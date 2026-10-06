@@ -1,14 +1,16 @@
 import { S, DOM } from './state.js';
 import { sendTunnelRequest, randomUUID } from './tunnel.js';
 import { escapeHtml, wingDisplayName } from './helpers.js';
-import { showTerminal, switchToSession } from './nav.js';
+import { showHome, showTerminal, switchToSession } from './nav.js';
 import { detachPTY, connectPTY } from './pty.js';
 import { startChatPolling, setViewPreference, chatSelectionVersion, onChatSnapshot, chatSnapshot, stopChatExecution, refreshChat } from './chat-view.js';
 import { orderConversationTree } from './conversation-state.js';
 import { loadHome } from './data.js';
 import { conversationResponseCurrent, canStartFreshLaunch, conversationTaskAvailability, readPendingLaunch, planLaunchStart, launchFieldsFromPending } from './conversation-response.js';
 import { createNavigationGuard, resolveConversationExecution, readConversationTree, resumeInTerminalState, findArchivedExecution, taskRootId, mergeRootRead, mergeWingListing } from './conversation-recovery.js';
-import { readTree, saveTree, readSelection, saveSelection } from './conversation-recovery-store.js';
+import { readTree, saveTree, readSelection, saveSelection, readExecution } from './conversation-recovery-store.js';
+import { coordinatorStatus, coordinatorStatusMarkup, coordinatorCardHeading, orderCoordinatorInventory, lastMessagePreview, previewReadArguments, previewMessagesFromRead, blockedBadge, observeCoordinatorStatus } from './coordinator-state.js';
+import { setNotification, clearNotification } from './notify.js';
 import './conversation-recovery.css';
 
 var TREE_REFRESH_MS = 5000;
@@ -21,6 +23,8 @@ var pendingLaunch = null;
 var navigation = createNavigationGuard();
 var panel = null;
 var snapshotListener = false;
+var previews = new Map();
+var observedStatuses = new Map();
 
 window.addEventListener('wingthing:continuation-started', function(event) {
     var source = event.detail.source;
@@ -87,6 +91,49 @@ function control(wingId, operation, args) {
 
 function wingFor(wingId) { return S.wingsData.find(function(wing) { return wing.wing_id === wingId; }); }
 
+function taskStatus(wingId, task) {
+    var data = cachedWingTree(wingId);
+    return coordinatorStatus(task.lifecycle, { observedAt: task.observedAt, readError: data.error || task.lifecycle_error });
+}
+
+function observeStatus(wingId, conversation, status) {
+    var key = JSON.stringify([userId(), wingId, conversation.conversation_id, conversation.session_id]);
+    var transition = observeCoordinatorStatus(observedStatuses, key, status);
+    if (transition.blocked) setNotification(conversation.session_id, wingId, { conversationId: conversation.conversation_id, title: conversation.title });
+    if (transition.cleared) clearNotification(conversation.session_id, wingId);
+}
+
+function observeTasks(wingId, tasks) {
+    tasks.forEach(function(task) { observeStatus(wingId, task.conversation, taskStatus(wingId, task)); });
+}
+
+function previewKey(wingId, sessionId) { return JSON.stringify([userId(), wingId, sessionId]); }
+function taskPreview(wingId, task) {
+    var conversation = task.conversation;
+    var live = chatSnapshot();
+    if (live && live.target && live.target.userId === userId() && live.target.wingId === wingId && live.target.sessionId === conversation.session_id) return lastMessagePreview(live.messages);
+    var preview = previews.get(previewKey(wingId, conversation.session_id));
+    if (preview && preview.text) return preview.text;
+    var saved = readExecution(storage(), { userId: userId(), wingId: wingId, sessionId: conversation.session_id }).record;
+    return lastMessagePreview(saved && saved.messages || []);
+}
+
+async function refreshRootPreview(wingId, task) {
+    var conversation = task.conversation;
+    if (!conversation.session_id || task.lifecycle_error || !task.lifecycle) return;
+    var key = previewKey(wingId, conversation.session_id);
+    var head = task.lifecycle.head_cursor;
+    var previous = previews.get(key);
+    if (previous && previous.head === head) return previous;
+    try {
+        var result = await control(wingId, 'session_read', previewReadArguments(task));
+        var messages = previewMessagesFromRead(task, result);
+        var preview = { head: head, text: lastMessagePreview(messages) || previous && previous.text || '', messages: messages.slice(-3) };
+        previews.set(key, preview);
+        return preview;
+    } catch (error) { return previous; /* Keep the last readable preview during reconnect. */ }
+}
+
 function persistSelection(conversation, wingId) {
     saveSelection(storage(), userId(), { wingId: wingId, conversationId: conversation.conversation_id, rootConversationId: conversation.root_conversation_id || conversation.conversation_id, sessionId: conversation.session_id, title: conversation.title || '', savedAt: Date.now() });
 }
@@ -125,8 +172,10 @@ function conversationCard(task, wingId, depth, options) {
     item.style.paddingLeft = (Math.min(depth, 5) * 18) + 'px';
     var role = conversation.parent_conversation_id ? 'child' : 'parent';
     var execution = conversation.session_id ? 'execution ' + shortId(conversation.session_id) : 'no execution started';
+    var status = taskStatus(wingId, task);
+    var preview = taskPreview(wingId, task);
     item.innerHTML = '<button class="conversation-open" type="button" data-focus-key="open:' + escapeHtml(key) + '"' + (options.selected ? ' aria-current="true"' : '') + '>' +
-        '<span>' + (depth === 0 ? '● ' : '↳ ') + escapeHtml(conversation.title || conversation.agent || conversation.conversation_id) + '</span>' +
+        coordinatorCardHeading(conversation, status, preview) +
         '<small><span class="conversation-badge" data-state="' + escapeHtml(availability.state) + '">' + escapeHtml(availability.label) + '</span> · ' + role + ' · ' + escapeHtml(wingDisplayName(wingFor(wingId)) || wingId) + ' · ' + escapeHtml(execution) + '</small></button>' +
         (options.addChild ? '<button class="conversation-add-child" type="button" data-focus-key="child:' + escapeHtml(key) + '">Add child</button>' : '');
     var details = document.createElement('details');
@@ -161,6 +210,37 @@ function conversationCard(task, wingId, depth, options) {
         add.disabled = !!options.addChildDisabled;
         add.addEventListener('click', function() { options.addChild(conversation); });
     }
+    if (!conversation.parent_conversation_id && window.innerWidth <= 600) {
+        var more = document.createElement('details');
+        more.className = 'conversation-options';
+        more.dataset.detailKey = 'options:' + key;
+        more.innerHTML = '<summary>Options</summary>';
+        Array.from(item.children).filter(function(child) { return child !== item.querySelector('.conversation-open'); }).forEach(function(child) { more.appendChild(child); });
+        item.appendChild(more);
+    }
+    if (conversation.parent_conversation_id && window.innerWidth <= 600) {
+        var child = document.createElement('details');
+        child.className = 'conversation-child';
+        child.dataset.detailKey = 'child:' + key;
+        child.setAttribute('role', 'listitem');
+        child.innerHTML = '<summary>' + coordinatorCardHeading(conversation, status, '') + '</summary>';
+        item.removeAttribute('role');
+        item.style.paddingLeft = '0';
+        item.querySelector('.conversation-open').textContent = 'Open conversation';
+        var inline = document.createElement('div');
+        inline.className = 'conversation-child-messages';
+        inline.setAttribute('aria-label', 'Recent child messages');
+        child.appendChild(inline);
+        child.appendChild(item);
+        child.addEventListener('toggle', async function() {
+            if (!child.open) return;
+            inline.textContent = 'Reading child messages…';
+            var preview = await refreshRootPreview(wingId, task);
+            if (!child.isConnected) return;
+            inline.innerHTML = preview && preview.messages && preview.messages.length ? preview.messages.map(function(message) { return '<p><strong>' + (message.type === 'user' ? 'You' : 'Agent') + '</strong> ' + escapeHtml(message.content.slice(0, 4000)) + '</p>'; }).join('') : '<p>' + escapeHtml(taskPreview(wingId, task) || 'No readable child messages yet.') + '</p>';
+        });
+        return child;
+    }
     return item;
 }
 
@@ -184,7 +264,8 @@ function buildPanel() {
         chatView.prepend(toolbar);
     }
     toolbar.className = 'conversation-toolbar conversation-panel';
-    toolbar.innerHTML = '<div class="conversation-identity"><strong class="cp-title"></strong><span class="conversation-badge cp-state" role="status"></span><span class="cp-identity"></span></div>' +
+    toolbar.innerHTML = '<div class="conversation-identity"><button class="conversation-home" type="button">Back</button><strong class="cp-title"></strong><span class="cp-agent-status"></span><span class="coordinator-blocked cp-attention" role="status" hidden></span></div>' +
+        '<details class="conversation-controls" data-detail-key="controls"' + (window.innerWidth > 600 ? ' open' : '') + '><summary>Conversation controls</summary><span class="conversation-badge cp-state" role="status"></span><span class="cp-identity"></span>' +
         '<div class="conversation-actions">' +
         '<button class="conversation-terminal" type="button" title="Attach this exact execution’s terminal as an interactive writer">Open terminal</button>' +
         '<button class="conversation-stop" type="button" hidden>Stop execution</button>' +
@@ -192,11 +273,12 @@ function buildPanel() {
         '<button class="conversation-retry" type="button" hidden>Retry read</button>' +
         '<button class="conversation-current" type="button">Check current execution</button>' +
         '<button class="conversation-bootstrap" type="button">Copy MCP setup</button></div>' +
-        '<p class="conversation-setup-status" role="status" aria-live="polite"></p>' +
+        '<p class="conversation-setup-status" role="status" aria-live="polite"></p></details>' +
         '<p class="conversation-recovery-status" role="status" aria-live="polite"></p>' +
         '<details class="conversation-tree" open><summary>Linked conversations</summary><div class="conversation-cards" role="list"></div></details>' +
         '<details class="conversation-deliveries" hidden data-detail-key="deliveries"><summary></summary><ol></ol></details>';
     var state = panel;
+    toolbar.querySelector('.conversation-home').addEventListener('click', function() { showHome(); });
     toolbar.querySelector('.conversation-terminal').addEventListener('click', function() {
         DOM.sessionCloseBtn.style.display = '';
         switchToSession(state.conversation.session_id, undefined, state.wingId);
@@ -238,7 +320,7 @@ function renderPanelState() {
     var snap = chatSnapshot();
     var conversation = panel.conversation;
     var wingName = wingDisplayName(wingFor(panel.wingId)) || panel.wingId;
-    setText(toolbar.querySelector('.cp-title'), (conversation.parent_conversation_id ? 'Child · ' : 'Parent · ') + (conversation.title || conversation.conversation_id));
+    setText(toolbar.querySelector('.cp-title'), conversation.title || (conversation.parent_conversation_id ? 'Child task' : 'Coordinator'));
     var target = snap && snap.target;
     var provider = target && target.providerSessionId ? target.providerSessionId : 'provider conversation not reported yet';
     setText(toolbar.querySelector('.cp-identity'), wingName + ' · logical ' + conversation.conversation_id + ' · execution ' + (conversation.session_id || 'none') + ' · ' + provider);
@@ -246,6 +328,15 @@ function renderPanelState() {
     var shown = snap ? snap.presentation : { state: 'connecting', label: 'connecting' };
     setText(badge, shown.label);
     badge.dataset.state = shown.state;
+    var data = cachedWingTree(panel.wingId);
+    var task = data.tasks.find(function(task) { return task.conversation.conversation_id === conversation.conversation_id; });
+    var status = snap && snap.target ? coordinatorStatus(snap.lifecycle, snap) : task ? taskStatus(panel.wingId, task) : 'unknown';
+    toolbar.querySelector('.cp-agent-status').innerHTML = coordinatorStatusMarkup(status);
+    observeStatus(panel.wingId, conversation, status);
+    var statuses = data.tasks.filter(function(task) { return taskRootId(task) === panel.rootId && task.conversation.conversation_id !== conversation.conversation_id; }).map(function(task) { return taskStatus(panel.wingId, task); });
+    var attention = toolbar.querySelector('.cp-attention');
+    setText(attention, blockedBadge(statuses.concat(status)));
+    attention.hidden = !attention.textContent;
 
     var stop = toolbar.querySelector('.conversation-stop');
     var stopState = snap ? snap.stop : { pending: false, error: '', acknowledgedAt: 0 };
@@ -267,7 +358,7 @@ function renderPanelState() {
     if (Date.now() <= panel.stopConfirmUntil) lines.push('Stop ends the process for execution ' + conversation.session_id + ' on ' + wingName + '. It does not prove the task completed or cancel external effects. Click Confirm stop to proceed.');
     if (stopState.error) lines.push(stopState.error + ' This execution remains listed and readable.');
     if (stopState.acknowledgedAt) lines.push('Stop acknowledged by the wing at ' + timeLabel(stopState.acknowledgedAt) + '. Waiting for native exit evidence; this does not prove the task completed or cancel external effects.');
-    if (shown.archived && !panel.resume.available && panel.resume.reason) lines.push('Resume unavailable: ' + panel.resume.reason);
+    if (shown.archived && !panel.resume.available && panel.resume.reason && !(snap && snap.continuationReady)) lines.push('Resume unavailable: ' + panel.resume.reason);
     if (panel.resume.status) lines.push(panel.resume.status);
     if (panel.treeError) lines.push('Linked tree not refreshed: ' + panel.treeError);
     setText(toolbar.querySelector('.conversation-recovery-status'), lines.join(' '));
@@ -285,13 +376,17 @@ function renderPanelTree() {
     stableRender(toolbar, function() {
         cards.innerHTML = '';
         orderConversationTree(tasks.map(function(task) { return task.conversation; })).forEach(function(row) {
-            cards.appendChild(conversationCard(byId.get(row.conversation.conversation_id), state.wingId, row.depth, {
+            var card = conversationCard(byId.get(row.conversation.conversation_id), state.wingId, row.depth, {
                 selected: row.conversation.conversation_id === state.conversation.conversation_id,
                 onOpen: function(conversation) { openFromCard({ wingId: state.wingId, conversationId: conversation.conversation_id }, toolbar.querySelector('.conversation-recovery-status')); },
-            }));
+            });
+            if (!row.conversation.parent_conversation_id) card.classList.add('conversation-tree-root');
+            cards.appendChild(card);
         });
         if (!tasks.length) cards.innerHTML = '<p class="text-dim">Linked tasks appear after the first tree read.</p>';
-        toolbar.querySelector('.conversation-tree summary').textContent = 'Linked conversations (' + tasks.length + ')' + (data.error || data.cached ? ' · cached' : '');
+        var childCount = tasks.filter(function(task) { return !!task.conversation.parent_conversation_id; }).length;
+        toolbar.querySelector('.conversation-tree').hidden = window.innerWidth <= 600 && !childCount;
+        toolbar.querySelector('.conversation-tree > summary').textContent = (window.innerWidth <= 600 ? 'Child tasks (' + childCount : 'Linked conversations (' + tasks.length) + ')' + (data.error || data.cached ? ' · cached' : '');
         renderDeliveries(toolbar, data, byId, state.rootId);
     });
 }
@@ -330,6 +425,7 @@ async function refreshPanelTree(state) {
         if (!panelCurrent(state)) return;
         state.treeError = '';
         if (mergeRootTree(state.wingId, state.rootId, tree.tasks, tree.delivery, issuedAt)) {
+            observeTasks(state.wingId, tree.tasks);
             var selected = tree.tasks.find(function(task) { return task.conversation.conversation_id === state.conversation.conversation_id; });
             state.newerSession = selected && selected.conversation.session_id && selected.conversation.session_id !== state.conversation.session_id ? selected.conversation.session_id : '';
         }
@@ -507,6 +603,8 @@ export async function refreshConversationInventory() {
             // were in flight; the later-issued read wins per root.
             var merged = mergeWingListing(cachedWingTree(wing.wing_id), reads, listedAt);
             cacheWingTree(wing.wing_id, { tasks: merged.tasks, deliveries: merged.deliveries, error: '', observedAt: Date.now(), cached: false });
+            observeTasks(wing.wing_id, merged.tasks);
+            await Promise.all(merged.tasks.filter(function(task) { return !task.conversation.parent_conversation_id; }).map(function(task) { return refreshRootPreview(wing.wing_id, task); }));
         } catch (error) {
             var cached = cachedWingTree(wing.wing_id);
             treeCache.set(treeCacheKey(wing.wing_id), { ...cached, error: errorText(error, 'Connection interrupted'), observedAt: 0 });
@@ -521,7 +619,7 @@ export async function refreshConversationInventory() {
 
 function renderInventory(mount, wings) {
     var selection = readSelection(storage(), userId()).selection;
-    mount.innerHTML = '<div class="conversation-heading"><h3>Conversations</h3><button id="new-parent-conversation" type="button" data-focus-key="new-parent">New parent</button></div>' +
+    mount.innerHTML = '<div class="conversation-heading"><h3>Coordinators</h3><button id="new-parent-conversation" type="button" data-focus-key="new-parent">New coordinator</button></div>' +
         '<p class="conversation-inventory-status text-dim" role="status" aria-live="polite"></p><div id="conversation-tasks" role="list"></div>';
     var status = mount.querySelector('.conversation-inventory-status');
     var list = mount.querySelector('#conversation-tasks');
@@ -532,25 +630,32 @@ function renderInventory(mount, wings) {
         resume.querySelector('button').addEventListener('click', function() { openFromCard({ wingId: selection.wingId, conversationId: selection.conversationId }, status); });
         mount.insertBefore(resume, list);
     }
+    var rows = [];
+    var issues = [];
     wings.forEach(function(wing) {
         var data = cachedWingTree(wing.wing_id);
         if (data.error || data.cached) {
             var error = document.createElement('p');
             error.className = 'text-dim';
             error.textContent = wingDisplayName(wing) + ': ' + (data.error || 'Cached tasks from this browser · checking') + (data.savedAt ? ' · saved ' + timeLabel(data.savedAt) : '');
-            list.appendChild(error);
+            issues.push(error);
         }
         var taskById = new Map(data.tasks.map(function(task) { return [task.conversation.conversation_id, task]; }));
         orderConversationTree(data.tasks.map(function(task) { return task.conversation; })).forEach(function(row) {
-            var conversation = row.conversation;
-            list.appendChild(conversationCard(taskById.get(conversation.conversation_id), wing.wing_id, row.depth, {
-                selected: !!selection && selection.wingId === wing.wing_id && selection.conversationId === conversation.conversation_id,
-                onOpen: function() { openFromCard({ wingId: wing.wing_id, conversationId: conversation.conversation_id }, status); },
-                addChild: row.depth === 0 ? function() { showLaunchForm(mount, [wing], conversation); } : null,
-                addChildDisabled: wing.online === false || !!wing.tunnel_error || !!data.error,
-            }));
+            rows.push({ task: taskById.get(row.conversation.conversation_id), wing: wing, depth: row.depth, error: data.error });
         });
     });
+    orderCoordinatorInventory(rows, window.innerWidth <= 600).forEach(function(row) {
+        var conversation = row.task.conversation;
+        var wing = row.wing;
+        list.appendChild(conversationCard(row.task, wing.wing_id, row.depth, {
+            selected: !!selection && selection.wingId === wing.wing_id && selection.conversationId === conversation.conversation_id,
+            onOpen: function() { openFromCard({ wingId: wing.wing_id, conversationId: conversation.conversation_id }, status); },
+            addChild: !conversation.parent_conversation_id ? function() { showLaunchForm(mount, [wing], conversation); } : null,
+            addChildDisabled: wing.online === false || !!wing.tunnel_error || !!row.error,
+        }));
+    });
+    issues.forEach(function(issue) { list.appendChild(issue); });
     if (!list.children.length) list.innerHTML = '<p class="text-dim">Create a persistent parent conversation, then inspect its linked children here.</p>';
     var newParent = mount.querySelector('#new-parent-conversation');
     newParent.disabled = eligibleWings().length === 0;

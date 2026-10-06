@@ -121,10 +121,10 @@
                 <div id="terminal-container"></div>
                 <div id="chat-view" style="display:none;">
                     <div id="chat-messages"></div>
-                    <div id="chat-view-status"></div>
+                    <details id="chat-state-details"><summary id="chat-view-status"></summary><p id="chat-view-detail"></p></details>
                     <div id="chat-input-bar">
-                        <textarea id="chat-input" rows="1" placeholder="send a message..."></textarea>
-                        <button id="chat-send">send</button>
+                        <textarea id="chat-input" rows="1" aria-label="Message to the coordinator" placeholder="send a message..."></textarea>
+                        <button id="chat-send" type="button">Send</button>
                     </div>
                 </div>
                 <div id="preview-divider" style="display:none;"></div>

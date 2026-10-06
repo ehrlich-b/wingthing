@@ -33,7 +33,7 @@ function isViewingSession(sessionId, wingId) {
            document.visibilityState === 'visible';
 }
 
-export function setNotification(sessionId, wingId) {
+export function setNotification(sessionId, wingId, conversation) {
     wingId = notificationWing(sessionId, wingId);
     if (!sessionId || !wingId) return;
 
@@ -55,8 +55,8 @@ export function setNotification(sessionId, wingId) {
 
     if (document.hidden && 'Notification' in window) {
         if (Notification.permission === 'granted') {
-            fireOSNotification(sessionId, wingId);
-        } else if (Notification.permission === 'default') {
+            fireOSNotification(sessionId, wingId, conversation);
+        } else if (!conversation && Notification.permission === 'default') {
             Notification.requestPermission().then(function(p) {
                 if (p === 'granted') fireOSNotification(sessionId, wingId);
             });
@@ -77,13 +77,26 @@ export function setNotification(sessionId, wingId) {
     }
 }
 
-function fireOSNotification(sessionId, wingId) {
-    var n = new Notification('wingthing', { body: 'A session needs your attention' });
-    n.onclick = function() {
-        window.focus();
-        // Lazy import to avoid circular dependency (nav.js imports from notify.js)
-        import('./nav.js').then(function(mod) { mod.switchToSession(sessionId, undefined, wingId); });
-    };
+async function fireOSNotification(sessionId, wingId, conversation) {
+    var options = { body: conversation && conversation.title ? conversation.title + ' needs your attention' : 'A session needs your attention',
+        tag: JSON.stringify([wingId, sessionId]), data: { sessionId: sessionId, wingId: wingId, conversationId: conversation && conversation.conversationId || '' } };
+    // Home Screen Safari requires persistent service-worker notifications.
+    try {
+        var registration = 'serviceWorker' in navigator && await navigator.serviceWorker.getRegistration(import.meta.env.BASE_URL);
+        if (registration) { await registration.showNotification('wingthing', options); return; }
+    } catch (error) { /* Other browsers can still use the page notification. */ }
+    try {
+        var n = new Notification('wingthing', options);
+        n.onclick = function() {
+            window.focus();
+            if (conversation && conversation.conversationId) {
+                import('./conversation-view.js').then(function(mod) { mod.openConversationReference({ wingId: wingId, conversationId: conversation.conversationId }); });
+            } else {
+                // Lazy import to avoid the nav/notify cycle.
+                import('./nav.js').then(function(mod) { mod.switchToSession(sessionId, undefined, wingId); });
+            }
+        };
+    } catch (error) { /* Visible badges remain available without OS support. */ }
 }
 
 export function clearNotification(sessionId, wingId) {

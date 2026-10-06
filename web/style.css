@@ -15,6 +15,7 @@
 }
 
 :root {
+    color-scheme: dark;
     --bg: #1a1a2e;
     --bg-card: #16213e;
     --bg-hover: #1e2a4a;
@@ -320,6 +321,9 @@ body {
 #parent-dot[data-state="working"] .parent-dot-light { background: var(--accent); }
 #parent-dot[data-state="idle"] .parent-dot-light, #parent-dot[data-state="completed"] .parent-dot-light { background: var(--green); }
 #parent-dot[data-state="needs_input"] .parent-dot-light { background: var(--yellow); }
+#parent-dot[data-state="blocked"] .parent-dot-light { background: var(--yellow); }
+#parent-dot[data-state="done"] .parent-dot-light { background: var(--green); }
+#parent-dot[data-state="exited"] .parent-dot-light { background: transparent; border: 1px solid var(--text-dim); }
 #parent-dot[data-state="failed"] .parent-dot-light { background: var(--red); }
 #parent-dot[data-state="offline"] .parent-dot-light, #parent-dot[data-state="unavailable"] .parent-dot-light { background: var(--text-muted); }
 .parent-dot-message { padding: 8px 12px; margin-bottom: 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--yellow); font-size: 12px; overflow-wrap: anywhere; }
@@ -1293,6 +1297,7 @@ body {
 
 #chat-messages {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     padding: 12px 8px;
@@ -1396,6 +1401,10 @@ body {
     flex-shrink: 0;
     min-height: 16px;
 }
+
+#chat-state-details { flex-shrink: 0; max-height: 25%; overflow-y: auto; }
+#chat-view-status { cursor: pointer; }
+#chat-view-detail { padding: 0 8px 6px; font-size: 11px; color: var(--text-dim); overflow-wrap: anywhere; }
 
 #chat-input-bar {
     display: flex;
