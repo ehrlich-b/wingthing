@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 type seatbeltSandbox struct {
@@ -62,11 +64,32 @@ func (s *seatbeltSandbox) Destroy() error {
 	return os.RemoveAll(s.tmpDir)
 }
 
-// buildProfile generates a Seatbelt (.sb) profile from sandbox config.
+// buildProfile returns profile text, or an empty string for unsafe paths.
+// Production uses buildCheckedProfile to report the error before spawning.
+func buildProfile(cfg Config) string {
+	profile, _ := buildSeatbeltProfile(cfg)
+	return profile
+}
+
+// buildSeatbeltProfile generates a Seatbelt (.sb) profile from sandbox config.
 // Uses allow-default with specific deny rules. SBPL gives precedence to
 // later rules, so ordering matters: deny-write rules must come after
 // mount allows to prevent the mount allow from overriding them.
-func buildProfile(cfg Config) string {
+func buildSeatbeltProfile(cfg Config) (string, error) {
+	var pathErr error
+	resolvePath := func(path string) (string, error) {
+		abs, err := canonicalSandboxPath(path)
+		if err == nil {
+			err = validateSeatbeltPath(path)
+		}
+		if err == nil {
+			err = validateSeatbeltPath(abs)
+		}
+		if err != nil && pathErr == nil {
+			pathErr = fmt.Errorf("Seatbelt profile path %q: %w", path, err)
+		}
+		return abs, err
+	}
 	var sb strings.Builder
 	sb.WriteString("(version 1)\n")
 	sb.WriteString("(allow default)\n")
@@ -102,7 +125,7 @@ func buildProfile(cfg Config) string {
 	// Allow outbound connections to specific Unix sockets (e.g. tool sockets).
 	// Must come after any network deny rule so the allow takes precedence.
 	for _, sock := range cfg.AllowSockets {
-		abs, err := canonicalSandboxPath(sock)
+		abs, err := resolvePath(sock)
 		if err != nil {
 			continue
 		}
@@ -112,7 +135,7 @@ func buildProfile(cfg Config) string {
 	// Resolve the SSH directory once for the deny exceptions emitted below.
 	sshDir, _ := os.UserHomeDir()
 	if sshDir != "" {
-		sshDir, _ = canonicalSandboxPath(filepath.Join(sshDir, ".ssh"))
+		sshDir, _ = resolvePath(filepath.Join(sshDir, ".ssh"))
 	}
 
 	// Mount-based filesystem write isolation.
@@ -131,7 +154,7 @@ func buildProfile(cfg Config) string {
 	if hasWritableMounts {
 		home, _ := os.UserHomeDir()
 		if home != "" {
-			home, _ = canonicalSandboxPath(home)
+			home, _ = resolvePath(home)
 		}
 		if home != "" {
 			fmt.Fprintf(&sb, "(deny file-write* (subpath %q))\n", home)
@@ -139,7 +162,7 @@ func buildProfile(cfg Config) string {
 				if m.ReadOnly {
 					continue
 				}
-				abs, err := canonicalSandboxPath(m.Source)
+				abs, err := resolvePath(m.Source)
 				if err != nil {
 					continue
 				}
@@ -159,7 +182,7 @@ func buildProfile(cfg Config) string {
 		fmt.Fprintf(&sb, "(allow file-write* (subpath %q))\n", keychains)
 		// Always allow writes to system tmp dirs (resolve symlinks for macOS /tmp -> /private/tmp)
 		tmpDir := os.TempDir()
-		if real, err := canonicalSandboxPath(tmpDir); err == nil {
+		if real, err := resolvePath(tmpDir); err == nil {
 			tmpDir = real
 		}
 		fmt.Fprintf(&sb, "(allow file-write* (subpath %q))\n", tmpDir)
@@ -174,7 +197,7 @@ func buildProfile(cfg Config) string {
 	// denied path. The narrow known_hosts exception follows the denies, unless
 	// that exact file was explicitly denied too.
 	for _, d := range cfg.Deny {
-		abs, err := canonicalSandboxPath(d)
+		abs, err := resolvePath(d)
 		if err != nil {
 			continue
 		}
@@ -196,7 +219,7 @@ func buildProfile(cfg Config) string {
 	// Deny-write paths — block writes only, reads allowed.
 	// Emitted AFTER mount allows so they take precedence in SBPL evaluation.
 	for _, d := range cfg.DenyWrite {
-		abs, err := canonicalSandboxPath(d)
+		abs, err := resolvePath(d)
 		if err != nil {
 			continue
 		}
@@ -208,26 +231,50 @@ func buildProfile(cfg Config) string {
 	// covers creating a missing target and the subpath covers descendants.
 	// buildCheckedProfile still refuses any allow rule that overlaps a target.
 	for _, t := range cfg.ProtectedWriteTargets {
-		abs, err := canonicalSandboxPath(t)
+		abs, err := resolvePath(t)
 		if err != nil {
-			continue // buildCheckedProfile reports the uncovered target
+			continue // pathErr refuses the entire profile below
 		}
 		fmt.Fprintf(&sb, "(deny file-write* (literal %q))\n", abs)
 		fmt.Fprintf(&sb, "(deny file-write* (subpath %q))\n", abs)
 	}
 
-	return sb.String()
+	if pathErr != nil {
+		return "", pathErr
+	}
+	return sb.String(), nil
+}
+
+// Go's %q and SBPL differ on some escapes, and regex literals add another
+// quoting layer. Refuse ambiguous paths rather than risk changing the policy.
+// Parentheses are safe in quoted literals and escaped by sbplRegexEscape.
+func validateSeatbeltPath(path string) error {
+	if !utf8.ValidString(path) {
+		return fmt.Errorf("path must be valid UTF-8")
+	}
+	for _, c := range path {
+		if c == '"' || c == '\\' || !unicode.IsPrint(c) {
+			return fmt.Errorf("path contains a quote, backslash, or nonprintable character")
+		}
+	}
+	return nil
 }
 
 // buildCheckedProfile builds the profile handed to sandbox-exec and, when the
 // host supplied protected write targets, verifies that exact profile text keeps
-// every target unwritable. An empty protected set returns buildProfile output
-// unchanged.
+// every target unwritable. Unsafe paths are refused even without protected
+// targets, so a rejected deny cannot silently disappear from the policy.
 func buildCheckedProfile(cfg Config) (string, error) {
 	if err := ValidateProtectedWriteTargets(cfg.ProtectedWriteTargets); err != nil {
 		return "", err
 	}
-	profile := buildProfile(cfg)
+	profile, err := buildSeatbeltProfile(cfg)
+	if err != nil {
+		if len(cfg.ProtectedWriteTargets) > 0 {
+			return "", &ProtectedWriteTargetError{Reason: "final sandbox policy cannot be verified: " + err.Error()}
+		}
+		return "", err
+	}
 	if len(cfg.ProtectedWriteTargets) == 0 {
 		return profile, nil
 	}

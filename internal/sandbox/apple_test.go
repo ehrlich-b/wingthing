@@ -106,6 +106,105 @@ func TestBuildProfileProxyHasNoDirectDNS(t *testing.T) {
 	}
 }
 
+func TestBuildProfileRejectsUnsafePaths(t *testing.T) {
+	root := t.TempDir()
+	for name, suffix := range map[string]string{
+		"quote injection": "config\") (allow default) (regex #\"",
+		"backslash":       "config\\path",
+		"newline":         "config\n(allow default)",
+		"carriage return": "config\rpath",
+		"tab":             "config\tpath",
+		"NUL":             "config\x00path",
+		"nonprintable":    "config\u2028path",
+		"invalid UTF-8":   "config\xffpath",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(root, suffix)
+			for kind, cfg := range map[string]Config{
+				"mount":            {Mounts: []Mount{{Source: path}}},
+				"regex mount":      {Mounts: []Mount{{Source: path, UseRegex: true}}},
+				"deny":             {Deny: []string{path}},
+				"deny write":       {DenyWrite: []string{path}},
+				"socket":           {AllowSockets: []string{path}},
+				"protected target": {ProtectedWriteTargets: []string{path}},
+			} {
+				t.Run(kind, func(t *testing.T) {
+					if profile, err := buildCheckedProfile(cfg); err == nil || profile != "" {
+						t.Fatalf("unsafe path must refuse the entire profile: err=%v\n%s", err, profile)
+					}
+					if profile := buildProfile(cfg); profile != "" {
+						t.Fatalf("unchecked generator exposed an unsafe profile:\n%s", profile)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestBuildProfileRejectsUnsafeImplicitPaths(t *testing.T) {
+	root := t.TempDir()
+	for _, env := range []string{"HOME", "TMPDIR"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv(env, filepath.Join(root, "unsafe\"\npath"))
+			profile, err := buildCheckedProfile(Config{Mounts: []Mount{{Source: root}}})
+			if err == nil || profile != "" {
+				t.Fatalf("unsafe %s must refuse the entire profile: err=%v\n%s", env, err, profile)
+			}
+		})
+	}
+}
+
+func TestBuildProfileRejectsUnsafeResolvedPath(t *testing.T) {
+	root := t.TempDir()
+	unsafe := filepath.Join(root, "unsafe\"\npath")
+	if err := os.Mkdir(unsafe, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "safe-alias")
+	if err := os.Symlink(unsafe, alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{alias, filepath.Join(alias, "missing")} {
+		profile, err := buildCheckedProfile(Config{Mounts: []Mount{{Source: source, UseRegex: true}}})
+		if err == nil || profile != "" {
+			t.Fatalf("unsafe symlink destination must refuse the profile: err=%v\n%s", err, profile)
+		}
+	}
+}
+
+func TestBuildProfileParenthesesStayInPaths(t *testing.T) {
+	path, err := canonicalSandboxPath(filepath.Join(t.TempDir(), "config) (allow default)"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err := buildCheckedProfile(Config{
+		Mounts:    []Mount{{Source: path, UseRegex: true}},
+		DenyWrite: []string{path},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules, err := parseWriteRules(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var prefix, literal, defaults int
+	for _, rule := range rules {
+		if rule.kind == writeRuleAll {
+			defaults++
+		}
+		if rule.path == path && rule.kind == writeRulePrefix && rule.allow {
+			prefix++
+		}
+		if rule.path == path && rule.kind == writeRuleLiteral && !rule.allow {
+			literal++
+		}
+	}
+	if defaults != 1 || prefix != 1 || literal != 1 {
+		t.Fatalf("parentheses changed profile syntax: defaults=%d prefix=%d literal=%d\n%s", defaults, prefix, literal, profile)
+	}
+}
+
 func TestBuildProfileDenyPaths(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	profile := buildProfile(Config{
