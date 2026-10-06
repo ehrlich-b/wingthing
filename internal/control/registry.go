@@ -200,15 +200,47 @@ func AuditTarget(name string, arguments json.RawMessage, result map[string]any) 
 	}
 	var parsed map[string]any
 	if json.Unmarshal(arguments, &parsed) == nil {
-		if target := firstString(parsed, tool.AuditTargetKeys); target != "" {
+		if target := firstAuditTarget(parsed, tool.AuditTargetKeys); target != "" {
 			return target
 		}
 	}
-	return firstString(result, tool.AuditTargetKeys)
+	return firstAuditTarget(result, tool.AuditTargetKeys)
 }
 
-func firstString(values map[string]any, keys []string) string {
+func auditRunIDs(value any) string {
+	ids, ok := value.([]any)
+	if !ok || len(ids) == 0 {
+		return ""
+	}
+	bounded := make([]string, 0, 4)
+	for index, item := range ids {
+		id, ok := item.(string)
+		if !ok {
+			return ""
+		}
+		if index < 4 {
+			runes := []rune(id)
+			if len(runes) > 64 {
+				id = string(runes[:61]) + "..."
+			}
+			bounded = append(bounded, id)
+		}
+	}
+	target, _ := json.Marshal(struct {
+		RunIDs []string `json:"run_ids"`
+		Count  int      `json:"count"`
+	}{bounded, len(ids)})
+	return string(target)
+}
+
+func firstAuditTarget(values map[string]any, keys []string) string {
 	for _, key := range keys {
+		if key == "run_ids" {
+			if target := auditRunIDs(values[key]); target != "" {
+				return target
+			}
+			continue
+		}
 		if value, ok := values[key].(string); ok && strings.TrimSpace(value) != "" {
 			return value
 		}
@@ -441,9 +473,9 @@ func buildTools() []Tool {
 					"type": "array", "items": map[string]any{"type": "string"}, "minItems": 1, "maxItems": 64,
 					"description": "Wingthing agent run IDs owned by this caller",
 				},
-				"timeout_seconds": map[string]any{"type": "number", "minimum": 0.1, "maximum": 3600, "default": 30},
+				"timeout_seconds": map[string]any{"type": "number", "minimum": 0.1, "maximum": 600, "default": 30},
 			}, "run_ids"), Annotations: readOnly,
-			Grant: "agent.read", Surfaces: both, AuditTargetKeys: []string{"run_id"},
+			Grant: "agent.read", Surfaces: both, AuditTargetKeys: []string{"run_ids"},
 		},
 		{
 			Name: "agent_result", Title: "Read agent result",

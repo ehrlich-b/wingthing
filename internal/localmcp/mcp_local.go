@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -38,6 +39,8 @@ import (
 const localMCPProtocolVersion = "2025-11-25"
 
 const maxConcurrentLocalMCPCalls = 64
+
+const maxConcurrentAgentWaitAnyCalls = 4
 
 type Server struct {
 	Version           string
@@ -92,6 +95,11 @@ type activeMCPAgentRun struct {
 }
 
 var activeMCPAgentRuns sync.Map
+
+var activeAgentWaitAnyCalls = struct {
+	sync.Mutex
+	counts map[string]int
+}{counts: make(map[string]int)}
 
 func (s *Server) clientPrincipal() string {
 	if s.Principal == "" {
@@ -1843,9 +1851,14 @@ func (s *Server) toolAgentWaitAny(ctx context.Context, arguments json.RawMessage
 	if args.TimeoutSeconds == 0 {
 		args.TimeoutSeconds = 30
 	}
-	if args.TimeoutSeconds < 0.1 || args.TimeoutSeconds > 3600 {
-		return nil, errors.New("timeout_seconds must be between 0.1 and 3600")
+	if args.TimeoutSeconds < 0.1 || args.TimeoutSeconds > 600 {
+		return nil, errors.New("timeout_seconds must be between 0.1 and 600")
 	}
+	release, err := s.admitAgentWaitAny()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	waitCtx, cancel := context.WithTimeout(ctx, durationSeconds(args.TimeoutSeconds))
 	defer cancel()
 	taskStore, err := store.Open(s.Cfg.DBPath())
@@ -1853,20 +1866,30 @@ func (s *Server) toolAgentWaitAny(ctx context.Context, arguments json.RawMessage
 		return nil, err
 	}
 	defer cmdutil.CloseWithLog("task store", taskStore)
+	runIDs := make([]string, 0, len(args.RunIDs))
+	seen := make(map[string]bool, len(args.RunIDs))
+	for _, runID := range args.RunIDs {
+		if !seen[runID] {
+			seen[runID] = true
+			runIDs = append(runIDs, runID)
+		}
+	}
 	var data map[string]any
 	err = waitForAgentRunCondition(waitCtx, func() (bool, error) {
+		tasks, err := s.loadOwnedAgentRunStatuses(taskStore.DB(), runIDs)
+		if err != nil {
+			return false, err
+		}
 		finished := []map[string]any{}
 		pending := []string{}
 		lookupErrors := []map[string]any{}
-		seen := make(map[string]bool, len(args.RunIDs))
-		for _, runID := range args.RunIDs {
-			if seen[runID] {
-				continue
-			}
-			seen[runID] = true
-			task, err := s.loadOwnedAgentRun(taskStore, runID)
-			if err != nil {
-				return false, err
+		for _, runID := range runIDs {
+			task := tasks[runID]
+			if task != nil && (task.Status == "pending" || task.Status == "running") && task.RunnerPID > 0 && !procinfo.OwnedProcessIsAlive(task.RunnerPID) {
+				if err := taskStore.SetTaskError(runID, fmt.Sprintf("supervising Wingthing process %d exited", task.RunnerPID)); err != nil {
+					return false, fmt.Errorf("mark orphaned agent run failed: %w", err)
+				}
+				task.Status = "failed"
 			}
 			if task == nil {
 				lookupErrors = append(lookupErrors, map[string]any{"run_id": runID, "error": fmt.Sprintf("agent run %q not found or not owned by caller", runID)})
@@ -1886,6 +1909,49 @@ func (s *Server) toolAgentWaitAny(ctx context.Context, arguments json.RawMessage
 		return data, nil
 	}
 	return data, err
+}
+
+func (s *Server) admitAgentWaitAny() (func(), error) {
+	key := s.Cfg.DBPath() + "\x00" + s.clientPrincipal()
+	activeAgentWaitAnyCalls.Lock()
+	defer activeAgentWaitAnyCalls.Unlock()
+	if activeAgentWaitAnyCalls.counts[key] >= maxConcurrentAgentWaitAnyCalls {
+		return nil, errors.New("too many concurrent waits (maximum 4 per principal)")
+	}
+	activeAgentWaitAnyCalls.counts[key]++
+	return func() {
+		activeAgentWaitAnyCalls.Lock()
+		defer activeAgentWaitAnyCalls.Unlock()
+		activeAgentWaitAnyCalls.counts[key]--
+		if activeAgentWaitAnyCalls.counts[key] == 0 {
+			delete(activeAgentWaitAnyCalls.counts, key)
+		}
+	}, nil
+}
+
+func (s *Server) loadOwnedAgentRunStatuses(db *sql.DB, runIDs []string) (map[string]*store.Task, error) {
+	arguments := make([]any, 0, len(runIDs)+2)
+	arguments = append(arguments, s.clientPrincipal(), s.clientPrincipal())
+	for _, runID := range runIDs {
+		arguments = append(arguments, runID)
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(runIDs)), ",")
+	rows, err := db.Query(`SELECT id, status, runner_pid FROM tasks
+		WHERE type = 'agent_run' AND (principal = ? OR (principal = '' AND ? = 'default'))
+		AND id IN (`+placeholders+`)`, arguments...)
+	if err != nil {
+		return nil, err
+	}
+	defer cmdutil.CloseWithLog("agent run rows", rows)
+	tasks := make(map[string]*store.Task, len(runIDs))
+	for rows.Next() {
+		task := &store.Task{}
+		if err := rows.Scan(&task.ID, &task.Status, &task.RunnerPID); err != nil {
+			return nil, err
+		}
+		tasks[task.ID] = task
+	}
+	return tasks, rows.Err()
 }
 
 func (s *Server) toolAgentResult(arguments json.RawMessage) (map[string]any, error) {

@@ -590,10 +590,18 @@ func agentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+			if err := json.NewEncoder(cmd.OutOrStdout()).Encode(result); err != nil {
+				return err
+			}
+			finished, _ := result["finished"].([]map[string]any)
+			pending, _ := result["pending"].([]string)
+			if len(finished) == 0 && len(pending) > 0 {
+				return cmdutil.ExitError(2, "timed out waiting for an agent run to finish")
+			}
+			return nil
 		},
 	}
-	waitAny.Flags().Float64Var(&timeoutSeconds, "timeout", 30, "wait timeout in seconds (0.1-3600)")
+	waitAny.Flags().Float64Var(&timeoutSeconds, "timeout", 30, "wait timeout in seconds (0.1-600)")
 	waitAny.Flags().StringVar(&clientName, "client", "", "local MCP client name (or WT_MCP_CLIENT)")
 	ag.AddCommand(waitAny)
 	return ag
