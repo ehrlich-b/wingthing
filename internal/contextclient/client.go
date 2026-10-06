@@ -93,7 +93,7 @@ func (c *Client) token(ctx context.Context, owner, rejected string) (string, err
 	if len(c.cfg.Scopes) > 0 {
 		form.Set("scope", strings.Join(c.cfg.Scopes, " "))
 	}
-	body, err := c.post(ctx, endpoint, "application/x-www-form-urlencoded", "", []byte(form.Encode()), "", assertion, form.Encode())
+	body, err := c.post(ctx, endpoint, "application/x-www-form-urlencoded", "", []byte(form.Encode()), "", form.Encode(), assertion, rejected)
 	if err != nil {
 		return "", err
 	}
