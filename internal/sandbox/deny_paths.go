@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"path/filepath"
+	"strings"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 )
@@ -9,8 +10,9 @@ import (
 // CanonicalDenyPaths preserves both a deny's declared name and its resolved
 // target. A jail can turn a symlink into a separate bind mount, so masking only
 // one name would leave the other readable or writable. Missing suffixes are
-// resolved through their existing ancestors too.
-func CanonicalDenyPaths(paths []string) []string {
+// resolved through their existing ancestors too. Denies inside an alias's
+// source are also projected into its synthetic target before the jail is built.
+func CanonicalDenyPaths(paths []string, aliases ...Mount) []string {
 	var result []string
 	seen := make(map[string]bool)
 	for _, path := range paths {
@@ -18,6 +20,27 @@ func CanonicalDenyPaths(paths []string) []string {
 			path = absolute
 		}
 		for _, name := range []string{filepath.Clean(path), config.CanonicalProviderPath(path)} {
+			if !seen[name] {
+				seen[name] = true
+				result = append(result, name)
+			}
+		}
+	}
+	canonical := result
+	for _, alias := range aliases {
+		if alias.Target == "" || alias.Target == alias.Source {
+			continue
+		}
+		source := config.CanonicalProviderPath(alias.Source)
+		for _, path := range canonical {
+			if path == "/" {
+				continue // jail marker, not a mask of the alias's contents
+			}
+			relative, err := filepath.Rel(source, path)
+			if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+				continue
+			}
+			name := filepath.Join(alias.Target, relative)
 			if !seen[name] {
 				seen[name] = true
 				result = append(result, name)

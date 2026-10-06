@@ -398,6 +398,73 @@ func TestLinuxControlAllowlistOmitsDeniedSymlinkAliases(t *testing.T) {
 	}
 }
 
+func TestLinuxControlAllowlistProjectsMasksIntoParentAliases(t *testing.T) {
+	home := canonicalPolicyTestPath(t, t.TempDir())
+	tree := filepath.Join(home, ".wingthing", "eggs")
+	dotfiles := filepath.Join(home, "dotfiles")
+	private := filepath.Join(dotfiles, "private")
+	for _, dir := range []string{tree, private} {
+		makeEggConfigTestDir(t, dir)
+	}
+	for _, name := range []string{"netrc", "egg.yaml", "zshrc", "private/token"} {
+		writeEggConfigTestFile(t, filepath.Join(dotfiles, name), "fixture")
+	}
+	alias := filepath.Join(home, "alias")
+	nested := filepath.Join(home, "nested")
+	deniedAlias := filepath.Join(home, "private-alias")
+	for path, target := range map[string]string{filepath.Join(home, ".netrc"): filepath.Join(dotfiles, "netrc"), alias: dotfiles, nested: alias, deniedAlias: private} {
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deny := []string{filepath.Join(home, ".netrc"), private}
+	mounts, err := isolateLinuxEggControl([]sandbox.Mount{{Source: home}}, []string{tree}, nil, deny)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{alias, nested} {
+		found := false
+		for _, mount := range mounts {
+			if mount.Target == path {
+				if mount.Source != dotfiles || !mount.ReadOnly {
+					t.Fatalf("unsafe parent alias mount: %+v", mount)
+				}
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("useful dotfile directory alias disappeared: %s", path)
+		}
+	}
+	for _, mount := range mounts {
+		if mount.Target == deniedAlias {
+			t.Fatalf("alias to denied directory mounted readable: %+v", mount)
+		}
+	}
+	for _, test := range []struct {
+		name  string
+		paths []string
+		files []string
+	}{
+		{"deny", deny, []string{"netrc", "private"}},
+		{"deny-write", []string{filepath.Join(dotfiles, "egg.yaml"), filepath.Join(dotfiles, "missing.yaml")}, []string{"egg.yaml", "missing.yaml"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			masks := sandbox.CanonicalDenyPaths(test.paths, mounts...)
+			for _, parent := range []string{dotfiles, alias, nested} {
+				for _, name := range test.files {
+					if path := filepath.Join(parent, name); !containsString(masks, path) {
+						t.Errorf("mask missing at %s: %v", path, masks)
+					}
+				}
+				if containsString(masks, filepath.Join(parent, "zshrc")) || containsString(masks, parent) {
+					t.Fatalf("safe dotfiles masked under %s: %v", parent, masks)
+				}
+			}
+		})
+	}
+}
+
 func TestAgentKeyHelperMountUsesOwnerReadOnlyFile(t *testing.T) {
 	owner, other := t.TempDir(), t.TempDir()
 	for _, home := range []string{owner, other} {

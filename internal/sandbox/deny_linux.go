@@ -306,9 +306,9 @@ func DenyInit(args []string) {
 
 	tmpDir := filepath.Dir(logPath)
 	// Resolve host aliases before setupJail hides or recreates their names.
-	// Keep both masks even when a read alias is bound separately in the jail.
-	denyPaths = CanonicalDenyPaths(denyPaths)
-	denyWritePaths = CanonicalDenyPaths(denyWritePaths)
+	// Project descendant masks into every separately bound read alias too.
+	denyPaths = CanonicalDenyPaths(denyPaths, readAliases...)
+	denyWritePaths = CanonicalDenyPaths(denyWritePaths, readAliases...)
 
 	// Jail mode: deny:/ creates an allowlist filesystem. Only explicitly
 	// mounted paths are visible; everything else is inaccessible.
@@ -318,8 +318,12 @@ func DenyInit(args []string) {
 		// A missing deny target under a declared read-only mount needs its
 		// placeholder in the backing tree before that parent is bound read-only.
 		// Other targets can be prepared in the jail's private filesystem below.
+		readonlySources := append([]string(nil), roMounts...)
+		for _, alias := range readAliases {
+			readonlySources = append(readonlySources, alias.Source)
+		}
 		for _, path := range append(append([]string(nil), denyPaths...), denyWritePaths...) {
-			for _, parent := range roMounts {
+			for _, parent := range readonlySources {
 				if isPathWithin(path, parent) {
 					if operation, target, err := prepareDenyMountpoints([]string{path}); err != nil {
 						failEnforcement(operation, target, err)
