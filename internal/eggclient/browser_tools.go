@@ -29,11 +29,6 @@ func PrepareBrowserTools(cfg *config.Config, sessionID string, tools []*config.T
 			return nil, fmt.Errorf("tool %s: context requires a wing context block", tool.Name)
 		}
 	}
-	_, protected, err := protectContextSecret(egg.DefaultEggConfig(), wingCfg.Context)
-	if err != nil {
-		return nil, err
-	}
-	opts.ContextSecretFiles = protected
 	client, err := contextclient.New(wingCfg.Context)
 	if err != nil {
 		return nil, err

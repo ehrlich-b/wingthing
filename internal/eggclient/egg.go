@@ -597,7 +597,6 @@ type SpawnEggOpts struct {
 	ProviderReserved       bool
 	ToolNames              []string
 	ToolSocketPath         string
-	ContextSecretFiles     []string // paths only; credentials remain in the wing
 	Label                  string
 	Kind                   string
 	Command                []string
@@ -792,17 +791,6 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// read+write deny mounts enforce these secret paths instead.
 	if runtime.GOOS == "darwin" {
 		o.ProtectedWriteTargets = append(append([]string(nil), o.ProtectedWriteTargets...), protected...)
-	}
-	if len(o.ContextSecretFiles) > 0 {
-		clone := *eggCfg
-		clone.FS = append([]string(nil), eggCfg.FS...)
-		for _, path := range o.ContextSecretFiles {
-			clone.FS = append(clone.FS, "deny:"+path)
-		}
-		eggCfg = &clone
-		if runtime.GOOS == "darwin" {
-			o.ProtectedWriteTargets = append(o.ProtectedWriteTargets, o.ContextSecretFiles...)
-		}
 	}
 	outerBoundary := !egg.RequiresSandbox(eggCfg, agentName)
 	if err := egg.ValidatePreviewClaudeBoundary(agentName, o.Command, outerBoundary); err != nil {

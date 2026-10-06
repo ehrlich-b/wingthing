@@ -2237,8 +2237,7 @@ authDone:
 		identity, idleTimeout, eggclient.SpawnEggOpts{
 			ResumeSessionID: providerResumeID, ResumeSourceSessionID: start.ResumeSessionID,
 			ProviderReserved: providerResumeID != "", ToolNames: toolOpts.ToolNames, ToolSocketPath: toolOpts.ToolSocketPath,
-			ContextSecretFiles: toolOpts.ContextSecretFiles,
-			Principal:          resumePrincipal, AgentArgs: resumeArgs,
+			Principal: resumePrincipal, AgentArgs: resumeArgs,
 		})
 	if err != nil {
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
