@@ -22,6 +22,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/relay"
+	"github.com/ehrlich-b/wingthing/internal/wing"
 	"github.com/spf13/cobra"
 )
 
@@ -466,7 +467,7 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 	_ = os.Remove(daemonctl.WingStatusPath())
 	wingErrCh := make(chan error, 1)
 	go func() {
-		wingErrCh <- runWingWithContext(ctx, sighupCh, localHTTPURL(addrFlag), labelsFlag, "auto", eggConfigFlag, orgFlag, nil, pathsFlag, debugFlag, auditFlag, true, false, hasAuth, embeddedWingToken)
+		wingErrCh <- wing.RunWingWithContext(wing.EntryOptions{Version: version}, ctx, sighupCh, localHTTPURL(addrFlag), labelsFlag, "auto", eggConfigFlag, orgFlag, nil, pathsFlag, debugFlag, auditFlag, true, false, hasAuth, embeddedWingToken)
 	}()
 	if err := awaitEmbeddedWingReady(ctx, wingErrCh, listeners.errCh, daemonctl.ReadWingStatus, roostWingReadyTimeout); err != nil {
 		_ = listeners.Shutdown(srv, 8*time.Second)
@@ -682,7 +683,7 @@ func roostStatusCmd() *cobra.Command {
 
 			cfg, _ := config.Load()
 			if cfg != nil {
-				sessions := listAliveEggSessions(cfg)
+				sessions := wing.ListAliveEggSessions(cfg)
 				if len(sessions) > 0 {
 					fmt.Println("  egg sessions:")
 					for _, s := range sessions {

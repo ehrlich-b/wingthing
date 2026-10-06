@@ -1,4 +1,4 @@
-package main
+package wing
 
 import (
 	"context"
@@ -50,7 +50,7 @@ func TestTunnelResponseBackpressureDoesNotBlockWingConfigReload(t *testing.T) {
 
 	go func() {
 		defer close(done)
-		tunnel.HandleTunnelRequest(tunnel.References{Version: version, WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowed, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: listAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs}, context.Background(), &config.Config{Dir: t.TempDir()}, ws.TunnelRequest{
+		tunnel.HandleTunnelRequest(tunnel.References{Version: "dev", WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowed, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs}, context.Background(), &config.Config{Dir: t.TempDir()}, ws.TunnelRequest{
 			RequestID: "request-1", SenderPub: senderPublic, SenderUserID: "owner-1",
 			SenderEmail: "owner@example.com", SenderOrgRole: "owner", Payload: payload,
 		}, func(any) error {
@@ -123,7 +123,7 @@ func TestTunnelRejectsPathShapedSessionIDBeforeFilesystemAccess(t *testing.T) {
 	wingEggCfg := &egg.EggConfig{}
 	var wingEggMu sync.Mutex
 	var responses int
-	tunnel.HandleTunnelRequest(tunnel.References{Version: version, WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowed, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: listAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs}, context.Background(), cfg, ws.TunnelRequest{
+	tunnel.HandleTunnelRequest(tunnel.References{Version: "dev", WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowed, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs}, context.Background(), cfg, ws.TunnelRequest{
 		RequestID: "traversal", SenderPub: senderPublic, SenderUserID: "owner-1", SenderOrgRole: "owner", Payload: payload,
 	}, func(any) error {
 		responses++
@@ -162,7 +162,7 @@ func TestTunnelRejectsMissingCoordinatorIdentity(t *testing.T) {
 	allowed := []config.AllowKey(nil)
 	wingEggCfg := &egg.EggConfig{}
 	var wingEggMu sync.Mutex
-	tunnel.HandleTunnelRequest(tunnel.References{Version: version, WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowed, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: listAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs}, context.Background(), &config.Config{Dir: t.TempDir()}, ws.TunnelRequest{
+	tunnel.HandleTunnelRequest(tunnel.References{Version: "dev", WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowed, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs}, context.Background(), &config.Config{Dir: t.TempDir()}, ws.TunnelRequest{
 		RequestID: "anonymous", SenderPub: senderPublic, Payload: payload,
 	}, func(message any) error {
 		var ok bool
@@ -204,7 +204,7 @@ func TestFileDownloadOwnerDenialUsesTerminalStreamError(t *testing.T) {
 	wingEggCfg := &egg.EggConfig{}
 	var wingEggMu sync.Mutex
 	var response ws.TunnelStream
-	tunnel.HandleTunnelRequest(tunnel.References{Version: version, WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowed, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: listAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs}, context.Background(), &config.Config{Dir: t.TempDir()}, ws.TunnelRequest{
+	tunnel.HandleTunnelRequest(tunnel.References{Version: "dev", WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowed, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs}, context.Background(), &config.Config{Dir: t.TempDir()}, ws.TunnelRequest{
 		RequestID: "download-denied", SenderPub: senderPublic, SenderUserID: "alice", SenderEmail: "alice@example.com", SenderOrgRole: "member", Payload: payload,
 	}, func(message any) error {
 		var ok bool
