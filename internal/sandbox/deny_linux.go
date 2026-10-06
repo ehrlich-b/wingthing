@@ -877,6 +877,10 @@ type mountInfoEntry struct {
 // many Linux kernels, but WSL returns EPERM when a remount would implicitly
 // discard flags inherited from the source mount.
 func remountBindReadonly(path string) error {
+	return remountBindReadonlyAt(path, path)
+}
+
+func remountBindReadonlyAt(path, target string) error {
 	entries, err := readMountInfo("/proc/self/mountinfo")
 	if err != nil {
 		return err
@@ -887,7 +891,7 @@ func remountBindReadonly(path string) error {
 	}
 	flags := uintptr(unix.MS_REMOUNT | unix.MS_BIND | unix.MS_RDONLY)
 	flags |= mountFlagsFromOptions(entry.Options)
-	return unix.Mount("", path, "", flags, "")
+	return unix.Mount("", target, "", flags, "")
 }
 
 func mountFlagsFromOptions(options map[string]bool) uintptr {
@@ -1157,9 +1161,11 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 		failEnforcement("mount jail /tmp", "/tmp", err)
 	}
 	// Recreate tmpDir inside jail so HOME/TMPDIR env vars resolve.
-	if err := os.MkdirAll(filepath.Join(newRoot, tmpDir), 0755); err != nil {
+	tmpFD, err := createConfinedMountpoint(newRoot, tmpDir, true)
+	if err != nil {
 		failEnforcement("create sandbox temp directory inside jail", tmpDir, err)
 	}
+	tmpFD.Close()
 	// Bind-mount read-only paths from real root.
 	expected := []expectedMount{
 		{Path: "/", FSType: "tmpfs", Writable: true},
@@ -1170,15 +1176,18 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 	}
 	for _, p := range roMounts {
 		target := filepath.Join(newRoot, p)
-		if err := jailMkTarget(p, target); err != nil {
+		sourceFD, targetFD, err := jailMkTarget(newRoot, p)
+		if err != nil {
 			failEnforcement("create jail read-only mountpoint", p, err)
 		}
-		if err := unix.Mount(p, target, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+		if err := unix.Mount(mountFDPath(sourceFD), mountFDPath(targetFD), "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
 			failEnforcement("bind jail read-only path", p, err)
 		}
-		if err := remountBindReadonly(target); err != nil {
+		if err := remountBindReadonlyAt(target, mountFDPath(targetFD)); err != nil {
 			failEnforcement("make jail path read-only", p, err)
 		}
+		sourceFD.Close()
+		targetFD.Close()
 		expected = append(expected, expectedMount{Path: p, ReadOnly: true})
 		log.Printf("_deny_init: jail ro %s", p)
 	}
@@ -1190,27 +1199,31 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 		if home != "" && isPathWithin(p, home) {
 			continue
 		}
-		target := filepath.Join(newRoot, p)
-		if err := jailMkTarget(p, target); err != nil {
+		sourceFD, targetFD, err := jailMkTarget(newRoot, p)
+		if err != nil {
 			failEnforcement("create jail writable mountpoint", p, err)
 		}
-		if err := unix.Mount(p, target, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+		if err := unix.Mount(mountFDPath(sourceFD), mountFDPath(targetFD), "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
 			failEnforcement("bind jail writable path", p, err)
 		}
+		sourceFD.Close()
+		targetFD.Close()
 		expected = append(expected, expectedMount{Path: p, Writable: true})
 		log.Printf("_deny_init: jail rw %s", p)
 	}
 	// Bind-mount home directory (writable).
 	if home != "" {
-		target := filepath.Join(newRoot, home)
-		if err := os.MkdirAll(target, 0755); err != nil {
+		sourceFD, targetFD, err := jailMkTarget(newRoot, home)
+		if err != nil {
 			failEnforcement("create jail HOME mountpoint", home, err)
-		} else if err := unix.Mount(home, target, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+		} else if err := unix.Mount(mountFDPath(sourceFD), mountFDPath(targetFD), "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
 			failEnforcement("bind jail HOME", home, err)
 		} else {
 			expected = append(expected, expectedMount{Path: home, Writable: true})
 			log.Printf("_deny_init: jail home %s", home)
 		}
+		sourceFD.Close()
+		targetFD.Close()
 	}
 	// pivot_root: swap new root into place, old root at .pivot.
 	// Save cwd so we can restore it after pivot (cmd.Dir set by parent).
@@ -1249,23 +1262,122 @@ func isPathWithin(path, root string) bool {
 	return cleanPath == cleanRoot || strings.HasPrefix(cleanPath, cleanRoot+string(filepath.Separator))
 }
 
-// jailMkTarget creates the bind-mount target inside the jail root.
-// For directories it creates the full path; for files/sockets it creates the
-// parent directory and an empty file as the mount point.
-func jailMkTarget(src, target string) error {
-	info, err := os.Stat(src)
+// jailMkTarget pins both sides of a jail bind mount. No component may be a
+// symlink, and existing target files are opened without truncating them.
+func jailMkTarget(root, src string) (source, target *os.File, err error) {
+	source, err = openConfinedExisting("/", src)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	if info.IsDir() {
-		return os.MkdirAll(target, 0755)
+	info, err := source.Stat()
+	if err == nil {
+		target, err = createConfinedMountpoint(root, src, info.IsDir())
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-		return err
-	}
-	f, err := os.Create(target)
 	if err != nil {
-		return err
+		source.Close()
+		return nil, nil, err
 	}
-	return f.Close()
+	return source, target, nil
+}
+
+func mountFDPath(file *os.File) string {
+	return fmt.Sprintf("/proc/self/fd/%d", file.Fd())
+}
+
+// openConfinedParent walks from a pinned root, refusing symlinks at every
+// component. mkdirat/openat also keep creation confined if a component is
+// replaced while setup is running.
+func openConfinedParent(root, path string, create bool) (*os.File, string, error) {
+	if !filepath.IsAbs(path) {
+		return nil, "", fmt.Errorf("mount path must be absolute: %s", path)
+	}
+	for _, part := range strings.Split(path, "/") {
+		if part == ".." {
+			return nil, "", fmt.Errorf("mount path contains parent traversal: %s", path)
+		}
+	}
+	fd, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, "", err
+	}
+	parts := strings.Split(strings.TrimPrefix(filepath.Clean(path), "/"), "/")
+	for _, part := range parts[:len(parts)-1] {
+		next, openErr := unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if openErr == unix.ENOENT && create {
+			if mkdirErr := unix.Mkdirat(fd, part, 0o755); mkdirErr != nil && mkdirErr != unix.EEXIST {
+				unix.Close(fd)
+				return nil, "", mkdirErr
+			}
+			next, openErr = unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		}
+		unix.Close(fd)
+		if openErr != nil {
+			return nil, "", openErr
+		}
+		fd = next
+	}
+	base := parts[len(parts)-1]
+	if base == "" {
+		base = "."
+	}
+	return os.NewFile(uintptr(fd), path), base, nil
+}
+
+func openConfinedExisting(root, path string) (*os.File, error) {
+	parent, base, err := openConfinedParent(root, path, false)
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close()
+	return openMountpointAt(parent, base, path)
+}
+
+func openMountpointAt(parent *os.File, base, path string) (*os.File, error) {
+	fd, err := unix.Openat(int(parent.Fd()), base, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), path)
+	info, err := file.Stat()
+	if err != nil || info.Mode()&os.ModeSymlink != 0 {
+		file.Close()
+		if err == nil {
+			err = fmt.Errorf("refusing symlink mountpoint: %s", path)
+		}
+		return nil, err
+	}
+	return file, nil
+}
+
+func createConfinedMountpoint(root, path string, directory bool) (*os.File, error) {
+	parent, base, err := openConfinedParent(root, path, true)
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close()
+	if directory {
+		err = unix.Mkdirat(int(parent.Fd()), base, 0o755)
+	} else {
+		var fd int
+		fd, err = unix.Openat(int(parent.Fd()), base, unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_CREAT|unix.O_EXCL, 0o644)
+		if err == nil {
+			err = unix.Close(fd)
+		}
+	}
+	if err != nil && err != unix.EEXIST {
+		return nil, err
+	}
+	file, err := openMountpointAt(parent, base, path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil || info.IsDir() != directory {
+		file.Close()
+		if err == nil {
+			err = fmt.Errorf("incompatible mountpoint type: %s", path)
+		}
+		return nil, err
+	}
+	return file, nil
 }

@@ -3,6 +3,7 @@
 package sandbox
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,5 +122,83 @@ func TestPrepareDenyMountpointsReportsUncreatablePath(t *testing.T) {
 	}
 	if operation != "create deny mountpoint" || gotPath != path {
 		t.Fatalf("failure = operation %q path %q, want create failure for %q", operation, gotPath, path)
+	}
+}
+
+func TestJailMountpointPreservesExistingFile(t *testing.T) {
+	root := t.TempDir()
+	path := "/workspace/config"
+	if err := os.MkdirAll(filepath.Join(root, "workspace"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, path)
+	if err := os.WriteFile(target, []byte("keep me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := createConfinedMountpoint(root, path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file.Close()
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != "keep me" {
+		t.Fatalf("existing mountpoint was truncated: %q, %v", data, err)
+	}
+}
+
+func TestJailMountpointRejectsSymlinks(t *testing.T) {
+	for _, directory := range []bool{false, true} {
+		for _, parentLink := range []bool{false, true} {
+			t.Run(fmt.Sprintf("directory=%t/parentLink=%t", directory, parentLink), func(t *testing.T) {
+				root, outside := t.TempDir(), t.TempDir()
+				victim := filepath.Join(outside, "config")
+				if err := os.WriteFile(victim, []byte("host config"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				path, linkTarget := "/link/config", outside
+				if !parentLink {
+					path = "/link"
+					linkTarget = victim
+				}
+				if err := os.Symlink(linkTarget, filepath.Join(root, "link")); err != nil {
+					t.Fatal(err)
+				}
+				file, err := createConfinedMountpoint(root, path, directory)
+				if err == nil {
+					file.Close()
+					t.Fatal("accepted a symlink mountpoint")
+				}
+				data, err := os.ReadFile(victim)
+				if err != nil || string(data) != "host config" {
+					t.Fatalf("symlink target changed: %q, %v", data, err)
+				}
+			})
+		}
+	}
+}
+
+func TestJailMountpointRejectsSourceSymlinks(t *testing.T) {
+	root, host := t.TempDir(), t.TempDir()
+	link := filepath.Join(host, "link")
+	if err := os.Symlink(host, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{link, filepath.Join(link, "config")} {
+		source, target, err := jailMkTarget(root, path)
+		if err == nil {
+			source.Close()
+			target.Close()
+			t.Fatalf("accepted symlink source %q", path)
+		}
+	}
+}
+
+func TestJailMountpointRejectsTraversal(t *testing.T) {
+	for _, path := range []string{"relative", "/../escape", "/workspace/../../escape"} {
+		file, err := createConfinedMountpoint(t.TempDir(), path, false)
+		if err == nil {
+			file.Close()
+			t.Fatalf("accepted unsafe path %q", path)
+		}
 	}
 }
