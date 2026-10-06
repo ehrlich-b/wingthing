@@ -306,12 +306,12 @@ export function setupEggDrag() {
     if (!grids.length) return;
 
     var isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-    var touchSrc = null;
-    var touchTimer = null;
 
     grids.forEach(function(grid) {
         var cards = grid.querySelectorAll('.egg-box');
         var dragSrc = null;
+        var touchSrc = null;
+        var touchTimer = null;
 
         cards.forEach(function(card) {
             if (!isTouch) card.setAttribute('draggable', 'true');
@@ -375,28 +375,37 @@ export function setupEggDrag() {
             var target = document.elementFromPoint(touch.clientX, touch.clientY);
             var targetCard = target ? target.closest('.egg-box') : null;
             cards.forEach(function(c) { c.classList.remove('drag-over'); });
-            if (targetCard && targetCard !== touchSrc) {
+            if (targetCard && targetCard.parentNode === grid && targetCard !== touchSrc) {
                 targetCard.classList.add('drag-over');
             }
         }, { passive: false });
 
+        function clearTouchDrag() {
+            if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; }
+            cards.forEach(function(c) { c.classList.remove('drag-over'); });
+            if (touchSrc) touchSrc.classList.remove('dragging');
+            touchSrc = null;
+        }
+
         grid.addEventListener('touchend', function(e) {
             if (!touchSrc) return;
-            var touch = e.changedTouches[0];
-            var target = document.elementFromPoint(touch.clientX, touch.clientY);
-            var targetCard = target ? target.closest('.egg-box') : null;
-            cards.forEach(function(c) { c.classList.remove('drag-over'); });
-            touchSrc.classList.remove('dragging');
-            if (targetCard && targetCard !== touchSrc) {
-                if (touchSrc.compareDocumentPosition(targetCard) & Node.DOCUMENT_POSITION_FOLLOWING) {
-                    grid.insertBefore(touchSrc, targetCard.nextSibling);
-                } else {
-                    grid.insertBefore(touchSrc, targetCard);
+            try {
+                var touch = e.changedTouches[0];
+                var target = document.elementFromPoint(touch.clientX, touch.clientY);
+                var targetCard = target ? target.closest('.egg-box') : null;
+                if (touchSrc.parentNode === grid && targetCard && targetCard.parentNode === grid && targetCard !== touchSrc) {
+                    if (touchSrc.compareDocumentPosition(targetCard) & Node.DOCUMENT_POSITION_FOLLOWING) {
+                        grid.insertBefore(touchSrc, targetCard.nextSibling);
+                    } else {
+                        grid.insertBefore(touchSrc, targetCard);
+                    }
+                    saveEggOrder();
                 }
-                saveEggOrder();
+            } finally {
+                clearTouchDrag();
             }
-            touchSrc = null;
         }, { passive: true });
+        grid.addEventListener('touchcancel', clearTouchDrag, { passive: true });
     });
 }
 
