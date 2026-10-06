@@ -237,12 +237,12 @@ func eggControlDenyPaths(sessionDir string) ([]string, error) {
 		state = wingconfig.CanonicalProviderPath(state)
 		// Validate the lexical path too, before canonicalization hides links
 		// that could redirect the host's next configuration load.
-		loaders = append(loaders, filepath.Join(loaderState, "wing.yaml"))
+		loaders = append(loaders, filepath.Join(loaderState, "wing.yaml"), filepath.Join(loaderState, "egg.yaml"))
 		if seen[state] {
 			continue
 		}
 		seen[state] = true
-		for _, name := range []string{"eggs", "tools", "device_token.yaml", "local_device_token.yaml", "wing_key", "sync.key", "wing.yaml", "config.yaml", "roost.db", "wt.db"} {
+		for _, name := range []string{"eggs", "tools", "device_token.yaml", "local_device_token.yaml", "wing_key", "sync.key", "wing.yaml", "egg.yaml", "config.yaml", "roost.db", "wt.db"} {
 			paths = append(paths, filepath.Join(state, name))
 		}
 		toolsDir := filepath.Join(loaderState, "tools")
@@ -266,7 +266,7 @@ func eggControlDenyPaths(sessionDir string) ([]string, error) {
 		if err != nil {
 			return paths, fmt.Errorf("protect tool loader %s: %w", loader, err)
 		}
-		paths = append(paths, resolved)
+		paths = append(paths, loader, resolved)
 	}
 	return paths, nil
 }

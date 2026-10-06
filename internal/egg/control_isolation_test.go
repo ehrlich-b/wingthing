@@ -37,6 +37,49 @@ func TestDefaultPolicyDeniesWingthingControlCredentials(t *testing.T) {
 	}
 }
 
+func TestGlobalEggLoadersAreSealedBeforeCreation(t *testing.T) {
+	home := t.TempDir() // retain macOS's /var alias as well as its resolved name
+	t.Setenv("HOME", home)
+	t.Setenv("WINGTHING_DIR", filepath.Join(home, "custom"))
+	for _, state := range []string{".wingthing", ".wingthing-preview", "custom"} {
+		makeEggConfigTestDir(t, filepath.Join(home, state))
+	}
+	cfg := DefaultEggConfig()
+	if err := cfg.ResolutionError(); err != nil {
+		t.Fatal(err)
+	}
+	sc := cfg.ToSandboxConfig(home)
+	for _, state := range []string{".wingthing", ".wingthing-preview", "custom"} {
+		loader := filepath.Join(home, state, "egg.yaml")
+		for _, path := range []string{loader, wingconfigPathForTest(loader)} {
+			if !containsString(sc.Deny, path) {
+				t.Fatalf("global loader can be created through %s: %v", path, sc.Deny)
+			}
+		}
+		if _, err := os.Lstat(loader); !os.IsNotExist(err) {
+			t.Fatalf("planning created a global loader: %v", err)
+		}
+	}
+	// The same deny set is emitted to Seatbelt on macOS and omitted from every
+	// ancestor grant when compiling the Linux jail, even when CWD is HOME.
+	mounts, err := isolateLinuxEggControl([]sandbox.Mount{{Source: home}}, sc.Deny, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{".wingthing", ".wingthing-preview", "custom"} {
+		loader := wingconfigPathForTest(filepath.Join(home, state, "egg.yaml"))
+		for _, mount := range mounts {
+			if controlPathWithin(loader, mount.Source) {
+				t.Fatalf("Linux grant exposes future global loader: %+v", mount)
+			}
+		}
+	}
+}
+
+func wingconfigPathForTest(path string) string {
+	return config.CanonicalProviderPath(path)
+}
+
 func TestEggRefusesAnotherSessionsToolSocket(t *testing.T) {
 	root := filepath.Dir(shortSockPath(t))
 	s := &Server{dir: filepath.Join(root, "eggs", "own")}
