@@ -15,7 +15,7 @@ parent-to-two-child journey still has the recorded nested proxy bind blocker.
 
 ## Public role actually supplied to a parent
 
-[The public prompt](../../cmd/wt/prompts/personal_coordinator.md) is embedded by
+[The public prompt](../../internal/localmcp/prompts/personal_coordinator.md) is embedded by
 `cmd/wt/coordinator_role.go`. `prepareBoundParentMCP` passes it through Claude's
 existing `--append-system-prompt` argument alongside the unchanged per-root
 `--mcp-config`. It is authored for this product; it does not reproduce a Codex
