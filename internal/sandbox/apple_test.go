@@ -953,3 +953,23 @@ func TestBuildProfilePinsPolicyAncestorsWithoutSealingDescendants(t *testing.T) 
 		t.Fatal("ordinary policy-directory files were sealed")
 	}
 }
+
+func TestBuildProfilePreventsControlDirectoryRelocation(t *testing.T) {
+	home, err := canonicalSandboxPath(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	state := filepath.Join(home, "nested", ".wingthing")
+	bridge := filepath.Join(state, "eggs", "own", "browser-requests")
+	profile, err := buildCheckedProfile(Config{Mounts: []Mount{{Source: home}}, ControlDenyPaths: []string{filepath.Join(state, "eggs"), filepath.Join(state, "wing_key")}, ControlBridges: []Mount{{Source: bridge}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{state, filepath.Dir(state), home} {
+		rule := fmt.Sprintf("(deny file-write* (literal %q))", path)
+		if strings.LastIndex(profile, rule) < strings.Index(profile, fmt.Sprintf("(allow file-write* (literal %q))", bridge)) {
+			t.Fatalf("control ancestor %s can be moved: %s", path, profile)
+		}
+	}
+}

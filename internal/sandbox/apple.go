@@ -268,6 +268,27 @@ func buildSeatbeltProfile(cfg Config) (string, error) {
 		fmt.Fprintf(&sb, "(deny file-write* (literal %q))\n", abs)
 	}
 
+	// A moved controller directory would carry its secrets outside the
+	// pathname denies. Protect its entry and HOME ancestors after bridges.
+	controlHome, _ := os.UserHomeDir()
+	controlHome, _ = resolvePath(controlHome)
+	pinned := make(map[string]bool)
+	for _, path := range cfg.ControlDenyPaths {
+		abs, err := resolvePath(path)
+		if err != nil {
+			continue
+		}
+		for dir := filepath.Dir(abs); controlHome != "" && pathWithin(dir, controlHome); dir = filepath.Dir(dir) {
+			if !pinned[dir] {
+				fmt.Fprintf(&sb, "(deny file-write* (literal %q))\n", dir)
+				pinned[dir] = true
+			}
+			if dir == controlHome {
+				break
+			}
+		}
+	}
+
 	// Protected write targets — host-owned state the agent must never write.
 	// Emitted last so no earlier rule can reopen them. Like Deny, the literal
 	// covers creating a missing target and the subpath covers descendants.
