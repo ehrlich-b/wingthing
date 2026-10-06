@@ -925,54 +925,128 @@ func TestAgentStatusMarksOrphanedRunnerFailed(t *testing.T) {
 	}
 }
 
-func TestFailedParentDoesNotReleaseSteeredRun(t *testing.T) {
-	dir := t.TempDir()
-	cwd := t.TempDir()
-	cfg := &config.Config{Dir: dir, DefaultAgent: "claude"}
-	taskStore, err := store.Open(cfg.DBPath())
-	if err != nil {
-		t.Fatal(err)
+func TestAgentSteerContinuesTerminalRunsWithPartialResultAndError(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status string
+		output string
+		error  string
+	}{
+		{"failed-after-timeout", "failed", "partial review ✓", "agent error: context deadline exceeded"},
+		{"failed-without-result", "failed", "", "review failed"},
+		{"timeout", "timeout", "partial review ✓", "context deadline exceeded"},
+		{"stopped", "stopped", "partial review ✓", "stopped by MCP principal owner"},
+		{"done-without-result", "done", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cwd, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			parent := &store.Task{
+				ID: "parent", Type: "agent_run", What: "original review", Agent: "claude", Model: "opus",
+				RunAt: time.Now(), CWD: cwd, Principal: "owner", RunnerPID: os.Getpid(), TimeoutSeconds: 120,
+			}
+			server, taskStore := fakeAgentWaitRuns(t, parent)
+			if tc.output != "" {
+				if err := taskStore.SetTaskOutput(parent.ID, tc.output); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.error != "" {
+				if err := taskStore.SetTaskError(parent.ID, tc.error); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := taskStore.UpdateTaskStatus(parent.ID, tc.status); err != nil {
+				t.Fatal(err)
+			}
+			wantPrompt := "Prior request:\noriginal review\n\nPrior result:\n" + tc.output
+			if tc.error != "" {
+				wantPrompt += "\n\nPrior error:\n" + tc.error
+			}
+			wantPrompt += "\n\nNew direction:\nfocus on auth"
+			seenPrompt := make(chan string, 1)
+			server.runAgentTask = func(_ context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
+				seenPrompt <- task.What
+				return taskStore.UpdateTaskStatus(task.ID, "done")
+			}
+			created, err := server.toolAgentSteer(json.RawMessage(`{"run_id":"parent","prompt":"focus on auth"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			childID := created["run_id"].(string)
+			t.Cleanup(func() {
+				if value, ok := activeMCPAgentRuns.Load(server.agentRunKey(childID)); ok {
+					active := value.(activeMCPAgentRun)
+					active.cancel()
+					<-active.done
+				}
+			})
+			waited, err := server.toolAgentWait(context.Background(), json.RawMessage(`{"run_id":`+strconv.Quote(childID)+`,"timeout_seconds":2}`))
+			if err != nil || waited["status"] != "done" {
+				t.Fatalf("child wait = %#v err=%v", waited, err)
+			}
+			select {
+			case got := <-seenPrompt:
+				if got != wantPrompt {
+					t.Fatalf("runner prompt = %q, want %q", got, wantPrompt)
+				}
+			default:
+				t.Fatal("terminal parent did not release the steered child")
+			}
+			child, err := taskStore.GetTask(childID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if child.What != wantPrompt || child.ParentID == nil || *child.ParentID != parent.ID ||
+				child.Agent != parent.Agent || child.Model != parent.Model || child.CWD != parent.CWD || child.TimeoutSeconds != parent.TimeoutSeconds {
+				t.Fatalf("steered child = %#v, want prior context and inherited settings", child)
+			}
+		})
 	}
-	parent := &store.Task{
-		ID: "failed-parent", Type: "agent_run", What: "original review", Agent: "claude", Model: "opus",
-		RunAt: time.Now(), CWD: cwd, Principal: "alpha", RunnerPID: os.Getpid(),
-	}
-	if err := taskStore.CreateTask(parent); err != nil {
-		t.Fatal(err)
-	}
-	if err := taskStore.SetTaskError(parent.ID, "review failed"); err != nil {
-		t.Fatal(err)
-	}
-	closeForTest(t, "task store", taskStore)
-	runnerCalled := make(chan struct{}, 1)
-	server := &Server{Version: "dev",
-		Cfg: cfg, Logs: &bytes.Buffer{}, Principal: "alpha",
-		runAgentTask: func(context.Context, *config.Config, *store.Store, *store.Task, taskrun.TaskRunOptions) error {
-			runnerCalled <- struct{}{}
-			return nil
-		},
-	}
-	created, err := server.toolAgentSteer(json.RawMessage(`{"run_id":"failed-parent","prompt":"focus on auth"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	childID := created["run_id"].(string)
-	waited, err := server.toolAgentWait(context.Background(), json.RawMessage(`{"run_id":`+strconv.Quote(childID)+`,"timeout_seconds":2}`))
-	if err != nil || waited["status"] != "failed" {
-		t.Fatalf("child wait = %#v err=%v", waited, err)
-	}
-	select {
-	case <-runnerCalled:
-		t.Fatal("failed parent released the steered child")
-	default:
-	}
-	child, childStore, err := server.ownedAgentRun(childID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer closeForTest(t, "child task store", childStore)
-	if !strings.Contains(child.What, "Prior request:\noriginal review") || !strings.Contains(child.What, "New direction:\nfocus on auth") {
-		t.Fatalf("steered prompt = %q", child.What)
+}
+
+func TestAgentSteerRejectsActiveAndUnownedRuns(t *testing.T) {
+	for _, tc := range []struct {
+		status    string
+		principal string
+		wantError string
+	}{
+		{"pending", "owner", "is not terminal"},
+		{"running", "owner", "is not terminal"},
+		{"done", "other", "not found or not owned by caller"},
+		{"failed", "other", "not found or not owned by caller"},
+		{"timeout", "other", "not found or not owned by caller"},
+		{"stopped", "other", "not found or not owned by caller"},
+	} {
+		t.Run(tc.status+"/"+tc.principal, func(t *testing.T) {
+			server, taskStore := fakeAgentWaitRuns(t, &store.Task{
+				ID: "parent", Type: "agent_run", Agent: "claude", What: "review", CWD: t.TempDir(),
+				Status: tc.status, Principal: tc.principal, RunnerPID: os.Getpid(),
+			})
+			created, err := server.toolAgentSteer(json.RawMessage(`{"run_id":"parent","prompt":"continue"}`))
+			if err == nil {
+				// Cancel an unexpectedly accepted follow-up so a regression cannot
+				// leave a runner waiting on the active parent after this test.
+				if value, ok := activeMCPAgentRuns.Load(server.agentRunKey(created["run_id"].(string))); ok {
+					active := value.(activeMCPAgentRun)
+					active.cancel()
+					<-active.done
+				}
+				t.Fatalf("steer accepted %s run owned by %s: %#v", tc.status, tc.principal, created)
+			}
+			if !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("steer error = %v, want %q", err, tc.wantError)
+			}
+			var count int
+			if err := taskStore.DB().QueryRow("SELECT COUNT(*) FROM tasks").Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			if count != 1 {
+				t.Fatalf("rejected steer created a task: count = %d", count)
+			}
+		})
 	}
 }
 
@@ -999,7 +1073,7 @@ func TestAgentSteerPassesAndPersistsPriorResult(t *testing.T) {
 	}
 	closeForTest(t, "task store", taskStore)
 
-	wantPrompt := agentSteerPrompt(parent.What, "the auth boundary is sound", "now review the UI")
+	wantPrompt := agentSteerPrompt(parent.What, "the auth boundary is sound", "", "now review the UI")
 	seenPrompt := make(chan string, 1)
 	server := &Server{Version: "dev",
 		Cfg: cfg, Logs: &bytes.Buffer{}, Principal: "alpha",
@@ -1037,7 +1111,7 @@ func TestAgentSteerPassesAndPersistsPriorResult(t *testing.T) {
 
 func TestAgentSteerBoundsPriorResultWithoutSplittingUnicode(t *testing.T) {
 	prior := strings.Repeat("✓", maxAgentSteerPriorResultChars+1)
-	prompt := agentSteerPrompt("review", prior, "continue")
+	prompt := agentSteerPrompt("review", prior, "", "continue")
 	if strings.Contains(prompt, strings.Repeat("✓", maxAgentSteerPriorResultChars+1)) {
 		t.Fatal("follow-up retained the unbounded prior result")
 	}

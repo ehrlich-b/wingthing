@@ -1600,7 +1600,7 @@ func (s *Server) startAgentRun(runID string, followup *agentRunFollowup) {
 				s.setAgentRunError(runID, fmt.Errorf("close parent task store: %w", err))
 				return
 			}
-			if parent.Status != "done" {
+			if !agentRunTerminal(parent.Status) {
 				s.setAgentRunError(runID, fmt.Errorf("parent agent run %s finished with status %s", parent.ID, parent.Status))
 				return
 			}
@@ -1608,7 +1608,11 @@ func (s *Server) startAgentRun(runID string, followup *agentRunFollowup) {
 			if parent.Output != nil {
 				parentResult = *parent.Output
 			}
-			resolvedFollowupPrompt = agentSteerPrompt(parent.What, parentResult, followup.direction)
+			var parentError string
+			if parent.Error != nil {
+				parentError = *parent.Error
+			}
+			resolvedFollowupPrompt = agentSteerPrompt(parent.What, parentResult, parentError, followup.direction)
 		}
 		taskStore, err := store.Open(s.Cfg.DBPath())
 		if err != nil {
@@ -1720,7 +1724,7 @@ func (s *Server) loadOwnedAgentRun(taskStore *store.Store, runID string) (*store
 }
 
 func agentRunTerminal(status string) bool {
-	return status == "done" || status == "failed"
+	return status == "done" || status == "failed" || status == "timeout" || status == "stopped"
 }
 
 func agentRunStatusData(task *store.Task) map[string]any {
@@ -2051,6 +2055,9 @@ func (s *Server) toolAgentSteer(arguments json.RawMessage) (map[string]any, erro
 	if err := taskStore.Close(); err != nil {
 		return nil, fmt.Errorf("close task store: %w", err)
 	}
+	if !agentRunTerminal(parent.Status) {
+		return nil, fmt.Errorf("agent run %s is not terminal (status %s)", parent.ID, parent.Status)
+	}
 	model := args.Model
 	if model == "" {
 		model = parent.Model
@@ -2063,12 +2070,16 @@ func (s *Server) toolAgentSteer(arguments json.RawMessage) (map[string]any, erro
 	}, &agentRunFollowup{parentID: parentID, direction: args.Prompt})
 }
 
-func agentSteerPrompt(parentRequest, parentResult, direction string) string {
+func agentSteerPrompt(parentRequest, parentResult, parentError, direction string) string {
 	resultRunes := []rune(parentResult)
 	if len(resultRunes) > maxAgentSteerPriorResultChars {
 		parentResult = string(resultRunes[:maxAgentSteerPriorResultChars]) + "\n\n[Wingthing truncated the prior result for this follow-up.]"
 	}
-	return "Prior request:\n" + parentRequest + "\n\nPrior result:\n" + parentResult + "\n\nNew direction:\n" + direction
+	prompt := "Prior request:\n" + parentRequest + "\n\nPrior result:\n" + parentResult
+	if parentError != "" {
+		prompt += "\n\nPrior error:\n" + parentError
+	}
+	return prompt + "\n\nNew direction:\n" + direction
 }
 
 func (s *Server) toolAgentStop(arguments json.RawMessage) (map[string]any, error) {
