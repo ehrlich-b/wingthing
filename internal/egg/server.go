@@ -1360,7 +1360,7 @@ func (s *Server) prepareEndpoint() (net.Listener, error) {
 	if err := os.Remove(tokenPath); err != nil && !os.IsNotExist(err) {
 		return fail("replace token", err)
 	}
-	if err := atomicWritePrivate(filepath.Join(s.dir, "egg.control"), []byte(controlDir+"\n")); err != nil {
+	if err := atomicWritePrivate(filepath.Join(s.dir, "egg.control"), []byte(controlDirectoryLocator(s.dir)+"\n")); err != nil {
 		return fail("write controller locator", err)
 	}
 	if err := atomicWritePrivate(filepath.Join(controlDir, "isolation"), []byte(ControlIsolationVersion+"\n")); err != nil {

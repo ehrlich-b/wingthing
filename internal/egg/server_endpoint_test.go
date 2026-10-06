@@ -1,6 +1,7 @@
 package egg
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -106,6 +107,56 @@ func TestPrepareEndpointRefusesUnremovableStaleSocket(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
 			t.Fatalf("%s was created after socket preflight failed: %v", name, err)
 		}
+	}
+}
+
+func TestPrepareEndpointSupportsSymlinkedGnuPG(t *testing.T) {
+	for _, relative := range []bool{false, true} {
+		t.Run(fmt.Sprint(relative), func(t *testing.T) {
+			home := shortEndpointTempDir(t)
+			real := filepath.Join(home, "gpg-state")
+			if err := os.Mkdir(real, 0700); err != nil {
+				t.Fatal(err)
+			}
+			target := real
+			if relative {
+				target = "gpg-state"
+			}
+			if err := os.Symlink(target, filepath.Join(home, ".gnupg")); err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Join(home, "state", "eggs", "new")
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			server := &Server{dir: dir, token: "test-token"}
+			listener, err := server.prepareEndpoint()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer server.closeEndpoint(listener)
+			path, err := readControlDirectory(dir)
+			if err != nil || !controlPathWithin(path, canonicalPolicyTestPath(t, real)) || !HasCurrentControlIsolation(dir) {
+				t.Fatalf("resolved controller identity = %q: %v", path, err)
+			}
+			protected := false
+			for _, denied := range eggControlDenyPaths(dir) {
+				protected = protected || controlPathWithin(path, denied)
+			}
+			if !protected {
+				t.Fatal("resolved controller path missing from sandbox denies")
+			}
+			t.Setenv("HOME", filepath.Join(home, "other-home"))
+			client, err := Dial(filepath.Join(dir, "egg.sock"), filepath.Join(dir, "egg.token"))
+			if err != nil {
+				t.Fatalf("controller with another HOME: %v", err)
+			}
+			client.Close()
+			server.closeEndpoint(listener)
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("resolved credentials survived cleanup: %v", err)
+			}
+		})
 	}
 }
 

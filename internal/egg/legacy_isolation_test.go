@@ -80,7 +80,7 @@ func TestLegacyDefaultPolicyAllowsNewEndpointAndRestartRecovery(t *testing.T) {
 	}
 	controlDir, err := readControlDirectory(dir)
 	target := filepath.Join(controlDir, "egg.token")
-	if err != nil || !controlPathWithin(target, filepath.Join(home, ".gnupg")) {
+	if err != nil || !controlPathWithin(target, config.CanonicalProviderPath(filepath.Join(home, ".gnupg"))) {
 		t.Fatalf("token exposed outside historical deny: %q %v", target, err)
 	}
 	if err := legacyDeniesControlDirectory(legacy, target, home); err != nil {
@@ -205,11 +205,14 @@ func TestIsolationMarkerCannotBeForgedInSessionMetadata(t *testing.T) {
 	if HasCurrentControlIsolation(dir) {
 		t.Fatal("workspace locator spoof admitted tool recovery")
 	}
-	if err := os.Symlink(dir, filepath.Join(dir, ".gnupg")); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".gnupg"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dir, filepath.Join(dir, ".gnupg", "wingthing-control")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := prepareControlDirectory(dir); err == nil {
-		t.Fatal("aliased historical deny accepted")
+		t.Fatal("aliased runtime-owned controller child accepted")
 	}
 }
 

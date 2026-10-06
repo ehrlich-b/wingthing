@@ -1,3 +1,9 @@
+// Controller secrets live under ~/.gnupg because v0.147.0 policies deny it;
+// 0700 alone cannot isolate same-UID eggs. This borrows an unrelated user
+// namespace, and custom or already-running policies may still expose it.
+// Consider a dedicated state subdirectory denied by new policies, with explicit
+// degraded mode for surviving legacy policies, instead of this compatibility
+// location. A symlinked ~/.gnupg uses its resolved directory for protection.
 package egg
 
 import (
@@ -21,9 +27,13 @@ import (
 
 const ControlIsolationVersion = "3"
 
-// v0.147.0 denies ~/.gnupg by default on both platforms. Mode 0700 alone
-// cannot isolate same-UID eggs. State contains only a public directory locator.
 func controlDirectory(dir string) string {
+	return config.CanonicalProviderPath(controlDirectoryLocator(dir))
+}
+
+// Keep the creation HOME in the public locator so controllers with another
+// HOME can validate the session identity even when .gnupg points elsewhere.
+func controlDirectoryLocator(dir string) string {
 	home, _ := os.UserHomeDir()
 	return controlDirectoryUnderHome(dir, home)
 }
@@ -45,7 +55,7 @@ func readControlDirectory(dir string) (string, error) {
 	if !filepath.IsAbs(path) || path != controlDirectoryUnderHome(dir, home) {
 		return "", fmt.Errorf("invalid egg controller directory")
 	}
-	return path, nil
+	return config.CanonicalProviderPath(path), nil
 }
 
 // Only the runtime writes this marker, before publishing its PID. Mutable
@@ -64,9 +74,21 @@ func hasControlIsolationAt(path string) bool {
 }
 
 func prepareControlDirectory(dir string) (string, error) {
-	path := controlDirectory(dir)
-	// Do not redirect credentials through an alias of a historical deny path.
-	for _, ancestor := range []string{filepath.Dir(filepath.Dir(path)), filepath.Dir(path), path} {
+	root := filepath.Dir(filepath.Dir(controlDirectoryLocator(dir)))
+	if err := os.Mkdir(root, 0700); err != nil && !os.IsExist(err) {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(resolved)
+	if err != nil || !info.IsDir() {
+		return "", fmt.Errorf("controller root must resolve to a directory: %s", root)
+	}
+	path := filepath.Join(resolved, "wingthing-control", filepath.Base(controlDirectoryLocator(dir)))
+	// The owner may redirect .gnupg, but runtime-owned children are real dirs.
+	for _, ancestor := range []string{filepath.Dir(path), path} {
 		if err := os.Mkdir(ancestor, 0700); err != nil && !os.IsExist(err) {
 			return "", err
 		}
