@@ -53,7 +53,14 @@ func openPTYAuthTestSocket(t *testing.T, server *Server, interval time.Duration,
 	if err != nil {
 		t.Fatalf("PTY handshake: response=%v err=%v", response, err)
 	}
-	t.Cleanup(func() { _ = conn.CloseNow() })
+	t.Cleanup(func() {
+		_ = conn.CloseNow()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Error("PTY socket handler did not finish cleanup")
+		}
+	})
 	return conn, done
 }
 
