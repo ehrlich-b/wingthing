@@ -16,6 +16,8 @@ import (
 
 const hardeningTestArg = "_sandbox_hardening_test"
 
+var errHardeningOverlayUnavailable = errors.New("overlayfs unavailable")
+
 // Mount and pivot operations run only in a disposable child namespace. This
 // re-exec also works without the integration battery's TestMain.
 func init() {
@@ -28,6 +30,9 @@ func init() {
 	}
 	if err := runHardeningScenario(os.Args[2], os.Args[3]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		if errors.Is(err, errHardeningOverlayUnavailable) {
+			os.Exit(78)
+		}
 		os.Exit(1)
 	}
 	os.Exit(0)
@@ -53,11 +58,45 @@ func runHardeningNamespace(t *testing.T, scenario, root string) {
 	}
 	if output, err := cmd.CombinedOutput(); err != nil {
 		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 78 {
+			t.Skipf("Linux overlayfs unavailable: %s", output)
+		}
 		if errors.Is(err, unix.EPERM) || errors.Is(err, unix.ENOSYS) || (errors.As(err, &exitErr) && exitErr.ExitCode() == 77) {
 			t.Skipf("Linux mount namespaces unavailable: %v: %s", err, output)
 		}
 		t.Fatalf("%s: %v\n%s", scenario, err, output)
 	}
+}
+
+// Probe the same bind-backed lowerdir and mount options as setupOverlayHome.
+// Only an overlay mount failure skips the overlay-specific regressions; other
+// setup or teardown failures must still fail the tests.
+func probeHardeningOverlay(home, tmp string) error {
+	realHome := filepath.Join(tmp, "real-home")
+	upperDir := filepath.Join(tmp, "overlay-upper")
+	workDir := filepath.Join(tmp, "overlay-work")
+	for _, dir := range []string{realHome, upperDir, workDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	if err := unix.Mount(home, realHome, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+		return err
+	}
+	opts := fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", realHome, upperDir, workDir)
+	mountErr := unix.Mount("overlay", home, "overlay", 0, opts)
+	if mountErr == nil {
+		if err := unix.Unmount(home, 0); err != nil {
+			return err
+		}
+	}
+	if err := unix.Unmount(realHome, unix.MNT_DETACH); err != nil {
+		return err
+	}
+	if mountErr != nil {
+		return fmt.Errorf("%w: %v", errHardeningOverlayUnavailable, mountErr)
+	}
+	return nil
 }
 
 func runHardeningScenario(scenario, root string) error {
@@ -176,6 +215,9 @@ func runHardeningScenario(scenario, root string) error {
 				return err
 			}
 		}
+		if err := probeHardeningOverlay(home, tmp); err != nil {
+			return err
+		}
 		secret := filepath.Join(home, ".ssh", "key")
 		if err := os.MkdirAll(filepath.Dir(secret), 0o700); err != nil {
 			return err
@@ -190,7 +232,7 @@ func runHardeningScenario(scenario, root string) error {
 		}
 		persist := setupOverlayHome(home, []string{config}, []string{".claude"}, tmp)
 		if persist == nil {
-			return fmt.Errorf("overlayfs unavailable")
+			return fmt.Errorf("overlay HOME setup failed after successful mount probe")
 		}
 		alias := filepath.Join(tmp, "real-home")
 		if _, err := os.ReadFile(filepath.Join(alias, ".ssh", "key")); !os.IsNotExist(err) {
@@ -214,8 +256,14 @@ func runHardeningScenario(scenario, root string) error {
 		return nil
 	case "overlay-fallback":
 		home, tmp := filepath.Join(root, "home"), filepath.Join(root, "session")
-		for _, dir := range []string{home, tmp} {
+		config := filepath.Join(home, ".claude")
+		for _, dir := range []string{config, tmp} {
 			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
+		}
+		for _, name := range []string{".claude.json", ".claude.credentials.json"} {
+			if err := os.WriteFile(filepath.Join(home, name), []byte("initial config"), 0o600); err != nil {
 				return err
 			}
 		}
@@ -226,8 +274,20 @@ func runHardeningScenario(scenario, root string) error {
 		if err := os.WriteFile(filepath.Join(tmp, "overlay-upper"), nil, 0o600); err != nil {
 			return err
 		}
-		if persist := setupOverlayHome(home, nil, nil, tmp); persist != nil {
+		if persist := setupOverlayHome(home, []string{config}, []string{".claude"}, tmp); persist != nil {
 			return fmt.Errorf("expected overlay fallback")
+		}
+		if err := setupReadonlyHome(home, []string{config}, []string{".claude"}); err != nil {
+			return err
+		}
+		for _, name := range []string{".claude.json", ".claude.credentials.json", ".claude/state"} {
+			if err := os.WriteFile(filepath.Join(home, name), []byte("fallback config"), 0o600); err != nil {
+				return fmt.Errorf("fallback config not writable: %s: %w", name, err)
+			}
+		}
+		// The base bind-mount fallback cannot create new files in HOME.
+		if err := os.WriteFile(filepath.Join(home, ".claude-new.json"), nil, 0o600); !errors.Is(err, unix.EROFS) {
+			return fmt.Errorf("fallback new prefix file creation: %v, want EROFS", err)
 		}
 		entries, err := os.ReadDir(filepath.Join(tmp, "real-home"))
 		if err != nil || len(entries) != 0 {
@@ -283,7 +343,14 @@ func TestOverlayBackingHomeIsHidden(t *testing.T) {
 }
 
 func TestOverlayFallbackHidesBackingHome(t *testing.T) {
-	runHardeningNamespace(t, "overlay-fallback", t.TempDir())
+	root := t.TempDir()
+	runHardeningNamespace(t, "overlay-fallback", root)
+	for _, name := range []string{".claude.json", ".claude.credentials.json", ".claude/state"} {
+		data, err := os.ReadFile(filepath.Join(root, "home", name))
+		if err != nil || string(data) != "fallback config" {
+			t.Fatalf("fallback config did not persist: %s: %q, %v", name, data, err)
+		}
+	}
 }
 
 func TestOverlayRootAgentCannotReadWrapperBackingFDs(t *testing.T) {
