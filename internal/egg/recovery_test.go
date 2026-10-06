@@ -55,7 +55,7 @@ func TestRecoveryIdleTerminationPersistsStopBeforeSignal(t *testing.T) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	record, err := NewRecoveryRecord(LaunchIntent{Version: 1, Agent: "claude", CWD: state, Started: true}, UnsandboxedEggConfig())
+	record, err := NewRecoveryRecord(LaunchIntent{Version: 1, Agent: "claude", CWD: state, Started: true}, UnsandboxedEggConfig(), state)
 	if err != nil {
 		t.Fatal(err)
 	}

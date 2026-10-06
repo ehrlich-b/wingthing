@@ -32,7 +32,7 @@ func TestRecoveryCLIListsEligibleSessions(t *testing.T) {
 		if err := egg.WriteLaunchIntent(dir, intent); err != nil {
 			t.Fatal(err)
 		}
-		record, err := egg.NewRecoveryRecord(intent, egg.UnsandboxedEggConfig())
+		record, err := egg.NewRecoveryRecord(intent, egg.UnsandboxedEggConfig(), home)
 		if err != nil {
 			t.Fatal(err)
 		}

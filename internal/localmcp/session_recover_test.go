@@ -37,7 +37,7 @@ func writeRecoveryAuthority(t *testing.T, dir string, policy *egg.EggConfig) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := egg.NewRecoveryRecord(intent, policy)
+	record, err := egg.NewRecoveryRecord(intent, policy, eggclient.ReadEggMetaValues(dir)["provider_home"])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,6 +415,36 @@ func TestRecoveryRefusesChangedProviderRouting(t *testing.T) {
 	}
 	if _, err := s.ToolSessionRecover(context.Background(), json.RawMessage(`{"session":"source"}`)); err == nil {
 		t.Fatal("provider routing ceiling changed")
+	}
+}
+
+func TestRecoveryRefusesChangedFilesystemSymlink(t *testing.T) {
+	s, _, _, dir := recoverCoordinatorFixture(t)
+	alias := filepath.Join(s.Cfg.Dir, "allowed")
+	if err := os.Symlink(t.TempDir(), alias); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.Cfg.Dir, "sandbox.yaml")
+	if err := os.WriteFile(path, []byte("fs: [rw:"+s.Cfg.Dir+", rw:"+alias+"]\nnetwork: none\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := egg.ResolveEggConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeRecoveryAuthority(t, dir, policy)
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), alias); err != nil {
+		t.Fatal(err)
+	}
+	s.startContinuation = func(*store.Conversation, *egg.EggConfig, eggclient.SpawnEggOpts) error {
+		t.Fatal("filesystem symlink widened the recorded ceiling")
+		return nil
+	}
+	if _, err := s.ToolSessionRecover(context.Background(), json.RawMessage(`{"session":"source"}`)); err == nil {
+		t.Fatal("changed filesystem symlink admitted")
 	}
 }
 

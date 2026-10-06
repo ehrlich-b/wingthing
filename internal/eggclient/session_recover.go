@@ -50,7 +50,7 @@ func LoadRecoveryEggConfig(record egg.RecoveryRecord) (*egg.EggConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	digest, err = egg.RecoveryPolicyDigest(policy, record.Intent.Agent)
+	digest, err = egg.RecoveryPolicyDigest(policy, record.Intent.Agent, record.Intent.CWD, record.ProviderHome)
 	if err != nil || digest != record.PolicySHA256 || egg.RequiresSandbox(policy, record.Intent.Agent) != record.Sandboxed {
 		return nil, errors.New("recovery policy exceeds its recorded ceiling")
 	}

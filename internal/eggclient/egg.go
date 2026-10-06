@@ -876,7 +876,7 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 			ConversationID: link.ConversationID, RootConversationID: link.RootConversationID, ParentConversationID: link.ParentConversationID,
 			ProviderSessionID: providerSessionID, Model: LaunchModel(o.AgentArgs), EggConfig: eggCfg.SourcePath,
 			RecoveredFrom: o.RecoveredFrom, AutoBoot: o.RecoveryBoot}
-		record, err := egg.NewRecoveryRecord(intent, eggCfg)
+		record, err := egg.NewRecoveryRecord(intent, eggCfg, effectiveHome)
 		if err != nil {
 			return nil, fmt.Errorf("record recovery policy: %w", err)
 		}

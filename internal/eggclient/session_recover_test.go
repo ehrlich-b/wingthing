@@ -37,7 +37,7 @@ func writeRecoveryAuthorityFixture(t *testing.T, dir string, policy *egg.EggConf
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := egg.NewRecoveryRecord(intent, policy)
+	record, err := egg.NewRecoveryRecord(intent, policy, ReadEggMetaValues(dir)["provider_home"])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestRecoveryNestedSpawnCannotCreateHostAuthority(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(state) })
 	recovery := filepath.Join(state, "recovery")
-	if err := os.Mkdir(recovery, 0500); err != nil {
+	if err := os.Mkdir(recovery, 0000); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(recovery, 0700) })
@@ -121,11 +121,20 @@ func TestRecoveryNestedSpawnCannotCreateHostAuthority(t *testing.T) {
 	if _, err := egg.ReadLaunchIntent(dir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := egg.ReadRecoveryRecord(dir); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("nested launch created authority: %v", err)
+	if err := egg.UpdateLaunchIntent(dir, func(i *egg.LaunchIntent) { i.Started = true }); err != nil {
+		t.Fatalf("nested provider cannot persist its local lifecycle: %v", err)
 	}
 	if got := ClassifyEgg(cfg, "nested"); got.Class != RecoveryArchived {
 		t.Fatalf("nested launch became recoverable: %+v", got)
+	}
+	if err := egg.MarkDeliberateStop(dir, "idle"); err != nil {
+		t.Fatalf("nested provider cannot persist its deliberate stop: %v", err)
+	}
+	if err := os.Chmod(recovery, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := egg.ReadRecoveryRecord(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("nested launch created authority: %v", err)
 	}
 }
 

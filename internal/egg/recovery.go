@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/ehrlich-b/wingthing/internal/fsutil"
@@ -85,14 +86,34 @@ func recoveryDigest(data []byte) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func RecoveryPolicyDigest(policy *EggConfig, agent string) (string, error) {
+func RecoveryPolicyDigest(policy *EggConfig, agent, cwd, home string) (string, error) {
 	// Profile changes and host provider routing can also add filesystem or
 	// network authority without changing the egg.yaml file.
+	resolved := *policy
+	resolved.FS = make([]string, 0, len(policy.FS))
+	for _, entry := range policy.FS {
+		mode, path, ok := strings.Cut(entry, ":")
+		if !ok {
+			mode, path = "rw", entry
+		}
+		path = expandTilde(path, home)
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(cwd, path)
+		}
+		resolved.FS = append(resolved.FS, mode+":"+wingpolicy.CanonicalPolicyPath(path))
+	}
+	effective := ResolvePolicy(&resolved, agent, home)
+	for i := range effective.Mounts {
+		effective.Mounts[i].Source = wingpolicy.CanonicalPolicyPath(effective.Mounts[i].Source)
+		effective.Mounts[i].Target = wingpolicy.CanonicalPolicyPath(effective.Mounts[i].Target)
+	}
 	data, err := json.Marshal(struct {
 		Policy      *EggConfig
 		Profile     AgentProfile
+		Effective   EffectivePolicy
+		TempDir     string
 		ProviderURL string
-	}{policy, Profile(agent), os.Getenv("WT_PROVIDER_BASE_URL")})
+	}{policy, Profile(agent), effective, wingpolicy.CanonicalPolicyPath(os.TempDir()), os.Getenv("WT_PROVIDER_BASE_URL")})
 	return recoveryDigest(data), err
 }
 
@@ -104,8 +125,8 @@ func RecoveryConfigDigest(path string) (string, error) {
 	return recoveryDigest(data), err
 }
 
-func NewRecoveryRecord(intent LaunchIntent, policy *EggConfig) (RecoveryRecord, error) {
-	r := RecoveryRecord{Intent: intent, Sandboxed: RequiresSandbox(policy, intent.Agent)}
+func NewRecoveryRecord(intent LaunchIntent, policy *EggConfig, home string) (RecoveryRecord, error) {
+	r := RecoveryRecord{Intent: intent, Sandboxed: RequiresSandbox(policy, intent.Agent), ProviderHome: wingpolicy.CanonicalPolicyPath(home)}
 	r.Intent.CWD = wingpolicy.CanonicalPolicyPath(intent.CWD)
 	r.Intent.EggConfig = ""
 	if policy.SourcePath != "" {
@@ -125,7 +146,7 @@ func NewRecoveryRecord(intent LaunchIntent, policy *EggConfig) (RecoveryRecord, 
 	if err != nil {
 		return r, err
 	}
-	r.PolicySHA256, err = RecoveryPolicyDigest(&copy, intent.Agent)
+	r.PolicySHA256, err = RecoveryPolicyDigest(&copy, intent.Agent, r.Intent.CWD, r.ProviderHome)
 	return r, err
 }
 
@@ -252,7 +273,7 @@ func UpdateLaunchIntent(dir string, update func(*LaunchIntent)) error {
 			return err
 		}
 		return WriteLaunchIntent(dir, r.Intent)
-	} else if !errors.Is(err, os.ErrNotExist) && filepath.Base(filepath.Dir(dir)) == "eggs" {
+	} else if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, os.ErrPermission) && filepath.Base(filepath.Dir(dir)) == "eggs" {
 		return err
 	}
 	lock, err := os.OpenFile(filepath.Join(dir, "launch.intent.lock"), os.O_CREATE|os.O_RDWR, 0600)
@@ -279,7 +300,7 @@ func MarkDeliberateStop(dir, reason string) error {
 		if err := UpdateRecoveryRecord(dir, func(r *RecoveryRecord) { r.Stopped = true }); err != nil {
 			return err
 		}
-	} else if !errors.Is(err, os.ErrNotExist) && filepath.Base(filepath.Dir(dir)) == "eggs" {
+	} else if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, os.ErrPermission) && filepath.Base(filepath.Dir(dir)) == "eggs" {
 		return err
 	}
 	if err := atomicWritePrivate(filepath.Join(dir, DeliberateStopFile), []byte(reason+"\n")); err != nil {
