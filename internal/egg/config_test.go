@@ -437,7 +437,7 @@ func TestResolvedPoliciesDenyWriteEveryDependency(t *testing.T) {
 	}
 }
 
-func TestResolvedPoliciesProtectGlobalAndSymlinkTargets(t *testing.T) {
+func TestDiscoveredGlobalPolicyRefusesReplaceableSymlink(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	state := filepath.Join(home, "state")
@@ -452,17 +452,56 @@ func TestResolvedPoliciesProtectGlobalAndSymlinkTargets(t *testing.T) {
 	}
 	writeEggConfigTestFile(t, policy, "base: ./alias.yaml\n")
 	cfg := DiscoverEggConfig(t.TempDir(), nil)
-	_, _, denied := ParseFSRules(cfg.FS, home)
-	for _, dependency := range []string{policy, alias, base} {
-		found := false
-		for _, path := range denied {
-			if path == canonicalPolicyTestPath(t, dependency) {
-				found = true
+	if !isUnsafePolicyPath(cfg.ResolutionError()) {
+		t.Fatalf("replaceable global policy alias admitted: %v", cfg.ResolutionError())
+	}
+	if _, err := cfg.YAML(); !isUnsafePolicyPath(err) {
+		t.Fatalf("security refusal lost during serialization: %v", err)
+	}
+	if _, err := ResolvePolicyWithProvider(cfg, "claude", home, ""); !isUnsafePolicyPath(err) {
+		t.Fatalf("security refusal lost during policy resolution: %v", err)
+	}
+}
+
+func TestResolvedPoliciesRefuseReplaceableSymlinkComponents(t *testing.T) {
+	for _, kind := range []string{"file", "directory", "chain", "section", "root"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			outside := t.TempDir()
+			base := filepath.Join(outside, "base.yaml")
+			writeEggConfigTestFile(t, base, "base: none\nfs: [rw:./]\n")
+			alias := filepath.Join(root, "alias.yaml")
+			target := base
+			if kind == "directory" {
+				target = outside
 			}
-		}
-		if !found {
-			t.Errorf("global dependency %s can be overwritten: %v", dependency, denied)
-		}
+			if kind == "chain" {
+				link := filepath.Join(outside, "link.yaml")
+				if err := os.Symlink(base, link); err != nil {
+					t.Fatal(err)
+				}
+				target = link
+			}
+			if err := os.Symlink(target, alias); err != nil {
+				t.Fatal(err)
+			}
+			ref := "./alias.yaml"
+			if kind == "directory" {
+				ref += "/base.yaml"
+			}
+			policy := filepath.Join(root, "egg.yaml")
+			body := "base: " + ref + "\n"
+			if kind == "section" {
+				body = "base:\n  fs: " + ref + "\n"
+			}
+			writeEggConfigTestFile(t, policy, body)
+			if kind == "root" {
+				policy = alias
+			}
+			if _, err := ResolveEggConfig(policy); !isUnsafePolicyPath(err) {
+				t.Fatalf("replaceable %s alias admitted: %v", kind, err)
+			}
+		})
 	}
 }
 

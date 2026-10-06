@@ -36,5 +36,6 @@ func PrepareBrowserLaunch(wc *config.WingConfig, start *ws.PTYStart, home string
 			return nil, identity, fmt.Errorf("no egg.yaml in %s — ask the wing owner to add a sandbox config", start.CWD)
 		}
 	}
-	return egg.DiscoverEggConfig(start.CWD, wingDefault), identity, nil
+	cfg := egg.DiscoverEggConfig(start.CWD, wingDefault)
+	return cfg, identity, cfg.ResolutionError()
 }

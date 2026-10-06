@@ -160,7 +160,8 @@ func LoadEggConfigForExplain(configPath, cwd string) (*egg.EggConfig, string, er
 			source = path
 		}
 	}
-	return egg.DiscoverEggConfig(cwd, nil), source, nil
+	cfg := egg.DiscoverEggConfig(cwd, nil)
+	return cfg, source, cfg.ResolutionError()
 }
 
 func fileExists(path string) bool {
@@ -449,7 +450,8 @@ func LoadSpawnEggConfig(configPath, cwd string, unsandboxed bool) (*egg.EggConfi
 		}
 		return cfg, nil
 	}
-	return egg.DiscoverEggConfig(cwd, nil), nil
+	cfg := egg.DiscoverEggConfig(cwd, nil)
+	return cfg, cfg.ResolutionError()
 }
 
 // EggIdentity holds the authenticated user's identity for per-session env injection.
@@ -759,6 +761,9 @@ func effectiveSpawnProviderSession(agentName string, opts SpawnEggOpts) (string,
 
 // spawnEgg starts a per-session egg child process and returns a connected client.
 func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte, trace bool, identity EggIdentity, idleTimeout time.Duration, opts ...SpawnEggOpts) (*egg.Client, error) {
+	if err := eggCfg.ResolutionError(); err != nil {
+		return nil, err
+	}
 	if err := ValidateSessionID(sessionID); err != nil {
 		return nil, err
 	}

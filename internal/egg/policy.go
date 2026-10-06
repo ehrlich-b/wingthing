@@ -53,6 +53,9 @@ func ResolvePolicy(cfg *EggConfig, agent, home string) EffectivePolicy {
 // host replaces the profile's static vendor domains and remains visible as a
 // distinct source in explain output.
 func ResolvePolicyWithProvider(cfg *EggConfig, agent, home, providerURL string) (EffectivePolicy, error) {
+	if err := cfg.ResolutionError(); err != nil {
+		return EffectivePolicy{}, err
+	}
 	mounts, deny, denyWrite := ParseFSRules(cfg.FS, home)
 
 	policy := EffectivePolicy{

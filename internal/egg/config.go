@@ -1,6 +1,7 @@
 package egg
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	wingconfig "github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"golang.org/x/sys/unix"
 	"gopkg.in/yaml.v3"
 )
 
@@ -179,6 +181,7 @@ func (b BaseField) HasMasks() bool {
 
 // EggConfig holds the sandbox and environment configuration for egg sessions.
 type EggConfig struct {
+	resolutionError            error
 	Base                       BaseField         `yaml:"base,omitempty"`
 	FS                         []string          `yaml:"fs"`
 	Network                    NetworkField      `yaml:"network"`
@@ -462,6 +465,9 @@ func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 				return cfg
 			}
 			log.Printf("egg: config discovery failed for %s: %v", path, err)
+			if isUnsafePolicyPath(err) {
+				return &EggConfig{resolutionError: err}
+			}
 		}
 	}
 	if wingDefault != nil {
@@ -480,6 +486,9 @@ func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 				return cfg
 			}
 			log.Printf("egg: global config discovery failed for %s: %v", path, resolveErr)
+			if isUnsafePolicyPath(resolveErr) {
+				return &EggConfig{resolutionError: resolveErr}
+			}
 		}
 	}
 	return DefaultEggConfig()
@@ -550,6 +559,9 @@ func resolveEggConfig(path string, visited map[string]bool, depth int) (*EggConf
 		return nil, fmt.Errorf("egg config circular base reference: %s", abs)
 	}
 	visited[abs] = true
+	if err := validatePolicyPath(abs); err != nil {
+		return nil, err
+	}
 
 	child, err := LoadEggConfig(abs)
 	if err != nil {
@@ -582,6 +594,70 @@ func resolveEggConfig(path string, visited map[string]bool, depth int) (*EggConf
 
 	return MergeEggConfig(parent, child), nil
 }
+
+// PolicyPathError refuses aliases whose entry or ancestors the agent's UID
+// could replace. Resolved-file denies cannot pin a symlink on Linux. Check host
+// permissions conservatively, including paths a later agent profile may open.
+type PolicyPathError struct{ Path string }
+
+func (e *PolicyPathError) Error() string {
+	return fmt.Sprintf("policy path traverses a replaceable symlink: %s", e.Path)
+}
+
+func isUnsafePolicyPath(err error) bool {
+	var pathErr *PolicyPathError
+	return errors.As(err, &pathErr)
+}
+
+// Walk the actual loader path, including links in link targets. System aliases
+// such as macOS /var remain usable when their ancestor entries are immutable to
+// this UID. A read-only child directory inside a writable tree is not enough.
+func validatePolicyPath(path string) error {
+	pending := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	current := "/"
+	links := 0
+	for len(pending) > 0 {
+		part := pending[0]
+		pending = pending[1:]
+		if part == "" || part == "." {
+			continue
+		}
+		next := filepath.Join(current, part)
+		info, err := os.Lstat(next)
+		if err != nil {
+			return fmt.Errorf("inspect policy path: %w", err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			current = next
+			continue
+		}
+		for parent := current; ; parent = filepath.Dir(parent) {
+			if unix.Access(parent, unix.W_OK|unix.X_OK) == nil {
+				return &PolicyPathError{Path: next}
+			}
+			if parent == "/" {
+				break
+			}
+		}
+		links++
+		if links > 255 {
+			return fmt.Errorf("policy path has too many symlinks: %s", path)
+		}
+		target, err := os.Readlink(next)
+		if err != nil {
+			return err
+		}
+		if filepath.IsAbs(target) {
+			current = "/"
+		}
+		pending = append(strings.Split(target, "/"), pending...)
+	}
+	return nil
+}
+
+// ResolutionError preserves a security refusal through legacy discovery APIs.
+// Callers must check it before rendering or executing the returned config.
+func (c *EggConfig) ResolutionError() error { return c.resolutionError }
 
 // resolveBasePath turns a base value into an absolute path.
 // - Relative path (starts with . or /) -> resolve relative to configDir
@@ -1027,6 +1103,9 @@ func (c *EggConfig) BuildEnvMap(home string) map[string]string {
 
 // YAML returns the config serialized as YAML.
 func (c *EggConfig) YAML() (string, error) {
+	if err := c.ResolutionError(); err != nil {
+		return "", err
+	}
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return "", err
