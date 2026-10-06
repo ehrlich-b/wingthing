@@ -37,11 +37,12 @@ jobs:
       - run: npm install -g @anthropic-ai/claude-code@2.1.260
       - run: make gate GATE=claude
       - run: make gate GATE=static RACE_PACKAGES=./...
-      - run: make gate GATE=integration
       # Compatibility launches historical and candidate binaries from temporary
-      # paths. Ubuntu's path-scoped AppArmor userns policy cannot grant both;
-      # the Linux sandbox batteries below exercise that security boundary.
+      # paths, and integration starts sandboxed terminals on the runner host.
+      # Ubuntu's path-scoped AppArmor userns policy cannot grant either; the
+      # ci workflow's Linux sandbox jobs exercise that security boundary.
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: make gate GATE=integration
       - run: make gate GATE=compat
       - run: make e2e-linux LINUX_DISTROS=debian
       - run: make e2e-linux LINUX_DISTROS=ubuntu
