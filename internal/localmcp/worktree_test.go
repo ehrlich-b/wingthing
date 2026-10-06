@@ -59,7 +59,7 @@ func TestWorktreeMCPCallToolHappyPath(t *testing.T) {
 	s, repo := worktreeMCPFixture(t)
 	s.MaxSpawnsPerHour = 1
 	created, failed := callWorktreeTool(t, s, "worktree_create", map[string]any{"repo": repo, "name": "child"})
-	if failed || created["branch"] != "wt/child" || created["repo"] != repo {
+	if failed || created["branch"] != "wt/child" || created["repo"] != repo || created["checkout_required"] != true {
 		t.Fatalf("create = %#v, failed = %v", created, failed)
 	}
 	cwd, ok := created["cwd"].(string)
@@ -177,5 +177,30 @@ func TestWorktreeMCPStrictArguments(t *testing.T) {
 		if result, failed := callWorktreeTool(t, s, tool, map[string]any{"repo": repo, "unexpected": true}); !failed {
 			t.Fatalf("%s accepted unknown field: %#v", tool, result)
 		}
+	}
+}
+
+func TestWorktreeMCPIgnoredRemoval(t *testing.T) {
+	s, repo := worktreeMCPFixture(t)
+	if err := os.WriteFile(filepath.Join(repo, ".git", "info", "exclude"), []byte(".env\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	created, failed := callWorktreeTool(t, s, "worktree_create", map[string]any{"repo": repo, "name": "ignored"})
+	if failed {
+		t.Fatal(created)
+	}
+	path := filepath.Join(created["cwd"].(string), ".env")
+	if err := os.WriteFile(path, []byte("preserve\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, failed := callWorktreeTool(t, s, "worktree_remove", map[string]any{"repo": repo, "name": "ignored"})
+	if !failed || !strings.Contains(result["error"].(string), "uncommitted changes") {
+		t.Fatalf("ignored file removal accepted: %#v", result)
+	}
+	if content, err := os.ReadFile(path); err != nil || string(content) != "preserve\n" {
+		t.Fatalf("refusal lost ignored file: %q, %v", content, err)
+	}
+	if result, failed := callWorktreeTool(t, s, "worktree_remove", map[string]any{"repo": repo, "name": "ignored", "force": true}); failed {
+		t.Fatalf("forced ignored removal rejected: %#v", result)
 	}
 }

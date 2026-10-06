@@ -3,8 +3,16 @@ package control
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
+
+func TestWorktreeCreationRequiresSandboxedCheckout(t *testing.T) {
+	tool, ok := Lookup("worktree_create")
+	if !ok || !strings.Contains(tool.Description, "checkout_required: true") || !strings.Contains(tool.Description, "inside its sandbox") {
+		t.Fatalf("missing sandboxed checkout instructions: %#v", tool)
+	}
+}
 
 func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 	local := []string{

@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -47,7 +48,9 @@ func TestWorktreeCreateListRemove(t *testing.T) {
 		t.Fatalf("base HEAD = %q, created = %#v, err = %v", head, created, err)
 	}
 	entries, err := m.List(repo)
-	if err != nil || len(entries) != 1 || entries[0] != *created {
+	expected := *created
+	expected.CheckoutRequired = false // The checkout requirement is a creation result.
+	if err != nil || len(entries) != 1 || entries[0] != expected {
 		t.Fatalf("list = %#v, err = %v", entries, err)
 	}
 	if err := m.Remove(repo, created.Name, false); err != nil {
@@ -92,13 +95,16 @@ func TestWorktreeExplicitBaseAndRoot(t *testing.T) {
 }
 
 func TestWorktreeDirtyRemoval(t *testing.T) {
-	for _, kind := range []string{"untracked", "staged", "modified"} {
+	for _, kind := range []string{"untracked", "staged", "modified", "ignored", "deleted"} {
 		t.Run(kind, func(t *testing.T) {
 			m, repo := testRepo(t)
 			if err := os.WriteFile(filepath.Join(repo, "tracked"), []byte("original"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := git(repo, "add", "tracked"); err != nil {
+			if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := git(repo, "add", "--", "tracked", ".gitignore"); err != nil {
 				t.Fatal(err)
 			}
 			commit(t, repo, "Track file")
@@ -106,22 +112,31 @@ func TestWorktreeDirtyRemoval(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			file := "untracked"
-			if kind == "modified" {
-				file = "tracked"
+			if _, err := git(created.Path, "reset", "--hard", "HEAD", "--"); err != nil {
+				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(created.Path, file), []byte("change"), 0600); err != nil {
+			file := "untracked"
+			if kind == "modified" || kind == "deleted" {
+				file = "tracked"
+			} else if kind == "ignored" {
+				file = ".env"
+			}
+			if kind == "deleted" {
+				if err := os.Remove(filepath.Join(created.Path, file)); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(filepath.Join(created.Path, file), []byte("change"), 0600); err != nil {
 				t.Fatal(err)
 			}
 			if kind == "staged" {
-				if _, err := git(created.Path, "add", file); err != nil {
+				if _, err := git(created.Path, "add", "--", file); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if err := m.Remove(repo, "dirty", false); err == nil || !strings.Contains(err.Error(), "uncommitted changes") {
 				t.Fatalf("dirty removal error = %v", err)
 			}
-			if _, err := os.Stat(filepath.Join(created.Path, file)); err != nil {
+			if _, err := os.Stat(filepath.Join(created.Path, file)); kind != "deleted" && err != nil {
 				t.Fatalf("refusal lost changes: %v", err)
 			}
 			if err := m.Remove(repo, "dirty", true); err != nil {
@@ -131,6 +146,161 @@ func TestWorktreeDirtyRemoval(t *testing.T) {
 				t.Fatalf("forced removal deleted branch: %v", err)
 			}
 		})
+	}
+}
+
+func TestWorktreeRepositoryProgramsNeverRun(t *testing.T) {
+	for _, filter := range []string{"smudge", "process", "clean", "clean-unchanged"} {
+		t.Run(filter, func(t *testing.T) {
+			m, repo := testRepo(t)
+			for name, content := range map[string]string{".gitattributes": "tracked filter=marker\n", "tracked": "original\n"} {
+				if err := os.WriteFile(filepath.Join(repo, name), []byte(content), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := git(repo, "add", "--", ".gitattributes", "tracked"); err != nil {
+				t.Fatal(err)
+			}
+			commit(t, repo, "Track filtered file")
+			created, err := m.Create(repo, "programs", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Populate the controlled fixture before installing executable config
+			// so removal exercises a tracked file that status would clean-filter.
+			if strings.HasPrefix(filter, "clean") {
+				if _, err := git(created.Path, "reset", "--hard", "HEAD", "--"); err != nil {
+					t.Fatal(err)
+				}
+				if filter == "clean" {
+					if err := os.WriteFile(filepath.Join(created.Path, "tracked"), []byte("changed\n"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			hookMarker := filepath.Join(filepath.Dir(repo), "hook-marker")
+			filterMarker := filepath.Join(filepath.Dir(repo), "filter-marker")
+			monitorMarker := filepath.Join(filepath.Dir(repo), "monitor-marker")
+			quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
+			for name, marker := range map[string]string{"post-checkout": hookMarker, "monitor": monitorMarker} {
+				script := "#!/bin/sh\n: > " + quote(marker) + "\n"
+				if err := os.WriteFile(filepath.Join(repo, ".git", "hooks", name), []byte(script), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for key, value := range map[string]string{
+				"filter.marker." + strings.TrimSuffix(filter, "-unchanged"): ": > " + quote(filterMarker) + "; cat",
+				"core.fsmonitor": filepath.Join(repo, ".git", "hooks", "monitor"),
+			} {
+				if _, err := git(repo, "config", "--local", key, value); err != nil {
+					t.Fatal(err)
+				}
+			}
+			another, err := m.Create(repo, "host-safe", "")
+			for _, marker := range []string{hookMarker, filterMarker, monitorMarker} {
+				if _, err := os.Stat(marker); !os.IsNotExist(err) {
+					t.Errorf("repository program executed during creation: %s, %v", marker, err)
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !another.CheckoutRequired {
+				t.Fatal("unpopulated checkout did not report checkout_required")
+			}
+			if _, err := os.Stat(filepath.Join(another.Path, "tracked")); !os.IsNotExist(err) {
+				t.Fatalf("host populated the checkout: %v", err)
+			}
+			if _, err := m.List(repo); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.Remove(repo, "programs", false); filter == "clean" && err == nil || filter != "clean" && err != nil {
+				t.Fatalf("safe removal = %v", err)
+			}
+			if filter == "clean" {
+				if err := m.Remove(repo, "programs", true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := m.Remove(repo, "host-safe", false); err != nil {
+				t.Fatal(err)
+			}
+			for _, marker := range []string{hookMarker, filterMarker, monitorMarker} {
+				if _, err := os.Stat(marker); !os.IsNotExist(err) {
+					t.Errorf("repository program executed: %s, %v", marker, err)
+				}
+			}
+		})
+	}
+}
+
+func TestWorktreeAncestorSwapDuringCreate(t *testing.T) {
+	for _, trigger := range []string{"HEAD^{commit}", "add"} {
+		t.Run(trigger, func(t *testing.T) {
+			m, repo := testRepo(t)
+			m.Root = filepath.Join(filepath.Dir(repo), "checkouts")
+			if err := os.Mkdir(m.Root, 0700); err != nil {
+				t.Fatal(err)
+			}
+			outside := t.TempDir()
+			realGit, err := exec.LookPath("git")
+			if err != nil {
+				t.Fatal(err)
+			}
+			wrapperDir := t.TempDir()
+			quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
+			// Swap either after admission or inside Git after the leaf is pinned.
+			script := "#!/bin/sh\nfor arg do\ncase \"$arg\" in\n" + quote(trigger) + ")\nmv " + quote(m.Root) + " " + quote(m.Root+"-saved") + "\nln -s " + quote(outside) + " " + quote(m.Root) + "\n;;\nesac\ndone\nexec " + quote(realGit) + " \"$@\"\n"
+			if err := os.WriteFile(filepath.Join(wrapperDir, "git"), []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			if _, err := m.Create(repo, "swapped", ""); err == nil {
+				t.Fatal("creation accepted an ancestor replaced after admission")
+			}
+			entries, err := os.ReadDir(outside)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("creation mutated the outside directory: %v, %v", entries, err)
+			}
+		})
+	}
+}
+
+func TestWorktreeOptionLikeRef(t *testing.T) {
+	m, repo := testRepo(t)
+	head, err := git(repo, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git(repo, "update-ref", "refs/heads/-base", strings.TrimSpace(head)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Create(repo, "option", "-base"); err == nil {
+		t.Fatal("a resolvable ref beginning with '-' was accepted")
+	}
+}
+
+func TestWorktreeCleanPopulatedRemoval(t *testing.T) {
+	m, repo := testRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "-tracked\nname"), []byte("original\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("-tracked\nname", filepath.Join(repo, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git(repo, "add", "--", "-tracked\nname", "link"); err != nil {
+		t.Fatal(err)
+	}
+	commit(t, repo, "Track executable and symlink")
+	created, err := m.Create(repo, "clean", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git(created.Path, "reset", "--hard", "HEAD", "--"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Remove(repo, "clean", false); err != nil {
+		t.Fatalf("clean populated worktree rejected: %v", err)
 	}
 }
 
