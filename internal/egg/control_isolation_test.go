@@ -259,3 +259,18 @@ func TestDarwinControlPolicyPreservesBridgesAndBlocksFutureSiblings(t *testing.T
 		t.Fatalf("control isolation: %v\n%s", err, output)
 	}
 }
+
+func TestEggControlProfileAllowsSelfInspection(t *testing.T) {
+	profile := eggControlProfile(nil, nil, "")
+	if strings.Contains(profile, "(deny process-info*)\n") || !strings.Contains(profile, "(deny process-info* (target others))") {
+		t.Fatalf("process inspection must be denied only for other processes:\n%s", profile)
+	}
+	if runtime.GOOS != "darwin" || os.Getenv("WT_TEST_SEATBELT_ENFORCEMENT") != "1" {
+		t.Skip("set WT_TEST_SEATBELT_ENFORCEMENT=1 on macOS to launch an interpreter under the profile")
+	}
+	// A blanket process-info deny makes node and python abort at startup.
+	out, err := exec.Command("/usr/bin/sandbox-exec", "-p", profile, "/usr/bin/python3", "-c", "print('ok')").CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "ok" {
+		t.Fatalf("interpreter failed under the egg control profile: %v %s", err, out)
+	}
+}

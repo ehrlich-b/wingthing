@@ -1279,7 +1279,8 @@ func eggControlProfile(control []string, bridges []sandbox.Mount, toolSocket str
 	profile.WriteString("(version 1)\n(allow default)\n")
 	// Other eggs' environments carry their capabilities. Seatbelt shares the
 	// host PID namespace, so filesystem isolation alone cannot protect them.
-	profile.WriteString("(deny process-info*)\n")
+	// A blanket deny also blocks self-inspection, which crashes node and python.
+	profile.WriteString("(deny process-info* (target others))\n")
 	for _, path := range control {
 		path = config.CanonicalProviderPath(path)
 		fmt.Fprintf(&profile, "(deny file-read* file-write* network-outbound (literal %q) (subpath %q))\n", path, path)
