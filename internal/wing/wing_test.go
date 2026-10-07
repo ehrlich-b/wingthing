@@ -512,3 +512,16 @@ func TestForgetAttentionStateRemovesAllSessionEntries(t *testing.T) {
 		t.Fatal("attention nonce was retained")
 	}
 }
+
+func TestSortSessionsByStartKeepsLaunchOrder(t *testing.T) {
+	sessions := []ws.SessionInfo{{SessionID: "11bb"}, {SessionID: "8e2e"}, {SessionID: "21da"}, {SessionID: "aa00"}}
+	started := map[string]int64{"11bb": 300, "8e2e": 200, "21da": 100, "aa00": 200}
+	sortSessionsByStart(sessions, started)
+	var got []string
+	for _, s := range sessions {
+		got = append(got, s.SessionID)
+	}
+	if strings.Join(got, ",") != "21da,8e2e,aa00,11bb" {
+		t.Fatalf("order = %v, want oldest first with ID tie-break", got)
+	}
+}

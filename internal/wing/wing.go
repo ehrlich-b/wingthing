@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1393,6 +1394,7 @@ func ListAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 	}
 
 	var out []ws.SessionInfo
+	started := make(map[string]int64)
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -1463,9 +1465,23 @@ func ListAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 		if _, err := os.Stat(filepath.Join(dir, "chat.jsonl.gz")); err == nil {
 			info.Chat = true
 		}
+		started[sessionID], _ = strconv.ParseInt(eggclient.ReadEggMetaValues(dir)["started_at"], 10, 64)
 		out = append(out, info)
 	}
+	sortSessionsByStart(out, started)
 	return out
+}
+
+// sortSessionsByStart lists sessions oldest first, so a browser reload keeps a
+// new session where it appeared instead of sorting it in by its random ID.
+func sortSessionsByStart(sessions []ws.SessionInfo, started map[string]int64) {
+	sort.SliceStable(sessions, func(i, j int) bool {
+		a, b := started[sessions[i].SessionID], started[sessions[j].SessionID]
+		if a != b {
+			return a < b
+		}
+		return sessions[i].SessionID < sessions[j].SessionID
+	})
 }
 
 type pendingReattachAuth struct {
