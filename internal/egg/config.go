@@ -251,6 +251,13 @@ func eggControlDenyPaths(sessionDir string, grants ...[]sandbox.Mount) ([]string
 		for _, name := range []string{"eggs", "tools", "device_token.yaml", "local_device_token.yaml", "wing_key", "sync.key", "wing.yaml", "egg.yaml", "config.yaml", "remotes.yaml", "clients.yaml", "roost.db", "wt.db"} {
 			paths = append(paths, filepath.Join(state, name))
 		}
+		// SQLite may create these after launch; they can contain the same
+		// bearer tokens as the main databases and must be masked in advance.
+		for _, database := range []string{"roost.db", "wt.db"} {
+			for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+				paths = append(paths, filepath.Join(state, database+suffix))
+			}
+		}
 		for _, name := range []string{"wing_key", "sync.key", "device_token.yaml", "local_device_token.yaml"} {
 			credentials = append(credentials, filepath.Join(state, name))
 		}

@@ -37,6 +37,40 @@ func TestDefaultPolicyDeniesWingthingControlCredentials(t *testing.T) {
 	}
 }
 
+func TestMandatoryDatabaseSidecarsDeniedBeforeCreation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("WINGTHING_DIR", filepath.Join(home, "custom"))
+	session := filepath.Join(home, "session-state", "eggs", "own")
+	for _, existing := range []bool{false, true} {
+		for _, state := range []string{".wingthing", ".wingthing-preview", "custom", "session-state"} {
+			for _, database := range []string{"roost.db", "wt.db"} {
+				for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+					path := filepath.Join(home, state, database+suffix)
+					if existing {
+						makeEggConfigTestDir(t, filepath.Dir(path))
+						writeEggConfigTestFile(t, path, "bearer-token")
+					}
+					// Mandatory protection must survive base:none and explicit
+					// writable grants, for interactive and headless launches.
+					sc, err := IsolateControl(sandbox.Config{Mounts: []sandbox.Mount{{Source: home}}}, session, nil, "")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !containsString(sc.Deny, config.CanonicalProviderPath(path)) {
+						t.Fatalf("SQLite sidecar readable (existing=%v): %s", existing, path)
+					}
+					if !existing {
+						if _, err := os.Lstat(path); !os.IsNotExist(err) {
+							t.Fatalf("planning created sidecar: %v", err)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestGlobalEggLoadersAreSealedBeforeCreation(t *testing.T) {
 	home := t.TempDir() // retain macOS's /var alias as well as its resolved name
 	t.Setenv("HOME", home)
