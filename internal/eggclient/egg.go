@@ -148,7 +148,7 @@ type ExplainedHole struct {
 // error here, unlike discovery, which is allowed to fall back.
 func LoadEggConfigForExplain(configPath, cwd string) (*egg.EggConfig, string, error) {
 	if configPath != "" {
-		cfg, err := egg.ResolveEggConfig(configPath)
+		cfg, err := egg.ResolveEggConfig(configPath, cwd)
 		if err != nil {
 			return nil, "", fmt.Errorf("load egg config: %w", err)
 		}
@@ -444,7 +444,7 @@ func LoadSpawnEggConfig(configPath, cwd string, unsandboxed bool) (*egg.EggConfi
 		return egg.UnsandboxedEggConfig(), nil
 	}
 	if configPath != "" {
-		cfg, err := egg.ResolveEggConfig(configPath)
+		cfg, err := egg.ResolveEggConfig(configPath, cwd)
 		if err != nil {
 			return nil, fmt.Errorf("load egg config: %w", err)
 		}

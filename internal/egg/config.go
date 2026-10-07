@@ -494,7 +494,7 @@ func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 	if cwd != "" {
 		path := filepath.Join(cwd, "egg.yaml")
 		if _, statErr := os.Stat(path); statErr == nil {
-			cfg, err := ResolveEggConfig(path)
+			cfg, err := ResolveEggConfig(path, cwd)
 			if err == nil {
 				return cfg
 			}
@@ -515,7 +515,7 @@ func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 			}
 		}
 		if _, statErr := os.Stat(path); statErr == nil {
-			cfg, resolveErr := ResolveEggConfig(path)
+			cfg, resolveErr := ResolveEggConfig(path, cwd)
 			if resolveErr == nil {
 				return cfg
 			}
@@ -533,7 +533,8 @@ const maxBaseDepth = 10
 // ResolveEggConfig loads an egg.yaml and resolves its base chain, returning
 // a fully merged config. If base is empty, merges on top of DefaultEggConfig.
 // If base is "none", returns the config as-is (empty slate).
-func ResolveEggConfig(path string) (*EggConfig, error) {
+// An optional cwd anchors relative filesystem grants to the session workspace.
+func ResolveEggConfig(path string, cwds ...string) (*EggConfig, error) {
 	dependencies := make(map[string]bool)
 	cfg, err := resolveEggConfig(path, dependencies, 0)
 	if err != nil {
@@ -545,6 +546,13 @@ func ResolveEggConfig(path string) (*EggConfig, error) {
 	if RequiresSandbox(cfg, "") {
 		home, _ := os.UserHomeDir()
 		mounts, _, _ := ParseFSRules(cfg.FS, home)
+		if len(cwds) > 0 && cwds[0] != "" {
+			for i := range mounts {
+				if !filepath.IsAbs(mounts[i].Source) {
+					mounts[i].Source = filepath.Join(cwds[0], mounts[i].Source)
+				}
+			}
+		}
 		protected := make(map[string]bool)
 		ancestors := make(map[string]bool)
 		workspace := wingconfig.CanonicalProviderPath(filepath.Dir(path))

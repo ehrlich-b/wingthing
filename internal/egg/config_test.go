@@ -444,7 +444,7 @@ func TestDiscoveredGlobalPolicyRefusesReplaceableSymlink(t *testing.T) {
 	state := filepath.Join(home, "state")
 	t.Setenv("WINGTHING_DIR", state)
 	makeEggConfigTestDir(t, state)
-	t.Chdir(home)
+	t.Chdir(t.TempDir())
 	base := filepath.Join(home, "base.yaml")
 	alias := filepath.Join(state, "alias.yaml")
 	policy := filepath.Join(state, "egg.yaml")
@@ -453,7 +453,7 @@ func TestDiscoveredGlobalPolicyRefusesReplaceableSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeEggConfigTestFile(t, policy, "base: ./alias.yaml\n")
-	cfg := DiscoverEggConfig(t.TempDir(), nil)
+	cfg := DiscoverEggConfig(home, nil)
 	if !isUnsafePolicyPath(cfg.ResolutionError()) {
 		t.Fatalf("replaceable global policy alias admitted: %v", cfg.ResolutionError())
 	}
