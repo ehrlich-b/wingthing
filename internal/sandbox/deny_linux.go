@@ -1323,12 +1323,9 @@ func publishPinnedFile(in *os.File, mode os.FileMode, parent *os.File, name stri
 	if err != unix.ENOSYS && err != unix.EINVAL && err != unix.EOPNOTSUPP {
 		return err
 	}
-	// Older kernels/filesystems cannot exchange. Recheck after staging so
-	// host changes made during the copy are still saved as conflicts.
-	current, statErr := os.Lstat(filepath.Join(mountFDPath(parent), name))
-	if (before == nil && os.IsNotExist(statErr)) || (statErr == nil && samePrefixSnapshot(before, current)) {
-		return unix.Renameat(fd, temporary, fd, name)
-	}
+	// Without atomic exchange/no-replace there is no safe comparison before
+	// publication: a host edit can arrive between stat and rename. Preserve
+	// the destination and retain the session version as a logged conflict.
 	return saveConflict("session")
 }
 
