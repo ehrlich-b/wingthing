@@ -12,6 +12,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
+	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
@@ -149,11 +150,18 @@ func serveDirectMCPChannel(version string, cfg *config.Config, wingCfg *config.W
 	})
 }
 
-func ServeDirectMCPChannelWithPolicySource(version string, cfg *config.Config, home string, sharedHost bool, admission *AdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel, policySource func() (*config.WingConfig, []config.AllowKey)) {
-	serveDirectMCPChannelWithPolicySourceAndLease(version, cfg, home, sharedHost, admission, identity, dc, policySource, directMCPIdentityLease)
+func ServeDirectMCPChannelWithPolicySource(version string, cfg *config.Config, home string, sharedHost bool, admission *AdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel, policySource func() (*config.WingConfig, []config.AllowKey), eggSources ...func() *egg.EggConfig) {
+	serveDirectMCPChannelWithPolicySourceAndLease(version, cfg, home, sharedHost, admission, identity, dc, policySource, directMCPIdentityLease, eggSources...)
 }
 
-func serveDirectMCPChannelWithPolicySourceAndLease(version string, cfg *config.Config, home string, sharedHost bool, admission *AdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel, policySource func() (*config.WingConfig, []config.AllowKey), identityLease time.Duration) {
+func serveDirectMCPChannelWithPolicySourceAndLease(version string, cfg *config.Config, home string, sharedHost bool, admission *AdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel, policySource func() (*config.WingConfig, []config.AllowKey), identityLease time.Duration, eggSources ...func() *egg.EggConfig) {
+	// Standalone adapters capture once; the wing supplies its guarded live snapshot.
+	var initialEgg *egg.EggConfig
+	var eggErr error
+	if len(eggSources) == 0 {
+		initialWing, _ := policySource()
+		initialEgg, eggErr = loadRuntimeEggDefault(cfg.Dir, initialWing)
+	}
 	actor := strings.TrimPrefix(dc.Label(), control.DirectChannelPrefix)
 	if actor == dc.Label() || eggclient.ValidateSessionName(actor) != nil || identity.UserID == "" || identityLease <= 0 {
 		log.Printf("[P2P] rejected direct MCP channel %q: invalid actor or identity", dc.Label())
@@ -234,6 +242,13 @@ func serveDirectMCPChannelWithPolicySourceAndLease(version string, cfg *config.C
 				allowedPaths:      policy.allowedPaths,
 				enforcePathBounds: policy.enforcePathBounds,
 				identity:          policy.identity,
+			}
+			wingDefault := initialEgg
+			if len(eggSources) > 0 {
+				wingDefault = eggSources[0]()
+			}
+			if server.identity.SharedHost || server.identity.OrgWing {
+				server.launchConfig = runtimeLaunchConfig(wingDefault, eggErr)
 			}
 			arguments := request.Arguments
 			if len(arguments) == 0 {

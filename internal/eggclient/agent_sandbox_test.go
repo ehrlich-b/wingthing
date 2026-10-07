@@ -77,6 +77,40 @@ func TestBrowserWingDefaultsValidateLoaderAliasesAgainstSessionWorkspace(t *test
 	}
 }
 
+func TestAuthenticatedBrowserLaunchIgnoresWorkspacePolicy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
+	workspace := filepath.Join(home, "eng")
+	if err := os.MkdirAll(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "egg.yaml"), []byte("base: none\nfs: [deny:/, ro:/usr, rw:., ro:/opt/wingthing/support]\nenv: ['*']\nnetwork: ['*']\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	admin := &egg.EggConfig{FS: []string{"deny:/", "ro:/usr", "rw:./"}, Env: egg.EnvField{"HOME"}, Network: egg.NetworkField{Domains: []string{"corp.example"}}}
+	for _, shared := range []bool{false, true} {
+		wc := &config.WingConfig{Org: "org", Paths: config.PathList{{Path: workspace, Members: []string{"eng@example.com"}}}}
+		start := ws.PTYStart{UserID: "eng", Email: "eng@example.com", OrgRole: "member", CWD: workspace}
+		cfg, _, err := PrepareBrowserLaunch(wc, &start, home, shared, admin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(strings.Join(cfg.FS, "\n"), "/opt/wingthing/support") || cfg.IsAllEnv() || !ContainsExactPath(cfg.Network.Domains, "corp.example") {
+			t.Fatalf("caller policy replaced administrator policy (shared=%v): %#v", shared, cfg)
+		}
+		if err := os.Remove(filepath.Join(workspace, "egg.yaml")); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		if _, _, err := PrepareBrowserLaunch(wc, &start, home, shared, admin); err != nil {
+			t.Fatalf("runtime policy required a workspace egg.yaml: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(workspace, "egg.yaml"), []byte("base: none\nfs: [ro:/opt/wingthing/support]\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestLaunchDiscoveryRefusesReplaceablePolicyAlias(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

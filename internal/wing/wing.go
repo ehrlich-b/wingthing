@@ -763,14 +763,6 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	}
 	ephemeralCount := len(allowedKeys) - pinnedCount
 
-	if options.SetPolicySource != nil {
-		options.SetPolicySource(func() *config.WingConfig {
-			wingCfgMu.Lock()
-			defer wingCfgMu.Unlock()
-			return wingCfg.Clone()
-		})
-	}
-
 	// Boot-scoped passkey auth cache — tokens live until wing process dies
 	passkeyCache := auth.NewAuthCache()
 	passkeyChallenges := auth.NewChallengeCache()
@@ -795,6 +787,15 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		}
 	}
 	var wingEggMu sync.Mutex
+	if options.SetPolicySource != nil {
+		options.SetPolicySource(func() (*config.WingConfig, *egg.EggConfig) {
+			wingCfgMu.Lock()
+			defer wingCfgMu.Unlock()
+			wingEggMu.Lock()
+			defer wingEggMu.Unlock()
+			return wingCfg.Clone(), wingEggCfg
+		})
+	}
 
 	// Load privileged tool configs
 	toolsDir := config.ResolveToolsDir(cfg.Dir, wingCfg.ToolsDir)
@@ -949,6 +950,10 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 					wingCfgMu.Lock()
 					defer wingCfgMu.Unlock()
 					return wingCfg.Clone(), append([]config.AllowKey(nil), allowedKeys...)
+				}, func() *egg.EggConfig {
+					wingEggMu.Lock()
+					defer wingEggMu.Unlock()
+					return wingEggCfg
 				})
 				return
 			}

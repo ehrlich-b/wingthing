@@ -258,10 +258,12 @@ func TestSessionForkIdentityMatchesFreshLaunchOnEverySurface(t *testing.T) {
 				}
 				s.Surface, s.identity = control.SurfaceDirectMCP, policy.identity
 				s.allowedPaths, s.enforcePathBounds = policy.allowedPaths, policy.enforcePathBounds
+				s.launchConfig = runtimeLaunchConfig(egg.DefaultEggConfig(), nil)
 			case "HTTP shared host":
 				server := newRoostNativeMCPServer("dev", s.Cfg, true, NewMCPAdmissionState(), mcppkg.Principal{UserID: req.SenderUserID, Email: req.SenderEmail}, []string{cwd})
 				s.Surface, s.identity = server.Surface, server.identity
 				s.allowedPaths, s.enforcePathBounds = server.allowedPaths, server.enforcePathBounds
+				s.launchConfig = server.launchConfig
 			case "browser org member", "browser shared host":
 				if err := os.WriteFile(filepath.Join(cwd, "egg.yaml"), []byte("base: none\nfs: [deny:/, rw:"+cwd+"]\nnetwork: none\n"), 0600); err != nil {
 					t.Fatal(err)

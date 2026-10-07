@@ -31,6 +31,10 @@ func PrepareBrowserLaunch(wc *config.WingConfig, start *ws.PTYStart, home string
 	if len(identity.AllowedPaths) > 0 && !wingpolicy.IsExactPath(wingpolicy.CanonicalSessionPath(start.CWD), identity.AllowedPaths) {
 		start.CWD = identity.AllowedPaths[0]
 	}
+	if identity.UserID != "" && (identity.SharedHost || identity.OrgWing) {
+		cfg := egg.RuntimeEggConfig(wingDefault, start.CWD)
+		return cfg, identity, cfg.ResolutionError()
+	}
 	if wingpolicy.IsMemberRole(start.OrgRole) && len(wc.Paths) > 0 {
 		if _, err := os.Stat(filepath.Join(start.CWD, "egg.yaml")); os.IsNotExist(err) {
 			return nil, identity, fmt.Errorf("no egg.yaml in %s — ask the wing owner to add a sandbox config", start.CWD)

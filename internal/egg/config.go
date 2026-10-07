@@ -693,6 +693,16 @@ func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 	return configForWorkspace(DefaultEggConfig(), cwd)
 }
 
+// RuntimeEggConfig validates the administrator's captured policy for a session
+// without consulting caller-writable workspace or global configuration files.
+func RuntimeEggConfig(wingDefault *EggConfig, cwd string) *EggConfig {
+	if wingDefault == nil {
+		wingDefault = DefaultEggConfig()
+	}
+	cfg := *wingDefault
+	return configForWorkspace(&cfg, cwd)
+}
+
 func policyMountsForWorkspace(cfg *EggConfig, cwd string) []sandbox.Mount {
 	if cwd == "" {
 		return nil // Wing startup and reload have no session write surface yet.
