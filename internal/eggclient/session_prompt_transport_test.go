@@ -268,3 +268,21 @@ func TestNativePromptPreflightNotSentIsDurable(t *testing.T) {
 		})
 	}
 }
+
+func TestNativePromptAfterClaudeSessionStartChangesBinding(t *testing.T) {
+	cfg, fixture := nativePromptTransport(t, false)
+	spool := filepath.Join(cfg.Dir, ".claude", "wingthing-events", "fixture")
+	if err := os.WriteFile(filepath.Join(spool, "seq.00000000000000000001.json"), []byte(`{"session_id":"after-clear","hook_event_name":"SessionStart"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	session := LocalSession{ID: "fixture", Agent: "claude", CWD: cfg.Dir, PID: os.Getpid()}
+	result, err := PromptSession(ctx, cfg, session, "after-clear-request", "new conversation", 300*time.Millisecond, "mcp:fixture")
+	if err != nil || !result.TransportEnqueued {
+		t.Fatalf("native prompt lost announced binding: %+v %v", result, err)
+	}
+	if fixture.calls.Load() != 1 || len(fixture.input) != 2 {
+		t.Fatal("new conversation did not receive the prompt")
+	}
+}

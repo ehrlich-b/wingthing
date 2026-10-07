@@ -415,6 +415,30 @@ func recordedCodexSessionID(events []SessionEvent) string {
 	return ""
 }
 
+// SessionStart in this egg's own spool may announce /clear or /resume.
+// Keep the launch binding as an allowed historical ID, but read the latest
+// recorded conversation; a caller cannot introduce a new provider identity.
+func recordedHookSessionID(events []SessionEvent, agent, fallback string) string {
+	for _, event := range events {
+		if event.Source == agent+"_hook" && event.Type == "session_ready" && validLifecycleID(event.ProviderSessionID) {
+			fallback = event.ProviderSessionID
+		}
+	}
+	return fallback
+}
+
+func providerSessionRecorded(events []SessionEvent, agent, launchID, id string) bool {
+	if id == launchID {
+		return true
+	}
+	for _, event := range events {
+		if event.Source == agent+"_hook" && event.Type == "session_ready" && event.ProviderSessionID == id && validLifecycleID(id) {
+			return true
+		}
+	}
+	return false
+}
+
 // ReadSessionLifecycle imports exact native records into a durable journal and
 // returns bounded cursor replay. State completion means the foreground turn;
 // process_alive separately identifies whether this conversation can accept work.
@@ -442,16 +466,10 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 	if err != nil {
 		return view, err
 	}
-	if agent == "codex" && recordedID == "" {
-		recordedID = recordedCodexSessionID(j.events)
-	}
-	if exactProviderID != "" && exactProviderID != recordedID {
-		return view, errors.New("provider session ID does not match this egg's recorded session")
-	}
-	exactProviderID = recordedID
-	view.ProviderSessionID = recordedID
+	launchID := recordedID
+	recordedID = recordedHookSessionID(j.events, agent, recordedID)
 	var providerRoot *os.File
-	if providerHome != "" && ((agent == "claude" && validLifecycleID(exactProviderID)) || agent == "codex") {
+	if providerHome != "" && (agent == "claude" || agent == "codex") {
 		providerRoot, err = openProviderHome(providerHome)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return view, err
@@ -460,6 +478,17 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 			defer providerRoot.Close()
 		}
 	}
+	if agent == "claude" || agent == "codex" {
+		recordedID, err = j.importProviderHooks(providerRoot, filepath.Join("."+agent, "wingthing-events", view.SessionID), recordedID, agent)
+		if err != nil {
+			return view, err
+		}
+	}
+	if exactProviderID != "" && !providerSessionRecorded(j.events, agent, launchID, exactProviderID) {
+		return view, errors.New("provider session ID does not match this egg's recorded session")
+	}
+	exactProviderID = recordedID
+	view.ProviderSessionID = recordedID
 	processEnded := false
 	var processEnd SessionEvent
 	for _, event := range j.events {
@@ -470,14 +499,6 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 	}
 	if agent == "claude" && validLifecycleID(exactProviderID) {
 		if err = j.importTranscript(providerRoot, eggDir, cwd, exactProviderID, processEnded); err != nil {
-			return view, err
-		}
-		if err = j.importHooks(providerRoot, view.SessionID, exactProviderID); err != nil {
-			return view, err
-		}
-	} else if agent == "codex" {
-		view.ProviderSessionID, err = j.importCodexHooks(providerRoot, view.SessionID, exactProviderID)
-		if err != nil {
 			return view, err
 		}
 	}
@@ -626,7 +647,7 @@ func boundedLifecycleString(value string) string {
 func (j *lifecycleJournal) importTranscript(root *os.File, eggDir, cwd, id string, processEnded bool) error {
 	var offset int64
 	for _, e := range j.events {
-		if e.SourceKey == "transcript" && e.SourceOffset > offset {
+		if e.SourceKey == "transcript" && e.ProviderSessionID == id && e.SourceOffset > offset {
 			offset = e.SourceOffset
 		}
 	}
@@ -911,9 +932,9 @@ func (j *lifecycleJournal) importProviderHooks(root *os.File, spool, providerID,
 		if json.Unmarshal(data, &hook) != nil {
 			return providerID, errors.New("invalid published native lifecycle hook")
 		}
-		// A fresh Codex thread chooses its own ID. Bind once from SessionStart
-		// in this egg's private spool, then reject other threads (and subagents).
-		if agent == "codex" && providerID == "" && hook.Event == "SessionStart" && validLifecycleID(hook.SessionID) {
+		// Claude /clear and /resume announce new conversations in this egg's
+		// spool. Codex chooses a fresh main thread once; subagents cannot rebind it.
+		if (agent == "claude" || providerID == "") && hook.Event == "SessionStart" && validLifecycleID(hook.SessionID) {
 			providerID = hook.SessionID
 		}
 		e.ProviderSessionID = providerID

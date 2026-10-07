@@ -1058,3 +1058,75 @@ func TestLifecycleHookPublishOrderSurvivesEqualMtimeReversedTempNames(t *testing
 		t.Fatalf("full replay duplicated records: %+v", v)
 	}
 }
+
+func TestClaudeSessionStartRebindsTranscriptAndCapture(t *testing.T) {
+	dir, home, cwd, path := lifecycleFixture(t)
+	lifecycleWrite(t, path, `{"type":"user","sessionId":"ours","message":{"content":"a long launch conversation to exceed the next transcript's length"}}`+"\n")
+	before := lifecycleRead(t, dir, home, cwd, 0, 200)
+	for i, id := range []string{"after-clear", "after-resume"} {
+		lifecycleHook(t, home, filepath.Base(dir), fmt.Sprintf("seq.%020d", i+1), fmt.Sprintf(`{"session_id":%q,"hook_event_name":"SessionStart"}`, id))
+		content := fmt.Sprintf(`{"type":"user","sessionId":%q,"message":{"content":%q}}`+"\n", id, id)
+		lifecycleWrite(t, filepath.Join(filepath.Dir(path), id+".jsonl"), content)
+		view, err := ReadSessionLifecycle(dir, "claude", cwd, home, "ours", true, before.Cursor, 200)
+		if err != nil || view.ProviderSessionID != id || !view.Ready {
+			t.Fatalf("SessionStart did not rebind: %+v %v", view, err)
+		}
+		messages := 0
+		for _, event := range view.Events {
+			if event.Source == "claude_transcript" {
+				messages++
+				if event.ProviderSessionID != id || event.Text != id {
+					t.Fatalf("previous transcript cursor leaked into new conversation: %+v", event)
+				}
+			}
+		}
+		if messages != 1 {
+			t.Fatalf("new conversation imported %d messages", messages)
+		}
+		// Reconnect with either the launch ID or the provider-announced ID.
+		for _, requested := range []string{"ours", id} {
+			reconnected, err := ReadSessionLifecycle(dir, "claude", cwd, home, requested, true, view.Cursor, 200)
+			if err != nil || reconnected.ProviderSessionID != id || reconnected.Cursor != view.Cursor || len(reconnected.Events) != 0 {
+				t.Fatalf("reconnect lost binding or cursor: %+v %v", reconnected, err)
+			}
+		}
+		if err := CaptureSessionHistory("claude", cwd, dir, home, time.Time{}, "ours"); err != nil {
+			t.Fatal(err)
+		}
+		meta, err := os.ReadFile(filepath.Join(dir, "chat.meta"))
+		if err != nil || ParseChatMeta(string(meta))["agent_session_id"] != id {
+			t.Fatalf("capture retained launch binding: %s %v", meta, err)
+		}
+		if restored, err := RestoreSessionHistory("claude", cwd, dir, home); err != nil || restored != id {
+			t.Fatalf("recorded changed conversation could not resume: %q %v", restored, err)
+		}
+		before = view
+	}
+}
+
+func TestClaudeSessionChangeRefusesUnrecordedID(t *testing.T) {
+	dir, home, cwd, path := lifecycleFixture(t)
+	lifecycleHook(t, home, filepath.Base(dir), "seq.00000000000000000001", `{"session_id":"after-clear","hook_event_name":"SessionStart"}`)
+	lifecycleHook(t, home, filepath.Base(dir), "seq.00000000000000000002", `{"session_id":"victim","hook_event_name":"UserPromptSubmit","prompt":"must not rebind"}`)
+	lifecycleWrite(t, filepath.Join(filepath.Dir(path), "victim.jsonl"), `{"type":"user","sessionId":"victim","message":{"content":"victim-secret"}}`+"\n")
+	if _, err := ReadSessionLifecycle(dir, "claude", cwd, home, "victim", true, 0, 200); err == nil {
+		t.Fatal("unrecorded provider ID accepted after SessionStart changed the binding")
+	}
+	if err := CaptureSessionHistory("claude", cwd, dir, home, time.Time{}, "victim"); err == nil {
+		t.Fatal("unrecorded provider ID captured after SessionStart changed the binding")
+	}
+	assertNoImportedTranscript(t, dir)
+}
+
+func TestClaudeSessionStartBindsLegacyEgg(t *testing.T) {
+	dir, home, cwd, path := lifecycleFixture(t)
+	if err := os.Remove(filepath.Join(dir, "egg.meta")); err != nil {
+		t.Fatal(err)
+	}
+	lifecycleHook(t, home, filepath.Base(dir), "seq.00000000000000000001", `{"session_id":"ours","hook_event_name":"SessionStart"}`)
+	lifecycleWrite(t, path, `{"type":"user","sessionId":"ours","message":{"content":"legacy own conversation"}}`+"\n")
+	view := lifecycleRead(t, dir, home, cwd, 0, 200)
+	if view.ProviderSessionID != "ours" || !view.Ready || len(view.Events) != 2 {
+		t.Fatalf("legacy egg lost its own native binding: %+v", view)
+	}
+}

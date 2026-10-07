@@ -28,44 +28,40 @@ func CaptureSessionHistory(agent, cwd, eggDir, home string, startedAfter time.Ti
 	if err != nil {
 		return err
 	}
+	launchID := requestedID
 	var j *lifecycleJournal
-	if agent == "codex" && requestedID == "" {
-		// Fresh Codex IDs are chosen by the provider and recorded by SessionStart
-		// in this egg's private hook journal, rather than guessed from filenames.
+	if agent == "claude" || agent == "codex" {
 		j, err = openLifecycleJournal(eggDir)
 		if err != nil {
 			return err
 		}
-		defer func() {
-			if j != nil {
-				j.close()
-			}
-		}()
-		requestedID = recordedCodexSessionID(j.events)
-	}
-	if len(exactSessionID) > 0 && (agent != "codex" || exactSessionID[0] != "") && exactSessionID[0] != requestedID {
-		return errors.New("provider session ID does not match this egg's recorded session")
-	}
-	if agent != "codex" && !validLifecycleID(requestedID) {
-		return errors.New("recorded provider session ID is required for capture")
+		defer j.close()
+		requestedID = recordedHookSessionID(j.events, agent, requestedID)
 	}
 	root, err := openProviderHome(home)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	defer root.Close()
+	if root != nil {
+		defer root.Close()
+	}
 	if j != nil {
-		if requestedID == "" {
-			requestedID, err = j.importCodexHooks(root, filepath.Base(eggDir), "")
-		}
-		j.close()
-		j = nil
+		requestedID, err = j.importProviderHooks(root, filepath.Join("."+agent, "wingthing-events", filepath.Base(eggDir)), requestedID, agent)
 		if err != nil {
 			return err
 		}
+	}
+	if len(exactSessionID) > 0 && (agent != "codex" || exactSessionID[0] != "") {
+		matches := exactSessionID[0] == launchID
+		if j != nil {
+			matches = providerSessionRecorded(j.events, agent, launchID, exactSessionID[0])
+		}
+		if !matches {
+			return errors.New("provider session ID does not match this egg's recorded session")
+		}
+	}
+	if agent != "codex" && !validLifecycleID(requestedID) {
+		return errors.New("recorded provider session ID is required for capture")
 	}
 	if !validLifecycleID(requestedID) {
 		return nil // A fresh Codex thread has not published SessionStart yet.

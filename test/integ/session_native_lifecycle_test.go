@@ -22,6 +22,9 @@ func TestSessionNativeLifecycleProtocolReconnect(t *testing.T) {
 	home := t.TempDir()
 	dir := t.TempDir()
 	id := filepath.Base(dir)
+	if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=claude\nprovider_session_id=ours\nprovider_home="+home+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	args, err := egg.ClaudeLifecycleArgs([]string{"--session-id", "ours"}, home, id, "ours")
 	if err != nil {
 		t.Fatal(err)
@@ -103,6 +106,9 @@ func TestSessionPromptNativeTranscriptReceiptAfterLostConnection(t *testing.T) {
 	home := t.TempDir()
 	dir := t.TempDir()
 	id := filepath.Base(dir)
+	if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=claude\nprovider_session_id=ours\nprovider_home="+home+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	cwd := "/fixture/multiline"
 	args, err := egg.ClaudeLifecycleArgs(nil, home, id, "ours")
 	if err != nil {

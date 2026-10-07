@@ -83,7 +83,15 @@ func RestoreSessionHistory(agent, cwd, eggDir, home string) (agentSessionID stri
 		return "", err
 	}
 	if recordedID != "" && recordedID != agentSessionID {
-		return "", errors.New("captured provider session ID does not match egg metadata")
+		j, err := openLifecycleJournal(eggDir)
+		if err != nil {
+			return "", err
+		}
+		matches := providerSessionRecorded(j.events, agent, recordedID, agentSessionID)
+		j.close()
+		if !matches {
+			return "", errors.New("captured provider session ID does not match egg metadata")
+		}
 	}
 
 	gzFile, err := openProviderPath(eggRoot, "chat.jsonl.gz", false)
