@@ -422,7 +422,7 @@ func TestRoostPolicyLinuxPersonalDefaultWithoutEggYAMLStarts(t *testing.T) {
 	t.Cleanup(func() { _ = sb.Destroy() })
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd, err := sb.Exec(ctx, "/bin/sh", []string{"-c", "set -e; printf ordinary > ordinary; printf launched"})
+	cmd, err := sb.Exec(ctx, "/bin/sh", []string{"-c", `set -e; printf ordinary > "$1/ordinary"; printf launched`, "personal-default", project})
 	if err != nil {
 		t.Fatal(err)
 	}
