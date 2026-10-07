@@ -331,7 +331,22 @@ func LocalMCPTools() []LocalMCPTool {
 // roostNativeMCPTools adapts the local typed control surface to authenticated
 // Streamable HTTP MCP. The request principal is supplied by the roost after
 // bearer-token verification and never accepted from tool arguments.
-func RoostNativeMCPTools(version string, cfg *config.Config, sharedHost bool) []mcppkg.NativeTool {
+func RoostNativeMCPTools(version string, cfg *config.Config, sharedHost bool, sources ...func() (*config.WingConfig, *egg.EggConfig)) []mcppkg.NativeTool {
+	// Standalone callers capture once; the embedded roost supplies the wing's
+	// synchronized runtime snapshot, which changes on administrator reloads.
+	var initial *config.WingConfig
+	var initialEgg *egg.EggConfig
+	var policyErr error
+	var policySource func() (*config.WingConfig, *egg.EggConfig)
+	if len(sources) > 0 {
+		policySource = sources[0]
+	} else {
+		initial, policyErr = config.LoadWingConfig(cfg.Dir)
+		if policyErr == nil {
+			initialEgg, policyErr = loadRuntimeEggDefault(cfg.Dir, initial)
+		}
+		policySource = func() (*config.WingConfig, *egg.EggConfig) { return initial, initialEgg }
+	}
 	var tools []mcppkg.NativeTool
 	admission := NewMCPAdmissionState()
 	for _, localTool := range control.ToolsForAuthority(control.SurfaceHTTPMCP, control.AuthorityWing) {
@@ -343,11 +358,15 @@ func RoostNativeMCPTools(version string, cfg *config.Config, sharedHost bool) []
 				if principal.UserID == "" {
 					return nil, true, errors.New("authenticated user identity is required")
 				}
-				paths, err := roostMCPPaths(cfg, principal.Email)
+				if policyErr != nil {
+					return nil, true, fmt.Errorf("load roost path policy: %w", policyErr)
+				}
+				wingCfg, wingDefault := policySource()
+				paths, err := roostMCPPaths(wingCfg, principal.Email)
 				if err != nil {
 					return nil, true, err
 				}
-				server := newRoostNativeMCPServer(version, cfg, sharedHost, admission, principal, paths)
+				server := newRoostNativeMCPServer(version, cfg, sharedHost, admission, principal, paths, func() (*config.WingConfig, *egg.EggConfig) { return wingCfg, wingDefault })
 				data, isError, protocolErr := server.callTool(ctx, tool.Name, arguments)
 				if protocolErr != nil {
 					return map[string]any{"error": protocolErr.Message}, true, nil
@@ -359,12 +378,12 @@ func RoostNativeMCPTools(version string, cfg *config.Config, sharedHost bool) []
 	return tools
 }
 
-func newRoostNativeMCPServer(version string, cfg *config.Config, sharedHost bool, admission *AdmissionState, principal mcppkg.Principal, paths []string) *Server {
+func newRoostNativeMCPServer(version string, cfg *config.Config, sharedHost bool, admission *AdmissionState, principal mcppkg.Principal, paths []string, sources ...func() (*config.WingConfig, *egg.EggConfig)) *Server {
 	grants := GrantSet(defaultDirectMCPGrants)
 	if portalTool, ok := control.Lookup("wing_list"); ok {
 		grants[portalTool.Grant] = true
 	}
-	return &Server{Version: version,
+	server := &Server{Version: version,
 		Cfg: cfg, Logs: os.Stderr,
 		Principal:         roostSessionPrincipal(principal.UserID),
 		Actor:             principal.ClientID,
@@ -380,6 +399,59 @@ func newRoostNativeMCPServer(version string, cfg *config.Config, sharedHost bool
 			AllowedPaths: append([]string(nil), paths...), SealedFS: sharedHost,
 		},
 	}
+	var wingDefault *egg.EggConfig
+	var wingCfg *config.WingConfig
+	var err error
+	if len(sources) > 0 {
+		wingCfg, wingDefault = sources[0]()
+		if wingDefault == nil {
+			err = errors.New("roost runtime egg policy is not ready")
+		}
+	} else {
+		wingCfg, err = config.LoadWingConfig(cfg.Dir)
+		if err == nil {
+			wingDefault, err = loadRuntimeEggDefault(cfg.Dir, wingCfg)
+		}
+	}
+	if wingCfg != nil {
+		server.identity.OrgWing = wingCfg.Org != ""
+	}
+	if sharedHost || server.identity.OrgWing {
+		member := wingCfg == nil || !wingCfg.IsAdmin(principal.Email)
+		server.enforcePathBounds = member
+		home, _ := os.UserHomeDir()
+		server.launchConfig = runtimeLaunchConfig(wingCfg, home, member, paths, wingDefault, err)
+	}
+	return server
+}
+
+func loadRuntimeEggDefault(dir string, wingCfg *config.WingConfig) (*egg.EggConfig, error) {
+	path := filepath.Join(dir, "egg.yaml")
+	if wingCfg != nil && wingCfg.EggConfig != "" {
+		path = wingCfg.EggConfig
+	}
+	cfg, err := egg.ResolveEggConfig(path)
+	if errors.Is(err, os.ErrNotExist) && (wingCfg == nil || wingCfg.EggConfig == "") {
+		cfg = egg.DefaultEggConfig()
+		err = nil
+	}
+	return cfg, err
+}
+
+func runtimeLaunchConfig(wingCfg *config.WingConfig, home string, member bool, allowedRoots []string, wingDefault *egg.EggConfig, loadErr error) func(string) (*egg.EggConfig, error) {
+	var roots []string
+	if wingCfg != nil {
+		roots = wingpolicy.ResolvePathStrings(wingCfg.Paths.Strings(), home)
+	}
+	return func(cwd string) (*egg.EggConfig, error) {
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		if wingDefault == nil {
+			return nil, errors.New("administrator runtime egg policy is not ready")
+		}
+		return eggclient.LoadRoostEggConfig(cwd, roots, allowedRoots, member, wingDefault)
+	}
 }
 
 func roostSessionPrincipal(userID string) string {
@@ -387,13 +459,16 @@ func roostSessionPrincipal(userID string) string {
 	return "user-" + hex.EncodeToString(digest[:10])
 }
 
-func roostMCPPaths(cfg *config.Config, email string) ([]string, error) {
-	wingCfg, err := config.LoadWingConfig(cfg.Dir)
-	if err != nil {
-		return nil, fmt.Errorf("load roost path policy: %w", err)
+func roostMCPPaths(wingCfg *config.WingConfig, email string) ([]string, error) {
+	if wingCfg == nil {
+		return nil, errors.New("roost runtime policy is not ready")
 	}
 	home, _ := os.UserHomeDir()
-	return wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, email, "member", home)), nil
+	role := "member"
+	if wingCfg.IsAdmin(email) {
+		role = "admin"
+	}
+	return wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, email, role, home)), nil
 }
 
 func localMCPToolResult(data map[string]any, isError bool) map[string]any {
@@ -937,10 +1012,18 @@ func (s *Server) toolSandboxExplain(arguments json.RawMessage) (map[string]any, 
 	}
 	var eggCfg *egg.EggConfig
 	var source string
-	if s.Unsandboxed && args.Config != "" {
+	if s.identity.UserID != "" && (s.identity.SharedHost || s.identity.OrgWing) {
+		if args.Config != "" {
+			return nil, errors.New("sandbox_explain uses the administrator runtime policy on shared or organization hosts")
+		}
+		eggCfg, err = s.loadLaunchConfig(cwd)
+		if err != nil {
+			return nil, err
+		}
+		source = "administrator runtime policy"
+	} else if s.Unsandboxed && args.Config != "" {
 		return nil, errors.New("sandbox_explain config cannot be combined with MCP server --unsandboxed; spawned processes use the outer host boundary")
-	}
-	if s.Unsandboxed {
+	} else if s.Unsandboxed {
 		eggCfg = egg.UnsandboxedEggConfig()
 		source = "MCP server --unsandboxed"
 	} else {
@@ -1543,6 +1626,9 @@ func (s *Server) submitAgentRun(args agentRunArgs, followup *agentRunFollowup) (
 	if s.Unsandboxed {
 		task.Isolation = "privileged"
 	}
+	if err := s.freezeTaskLaunchConfig(task); err != nil {
+		return nil, err
+	}
 	if err := s.admitSpawn(func() error {
 		taskStore, openErr := store.Open(s.Cfg.DBPath())
 		if openErr != nil {
@@ -1661,6 +1747,34 @@ func (s *Server) agentTaskRunOptions() (taskrun.TaskRunOptions, error) {
 		}
 	}
 	return options, nil
+}
+
+func (s *Server) freezeTaskLaunchConfig(task *store.Task) error {
+	if s.Unsandboxed && s.identity.UserID != "" && (s.identity.SharedHost || s.identity.OrgWing) {
+		return errors.New("privileged isolation is not available on a shared or organization host")
+	}
+	cwd, err := s.resolveWorkingDirectory(task.CWD)
+	if err != nil {
+		return err
+	}
+	cfg, err := s.loadLaunchConfig(cwd)
+	if err != nil {
+		return err
+	}
+	task.EggConfigYAML, err = cfg.YAML()
+	task.CWD = cwd
+	return err
+}
+
+func (s *Server) runTask(ctx context.Context, taskStore *store.Store, task *store.Task) error {
+	options, err := s.agentTaskRunOptions()
+	if err != nil {
+		return err
+	}
+	if s.runAgentTask != nil {
+		return s.runAgentTask(ctx, s.Cfg, taskStore, task, options)
+	}
+	return taskrun.RunTaskToWithOptions(ctx, s.Cfg, taskStore, task, io.Discard, options)
 }
 
 func (s *Server) setAgentRunError(runID string, runErr error) {
@@ -2289,7 +2403,7 @@ func (s *Server) toolPromptRun(ctx context.Context, arguments json.RawMessage) (
 	} else if args.Revision != "" || len(args.Variables) > 0 {
 		return nil, false, errors.New("revision and variables require prompt_name")
 	}
-	resolvedCWD, err := ResolveWorkingDirectory(args.CWD)
+	resolvedCWD, err := s.resolveWorkingDirectory(args.CWD)
 	if err != nil {
 		return nil, false, err
 	}
@@ -2360,10 +2474,13 @@ func (s *Server) executePrompt(ctx context.Context, prompt, agentName, cwd, prom
 	if s.Unsandboxed {
 		task.Isolation = "privileged"
 	}
+	if err := s.freezeTaskLaunchConfig(task); err != nil {
+		return nil, err
+	}
 	if err := taskStore.CreateTask(task); err != nil {
 		return nil, err
 	}
-	runErr := taskrun.RunTaskTo(ctx, s.Cfg, taskStore, task, io.Discard)
+	runErr := s.runTask(ctx, taskStore, task)
 	stored, getErr := taskStore.GetTask(task.ID)
 	if getErr != nil {
 		return task, errors.Join(runErr, getErr)
@@ -2399,11 +2516,19 @@ func (s *Server) toolPromptLoop(ctx context.Context, arguments json.RawMessage) 
 	if _, ok := agentpkg.LookupDefinition(args.Agent); !ok {
 		return nil, false, fmt.Errorf("unsupported agent %q", args.Agent)
 	}
-	resolvedCWD, err := ResolveWorkingDirectory(args.CWD)
+	resolvedCWD, err := s.resolveWorkingDirectory(args.CWD)
 	if err != nil {
 		return nil, false, err
 	}
 	args.CWD = resolvedCWD
+
+	probe := &store.Task{CWD: args.CWD}
+	if s.Unsandboxed {
+		probe.Isolation = "privileged"
+	}
+	if err := s.freezeTaskLaunchConfig(probe); err != nil {
+		return nil, false, err
+	}
 
 	root, rootStore, err := s.createMetaTask("loop", args.Prompt, args.Agent, args.CWD)
 	if err != nil {
@@ -2502,11 +2627,19 @@ func (s *Server) toolSwarmRun(ctx context.Context, arguments json.RawMessage) (m
 	if args.Name == "" {
 		args.Name = "agent swarm"
 	}
-	resolvedCWD, err := ResolveWorkingDirectory(args.CWD)
+	resolvedCWD, err := s.resolveWorkingDirectory(args.CWD)
 	if err != nil {
 		return nil, false, err
 	}
 	args.CWD = resolvedCWD
+
+	probe := &store.Task{CWD: args.CWD}
+	if s.Unsandboxed {
+		probe.Isolation = "privileged"
+	}
+	if err := s.freezeTaskLaunchConfig(probe); err != nil {
+		return nil, false, err
+	}
 
 	root, rootStore, err := s.createMetaTask("swarm", args.Name, s.Cfg.DefaultAgent, args.CWD)
 	if err != nil {
@@ -2544,8 +2677,11 @@ func (s *Server) toolSwarmRun(ctx context.Context, arguments json.RawMessage) (m
 		if s.Unsandboxed {
 			task.Isolation = "privileged"
 		}
+		if err := s.freezeTaskLaunchConfig(task); err != nil {
+			return nil, true, errors.Join(err, rootStore.UpdateTaskStatus(root.ID, "failed"))
+		}
 		if err := rootStore.CreateTask(task); err != nil {
-			return nil, true, err
+			return nil, true, errors.Join(err, rootStore.UpdateTaskStatus(root.ID, "failed"))
 		}
 	}
 
@@ -2623,7 +2759,7 @@ func (s *Server) toolSwarmRun(ctx context.Context, arguments json.RawMessage) (m
 				defer cmdutil.CloseWithLog("task store", taskStore)
 				task, getErr := taskStore.GetTask(taskIDs[node.ID])
 				if getErr == nil && task != nil {
-					runErr := taskrun.RunTaskTo(ctx, s.Cfg, taskStore, task, io.Discard)
+					runErr := s.runTask(ctx, taskStore, task)
 					refreshed, refreshErr := taskStore.GetTask(task.ID)
 					if refreshErr == nil {
 						task = refreshed
@@ -2819,18 +2955,18 @@ func taskData(task *store.Task) map[string]any {
 }
 
 func (s *Server) resolveWorkingDirectory(cwd string) (string, error) {
+	if cwd == "" && s.identity.UserID != "" && (s.identity.SharedHost || s.identity.OrgWing) && len(s.allowedPaths) > 0 {
+		cwd = s.allowedPaths[0]
+	}
 	resolved, err := ResolveWorkingDirectory(cwd)
 	if err != nil {
 		return "", err
 	}
-	canonical := filepath.Clean(resolved)
-	if evaluated, evalErr := filepath.EvalSymlinks(canonical); evalErr == nil {
-		canonical = evaluated
-	}
+	canonical := wingpolicy.CanonicalSessionPath(resolved)
 	if s.enforcePathBounds && len(s.allowedPaths) == 0 {
 		return "", errors.New("this roost user has no configured workspace paths")
 	}
-	if len(s.allowedPaths) > 0 && !wingpolicy.IsUnderPaths(canonical, s.allowedPaths) {
+	if len(s.allowedPaths) > 0 && !wingpolicy.IsUnderPaths(canonical, s.allowedPaths) && (s.enforcePathBounds || !(s.identity.SharedHost || s.identity.OrgWing)) {
 		return "", fmt.Errorf("working directory %q is outside this user's roost paths", resolved)
 	}
 	return canonical, nil
@@ -2847,6 +2983,9 @@ func (s *Server) loadLaunchConfig(cwd string) (*egg.EggConfig, error) {
 	}
 	if s.broker != nil {
 		return s.broker.childEggConfig(cwd)
+	}
+	if s.identity.UserID != "" && (s.identity.SharedHost || s.identity.OrgWing) {
+		return nil, errors.New("administrator runtime egg policy is required")
 	}
 	return eggclient.LoadSpawnEggConfig("", cwd, s.Unsandboxed)
 }

@@ -259,7 +259,7 @@ func (s *Server) toolAgentContinue(arguments json.RawMessage) (map[string]any, e
 }
 
 func (s *Server) launchHeadlessContinuation(c *store.Conversation, turn *store.ConversationContinuation, model, input string) error {
-	eggCfg, err := eggclient.LoadSpawnEggConfig("", c.CWD, s.Unsandboxed)
+	eggCfg, err := s.loadLaunchConfig(c.CWD)
 	if err != nil {
 		return err
 	}

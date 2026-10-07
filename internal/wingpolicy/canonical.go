@@ -7,11 +7,7 @@ import (
 func CanonicalPaths(paths []string) []string {
 	canonical := make([]string, 0, len(paths))
 	for _, path := range paths {
-		cleaned := filepath.Clean(path)
-		if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
-			cleaned = resolved
-		}
-		canonical = append(canonical, cleaned)
+		canonical = append(canonical, CanonicalSessionPath(path))
 	}
 	return canonical
 }
@@ -19,7 +15,7 @@ func CanonicalPaths(paths []string) []string {
 func CanonicalSessionPath(path string) string {
 	cleaned := filepath.Clean(path)
 	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
-		return resolved
+		cleaned = resolved
 	}
-	return cleaned
+	return canonicalPathCase(cleaned)
 }

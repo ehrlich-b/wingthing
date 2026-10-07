@@ -329,6 +329,16 @@ func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 	return DefaultEggConfig()
 }
 
+// RuntimeEggConfig copies the administrator's captured session policy without
+// consulting caller-writable workspace or global configuration files.
+func RuntimeEggConfig(wingDefault *EggConfig) *EggConfig {
+	if wingDefault == nil {
+		wingDefault = DefaultEggConfig()
+	}
+	cfg := *wingDefault
+	return &cfg
+}
+
 const maxBaseDepth = 10
 
 // ResolveEggConfig loads an egg.yaml and resolves its base chain, returning

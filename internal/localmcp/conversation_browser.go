@@ -131,6 +131,9 @@ func configureBrowserFork(s *Server, wc *config.WingConfig, req ws.TunnelRequest
 	s.identity = eggclient.BrowserEggIdentity(wc, start, home, sharedHost)
 	s.allowedPaths = s.identity.AllowedPaths
 	s.enforcePathBounds = len(s.allowedPaths) > 0 || wingpolicy.IsMemberRole(start.OrgRole)
+	if req.SenderUserID != "" && (wc.Org != "" || sharedHost) {
+		s.enforcePathBounds = wingpolicy.IsMemberRole(start.OrgRole)
+	}
 	s.forkIdleTimeout, _ = time.ParseDuration(wc.IdleTimeout)
 	s.forkTrace = true
 	s.forkTools = append([]*config.ToolConfig(nil), tools...)
