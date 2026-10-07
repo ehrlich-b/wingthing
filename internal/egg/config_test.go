@@ -536,6 +536,79 @@ func TestDefaultPolicyRefusesReplaceableToolLoaderPaths(t *testing.T) {
 	}
 }
 
+func TestLoaderPathsRejectHardLinkAliases(t *testing.T) {
+	for _, kind := range []string{"tool yaml", "tool yml", "tool symlink", "wing config", "global policy", "project policy", "base policy", "section policy"} {
+		t.Run(kind, func(t *testing.T) {
+			home := canonicalPolicyTestPath(t, t.TempDir())
+			t.Setenv("HOME", home)
+			state := filepath.Join(home, ".wingthing")
+			t.Setenv("WINGTHING_DIR", state)
+			work := filepath.Join(home, "workspace")
+			tools := filepath.Join(state, "tools")
+			for _, dir := range []string{work, tools} {
+				makeEggConfigTestDir(t, dir)
+			}
+			t.Chdir(work)
+			loader := filepath.Join(tools, "host.yaml")
+			body := "name: host\nrun: /bin/true\n"
+			switch kind {
+			case "tool yml":
+				loader = filepath.Join(tools, "host.yml")
+			case "tool symlink":
+				loader = filepath.Join(home, "host.yaml")
+				if err := os.Symlink(loader, filepath.Join(tools, "host.yaml")); err != nil {
+					t.Fatal(err)
+				}
+			case "wing config":
+				loader, body = filepath.Join(state, "wing.yaml"), "tools_dir: tools\n"
+			case "global policy":
+				loader, body = filepath.Join(state, "egg.yaml"), "fs: [rw:./]\n"
+			case "project policy":
+				loader, body = filepath.Join(work, "egg.yaml"), "base: none\nfs: [rw:./]\n"
+			case "base policy", "section policy":
+				loader, body = filepath.Join(home, "base.yaml"), "base: none\nfs: [rw:./]\n"
+				base := "base: " + loader + "\n"
+				if kind == "section policy" {
+					base = "base:\n  fs: " + loader + "\n"
+				}
+				writeEggConfigTestFile(t, filepath.Join(work, "egg.yaml"), base)
+			}
+			writeEggConfigTestFile(t, loader, body)
+			alias := filepath.Join(work, "writable-alias.yaml")
+			if err := os.Link(loader, alias); err != nil {
+				t.Fatal(err)
+			}
+			// This is a regular-file alias, not a symlink. Path masks cannot
+			// stop writes through the workspace's second name for the inode.
+			original, err := os.Stat(loader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			linked, err := os.Lstat(alias)
+			if err != nil || !linked.Mode().IsRegular() || !os.SameFile(original, linked) {
+				t.Fatalf("invalid hard-link fixture: %v", err)
+			}
+			cfg := DiscoverEggConfig(work, nil)
+			if err := cfg.ResolutionError(); !isUnsafePolicyPath(err) || !strings.Contains(err.Error(), "hard links") {
+				t.Fatalf("writable hard-link alias admitted: %v", err)
+			}
+			if _, err := cfg.YAML(); !isUnsafePolicyPath(err) {
+				t.Fatalf("hard-link refusal lost during serialization: %v", err)
+			}
+			if _, err := ResolvePolicyWithProvider(cfg, "codex", home, ""); !isUnsafePolicyPath(err) {
+				t.Fatalf("hard-link refusal lost during policy resolution: %v", err)
+			}
+			// Removing the alias restores the supported one-link layout.
+			if err := os.Remove(alias); err != nil {
+				t.Fatal(err)
+			}
+			if err := DiscoverEggConfig(work, nil).ResolutionError(); err != nil {
+				t.Fatalf("one-link loader refused: %v", err)
+			}
+		})
+	}
+}
+
 func TestToolLoaderSealsResolvedDirectory(t *testing.T) {
 	home := t.TempDir() // includes the immutable /var alias on macOS
 	t.Setenv("HOME", home)

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	wingconfig "github.com/ehrlich-b/wingthing/internal/config"
@@ -755,11 +756,18 @@ func resolveEggConfig(path string, visited map[string]bool, depth int) (*EggConf
 	return MergeEggConfig(parent, child), nil
 }
 
-// PolicyPathError refuses aliases whose entry or ancestors the sandboxed agent
-// could replace. Host-user write permissions alone do not make an alias unsafe.
-type PolicyPathError struct{ Path string }
+// PolicyPathError refuses replaceable symlinks and regular-file hard links
+// whose other names cannot be sealed by the sandbox's pathname protections.
+// Host-user write permissions alone do not make a symlink unsafe.
+type PolicyPathError struct {
+	Path  string
+	Links uint64
+}
 
 func (e *PolicyPathError) Error() string {
+	if e.Links > 1 {
+		return fmt.Sprintf("policy path has multiple hard links (%d): %s", e.Links, e.Path)
+	}
 	return fmt.Sprintf("policy path traverses a replaceable symlink: %s", e.Path)
 }
 
@@ -833,6 +841,15 @@ func resolveLoaderPath(path string, allowMissing bool, grants ...[]sandbox.Mount
 			return "", fmt.Errorf("inspect policy path: %w", err)
 		}
 		if info.Mode()&os.ModeSymlink == 0 {
+			if info.Mode().IsRegular() {
+				stat, ok := info.Sys().(*syscall.Stat_t)
+				if !ok {
+					return "", fmt.Errorf("inspect policy path link count: %s", next)
+				}
+				if stat.Nlink > 1 {
+					return "", &PolicyPathError{Path: next, Links: uint64(stat.Nlink)}
+				}
+			}
 			current = next
 			continue
 		}
