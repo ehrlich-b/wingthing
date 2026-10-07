@@ -2,6 +2,7 @@ package egg
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"sync"
@@ -29,6 +30,8 @@ type VTerm struct {
 	title        string
 	titleChanged bool
 	onTitle      func(string)
+
+	drained chan struct{} // closed when the reply drain exits
 }
 
 // NewVTerm creates a VTerm with the given dimensions.
@@ -86,6 +89,14 @@ func NewVTerm(cols, rows int) *VTerm {
 			}
 		},
 	})
+	// The emulator answers terminal queries (DA, XTVERSION, mode reports) into
+	// a pipe; unread, the first query blocks Write forever. The browser's real
+	// terminal already answers them, so the shadow copy's replies are dropped.
+	v.drained = make(chan struct{})
+	go func() {
+		defer close(v.drained)
+		_, _ = io.Copy(io.Discard, v.emu)
+	}()
 	return v
 }
 
@@ -171,6 +182,12 @@ func (v *VTerm) ScrollbackLen() int {
 
 // Close releases the emulator resources.
 func (v *VTerm) Close() error {
+	// End the reply drain before the emulator marks itself closed; its Read
+	// checks that flag without a lock.
+	if pw, ok := v.emu.InputPipe().(*io.PipeWriter); ok {
+		_ = pw.Close()
+	}
+	<-v.drained
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return v.emu.Close()

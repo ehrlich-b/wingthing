@@ -849,3 +849,23 @@ func TestAsyncVTermConcurrentFenceAndWrites(t *testing.T) {
 		}
 	}
 }
+
+func TestVTermSurvivesTerminalQueries(t *testing.T) {
+	v := NewVTerm(80, 24)
+	defer v.Close()
+	done := make(chan struct{})
+	go func() {
+		// Claude Code 2.1.292's startup queries: XTVERSION, kitty keyboard, DA1.
+		_, _ = v.Write([]byte("\x1b[>0q\x1b[?u\x1b[c\x1b[6n"))
+		_, _ = v.Write([]byte("after queries"))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("VTerm.Write blocked on a terminal query reply")
+	}
+	if !strings.Contains(string(v.Snapshot()), "after queries") {
+		t.Fatal("output after the queries is missing from the snapshot")
+	}
+}
