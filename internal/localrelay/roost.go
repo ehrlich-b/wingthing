@@ -226,6 +226,10 @@ func RunRoostForeground(version string, addrFlag string, devFlag bool, labelsFla
 				case <-ctx.Done():
 					return
 				case <-mcpSIGHUPCh:
+					if err := egg.CheckLoaderReloadIsolation(cfg.Dir); err != nil {
+						log.Printf("mcp: reload failed; keeping previous configuration: %v", err)
+						continue
+					}
 					newTools, newPolicy, reloadErr := loadRoostMCPConfig(cfg.Dir, contextCfg)
 					if reloadErr != nil {
 						log.Printf("mcp: reload failed; keeping previous configuration: %v", reloadErr)
