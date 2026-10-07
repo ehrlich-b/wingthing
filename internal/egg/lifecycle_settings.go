@@ -81,6 +81,14 @@ func openClaudeSettingsFile(path string, policy *sandbox.Config) (*os.File, erro
 	if policy == nil {
 		return openBoundRegularFile(path)
 	}
+	path, err := resolveSystemSettingsPath(path)
+	if err != nil {
+		return nil, err
+	}
+	return openJailedClaudeSettingsFile(path, []sandbox.Mount{{Source: "/"}})
+}
+
+func resolveSystemSettingsPath(path string) (string, error) {
 	// macOS exposes these OS-owned aliases outside the provider namespace.
 	// Resolve only the system prefix; provider-controlled descendants still
 	// undergo the same no-follow walk as jailed paths.
@@ -89,14 +97,14 @@ func openClaudeSettingsFile(path string, policy *sandbox.Config) (*os.File, erro
 			if settingsPathWithin(path, prefix) {
 				resolved, err := filepath.EvalSymlinks(prefix)
 				if err != nil {
-					return nil, err
+					return "", err
 				}
 				path = resolved + strings.TrimPrefix(path, prefix)
 				break
 			}
 		}
 	}
-	return openJailedClaudeSettingsFile(path, []sandbox.Mount{{Source: "/"}})
+	return path, nil
 }
 
 // Pin the mounted source and each descendant with openat/O_NOFOLLOW. Walking

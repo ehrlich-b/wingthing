@@ -55,6 +55,10 @@ func SnapshotAgentConfig(agent, isolatedHome string, policies ...*sandbox.Config
 	if !filepath.IsAbs(home) {
 		return snap
 	}
+	home, err := resolveSystemSettingsPath(home)
+	if err != nil {
+		return snap
+	}
 	// Start at / so snapshot homes get the same no-follow walk as descendants.
 	root, err := openProviderHome("/")
 	if err != nil {

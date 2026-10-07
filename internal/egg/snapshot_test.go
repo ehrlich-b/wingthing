@@ -4,8 +4,69 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/sandbox"
 )
+
+func TestConfigSnapshotTrustedSystemHomeAliases(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("trusted system aliases are macOS-only")
+	}
+	for _, prefix := range []string{"/tmp", "/var/tmp"} {
+		t.Run(prefix, func(t *testing.T) {
+			// Alias-specific fixtures need to live beneath the actual OS alias.
+			fixture, err := os.MkdirTemp(prefix, "wt-snapshot-alias-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(fixture) })
+			for _, agent := range []string{"claude", "codex"} {
+				t.Run(agent, func(t *testing.T) {
+					home := filepath.Join(fixture, agent)
+					t.Setenv("HOME", home)
+					path := expandTilde(agentConfigFiles[agent][0], home)
+					if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(path, []byte("original config"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					isolated := ""
+					if agent == "codex" {
+						isolated = home
+					}
+					snapshot := SnapshotAgentConfig(agent, isolated, &sandbox.Config{})
+					defer snapshot.Close()
+					if snapshot == nil || snapshot.home == nil || len(snapshot.files) != 1 {
+						t.Fatal("system HOME alias disabled the config snapshot")
+					}
+					if err := os.WriteFile(path, []byte("changed config"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					snapshot.Restore()
+					if data, err := os.ReadFile(path); err != nil || string(data) != "original config" {
+						t.Fatalf("aliased HOME config was not restored: %q, %v", data, err)
+					}
+					alias := filepath.Join(fixture, agent+"-linked")
+					if err := os.Symlink(home, alias); err != nil {
+						t.Fatal(err)
+					}
+					t.Setenv("HOME", alias)
+					if isolated != "" {
+						isolated = alias
+					}
+					refused := SnapshotAgentConfig(agent, isolated, &sandbox.Config{})
+					defer refused.Close()
+					if refused != nil && (refused.home != nil || len(refused.files) != 0) {
+						t.Fatal("snapshot followed a provider-controlled HOME symlink below the trusted system alias")
+					}
+				})
+			}
+		})
+	}
+}
 
 func TestIsolatedClaudeSettingsAreNotRolledBackWhenSessionExits(t *testing.T) {
 	home := t.TempDir()
