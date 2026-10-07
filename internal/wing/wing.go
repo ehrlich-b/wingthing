@@ -716,6 +716,8 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	} else if orgFlag != "" && wingCfg.Org != "" && orgFlag != wingCfg.Org {
 		return fmt.Errorf("org conflict: --org %q vs wing.yaml %q", orgFlag, wingCfg.Org)
 	}
+	// Keep registration and every runtime launch selector on the same binding.
+	wingCfg.Org = orgFlag
 	// Merge paths: CLI extends yaml (same pattern as labels)
 	var cliPaths []string
 	if pathsFlag != "" {
