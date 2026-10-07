@@ -185,3 +185,16 @@ func TestEffectiveProviderSessionStopsAtNativeTerminator(t *testing.T) {
 		})
 	}
 }
+
+func TestEffectiveProviderSessionRecordsCodexResume(t *testing.T) {
+	args := []string{"-m", "existing-model"}
+	for _, id := range []string{"", "resumed"} {
+		providerID, gotArgs, resumeID, err := EffectiveProviderSession("codex", id, args)
+		if err != nil || providerID != id || resumeID != id || !slices.Equal(gotArgs, args) {
+			t.Fatalf("Codex launch binding = %q args=%v resume=%q err=%v", providerID, gotArgs, resumeID, err)
+		}
+	}
+	if _, _, _, err := EffectiveProviderSession("codex", "../victim", args); err == nil {
+		t.Fatal("invalid Codex resume identity was accepted")
+	}
+}

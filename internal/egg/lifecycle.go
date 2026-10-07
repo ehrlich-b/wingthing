@@ -595,6 +595,12 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 			view.Reason = "provider process unavailable without a recorded exit"
 		}
 	}
+	if agent == "codex" && !validLifecycleID(view.ProviderSessionID) {
+		if view.Reason != "" {
+			view.Reason += "; "
+		}
+		view.Reason += "capture unavailable: provider session ID has not been recorded"
+	}
 	view.Status = lifecycleStatus(view.State, hookEvidence, view.ProcessAlive, sessionEnded)
 	encodedReason, _ := json.Marshal(view.Reason)
 	if len(encodedReason) > maxLifecycleEvent {

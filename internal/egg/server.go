@@ -536,6 +536,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	if err := validatePTYSize(rc.Cols, rc.Rows); err != nil {
 		return err
 	}
+	if rc.Agent == "codex" && len(rc.Command) == 0 && rc.ResumeSessionID != "" {
+		if !validLifecycleID(rc.ResumeSessionID) || (rc.ProviderSessionID != "" && rc.ProviderSessionID != rc.ResumeSessionID) {
+			return errors.New("Codex resume ID does not match the launch provider binding")
+		}
+		rc.ProviderSessionID = rc.ResumeSessionID
+	}
 	name, args := sessionCommand(rc)
 	if len(rc.Command) > 0 {
 		if rc.Kind == "" {

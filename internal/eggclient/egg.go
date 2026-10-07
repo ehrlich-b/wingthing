@@ -634,6 +634,12 @@ func EffectiveProviderSession(agentName, generatedResumeID string, agentArgs []s
 	profile := egg.Profile(agentName)
 	args := append([]string(nil), agentArgs...)
 	if profile.SessionIDFlag == "" {
+		if agentName == "codex" && generatedResumeID != "" {
+			if !ValidProviderSessionID(generatedResumeID) {
+				return "", nil, "", errors.New("provider session ID is invalid")
+			}
+			return generatedResumeID, args, generatedResumeID, nil
+		}
 		return "", args, generatedResumeID, nil
 	}
 	providerID = generatedResumeID
