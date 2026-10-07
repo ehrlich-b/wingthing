@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"io"
 	"os"
@@ -366,32 +365,89 @@ func validateClaudeSettingsFile(f *os.File, policy *sandbox.Config) error {
 	if !jail {
 		return nil
 	} // Seatbelt and non-jail Linux permit other host reads.
-	// Most-specific namespace mount must expose this exact opened host inode.
+	// Rewalk the most-specific mount without following any directory links.
+	// A lexical workspace match must not import an unmounted host inode.
+	exposed, err := openJailedClaudeSettingsFile(path, policy.Mounts)
+	if err != nil {
+		return refuse()
+	}
+	defer exposed.Close()
+	info, err = exposed.Stat()
+	if err != nil || !os.SameFile(opened, info) {
+		return refuse()
+	}
+	return nil
+}
+
+func openClaudeSettingsFile(path string, policy *sandbox.Config) (*os.File, error) {
+	if policy != nil && runtime.GOOS == "linux" {
+		for _, masks := range [][]string{policy.Deny, policy.ControlDenyPaths} {
+			for _, mask := range masks {
+				if filepath.Clean(mask) == "/" {
+					return openJailedClaudeSettingsFile(path, policy.Mounts)
+				}
+			}
+		}
+	}
+	return openBoundRegularFile(path)
+}
+
+// Pin the mounted source and each descendant with openat/O_NOFOLLOW. Walking
+// the source's ancestors too prevents a replaced root from redirecting the read.
+func openJailedClaudeSettingsFile(path string, mounts []sandbox.Mount) (*os.File, error) {
+	refuse := func() (*os.File, error) {
+		return nil, errors.New("settings file is outside the session filesystem policy")
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
 	best := -1
-	allowed := false
-	for _, mount := range policy.Mounts {
+	source := ""
+	for _, mount := range mounts {
 		target := mount.Target
 		if target == "" {
 			target = mount.Source
 		}
-		for _, name := range []string{path, resolved} {
-			target = filepath.Clean(target)
-			if !controlPathWithin(name, target) || len(target) < best {
-				continue
-			}
-			relative, err := filepath.Rel(target, name)
-			if err != nil {
-				continue
-			}
-			source := config.CanonicalProviderPath(filepath.Join(mount.Source, relative))
-			exposed, err := os.Stat(source)
-			best, allowed = len(target), err == nil && os.SameFile(opened, exposed)
+		target = filepath.Clean(target)
+		if !controlPathWithin(path, target) || len(target) < best {
+			continue
 		}
+		relative, err := filepath.Rel(target, path)
+		if err != nil {
+			return refuse()
+		}
+		best, source = len(target), filepath.Join(mount.Source, relative)
 	}
-	if !allowed {
+	if best < 0 {
 		return refuse()
 	}
-	return nil
+	source, err = filepath.Abs(source)
+	if err != nil {
+		return nil, err
+	}
+	flags := unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC
+	fd, err := unix.Open("/", flags|unix.O_DIRECTORY, 0)
+	if err != nil {
+		return refuse()
+	}
+	defer func() { _ = unix.Close(fd) }()
+	parts := strings.Split(strings.TrimPrefix(source, "/"), "/")
+	for i, part := range parts {
+		openFlags := flags
+		if i < len(parts)-1 {
+			openFlags |= unix.O_DIRECTORY
+		}
+		next, err := unix.Openat(fd, part, openFlags, 0)
+		if err != nil {
+			return refuse()
+		}
+		_ = unix.Close(fd)
+		fd = next
+	}
+	f := os.NewFile(uintptr(fd), path)
+	fd = -1 // ownership of the final descriptor passes to the caller
+	return f, nil
 }
 
 func claudeLifecycleArgs(args []string, home, sessionID, providerID, cwd string, policies ...*sandbox.Config) ([]string, error) {
@@ -420,13 +476,13 @@ func claudeLifecycleArgs(args []string, home, sessionID, providerID, cwd string,
 			if !filepath.IsAbs(value) {
 				value = filepath.Join(cwd, value)
 			}
-			f, err := openBoundRegularFile(value)
-			if err != nil {
-				return nil, fmt.Errorf("read lifecycle settings: %w", err)
-			}
 			var policy *sandbox.Config
 			if len(policies) > 0 {
 				policy = policies[0]
+			}
+			f, err := openClaudeSettingsFile(value, policy)
+			if err != nil {
+				return nil, fmt.Errorf("read lifecycle settings: %w", err)
 			}
 			if err = validateClaudeSettingsFile(f, policy); err != nil {
 				_ = f.Close()
