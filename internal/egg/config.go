@@ -847,6 +847,33 @@ func (c *EggConfig) YAML() (string, error) {
 	return string(data), nil
 }
 
+// frozenTaskConfig carries the host-computed roost policy paths that egg.yaml
+// deliberately cannot express, so headless tasks keep them across the store.
+type frozenTaskConfig struct {
+	EggConfig        `yaml:",inline"`
+	RoostPolicyPaths []string `yaml:"roost_policy_paths,omitempty"`
+}
+
+// TaskYAML renders the config frozen into a host-written task record.
+func (c *EggConfig) TaskYAML() (string, error) {
+	data, err := yaml.Marshal(frozenTaskConfig{EggConfig: *c, RoostPolicyPaths: c.RoostPolicyPaths})
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// LoadTaskEggConfigFromYAML parses a task record written by TaskYAML.
+func LoadTaskEggConfigFromYAML(yamlStr string) (*EggConfig, error) {
+	var frozen frozenTaskConfig
+	if err := yaml.Unmarshal([]byte(yamlStr), &frozen); err != nil {
+		return nil, fmt.Errorf("parse task egg config: %w", err)
+	}
+	cfg := frozen.EggConfig
+	cfg.RoostPolicyPaths = frozen.RoostPolicyPaths
+	return &cfg, nil
+}
+
 // NetworkSummary returns a short description of the network config for logging.
 func (c *EggConfig) NetworkSummary() string {
 	if len(c.Network.Domains) == 0 {

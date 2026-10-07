@@ -53,7 +53,7 @@ func taskEggConfig(t *store.Task, cwd string) (*egg.EggConfig, error) {
 	if strings.TrimSpace(t.EggConfigYAML) == "" {
 		return egg.DiscoverEggConfig(cwd, nil), nil
 	}
-	eggCfg, err := egg.LoadEggConfigFromYAML(t.EggConfigYAML)
+	eggCfg, err := egg.LoadTaskEggConfigFromYAML(t.EggConfigYAML)
 	if err != nil {
 		return nil, fmt.Errorf("load task egg config: %w", err)
 	}

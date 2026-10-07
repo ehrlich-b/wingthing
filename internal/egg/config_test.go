@@ -1160,3 +1160,25 @@ func TestParseFSRulesDoesNotGrantWriteForRenamePins(t *testing.T) {
 		t.Fatalf("rename pins changed read/write permissions: mounts=%v deny=%v denyWrite=%v", mounts, deny, denyWrite)
 	}
 }
+
+func TestTaskYAMLKeepsRoostPolicyPathsThatEggYAMLCannotSet(t *testing.T) {
+	cfg := &EggConfig{FS: []string{"rw:/work/a"}, RoostPolicyPaths: []string{"/work/a/egg.yaml", "/work/b/egg.yaml"}}
+	frozen, err := cfg.TaskYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadTaskEggConfigFromYAML(frozen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got.RoostPolicyPaths, ",") != "/work/a/egg.yaml,/work/b/egg.yaml" || strings.Join(got.FS, ",") != "rw:/work/a" {
+		t.Fatalf("frozen task lost its roost policy: %#v", got)
+	}
+	plain, err := LoadEggConfigFromYAML(frozen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plain.RoostPolicyPaths) != 0 {
+		t.Fatalf("egg.yaml set host-only roost policy paths: %v", plain.RoostPolicyPaths)
+	}
+}

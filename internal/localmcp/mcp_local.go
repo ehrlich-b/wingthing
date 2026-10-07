@@ -1761,7 +1761,7 @@ func (s *Server) freezeTaskLaunchConfig(task *store.Task) error {
 	if err != nil {
 		return err
 	}
-	task.EggConfigYAML, err = cfg.YAML()
+	task.EggConfigYAML, err = cfg.TaskYAML()
 	task.CWD = cwd
 	return err
 }
