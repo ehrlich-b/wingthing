@@ -386,25 +386,6 @@ body {
     background: rgba(233, 69, 96, 0.1);
 }
 
-/* Header session controls share one quiet outline; .btn-sm fills are for cards. */
-#main-header .session-action,
-#main-header #canvas-toggle-btn {
-    background: none;
-    border: 1px solid var(--border);
-    color: var(--text-dim);
-    font-family: var(--font);
-    font-size: 12px;
-    font-weight: 400;
-    padding: 2px 6px;
-    border-radius: 3px;
-}
-#main-header .session-action:hover:not(:disabled),
-#main-header #canvas-toggle-btn:hover {
-    color: var(--accent);
-    border-color: var(--accent);
-    background: rgba(233, 69, 96, 0.1);
-}
-
 .session-action[aria-pressed="true"] {
     color: var(--accent);
     border-color: var(--accent);
@@ -2584,10 +2565,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     padding: 8px;
 }
 
-#main-header #canvas-toggle-btn.active {
-    color: var(--accent);
-    border-color: var(--accent);
-    background: rgba(233, 69, 96, 0.1);
+#canvas-toggle-btn.active {
+    background: var(--accent);
+    color: #fff;
 }
 
 .canvas-drag-ghost {
