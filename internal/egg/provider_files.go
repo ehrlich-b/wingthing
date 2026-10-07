@@ -27,7 +27,7 @@ func openProviderPath(root *os.File, path string, directory bool) (*os.File, err
 	return openProviderPathMode(root, path, directory, false)
 }
 
-func openProviderPathMode(root *os.File, path string, directory, create bool) (*os.File, error) {
+func openProviderPathMode(root *os.File, path string, directory, create bool, permissions ...uint32) (*os.File, error) {
 	if filepath.IsAbs(path) || path == "" {
 		return nil, errors.New("provider path must be relative")
 	}
@@ -37,6 +37,10 @@ func openProviderPathMode(root *os.File, path string, directory, create bool) (*
 			return nil, errors.New("invalid provider path component")
 		}
 	}
+	mode := uint32(0755)
+	if len(permissions) > 0 {
+		mode = permissions[0]
+	}
 	parent := root
 	for i, part := range parts {
 		flags := unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC | unix.O_NONBLOCK
@@ -45,7 +49,7 @@ func openProviderPathMode(root *os.File, path string, directory, create bool) (*
 		}
 		fd, err := unix.Openat(int(parent.Fd()), part, flags, 0)
 		if errors.Is(err, unix.ENOENT) && create && flags&unix.O_DIRECTORY != 0 {
-			if mkdirErr := unix.Mkdirat(int(parent.Fd()), part, 0755); mkdirErr != nil && !errors.Is(mkdirErr, unix.EEXIST) {
+			if mkdirErr := unix.Mkdirat(int(parent.Fd()), part, mode); mkdirErr != nil && !errors.Is(mkdirErr, unix.EEXIST) {
 				err = mkdirErr
 			} else {
 				fd, err = unix.Openat(int(parent.Fd()), part, flags, 0)
