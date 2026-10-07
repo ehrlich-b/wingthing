@@ -248,13 +248,13 @@ func eggControlDenyPaths(sessionDir string, grants ...[]sandbox.Mount) ([]string
 			continue
 		}
 		seen[state] = true
-		for _, name := range []string{"eggs", "tools", "device_token.yaml", "local_device_token.yaml", "wing_key", "sync.key", "wing.yaml", "egg.yaml", "config.yaml", "remotes.yaml", "roost.db", "wt.db"} {
+		for _, name := range []string{"eggs", "tools", "device_token.yaml", "local_device_token.yaml", "wing_key", "sync.key", "wing.yaml", "egg.yaml", "config.yaml", "remotes.yaml", "clients.yaml", "roost.db", "wt.db"} {
 			paths = append(paths, filepath.Join(state, name))
 		}
 		for _, name := range []string{"wing_key", "sync.key", "device_token.yaml", "local_device_token.yaml"} {
 			credentials = append(credentials, filepath.Join(state, name))
 		}
-		loaders = append(loaders, filepath.Join(loaderState, "config.yaml"), filepath.Join(loaderState, "remotes.yaml"))
+		loaders = append(loaders, filepath.Join(loaderState, "config.yaml"), filepath.Join(loaderState, "remotes.yaml"), filepath.Join(loaderState, "clients.yaml"))
 		tokenTrees = append(tokenTrees, filepath.Join(state, "eggs"))
 		toolsDir := filepath.Join(loaderState, "tools")
 		if cfg, err := wingconfig.LoadWingConfig(state); err == nil {

@@ -28,7 +28,7 @@ func TestToolReloadRefusesWorkspaceHardLink(t *testing.T) {
 	}
 }
 
-func TestToolLoaderRefusesSymlink(t *testing.T) {
+func TestToolLoaderValidatesSymlinkDescriptor(t *testing.T) {
 	dir := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "tool.yaml")
 	if err := os.WriteFile(outside, []byte("name: safe\nrun: /bin/true\n"), 0600); err != nil {
@@ -37,8 +37,14 @@ func TestToolLoaderRefusesSymlink(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(dir, "tool.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadToolsDir(dir); err == nil {
-		t.Fatal("followed tool YAML symlink")
+	if _, err := LoadToolsDir(dir); err != nil {
+		t.Fatalf("single-link dotfile alias refused: %v", err)
+	}
+	if err := os.Link(outside, filepath.Join(t.TempDir(), "writable")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadToolsDir(dir); err == nil || !strings.Contains(err.Error(), "hard links") {
+		t.Fatalf("symlink hid hard-linked tool YAML: %v", err)
 	}
 }
 

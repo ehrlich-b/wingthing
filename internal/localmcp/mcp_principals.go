@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/protectedfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -28,15 +29,20 @@ type localMCPClientsConfig struct {
 
 func LoadLocalMCPClientsConfig(cfg *config.Config) (localMCPClientsConfig, error) {
 	path := filepath.Join(cfg.Dir, "clients.yaml")
-	data, err := os.ReadFile(path)
+	file, err := protectedfile.OpenResolved(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return localMCPClientsConfig{}, nil
 	}
 	if err != nil {
 		return localMCPClientsConfig{}, fmt.Errorf("read %s: %w", path, err)
 	}
-	if info, statErr := os.Stat(path); statErr == nil && info.Mode().Perm()&0077 != 0 {
+	defer file.Close()
+	if file.Info.Mode().Perm()&0077 != 0 {
 		return localMCPClientsConfig{}, fmt.Errorf("%s must not be readable or writable by group/others (run chmod 600 %s)", path, path)
+	}
+	data, err := file.ReadAll()
+	if err != nil {
+		return localMCPClientsConfig{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	var clients localMCPClientsConfig
 	if err := yaml.Unmarshal(data, &clients); err != nil {

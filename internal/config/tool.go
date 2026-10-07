@@ -125,7 +125,7 @@ func LoadToolsDir(dir string) ([]*ToolConfig, error) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		file, err := protectedfile.Open(path)
+		file, err := protectedfile.OpenResolved(path)
 		if err != nil {
 			return nil, fmt.Errorf("open %s: %w", path, err)
 		}

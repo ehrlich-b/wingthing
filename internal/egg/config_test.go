@@ -537,7 +537,7 @@ func TestDefaultPolicyRefusesReplaceableToolLoaderPaths(t *testing.T) {
 }
 
 func TestLoaderPathsRejectHardLinkAliases(t *testing.T) {
-	for _, kind := range []string{"tool yaml", "tool yml", "tool symlink", "wing config", "global policy", "project policy", "base policy", "section policy"} {
+	for _, kind := range []string{"tool yaml", "tool yml", "tool symlink", "wing config", "clients config", "remotes config", "legacy config", "global policy", "project policy", "base policy", "section policy"} {
 		t.Run(kind, func(t *testing.T) {
 			home := canonicalPolicyTestPath(t, t.TempDir())
 			t.Setenv("HOME", home)
@@ -561,6 +561,12 @@ func TestLoaderPathsRejectHardLinkAliases(t *testing.T) {
 				}
 			case "wing config":
 				loader, body = filepath.Join(state, "wing.yaml"), "tools_dir: tools\n"
+			case "clients config":
+				loader, body = filepath.Join(state, "clients.yaml"), "require_client: true\n"
+			case "remotes config":
+				loader, body = filepath.Join(state, "remotes.yaml"), "{}\n"
+			case "legacy config":
+				loader, body = filepath.Join(state, "config.yaml"), "{}\n"
 			case "global policy":
 				loader, body = filepath.Join(state, "egg.yaml"), "fs: [rw:./]\n"
 			case "project policy":
