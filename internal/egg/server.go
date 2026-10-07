@@ -867,38 +867,8 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 				return err
 			}
 		}
-		control, err := eggControlDenyPaths(s.dir, mounts)
-		if err != nil {
-			return err
-		}
-		deny = append(deny, control...)
-		// The OS policies below handle the trees with exact bridge exceptions.
-		// Retain ordinary file denies.
-		var filtered []string
-		for _, path := range deny {
-			isTree := false
-			for _, target := range control {
-				if (filepath.Base(target) == "eggs" || filepath.Base(target) == "wingthing-control") && config.CanonicalProviderPath(path) == target {
-					isTree = true
-					break
-				}
-			}
-			if !isTree {
-				filtered = append(filtered, path)
-			}
-		}
-		deny = filtered
 		sandboxHome := rc.UserHome
 		if runtime.GOOS == "linux" {
-			// Resolve masks on the host before HOME links become independent
-			// jail mounts, retaining both the declared and resolved names.
-			deny = sandbox.CanonicalDenyPaths(deny)
-			denyWrite = sandbox.CanonicalDenyPaths(denyWrite)
-			mounts, err = isolateLinuxEggControl(mounts, control, bridgeMounts, deny)
-			if err != nil {
-				return err
-			}
-			deny = append(deny, "/")
 			// The existing jail always binds its HOME writable. Give that
 			// implicit mount an empty directory; real HOME and agent config
 			// directories keep their explicitly compiled mount permissions.
@@ -906,8 +876,6 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			if err := os.MkdirAll(sandboxHome, 0o700); err != nil {
 				return fmt.Errorf("create private sandbox home mount: %w", err)
 			}
-		} else {
-			mounts = append(mounts, bridgeMounts...)
 		}
 
 		proxyPort := 0
@@ -916,13 +884,6 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		}
 
 		allowSockets := sandboxAllowedSockets(rc.ToolSocketPath, envMap)
-		if previewClaudeOSHome != "" {
-			protected, err := GuardPreviewClaudeMounts(mounts, previewClaudeOSHome)
-			if err != nil {
-				return err
-			}
-			deny = append(deny, protected...)
-		}
 
 		sbCfg := sandbox.Config{
 			Mounts:       mounts,
@@ -945,11 +906,16 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			// Enforced against the final emitted policy inside sandbox.New.
 			ProtectedWriteTargets: append([]string(nil), rc.ProtectedWriteTargets...),
 		}
-		if runtime.GOOS == "darwin" {
-			sbCfg.ControlDenyPaths = control
-			sbCfg.ControlBridges = bridgeMounts
-			sbCfg.ControlSocket = rc.ToolSocketPath
-			sbCfg.DenyOtherProcessInfo = true
+		sbCfg, err = IsolateControl(sbCfg, s.dir, bridgeMounts, rc.ToolSocketPath)
+		if err != nil {
+			return err
+		}
+		if previewClaudeOSHome != "" {
+			protected, err := GuardPreviewClaudeMounts(sbCfg.Mounts, previewClaudeOSHome)
+			if err != nil {
+				return err
+			}
+			sbCfg.Deny = append(sbCfg.Deny, protected...)
 		}
 
 		sb, err = sandbox.New(sbCfg)

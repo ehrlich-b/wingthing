@@ -157,6 +157,18 @@ func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation
 		result.DenyWrite = declared.DenyWrite
 	}
 	result.NetworkNeed = netNeed
+	if runtime.GOOS == "linux" {
+		// The jail re-execs wt even for headless agents. Preserve a development
+		// executable under /tmp, which the jail replaces with private storage.
+		executable, err := os.Executable()
+		if err != nil {
+			return sandbox.Config{}, fmt.Errorf("locate wt binary for sandbox mount: %w", err)
+		}
+		if resolved, err := filepath.EvalSymlinks(executable); err == nil {
+			executable = resolved
+		}
+		result.Mounts = append(result.Mounts, sandbox.Mount{Source: executable, Target: executable, ReadOnly: true})
+	}
 	if config.Channel() == "preview" && runtime.GOOS == "darwin" && agentName == "claude" {
 		osHome, _, err := egg.PreviewClaudeOSContext(home)
 		if err != nil {
@@ -168,7 +180,7 @@ func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation
 		}
 		result.Deny = append(result.Deny, protected...)
 	}
-	return result, nil
+	return egg.IsolateControl(result, "", nil, "")
 }
 
 // eggConfigWithResolvedFSPaths matches the interactive egg path: relative fs

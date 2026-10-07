@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -271,6 +272,71 @@ func eggControlDenyPaths(sessionDir string, grants ...[]sandbox.Mount) ([]string
 		paths = append(paths, loader, resolved)
 	}
 	return paths, nil
+}
+
+// IsolateControl protects controller secrets and loader paths for both
+// interactive eggs and headless tasks. Only interactive sessions provide
+// bridges back into their otherwise sealed controller directories.
+func IsolateControl(cfg sandbox.Config, sessionDir string, bridges []sandbox.Mount, toolSocket string) (sandbox.Config, error) {
+	if runtime.GOOS == "linux" {
+		cfg.Mounts = linuxEggReadMounts(cfg.Mounts, cfg.Deny)
+	}
+	control, err := eggControlDenyPaths(sessionDir, cfg.Mounts)
+	if err != nil {
+		return sandbox.Config{}, err
+	}
+	cfg.Deny = append(cfg.Deny, control...)
+	// The OS policies handle these trees with exact bridge exceptions.
+	// Retain ordinary file denies so they still override bridges.
+	var filtered []string
+	for _, path := range cfg.Deny {
+		isTree := false
+		for _, target := range control {
+			if (filepath.Base(target) == "eggs" || filepath.Base(target) == "wingthing-control") && wingconfig.CanonicalProviderPath(path) == target {
+				isTree = true
+				break
+			}
+		}
+		if !isTree {
+			filtered = append(filtered, path)
+		}
+	}
+	cfg.Deny = filtered
+	if runtime.GOOS == "linux" {
+		// Resolve masks before HOME aliases become independent jail mounts.
+		cfg.Deny = sandbox.CanonicalDenyPaths(cfg.Deny)
+		cfg.DenyWrite = sandbox.CanonicalDenyPaths(cfg.DenyWrite)
+		cfg.Mounts, err = isolateLinuxEggControl(cfg.Mounts, control, bridges, cfg.Deny)
+		if err != nil {
+			return sandbox.Config{}, err
+		}
+		cfg.Deny = append(cfg.Deny, "/")
+		// The jail's synthetic mask ancestors must not be moved either. They
+		// are prepared with the masks even when missing on the host; omitted
+		// control trees without masks need not exist in the private jail.
+		pinned := make(map[string]bool)
+		for _, path := range cfg.DenyRename {
+			pinned[path] = true
+		}
+		for _, path := range cfg.Deny {
+			for dir := filepath.Dir(wingconfig.CanonicalProviderPath(path)); dir != "/"; dir = filepath.Dir(dir) {
+				if !pinned[dir] {
+					cfg.DenyRename = append(cfg.DenyRename, dir)
+					pinned[dir] = true
+				}
+			}
+		}
+	} else {
+		cfg.Mounts = append(cfg.Mounts, bridges...)
+		if runtime.GOOS == "darwin" {
+			// Seatbelt also pins each controller ancestor after bridge allows.
+			cfg.ControlDenyPaths = control
+			cfg.ControlBridges = bridges
+			cfg.ControlSocket = toolSocket
+			cfg.DenyOtherProcessInfo = true
+		}
+	}
+	return cfg, nil
 }
 
 // Linux deny masks cannot have holes: they are applied after writable mounts.

@@ -1,9 +1,12 @@
 package taskrun
 
 import (
+	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -12,6 +15,127 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 )
+
+func TestDirectAgentSandboxConfigProtectsControllerAncestors(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("WT_PROVIDER_BASE_URL", "")
+	state := filepath.Join(home, "nested", ".wingthing")
+	t.Setenv("WINGTHING_DIR", state)
+	defaultState := filepath.Join(home, ".wingthing")
+	if err := prepareDirectAgentState("codex", home); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{state, defaultState} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"wing_key", "device_token.yaml"} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte("controller canary"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	cfg, err := directAgentSandboxConfigForTask(egg.DefaultEggConfig(), "codex", "standard", home, home, []string{home}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "darwin" {
+		if !slices.Contains(cfg.ControlDenyPaths, filepath.Join(state, "wing_key")) || !slices.Contains(cfg.ControlDenyPaths, filepath.Join(defaultState, "wing_key")) || !cfg.DenyOtherProcessInfo {
+			t.Fatalf("headless policy omitted controller protection: %v", cfg.ControlDenyPaths)
+		}
+	} else if runtime.GOOS == "linux" {
+		if !slices.Contains(cfg.Deny, "/") {
+			t.Fatal("headless policy omitted the controller jail")
+		}
+		for _, mount := range cfg.Mounts {
+			for _, name := range []string{"wing_key", "device_token.yaml", "eggs"} {
+				path := filepath.Join(state, name)
+				if path == mount.Source || strings.HasPrefix(path, strings.TrimSuffix(mount.Source, "/")+"/") {
+					t.Fatalf("headless mount exposes controller path %s: %+v", path, mount)
+				}
+			}
+		}
+	} else {
+		t.Skip("requires macOS or Linux sandbox")
+	}
+	if !hasSandboxMount(cfg.Mounts, filepath.Join(home, ".codex")) {
+		t.Fatal("controller isolation removed writable agent state")
+	}
+	if ok, reason := sandbox.CheckCapability(); !ok {
+		t.Skipf("sandbox unavailable: %s", reason)
+	}
+	if runtime.GOOS == "darwin" {
+		if output, err := exec.Command("/usr/bin/sandbox-exec", "-p", "(version 1) (allow default)", "/usr/bin/true").CombinedOutput(); err != nil {
+			t.Skipf("Seatbelt enforcement unavailable: %v: %s", err, output)
+		}
+	} else {
+		// ro:/ enumerates temporary siblings of this disposable HOME. Other
+		// package tests may remove them before the jail starts. The live probe
+		// needs only its own mounts, system tools, and the wrapper executable.
+		executable, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		executable, err = filepath.EvalSymlinks(executable)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var mounts []sandbox.Mount
+		for _, mount := range cfg.Mounts {
+			if mount.Source == "/usr" || mount.Source == executable || strings.HasPrefix(mount.Source, home+"/") {
+				mounts = append(mounts, mount)
+			}
+		}
+		cfg.Mounts = mounts
+	}
+	sb, err := sandbox.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sb.Destroy() })
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	// Try moving each controller ancestor, as well as replacing the state
+	// entry with a symlink. Ordinary agent state must stay writable.
+	probe := `
+for path in "$1" "$2" "$3" "$4"; do
+    if mv "$path" "$path-moved" 2>/dev/null; then
+        echo "controller ancestor moved: $path"; exit 1
+    fi
+done
+if rmdir "$1" 2>/dev/null; then
+    echo 'controller state removed'; exit 1
+fi
+ln -s "$HOME/.codex" "$1" 2>/dev/null || true
+if [ -L "$1" ]; then
+    echo 'controller state replaced'; exit 1
+fi
+for dir in "$1" "$4"; do
+    for name in wing_key device_token.yaml; do
+        value=$(cat "$dir/$name" 2>/dev/null) || value=
+        if [ -n "$value" ]; then echo 'controller secret exposed'; exit 1; fi
+    done
+done
+echo agent-state > "$HOME/.codex/state"
+`
+	cmd, err := sb.Exec(ctx, "/bin/sh", []string{"-c", probe, "probe", state, filepath.Dir(state), home, defaultState})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Dir = home
+	cmd.Env = []string{"HOME=" + home, "PATH=/usr/bin:/bin"}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		diag, _ := os.ReadFile(sb.DiagLog())
+		t.Fatalf("headless controller protection: %v\n%s\n%s", err, output, diag)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "state")); err != nil {
+		t.Fatalf("agent state did not persist: %v", err)
+	}
+}
 
 func TestDirectAgentSandboxConfigAppliesOpenCodeProfile(t *testing.T) {
 	t.Setenv("WT_PROVIDER_BASE_URL", "")
@@ -112,7 +236,7 @@ func TestDirectAgentSandboxConfigAppliesTaskEggPolicy(t *testing.T) {
 	if !hasSandboxMount(cfg.Mounts, filepath.Join(workDir, "artifacts")) {
 		t.Fatalf("relative config mount was not rooted at cwd: %#v", cfg.Mounts)
 	}
-	if len(cfg.Deny) != 1 || cfg.Deny[0] != filepath.Join(home, ".factory-secret") {
+	if !slices.Contains(cfg.Deny, filepath.Join(home, ".factory-secret")) {
 		t.Fatalf("deny policy = %#v", cfg.Deny)
 	}
 	if len(cfg.DenyWrite) != 1 || cfg.DenyWrite[0] != filepath.Join(workDir, "egg.yaml") {
@@ -157,8 +281,10 @@ func TestDirectAgentSandboxConfigPreservesPolicyAncestorPins(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !slices.Equal(got.DenyRename, want) {
-				t.Fatalf("headless pins = %v, want declared pins %v", got.DenyRename, want)
+			for _, path := range want {
+				if !slices.Contains(got.DenyRename, path) {
+					t.Fatalf("headless pins = %v, missing declared pin %s", got.DenyRename, path)
+				}
 			}
 		})
 	}
@@ -334,12 +460,8 @@ func TestSharedHostDirectAgentPreservesAdministratorFilesystemPolicy(t *testing.
 	if !hasReadOnlySandboxMount(cfg.Mounts, readOnlySource) {
 		t.Fatalf("administrator read-only mount is absent from %#v", cfg.Mounts)
 	}
-	if len(cfg.Deny) != 2 {
-		t.Fatalf("administrator deny policy = %#v", cfg.Deny)
-	}
-	gotDenied, gotDeniedErr := os.Stat(cfg.Deny[1])
-	wantDenied, wantDeniedErr := os.Stat(deniedSecret)
-	if gotDeniedErr != nil || wantDeniedErr != nil || !os.SameFile(gotDenied, wantDenied) {
+	// Controller protection adds mandatory denies to the administrator policy.
+	if !slices.Contains(cfg.Deny, deniedSecret) {
 		t.Fatalf("administrator deny policy = %#v", cfg.Deny)
 	}
 }
