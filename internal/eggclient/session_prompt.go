@@ -15,7 +15,7 @@ import (
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 )
 
-func sendPromptInput(ctx context.Context, cfg *config.Config, sessionID, input, owner, expectedProviderID string) (egg.PromptDelivery, error) {
+func sendPromptInput(ctx context.Context, cfg *config.Config, sessionID, input, owner, expectedProviderID string, verifiedUserIDs ...string) (egg.PromptDelivery, error) {
 	delivery := egg.PromptDelivery{NoInputAttempted: true}
 	session, client, err := OpenLocalEgg(ctx, cfg, sessionID)
 	if err != nil {
@@ -51,6 +51,7 @@ func sendPromptInput(ctx context.Context, cfg *config.Config, sessionID, input, 
 	if !egg.NativePromptReady(view) {
 		return delivery, fmt.Errorf("native foreground readiness changed before input: state=%s source=%s", view.State, view.StateSource)
 	}
+	observeSessionController(cfg, session.ID, verifiedUserIDs)
 	lost := make(chan error, 1)
 	delivery.Lost = lost
 	go func() {
@@ -88,7 +89,7 @@ func sendPromptInput(ctx context.Context, cfg *config.Config, sessionID, input, 
 	return delivery, nil
 }
 
-func PromptSession(ctx context.Context, cfg *config.Config, session LocalSession, requestID, input string, timeout time.Duration, owner string) (egg.SessionPromptResult, error) {
+func PromptSession(ctx context.Context, cfg *config.Config, session LocalSession, requestID, input string, timeout time.Duration, owner string, verifiedUserIDs ...string) (egg.SessionPromptResult, error) {
 	dir := filepath.Join(cfg.Dir, "eggs", session.ID)
 	expectedProviderID := ReadEggMetaValues(dir)["provider_session_id"]
 	return egg.SubmitSessionPrompt(ctx, dir, egg.SessionPromptOptions{
@@ -100,7 +101,7 @@ func PromptSession(ctx context.Context, cfg *config.Config, session LocalSession
 			return LifecycleViewForSession(cfg, session, after, limit)
 		},
 		Send: func(ctx context.Context, text string) (egg.PromptDelivery, error) {
-			return sendPromptInput(ctx, cfg, session.ID, text, owner, expectedProviderID)
+			return sendPromptInput(ctx, cfg, session.ID, text, owner, expectedProviderID, verifiedUserIDs...)
 		},
 	})
 }

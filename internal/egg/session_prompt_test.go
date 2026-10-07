@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -52,58 +53,84 @@ func writeNativeUserPrompt(t *testing.T, path, input string) {
 }
 
 func TestSessionPromptConcurrentRetrySendsAtMostOnceAndKeepsLease(t *testing.T) {
-	dir, path, o := promptFixtureOptions(t)
-	var sends atomic.Int32
-	var held atomic.Bool
-	o.Send = func(ctx context.Context, input string) (PromptDelivery, error) {
-		sends.Add(1)
-		held.Store(true)
-		writeNativeUserPrompt(t, path, input)
-		return PromptDelivery{BytesEnqueued: len(input) + 1, Release: func() { held.Store(false) }}, nil
-	}
-	reader := o.Read
-	o.Read = func(ctx context.Context, after int64, limit int) (SessionView, error) {
-		if after > 0 && !held.Load() && sends.Load() == 0 {
-			t.Error("receipt scan occurred before send lease")
+	// Keep the fixture's 200ms bound, but exclude scheduler and disk latency
+	// from it: fake time advances only when all callers are durably blocked.
+	synctest.Test(t, func(t *testing.T) {
+		dir, path, o := promptFixtureOptions(t)
+		const callers = 6
+		var sends atomic.Int32
+		var held atomic.Bool
+		o.Send = func(ctx context.Context, input string) (PromptDelivery, error) {
+			sends.Add(1)
+			held.Store(true)
+			writeNativeUserPrompt(t, path, input)
+			return PromptDelivery{BytesEnqueued: len(input) + 1, Release: func() { held.Store(false) }}, nil
 		}
-		return reader(ctx, after, limit)
-	}
-	var wg sync.WaitGroup
-	results := make(chan SessionPromptResult, 6)
-	errs := make(chan error, 6)
-	for i := 0; i < 6; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			result, err := SubmitSessionPrompt(context.Background(), dir, o)
-			if err != nil {
-				errs <- err
-				return
+		observeReceipt := make(chan struct{})
+		reader := o.Read
+		o.Read = func(ctx context.Context, after int64, limit int) (SessionView, error) {
+			if after > 0 {
+				<-observeReceipt
+				if !held.Load() || sends.Load() != 1 {
+					t.Error("receipt scan occurred without the sole send lease")
+				}
 			}
-			results <- result
-		}()
-	}
-	wg.Wait()
-	close(results)
-	close(errs)
-	for err := range errs {
-		t.Error(err)
-	}
-	for r := range results {
-		if !r.NativeReceiptObserved || r.ProviderRequestAcknowledged || r.ReceiptKind != "exact_provider_user_text_match" || r.Status != "native_receipt_observed" {
-			t.Errorf("wrong acknowledgement claims: %+v", r)
+			return reader(ctx, after, limit)
 		}
-	}
-	if sends.Load() != 1 || held.Load() {
-		t.Fatalf("sends=%d lease=%t", sends.Load(), held.Load())
-	}
-	o.Input = "changed"
-	if _, err := SubmitSessionPrompt(context.Background(), dir, o); err == nil {
-		t.Fatal("same request ID accepted changed prompt")
-	}
-	if sends.Load() != 1 {
-		t.Fatal("changed spec was resent")
-	}
+		var wg sync.WaitGroup
+		results := make(chan SessionPromptResult, callers)
+		errs := make(chan error, callers)
+		for i := 0; i < callers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				result, err := SubmitSessionPrompt(context.Background(), dir, o)
+				if err != nil {
+					errs <- err
+					return
+				}
+				results <- result
+			}()
+		}
+		// The winner is blocked on receipt observation; every retry is now
+		// waiting for its session lock. The send lease must still be held.
+		synctest.Wait()
+		if sends.Load() != 1 || !held.Load() || len(results) != 0 || len(errs) != 0 {
+			t.Errorf("before receipt: sends=%d lease=%t results=%d errors=%d", sends.Load(), held.Load(), len(results), len(errs))
+		}
+		close(observeReceipt)
+		wg.Wait()
+		close(results)
+		close(errs)
+		for err := range errs {
+			t.Error(err)
+		}
+		if len(results) != callers {
+			t.Errorf("successful callers=%d, want %d", len(results), callers)
+		}
+		retries := 0
+		for r := range results {
+			if !r.NativeReceiptObserved || r.ProviderRequestAcknowledged || r.ReceiptKind != "exact_provider_user_text_match" || r.Status != "native_receipt_observed" || r.Causality != "unverified_without_provider_request_id" || r.ReceiptCursor <= r.ReservedCursor {
+				t.Errorf("wrong acknowledgement claims: %+v", r)
+			}
+			if r.Retried {
+				retries++
+			}
+		}
+		if retries != callers-1 {
+			t.Errorf("retries=%d, want %d", retries, callers-1)
+		}
+		if sends.Load() != 1 || held.Load() {
+			t.Fatalf("sends=%d lease=%t", sends.Load(), held.Load())
+		}
+		o.Input = "changed"
+		if _, err := SubmitSessionPrompt(context.Background(), dir, o); err == nil {
+			t.Fatal("same request ID accepted changed prompt")
+		}
+		if sends.Load() != 1 {
+			t.Fatal("changed spec was resent")
+		}
+	})
 }
 
 func TestSessionPromptTimeoutLostAckAndReconnectNativeReceipt(t *testing.T) {

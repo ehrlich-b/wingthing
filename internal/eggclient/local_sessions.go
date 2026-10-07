@@ -400,7 +400,7 @@ func sessionInputChunks(input []byte, enter bool) [][]byte {
 	return chunks
 }
 
-func SendSessionInput(ctx context.Context, cfg *config.Config, ref string, input []byte, enter bool) (LocalSession, error) {
+func SendSessionInput(ctx context.Context, cfg *config.Config, ref string, input []byte, enter bool, verifiedUserIDs ...string) (LocalSession, error) {
 	session, ec, err := OpenLocalEgg(ctx, cfg, ref)
 	if err != nil {
 		return LocalSession{}, err
@@ -415,6 +415,7 @@ func SendSessionInput(ctx context.Context, cfg *config.Config, ref string, input
 	if _, err := stream.Recv(); err != nil {
 		return LocalSession{}, fmt.Errorf("send to session %s: %w", session.ID, err)
 	}
+	observeSessionController(cfg, session.ID, verifiedUserIDs)
 	chunks := sessionInputChunks(input, enter)
 	for index, chunk := range chunks {
 		if index > 0 && len(input) > 0 {

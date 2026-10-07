@@ -101,6 +101,46 @@ func closeToolListenerForTest(t *testing.T, listener *ToolListener) {
 	}
 }
 
+func TestToolControllerRoutingUsesCanonicalSessionSocket(t *testing.T) {
+	root, err := os.MkdirTemp("../..", ".ctx-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	root, err = filepath.Abs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "session")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(dir, alias); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "tool.sock")
+	listener, err := NewToolListener(path, []*config.ToolConfig{{Name: "context", Context: "jira-search"}}, ToolContext{OwnerID: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeToolListenerForTest(t, listener)
+	ObserveToolController(filepath.Join(alias, "tool.sock"), "owner")
+	if response := toolCall(t, path, ToolRequest{Tool: "context"}); response.Error != "context: wing context block is required" {
+		t.Fatalf("owner input revoked Context: %+v", response)
+	}
+	ObserveToolController(filepath.Join(root, "missing.sock"), "admin")
+	if response := toolCall(t, path, ToolRequest{Tool: "context"}); response.Error != "context: wing context block is required" {
+		t.Fatalf("unrelated session input revoked Context: %+v", response)
+	}
+	ObserveToolController(filepath.Join(alias, "tool.sock"), "admin")
+	ObserveToolController(path, "owner")
+	listener.Reload([]*config.ToolConfig{{Name: "context", Context: "jira-search"}})
+	if response := toolCall(t, path, ToolRequest{Tool: "context"}); response.Error != "Context tools are disabled after another user took control of this session" {
+		t.Fatalf("aliased non-owner input retained Context: %+v", response)
+	}
+}
+
 func TestToolListener_CallAndResponse(t *testing.T) {
 	sockPath := shortSockPath(t)
 	tools := []*config.ToolConfig{
