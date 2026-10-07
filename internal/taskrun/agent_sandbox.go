@@ -56,10 +56,10 @@ func directAgentSandboxConfig(agentName, isolation, home string, mountPaths []st
 }
 
 func directAgentSandboxConfigWithPolicy(agentName, isolation, home string, mountPaths []string, sharedHost bool) (sandbox.Config, error) {
-	return directAgentSandboxConfigForTask(&egg.EggConfig{}, agentName, isolation, home, "", mountPaths, sharedHost)
+	return directAgentSandboxConfigForTask(&egg.EggConfig{}, agentName, isolation, home, "", mountPaths, sharedHost, nil)
 }
 
-func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation, home, cwd string, mountPaths []string, sharedHost bool) (sandbox.Config, error) {
+func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation, home, cwd string, mountPaths []string, sharedHost bool, contextCfg *config.ContextConfig) (sandbox.Config, error) {
 	if eggCfg == nil {
 		eggCfg = &egg.EggConfig{}
 	}
@@ -179,6 +179,28 @@ func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation
 			return sandbox.Config{}, err
 		}
 		result.Deny = append(result.Deny, protected...)
+	}
+	// Include prompt mounts and agent profile grants in alias checks: these
+	// become filesystem grants even though they are absent from egg.yaml.
+	if contextCfg != nil {
+		grants := &egg.EggConfig{}
+		for _, mount := range result.Mounts {
+			mode := "rw:"
+			if mount.ReadOnly {
+				mode = "ro:"
+			}
+			grants.FS = append(grants.FS, mode+mount.Source)
+		}
+		_, protected, err := eggclient.ProtectContextSecret(grants, contextCfg, cwd, home)
+		if err != nil {
+			return sandbox.Config{}, err
+		}
+		result.Deny = append(result.Deny, protected...)
+		// Match interactive eggs: Seatbelt verifies the final write policy;
+		// Linux enforces the read+write deny mounts instead.
+		if runtime.GOOS == "darwin" {
+			result.ProtectedWriteTargets = protected
+		}
 	}
 	return egg.IsolateControl(result, "", nil, "")
 }

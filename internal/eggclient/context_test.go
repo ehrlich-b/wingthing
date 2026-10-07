@@ -254,7 +254,7 @@ func TestContextThroughEggTools(t *testing.T) {
 		t.Fatalf("taint disabled command tools: %+v", environment)
 	}
 	// SpawnEgg builds its environment from this policy; credentials are never added to it.
-	protected, targets, err := protectContextSecret(egg.DefaultEggConfig(), wc.Context, root, root)
+	protected, targets, err := ProtectContextSecret(egg.DefaultEggConfig(), wc.Context, root, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestContextSecretProtectsSymlinkTarget(t *testing.T) {
 	}
 	original := egg.DefaultEggConfig()
 	before := append([]string(nil), original.FS...)
-	protected, targets, err := protectContextSecret(original, &config.ContextConfig{URL: "https://context.pants.taxi", ClientID: "wingthing-stage", SecretFile: alias}, root, root)
+	protected, targets, err := ProtectContextSecret(original, &config.ContextConfig{URL: "https://context.pants.taxi", ClientID: "wingthing-stage", SecretFile: alias}, root, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func TestContextSecretNeverInEggOrToolEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, paths, err := protectContextSecret(egg.DefaultEggConfig(), contextConfig, root, root)
+	policy, paths, err := ProtectContextSecret(egg.DefaultEggConfig(), contextConfig, root, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,14 +362,14 @@ func TestContextSecretRejectsGrantAliases(t *testing.T) {
 	c := &config.ContextConfig{URL: "https://context.example", ClientID: "wing", SecretFile: secret}
 	for _, grant := range []string{"ro:" + alias, "rw:" + alias, "ro:" + nested, "ro:leak", "rw:~/nested", "ro:" + secret} {
 		t.Run(grant, func(t *testing.T) {
-			if _, _, err := protectContextSecret(&egg.EggConfig{FS: []string{grant}}, c, root, root); err == nil || !strings.Contains(err.Error(), "exposes protected secret path") {
+			if _, _, err := ProtectContextSecret(&egg.EggConfig{FS: []string{grant}}, c, root, root); err == nil || !strings.Contains(err.Error(), "exposes protected secret path") {
 				t.Fatalf("grant accepted: %v", err)
 			}
 		})
 	}
 	// Protected paths can also be directories; no descendant may be granted.
 	c.SecretFile = private
-	if _, _, err := protectContextSecret(&egg.EggConfig{FS: []string{"ro:" + secret}}, c, root, root); err == nil {
+	if _, _, err := ProtectContextSecret(&egg.EggConfig{FS: []string{"ro:" + secret}}, c, root, root); err == nil {
 		t.Fatal("grant inside protected directory accepted")
 	}
 }
@@ -395,7 +395,7 @@ func TestContextSecretMasksAncestorGrantAliases(t *testing.T) {
 	c := &config.ContextConfig{URL: "https://context.example", ClientID: "wing", SecretFile: secret}
 	for _, mode := range []string{"ro", "rw"} {
 		original := &egg.EggConfig{FS: []string{mode + ":" + alias, mode + ":" + nested}}
-		policy, targets, err := protectContextSecret(original, c, root, root)
+		policy, targets, err := ProtectContextSecret(original, c, root, root)
 		if err != nil {
 			t.Fatal(err)
 		}

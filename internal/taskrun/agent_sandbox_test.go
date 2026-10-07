@@ -39,7 +39,7 @@ func TestDirectAgentSandboxConfigProtectsControllerAncestors(t *testing.T) {
 			}
 		}
 	}
-	cfg, err := directAgentSandboxConfigForTask(egg.DefaultEggConfig(), "codex", "standard", home, home, []string{home}, false)
+	cfg, err := directAgentSandboxConfigForTask(egg.DefaultEggConfig(), "codex", "standard", home, home, []string{home}, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestDirectAgentSandboxConfigAppliesTaskEggPolicy(t *testing.T) {
 		},
 		Trace: true,
 	}
-	cfg, err := directAgentSandboxConfigForTask(eggCfg, "codex", "standard", home, workDir, nil, false)
+	cfg, err := directAgentSandboxConfigForTask(eggCfg, "codex", "standard", home, workDir, nil, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestDirectAgentSandboxConfigPreservesPolicyAncestorPins(t *testing.T) {
 			if len(want) == 0 {
 				t.Fatal("resolved inherited policy has no ancestor pins")
 			}
-			got, err := directAgentSandboxConfigForTask(&cfg, "codex", "standard", home, workspace, nil, sharedHost)
+			got, err := directAgentSandboxConfigForTask(&cfg, "codex", "standard", home, workspace, nil, sharedHost, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -447,7 +447,7 @@ func TestSharedHostDirectAgentPreservesAdministratorFilesystemPolicy(t *testing.
 		"ro:" + readOnlySource,
 		"deny:" + deniedSecret,
 	}}
-	cfg, err := directAgentSandboxConfigForTask(eggCfg, "codex", "standard", home, workspace, nil, true)
+	cfg, err := directAgentSandboxConfigForTask(eggCfg, "codex", "standard", home, workspace, nil, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +474,7 @@ func TestSharedHostDirectAgentMountsOnlyOwnerRuntimeAndHelperReadonly(t *testing
 			if err := os.WriteFile(key, []byte("owner-key"), 0400); err != nil {
 				t.Fatal(err)
 			}
-			cfg, err := directAgentSandboxConfigForTask(&egg.EggConfig{FS: []string{"deny:/"}}, agentName, "standard", home, "", nil, true)
+			cfg, err := directAgentSandboxConfigForTask(&egg.EggConfig{FS: []string{"deny:/"}}, agentName, "standard", home, "", nil, true, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -516,7 +516,7 @@ func TestSharedHostDirectAgentIgnoresCallerMounts(t *testing.T) {
 	cfg, err := directAgentSandboxConfigForTask(&egg.EggConfig{FS: []string{
 		"deny:/",
 		"rw:" + workspace,
-	}}, "codex", "standard", home, workspace, []string{callerMount}, true)
+	}}, "codex", "standard", home, workspace, []string{callerMount}, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

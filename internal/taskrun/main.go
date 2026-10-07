@@ -185,6 +185,13 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		}
 		workDir = canonicalWorkDir
 	}
+	contextCfg, err := config.LoadContextConfig(cfg.Dir)
+	if err != nil {
+		return fmt.Errorf("load context config: %w", err)
+	}
+	if contextCfg != nil && pr.Isolation == "privileged" {
+		return errors.New("context: cannot protect secret_file with privileged isolation; use a sandboxed run")
+	}
 	var resolvedEggCfg *egg.EggConfig
 	if pr.Isolation == "privileged" {
 		// Privileged means the discovered/configured sandbox policy is not in
@@ -271,7 +278,7 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		}
 
 		mountPaths := taskSandboxMountPaths(pr.Mounts, workDir, options)
-		sbCfg, policyErr := directAgentSandboxConfigForTask(resolvedEggCfg, agentName, pr.Isolation, home, workDir, mountPaths, options.SharedHost)
+		sbCfg, policyErr := directAgentSandboxConfigForTask(resolvedEggCfg, agentName, pr.Isolation, home, workDir, mountPaths, options.SharedHost, contextCfg)
 		if policyErr != nil {
 			return fmt.Errorf("resolve sandbox network policy: %w", policyErr)
 		}
