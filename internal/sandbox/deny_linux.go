@@ -1223,7 +1223,7 @@ func persistDir(src, dst string) {
 
 // copyFile publishes a fresh inode in the pinned destination directory. Never
 // truncate the old inode: a sandbox may have hard-linked it to a host secret.
-func copyFile(src, dst string) error {
+func copyFile(src, dst string, expected ...os.FileInfo) error {
 	fd, err := unix.Open(src, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return err
@@ -1242,16 +1242,31 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	defer parent.Close()
-	return publishPinnedFile(in, info.Mode().Perm(), parent, filepath.Base(dst))
+	return publishPinnedFile(in, info.Mode().Perm(), parent, filepath.Base(dst), expected...)
 }
 
-func publishPinnedFile(in *os.File, mode os.FileMode, parent *os.File, name string) error {
+func publishPinnedFile(in *os.File, mode os.FileMode, parent *os.File, name string, expected ...os.FileInfo) error {
+	var before os.FileInfo
+	if len(expected) > 0 {
+		before = expected[0]
+	} else {
+		var err error
+		before, err = os.Lstat(filepath.Join(mountFDPath(parent), name))
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 	out, err := os.CreateTemp(mountFDPath(parent), ".wingthing-persist-*")
 	if err != nil {
 		return err
 	}
 	temporary := filepath.Base(out.Name())
-	defer unix.Unlinkat(int(parent.Fd()), temporary, 0)
+	removeTemporary := true
+	defer func() {
+		if removeTemporary {
+			_ = unix.Unlinkat(int(parent.Fd()), temporary, 0)
+		}
+	}()
 	defer out.Close()
 	if err := out.Chmod(mode); err != nil {
 		return err
@@ -1265,7 +1280,56 @@ func publishPinnedFile(in *os.File, mode os.FileMode, parent *os.File, name stri
 	if err := out.Close(); err != nil {
 		return err
 	}
-	return unix.Renameat(int(parent.Fd()), temporary, int(parent.Fd()), name)
+	fd := int(parent.Fd())
+	saveConflict := func(version string) error {
+		conflict, err := os.CreateTemp(mountFDPath(parent), ".wingthing-conflict-"+name+"-*")
+		if err == nil {
+			err = conflict.Close()
+			if err == nil {
+				err = unix.Renameat(fd, temporary, fd, filepath.Base(conflict.Name()))
+			}
+			if err != nil {
+				_ = unix.Unlinkat(fd, filepath.Base(conflict.Name()), 0)
+			}
+		}
+		if err != nil {
+			// After an exchange this is the displaced host version. Never
+			// delete it if conflict publication itself fails.
+			removeTemporary = false
+			return fmt.Errorf("save %s conflict for %s (retained %s): %w", version, name, temporary, err)
+		}
+		log.Printf("_deny_init: host prefix changed during publication of %s; saved %s version to %s", name, version, filepath.Base(conflict.Name()))
+		return nil
+	}
+	flags := uint(unix.RENAME_EXCHANGE)
+	if before == nil {
+		flags = unix.RENAME_NOREPLACE
+	}
+	err = unix.Renameat2(fd, temporary, fd, name, flags)
+	if err == nil {
+		if before == nil {
+			return nil
+		}
+		displaced, err := os.Lstat(filepath.Join(mountFDPath(parent), temporary))
+		if err == nil && samePrefixSnapshot(before, displaced) {
+			return nil
+		}
+		return saveConflict("displaced host")
+	}
+	if err == unix.EEXIST || err == unix.ENOENT {
+		// A host creation or deletion also wins over the session snapshot.
+		return saveConflict("session")
+	}
+	if err != unix.ENOSYS && err != unix.EINVAL && err != unix.EOPNOTSUPP {
+		return err
+	}
+	// Older kernels/filesystems cannot exchange. Recheck after staging so
+	// host changes made during the copy are still saved as conflicts.
+	current, statErr := os.Lstat(filepath.Join(mountFDPath(parent), name))
+	if (before == nil && os.IsNotExist(statErr)) || (statErr == nil && samePrefixSnapshot(before, current)) {
+		return unix.Renameat(fd, temporary, fd, name)
+	}
+	return saveConflict("session")
 }
 
 type expectedMount struct {
@@ -1924,7 +1988,7 @@ func prepareJailPrefixFiles(root, home string, readonly, writable, prefixes []st
 						}
 						continue
 					}
-					if err := copyFile(path, destination); err != nil {
+					if err := copyFile(path, destination, snapshot.info); err != nil {
 						log.Printf("_deny_init: persist jail prefix %s: %v", path, err)
 					}
 				}
