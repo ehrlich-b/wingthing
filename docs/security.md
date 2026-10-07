@@ -343,6 +343,12 @@ Plaintext terminal and task history exists on the wing for replay and durability
 Wingthing does not currently provide application-level encryption at rest; use OS
 disk encryption when that threat matters.
 
+Native chat archives captured by eggs started before the transcript confinement
+upgrade are unverified; upgrading the wing does not verify their source. After
+those eggs exit, an administrator can remove `chat.jsonl.gz` and `chat.meta` from
+each affected `<state-dir>/eggs/<session-id>/` directory (`~/.wingthing` by default,
+or the configured `WINGTHING_DIR`) to prevent their chat audit export.
+
 ## Relay-compromise threat model
 
 An attacker controlling the hosted relay can:
