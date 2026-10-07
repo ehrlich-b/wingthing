@@ -829,10 +829,21 @@ func installPrivateDenyMountpoints(plan denyMountpointPlan, tmpDir string, persi
 		}
 	}
 	options := fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lower, upper, work)
-	if !persist {
+	if persist {
+		// A disk-backed upper otherwise syncs its entire host filesystem when
+		// the last namespace reference goes away, delaying even SIGKILL. Keep
+		// ordinary workspace writes persistent, but do not promise durability
+		// through overlay fsync or teardown (volatile requires Linux 5.10+).
+		options += ",volatile"
+	} else {
 		options = fmt.Sprintf("lowerdir=%s:%s,upperdir=%s,workdir=%s", lower, mountFDPath(parent), upper, work)
 	}
 	if err := unix.Mount("overlay", mountFDPath(parent), "overlay", 0, options); err != nil {
+		if persist {
+			// Never retry with a syncing host upper or discard writable files in
+			// a tmpfs upper. The affected jail must fail closed on older kernels.
+			return nil, fmt.Errorf("private writable deny view at %s requires volatile overlayfs (Linux 5.10+): %w", plan.Parent, err)
+		}
 		return nil, fmt.Errorf("private deny view at %s: %w", plan.Parent, err)
 	}
 	for i, path := range bindNames {
@@ -874,9 +885,26 @@ func setupOverlayHome(home string, writablePaths, prefixes []string, tmpDir stri
 		}
 	}()
 
-	// Create overlay upper (COW layer) and work dirs.
-	upperDir := filepath.Join(tmpDir, "overlay-upper")
-	workDir := filepath.Join(tmpDir, "overlay-work")
+	// Keep the scratch COW upper and work directory on private tmpfs. A disk
+	// upper would sync unrelated host writes when its namespace is destroyed.
+	backing := filepath.Join(tmpDir, "overlay-cow")
+	if err := os.MkdirAll(backing, 0755); err != nil {
+		log.Printf("_deny_init: mkdir overlay backing: %v", err)
+		return nil
+	}
+	if err := unix.Mount("tmpfs", backing, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "size=64m"); err != nil {
+		log.Printf("_deny_init: mount overlay backing: %v (falling back to bind-mount)", err)
+		return nil
+	}
+	// Kernel references and the private persistence FD retain the contents;
+	// no alias to this backing tree remains accessible to the agent.
+	defer func() {
+		if err := unix.Unmount(backing, unix.MNT_DETACH); err != nil {
+			failEnforcement("hide overlay backing tree", backing, err)
+		}
+	}()
+	upperDir := filepath.Join(backing, "upper")
+	workDir := filepath.Join(backing, "work")
 	if err := os.MkdirAll(upperDir, 0755); err != nil {
 		log.Printf("_deny_init: mkdir overlay-upper: %v", err)
 		return nil
@@ -887,7 +915,7 @@ func setupOverlayHome(home string, writablePaths, prefixes []string, tmpDir stri
 	}
 
 	// Mount overlayfs on HOME. Lower layer is the real HOME (via saved ref).
-	// Upper layer is the tmpdir COW — writes go here, real HOME is untouched.
+	// Upper layer is private tmpfs — writes go here, real HOME is untouched.
 	opts := fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", realHome, upperDir, workDir)
 	if err := unix.Mount("overlay", home, "overlay", 0, opts); err != nil {
 		log.Printf("_deny_init: overlay HOME: %v (falling back to bind-mount)", err)

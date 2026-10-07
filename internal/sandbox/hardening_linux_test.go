@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -381,6 +382,34 @@ func runHardeningScenario(scenario, root string) error {
 		if persist == nil {
 			return fmt.Errorf("overlay HOME setup failed after successful mount probe")
 		}
+		fds, err := os.ReadDir("/proc/self/fd")
+		if err != nil {
+			return err
+		}
+		foundUpper := false
+		for _, fd := range fds {
+			path, _ := os.Readlink(filepath.Join("/proc/self/fd", fd.Name()))
+			// A detached backing mount's FD can be named /upper rather than
+			// by its former mountpoint in the host tree.
+			if filepath.Base(strings.TrimSuffix(path, " (deleted)")) != "upper" {
+				continue
+			}
+			foundUpper = true
+			number, err := strconv.Atoi(fd.Name())
+			if err != nil {
+				return err
+			}
+			var stat unix.Statfs_t
+			if err := unix.Fstatfs(number, &stat); err != nil {
+				return err
+			}
+			if stat.Type != unix.TMPFS_MAGIC {
+				return fmt.Errorf("scratch HOME upper can sync the host filesystem: type %#x", stat.Type)
+			}
+		}
+		if !foundUpper {
+			return fmt.Errorf("missing private scratch HOME upper")
+		}
 		alias := filepath.Join(tmp, "real-home")
 		if _, err := os.ReadFile(filepath.Join(alias, ".ssh", "key")); !os.IsNotExist(err) {
 			return fmt.Errorf("overlay exposed backing secrets: %v", err)
@@ -394,7 +423,7 @@ func runHardeningScenario(scenario, root string) error {
 		if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte("atomic config"), 0o600); err != nil {
 			return err
 		}
-		for _, dir := range []string{"overlay-upper", "overlay-work"} {
+		for _, dir := range []string{"overlay-cow/upper", "overlay-cow/work"} {
 			if err := os.WriteFile(filepath.Join(tmp, dir, ".claude.json"), []byte("bypass"), 0o600); err == nil {
 				return fmt.Errorf("raw overlay backing directory remained writable: %s", dir)
 			}
@@ -418,7 +447,7 @@ func runHardeningScenario(scenario, root string) error {
 			return err
 		}
 		// A regular file makes upperdir setup fail after real-home was bound.
-		if err := os.WriteFile(filepath.Join(tmp, "overlay-upper"), nil, 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(tmp, "overlay-cow"), nil, 0o600); err != nil {
 			return err
 		}
 		if persist := setupOverlayHome(home, []string{config}, []string{".claude"}, tmp); persist != nil {
