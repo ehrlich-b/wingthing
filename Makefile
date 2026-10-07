@@ -96,6 +96,7 @@ ifneq ($(filter integration,$(GATE)),)
 	python3 test/preview/provider_onboarding.py ./wt-preview
 	python3 test/preview/remote_reader_drain_regression.py
 	@if [ "$$(uname -s)" = Linux ]; then python3 test/preview/remote_isolation.py ./wt ./wt-preview; fi
+	@if [ "$$(uname -s)" = Linux ]; then $(GO) test -p 2 -c -o test/linux/eggclient-tests ./internal/eggclient/ && sh test/linux/roost-pin-tests.sh test/linux/eggclient-tests; fi
 endif
 ifneq ($(filter compat,$(GATE)),)
 	scripts/test-backward-compat.sh
@@ -152,7 +153,7 @@ endif
 		case "$$distro" in debian) dockerfile= testimage=wt-test-linux ;; ubuntu) dockerfile=.ubuntu2404 testimage=wt-test-ubuntu ;; *) echo "Unknown distro: $$distro"; exit 1 ;; esac; \
 		docker build -t "$$testimage" -f "test/linux/Dockerfile$$dockerfile" test/linux/; \
 		docker run --rm --privileged "$$testimage" sh -lc \
-			'/root/run-tests -test.v -test.timeout 120s && /root/sandbox-tests -test.v -test.timeout 120s && /root/wt-tests -test.v -test.timeout 120s && sh /root/roost-pin-tests.sh'; \
+			'/root/run-tests -test.v -test.timeout 120s && /root/sandbox-tests -test.v -test.timeout 120s && /root/wt-tests -test.v -test.timeout 120s && sh /root/roost-pin-tests.sh /root/eggclient-tests'; \
 	done
 
 e2e-web: web
