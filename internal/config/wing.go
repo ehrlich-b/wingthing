@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ehrlich-b/wingthing/internal/fsutil"
+	"github.com/ehrlich-b/wingthing/internal/protectedfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -379,7 +380,7 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 	cfg := &WingConfig{}
 	path := filepath.Join(dir, "wing.yaml")
 
-	data, err := os.ReadFile(path)
+	data, err := protectedfile.ReadResolved(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Migrate from legacy wing-id file

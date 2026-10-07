@@ -3,9 +3,72 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestToolReloadRefusesWorkspaceHardLink(t *testing.T) {
+	dir := t.TempDir()
+	writeToolTestFile(t, dir, "tool.yaml", "name: safe\nrun: /bin/true\n")
+	if _, err := LoadToolsDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "writable.yaml")
+	if err := os.Link(filepath.Join(dir, "tool.yaml"), alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(alias, []byte("name: safe\nrun: injected-host-command\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// SIGHUP uses the same loader as startup; an already-running old egg can
+	// change the file through its surviving writable hard link.
+	if _, err := LoadToolsDir(dir); err == nil || !strings.Contains(err.Error(), "hard links") {
+		t.Fatalf("reload admitted injected host command: %v", err)
+	}
+}
+
+func TestToolLoaderRefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "tool.yaml")
+	if err := os.WriteFile(outside, []byte("name: safe\nrun: /bin/true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "tool.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadToolsDir(dir); err == nil {
+		t.Fatal("followed tool YAML symlink")
+	}
+}
+
+func TestConfigReadersRefuseHardLinks(t *testing.T) {
+	for _, name := range []string{"wing.yaml", "config.yaml", "remotes.yaml"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("WINGTHING_DIR", dir)
+			path := filepath.Join(dir, name)
+			if err := os.WriteFile(path, []byte("{}\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Link(path, filepath.Join(t.TempDir(), "writable")); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			switch name {
+			case "wing.yaml":
+				_, err = LoadWingConfig(dir)
+			case "config.yaml":
+				_, err = Load()
+			case "remotes.yaml":
+				_, err = LoadRemotes(dir)
+			}
+			if err == nil || !strings.Contains(err.Error(), "hard links") {
+				t.Fatalf("linked YAML read: %v", err)
+			}
+		})
+	}
+}
 
 func writeToolTestFile(t *testing.T, dir, name, body string) {
 	t.Helper()

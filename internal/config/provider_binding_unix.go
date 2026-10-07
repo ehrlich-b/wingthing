@@ -8,39 +8,20 @@ import (
 	"io"
 	"os"
 	"syscall"
+
+	"github.com/ehrlich-b/wingthing/internal/protectedfile"
 )
 
 // The binding is opened without following a final symlink and without
 // blocking on a FIFO swapped in after Lstat. The opened file must be the same
 // private, single-link regular file owned by this OS account.
 func readProviderHomeBinding(path string, limit int64) ([]byte, error) {
-	before, err := os.Lstat(path)
+	f, err := protectedfile.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	if !before.Mode().IsRegular() {
-		return nil, errors.New("must be a regular file, not a link or special file")
-	}
-	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
-	if err != nil {
-		return nil, fmt.Errorf("open without following links: %w", err)
-	}
-	f := os.NewFile(uintptr(fd), path)
 	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() || !os.SameFile(before, info) {
-		return nil, errors.New("changed while being opened")
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || int(stat.Uid) != os.Getuid() {
-		return nil, errors.New("must be owned by this OS account")
-	}
-	if stat.Nlink != 1 {
-		return nil, errors.New("must not be hard-linked")
-	}
+	info := f.Info
 	if info.Mode().Perm()&0o077 != 0 {
 		return nil, errors.New("must not be accessible to group or others (use mode 0400 or 0600)")
 	}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	wingconfig "github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/protectedfile"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"golang.org/x/sys/unix"
 	"gopkg.in/yaml.v3"
@@ -536,15 +537,25 @@ func RequiresSandbox(cfg *EggConfig, agentName string) bool {
 
 // LoadEggConfig reads and parses an egg.yaml file.
 func LoadEggConfig(path string) (*EggConfig, error) {
-	data, err := os.ReadFile(path)
+	cfg, _, err := loadEggConfig(path)
+	return cfg, err
+}
+
+func loadEggConfig(path string) (*EggConfig, os.FileInfo, error) {
+	f, err := protectedfile.OpenResolved(path)
 	if err != nil {
-		return nil, fmt.Errorf("read egg config: %w", err)
+		return nil, nil, fmt.Errorf("read egg config: %w", err)
+	}
+	defer f.Close()
+	data, err := f.ReadAll()
+	if err != nil {
+		return nil, nil, fmt.Errorf("read egg config: %w", err)
 	}
 	var cfg EggConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse egg config: %w", err)
+		return nil, nil, fmt.Errorf("parse egg config: %w", err)
 	}
-	return &cfg, nil
+	return &cfg, f.Info, nil
 }
 
 // LoadEggConfigFromYAML parses an egg config from a YAML string.
@@ -643,7 +654,7 @@ const maxBaseDepth = 10
 // An optional cwd anchors relative filesystem grants to the session workspace.
 // Without it, alias write checks are deferred until session discovery/runtime.
 func ResolveEggConfig(path string, cwds ...string) (*EggConfig, error) {
-	dependencies := make(map[string]bool)
+	dependencies := make(map[string]os.FileInfo)
 	cfg, err := resolveEggConfig(path, dependencies, 0)
 	if err != nil {
 		return nil, err
@@ -660,10 +671,19 @@ func ResolveEggConfig(path string, cwds ...string) (*EggConfig, error) {
 		protected := make(map[string]bool)
 		ancestors := make(map[string]bool)
 		workspace := wingconfig.CanonicalProviderPath(filepath.Dir(path))
-		for dependency := range dependencies {
+		for dependency, identity := range dependencies {
 			real, err := resolveLoaderPath(dependency, false, mounts)
 			if err != nil {
 				return nil, fmt.Errorf("resolve policy dependency: %w", err)
+			}
+			f, err := protectedfile.Open(real)
+			if err != nil {
+				return nil, err
+			}
+			same := os.SameFile(identity, f.Info)
+			f.Close()
+			if !same {
+				return nil, &protectedfile.Error{Path: dependency, Reason: "policy changed after being read"}
 			}
 			protected[real] = true
 			// System aliases are immutable; only user-managed aliases need a
@@ -704,7 +724,7 @@ func ResolveEggConfig(path string, cwds ...string) (*EggConfig, error) {
 	return cfg, nil
 }
 
-func resolveEggConfig(path string, visited map[string]bool, depth int) (*EggConfig, error) {
+func resolveEggConfig(path string, visited map[string]os.FileInfo, depth int) (*EggConfig, error) {
 	if depth > maxBaseDepth {
 		return nil, fmt.Errorf("egg config base chain too deep (max %d)", maxBaseDepth)
 	}
@@ -712,19 +732,21 @@ func resolveEggConfig(path string, visited map[string]bool, depth int) (*EggConf
 	if err != nil {
 		return nil, err
 	}
-	if visited[abs] {
+	if _, exists := visited[abs]; exists {
 		return nil, fmt.Errorf("egg config circular base reference: %s", abs)
 	}
-	visited[abs] = true
+	visited[abs] = nil
 	// Read the chain before checking aliases against the final inherited FS.
 	if _, err := resolveLoaderPath(abs, false, nil); err != nil {
 		return nil, err
 	}
 
-	child, err := LoadEggConfig(abs)
+	child, identity, err := loadEggConfig(abs)
 	if err != nil {
 		return nil, err
 	}
+
+	visited[abs] = identity
 
 	var parent *EggConfig
 	switch child.Base.Name {
@@ -773,7 +795,8 @@ func (e *PolicyPathError) Error() string {
 
 func isUnsafePolicyPath(err error) bool {
 	var pathErr *PolicyPathError
-	return errors.As(err, &pathErr)
+	var fileErr *protectedfile.Error
+	return errors.As(err, &pathErr) || errors.As(err, &fileErr)
 }
 
 // Walk the actual loader path, including links in link targets. System aliases
@@ -932,7 +955,7 @@ func resolveBasePath(base, configDir string) string {
 // per-section mask values. "none" clears the section; a name/path resolves
 // that file's full chain and extracts the section.
 func applySectionMasks(parent *EggConfig, masks BaseField, configDir string,
-	visited map[string]bool, depth int) error {
+	visited map[string]os.FileInfo, depth int) error {
 	if masks.FS != "" {
 		if masks.FS == "none" {
 			parent.FS = nil

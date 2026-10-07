@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/protectedfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -124,14 +125,16 @@ func LoadToolsDir(dir string) ([]*ToolConfig, error) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		info, err := e.Info()
+		file, err := protectedfile.Open(path)
 		if err != nil {
-			return nil, fmt.Errorf("stat %s: %w", path, err)
+			return nil, fmt.Errorf("open %s: %w", path, err)
 		}
+		info := file.Info
 		if info.Mode().Perm()&0o077 != 0 {
 			fmt.Fprintf(os.Stderr, "warning: tool config %s is world-readable (mode %o), should be 0600\n", path, info.Mode().Perm())
 		}
-		data, err := os.ReadFile(path)
+		data, err := file.ReadAll()
+		file.Close()
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", path, err)
 		}
