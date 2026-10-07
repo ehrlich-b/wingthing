@@ -123,6 +123,19 @@ export function initTerminal() {
         if (S.ptySessionId) setNotification(S.ptySessionId, S.ptyWingId);
     });
 
+    // Agents retitle their terminal as they work (Claude: "◐ Math question");
+    // ask for a list refresh once per new topic so the sidebar label follows.
+    var titleKey = '';
+    var titleTimer = null;
+    S.term.onTitleChange(function(raw) {
+        var topic = String(raw || '').replace(/^[^\p{L}\p{N}]+/u, '').trim();
+        var key = S.ptyWingId + '\n' + S.ptySessionId + '\n' + topic;
+        if (!topic || key === titleKey) return;
+        titleKey = key;
+        clearTimeout(titleTimer);
+        titleTimer = setTimeout(function() { window.dispatchEvent(new CustomEvent('wt-terminal-title')); }, 1500);
+    });
+
     S.term.onSelectionChange(function() {
         DOM.terminalCopyBtn.disabled = !S.term.hasSelection();
         DOM.terminalCopyBtn.title = S.term.hasSelection()

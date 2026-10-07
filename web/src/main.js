@@ -9,7 +9,7 @@ import { initChatView } from './chat-view.js';
 import { detachPTY, disconnectPTY, retryReconnect, attachPTY, handlePTYPasskey } from './pty.js';
 import { showPalette, hidePalette, cyclePaletteAgent, cyclePaletteWing, navigatePalette, tabCompletePalette, launchFromPalette, debouncedDirList, isDirListPending } from './palette.js';
 import { connectAppWS } from './dashboard.js';
-import { loadHome } from './data.js';
+import { loadHome, fetchWingSessions, mergeWingSessions } from './data.js';
 import { scopeBrowserStateToUser } from './storage-scope.js';
 import { closeAuditOverlay } from './audit.js';
 import { hideDetailModal, showSessionInfo, renderSidebar, renderDashboard } from './render.js';
@@ -369,6 +369,17 @@ async function init() {
     }
     initNotifyListeners();
     initParentDot();
+    // The open session's agent took a new title; show it without waiting for the poll.
+    window.addEventListener('wt-terminal-title', function() {
+        var wingId = S.ptyWingId;
+        if (!wingId) return;
+        fetchWingSessions(wingId).then(function(sessions) {
+            if (!sessions) return;
+            mergeWingSessions(wingId, sessions);
+            renderSidebar();
+            if (S.activeView === 'home') renderDashboard();
+        }).catch(function() {});
+    });
     await loadHome();
     setInterval(loadHome, 30000);
     connectAppWS();
