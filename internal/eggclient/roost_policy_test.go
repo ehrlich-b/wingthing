@@ -340,3 +340,37 @@ func TestRoostPolicyOmittedCWDUsesFirstAccessibleRoot(t *testing.T) {
 		t.Fatalf("omitted cwd bypassed strict policy checks: %v", err)
 	}
 }
+
+func TestRoostPolicyPinsRootsAndAncestors(t *testing.T) {
+	home, root, other, wc := roostPolicyFixture(t)
+	role := filepath.Join(root, "role")
+	if err := os.Mkdir(role, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(role, "egg.yaml"), []byte("base: none\nfs: [rw:"+home+"]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	wc.Paths[0].Path = role
+	missing := filepath.Join(home, "absent", "role")
+	wc.Paths = append(wc.Paths, config.PathEntry{Path: missing})
+	for _, cwd := range []string{role, home, other} {
+		if cwd == other {
+			if err := os.Remove(filepath.Join(other, "egg.yaml")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		start := ws.PTYStart{UserID: "admin", OrgRole: "admin", CWD: cwd}
+		cfg, _, err := PrepareBrowserLaunch(wc, &start, home, true, &egg.EggConfig{FS: []string{"rw:" + home}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		resolved := cfg.ToSandboxConfig(home)
+		for _, configured := range []string{role, other, missing} {
+			for dir := configured; dir != "/"; dir = filepath.Dir(dir) {
+				if !ContainsExactPath(resolved.DenyRename, dir) {
+					t.Errorf("policy directory %s can be replaced (cwd=%s): %v", dir, cwd, resolved.DenyRename)
+				}
+			}
+		}
+	}
+}
