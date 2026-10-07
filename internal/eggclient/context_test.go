@@ -130,6 +130,10 @@ func TestContextThroughEggTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(root)
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	secretPath := filepath.Join(root, "context.secret")
 	if err := os.WriteFile(secretPath, []byte(secret+"\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -262,7 +266,10 @@ func TestContextThroughEggTools(t *testing.T) {
 }
 
 func TestContextSecretProtectsSymlinkTarget(t *testing.T) {
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	path, alias := filepath.Join(root, "secret"), filepath.Join(root, "alias")
 	if err := os.WriteFile(path, []byte("private"), 0600); err != nil {
 		t.Fatal(err)
@@ -286,7 +293,10 @@ func TestContextSecretProtectsSymlinkTarget(t *testing.T) {
 
 func TestContextSecretNeverInEggOrToolEnvironment(t *testing.T) {
 	const secret = "unique-secret-stays-in-wing-memory"
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(root, "context.secret")
 	if err := os.WriteFile(path, []byte(secret), 0600); err != nil {
 		t.Fatal(err)
