@@ -1581,3 +1581,20 @@ func TestEggPolicyRefusesGroupWritableLoader(t *testing.T) {
 		t.Fatal("accepted group-writable policy")
 	}
 }
+
+func TestControlPolicyIgnoresVanishedSessionEntries(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	state := filepath.Join(home, "state")
+	t.Setenv("WINGTHING_DIR", state)
+	tree := filepath.Join(state, "eggs")
+	makeEggConfigTestDir(t, tree)
+	// A dangling entry deterministically produces the same ENOENT from Stat
+	// as removal between ReadDir and Stat, without a timing-dependent race.
+	if err := os.Symlink(filepath.Join(tree, "already-removed"), filepath.Join(tree, "retired")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eggControlDenyPaths(""); err != nil {
+		t.Fatalf("vanished session prevented policy resolution: %v", err)
+	}
+}

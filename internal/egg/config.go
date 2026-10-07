@@ -284,6 +284,10 @@ func eggControlDenyPaths(sessionDir string, grants ...[]sandbox.Mount) ([]string
 		}
 		for _, entry := range entries {
 			info, err := os.Stat(filepath.Join(tree, entry.Name()))
+			if os.IsNotExist(err) {
+				// Concurrent session cleanup can remove an entry after ReadDir.
+				continue
+			}
 			if err != nil {
 				return paths, fmt.Errorf("inspect controller session: %w", err)
 			}
