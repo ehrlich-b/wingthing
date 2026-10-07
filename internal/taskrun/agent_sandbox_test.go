@@ -101,7 +101,7 @@ func TestDirectAgentSandboxConfigAppliesTaskEggPolicy(t *testing.T) {
 		},
 		Trace: true,
 	}
-	cfg, err := directAgentSandboxConfigForTask(eggCfg, "codex", "standard", home, workDir, nil, false)
+	cfg, err := directAgentSandboxConfigForTask(eggCfg, "codex", "standard", home, workDir, nil, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +279,7 @@ func TestSharedHostDirectAgentPreservesAdministratorFilesystemPolicy(t *testing.
 		"ro:" + readOnlySource,
 		"deny:" + deniedSecret,
 	}}
-	cfg, err := directAgentSandboxConfigForTask(eggCfg, "codex", "standard", home, workspace, nil, true)
+	cfg, err := directAgentSandboxConfigForTask(eggCfg, "codex", "standard", home, workspace, nil, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ func TestSharedHostDirectAgentIgnoresCallerMounts(t *testing.T) {
 	cfg, err := directAgentSandboxConfigForTask(&egg.EggConfig{FS: []string{
 		"deny:/",
 		"rw:" + workspace,
-	}}, "codex", "standard", home, workspace, []string{callerMount}, true)
+	}}, "codex", "standard", home, workspace, []string{callerMount}, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
