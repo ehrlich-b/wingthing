@@ -202,3 +202,55 @@ func TestHeadlessClaudeConfigAtomicReplacementPersists(t *testing.T) {
 		})
 	}
 }
+
+func TestHeadlessLaunchWithExistingControllerTokens(t *testing.T) {
+	if ok, reason := sandbox.CheckCapability(); !ok {
+		t.Skipf("namespaces unavailable: %s", reason)
+	}
+	root, _ := contextSecretFixture(t)
+	home, work := filepath.Join(root, "home"), filepath.Join(root, "work")
+	t.Setenv("HOME", home)
+	t.Setenv("WINGTHING_DIR", filepath.Join(home, ".wingthing"))
+	t.Setenv("TMPDIR", filepath.Join(root, "tmp"))
+	var tokens []string
+	for _, suffix := range []string{".gnupg/wingthing-control/old/egg.token", ".wingthing/eggs/old/egg.token"} {
+		path := filepath.Join(home, suffix)
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("controller-secret"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		tokens = append(tokens, path)
+	}
+	policy := &egg.EggConfig{FS: []string{"deny:/", "ro:/usr", "rw:" + work, "deny:" + filepath.Join(home, ".gnupg")}}
+	for _, path := range []string{"/lib", "/lib64", "/bin"} {
+		if _, err := os.Stat(path); err == nil {
+			policy.FS = append(policy.FS, "ro:"+path)
+		}
+	}
+	cfg, err := directAgentSandboxConfigForTask(policy, "custom", "standard", home, work, nil, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb, err := sandbox.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sb.Destroy()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	args := append([]string{"-c", `for path do if [ "$(cat "$path" 2>/dev/null)" = controller-secret ]; then exit 1; fi; done; printf launched > result`, "existing-tokens"}, tokens...)
+	cmd, err := sb.Exec(ctx, "/bin/sh", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Dir = work
+	if out, err := cmd.CombinedOutput(); err != nil {
+		diag, _ := os.ReadFile(sb.DiagLog())
+		t.Fatalf("existing token stopped launch: %v\n%s\n%s", err, out, diag)
+	}
+	if data, err := os.ReadFile(filepath.Join(work, "result")); err != nil || string(data) != "launched" {
+		t.Fatalf("launch result: %q, %v", data, err)
+	}
+}

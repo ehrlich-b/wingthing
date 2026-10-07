@@ -295,6 +295,10 @@ func eggControlDenyPaths(sessionDir string, grants ...[]sandbox.Mount) ([]string
 			}
 		}
 	}
+	sealed, err := physicalControlAliases(paths)
+	if err != nil {
+		return paths, fmt.Errorf("resolve controller aliases: %w", err)
+	}
 	for _, path := range credentials {
 		f, err := protectedfile.Open(path)
 		if os.IsNotExist(err) {
@@ -308,7 +312,17 @@ func eggControlDenyPaths(sessionDir string, grants ...[]sandbox.Mount) ([]string
 		if err != nil {
 			return paths, fmt.Errorf("resolve controller credential %s: %w", path, err)
 		}
-		paths = append(paths, aliases...)
+		for _, alias := range aliases {
+			covered := false
+			for _, tree := range sealed {
+				covered = covered || controlPathWithin(alias, tree)
+			}
+			// Keep validating every token, but avoid child masks beneath a
+			// directory already sealed by the allowlist or a parent mask.
+			if !covered {
+				paths = append(paths, alias)
+			}
+		}
 	}
 	for _, loader := range loaders {
 		resolved, err := resolveLoaderPath(loader, true, grants...)
