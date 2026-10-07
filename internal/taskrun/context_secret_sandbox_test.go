@@ -35,7 +35,11 @@ func TestHeadlessContextSecretCannotRead(t *testing.T) {
 	if err := os.Symlink(filepath.Join(root, "private"), alias); err != nil {
 		t.Fatal(err)
 	}
-	policy := &egg.EggConfig{FS: []string{"ro:" + alias}}
+	private := filepath.Join(root, "private")
+	// The jail supplies private /tmp instead of inheriting host temp reads.
+	// Grant the fixture directories explicitly so the positive control
+	// exercises the same aliases that secret protection must later block.
+	policy := &egg.EggConfig{FS: []string{"ro:" + alias, "ro:" + private}}
 	for _, dir := range []string{home + "/.claude", home + "/.codex"} {
 		if err := os.Mkdir(dir, 0700); err != nil {
 			t.Fatal(err)
@@ -91,13 +95,13 @@ func TestHeadlessContextSecretCannotRead(t *testing.T) {
 		}
 		return string(out), err
 	}
-	// Establish that default read access really exposes the secret without
-	// the guard, and that the namespace/sandbox harness runs on this host.
+	// Establish that the fixture grants expose the secret without the guard,
+	// and that the namespace/sandbox harness runs on this host.
 	unprotected, err := directAgentSandboxConfigForTask(policy, "custom", "standard", home, work, []string{work}, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := execInSandbox(unprotected, `cat "$1"`, c.SecretFile)
+	out, err := execInSandbox(unprotected, `cat "$1"`, filepath.Join(private, "context.secret"))
 	if err != nil {
 		if runtime.GOOS == "darwin" && strings.Contains(out, "sandbox-exec: sandbox_apply: Operation not permitted") {
 			t.Skipf("Seatbelt unavailable in this test environment: %v: %s", err, out)
@@ -115,7 +119,13 @@ func TestHeadlessContextSecretCannotRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{c.SecretFile, filepath.Join(root, "private", "context.secret"), filepath.Join(alias, "context.secret")} {
+	for _, path := range []string{filepath.Join(alias, "context.secret")} {
+		out, err := execInSandbox(unprotected, `cat "$1"`, path)
+		if err != nil || !strings.Contains(out, "headless-context-secret-must-stay-private") {
+			t.Fatalf("unprotected alias control failed via %s: %v: %s", path, err, out)
+		}
+	}
+	for _, path := range []string{c.SecretFile, filepath.Join(private, "context.secret"), filepath.Join(alias, "context.secret")} {
 		out, _ := execInSandbox(protected, `cat "$1"`, path)
 		if strings.Contains(out, "headless-context-secret-must-stay-private") {
 			t.Fatalf("headless sandbox read secret via %q: %s", path, out)
