@@ -485,7 +485,11 @@ func isolateLinuxEggControl(mounts []sandbox.Mount, control []string, bridges []
 					continue
 				}
 			}
-			if err := split(sandbox.Mount{Source: child, Target: child, ReadOnly: m.ReadOnly}); err != nil {
+			origin := m.InheritedFrom
+			if origin == "" {
+				origin = m.Source
+			}
+			if err := split(sandbox.Mount{Source: child, Target: child, ReadOnly: m.ReadOnly, InheritedFrom: origin}); err != nil {
 				return err
 			}
 		}

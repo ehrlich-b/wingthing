@@ -360,6 +360,12 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 			if d == "/" {
 				for _, m := range s.cfg.Mounts {
 					if m.ReadOnly && m.Source != "/" {
+						// Root enumeration supplies default reads, not an explicit
+						// file grant. Prefix files need private copies so replacement
+						// and persistence work instead of hitting a bind mountpoint.
+						if inferredPrefixFile(m, s.cfg.Mounts, home) {
+							continue
+						}
 						if m.Target != "" && m.Target != m.Source {
 							wrapArgs = append(wrapArgs, "--mount-ro-alias", m.Source, m.Target)
 						} else {
@@ -435,6 +441,22 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		cmd.ExtraFiles = append(cmd.ExtraFiles, child)
 	}
 	return cmd, nil
+}
+
+func inferredPrefixFile(m Mount, mounts []Mount, home string) bool {
+	if m.InheritedFrom != "/" || home == "" || (m.Target != "" && m.Target != m.Source) {
+		return false
+	}
+	for _, prefix := range mounts {
+		if prefix.ReadOnly || !prefix.UseRegex || !isPathWithin(prefix.Source, home) {
+			continue
+		}
+		if filepath.Dir(m.Source) == filepath.Dir(prefix.Source) && m.Source != prefix.Source && strings.HasPrefix(m.Source, prefix.Source) {
+			info, err := os.Lstat(m.Source)
+			return err == nil && info.Mode().IsRegular()
+		}
+	}
+	return false
 }
 
 // straceSupportsKillOnExit reports whether the strace binary understands

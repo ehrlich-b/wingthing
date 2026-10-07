@@ -24,10 +24,11 @@ type Sandbox interface {
 
 // Mount describes a filesystem mount for the sandbox.
 type Mount struct {
-	Source   string
-	Target   string
-	ReadOnly bool
-	UseRegex bool // macOS: emit regex rule instead of subpath (covers adjacent files like ~/.claude.json)
+	Source        string
+	Target        string
+	ReadOnly      bool
+	UseRegex      bool   // macOS: emit regex rule instead of subpath (covers adjacent files like ~/.claude.json)
+	InheritedFrom string // ancestor split to produce this mount; empty for explicit grants
 }
 
 // Config holds sandbox creation parameters.

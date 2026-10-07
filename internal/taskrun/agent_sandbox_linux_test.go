@@ -111,3 +111,81 @@ func TestHeadlessContextPhysicalAliases(t *testing.T) {
 		t.Fatalf("workspace write failed: %q, %v", data, err)
 	}
 }
+
+func TestHeadlessClaudeConfigAtomicReplacementPersists(t *testing.T) {
+	if ok, reason := sandbox.CheckCapability(); !ok {
+		t.Skipf("namespaces unavailable: %s", reason)
+	}
+	for _, readonly := range []bool{false, true} {
+		name := "inferred root read"
+		if readonly {
+			name = "explicit file read"
+		}
+		t.Run(name, func(t *testing.T) {
+			root, _ := contextSecretFixture(t)
+			home, work := filepath.Join(root, "home"), filepath.Join(root, "work")
+			t.Setenv("HOME", home)
+			t.Setenv("WINGTHING_DIR", filepath.Join(home, ".wingthing"))
+			t.Setenv("TMPDIR", filepath.Join(root, "tmp"))
+			t.Setenv("WT_PROVIDER_BASE_URL", "")
+			if err := os.Mkdir(filepath.Join(home, ".claude"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(home, ".claude.json")
+			if err := os.WriteFile(path, []byte("initial"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			policy := egg.DefaultEggConfig()
+			if readonly {
+				policy.FS = append(policy.FS, "ro:"+path)
+			}
+			cfg, err := directAgentSandboxConfigForTask(policy, "claude", "standard", home, work, []string{work}, false, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Keep the default HOME split, but omit unrelated temporary siblings
+			// that another package can remove before the namespace starts.
+			exe, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var mounts []sandbox.Mount
+			for _, mount := range cfg.Mounts {
+				if strings.HasPrefix(mount.Source, root+"/") || mount.Source == exe || mount.Source == "/usr" || mount.Source == "/bin" || mount.Source == "/lib" || mount.Source == "/lib64" {
+					mounts = append(mounts, mount)
+				}
+			}
+			cfg.Mounts = mounts
+			sb, err := sandbox.New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer sb.Destroy()
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			cmd, err := sb.Exec(ctx, "/bin/sh", []string{"-c", `test "$(cat "$HOME/.claude.json")" = initial && printf persisted > "$HOME/.claude/state" && printf rewritten > "$HOME/.claude.json.tmp" && mv "$HOME/.claude.json.tmp" "$HOME/.claude.json"`})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd.Dir = work
+			cmd.Env = append(os.Environ(), "HOME="+home)
+			out, runErr := cmd.CombinedOutput()
+			want := "rewritten"
+			if readonly {
+				want = "initial"
+				if runErr == nil {
+					t.Fatal("explicit read-only file became replaceable")
+				}
+			} else if runErr != nil {
+				diag, _ := os.ReadFile(sb.DiagLog())
+				t.Fatalf("atomic Claude config replacement failed: %v\n%s\n%s", runErr, out, diag)
+			}
+			if data, err := os.ReadFile(path); err != nil || string(data) != want {
+				t.Fatalf("prefix config persistence: %q, %v", data, err)
+			}
+			if data, err := os.ReadFile(filepath.Join(home, ".claude", "state")); err != nil || string(data) != "persisted" {
+				t.Fatalf("agent directory write lost: %q, %v", data, err)
+			}
+		})
+	}
+}
