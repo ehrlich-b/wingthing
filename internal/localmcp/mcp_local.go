@@ -331,7 +331,18 @@ func LocalMCPTools() []LocalMCPTool {
 // roostNativeMCPTools adapts the local typed control surface to authenticated
 // Streamable HTTP MCP. The request principal is supplied by the roost after
 // bearer-token verification and never accepted from tool arguments.
-func RoostNativeMCPTools(version string, cfg *config.Config, sharedHost bool) []mcppkg.NativeTool {
+func RoostNativeMCPTools(version string, cfg *config.Config, sharedHost bool, sources ...func() *config.WingConfig) []mcppkg.NativeTool {
+	// Standalone callers capture once; the embedded roost supplies the wing's
+	// synchronized runtime snapshot, which only changes after guarded reloads.
+	var initial *config.WingConfig
+	var policyErr error
+	var policySource func() *config.WingConfig
+	if len(sources) > 0 {
+		policySource = sources[0]
+	} else {
+		initial, policyErr = config.LoadWingConfig(cfg.Dir)
+		policySource = func() *config.WingConfig { return initial }
+	}
 	var tools []mcppkg.NativeTool
 	admission := NewMCPAdmissionState()
 	for _, localTool := range control.ToolsForAuthority(control.SurfaceHTTPMCP, control.AuthorityWing) {
@@ -343,7 +354,10 @@ func RoostNativeMCPTools(version string, cfg *config.Config, sharedHost bool) []
 				if principal.UserID == "" {
 					return nil, true, errors.New("authenticated user identity is required")
 				}
-				paths, err := roostMCPPaths(cfg, principal.Email)
+				if policyErr != nil {
+					return nil, true, fmt.Errorf("load roost path policy: %w", policyErr)
+				}
+				paths, err := roostMCPPaths(policySource(), principal.Email)
 				if err != nil {
 					return nil, true, err
 				}
@@ -387,10 +401,9 @@ func roostSessionPrincipal(userID string) string {
 	return "user-" + hex.EncodeToString(digest[:10])
 }
 
-func roostMCPPaths(cfg *config.Config, email string) ([]string, error) {
-	wingCfg, err := config.LoadWingConfig(cfg.Dir)
-	if err != nil {
-		return nil, fmt.Errorf("load roost path policy: %w", err)
+func roostMCPPaths(wingCfg *config.WingConfig, email string) ([]string, error) {
+	if wingCfg == nil {
+		return nil, errors.New("roost runtime path policy is not ready")
 	}
 	home, _ := os.UserHomeDir()
 	return wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, email, "member", home)), nil

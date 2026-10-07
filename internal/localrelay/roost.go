@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -185,7 +186,13 @@ func RunRoostForeground(version string, addrFlag string, devFlag bool, labelsFla
 	if err != nil {
 		return err
 	}
-	nativeTools := roostMCPControlTools(version, srv, cfg, hasAuth)
+	var runtimePolicy atomic.Pointer[func() *config.WingConfig]
+	nativeTools := roostMCPControlTools(version, srv, cfg, hasAuth, func() *config.WingConfig {
+		if source := runtimePolicy.Load(); source != nil {
+			return (*source)()
+		}
+		return nil
+	})
 	if hasAuth || policy != nil {
 		runner, err := roostToolRunner(cfg.Dir, tools)
 		if err != nil {
@@ -278,7 +285,7 @@ func RunRoostForeground(version string, addrFlag string, devFlag bool, labelsFla
 	_ = os.Remove(daemonctl.WingStatusPath())
 	wingErrCh := make(chan error, 1)
 	go func() {
-		wingErrCh <- wing.RunWingWithContext(wing.EntryOptions{Version: version}, ctx, sighupCh, LocalHTTPURL(addrFlag), labelsFlag, "auto", eggConfigFlag, orgFlag, nil, pathsFlag, debugFlag, auditFlag, true, false, hasAuth, embeddedWingToken)
+		wingErrCh <- wing.RunWingWithContext(wing.EntryOptions{Version: version, SetPolicySource: func(source func() *config.WingConfig) { runtimePolicy.Store(&source) }}, ctx, sighupCh, LocalHTTPURL(addrFlag), labelsFlag, "auto", eggConfigFlag, orgFlag, nil, pathsFlag, debugFlag, auditFlag, true, false, hasAuth, embeddedWingToken)
 	}()
 	if err := awaitEmbeddedWingReady(ctx, wingErrCh, listeners.ErrCh, daemonctl.ReadWingStatus, roostWingReadyTimeout); err != nil {
 		_ = listeners.Shutdown(srv, 8*time.Second)
@@ -418,8 +425,8 @@ func awaitEmbeddedWingReady(ctx context.Context, wingErrors <-chan error, relayE
 	}
 }
 
-func roostMCPControlTools(version string, srv *relay.Server, cfg *config.Config, sharedHost bool) []mcppkg.NativeTool {
-	tools := localmcp.RoostNativeMCPTools(version, cfg, sharedHost)
+func roostMCPControlTools(version string, srv *relay.Server, cfg *config.Config, sharedHost bool, sources ...func() *config.WingConfig) []mcppkg.NativeTool {
+	tools := localmcp.RoostNativeMCPTools(version, cfg, sharedHost, sources...)
 	return append(tools, srv.PortalNativeMCPTools(cfg.WingID)...)
 }
 
