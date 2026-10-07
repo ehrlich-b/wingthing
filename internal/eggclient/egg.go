@@ -1409,6 +1409,10 @@ func SetupAPIKeyHelper(agentName string, envMap map[string]string, effectiveHome
 		if err := json.Unmarshal(data, &settings); err != nil {
 			return fmt.Errorf("parse API key settings: %w", err)
 		}
+		// A user-writable file containing JSON null decodes to a nil map.
+		if settings == nil {
+			settings = make(map[string]any)
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read API key settings: %w", err)
 	}
