@@ -57,9 +57,34 @@ func TestOpenPolicyPathRejectsCreatableMissingPaths(t *testing.T) {
 		if fd >= 0 {
 			unix.Close(fd)
 		}
-		if err == nil || errors.Is(err, unix.ENOENT) || !strings.Contains(err.Error(), root+" is writable by this session") {
+		if err == nil || errors.Is(err, unix.ENOENT) || !strings.Contains(err.Error(), root+" is on writable mount ") {
 			t.Fatalf("creatable missing policy path %s was not refused: %v", tc.path, err)
 		}
+	}
+}
+
+func TestOpenPolicyPathRejectsMutablePermissionBarriers(t *testing.T) {
+	for _, mode := range []os.FileMode{0500, 0} {
+		t.Run(mode.String(), func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.Chmod(root, mode); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(root, 0700) })
+			for _, directory := range []bool{true, false} {
+				path := filepath.Join(root, "deeper", "role")
+				if !directory {
+					path = filepath.Join(path, "egg.yaml")
+				}
+				fd, err := openPolicyPath(path, directory)
+				if fd >= 0 {
+					unix.Close(fd)
+				}
+				if err == nil || errors.Is(err, unix.ENOENT) || errors.Is(err, unix.EACCES) || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), root+" is on writable mount ") {
+					t.Fatalf("mutable permission barrier allowed a missing policy path %s: %v", path, err)
+				}
+			}
+		})
 	}
 }
 

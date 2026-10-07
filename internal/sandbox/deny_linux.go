@@ -409,7 +409,7 @@ func DenyInit(args []string) {
 	var missingWritePaths []string
 	for _, p := range denyWritePaths {
 		if _, err := os.Stat(p); err != nil {
-			if os.IsNotExist(err) {
+			if os.IsNotExist(err) || errors.Is(err, unix.EACCES) {
 				log.Printf("_deny_init: deny-write path absent at launch: %s", p)
 				missingWritePaths = append(missingWritePaths, p)
 				continue
@@ -423,6 +423,16 @@ func DenyInit(args []string) {
 			failEnforcement("make deny-write path read-only", p, err)
 		}
 		expectedMounts = append(expectedMounts, expectedMount{Path: p, ReadOnly: true})
+	}
+
+	// The empty jail root is writable only while we create mountpoints. Seal
+	// its scaffolding before checking pins or starting the agent; the separate
+	// HOME, /tmp, /dev and explicit rw mounts retain their writable flags.
+	if jailMode {
+		if err := remountBindReadonly("/"); err != nil {
+			failEnforcement("make jail scaffolding read-only", "/", err)
+		}
+		expectedMounts = append(expectedMounts, expectedMount{Path: "/", FSType: "tmpfs", ReadOnly: true})
 	}
 
 	// Linux cannot rename or unlink a mountpoint. Recursive self-binds keep
@@ -1324,7 +1334,7 @@ func pinRenamePaths(paths, missingWritePaths []string, uid, gid int, jail bool) 
 			return nil, fmt.Errorf("incomplete policy pin response for %q", path)
 		}
 		switch data[0] {
-		case 1: // ENOENT is safe only after the kernel refuses ancestor writes.
+		case 1: // An unreachable path is safe only on a read-only mount.
 			debug.Debug("skipped unreachable policy directory", "path", path, "error", string(data[1:n]))
 			continue
 		case 2:
@@ -1412,18 +1422,27 @@ func openPolicyPath(path string, directory bool) (int, error) {
 		}
 		next, err := unix.Openat(fd, part, openFlags, 0)
 		if err != nil {
-			if errors.Is(err, unix.ENOENT) {
-				// Use the kernel directly: Faccessat's compatibility fallback
-				// checks mode bits in userspace and misses read-only mounts.
-				accessErr := unix.Faccessat2(fd, ".", unix.W_OK|unix.X_OK, unix.AT_EACCESS)
-				switch {
-				case accessErr == nil:
-					return -1, fmt.Errorf("configured roost path %s does not exist and %s is writable by this session; create the role directory and its egg.yaml", path, ancestor)
-				case errors.Is(accessErr, unix.EROFS), errors.Is(accessErr, unix.EACCES):
-					return -1, err
-				default:
-					return -1, fmt.Errorf("check creation of missing policy path %q under %q: %v", path, ancestor, accessErr)
+			if errors.Is(err, unix.ENOENT) || errors.Is(err, unix.EACCES) {
+				// Mode bits, ACLs and ownership can change after launch. Only a
+				// read-only mount permanently prevents chmod and entry creation.
+				var stat unix.Statfs_t
+				if statErr := unix.Fstatfs(fd, &stat); statErr != nil {
+					return -1, fmt.Errorf("inspect mount for unreachable policy path %q under %q: %v", path, ancestor, statErr)
 				}
+				if stat.Flags&unix.ST_RDONLY != 0 {
+					return -1, err
+				}
+				entries, mountErr := readMountInfo("/proc/self/mountinfo")
+				if mountErr != nil {
+					return -1, mountErr
+				}
+				mount := "/"
+				for point := range entries {
+					if isPathWithin(ancestor, point) && len(point) > len(mount) {
+						mount = point
+					}
+				}
+				return -1, fmt.Errorf("configured roost path %s is missing or unreachable and reachable ancestor %s is on writable mount %s; create the role directory and its egg.yaml, restore search permission, or make that mount read-only: %v", path, ancestor, mount, err)
 			}
 			return -1, err
 		}
