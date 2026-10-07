@@ -76,7 +76,8 @@ func TestClaudeLifecycleRefusesHostSettingsOutsideFinalPolicy(t *testing.T) {
 			if attack == "controller" || attack == "allowed" {
 				fs = []string{"ro:/", "rw:" + cwd}
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			// Race-instrumented namespace re-execs need time to start and exit.
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			server := &Server{dir: dir}
 			err = server.RunSession(ctx, RunConfig{Agent: "claude", ProviderSessionID: "ours", AgentArgs: []string{"--settings", path}, CWD: cwd, UserHome: home, FS: fs, Rows: 24, Cols: 80, Network: []string{"*"}, OmitBrowserBridge: true})

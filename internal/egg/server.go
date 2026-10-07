@@ -685,7 +685,13 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	}
 
 	// Snapshot agent config before session so we can restore on exit
-	configSnap := SnapshotAgentConfig(rc.Agent, rc.UserHome)
+	var configSnap *ConfigSnapshot
+	snapshotOwnedByProcess := false
+	defer func() {
+		if !snapshotOwnedByProcess {
+			configSnap.Close()
+		}
+	}()
 
 	// Resolve declared, agent-profile, and provider-derived domains through the
 	// same policy path used by `wt egg explain`.
@@ -938,6 +944,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			finalCfg.Deny = append(finalCfg.Deny, sbCfg.Deny...)
 			sbCfg = finalCfg
 		}
+		configSnap = SnapshotAgentConfig(rc.Agent, rc.UserHome, &sbCfg)
 		sb, err = sandbox.New(sbCfg)
 		if err != nil {
 			return fmt.Errorf("sandbox: %w", err)
@@ -957,6 +964,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		if err := prepareLifecycle(nil); err != nil {
 			return err
 		}
+		configSnap = SnapshotAgentConfig(rc.Agent, rc.UserHome)
 		log.Printf("SECURITY: egg runs in outer-boundary mode with the full authority of the local OS user; Wingthing filesystem, network, syscall, and resource isolation is disabled")
 		cmd = exec.CommandContext(context.Background(), binPath, args...)
 		cmd.Env = envSlice
@@ -1137,6 +1145,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	log.Printf("egg: serving on %s (pid %d)", lis.Addr(), os.Getpid())
 
 	// Wait for process exit in background
+	snapshotOwnedByProcess = true
 	go func() {
 		exitCode := 0
 		if err := cmd.Wait(); err != nil {
