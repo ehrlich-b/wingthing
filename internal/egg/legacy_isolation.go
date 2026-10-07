@@ -22,6 +22,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/procinfo"
+	"github.com/ehrlich-b/wingthing/internal/protectedfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -46,7 +47,7 @@ func controlDirectoryUnderHome(dir, home string) string {
 // The locator also lets host clients with a different HOME attach to an egg.
 // Bind it to the session identity before reading or cleaning external files.
 func readControlDirectory(dir string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(dir, "egg.control"))
+	data, err := protectedfile.ReadFile(filepath.Join(dir, "egg.control"))
 	if err != nil {
 		return "", err
 	}
@@ -69,7 +70,7 @@ func HasCurrentControlIsolation(dir string) bool {
 }
 
 func hasControlIsolationAt(path string) bool {
-	data, err := os.ReadFile(filepath.Join(path, "isolation"))
+	data, err := protectedfile.ReadFile(filepath.Join(path, "isolation"))
 	return err == nil && string(data) == ControlIsolationVersion+"\n"
 }
 

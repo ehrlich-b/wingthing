@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/protectedfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -74,7 +75,7 @@ func (ks *KeyStore) Init(passphrase string) error {
 		return fmt.Errorf("create key dir: %w", err)
 	}
 
-	if err := os.WriteFile(ks.keyFilePath(), data, 0o600); err != nil {
+	if err := protectedfile.WriteFile(ks.keyFilePath(), data); err != nil {
 		return fmt.Errorf("write key file: %w", err)
 	}
 
@@ -83,7 +84,7 @@ func (ks *KeyStore) Init(passphrase string) error {
 
 // Unlock derives the key from passphrase, decrypts the stored symmetric key, returns it.
 func (ks *KeyStore) Unlock(passphrase string) ([]byte, error) {
-	data, err := os.ReadFile(ks.keyFilePath())
+	data, err := protectedfile.ReadFile(ks.keyFilePath())
 	if err != nil {
 		return nil, fmt.Errorf("read key file: %w", err)
 	}

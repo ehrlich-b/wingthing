@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"github.com/ehrlich-b/wingthing/internal/protectedfile"
 	"os"
 	"path/filepath"
 )
@@ -17,7 +18,7 @@ func EnsureKeyPair(dir string) (string, error) {
 	keyPath := filepath.Join(dir, keyFileName)
 
 	// Try loading existing key
-	data, err := os.ReadFile(keyPath)
+	data, err := protectedfile.ReadFile(keyPath)
 	if err == nil && len(data) > 0 {
 		privBytes, err := base64.StdEncoding.DecodeString(string(data))
 		if err != nil {
@@ -30,6 +31,10 @@ func EnsureKeyPair(dir string) (string, error) {
 		return base64.StdEncoding.EncodeToString(priv.PublicKey().Bytes()), nil
 	}
 
+	if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("read existing key: %w", err)
+	}
+
 	// Generate new keypair
 	priv, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
@@ -40,7 +45,7 @@ func EnsureKeyPair(dir string) (string, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", fmt.Errorf("create dir: %w", err)
 	}
-	if err := os.WriteFile(keyPath, []byte(encoded), 0600); err != nil {
+	if err := protectedfile.WriteFile(keyPath, []byte(encoded)); err != nil {
 		return "", fmt.Errorf("write key: %w", err)
 	}
 
@@ -50,7 +55,7 @@ func EnsureKeyPair(dir string) (string, error) {
 // LoadPrivateKey loads the X25519 private key from disk.
 func LoadPrivateKey(dir string) (*ecdh.PrivateKey, error) {
 	keyPath := filepath.Join(dir, keyFileName)
-	data, err := os.ReadFile(keyPath)
+	data, err := protectedfile.ReadFile(keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("read key: %w", err)
 	}

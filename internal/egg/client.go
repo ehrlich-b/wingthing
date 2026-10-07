@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	"github.com/ehrlich-b/wingthing/internal/protectedfile"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -35,7 +36,7 @@ func Dial(socketPath, tokenPath string) (*Client, error) {
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
-	tokenData, err := os.ReadFile(tokenPath)
+	tokenData, err := protectedfile.ReadFile(tokenPath)
 	if err != nil {
 		return nil, fmt.Errorf("read egg token: %w", err)
 	}

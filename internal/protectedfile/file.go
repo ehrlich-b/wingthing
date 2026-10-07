@@ -22,6 +22,22 @@ type Error struct {
 
 func (e *Error) Error() string { return fmt.Sprintf("protected file %s: %s", e.Path, e.Reason) }
 
+// ResolvedPath binds a mask's pathname to the identity already opened.
+func (f *File) ResolvedPath() (string, error) {
+	path, err := filepath.EvalSymlinks(f.Name())
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if !os.SameFile(f.Info, info) {
+		return "", &Error{f.Name(), "changed before resolving masks"}
+	}
+	return path, nil
+}
+
 // OpenResolved preserves existing dotfile aliases. The resolved destination is
 // opened without following links and must match the original file's identity.
 // Sandbox callers must separately seal replaceable alias directory entries.
@@ -74,4 +90,22 @@ func ReadResolved(path string) ([]byte, error) {
 	}
 	defer f.Close()
 	return f.ReadAll()
+}
+
+// WriteFile publishes a fresh private inode rather than writing through an
+// existing name, which could become a symlink or hard link after a read.
+func WriteFile(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }

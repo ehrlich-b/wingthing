@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	wingconfig "github.com/ehrlich-b/wingthing/internal/config"
@@ -236,6 +235,8 @@ func eggControlDenyPaths(sessionDir string, grants ...[]sandbox.Mount) ([]string
 	seen := make(map[string]bool)
 	var paths []string
 	var loaders []string
+	var credentials []string
+	tokenTrees := []string{wingconfig.CanonicalProviderPath(filepath.Join(home, ".gnupg", "wingthing-control"))}
 	paths = append(paths, wingconfig.CanonicalProviderPath(filepath.Join(home, ".gnupg", "wingthing-control")))
 	for _, state := range states {
 		loaderState := state
@@ -247,9 +248,14 @@ func eggControlDenyPaths(sessionDir string, grants ...[]sandbox.Mount) ([]string
 			continue
 		}
 		seen[state] = true
-		for _, name := range []string{"eggs", "tools", "device_token.yaml", "local_device_token.yaml", "wing_key", "sync.key", "wing.yaml", "egg.yaml", "config.yaml", "roost.db", "wt.db"} {
+		for _, name := range []string{"eggs", "tools", "device_token.yaml", "local_device_token.yaml", "wing_key", "sync.key", "wing.yaml", "egg.yaml", "config.yaml", "remotes.yaml", "roost.db", "wt.db"} {
 			paths = append(paths, filepath.Join(state, name))
 		}
+		for _, name := range []string{"wing_key", "sync.key", "device_token.yaml", "local_device_token.yaml"} {
+			credentials = append(credentials, filepath.Join(state, name))
+		}
+		loaders = append(loaders, filepath.Join(loaderState, "config.yaml"), filepath.Join(loaderState, "remotes.yaml"))
+		tokenTrees = append(tokenTrees, filepath.Join(state, "eggs"))
 		toolsDir := filepath.Join(loaderState, "tools")
 		if cfg, err := wingconfig.LoadWingConfig(state); err == nil {
 			toolsDir = wingconfig.ResolveToolsDir(loaderState, cfg.ToolsDir)
@@ -265,6 +271,44 @@ func eggControlDenyPaths(sessionDir string, grants ...[]sandbox.Mount) ([]string
 				}
 			}
 		}
+	}
+	// Both the v0.147.0 compatibility token and current controller token are
+	// host credentials. Refuse existing hard links before exposing a workspace.
+	for _, tree := range tokenTrees {
+		entries, err := os.ReadDir(tree)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return paths, fmt.Errorf("inspect controller tokens: %w", err)
+		}
+		for _, entry := range entries {
+			info, err := os.Stat(filepath.Join(tree, entry.Name()))
+			if err != nil {
+				return paths, fmt.Errorf("inspect controller session: %w", err)
+			}
+			if !info.IsDir() {
+				continue
+			}
+			for _, name := range []string{"egg.token", "egg.control", "isolation"} {
+				credentials = append(credentials, filepath.Join(tree, entry.Name(), name))
+			}
+		}
+	}
+	for _, path := range credentials {
+		f, err := protectedfile.Open(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return paths, fmt.Errorf("protect controller credential %s: %w", path, err)
+		}
+		aliases, err := f.Aliases()
+		f.Close()
+		if err != nil {
+			return paths, fmt.Errorf("resolve controller credential %s: %w", path, err)
+		}
+		paths = append(paths, aliases...)
 	}
 	for _, loader := range loaders {
 		resolved, err := resolveLoaderPath(loader, true, grants...)
@@ -872,15 +916,7 @@ func resolveLoaderPath(path string, allowMissing bool, grants ...[]sandbox.Mount
 			return "", fmt.Errorf("inspect policy path: %w", err)
 		}
 		if info.Mode()&os.ModeSymlink == 0 {
-			if info.Mode().IsRegular() {
-				stat, ok := info.Sys().(*syscall.Stat_t)
-				if !ok {
-					return "", fmt.Errorf("inspect policy path link count: %s", next)
-				}
-				if stat.Nlink > 1 {
-					return "", &PolicyPathError{Path: next, Links: uint64(stat.Nlink)}
-				}
-			}
+
 			current = next
 			continue
 		}
@@ -909,6 +945,17 @@ func resolveLoaderPath(path string, allowMissing bool, grants ...[]sandbox.Mount
 		if err := checkAncestors(filepath.Dir(current), mutableAlias); err != nil {
 			return "", err
 		}
+	}
+	info, err := os.Stat(current)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		f, err := protectedfile.Open(current)
+		if err != nil {
+			return "", err
+		}
+		f.Close()
 	}
 	return current, nil
 }

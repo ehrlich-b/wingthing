@@ -73,3 +73,24 @@ func TestProtectedFileRechecksLinkCountAfterOpen(t *testing.T) {
 		t.Fatal("accepted hard link created after open")
 	}
 }
+
+func TestProtectedFileMasksRefuseReplacement(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(path, []byte("secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := os.Rename(path, path+".old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replacement"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Aliases(); err == nil {
+		t.Fatal("sealed a replacement instead of the opened identity")
+	}
+}

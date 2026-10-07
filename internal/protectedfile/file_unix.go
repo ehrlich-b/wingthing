@@ -12,7 +12,10 @@ import (
 func Open(path string) (*File, error) {
 	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, &os.PathError{Op: "open protected file without following links", Path: path, Err: err}
+		if err == syscall.ENOENT {
+			return nil, &os.PathError{Op: "open protected file without following links", Path: path, Err: err}
+		}
+		return nil, &Error{path, "cannot open without following links: " + err.Error()}
 	}
 	f := os.NewFile(uintptr(fd), path)
 	info, dev, ino, err := inspect(f)

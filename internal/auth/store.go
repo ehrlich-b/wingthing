@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/fsutil"
+	"github.com/ehrlich-b/wingthing/internal/protectedfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -77,7 +78,7 @@ func (s *TokenStore) Save(token *DeviceToken) error {
 }
 
 func (s *TokenStore) Load() (*DeviceToken, error) {
-	data, err := os.ReadFile(s.tokenPath())
+	data, err := protectedfile.ReadFile(s.tokenPath())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

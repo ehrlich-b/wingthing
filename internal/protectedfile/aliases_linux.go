@@ -123,5 +123,16 @@ func (f *File) Aliases() ([]string, error) {
 	if _, _, _, err := inspect(f.File); err != nil {
 		return nil, err
 	}
-	return aliases([]string{f.Name()}, map[string]os.FileInfo{f.Name(): f.Info})
+	resolved, err := f.ResolvedPath()
+	if err != nil {
+		return nil, err
+	}
+	paths, err := aliases([]string{resolved}, map[string]os.FileInfo{resolved: f.Info})
+	if err != nil {
+		return nil, err
+	}
+	if resolved != f.Name() {
+		paths = append(paths, f.Name())
+	}
+	return paths, nil
 }
