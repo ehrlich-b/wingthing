@@ -1407,7 +1407,7 @@ func openPolicyPath(path string, directory bool) (int, error) {
 	flags := unix.O_PATH | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC
 	fd, err := unix.Open("/", flags, 0)
 	if err != nil {
-		return -1, err
+		return -1, fmt.Errorf("open filesystem root for policy path %q: %v", path, err)
 	}
 	defer func() { _ = unix.Close(fd) }()
 	ancestor := "/"
@@ -1434,7 +1434,7 @@ func openPolicyPath(path string, directory bool) (int, error) {
 				}
 				entries, mountErr := readMountInfo("/proc/self/mountinfo")
 				if mountErr != nil {
-					return -1, mountErr
+					return -1, fmt.Errorf("inspect writable mount for unreachable policy path %q under %q: %v", path, ancestor, mountErr)
 				}
 				mount := "/"
 				for point := range entries {

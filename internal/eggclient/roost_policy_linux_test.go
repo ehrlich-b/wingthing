@@ -172,6 +172,7 @@ func TestRoostPolicyLinuxBrowserCanaryLayoutStarts(t *testing.T) {
 	for _, exportAsRoot := range []bool{false, true} {
 		if exportAsRoot {
 			wc.Paths = append(wc.Paths, config.PathEntry{Path: exports})
+			wc.Exports = nil // a workspace cannot also be an export destination
 		}
 		for i, role := range roles {
 			t.Run(fmt.Sprintf("export-root=%v/%s", exportAsRoot, filepath.Base(role)), func(t *testing.T) {
