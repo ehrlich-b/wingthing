@@ -1565,44 +1565,14 @@ func setupJailWithDenyMountpoints(tmpDir string, roMounts, writablePaths []strin
 			log.Printf("_deny_init: jail symlink /%s -> %s", link[0], target)
 		}
 	}
-	// Essential virtual filesystems FIRST — user bind-mounts may land on top
-	// of these (e.g. a writable path under /tmp).
-	// Bind-mount host /proc temporarily. The outer wrapper needs host PIDs while
-	// Go writes the nested user namespace's uid_map. The nested PID-namespace
-	// init replaces this mount before it executes the agent.
-	//
-	// The bind must be recursive: the host's binfmt_misc autofs under
-	// /proc/sys/fs is a locked submount in this user namespace, and a
-	// non-recursive bind that would expose what locked mounts cover is
-	// refused (EPERM). Keeping the children also keeps procfs "fully
-	// visible", which the kernel requires before it lets the PID-namespace
-	// init mount a fresh proc.
-	procPath := filepath.Join(newRoot, "proc")
-	if err := os.MkdirAll(procPath, 0555); err != nil {
-		failEnforcement("create jail /proc", "/proc", err)
-	}
-	if err := unix.Mount("/proc", procPath, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
-		failEnforcement("bind jail /proc", "/proc", err)
-	}
+	// Private virtual filesystems precede placeholders, so mounts under /tmp,
+	// /dev and /dev/shm cannot hide their deny targets.
 	devPath := filepath.Join(newRoot, "dev")
 	if err := os.MkdirAll(devPath, 0755); err != nil {
 		failEnforcement("create jail /dev", "/dev", err)
 	}
 	if err := unix.Mount("tmpfs", devPath, "tmpfs", unix.MS_NOSUID, "size=65536,mode=755"); err != nil {
 		failEnforcement("mount jail /dev", "/dev", err)
-	}
-	for _, dev := range []string{"null", "zero", "urandom", "tty", "random"} {
-		dp := filepath.Join(devPath, dev)
-		f, err := os.Create(dp)
-		if err != nil {
-			failEnforcement("create jail device mountpoint", "/dev/"+dev, err)
-		}
-		if err := f.Close(); err != nil {
-			failEnforcement("close jail device mountpoint", "/dev/"+dev, err)
-		}
-		if err := unix.Mount("/dev/"+dev, dp, "", unix.MS_BIND, ""); err != nil {
-			failEnforcement("bind jail device", "/dev/"+dev, err)
-		}
 	}
 	shmPath := filepath.Join(devPath, "shm")
 	if err := os.MkdirAll(shmPath, 01777); err != nil {
@@ -1624,9 +1594,8 @@ func setupJailWithDenyMountpoints(tmpDir string, roMounts, writablePaths []strin
 		failEnforcement("create sandbox temp directory inside jail", tmpDir, err)
 	}
 	tmpFD.Close()
-	// Create deny targets after the virtual mounts, which would otherwise
-	// cover placeholders under /tmp and /dev. No host binds exist yet, so
-	// creation still touches only the private jail filesystem.
+	// No host /proc or device binds exist yet. Placeholder creation touches
+	// only the private root and its private virtual filesystems.
 	for _, path := range denied {
 		if path == "/" {
 			continue
@@ -1634,6 +1603,10 @@ func setupJailWithDenyMountpoints(tmpDir string, roMounts, writablePaths []strin
 		directory := true
 		if info, err := os.Lstat(path); err == nil {
 			directory = info.IsDir()
+		} else if isPathWithin(path, "/proc") {
+			// The host proc bind would cover a private placeholder. Never
+			// recreate it through that bind or an inherited host submount.
+			failEnforcement("create private jail deny mountpoint", path, fmt.Errorf("refusing deny placeholder beneath host /proc: %w", err))
 		}
 		file, err := createConfinedMountpoint(newRoot, path, directory)
 		if err != nil {
@@ -1658,6 +1631,36 @@ func setupJailWithDenyMountpoints(tmpDir string, roMounts, writablePaths []strin
 		failEnforcement("prepare jail prefix config", home, err)
 	}
 	writablePaths = append(append([]string(nil), writablePaths...), extraWritable...)
+	// Bind-mount host /proc temporarily. The outer wrapper needs host PIDs while
+	// Go writes the nested user namespace's uid_map. The nested PID-namespace
+	// init replaces this mount before it executes the agent.
+	//
+	// The bind must be recursive: the host's binfmt_misc autofs under
+	// /proc/sys/fs is a locked submount in this user namespace, and a
+	// non-recursive bind that would expose what locked mounts cover is
+	// refused (EPERM). Keeping the children also keeps procfs "fully
+	// visible", which the kernel requires before it lets the PID-namespace
+	// init mount a fresh proc.
+	procPath := filepath.Join(newRoot, "proc")
+	if err := os.MkdirAll(procPath, 0555); err != nil {
+		failEnforcement("create jail /proc", "/proc", err)
+	}
+	if err := unix.Mount("/proc", procPath, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+		failEnforcement("bind jail /proc", "/proc", err)
+	}
+	for _, dev := range []string{"null", "zero", "urandom", "tty", "random"} {
+		dp := filepath.Join(devPath, dev)
+		f, err := os.Create(dp)
+		if err != nil {
+			failEnforcement("create jail device mountpoint", "/dev/"+dev, err)
+		}
+		if err := f.Close(); err != nil {
+			failEnforcement("close jail device mountpoint", "/dev/"+dev, err)
+		}
+		if err := unix.Mount("/dev/"+dev, dp, "", unix.MS_BIND, ""); err != nil {
+			failEnforcement("bind jail device", "/dev/"+dev, err)
+		}
+	}
 	// Mount parents before children so each declared child retains its mode.
 	expected := []expectedMount{
 		{Path: "/", FSType: "tmpfs", Writable: true},

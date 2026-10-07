@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -58,6 +59,9 @@ func runHardeningNamespace(t *testing.T, scenario, root string) {
 	}
 	if output, err := cmd.CombinedOutput(); err != nil {
 		var exitErr *exec.ExitError
+		if scenario == "jail-deny-host-proc-bind" && errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && strings.Contains(string(output), "refusing deny placeholder beneath host /proc") {
+			return // Refusal is safe; the parent still checks the host directory.
+		}
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 78 {
 			t.Skipf("Linux overlayfs unavailable: %s", output)
 		}
@@ -101,6 +105,19 @@ func probeHardeningOverlay(home, tmp string) error {
 
 func runHardeningScenario(scenario, root string) error {
 	switch scenario {
+	case "jail-deny-host-proc-bind":
+		data, tmp := filepath.Join(root, "host-data"), filepath.Join(root, "session")
+		if err := os.MkdirAll(tmp, 0o755); err != nil {
+			return err
+		}
+		if err := unix.Mount(data, "/proc/acpi", "", unix.MS_BIND, ""); err != nil {
+			return err
+		}
+		if err := os.Chdir("/"); err != nil {
+			return err
+		}
+		setupJailWithDenyMountpoints(tmp, nil, nil, "", nil, []string{"/", "/proc/acpi/new"})
+		return nil
 	case "readonly-inherited-submount":
 		home := filepath.Join(root, "home")
 		inherited, workspace := filepath.Join(home, "inherited"), filepath.Join(home, "workspace")
@@ -135,7 +152,7 @@ func runHardeningScenario(scenario, root string) error {
 		}
 		args := []string{"--uid", "0", "--gid", "0", "--log", filepath.Join(tmp, "deny.log"), "--deny", "/", "--writable", workspace}
 		command := ""
-		for _, parent := range []string{"/tmp", "/dev"} {
+		for _, parent := range []string{"/tmp", "/dev", "/dev/shm"} {
 			denied := filepath.Join(parent, filepath.Base(root), "denied")
 			args = append(args, "--deny", denied)
 			command += fmt.Sprintf(`test -d %q && ! touch %q 2>/dev/null && `, denied, filepath.Join(denied, "secret"))
@@ -458,6 +475,18 @@ func runHardeningScenario(scenario, root string) error {
 		return nil
 	default:
 		return fmt.Errorf("unknown hardening scenario %q", scenario)
+	}
+}
+
+func TestJailDenyPlaceholderDoesNotWriteThroughInheritedProcBind(t *testing.T) {
+	root := t.TempDir()
+	data := filepath.Join(root, "host-data")
+	if err := os.Mkdir(data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runHardeningNamespace(t, "jail-deny-host-proc-bind", root)
+	if _, err := os.Lstat(filepath.Join(data, "new")); !os.IsNotExist(err) {
+		t.Fatalf("deny placeholder modified the host through /proc/acpi: %v", err)
 	}
 }
 
