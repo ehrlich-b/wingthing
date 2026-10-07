@@ -1143,6 +1143,10 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 				}
 				if sig == syscall.SIGHUP {
 					log.Println("SIGHUP: reloading wing config")
+					if err := egg.CheckLoaderReloadIsolation(cfg.Dir); err != nil {
+						log.Printf("reload failed: %v", err)
+						continue
+					}
 					newCfg, err := config.LoadWingConfig(cfg.Dir)
 					if err != nil {
 						log.Printf("reload failed: %v", err)

@@ -158,6 +158,60 @@ func ReadLegacyIsolation(dir string) *LegacyIsolation {
 	return &result
 }
 
+// CheckLoaderReloadIsolation refuses reloads until every surviving legacy egg
+// has been replaced. A legacy process can retain a writable descriptor after
+// unlinking a loader alias, so a single-link inode is no proof of isolation.
+// Current isolation markers and the existing live-PID checks are the authority;
+// mutable session metadata and stale degraded warnings cannot clear this guard.
+func CheckLoaderReloadIsolation(state string) error {
+	home, _ := os.UserHomeDir()
+	states := []string{state, filepath.Join(home, ".wingthing"), filepath.Join(home, ".wingthing-preview")}
+	if selected, err := config.StateDir(); err == nil {
+		states = append(states, selected)
+	}
+	seen := make(map[string]bool)
+	var legacy []string
+	for _, state := range states {
+		state = config.CanonicalProviderPath(state)
+		if seen[state] {
+			continue
+		}
+		seen[state] = true
+		entries, err := os.ReadDir(filepath.Join(state, "eggs"))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("loader reload refused: cannot inspect legacy eggs: %w; keeping last known-good configuration", err)
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			dir := filepath.Join(state, "eggs", entry.Name())
+			if HasCurrentControlIsolation(dir) {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(dir, "egg.pid"))
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("loader reload refused: cannot inspect legacy egg %s: %w; keeping last known-good configuration", dir, err)
+			}
+			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			if err == nil && procinfo.OwnedProcessIsAlive(pid) {
+				legacy = append(legacy, dir)
+			}
+		}
+	}
+	if len(legacy) == 0 {
+		return nil
+	}
+	sort.Strings(legacy)
+	return fmt.Errorf("loader reload refused while legacy eggs are live: %s; stop these eggs, review/restore wing.yaml, egg.yaml and tool YAML, restart the eggs with current wingthing, then send SIGHUP again; keeping last known-good configuration", strings.Join(legacy, ", "))
+}
+
 // A live egg upgrade admits new sessions by default, retaining an explicit
 // warning about legacy policies. Strict mode restores the launch refusal.
 func RequireLegacySecretProtection(sessionDir string, toolCapability bool) error {
