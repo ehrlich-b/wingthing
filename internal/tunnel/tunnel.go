@@ -392,7 +392,7 @@ func HandleTunnelRequest(refs References, ctx context.Context, cfg *config.Confi
 		sessions := listAliveEggSessions(cfg)
 		for i := range sessions {
 			session := &sessions[i]
-			session.Forkable, session.ForkUnavailableReason = eggclient.SessionForkStatus(filepath.Join(cfg.Dir, "eggs", session.SessionID), session.Agent, session.CWD)
+			session.Forkable, session.ForkUnavailableReason = eggclient.SessionForkStatus(cfg, filepath.Join(cfg.Dir, "eggs", session.SessionID), session.Agent, session.CWD)
 		}
 		if wingpolicy.IsMemberFiltered(req) {
 			userPaths := wingpolicy.PathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
@@ -1080,7 +1080,7 @@ func collectSessionsHistory(cfg *config.Config) []pastSessionInfo {
 			info.StartedAt = stat.ModTime().Unix()
 		}
 		info.Resumable, info.ResumeUnavailableReason = eggclient.SessionResumeStatus(dir, agentName, cwd)
-		info.Forkable, info.ForkUnavailableReason = eggclient.SessionForkStatus(dir, agentName, cwd)
+		info.Forkable, info.ForkUnavailableReason = eggclient.SessionForkStatus(cfg, dir, agentName, cwd)
 		dead = append(dead, info)
 	}
 

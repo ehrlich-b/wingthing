@@ -16,7 +16,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 )
 
-func forkProviderID(dir, agent, cwd string) (string, error) {
+func forkProviderID(cfg *config.Config, dir, agent, cwd string) (string, error) {
 	if agent != "claude" {
 		return "", fmt.Errorf("agent %q does not support session fork; only Claude supports --fork-session", agent)
 	}
@@ -52,7 +52,7 @@ func forkProviderID(dir, agent, cwd string) (string, error) {
 	if reservation["agent"] != agent || reservation["provider_session_id"] != id {
 		return "", errors.New("provider conversation identity was not verified")
 	}
-	home, err := LifecycleProviderHome(&config.Config{Dir: filepath.Dir(filepath.Dir(dir))}, meta["provider_home"])
+	home, err := LifecycleProviderHome(cfg, meta["provider_home"])
 	if err != nil {
 		return "", err
 	}
@@ -78,8 +78,8 @@ func validForkProviderID(id string) bool {
 	return true
 }
 
-func SessionForkStatus(dir, agent, cwd string) (bool, string) {
-	if _, err := forkProviderID(dir, agent, cwd); err != nil {
+func SessionForkStatus(cfg *config.Config, dir, agent, cwd string) (bool, string) {
+	if _, err := forkProviderID(cfg, dir, agent, cwd); err != nil {
 		return false, err.Error()
 	}
 	return true, ""
@@ -181,7 +181,7 @@ func ForkSession(ctx context.Context, cfg *config.Config, sourceRef, label strin
 		}
 		plan.Options.nameLock = lock
 		home := EffectiveSessionHome(cfg, scope.Identity)
-		providerID, err := forkProviderID(dir, source.Agent, cwd)
+		providerID, err := forkProviderID(cfg, dir, source.Agent, cwd)
 		if err != nil {
 			return err
 		}
