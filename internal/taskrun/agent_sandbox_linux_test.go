@@ -69,6 +69,19 @@ func TestHeadlessContextPhysicalAliases(t *testing.T) {
 	}
 	run := func(cfg sandbox.Config, script string, args ...string) (string, error) {
 		t.Helper()
+		// Other packages can remove temporary siblings between default root
+		// enumeration and exec. Retain this fixture and the stable runtime.
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var mounts []sandbox.Mount
+		for _, mount := range cfg.Mounts {
+			if strings.HasPrefix(mount.Source, root+"/") || mount.Source == exe || mount.Source == "/usr" || mount.Source == "/bin" || mount.Source == "/lib" || mount.Source == "/lib64" {
+				mounts = append(mounts, mount)
+			}
+		}
+		cfg.Mounts = mounts
 		sb, err := sandbox.New(cfg)
 		if err != nil {
 			t.Fatal(err)
