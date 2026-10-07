@@ -1539,21 +1539,6 @@ func setupJailWithDenyMountpoints(tmpDir string, roMounts, writablePaths []strin
 	if err := unix.Mount("tmpfs", newRoot, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "size=64m"); err != nil {
 		log.Fatalf("_deny_init: jail mount newroot: %v", err)
 	}
-	// This is still an empty private tmpfs: no host bind may be created through.
-	for _, path := range denied {
-		if path == "/" {
-			continue
-		}
-		directory := true
-		if info, err := os.Lstat(path); err == nil {
-			directory = info.IsDir()
-		}
-		file, err := createConfinedMountpoint(newRoot, path, directory)
-		if err != nil {
-			failEnforcement("create private jail deny mountpoint", path, err)
-		}
-		file.Close()
-	}
 	// Recreate merged-usr symlinks (/bin -> usr/bin, etc.) if the host uses them.
 	aliases := make(map[string]string)
 	for _, link := range [][2]string{
@@ -1629,6 +1614,23 @@ func setupJailWithDenyMountpoints(tmpDir string, roMounts, writablePaths []strin
 		failEnforcement("create sandbox temp directory inside jail", tmpDir, err)
 	}
 	tmpFD.Close()
+	// Create deny targets after the virtual mounts, which would otherwise
+	// cover placeholders under /tmp and /dev. No host binds exist yet, so
+	// creation still touches only the private jail filesystem.
+	for _, path := range denied {
+		if path == "/" {
+			continue
+		}
+		directory := true
+		if info, err := os.Lstat(path); err == nil {
+			directory = info.IsDir()
+		}
+		file, err := createConfinedMountpoint(newRoot, path, directory)
+		if err != nil {
+			failEnforcement("create private jail deny mountpoint", path, err)
+		}
+		file.Close()
+	}
 	// HOME itself is an empty jail directory unless explicitly declared. Agent
 	// config directories are already included in writablePaths by its profile.
 	if home != "" {

@@ -68,6 +68,11 @@ func runJail(t *testing.T, cfg Config, shellCmd string) (string, error) {
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	err = cmd.Run()
+	if err != nil {
+		if diagnostic, readErr := os.ReadFile(sb.DiagLog()); readErr == nil {
+			t.Logf("sandbox diagnostic: %s", diagnostic)
+		}
+	}
 	return strings.TrimSpace(out.String()), err
 }
 

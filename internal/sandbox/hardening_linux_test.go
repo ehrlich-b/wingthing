@@ -123,6 +123,30 @@ func runHardeningScenario(scenario, root string) error {
 			return fmt.Errorf("inherited writable submount bypassed read-only HOME")
 		}
 		return os.WriteFile(filepath.Join(workspace, "result"), []byte("allowed"), 0o600)
+	case "jail-private-deny":
+		workspace, tmp := filepath.Join(root, "work"), filepath.Join(root, "session")
+		for _, dir := range []string{workspace, tmp} {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
+		}
+		if err := os.Chdir(workspace); err != nil {
+			return err
+		}
+		args := []string{"--uid", "0", "--gid", "0", "--log", filepath.Join(tmp, "deny.log"), "--deny", "/", "--writable", workspace}
+		command := ""
+		for _, parent := range []string{"/tmp", "/dev"} {
+			denied := filepath.Join(parent, filepath.Base(root), "denied")
+			args = append(args, "--deny", denied)
+			command += fmt.Sprintf(`test -d %q && ! touch %q 2>/dev/null && `, denied, filepath.Join(denied, "secret"))
+		}
+		for _, path := range []string{"/usr", "/bin", "/lib", "/lib64"} {
+			if _, err := os.Stat(path); err == nil {
+				args = append(args, "--mount-ro", path)
+			}
+		}
+		DenyInit(append(args, "--", "/bin/sh", "-c", command+"printf sealed > result"))
+		return fmt.Errorf("DenyInit returned")
 	case "jail-missing-deny":
 		home, workspace, tmp := filepath.Join(root, "home"), filepath.Join(root, "work"), filepath.Join(root, "session")
 		for _, dir := range []string{home, workspace, tmp} {
@@ -422,6 +446,15 @@ func runHardeningScenario(scenario, root string) error {
 		return nil
 	default:
 		return fmt.Errorf("unknown hardening scenario %q", scenario)
+	}
+}
+
+func TestJailPreservesDenyMountpointsUnderPrivateVirtualMounts(t *testing.T) {
+	root := t.TempDir()
+	runHardeningNamespace(t, "jail-private-deny", root)
+	data, err := os.ReadFile(filepath.Join(root, "work", "result"))
+	if err != nil || string(data) != "sealed" {
+		t.Fatalf("private virtual mount hid a deny target: %q, %v", data, err)
 	}
 }
 
