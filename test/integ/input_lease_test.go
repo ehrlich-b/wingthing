@@ -200,4 +200,42 @@ func logLeaseCleanupDiagnostics(t *testing.T, dir string) {
 	if out, err := exec.Command("ps", "-eo", "pid,ppid,stat,wchan:20,args").CombinedOutput(); err == nil {
 		t.Logf("processes:\n%s", out)
 	}
+	// Debug only: time how long the jail wrapper takes to become reapable and
+	// show where its remaining threads wait.
+	pid := ""
+	for _, line := range strings.Split(eggLog, "\n") {
+		if i := strings.Index(line, " pid="); i >= 0 && strings.Contains(line, "kind=") {
+			pid = strings.Fields(line[i+5:])[0]
+		}
+	}
+	if pid == "" {
+		return
+	}
+	start := time.Now()
+	for i := 0; ; i++ {
+		tasks, _ := filepath.Glob(filepath.Join("/proc", pid, "task", "*"))
+		if len(tasks) == 0 {
+			t.Logf("wrapper %s gone after %s", pid, time.Since(start))
+			return
+		}
+		if i%10 == 0 {
+			var states []string
+			for _, task := range tasks {
+				stat, _ := os.ReadFile(filepath.Join(task, "stat"))
+				wchan, _ := os.ReadFile(filepath.Join(task, "wchan"))
+				fields := strings.Fields(string(stat))
+				state := "?"
+				if len(fields) > 2 {
+					state = fields[2]
+				}
+				states = append(states, filepath.Base(task)+":"+state+":"+string(wchan))
+			}
+			t.Logf("after %s wrapper %s threads: %s", time.Since(start).Round(time.Millisecond), pid, strings.Join(states, " "))
+		}
+		if time.Since(start) > 60*time.Second {
+			t.Logf("wrapper %s still present after 60s", pid)
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
