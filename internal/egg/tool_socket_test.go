@@ -21,7 +21,7 @@ import (
 
 func TestToolCapabilityReclaimRequiresEggAuthenticationAndPreservesAuthority(t *testing.T) {
 	path := shortSockPath(t)
-	tools := []*config.ToolConfig{{Name: "echo", Run: "printf restored"}}
+	tools := []*config.ToolConfig{{Name: "echo", Run: "printf restored"}, {Name: "context", Context: "jira-search"}}
 	first, err := NewToolListener(path, tools)
 	if err != nil {
 		t.Fatal(err)
@@ -60,13 +60,16 @@ func TestToolCapabilityReclaimRequiresEggAuthenticationAndPreservesAuthority(t *
 	if err != nil || recovered != secret {
 		t.Fatalf("recovery lost the original capability: %v", err)
 	}
-	restarted, err := NewToolListenerWithCapability(path, tools, recovered)
+	restarted, err := NewToolListenerWithCapability(path, tools, recovered, ToolContext{Reclaimed: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer closeToolListenerForTest(t, restarted)
 	if result := toolCall(t, path, ToolRequest{Tool: "echo", Capability: secret}); result.Error != "" || result.Stdout != "restored" {
 		t.Fatalf("surviving agent cannot call restored tools: %#v", result)
+	}
+	if result := toolCall(t, path, ToolRequest{Tool: "context", Capability: secret}); result.Error != "Context tools are unavailable in sessions that survived a wing restart; start a new session" {
+		t.Fatalf("surviving agent retained Context authority: %#v", result)
 	}
 	if result := toolCall(t, path, ToolRequest{Tool: "echo", Capability: strings.Repeat("0", 64)}); result.Error == "" {
 		t.Fatal("another egg's capability authenticated")
@@ -595,4 +598,45 @@ func toolCall(t *testing.T, sockPath string, req ToolRequest) ToolResponse {
 		t.Fatal(err)
 	}
 	return tr
+}
+
+func TestToolListenerControllerTaintIsPermanent(t *testing.T) {
+	tools := []*config.ToolConfig{{Name: "context", Context: "jira-search"}, {Name: "command", Run: "printf allowed"}}
+	listener := &ToolListener{owner: "owner@slide.tech", ownerID: "owner", runner: NewToolRunner(tools)}
+	listener.ObserveController("owner")
+	response := listener.runner.CallAs("context", nil, listener.owner, nil)
+	if response.Error != "context: wing context block is required" {
+		t.Fatalf("owner's own claim tainted tools: %+v", response)
+	}
+	for _, user := range []string{"other", "owner"} {
+		listener.ObserveController(user)
+		listener.Reload(tools)
+		response = listener.runner.CallAs("context", nil, listener.owner, nil)
+		if response.Error != "Context tools are disabled after another user took control of this session" {
+			t.Fatalf("controller %s: %+v", user, response)
+		}
+		if listener.owner != "owner@slide.tech" || listener.ownerID != "owner" {
+			t.Fatal("controller rebound Context owner")
+		}
+	}
+	response = listener.runner.Call("command", nil)
+	if response.Error != "" || response.Stdout != "allowed" {
+		t.Fatalf("command tool after taint: %+v", response)
+	}
+}
+
+func TestReclaimedSessionToolsFailClosedWithRestartMessage(t *testing.T) {
+	tools := []*config.ToolConfig{{Name: "context", Context: "jira-search"}, {Name: "command", Run: "printf allowed"}}
+	runner := newSessionToolRunner(tools, ToolContext{Reclaimed: true})
+	for _, owner := range []string{"", "owner@slide.tech"} {
+		runner.Reload(tools)
+		response := runner.CallAs("context", nil, owner, nil)
+		if response.Error != "Context tools are unavailable in sessions that survived a wing restart; start a new session" {
+			t.Fatalf("reclaimed Context: %+v", response)
+		}
+	}
+	response := runner.Call("command", nil)
+	if response.Error != "" || response.Stdout != "allowed" {
+		t.Fatalf("reclaimed command: %+v", response)
+	}
 }

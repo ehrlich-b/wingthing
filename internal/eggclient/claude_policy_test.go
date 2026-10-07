@@ -22,6 +22,8 @@ func TestIsolatedClaudePolicyProjectsOnlyModelAndEffort(t *testing.T) {
 		{"sonnet five", `{"model":"claude-sonnet-5","effortLevel":"xhigh","env":{"CLAUDE_CODE_EFFORT_LEVEL":"xhigh"}}`, `{"model":"claude-sonnet-5","effortLevel":"xhigh","env":{"CLAUDE_CODE_EFFORT_LEVEL":"xhigh"}}`, false},
 		{"no policy", `{"theme":"host-theme","apiKey":"host-secret"}`, `{}`, false},
 		{"model only", `{"model":"claude-sonnet-5"}`, `{"model":"claude-sonnet-5"}`, false},
+		{"slide deployment", `{"apiKey":"host-secret","model":"claude-sonnet-5-5","env":{"CLAUDE_CODE_EFFORT_LEVEL":"max","DISABLE_AUTOUPDATER":"1"},"effortLevel":"high"}`, `{"model":"claude-sonnet-5-5","effortLevel":"high","env":{"CLAUDE_CODE_EFFORT_LEVEL":"max","DISABLE_AUTOUPDATER":"1"}}`, false},
+		{"updater enabled stays the user's default", `{"env":{"DISABLE_AUTOUPDATER":"0"}}`, `{}`, false},
 		{"secret and preference boundary", `{"model":"claude-sonnet-5","apiKey":"host-secret","apiKeyHelper":"host-helper","hooks":{"SessionStart":["host-command"]},"permissions":{"allow":["Bash"]},"theme":"host-theme","env":{"ANTHROPIC_API_KEY":"host-secret","CLAUDE_CODE_EFFORT_LEVEL":"xhigh","UNRELATED":"host-value"}}`, `{"model":"claude-sonnet-5","env":{"CLAUDE_CODE_EFFORT_LEVEL":"xhigh"}}`, false},
 		{"malformed", `{"apiKey":"host-secret",`, "", true},
 		{"wrong type", `{"model":123}`, "", true},

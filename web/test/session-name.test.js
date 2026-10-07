@@ -16,10 +16,9 @@ test('browser session-name validation matches the wing contract', function() {
     assert.equal(validSessionName('x'.repeat(65)), false);
 });
 
-test('session titles use the persisted agent without leaving a dangling separator', function() {
-    assert.equal(
-        formatSessionTitle({ name: 'support', agent: 'claude' }, '', 'shared-wing'),
-        'support \u00b7 claude'
-    );
-    assert.equal(formatSessionTitle({ name: 'support' }, '', 'shared-wing'), 'support');
+test('session titles name the session alone and fall back only without one', function() {
+    assert.equal(formatSessionTitle({ name: 'support', agent: 'claude' }, '', 'shared-wing'), 'support');
+    assert.equal(formatSessionTitle({ agent: 'claude', cwd: '/opt/wingthing/support' }, 'claude', 'shared-wing'), 'support');
+    assert.equal(formatSessionTitle(undefined, 'claude', 'shared-wing'), 'shared-wing');
+    assert.equal(formatSessionTitle(undefined, 'claude', ''), 'claude');
 });

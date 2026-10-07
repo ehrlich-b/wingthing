@@ -811,6 +811,20 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		}
 		eggCfg = sealed
 	}
+	contextCfg, err := config.LoadContextConfig(cfg.Dir)
+	if err != nil {
+		return nil, err
+	}
+	eggCfg, protected, err := protectContextSecret(eggCfg, contextCfg, cwd, EffectiveSessionHome(cfg, identity))
+	if err != nil {
+		return nil, err
+	}
+	// Seatbelt verifies protected targets against its emitted policy. Linux's
+	// protected-write contract deliberately refuses every nonempty set; its
+	// read+write deny mounts enforce these secret paths instead.
+	if runtime.GOOS == "darwin" {
+		o.ProtectedWriteTargets = append(append([]string(nil), o.ProtectedWriteTargets...), protected...)
+	}
 	outerBoundary := !egg.RequiresSandbox(eggCfg, agentName)
 	if err := egg.ValidatePreviewClaudeBoundary(agentName, o.Command, outerBoundary); err != nil {
 		return nil, err

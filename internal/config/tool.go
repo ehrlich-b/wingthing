@@ -53,7 +53,8 @@ type ToolConfig struct {
 	Name          string            `yaml:"name"`
 	Description   string            `yaml:"description,omitempty"`
 	Params        []ToolParam       `yaml:"params,omitempty"`
-	Run           string            `yaml:"run"`
+	Run           string            `yaml:"run,omitempty"`
+	Context       string            `yaml:"context,omitempty"`
 	Env           map[string]string `yaml:"env,omitempty"`
 	Timeout       string            `yaml:"timeout,omitempty"`
 	MaxConcurrent int               `yaml:"max_concurrent,omitempty"`
@@ -157,8 +158,14 @@ func LoadToolsDir(dir string) ([]*ToolConfig, error) {
 			return nil, fmt.Errorf("duplicate tool name %q in %s and %s", tc.Name, prev, e.Name())
 		}
 		seen[tc.Name] = e.Name()
-		if tc.Run == "" {
-			return nil, fmt.Errorf("tool config %s: missing run", path)
+		if tc.Run == "" && tc.Context == "" {
+			return nil, fmt.Errorf("tool config %s: missing run or context", path)
+		}
+		if tc.Run != "" && tc.Context != "" {
+			return nil, fmt.Errorf("tool config %s: run and context are mutually exclusive", path)
+		}
+		if tc.Context != "" && !validToolName.MatchString(tc.Context) {
+			return nil, fmt.Errorf("tool config %s: invalid context tool name", path)
 		}
 		for name := range tc.Env {
 			if !validToolEnvName.MatchString(name) {

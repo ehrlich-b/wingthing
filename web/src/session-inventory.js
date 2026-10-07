@@ -4,7 +4,7 @@ export { sessionResourceKey } from './session-reference.js';
 
 var agentLabels = {
     working: 'working', blocked: 'blocked', idle: 'idle',
-    done: 'done', exited: 'exited', unknown: 'agent state unknown'
+    done: 'done', exited: 'exited', unknown: 'unknown'
 };
 
 export function sessionStatusDot(status, tab) {
@@ -117,7 +117,7 @@ export function groupSessionInventory(sessions, wings, notifications = {}, unsee
         var project = sessionProjectRoot(session, wing);
         var key = JSON.stringify([session.wing_id || '', project]);
         if (!groups.has(key)) groups.set(key, { key: key, wingId: session.wing_id || '', wing: wing, project: project,
-            sessions: [], rollup: { blocked: 0, working: 0, idle: 0, unseen: 0 }, priority: 3 });
+            sessions: [], rollup: { blocked: 0, working: 0, idle: 0, unseen: 0 }, priority: 3, priorities: priorities });
         var group = groups.get(key);
         var status = statusForSession ? statusForSession(session) : sessionInventoryState(session, wing, notificationForSession(notifications, session)).status;
         var unread = unseen.has(sessionResourceKey(session));
@@ -134,17 +134,95 @@ export function groupSessionInventory(sessions, wings, notifications = {}, unsee
     });
 }
 
+// Home labels wings, not projects: project groups of one session each would
+// put a header over every card. Keeps the attention order across projects.
+export function groupSessionsByWing(groups) {
+    var wings = new Map();
+    groups.forEach(function(group) {
+        if (!wings.has(group.wingId)) wings.set(group.wingId, { key: JSON.stringify([group.wingId]), wingId: group.wingId, wing: group.wing, sessions: [] });
+        var wing = wings.get(group.wingId);
+        wing.sessions = wing.sessions.concat(group.sessions);
+        wing.priorities = group.priorities;
+    });
+    return Array.from(wings.values()).map(function(wing) {
+        wing.sessions.sort(function(a, b) { return wing.priorities.get(a) - wing.priorities.get(b); });
+        return wing;
+    });
+}
+
 export function unseenCompletionBadge(unseen) {
     return unseen ? '<span class="unseen-completion">' + (typeof unseen === 'number' ? unseen + ' ' : '') + 'unseen completion' + (unseen > 1 ? 's' : '') + '</span>' : '';
 }
 
-export function sessionGroupHeader(group) {
+// Only exceptions earn a visible word; the dot already carries normal states.
+// A wing still being checked is transient, so it prints nothing either.
+export function sessionExceptionLabel(state) {
+    if (state.connection !== 'available' && state.connection !== 'checking') return state.connectionLabel;
+    if (state.status === 'blocked') return 'needs input';
+    if (state.status === 'exited') return 'exited';
+    return state.attention ? 'attention' : '';
+}
+
+export var INVENTORY_SEARCH_MIN = 8;
+
+export function inventorySearchVisible(total, query) {
+    return !!query || total >= INVENTORY_SEARCH_MIN;
+}
+
+export function inventoryCountLabel(total, shown, filtered) {
+    return filtered ? shown + ' of ' + total : '';
+}
+
+function resourceAttributes(session) {
+    return 'data-sid="' + escapeHtml(session.id) + '" data-wing-id="' + escapeHtml(session.wing_id || '') + '"';
+}
+
+// One line per session: dot and name. Every other fact stays in the tooltip
+// and accessible label; actions live in the details dialog.
+export function sessionTabMarkup(session, state, opts) {
+    opts = opts || {};
+    var name = sessionDisplayName(session);
+    var title = [name, session.agent || '?', opts.wingName || '', session.cwd || '~', state.connectionLabel, state.agentLabel].join(' · ') +
+        (opts.unseen ? ' · unseen completion' : '');
+    // Attention short of blocked marks the dot, never the words "needs input".
+    return '<div class="session-tab' + (opts.active ? ' active' : '') + '" data-blocked="' + (state.status === 'blocked') + '" data-attention="' + (state.attention && state.status !== 'blocked') + '" data-unseen="' + !!opts.unseen + '" role="button" tabindex="0" ' +
+        'aria-label="' + escapeHtml(title) + '" ' + (opts.active ? 'aria-current="page" ' : '') + 'title="' + escapeHtml(title) + '" ' + resourceAttributes(session) + '>' +
+        sessionStatusDot(state.status, true) +
+        '<span class="tab-letter">' + escapeHtml(name.charAt(0).toUpperCase()) + '</span>' +
+        '<span class="tab-label">' + escapeHtml(name) + '</span></div>';
+}
+
+export function sessionCardMarkup(session, state, opts) {
+    opts = opts || {};
+    var name = sessionDisplayName(session);
+    var exception = sessionExceptionLabel(state);
+    var label = [name, session.agent || 'unknown agent', opts.wingName || 'unknown wing', session.cwd || '~'].concat(opts.owner ? [opts.owner] : [])
+        .concat([state.connectionLabel, state.agentLabel]).join(' · ') + (opts.unseen ? ' · unseen completion' : '');
+    return '<article class="egg-box inventory-session' + (opts.selected ? ' selected' : '') + '" data-blocked="' + (state.status === 'blocked') + '" data-unseen="' + !!opts.unseen + '" role="group" tabindex="0" ' +
+        resourceAttributes(session) + ' data-kind="' + escapeHtml(session.kind || 'terminal') + '" aria-label="' + escapeHtml(label) + '"' + (opts.selected ? ' aria-current="page"' : '') + '>' +
+        '<div class="egg-footer">' + sessionStatusDot(state.status) +
+        '<span class="egg-label">' + escapeHtml(name) + '</span>' +
+        (exception ? '<span class="inventory-exception status-' + state.tone + '">' + escapeHtml(exception) + '</span>' : '') +
+        // The facts tooltip sits on the details trigger, not over the whole row.
+        '<button class="box-menu-btn inventory-details" type="button" data-session-action="details" title="' + escapeHtml(label) + '" aria-label="Details for ' + escapeHtml(name) + '">&#x22ef;</button></div>' +
+        (opts.error ? '<div class="inventory-action-status" role="status">' + escapeHtml(opts.error) + '</div>' : '') + '</article>';
+}
+
+export function sessionGroupHeader(group, opts) {
     var counts = group.rollup;
-    var wing = (wingDisplayName(group.wing) || 'unknown wing') + ' · ' + group.wingId;
-    var path = group.project ? shortenPath(group.project) : 'No project reported';
-    return '<header class="inventory-group-header"><h4><span class="inventory-group-wing">' + escapeHtml(wing) + '</span><span class="inventory-group-project" title="' + escapeHtml(group.project) + '">' + escapeHtml(path) + '</span></h4>' +
-        '<div class="inventory-rollup"><span class="rollup-blocked">' + counts.blocked + ' blocked</span><span>' + counts.working + ' working</span><span>' + counts.idle + ' idle</span>' + unseenCompletionBadge(counts.unseen) + '</div>' +
-        (counts.unseen ? '<button class="btn-sm inventory-acknowledge" type="button" data-focus-key="ack:' + escapeHtml(group.key) + '" aria-label="Acknowledge completions in ' + escapeHtml(path + ' on ' + wing) + '">Mark completions seen</button>' : '') + '</header>';
+    // The wing ID stays in the tooltip; the visible label is the wing's name.
+    var wing = wingDisplayName(group.wing) || group.wingId || 'unknown wing';
+    if (opts && opts.compact) {
+        return '<header class="inventory-group-header"><h4><span class="inventory-group-wing" title="' + escapeHtml(wing + ' · ' + group.wingId) + '">' + escapeHtml(wing) + '</span></h4></header>';
+    }
+    var path = group.project ? shortenPath(group.project) : 'no project';
+    var rollup = ['blocked', 'working', 'idle'].filter(function(status) { return counts[status] > 0; }).map(function(status) {
+        return '<span' + (status === 'blocked' ? ' class="rollup-blocked"' : '') + '>' + counts[status] + ' ' + status + '</span>';
+    }).join('') + unseenCompletionBadge(counts.unseen);
+    return '<header class="inventory-group-header"><h4><span class="inventory-group-project" title="' + escapeHtml(group.project) + '">' + escapeHtml(path) + '</span>' +
+        '<span class="inventory-group-wing" title="' + escapeHtml(wing + ' · ' + group.wingId) + '">' + escapeHtml(wing) + '</span></h4>' +
+        (rollup ? '<div class="inventory-rollup">' + rollup + '</div>' : '') +
+        (counts.unseen ? '<button class="btn-sm inventory-acknowledge" type="button" data-focus-key="ack:' + escapeHtml(group.key) + '" aria-label="Acknowledge completions in ' + escapeHtml(path + ' on ' + wing) + '">mark seen</button>' : '') + '</header>';
 }
 
 // Keep focus on the same qualified row/action after a status refresh. Do not

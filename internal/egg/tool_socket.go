@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/contextclient"
 )
 
 const (
@@ -79,15 +80,25 @@ type ToolListResponse struct {
 // same runner over HTTP.
 type ToolListener struct {
 	capability  string
+	owner       string
+	ownerID     string
 	runner      *ToolRunner
 	listener    net.Listener
 	connections chan struct{}
 	wg          sync.WaitGroup
 }
 
+// ToolContext binds a listener to its wing-owned Context client and verified owner.
+type ToolContext struct {
+	Client    *contextclient.Client
+	Owner     string // verified EggIdentity.Email, fixed for this listener's lifetime
+	OwnerID   string // verified EggIdentity.UserID, also fixed
+	Reclaimed bool   // surviving egg has no trusted owner/client binding after restart
+}
+
 // NewToolListener creates and starts a tool socket listener.
 // sockPath is the path for the Unix socket (e.g. ~/.wingthing/eggs/<session>/tool.sock).
-func NewToolListener(sockPath string, tools []*config.ToolConfig) (*ToolListener, error) {
+func NewToolListener(sockPath string, tools []*config.ToolConfig, contexts ...ToolContext) (*ToolListener, error) {
 	if err := ValidateSocketPath(sockPath); err != nil {
 		return nil, err
 	}
@@ -96,12 +107,12 @@ func NewToolListener(sockPath string, tools []*config.ToolConfig) (*ToolListener
 		return nil, fmt.Errorf("generate tool capability: %w", err)
 	}
 	capability := hex.EncodeToString(secret)
-	return NewToolListenerWithCapability(sockPath, tools, capability)
+	return NewToolListenerWithCapability(sockPath, tools, capability, contexts...)
 }
 
 // NewToolListenerWithCapability restores authority recovered through an egg's
 // authenticated host endpoint. Missing/legacy capabilities must fail closed.
-func NewToolListenerWithCapability(sockPath string, tools []*config.ToolConfig, capability string) (*ToolListener, error) {
+func NewToolListenerWithCapability(sockPath string, tools []*config.ToolConfig, capability string, contexts ...ToolContext) (*ToolListener, error) {
 	if err := ValidateSocketPath(sockPath); err != nil {
 		return nil, err
 	}
@@ -121,9 +132,15 @@ func NewToolListenerWithCapability(sockPath string, tools []*config.ToolConfig, 
 		_ = os.Remove(sockPath)
 		return nil, fmt.Errorf("secure tool socket: %w", err)
 	}
+	var tc ToolContext
+	if len(contexts) > 0 {
+		tc = contexts[0]
+	}
 	tl := &ToolListener{
 		capability:  capability,
-		runner:      NewToolRunner(tools),
+		owner:       tc.Owner,
+		ownerID:     tc.OwnerID,
+		runner:      newSessionToolRunner(tools, tc),
 		listener:    ln,
 		connections: make(chan struct{}, maxConcurrentToolSocketConnections),
 	}
@@ -131,6 +148,25 @@ func NewToolListenerWithCapability(sockPath string, tools []*config.ToolConfig, 
 	tl.wg.Add(1)
 	go tl.acceptLoop()
 	return tl, nil
+}
+
+func newSessionToolRunner(tools []*config.ToolConfig, tc ToolContext) *ToolRunner {
+	runner := NewToolRunner(tools, tc.Client)
+	if tc.Reclaimed {
+		runner.contextUnavailable = "Context tools are unavailable in sessions that survived a wing restart; start a new session"
+	}
+	return runner
+}
+
+// ObserveController permanently revokes Context authority when another verified
+// user claims input. Returning to the original owner never restores it.
+func (tl *ToolListener) ObserveController(userID string) {
+	if tl == nil || userID == tl.ownerID {
+		return
+	}
+	tl.runner.mu.Lock()
+	tl.runner.contextUnavailable = "Context tools are disabled after another user took control of this session"
+	tl.runner.mu.Unlock()
 }
 
 // Close stops the listener and waits for in-flight requests to finish.
@@ -224,7 +260,7 @@ func (tl *ToolListener) handleConn(conn net.Conn) {
 		log.Printf("tool socket extended deadline: %v", err)
 		return
 	}
-	if err := writeJSON(conn, tl.runner.Call(req.Tool, req.Args)); err != nil {
+	if err := writeJSON(conn, tl.runner.CallAs(req.Tool, req.Args, tl.owner, nil)); err != nil {
 		log.Printf("tool socket write response: %v", err)
 	}
 }

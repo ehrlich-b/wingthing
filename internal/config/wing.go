@@ -56,7 +56,8 @@ type WingConfig struct {
 
 	// ToolsDir is the directory containing privileged tool YAML configs.
 	// Defaults to ~/.wingthing/tools/ if empty.
-	ToolsDir string `yaml:"tools_dir,omitempty"`
+	ToolsDir string         `yaml:"tools_dir,omitempty"`
+	Context  *ContextConfig `yaml:"context,omitempty"`
 
 	// MCP is the optional OAuth-gated remote surface over privileged tools.
 	MCP       *MCPConfig       `yaml:"mcp,omitempty"`
@@ -88,6 +89,11 @@ func (c *WingConfig) Clone() *WingConfig {
 	for index, server := range c.ICEServers {
 		clone.ICEServers[index] = server
 		clone.ICEServers[index].URLs = append([]string(nil), server.URLs...)
+	}
+	if c.Context != nil {
+		context := *c.Context
+		context.Scopes = append([]string(nil), c.Context.Scopes...)
+		clone.Context = &context
 	}
 	if c.DirectMCP != nil {
 		direct := *c.DirectMCP
@@ -394,6 +400,9 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 	if err := ValidatePreviewRelay(cfg.Roost); err != nil {
 		return nil, err
 	}
+	if err := cfg.Context.Validate(); err != nil {
+		return nil, err
+	}
 	if cfg.MCP != nil {
 		if err := cfg.MCP.Validate(); err != nil {
 			return nil, fmt.Errorf("validate %s mcp config: %w", path, err)
@@ -427,6 +436,9 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 // key, so it must never be readable by other local users.
 func SaveWingConfig(dir string, cfg *WingConfig) error {
 	if err := validateLegacyIsolation(cfg.LegacyIsolation); err != nil {
+		return err
+	}
+	if err := cfg.Context.Validate(); err != nil {
 		return err
 	}
 	if err := validateConversations(cfg.Conversations); err != nil {

@@ -51,11 +51,10 @@ export function sessionDisplayName(session) {
     return projectName(session && session.cwd);
 }
 
+// The header names the session; agent and wing are in its details.
 export function formatSessionTitle(session, agent, wingName) {
-    var resolvedAgent = agent || (session && session.agent) || '';
-    var label = session && session.name ? sessionDisplayName(session) : (wingName || '');
-    if (label && resolvedAgent) return label + ' \u00b7 ' + resolvedAgent;
-    return label || resolvedAgent;
+    if (session) return sessionDisplayName(session);
+    return wingName || agent || '';
 }
 
 export function validSessionName(name) {
