@@ -90,7 +90,7 @@ func TestRoostPolicyLinuxSiblingRolesStartWithPins(t *testing.T) {
 set -e
 printf ordinary > "$1/ordinary"
 if cat "$2/egg.yaml" 2>/dev/null; then exit 42; fi
-if printf replaced > "$1/egg.yaml" 2>/dev/null; then exit 43; fi
+if { printf replaced > "$1/egg.yaml"; } 2>/dev/null; then exit 43; fi
 if mv "$1" "$1-old" 2>/dev/null; then exit 44; fi
 if mv "$3" "$3-old" 2>/dev/null; then exit 45; fi
 `, "sibling-roles", role, roles[1-i], parent})
@@ -202,7 +202,7 @@ printf config > "$HOME/.codex/config"
 printf temporary > /tmp/canary-temporary
 if cat "$2/egg.yaml" 2>/dev/null; then exit 42; fi
 if mkdir -p "$3" 2>/dev/null; then exit 43; fi
-if printf replaced > "$1/egg.yaml" 2>/dev/null; then exit 44; fi
+if { printf replaced > "$1/egg.yaml"; } 2>/dev/null; then exit 44; fi
 for path in / "$4" "$5"; do
   if chmod 0700 "$path" 2>/dev/null; then exit 45; fi
   if mkdir "$path/canary-planted" 2>/dev/null; then exit 46; fi
@@ -357,7 +357,7 @@ func TestRoostPolicyLinuxMissingPaths(t *testing.T) {
 set -e
 printf ordinary > "$2/ordinary"
 chmod 0700 "$3" 2>/dev/null || true
-if mkdir -p "$1" 2>/dev/null && printf 'base: none\nfs: [rw:/]\n' > "$1/egg.yaml" 2>/dev/null; then exit 42; fi
+if { mkdir -p "$1" && printf 'base: none\nfs: [rw:/]\n' > "$1/egg.yaml"; } 2>/dev/null; then exit 42; fi
 printf launched
 `, "missing-policy", sibling, role, ancestor})
 				if err != nil {
