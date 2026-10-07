@@ -10,12 +10,16 @@ import (
 	"testing"
 )
 
-// protectedProfileEnv points HOME and TMPDIR at sibling directories so the
-// profile's implicit temp-dir allow does not cover the fake home. It returns
-// canonical home and temp paths as Seatbelt sees them.
+// protectedProfileEnv points HOME and TMPDIR at sibling directories outside
+// /private/tmp, which Seatbelt always grants for writes. It returns canonical
+// home and temp paths as Seatbelt sees them even when the suite uses TMPDIR=/tmp.
 func protectedProfileEnv(t *testing.T) (home, tmp string) {
 	t.Helper()
-	root := t.TempDir()
+	root, err := os.MkdirTemp(os.Getenv("HOME"), "wt-protected-profile-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	home = filepath.Join(root, "home")
 	tmp = filepath.Join(root, "tmp")
 	for _, dir := range []string{home, tmp} {
@@ -25,7 +29,6 @@ func protectedProfileEnv(t *testing.T) (home, tmp string) {
 	}
 	t.Setenv("HOME", home)
 	t.Setenv("TMPDIR", tmp)
-	var err error
 	if home, err = canonicalSandboxPath(home); err != nil {
 		t.Fatal(err)
 	}
