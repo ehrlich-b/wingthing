@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/ehrlich-b/wingthing/internal/ws"
@@ -22,6 +24,75 @@ func TestMain(m *testing.M) {
 		return
 	}
 	os.Exit(m.Run())
+}
+
+func TestRoostPolicyLinuxSiblingRolesStartWithoutPins(t *testing.T) {
+	if ok, help := sandbox.CheckCapability(); !ok {
+		t.Skip(help)
+	}
+	home := config.CanonicalProviderPath(t.TempDir())
+	t.Setenv("HOME", home)
+	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
+	parent := config.CanonicalProviderPath(t.TempDir())
+	roles := []string{filepath.Join(parent, "a"), filepath.Join(parent, "b")}
+	for i, role := range roles {
+		if err := os.Mkdir(role, 0700); err != nil {
+			t.Fatal(err)
+		}
+		policy := "base: none\nfs:\n  - deny:/\n"
+		for _, path := range []string{"/usr", "/bin", "/lib", "/lib64"} {
+			if _, err := os.Stat(path); err == nil {
+				policy += "  - ro:" + path + "\n"
+			}
+		}
+		policy += "  - rw:" + role + "\n  - deny:" + roles[1-i] + "\n  - deny-write:./egg.yaml\n"
+		if err := os.WriteFile(filepath.Join(role, "egg.yaml"), []byte(policy), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wc := &config.WingConfig{Org: "org", Paths: config.PathList{
+		{Path: roles[0], Members: []string{"alice@example.com"}},
+		{Path: roles[1], Members: []string{"bob@example.com"}},
+	}}
+	start := ws.PTYStart{UserID: "alice", Email: "alice@example.com", OrgRole: "member", CWD: roles[0]}
+	cfg, _, err := PrepareBrowserLaunch(wc, &start, home, false, egg.DefaultEggConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range cfg.FS {
+		if strings.HasPrefix(rule, "deny-rename:") {
+			t.Fatalf("role policy emitted an unnecessary pin: %s", rule)
+		}
+	}
+	sb, err := sandbox.New(cfg.ToSandboxConfig(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := sb.Destroy(); err != nil {
+			t.Error(err)
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd, err := sb.Exec(ctx, "/bin/sh", []string{"-c", `
+set -e
+printf ordinary > "$1/ordinary"
+if cat "$2/egg.yaml" 2>/dev/null; then exit 42; fi
+if printf replaced > "$1/egg.yaml" 2>/dev/null; then exit 43; fi
+`, "sibling-roles", roles[0], roles[1]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		if os.IsPermission(err) {
+			t.Skipf("namespace creation unavailable: %v", err)
+		}
+		t.Fatalf("role policy failed to start or enforce its boundaries: %v, %s", err, output)
+	}
+	if data, err := os.ReadFile(filepath.Join(roles[0], "ordinary")); err != nil || string(data) != "ordinary" {
+		t.Fatalf("ordinary role-root write failed: %q, %v", data, err)
+	}
 }
 
 func TestRoostPolicyBlocksLinuxRootReplacement(t *testing.T) {

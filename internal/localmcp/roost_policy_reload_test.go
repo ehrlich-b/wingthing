@@ -739,9 +739,6 @@ func TestRoostMCPRolePolicyMissingAndAdminFallback(t *testing.T) {
 	}
 	defaultPolicy := &egg.EggConfig{Shell: "/bin/wing-default"}
 	wantFS := []string{"deny-write:" + filepath.Join(root, "egg.yaml")}
-	for dir := root; dir != "/"; dir = filepath.Dir(dir) {
-		wantFS = append(wantFS, "deny-rename:"+dir)
-	}
 	for _, shared := range []bool{false, true} {
 		org := "org"
 		if shared {

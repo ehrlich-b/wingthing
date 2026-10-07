@@ -394,9 +394,10 @@ func TestDirectAgentSandboxPreservesRoostRootPins(t *testing.T) {
 	if len(cmd.Args) < 3 || cmd.Args[1] != "-p" {
 		t.Fatalf("missing Seatbelt profile: %v", cmd.Args)
 	}
-	for _, path := range []string{root, home} {
-		if !strings.Contains(cmd.Args[2], fmt.Sprintf("(deny file-write* (literal %q))", path)) {
-			t.Fatalf("headless task can replace policy directory: %s", path)
-		}
+	if !strings.Contains(cmd.Args[2], fmt.Sprintf("(deny file-write* (literal %q))", root)) {
+		t.Fatalf("headless task can replace policy directory: %s", root)
+	}
+	if strings.Contains(cmd.Args[2], fmt.Sprintf("(deny file-write* (literal %q))", home)) {
+		t.Fatal("headless task pinned HOME without a writable parent")
 	}
 }

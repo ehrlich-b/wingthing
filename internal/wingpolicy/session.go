@@ -2,7 +2,45 @@ package wingpolicy
 
 import (
 	"path/filepath"
+	"runtime"
 )
+
+// WritablePolicyRoot returns the most specific writable root covering path,
+// after applying the compiled session filesystem policy's read-only and deny
+// rules. The rule paths must already be resolved and canonicalized.
+func WritablePolicyRoot(path string, writableRoots, readOnlyRoots, deny, denyWrite []string) (string, bool) {
+	path = CanonicalPolicyPath(path)
+	best := ""
+	for _, root := range writableRoots {
+		if SessionPolicyContains(root, path) && len(root) > len(best) {
+			best = root
+		}
+	}
+	if best == "" {
+		return "", false
+	}
+	for _, root := range readOnlyRoots {
+		if SessionPolicyContains(root, path) && len(root) >= len(best) {
+			return "", false
+		}
+	}
+	for _, rule := range deny {
+		// deny:/ selects the Linux mount jail, which mounts explicit rw/ro
+		// roots back in. On other platforms it is an effective deny.
+		if runtime.GOOS == "linux" && filepath.Clean(rule) == string(filepath.Separator) {
+			continue
+		}
+		if SessionPolicyContains(rule, path) {
+			return "", false
+		}
+	}
+	for _, rule := range denyWrite {
+		if SessionPolicyContains(rule, path) {
+			return "", false
+		}
+	}
+	return best, true
+}
 
 func SessionPolicyContains(root, path string) bool {
 	root = filepath.Clean(root)

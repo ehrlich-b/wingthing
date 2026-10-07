@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -366,13 +367,78 @@ func TestRoostPolicyPinsRootsAndAncestors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, configured := range []string{role, other, missing} {
-			for dir := configured; dir != "/"; dir = filepath.Dir(dir) {
-				if !ContainsExactPath(cfg.FS, "deny-rename:"+dir) {
-					t.Fatalf("policy directory %s can be replaced (cwd=%s)", dir, cwd)
-				}
-			}
+		want := []string{role, root, other, missing, filepath.Dir(missing)}
+		if got := cfg.ToSandboxConfig(home).DenyRename; !slices.Equal(got, want) {
+			t.Fatalf("root pins (cwd=%s) = %v, want %v", cwd, got, want)
 		}
+	}
+}
+
+func TestRoostPolicyPinsOnlyWritableParents(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		fs    []string
+		roots []string
+		want  []string
+	}{
+		{
+			name: "Slide sibling roles",
+			fs: []string{"deny:/", "ro:/usr", "rw:/opt/wingthing/a",
+				"deny:/opt/wingthing/b", "deny-write:/opt/wingthing/a/egg.yaml"},
+			roots: []string{"/opt/wingthing/a", "/opt/wingthing/b"},
+		},
+		{
+			name: "macOS writable parent",
+			fs:   []string{"rw:/work"}, roots: []string{"/work/role"},
+			want: []string{"/work/role"},
+		},
+		{
+			name: "writable ancestor",
+			fs:   []string{"rw:/work"}, roots: []string{"/work/group/role"},
+			want: []string{"/work/group/role", "/work/group"},
+		},
+		{
+			name: "read-only parent",
+			fs:   []string{"rw:/work", "ro:/work/group"}, roots: []string{"/work/group/role"},
+			want: []string{"/work/group"},
+		},
+		{
+			name: "denied parent",
+			fs:   []string{"rw:/work", "deny:/work/group"}, roots: []string{"/work/group/role"},
+			want: []string{"/work/group"},
+		},
+		{
+			name: "write-denied parent",
+			fs:   []string{"rw:/work", "deny-write:/work/group"}, roots: []string{"/work/group/role"},
+			want: []string{"/work/group"},
+		},
+		{
+			name: "relative fallback grant",
+			fs:   []string{"rw:.."}, roots: []string{"/work/role"},
+			want: []string{"/work/role"},
+		},
+		{
+			name: "duplicate roots",
+			fs:   []string{"rw:/work"}, roots: []string{"/work/role", "/work/role"},
+			want: []string{"/work/role"},
+		},
+		{
+			name: "no writable grants", roots: []string{"/work/role"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := protectRoostRootPolicies(&egg.EggConfig{FS: tc.fs}, tc.roots, "/work/role")
+			if got := cfg.ToSandboxConfig("").DenyRename; !slices.Equal(got, tc.want) {
+				t.Fatalf("root pins = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	home := config.CanonicalProviderPath(t.TempDir())
+	t.Setenv("HOME", home)
+	root := filepath.Join(home, "role")
+	cfg := protectRoostRootPolicies(&egg.EggConfig{FS: []string{"rw:~"}}, []string{root}, root)
+	if got := cfg.ToSandboxConfig(home).DenyRename; !slices.Equal(got, []string{root}) {
+		t.Fatalf("tilde root pins = %v, want %v", got, []string{root})
 	}
 }
 
@@ -423,5 +489,8 @@ func TestRoostPolicyPinsSeatbeltProfile(t *testing.T) {
 		if strings.Contains(profile, fmt.Sprintf("(deny file-write* (subpath %q))", path)) {
 			t.Fatalf("ordinary role-root files became unwritable: %s", path)
 		}
+	}
+	if strings.Contains(profile, fmt.Sprintf("(deny file-write* (literal %q))", home)) {
+		t.Fatal("HOME entry pinned even though its parent has no write grant")
 	}
 }

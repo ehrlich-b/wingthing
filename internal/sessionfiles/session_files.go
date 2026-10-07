@@ -15,7 +15,6 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -100,38 +99,7 @@ func LoadSessionFilePolicy(session ws.SessionInfo, effectiveHome string) (sessio
 }
 
 func (p sessionFilePolicy) WritableRoot(path string) (string, bool) {
-	path = wingpolicy.CanonicalPolicyPath(path)
-	best := ""
-	for _, root := range p.writableRoots {
-		if wingpolicy.SessionPolicyContains(root, path) && len(root) > len(best) {
-			best = root
-		}
-	}
-	if best == "" {
-		return "", false
-	}
-	for _, root := range p.readOnlyRoots {
-		if wingpolicy.SessionPolicyContains(root, path) && len(root) >= len(best) {
-			return "", false
-		}
-	}
-	for _, rule := range p.deny {
-		// deny:/ is only a selector for the Linux mount jail, where explicit
-		// rw/ro roots are mounted back in. On other platforms it is an
-		// effective deny and therefore wins.
-		if runtime.GOOS == "linux" && filepath.Clean(rule) == string(filepath.Separator) {
-			continue
-		}
-		if wingpolicy.SessionPolicyContains(rule, path) {
-			return "", false
-		}
-	}
-	for _, rule := range p.denyWrite {
-		if wingpolicy.SessionPolicyContains(rule, path) {
-			return "", false
-		}
-	}
-	return best, best != ""
+	return wingpolicy.WritablePolicyRoot(path, p.writableRoots, p.readOnlyRoots, p.deny, p.denyWrite)
 }
 
 func (p sessionFilePolicy) UploadDirectory(userPaths []string) (string, error) {
