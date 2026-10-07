@@ -652,14 +652,23 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	// native installation and don't warn about missing PATH entries.
 	home := envMap["HOME"]
 	lifecycleSettingsPath := ""
-	if rc.Agent == "claude" && len(rc.Command) == 0 && rc.ProviderSessionID != "" {
-		args, err = prepareClaudeLifecycleArgs(args, home, s.dir, rc.ProviderSessionID, rc.CWD)
+	prepareLifecycle := func(policy *sandbox.Config) error {
+		if rc.Agent != "claude" || len(rc.Command) != 0 || rc.ProviderSessionID == "" {
+			return nil
+		}
+		var err error
+		args, err = prepareClaudeLifecycleArgs(args, home, s.dir, rc.ProviderSessionID, rc.CWD, policy)
 		if err != nil {
 			return fmt.Errorf("prepare native lifecycle hooks: %w", err)
 		}
 		lifecycleSettingsPath = args[providerOptionsEnd(args)-1]
-		defer func() { _ = os.Remove(lifecycleSettingsPath) }()
+		return nil
 	}
+	defer func() {
+		if lifecycleSettingsPath != "" {
+			_ = os.Remove(lifecycleSettingsPath)
+		}
+	}()
 	if rc.Agent == "codex" && len(rc.Command) == 0 && codexLifecycleSupported(binPath) {
 		args, err = CodexLifecycleArgs(args, home, filepath.Base(s.dir))
 		if err != nil {
@@ -791,9 +800,6 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			mounts = linuxEggReadMounts(mounts, deny)
 		}
 		var bridgeMounts []sandbox.Mount
-		if lifecycleSettingsPath != "" {
-			bridgeMounts = append(bridgeMounts, sandbox.Mount{Source: lifecycleSettingsPath, Target: lifecycleSettingsPath, ReadOnly: true})
-		}
 		if browserRequestsPath != "" {
 			bridgeMounts = append(bridgeMounts, sandbox.Mount{Source: shimDir, Target: shimDir, ReadOnly: true})
 			bridgeMounts = append(bridgeMounts, sandbox.Mount{
@@ -906,6 +912,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			// Enforced against the final emitted policy inside sandbox.New.
 			ProtectedWriteTargets: append([]string(nil), rc.ProtectedWriteTargets...),
 		}
+		sourceConfig := sbCfg
 		sbCfg, err = IsolateControl(sbCfg, s.dir, bridgeMounts, rc.ToolSocketPath)
 		if err != nil {
 			return err
@@ -918,6 +925,19 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			sbCfg.Deny = append(sbCfg.Deny, protected...)
 		}
 
+		if err := prepareLifecycle(&sbCfg); err != nil {
+			return err
+		}
+		if lifecycleSettingsPath != "" {
+			bridgeMounts = append(bridgeMounts, sandbox.Mount{Source: lifecycleSettingsPath, Target: lifecycleSettingsPath, ReadOnly: true})
+			finalCfg, err := IsolateControl(sourceConfig, s.dir, bridgeMounts, rc.ToolSocketPath)
+			if err != nil {
+				return err
+			}
+			// Retain any OS-context denies added after control compilation.
+			finalCfg.Deny = append(finalCfg.Deny, sbCfg.Deny...)
+			sbCfg = finalCfg
+		}
 		sb, err = sandbox.New(sbCfg)
 		if err != nil {
 			return fmt.Errorf("sandbox: %w", err)
@@ -934,6 +954,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			cmd.Dir = rc.CWD
 		}
 	} else {
+		if err := prepareLifecycle(nil); err != nil {
+			return err
+		}
 		log.Printf("SECURITY: egg runs in outer-boundary mode with the full authority of the local OS user; Wingthing filesystem, network, syscall, and resource isolation is disabled")
 		cmd = exec.CommandContext(context.Background(), binPath, args...)
 		cmd.Env = envSlice
