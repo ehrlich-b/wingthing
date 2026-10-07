@@ -13,6 +13,7 @@ type File struct {
 	*os.File
 	Info     os.FileInfo
 	Dev, Ino uint64
+	policy   bool
 }
 
 // Error is a security refusal, rather than a missing configuration file.
@@ -41,7 +42,11 @@ func (f *File) ResolvedPath() (string, error) {
 // OpenResolved preserves existing dotfile aliases. The resolved destination is
 // opened without following links and must match the original file's identity.
 // Sandbox callers must separately seal replaceable alias directory entries.
-func OpenResolved(path string) (*File, error) {
+func OpenResolved(path string) (*File, error) { return openResolved(path, false) }
+
+func OpenPolicyResolved(path string) (*File, error) { return openResolved(path, true) }
+
+func openResolved(path string, policy bool) (*File, error) {
 	before, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -50,7 +55,7 @@ func OpenResolved(path string) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := Open(resolved)
+	f, err := open(resolved, policy)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +73,7 @@ func (f *File) ReadAll() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, _, _, err := inspect(f.File); err != nil {
+	if _, _, _, err := inspect(f.File, f.policy); err != nil {
 		return nil, err
 	}
 	return data, nil
@@ -108,4 +113,14 @@ func WriteFile(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(f.Name(), path)
+}
+
+
+func ReadPolicyResolved(path string) ([]byte, error) {
+	f, err := OpenPolicyResolved(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return f.ReadAll()
 }

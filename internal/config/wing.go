@@ -380,7 +380,7 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 	cfg := &WingConfig{}
 	path := filepath.Join(dir, "wing.yaml")
 
-	data, err := protectedfile.ReadResolved(path)
+	data, err := protectedfile.ReadPolicyResolved(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Migrate from legacy wing-id file

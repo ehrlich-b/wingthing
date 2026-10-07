@@ -73,7 +73,7 @@ func validateRemotes(remotes map[string]Remote) error {
 
 // LoadRemotes is read-only, including when no registry has been created yet.
 func LoadRemotes(dir string) (map[string]Remote, error) {
-	data, err := protectedfile.ReadResolved(filepath.Join(dir, "remotes.yaml"))
+	data, err := protectedfile.ReadPolicyResolved(filepath.Join(dir, "remotes.yaml"))
 	if errors.Is(err, os.ErrNotExist) {
 		return map[string]Remote{}, nil
 	}

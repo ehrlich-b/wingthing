@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	wingconfig "github.com/ehrlich-b/wingthing/internal/config"
@@ -1549,5 +1550,34 @@ func TestResolvedPoliciesPinAncestorsToWorkspace(t *testing.T) {
 		if !found {
 			t.Fatalf("replaceable policy ancestor %s: %v", dir, got.DenyRename)
 		}
+	}
+}
+
+func TestEggPolicyAcceptsRootOwnedReadonlyLoader(t *testing.T) {
+	// A real root-owned descriptor exercises the non-root roost ownership
+	// check without requiring chown privileges on the developer or rig host.
+	path := "/etc/passwd"
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Skip(err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != 0 || os.Getuid() == 0 {
+		t.Skip("requires a non-root service account and a root-owned fixture")
+	}
+	_, err = LoadEggConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "parse egg config") {
+		t.Fatalf("root-owned 0644 loader was refused before YAML parsing: %v", err)
+	}
+}
+
+func TestEggPolicyRefusesGroupWritableLoader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "egg.yaml")
+	writeEggConfigTestFile(t, path, "base: none\n")
+	if err := os.Chmod(path, 0664); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadEggConfig(path); err == nil {
+		t.Fatal("accepted group-writable policy")
 	}
 }

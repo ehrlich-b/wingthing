@@ -59,3 +59,26 @@ func TestEnsureKeyPairRefusesSymlinkWithoutReplacingTarget(t *testing.T) {
 		t.Fatalf("changed symlink target: %q, %v", data, err)
 	}
 }
+
+func TestCredentialReadersRequirePrivateMode(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := EnsureKeyPair(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(dir, "wing_key"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadPrivateKey(dir); err == nil {
+		t.Fatal("accepted world-readable private key")
+	}
+	store := NewTokenStore(dir)
+	if err := store.Save(&DeviceToken{Token: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(store.tokenPath(), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Load(); err == nil {
+		t.Fatal("accepted world-readable token")
+	}
+}

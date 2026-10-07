@@ -612,7 +612,7 @@ func LoadEggConfig(path string) (*EggConfig, error) {
 }
 
 func loadEggConfig(path string) (*EggConfig, os.FileInfo, error) {
-	f, err := protectedfile.OpenResolved(path)
+	f, err := protectedfile.OpenPolicyResolved(path)
 	if err != nil {
 		return nil, nil, fmt.Errorf("read egg config: %w", err)
 	}
@@ -746,7 +746,7 @@ func ResolveEggConfig(path string, cwds ...string) (*EggConfig, error) {
 			if err != nil {
 				return nil, fmt.Errorf("resolve policy dependency: %w", err)
 			}
-			f, err := protectedfile.Open(real)
+			f, err := protectedfile.OpenPolicy(real)
 			if err != nil {
 				return nil, err
 			}
@@ -969,7 +969,7 @@ func resolveLoaderPath(path string, allowMissing bool, grants ...[]sandbox.Mount
 		return "", err
 	}
 	if !info.IsDir() {
-		f, err := protectedfile.Open(current)
+		f, err := protectedfile.OpenPolicy(current)
 		if err != nil {
 			return "", err
 		}

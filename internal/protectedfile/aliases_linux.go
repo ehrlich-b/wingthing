@@ -120,7 +120,7 @@ func pathWithin(path, root string) bool {
 
 // Aliases returns all visible mount-table names for this opened identity.
 func (f *File) Aliases() ([]string, error) {
-	if _, _, _, err := inspect(f.File); err != nil {
+	if _, _, _, err := inspect(f.File, f.policy); err != nil {
 		return nil, err
 	}
 	resolved, err := f.ResolvedPath()

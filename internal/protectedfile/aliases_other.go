@@ -4,7 +4,7 @@ package protectedfile
 
 func Aliases(paths []string) ([]string, error) { return paths, nil }
 func (f *File) Aliases() ([]string, error) {
-	if _, _, _, err := inspect(f.File); err != nil {
+	if _, _, _, err := inspect(f.File, f.policy); err != nil {
 		return nil, err
 	}
 	resolved, err := f.ResolvedPath()

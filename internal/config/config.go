@@ -77,7 +77,7 @@ func Load() (*Config, error) {
 		providerDataHome: providerDataHome,
 	}
 
-	data, err := protectedfile.ReadResolved(filepath.Join(dir, "config.yaml"))
+	data, err := protectedfile.ReadPolicyResolved(filepath.Join(dir, "config.yaml"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			cfg.WingID, err = defaultWingID(dir)

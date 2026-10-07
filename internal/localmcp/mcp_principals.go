@@ -29,7 +29,7 @@ type localMCPClientsConfig struct {
 
 func LoadLocalMCPClientsConfig(cfg *config.Config) (localMCPClientsConfig, error) {
 	path := filepath.Join(cfg.Dir, "clients.yaml")
-	file, err := protectedfile.OpenResolved(path)
+	file, err := protectedfile.OpenPolicyResolved(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return localMCPClientsConfig{}, nil
 	}
@@ -37,9 +37,6 @@ func LoadLocalMCPClientsConfig(cfg *config.Config) (localMCPClientsConfig, error
 		return localMCPClientsConfig{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	defer file.Close()
-	if file.Info.Mode().Perm()&0077 != 0 {
-		return localMCPClientsConfig{}, fmt.Errorf("%s must not be readable or writable by group/others (run chmod 600 %s)", path, path)
-	}
 	data, err := file.ReadAll()
 	if err != nil {
 		return localMCPClientsConfig{}, fmt.Errorf("read %s: %w", path, err)
