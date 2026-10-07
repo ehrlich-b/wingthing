@@ -1,14 +1,19 @@
 package taskrun
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 )
 
@@ -349,4 +354,49 @@ func hasReadOnlySandboxMount(mounts []sandbox.Mount, source string) bool {
 		}
 	}
 	return false
+}
+
+func TestDirectAgentSandboxPreservesRoostRootPins(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Seatbelt profile is macOS-only")
+	}
+	home := config.CanonicalProviderPath(t.TempDir())
+	t.Setenv("HOME", home)
+	t.Setenv("WT_PROVIDER_BASE_URL", "")
+	root := filepath.Join(home, "role")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "egg.yaml"), []byte("base: none\nfs: [rw:"+home+"]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := eggclient.LoadRoostEggConfig(root, []string{root}, nil, false, egg.DefaultEggConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := directAgentSandboxConfigForTask(policy, "custom", "standard", home, root, nil, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb, err := sandbox.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := sb.Destroy(); err != nil {
+			t.Error(err)
+		}
+	})
+	cmd, err := sb.Exec(context.Background(), "/bin/true", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cmd.Args) < 3 || cmd.Args[1] != "-p" {
+		t.Fatalf("missing Seatbelt profile: %v", cmd.Args)
+	}
+	for _, path := range []string{root, home} {
+		if !strings.Contains(cmd.Args[2], fmt.Sprintf("(deny file-write* (literal %q))", path)) {
+			t.Fatalf("headless task can replace policy directory: %s", path)
+		}
+	}
 }

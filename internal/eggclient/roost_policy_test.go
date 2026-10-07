@@ -1,6 +1,7 @@
 package eggclient
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
@@ -338,5 +340,88 @@ func TestRoostPolicyOmittedCWDUsesFirstAccessibleRoot(t *testing.T) {
 	start := ws.PTYStart{UserID: "bob", Email: "bob@example.com", OrgRole: "member"}
 	if _, _, err := PrepareBrowserLaunch(wc, &start, home, true, egg.DefaultEggConfig()); err == nil || !strings.Contains(err.Error(), filepath.Join(child, "egg.yaml")) {
 		t.Fatalf("omitted cwd bypassed strict policy checks: %v", err)
+	}
+}
+
+func TestRoostPolicyPinsRootsAndAncestors(t *testing.T) {
+	home, root, other, wc := roostPolicyFixture(t)
+	role := filepath.Join(root, "role")
+	if err := os.Mkdir(role, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(role, "egg.yaml"), []byte("base: none\nfs: [rw:"+home+"]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	wc.Paths[0].Path = role
+	missing := filepath.Join(home, "absent", "role")
+	wc.Paths = append(wc.Paths, config.PathEntry{Path: missing})
+	for _, cwd := range []string{role, home, other} {
+		if cwd == other {
+			if err := os.Remove(filepath.Join(other, "egg.yaml")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		start := ws.PTYStart{UserID: "admin", OrgRole: "admin", CWD: cwd}
+		cfg, _, err := PrepareBrowserLaunch(wc, &start, home, true, &egg.EggConfig{FS: []string{"rw:" + home}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, configured := range []string{role, other, missing} {
+			for dir := configured; dir != "/"; dir = filepath.Dir(dir) {
+				if !ContainsExactPath(cfg.FS, "deny-rename:"+dir) {
+					t.Fatalf("policy directory %s can be replaced (cwd=%s)", dir, cwd)
+				}
+			}
+		}
+	}
+}
+
+func TestRoostPolicyPinsSeatbeltProfile(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Seatbelt profile is macOS-only")
+	}
+	home, parent, _, wc := roostPolicyFixture(t)
+	root := filepath.Join(parent, "role")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "egg.yaml"), []byte("base: none\nfs: [rw:"+home+"]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	wc.Paths[0].Path = root
+	start := ws.PTYStart{UserID: "admin", OrgRole: "admin", CWD: root}
+	cfg, _, err := PrepareBrowserLaunch(wc, &start, home, true, egg.DefaultEggConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb, err := sandbox.New(cfg.ToSandboxConfig(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := sb.Destroy(); err != nil {
+			t.Error(err)
+		}
+	})
+	cmd, err := sb.Exec(context.Background(), "/bin/true", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cmd.Args) < 3 || cmd.Args[1] != "-p" {
+		t.Fatalf("missing Seatbelt profile: %v", cmd.Args)
+	}
+	profile := cmd.Args[2]
+	allow := strings.Index(profile, fmt.Sprintf("(allow file-write* (subpath %q))", home))
+	if allow < 0 {
+		t.Fatal("ordinary role-root writes lost their grant")
+	}
+	for _, path := range []string{root, parent} {
+		rule := fmt.Sprintf("(deny file-write* (literal %q))", path)
+		if strings.Index(profile, rule) <= allow {
+			t.Fatalf("policy directory can be replaced through writable parent: %s", path)
+		}
+		if strings.Contains(profile, fmt.Sprintf("(deny file-write* (subpath %q))", path)) {
+			t.Fatalf("ordinary role-root files became unwritable: %s", path)
+		}
 	}
 }

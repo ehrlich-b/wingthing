@@ -1153,3 +1153,10 @@ func TestSectionMask_EnvNone_RemovesEssentials(t *testing.T) {
 		}
 	}
 }
+
+func TestParseFSRulesDoesNotGrantWriteForRenamePins(t *testing.T) {
+	mounts, deny, denyWrite := ParseFSRules([]string{"deny-rename:~", "deny-rename:/work/role"}, "/home/user")
+	if len(mounts) != 0 || len(deny) != 0 || len(denyWrite) != 0 {
+		t.Fatalf("rename pins changed read/write permissions: mounts=%v deny=%v denyWrite=%v", mounts, deny, denyWrite)
+	}
+}

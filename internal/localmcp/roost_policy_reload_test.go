@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -737,6 +738,10 @@ func TestRoostMCPRolePolicyMissingAndAdminFallback(t *testing.T) {
 		}
 	}
 	defaultPolicy := &egg.EggConfig{Shell: "/bin/wing-default"}
+	wantFS := []string{"deny-write:" + filepath.Join(root, "egg.yaml")}
+	for dir := root; dir != "/"; dir = filepath.Dir(dir) {
+		wantFS = append(wantFS, "deny-rename:"+dir)
+	}
 	for _, shared := range []bool{false, true} {
 		org := "org"
 		if shared {
@@ -752,7 +757,7 @@ func TestRoostMCPRolePolicyMissingAndAdminFallback(t *testing.T) {
 					if err == nil || cwd != outside && !strings.Contains(err.Error(), "ask the wing owner") {
 						t.Fatalf("member fallback admitted caller policy at %s: %#v, %v", cwd, policy, err)
 					}
-				} else if err != nil || policy.Shell != defaultPolicy.Shell || len(policy.FS) != 1 || policy.FS[0] != "deny-write:"+filepath.Join(root, "egg.yaml") {
+				} else if err != nil || policy.Shell != defaultPolicy.Shell || !slices.Equal(policy.FS, wantFS) {
 					t.Fatalf("admin fallback admitted caller policy at %s: %#v, %v", cwd, policy, err)
 				}
 			}

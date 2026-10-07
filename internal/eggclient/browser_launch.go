@@ -190,6 +190,14 @@ func protectRoostRootPolicies(cfg *egg.EggConfig, roots []string) *egg.EggConfig
 		if !ContainsExactPath(copyCfg.FS, rule) {
 			copyCfg.FS = append(copyCfg.FS, rule)
 		}
+		// A file deny cannot stop a writable parent from replacing the whole
+		// policy directory. Pin every configured root and its ancestor entries.
+		for dir := filepath.Clean(root); dir != "/"; dir = filepath.Dir(dir) {
+			rule := "deny-rename:" + dir
+			if !ContainsExactPath(copyCfg.FS, rule) {
+				copyCfg.FS = append(copyCfg.FS, rule)
+			}
+		}
 	}
 	return &copyCfg
 }

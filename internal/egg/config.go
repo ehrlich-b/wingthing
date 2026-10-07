@@ -641,7 +641,7 @@ func mergeResources(parent, child EggResources) EggResources {
 }
 
 // ParseFSRules splits fs entries into mounts, deny paths, and deny-write paths.
-// Entries are "mode:path" where mode is rw, ro, deny, or deny-write.
+// Entries are "mode:path" where mode is rw, ro, deny, deny-write, or deny-rename.
 func ParseFSRules(fs []string, home string) ([]sandbox.Mount, []string, []string) {
 	var mounts []sandbox.Mount
 	var deny []string
@@ -657,6 +657,8 @@ func ParseFSRules(fs []string, home string) ([]sandbox.Mount, []string, []string
 		switch mode {
 		case "deny":
 			deny = append(deny, expanded)
+		case "deny-rename":
+			// Consumed separately by the runtime; never a writable grant.
 		case "deny-write":
 			denyWrite = append(denyWrite, expanded)
 		case "ro":
@@ -666,6 +668,18 @@ func ParseFSRules(fs []string, home string) ([]sandbox.Mount, []string, []string
 		}
 	}
 	return mounts, deny, denyWrite
+}
+
+// denyRenamePaths preserves directory contents' existing permissions while
+// preventing replacement of the directory entry itself.
+func denyRenamePaths(fs []string, home string) []string {
+	var paths []string
+	for _, entry := range fs {
+		if path, ok := strings.CutPrefix(entry, "deny-rename:"); ok {
+			paths = append(paths, expandTilde(path, home))
+		}
+	}
+	return paths
 }
 
 // ToSandboxConfig converts the egg config to a sandbox.Config.
@@ -682,6 +696,7 @@ func (c *EggConfig) ToSandboxConfig(home string) sandbox.Config {
 		Mounts:      mounts,
 		Deny:        deny,
 		DenyWrite:   denyWrite,
+		DenyRename:  denyRenamePaths(c.FS, home),
 		NetworkNeed: netNeed,
 		NetworkMode: c.Network.Mode,
 		Domains:     c.Network.Domains,

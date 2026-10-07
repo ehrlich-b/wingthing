@@ -198,6 +198,7 @@ func verifyPrivateProcfs() error {
 // [--rlimit RESOURCE=VALUE...] -- CMD ARGS...
 func DenyInit(args []string) {
 	var denyPaths []string
+	var denyRenamePaths []string
 	var denyWritePaths []string
 	var writablePaths []string
 	var overlayPrefixes []string
@@ -226,6 +227,9 @@ func DenyInit(args []string) {
 				i++
 			case "--deny":
 				denyPaths = append(denyPaths, args[i+1])
+				i++
+			case "--deny-rename":
+				denyRenamePaths = append(denyRenamePaths, args[i+1])
 				i++
 			case "--deny-write":
 				denyWritePaths = append(denyWritePaths, args[i+1])
@@ -411,6 +415,15 @@ func DenyInit(args []string) {
 			failEnforcement("make deny-write path read-only", p, err)
 		}
 		expectedMounts = append(expectedMounts, expectedMount{Path: p, ReadOnly: true})
+	}
+
+	// Linux cannot rename or unlink a mountpoint. Recursive self-binds keep
+	// each policy directory in place and preserve all descendant mount flags.
+	for _, path := range denyRenamePaths {
+		if err := pinRenamePath(path); err != nil {
+			failEnforcement("pin policy directory", path, err)
+		}
+		expectedMounts = append(expectedMounts, expectedMount{Path: path})
 	}
 
 	// Syscall success is necessary but the live mount table is the security
@@ -1247,6 +1260,33 @@ func isPathWithin(path, root string) bool {
 	cleanPath := filepath.Clean(path)
 	cleanRoot := filepath.Clean(root)
 	return cleanPath == cleanRoot || strings.HasPrefix(cleanPath, cleanRoot+string(filepath.Separator))
+}
+
+// pinRenamePath walks from / without following links, then mounts through the
+// pinned descriptor so a concurrent directory replacement cannot redirect it.
+func pinRenamePath(path string) error {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return fmt.Errorf("policy directory must be a clean absolute path: %q", path)
+	}
+	flags := unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC
+	fd, err := unix.Open("/", flags, 0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unix.Close(fd) }()
+	for _, part := range strings.Split(strings.TrimPrefix(path, "/"), "/") {
+		if part == "" {
+			continue
+		}
+		next, err := unix.Openat(fd, part, flags, 0)
+		if err != nil {
+			return err
+		}
+		_ = unix.Close(fd)
+		fd = next
+	}
+	pinned := fmt.Sprintf("/proc/self/fd/%d", fd)
+	return unix.Mount(pinned, pinned, "", unix.MS_BIND|unix.MS_REC, "")
 }
 
 // jailMkTarget creates the bind-mount target inside the jail root.
