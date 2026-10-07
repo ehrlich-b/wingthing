@@ -2,6 +2,7 @@
 package protectedfile
 
 import (
+	"crypto/rand"
 	"fmt"
 	"io"
 	"os"
@@ -97,24 +98,46 @@ func ReadResolved(path string) ([]byte, error) {
 	return f.ReadAll()
 }
 
-// WriteFile publishes a fresh private inode rather than writing through an
-// existing name, which could become a symlink or hard link after a read.
+// WriteFile stages secrets beneath eggs, a directory permanently masked by
+// every current sandbox, then publishes a new inode. Adjacent named temporary
+// files would escape masks for the final credential pathname.
 func WriteFile(path string, data []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
+	root, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
+	defer root.Close()
+	staging := filepath.Join("eggs", ".credential-staging")
+	for _, name := range []string{"eggs", staging} {
+		if err := root.Mkdir(name, 0700); err != nil && !os.IsExist(err) {
+			return err
+		}
+		info, err := root.Lstat(name)
+		if err != nil {
+			return err
+		}
+		if err := inspectSecretDirectory(info); err != nil {
+			return &Error{filepath.Join(root.Name(), name), err.Error()}
+		}
+	}
+	temporary := filepath.Join(staging, "."+filepath.Base(path)+"-"+rand.Text())
+	f, err := root.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	defer root.Remove(temporary)
+	defer f.Close()
 	if _, err := f.Write(data); err != nil {
-		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
 		return err
 	}
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	return root.Rename(temporary, filepath.Base(path))
 }
-
 
 func ReadPolicyResolved(path string) ([]byte, error) {
 	f, err := OpenPolicyResolved(path)

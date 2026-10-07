@@ -13,3 +13,7 @@ func inspect(f *os.File, policy bool) (os.FileInfo, uint64, uint64, error) {
 
 func open(path string, policy bool) (*File, error) { return Open(path) }
 func OpenPolicy(path string) (*File, error)        { return Open(path) }
+
+func inspectSecretDirectory(info os.FileInfo) error {
+	return &Error{info.Name(), "secret directory validation unsupported on this platform"}
+}

@@ -81,7 +81,8 @@ func ReapDeadEggs(cfg *config.Config) {
 		return
 	}
 	for _, e := range entries {
-		if !e.IsDir() {
+		// Reserved credential staging is permanently denied, not a session.
+		if e.Name() == ".credential-staging" || !e.IsDir() {
 			continue
 		}
 		dir := filepath.Join(eggsDir, e.Name())

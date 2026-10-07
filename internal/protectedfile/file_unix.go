@@ -67,3 +67,11 @@ func inspect(f *os.File, policy bool) (os.FileInfo, uint64, uint64, error) {
 	}
 	return info, uint64(stat.Dev), uint64(stat.Ino), nil
 }
+
+func inspectSecretDirectory(info os.FileInfo) error {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !info.IsDir() || !ok || int(stat.Uid) != os.Getuid() || info.Mode().Perm()&0022 != 0 {
+		return fmt.Errorf("secret staging directory must be a real account-owned directory not writable by group or others")
+	}
+	return nil
+}

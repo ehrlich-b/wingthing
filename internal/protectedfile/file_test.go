@@ -94,3 +94,17 @@ func TestProtectedFileMasksRefuseReplacement(t *testing.T) {
 		t.Fatal("sealed a replacement instead of the opened identity")
 	}
 }
+
+func TestSecretStagingRefusesRedirectedDirectory(t *testing.T) {
+	dir, outside := t.TempDir(), t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dir, "eggs")); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteFile(filepath.Join(dir, "wing_key"), []byte("secret")); err == nil {
+		t.Fatal("staged a secret without a permanently masked real directory")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("redirected staging directory was modified: %v, %v", entries, err)
+	}
+}
