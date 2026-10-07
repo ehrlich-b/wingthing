@@ -410,3 +410,44 @@ func toolCall(t *testing.T, sockPath string, req ToolRequest) ToolResponse {
 	}
 	return tr
 }
+
+func TestToolListenerControllerTaintIsPermanent(t *testing.T) {
+	tools := []*config.ToolConfig{{Name: "context", Context: "jira-search"}, {Name: "command", Run: "printf allowed"}}
+	listener := &ToolListener{owner: "owner@slide.tech", ownerID: "owner", runner: NewToolRunner(tools)}
+	listener.ObserveController("owner")
+	response := listener.runner.CallAs("context", nil, listener.owner, nil)
+	if response.Error != "context: wing context block is required" {
+		t.Fatalf("owner's own claim tainted tools: %+v", response)
+	}
+	for _, user := range []string{"other", "owner"} {
+		listener.ObserveController(user)
+		listener.Reload(tools)
+		response = listener.runner.CallAs("context", nil, listener.owner, nil)
+		if response.Error != "Context tools are disabled after another user took control of this session" {
+			t.Fatalf("controller %s: %+v", user, response)
+		}
+		if listener.owner != "owner@slide.tech" || listener.ownerID != "owner" {
+			t.Fatal("controller rebound Context owner")
+		}
+	}
+	response = listener.runner.Call("command", nil)
+	if response.Error != "" || response.Stdout != "allowed" {
+		t.Fatalf("command tool after taint: %+v", response)
+	}
+}
+
+func TestReclaimedSessionToolsFailClosedWithRestartMessage(t *testing.T) {
+	tools := []*config.ToolConfig{{Name: "context", Context: "jira-search"}, {Name: "command", Run: "printf allowed"}}
+	runner := newSessionToolRunner(tools, ToolContext{Reclaimed: true})
+	for _, owner := range []string{"", "owner@slide.tech"} {
+		runner.Reload(tools)
+		response := runner.CallAs("context", nil, owner, nil)
+		if response.Error != "Context tools are unavailable in sessions that survived a wing restart; start a new session" {
+			t.Fatalf("reclaimed Context: %+v", response)
+		}
+	}
+	response := runner.Call("command", nil)
+	if response.Error != "" || response.Stdout != "allowed" {
+		t.Fatalf("reclaimed command: %+v", response)
+	}
+}

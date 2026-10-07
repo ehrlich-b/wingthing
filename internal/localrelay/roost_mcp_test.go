@@ -1,9 +1,11 @@
 package localrelay
 
 import (
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -78,5 +80,53 @@ func TestJWTKeyFromEnvironmentUsesExistingSecretAndPrefersExplicitKey(t *testing
 	}
 	if got != "explicit-key" {
 		t.Fatalf("explicit WT_JWT_KEY did not take precedence: %q", got)
+	}
+}
+
+func TestRoostMCPReloadRetainsStartupContext(t *testing.T) {
+	dir := t.TempDir()
+	toolsDir := filepath.Join(dir, "tools")
+	if err := os.Mkdir(toolsDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(toolsDir, "context.yaml"), []byte("name: tickets\ncontext: jira-search\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	initial := &config.ContextConfig{URL: "https://context.example", ClientID: "wing", SecretFile: filepath.Join(dir, "secret")}
+	if err := os.WriteFile(initial.SecretFile, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, release := config.FreezeContextConfig(dir, initial)
+	defer release()
+	// Removing enrollment from disk must neither remove valid Context tools nor
+	// cause the runner to lose its original client on SIGHUP.
+	if err := config.SaveWingConfig(dir, &config.WingConfig{MCP: &config.MCPConfig{Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	tools, _, err := loadRoostMCPConfig(dir, initial)
+	if err != nil || len(tools) != 1 {
+		t.Fatalf("reload lost Context tools: %v", err)
+	}
+	runner, err := roostToolRunner(dir, tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := runner.Call("tickets", nil)
+	if !strings.Contains(response.Error, "verified owner email is required") {
+		t.Fatalf("runner lost startup Context: %+v", response)
+	}
+	// Enabling Context on disk cannot enroll a previously unenrolled process.
+	otherDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(otherDir, "tools"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(otherDir, "tools", "context.yaml"), []byte("name: tickets\ncontext: jira-search\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveWingConfig(otherDir, &config.WingConfig{Context: initial, MCP: &config.MCPConfig{Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadRoostMCPConfig(otherDir, nil); err == nil {
+		t.Fatal("reload enabled Context without restart")
 	}
 }

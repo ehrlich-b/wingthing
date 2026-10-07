@@ -16,6 +16,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/contextclient"
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
@@ -174,13 +175,23 @@ func RunRoostForeground(version string, addrFlag string, devFlag bool, labelsFla
 
 	// Authenticated roost users always receive the typed owner-scoped control
 	// surface. wing.yaml can add role-scoped executable tools beside it.
-	tools, policy, err := loadRoostMCPConfig(cfg.Dir)
+	wingCfg, err := config.LoadWingConfig(cfg.Dir)
+	if err != nil {
+		return err
+	}
+	contextCfg, releaseContext := config.FreezeContextConfig(cfg.Dir, wingCfg.Context)
+	defer releaseContext()
+	tools, policy, err := loadRoostMCPConfig(cfg.Dir, contextCfg)
 	if err != nil {
 		return err
 	}
 	nativeTools := roostMCPControlTools(version, srv, cfg, hasAuth)
 	if hasAuth || policy != nil {
-		srv.EnableMCP(egg.NewToolRunner(tools), policy, nativeTools...)
+		runner, err := roostToolRunner(cfg.Dir, tools)
+		if err != nil {
+			return err
+		}
+		srv.EnableMCP(runner, policy, nativeTools...)
 		roleCount := 0
 		if policy != nil {
 			roleCount = len(policy.Roles)
@@ -215,12 +226,17 @@ func RunRoostForeground(version string, addrFlag string, devFlag bool, labelsFla
 				case <-ctx.Done():
 					return
 				case <-mcpSIGHUPCh:
-					newTools, newPolicy, reloadErr := loadRoostMCPConfig(cfg.Dir)
+					newTools, newPolicy, reloadErr := loadRoostMCPConfig(cfg.Dir, contextCfg)
 					if reloadErr != nil {
 						log.Printf("mcp: reload failed; keeping previous configuration: %v", reloadErr)
 						continue
 					}
-					srv.ReloadMCP(egg.NewToolRunner(newTools), newPolicy)
+					runner, err := roostToolRunner(cfg.Dir, newTools)
+					if err != nil {
+						log.Printf("mcp: context reload failed: %v", err)
+						continue
+					}
+					srv.ReloadMCP(runner, newPolicy)
 					roleCount := 0
 					if newPolicy != nil {
 						roleCount = len(newPolicy.Roles)
@@ -403,16 +419,19 @@ func roostMCPControlTools(version string, srv *relay.Server, cfg *config.Config,
 	return append(tools, srv.PortalNativeMCPTools(cfg.WingID)...)
 }
 
-func loadRoostMCPConfig(configDir string) ([]*config.ToolConfig, *config.MCPConfig, error) {
+func loadRoostMCPConfig(configDir string, contexts ...*config.ContextConfig) ([]*config.ToolConfig, *config.MCPConfig, error) {
 	wingCfg, err := config.LoadWingConfig(configDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load wing config for mcp: %w", err)
+	}
+	if len(contexts) > 0 {
+		config.RetainContextConfig(wingCfg, contexts[0])
 	}
 	if wingCfg.MCP == nil || !wingCfg.MCP.Enabled {
 		return nil, nil, nil
 	}
 	toolsDir := config.ResolveToolsDir(configDir, wingCfg.ToolsDir)
-	tools, err := config.LoadToolsDir(toolsDir)
+	tools, err := config.LoadWingTools(toolsDir, wingCfg.Context)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load mcp tools from %s: %w", toolsDir, err)
 	}
@@ -428,4 +447,16 @@ func loadRoostMCPConfig(configDir string) ([]*config.ToolConfig, *config.MCPConf
 		}
 	}
 	return tools, wingCfg.MCP, nil
+}
+
+func roostToolRunner(dir string, tools []*config.ToolConfig) (*egg.ToolRunner, error) {
+	contextCfg, err := config.LoadContextConfig(dir)
+	if err != nil {
+		return nil, err
+	}
+	client, err := contextclient.New(contextCfg)
+	if err != nil {
+		return nil, err
+	}
+	return egg.NewToolRunner(tools, client), nil
 }

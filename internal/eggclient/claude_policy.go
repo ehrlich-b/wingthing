@@ -10,8 +10,9 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 )
 
-// Only deployment model policy crosses from the host profile into an isolated
-// session. Pass it to Claude for this launch; never merge it into the user's file.
+// Only deployment model policy, and the host's choice to disable Claude's
+// self-updater, cross from the host profile into an isolated session. Pass it to
+// Claude for this launch; never merge it into the user's file.
 func IsolatedClaudePolicyArgs(agentName string, isolated bool) ([]string, error) {
 	return isolatedClaudePolicyArgs(agentName, isolated, "")
 }
@@ -43,13 +44,15 @@ func isolatedClaudePolicyArgs(agentName string, isolated bool, settingsSource st
 		Model       string `json:"model"`
 		EffortLevel string `json:"effortLevel"`
 		Env         struct {
-			Effort string `json:"CLAUDE_CODE_EFFORT_LEVEL"`
+			Effort            string `json:"CLAUDE_CODE_EFFORT_LEVEL"`
+			DisableAutoupdate string `json:"DISABLE_AUTOUPDATER"`
 		} `json:"env"`
 	}
 	if err := json.Unmarshal(data, &source); err != nil {
 		return nil, errors.New("invalid host Claude model policy")
 	}
 	policy := make(map[string]any)
+	env := make(map[string]string)
 	var args []string
 	if source.Model != "" {
 		args = append(args, "--model", source.Model)
@@ -65,10 +68,18 @@ func isolatedClaudePolicyArgs(agentName string, isolated bool, settingsSource st
 	if source.Env.Effort != "" {
 		switch source.Env.Effort {
 		case "low", "medium", "high", "xhigh", "max", "auto":
-			policy["env"] = map[string]string{"CLAUDE_CODE_EFFORT_LEVEL": source.Env.Effort}
+			env["CLAUDE_CODE_EFFORT_LEVEL"] = source.Env.Effort
 		default:
 			return nil, errors.New("invalid host Claude effort environment policy")
 		}
+	}
+	// A host-managed install is read-only inside the sandbox, so its updater can
+	// only fail there. Only the disabling value crosses.
+	if source.Env.DisableAutoupdate == "1" {
+		env["DISABLE_AUTOUPDATER"] = "1"
+	}
+	if len(env) > 0 {
+		policy["env"] = env
 	}
 	if len(policy) == 0 {
 		return args, nil

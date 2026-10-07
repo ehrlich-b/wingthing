@@ -10,7 +10,7 @@ const wing = { online: true, capabilities: ['session.fork.v1'] };
 test('Fork is visible for owned supported live and ended Claude sessions', () => {
     for (const source of [session, { ...session, session_id: 'ended', id: undefined }]) {
         assert.equal(sessionForkAvailable(source, wing, owner), true);
-        assert.match(sessionForkControl(source, wing, owner), />Fork<\/button>/);
+        assert.match(sessionForkControl(source, wing, owner), /title="Start a new session from a copy of this conversation\. This session keeps running\.">fork<\/button>/);
     }
 });
 

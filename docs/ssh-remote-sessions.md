@@ -196,7 +196,7 @@ browser DOM and network relay with typed message queues. A physical-host check
 remains necessary for SSH, installed binary and sandbox compatibility; a live
 browser pass remains necessary for the UI affordances.
 
-`make e2e-linux` drives `--remote-state` end to end through the same
+On Linux, `make gate GATE=integration` drives `--remote-state` end to end through the same
 kind of fake SSH transport. It uses the stable and preview builds as both
 clients and receivers, and runs sandboxed `/bin/sh` eggs that the fixture owns.
 The selected state path contains spaces and an apostrophe. The fixture checks:
