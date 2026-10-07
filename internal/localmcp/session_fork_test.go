@@ -245,16 +245,14 @@ func TestSessionForkIdentityMatchesFreshLaunchOnEverySurface(t *testing.T) {
 			s.Cfg.Dir = cwd
 			wc := &config.WingConfig{Org: "org", Paths: config.PathList{{Path: cwd, Members: []string{"alice@example.com"}}}}
 			req := ws.TunnelRequest{SenderUserID: "alice", SenderEmail: "alice@example.com", SenderOrgRole: "member"}
+			if err := os.WriteFile(filepath.Join(cwd, "egg.yaml"), []byte("base: none\nfs: [deny:/, rw:"+cwd+"]\nnetwork: none\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := config.SaveWingConfig(s.Cfg.Dir, wc); err != nil {
+				t.Fatal(err)
+			}
 			var freshIdentity eggclient.EggIdentity
 			var freshConfig *egg.EggConfig
-			if strings.Contains(surface, "org") || strings.Contains(surface, "shared host") {
-				if err := os.WriteFile(filepath.Join(cwd, "egg.yaml"), []byte("base: none\nfs: [deny:/, rw:"+cwd+"]\nnetwork: none\n"), 0600); err != nil {
-					t.Fatal(err)
-				}
-				if err := config.SaveWingConfig(s.Cfg.Dir, wc); err != nil {
-					t.Fatal(err)
-				}
-			}
 			var err error
 			switch surface {
 			case "local MCP unsandboxed":
@@ -266,7 +264,7 @@ func TestSessionForkIdentityMatchesFreshLaunchOnEverySurface(t *testing.T) {
 				}
 				s.Surface, s.identity = control.SurfaceDirectMCP, policy.identity
 				s.allowedPaths, s.enforcePathBounds = policy.allowedPaths, policy.enforcePathBounds
-				s.launchConfig = runtimeLaunchConfig(egg.DefaultEggConfig(), nil, []string{cwd}, true)
+				s.launchConfig = runtimeLaunchConfig(wc, cwd, true, s.allowedPaths, egg.DefaultEggConfig(), nil)
 			case "HTTP shared host":
 				server := newRoostNativeMCPServer("dev", s.Cfg, true, NewMCPAdmissionState(), mcppkg.Principal{UserID: req.SenderUserID, Email: req.SenderEmail}, []string{cwd})
 				s.Surface, s.identity = server.Surface, server.identity

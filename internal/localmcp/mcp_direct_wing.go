@@ -155,7 +155,7 @@ func ServeDirectMCPChannelWithPolicySource(version string, cfg *config.Config, h
 }
 
 func serveDirectMCPChannelWithPolicySourceAndLease(version string, cfg *config.Config, home string, sharedHost bool, admission *AdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel, policySource func() (*config.WingConfig, []config.AllowKey), identityLease time.Duration, eggSources ...func() *egg.EggConfig) {
-	// Standalone adapters capture once; the wing supplies its guarded live snapshot.
+	// Standalone adapters capture once; the wing supplies its synchronized live snapshot.
 	var initialEgg *egg.EggConfig
 	var eggErr error
 	if len(eggSources) == 0 {
@@ -248,7 +248,7 @@ func serveDirectMCPChannelWithPolicySourceAndLease(version string, cfg *config.C
 				wingDefault = eggSources[0]()
 			}
 			if server.identity.SharedHost || server.identity.OrgWing {
-				server.launchConfig = runtimeLaunchConfig(wingDefault, eggErr, wingpolicy.CanonicalPaths(wingpolicy.ResolvePathStrings(wingCfg.Paths.Strings(), home)), wingpolicy.IsMemberRole(policy.role))
+				server.launchConfig = runtimeLaunchConfig(wingCfg, home, policy.role == "member", policy.allowedPaths, wingDefault, eggErr)
 			}
 			arguments := request.Arguments
 			if len(arguments) == 0 {
