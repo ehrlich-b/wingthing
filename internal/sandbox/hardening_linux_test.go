@@ -240,6 +240,51 @@ func runHardeningScenario(scenario, root string) error {
 		command := fmt.Sprintf(`test "$(id -u)" = 1000 && test ! -e %q && printf launched > result && printf persisted > %q`, secret, filepath.Join(config, "state"))
 		DenyInit(append(args, "--", "/bin/sh", "-c", command))
 		return fmt.Errorf("DenyInit returned")
+	case "jail-prefix-unchanged", "jail-prefix-conflict":
+		home := filepath.Join(root, "home")
+		config := filepath.Join(home, ".claude")
+		if err := os.MkdirAll(config, 0755); err != nil {
+			return err
+		}
+		path := filepath.Join(home, ".claude.json")
+		if err := os.WriteFile(path, []byte("initial config"), 0600); err != nil {
+			return err
+		}
+		// This descriptor represents a second session's host-side copy-back.
+		host, err := os.Open(home)
+		if err != nil {
+			return err
+		}
+		defer host.Close()
+		persist := setupJail(root, []string{"/usr"}, []string{config}, home, nil, ".claude")
+		destination := filepath.Join(mountFDPath(host), ".claude.json")
+		if err := os.WriteFile(destination, []byte("newer host update"), 0600); err != nil {
+			return err
+		}
+		if scenario == "jail-prefix-conflict" {
+			if err := os.WriteFile(path, []byte("this session update"), 0600); err != nil {
+				return err
+			}
+		}
+		persist()
+		if data, err := os.ReadFile(destination); err != nil || string(data) != "newer host update" {
+			return fmt.Errorf("copy-back lost another session's update: %q, %v", data, err)
+		}
+		conflicts, err := filepath.Glob(filepath.Join(mountFDPath(host), ".wingthing-conflict-*"))
+		if err != nil {
+			return err
+		}
+		if scenario == "jail-prefix-conflict" {
+			if len(conflicts) != 1 {
+				return fmt.Errorf("missing session conflict: %v", conflicts)
+			}
+			if data, err := os.ReadFile(conflicts[0]); err != nil || string(data) != "this session update" {
+				return fmt.Errorf("lost session conflict: %q, %v", data, err)
+			}
+		} else if len(conflicts) != 0 {
+			return fmt.Errorf("unchanged session generated a conflict: %v", conflicts)
+		}
+		return nil
 	case "jail-prefix":
 		home := filepath.Join(root, "home")
 		config := filepath.Join(home, ".claude")
@@ -613,6 +658,14 @@ func TestDenyWriteMissingFileCannotBeCreatedOrReplaced(t *testing.T) {
 			if _, err := os.Lstat(filepath.Join(root, "work", "egg.yaml")); !os.IsNotExist(err) {
 				t.Fatalf("private deny-write created a host policy path: %v", err)
 			}
+		})
+	}
+}
+
+func TestJailPrefixCopyBackPreservesConcurrentUpdates(t *testing.T) {
+	for _, scenario := range []string{"jail-prefix-unchanged", "jail-prefix-conflict"} {
+		t.Run(scenario, func(t *testing.T) {
+			runHardeningNamespace(t, scenario, t.TempDir())
 		})
 	}
 }

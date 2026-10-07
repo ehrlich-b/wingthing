@@ -4,6 +4,7 @@ package sandbox
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"log"
@@ -1806,6 +1807,11 @@ func prepareJailPrefixFiles(root, home string, readonly, writable, prefixes []st
 		}
 		return false
 	}
+	type snapshot struct {
+		info os.FileInfo
+		hash [sha256.Size]byte
+	}
+	snapshots := make(map[string]snapshot)
 	var extraWritable []string
 	for _, path := range files {
 		if covered(path) {
@@ -1820,10 +1826,24 @@ func prepareJailPrefixFiles(root, home string, readonly, writable, prefixes []st
 		if err != nil {
 			return nil, nil, err
 		}
+		before, err := source.Stat()
+		if err != nil {
+			source.Close()
+			return nil, nil, err
+		}
 		target, err := createConfinedMountpoint(root, path, false)
 		if err == nil {
 			err = copyPinnedFile(source, target)
+			if err == nil {
+				var data []byte
+				data, err = os.ReadFile(mountFDPath(target))
+				snapshots[path] = snapshot{before, sha256.Sum256(data)}
+			}
 			target.Close()
+		}
+		after, statErr := source.Stat()
+		if err == nil && (statErr != nil || !samePrefixSnapshot(before, after)) {
+			err = fmt.Errorf("host prefix config changed during snapshot: %s", path)
 		}
 		source.Close()
 		if err != nil {
@@ -1841,7 +1861,12 @@ func prepareJailPrefixFiles(root, home string, readonly, writable, prefixes []st
 		if covered(parent) {
 			continue
 		}
-		host, err := openConfinedExisting("/", parent)
+		pinned, err := openConfinedExisting("/", parent)
+		var host *os.File
+		if err == nil {
+			host, err = os.Open(mountFDPath(pinned))
+			pinned.Close()
+		}
 		if err != nil {
 			for _, directory := range directories {
 				directory.host.Close()
@@ -1855,6 +1880,12 @@ func prepareJailPrefixFiles(root, home string, readonly, writable, prefixes []st
 	}
 	return func() {
 		for _, directory := range directories {
+			// Serialize cooperating sessions' comparison and publication.
+			if err := unix.Flock(int(directory.host.Fd()), unix.LOCK_EX); err != nil {
+				log.Printf("_deny_init: lock jail prefix destination %s: %v", directory.path, err)
+				directory.host.Close()
+				continue
+			}
 			entries, err := os.ReadDir(directory.path)
 			if err == nil {
 				for _, entry := range entries {
@@ -1862,7 +1893,38 @@ func prepareJailPrefixFiles(root, home string, readonly, writable, prefixes []st
 					if entry.Name() == directory.prefix || !strings.HasPrefix(entry.Name(), directory.prefix) || covered(path) || !entry.Type().IsRegular() {
 						continue
 					}
-					if err := copyFile(path, filepath.Join(mountFDPath(directory.host), entry.Name())); err != nil {
+					data, err := os.ReadFile(path)
+					if err != nil {
+						log.Printf("_deny_init: read jail prefix %s: %v", path, err)
+						continue
+					}
+					snapshot, existed := snapshots[path]
+					if existed && sha256.Sum256(data) == snapshot.hash {
+						continue
+					}
+					destination := filepath.Join(mountFDPath(directory.host), entry.Name())
+					current, statErr := os.Lstat(destination)
+					unchanged := existed && statErr == nil && samePrefixSnapshot(snapshot.info, current)
+					if !existed && os.IsNotExist(statErr) {
+						unchanged = true
+					}
+					if !unchanged {
+						// Keep both versions, outside the agent's prefix so future
+						// sessions do not import and copy back conflict artifacts.
+						conflict, err := os.CreateTemp(mountFDPath(directory.host), ".wingthing-conflict-"+entry.Name()+"-*")
+						if err == nil {
+							_, err = conflict.Write(data)
+							closeErr := conflict.Close()
+							if err == nil {
+								err = closeErr
+							}
+							log.Printf("_deny_init: host prefix changed; kept %s and saved session version to %s (error: %v)", path, filepath.Join(directory.path, filepath.Base(conflict.Name())), err)
+						} else {
+							log.Printf("_deny_init: save jail prefix conflict %s: %v", path, err)
+						}
+						continue
+					}
+					if err := copyFile(path, destination); err != nil {
 						log.Printf("_deny_init: persist jail prefix %s: %v", path, err)
 					}
 				}
@@ -1870,6 +1932,11 @@ func prepareJailPrefixFiles(root, home string, readonly, writable, prefixes []st
 			directory.host.Close()
 		}
 	}, extraWritable, nil
+}
+
+func samePrefixSnapshot(before, after os.FileInfo) bool {
+	return before != nil && after != nil && os.SameFile(before, after) &&
+		before.Size() == after.Size() && before.ModTime().Equal(after.ModTime())
 }
 
 func copyPinnedFile(source, target *os.File) error {
