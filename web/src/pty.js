@@ -21,6 +21,9 @@ import { terminalControlFailure, terminalControlOptions, ptyAttachRequest, curre
 import { acknowledgeSessionCompletions } from './session-completion.js';
 import { browserLocalStorage } from './storage-scope.js';
 
+var PTY_PING_INTERVAL_MS = 5000;
+var PTY_LIVENESS_TIMEOUT_MS = 12000;
+
 function clearTerminalControl() {
     S.ptyControllerId = null;
     S.ptyInputBlocked = false;
@@ -310,6 +313,10 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
         if (ws !== S.ptyWs) return;
         var msg = JSON.parse(e.data);
         switch (msg.type) {
+            case 'pty.pong':
+                lastPong = Date.now();
+                return;
+
             case 'relay.restart':
                 if (S.ptySessionId) {
                     var sid = S.ptySessionId;
@@ -539,7 +546,33 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
         }
     };
 
+    function reconnectAfterLoss(delay) {
+        var sid = S.ptySessionId;
+        S.ptyReconnecting = true;
+        DOM.ptyStatus.textContent = 'reconnecting...';
+        showReconnectBanner();
+        setTimeout(function () {
+            if (terminalReferenceMatches(S, sid, connectedWingId, ws)) ptyReconnectAttach(sid, 0, connectedWingId);
+        }, delay);
+    }
+
+    // A link can die without a close event, and the browser would wait on it
+    // forever. Ping the relay; once it has answered, silence means reconnect.
+    var lastPong = 0;
+    var liveness = setInterval(function () {
+        if (ws !== S.ptyWs || ws.readyState > WebSocket.OPEN) { clearInterval(liveness); return; }
+        if (ws.readyState !== WebSocket.OPEN) return;
+        if (lastPong && Date.now() - lastPong > PTY_LIVENESS_TIMEOUT_MS) {
+            clearInterval(liveness);
+            if (S.ptySessionId && !S.ptyReconnecting && !S.ptyInputBlocked) reconnectAfterLoss(0);
+            ws.close();
+            return;
+        }
+        ws.send(JSON.stringify({ type: 'pty.ping' }));
+    }, PTY_PING_INTERVAL_MS);
+
     ws.onclose = function () {
+        clearInterval(liveness);
         if (ws !== S.ptyWs) return;
         if (S.ptyInputBlocked) return;
         if (S.ptyBandwidthExceeded) {
@@ -547,13 +580,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
             return;
         }
         if (S.ptySessionId && !S.ptyReconnecting) {
-            var sid = S.ptySessionId;
-            S.ptyReconnecting = true;
-            DOM.ptyStatus.textContent = 'reconnecting...';
-            showReconnectBanner();
-            setTimeout(function () {
-                if (terminalReferenceMatches(S, sid, connectedWingId, ws)) ptyReconnectAttach(sid, 0, connectedWingId);
-            }, 1000);
+            reconnectAfterLoss(1000);
             return;
         }
         if (!S.ptyReconnecting) {

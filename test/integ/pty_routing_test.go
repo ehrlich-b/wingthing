@@ -1013,3 +1013,27 @@ func TestPTYRoutingPreviewAndBrowserOpen(t *testing.T) {
 		t.Errorf("url = %q, want %q", browserOpen.URL, "https://example.com")
 	}
 }
+
+func TestBrowserTerminalSocketAnswersPing(t *testing.T) {
+	_, ts, store := testRelayAndWS(t)
+	token, _ := createTestUser(t, store, "liveness")
+	wing := connectWing(t, wsURL(ts), token, "liveness-wing", []string{"claude"})
+	defer wing.CloseNow()
+	browser := connectBrowser(t, wsURL(ts), token, "liveness-wing")
+	defer browser.CloseNow()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := wsjson.Write(ctx, browser, ws.Envelope{Type: ws.TypePTYPing}); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		var reply ws.Envelope
+		if err := wsjson.Read(ctx, browser, &reply); err != nil {
+			t.Fatalf("no pong for the browser ping: %v", err)
+		}
+		if reply.Type == ws.TypePTYPong {
+			return
+		}
+	}
+}

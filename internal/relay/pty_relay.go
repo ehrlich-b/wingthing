@@ -659,6 +659,13 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 		}
 
 		switch env.Type {
+		case ws.TypePTYPing:
+			// Browsers cannot see transport pings, so answer on this socket and let
+			// the browser notice a link that died without a close.
+			if err := writeWebSocketJSON(ctx, conn, ws.Envelope{Type: ws.TypePTYPong}); err != nil {
+				return
+			}
+
 		case ws.TypePTYStart:
 			if !s.relayAccess(userID).Allowed {
 				if err := writeWebSocketJSON(ctx, conn, ws.ErrorMsg{Type: ws.TypeError, Message: "hosted relay is not included on the free direct tier; connect directly, use a self-hosted roost, or upgrade to Pro"}); err != nil {

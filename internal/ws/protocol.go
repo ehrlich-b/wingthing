@@ -22,6 +22,8 @@ const (
 	TypePTYPreview      = "pty.preview"       // wing → relay → browser (ephemeral)
 	TypePTYBrowserOpen  = "pty.browser_open"  // wing → relay → browser (URL open request)
 	TypePTYMigrate      = "pty.migrate"       // browser → relay → wing (request P2P migration)
+	TypePTYPing         = "pty.ping"          // browser → relay (terminal socket liveness)
+	TypePTYPong         = "pty.pong"          // relay → browser
 	TypePTYMigrated     = "pty.migrated"      // wing → relay → browser (P2P migration complete)
 	TypePTYFallback     = "pty.fallback"      // wing → relay → browser (P2P failed, back to relay)
 
