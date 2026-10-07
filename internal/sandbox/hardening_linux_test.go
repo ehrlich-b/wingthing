@@ -147,6 +147,18 @@ func runHardeningScenario(scenario, root string) error {
 		}
 		DenyInit(append(args, "--", "/bin/sh", "-c", command+"printf sealed > result"))
 		return fmt.Errorf("DenyInit returned")
+	case "readonly-home-missing-deny":
+		home, tmp := filepath.Join(root, "home"), filepath.Join(root, "session")
+		cache := filepath.Join(home, ".cache")
+		for _, dir := range []string{cache, tmp} {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
+		}
+		denied := filepath.Join(home, ".aws")
+		command := fmt.Sprintf(`test -d %q && ! touch %q 2>/dev/null && ! touch %q 2>/dev/null && printf persisted > %q && mv %q %q`, denied, filepath.Join(denied, "key"), filepath.Join(home, "undeclared"), filepath.Join(cache, "entry.tmp"), filepath.Join(cache, "entry.tmp"), filepath.Join(cache, "entry"))
+		DenyInit([]string{"--uid", "0", "--gid", "0", "--log", filepath.Join(tmp, "deny.log"), "--home", home, "--writable", cache, "--deny", denied, "--", "/bin/sh", "-c", command})
+		return fmt.Errorf("DenyInit returned")
 	case "jail-missing-deny":
 		home, workspace, tmp := filepath.Join(root, "home"), filepath.Join(root, "work"), filepath.Join(root, "session")
 		for _, dir := range []string{home, workspace, tmp} {
@@ -455,6 +467,18 @@ func TestJailPreservesDenyMountpointsUnderPrivateVirtualMounts(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(root, "work", "result"))
 	if err != nil || string(data) != "sealed" {
 		t.Fatalf("private virtual mount hid a deny target: %q, %v", data, err)
+	}
+}
+
+func TestMissingDenyUnderReadonlyHomePreservesWritableCache(t *testing.T) {
+	root := t.TempDir()
+	runHardeningNamespace(t, "readonly-home-missing-deny", root)
+	data, err := os.ReadFile(filepath.Join(root, "home", ".cache", "entry"))
+	if err != nil || string(data) != "persisted" {
+		t.Fatalf("declared cache write did not persist: %q, %v", data, err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "home", ".aws")); !os.IsNotExist(err) {
+		t.Fatalf("private deny mountpoint appeared on the host: %v", err)
 	}
 }
 

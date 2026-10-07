@@ -278,12 +278,18 @@ func TestJail_MissingDenyPathPreparedBeforeReadonlyHome(t *testing.T) {
 		UserHome:    home,
 		Mounts:      []Mount{{Source: writable, Target: writable}},
 		Deny:        []string{missing},
-	}, "test -d "+missing+" && ! touch "+missing+"/credential 2>/dev/null && printf launched")
+	}, "test -d "+missing+" && ! touch "+missing+"/credential 2>/dev/null && ! touch "+home+"/undeclared 2>/dev/null && printf persisted > "+writable+"/entry.tmp && mv "+writable+"/entry.tmp "+writable+"/entry && printf launched")
 	if err != nil {
 		t.Fatalf("sandbox rejected an absent deny path under read-only HOME: output=%q error=%v", out, err)
 	}
 	if out != "launched" {
 		t.Fatalf("agent did not launch after deny mount preparation: %q", out)
+	}
+	if data, err := os.ReadFile(filepath.Join(writable, "entry")); err != nil || string(data) != "persisted" {
+		t.Fatalf("declared cache write did not persist: %q %v", data, err)
+	}
+	if _, err := os.Lstat(missing); !os.IsNotExist(err) {
+		t.Fatalf("private deny mountpoint appeared on the host: %v", err)
 	}
 }
 

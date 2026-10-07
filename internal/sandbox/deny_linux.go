@@ -673,9 +673,9 @@ func prepareDenyMountpoints(paths []string, tmpDir string, writable []string) (f
 	for _, plan := range plans {
 		persist := false
 		for _, grant := range writable {
-			persist = persist || isPathWithin(plan.Parent, grant) || isPathWithin(grant, plan.Parent)
+			persist = persist || isPathWithin(plan.Parent, grant)
 		}
-		remove, err := installPrivateDenyMountpoints(plan, tmpDir, persist)
+		remove, err := installPrivateDenyMountpoints(plan, tmpDir, persist, writable)
 		if err != nil {
 			cleanup()
 			return nil, err
@@ -688,7 +688,7 @@ func prepareDenyMountpoints(paths []string, tmpDir string, writable []string) (f
 // A private lower layer supplies missing directory mountpoints. For a writable
 // parent the real directory is the upper layer, so ordinary new files still go
 // straight to the host. For a read-only parent, use a private COW upper instead.
-func installPrivateDenyMountpoints(plan denyMountpointPlan, tmpDir string, persist bool) (func(), error) {
+func installPrivateDenyMountpoints(plan denyMountpointPlan, tmpDir string, persist bool, writable []string) (func(), error) {
 	parent, err := openConfinedExisting("/", plan.Parent)
 	if err != nil {
 		return nil, err
@@ -705,6 +705,16 @@ func installPrivateDenyMountpoints(plan denyMountpointPlan, tmpDir string, persi
 	for path := range entries {
 		if path != plan.Parent && isPathWithin(path, plan.Parent) {
 			bindPaths[path] = true
+		}
+	}
+	// A writable descendant does not make its read-only parent a host upper
+	// layer. Pin those grants before covering the parent, then bind them back
+	// so cache/config writes persist without copying unrelated HOME files up.
+	if !persist {
+		for _, path := range writable {
+			if path != plan.Parent && isPathWithin(path, plan.Parent) {
+				bindPaths[path] = true
+			}
 		}
 	}
 	var bindNames []string
