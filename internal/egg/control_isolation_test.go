@@ -71,6 +71,41 @@ func TestMandatoryDatabaseSidecarsDeniedBeforeCreation(t *testing.T) {
 	}
 }
 
+func TestMandatoryLocalTLSProtectionIncludesFutureKeysAndAliases(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("WINGTHING_DIR", filepath.Join(home, "custom"))
+	session := filepath.Join(home, "session-state", "eggs", "own")
+	for _, existing := range []bool{false, true} {
+		for _, state := range []string{".wingthing", ".wingthing-preview", "custom", "session-state"} {
+			path := filepath.Join(home, state, "local-tls")
+			target := filepath.Join(home, "keys-"+state)
+			if existing {
+				makeEggConfigTestDir(t, target)
+				makeEggConfigTestDir(t, filepath.Dir(path))
+				for _, key := range []string{"ca-key.pem", "localhost-key.pem", "future-key.pem"} {
+					writeEggConfigTestFile(t, filepath.Join(target, key), "private-key")
+				}
+				if err := os.Symlink(target, path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sc, err := IsolateControl(sandbox.Config{Mounts: []sandbox.Mount{{Source: home}}}, session, nil, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !containsString(sc.Deny, config.CanonicalProviderPath(path)) {
+				t.Fatalf("local TLS tree readable (existing=%v): %s", existing, path)
+			}
+			if !existing {
+				if _, err := os.Lstat(path); !os.IsNotExist(err) {
+					t.Fatalf("planning created TLS tree: %v", err)
+				}
+			}
+		}
+	}
+}
+
 func TestGlobalEggLoadersAreSealedBeforeCreation(t *testing.T) {
 	home := t.TempDir() // retain macOS's /var alias as well as its resolved name
 	t.Setenv("HOME", home)

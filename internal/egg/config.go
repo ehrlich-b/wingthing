@@ -251,6 +251,10 @@ func eggControlDenyPaths(sessionDir string, grants ...[]sandbox.Mount) ([]string
 		for _, name := range []string{"eggs", "tools", "device_token.yaml", "local_device_token.yaml", "wing_key", "sync.key", "wing.yaml", "egg.yaml", "config.yaml", "remotes.yaml", "clients.yaml", "roost.db", "wt.db"} {
 			paths = append(paths, filepath.Join(state, name))
 		}
+		// Seal the entire TLS tree, including a configured directory alias and
+		// keys created after launch, on both Linux and macOS.
+		tls := filepath.Join(state, "local-tls")
+		paths = append(paths, tls, wingconfig.CanonicalProviderPath(tls))
 		// SQLite may create these after launch; they can contain the same
 		// bearer tokens as the main databases and must be masked in advance.
 		for _, database := range []string{"roost.db", "wt.db"} {
