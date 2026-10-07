@@ -580,6 +580,9 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		}
 	}
 	if agent == "claude" && validLifecycleID(exactProviderID) {
+		if err = verifyProviderSession(eggDir, agent, providerHome, exactProviderID); err != nil {
+			return view, err
+		}
 		if err = j.importTranscript(eggDir, cwd, providerHome, exactProviderID, processEnded); err != nil {
 			return view, err
 		}
@@ -741,19 +744,14 @@ func (j *lifecycleJournal) importTranscript(eggDir, cwd, home, id string, proces
 			offset = e.SourceOffset
 		}
 	}
-	path, _, err := findClaudeSession(cwd, home, Profile("claude").SessionDir, time.Time{}, id)
+	source, _, err := openAgentSession("claude", cwd, home, Profile("claude").SessionDir, time.Time{}, id)
 	if err != nil {
 		return err
 	}
 	var reader io.Reader
-	var source *os.File
 	var gz *gzip.Reader
-	if path != "" {
-		source, err = openBoundRegularFile(path)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = source.Close() }()
+	if source != nil {
+		defer source.Close()
 		reader = source
 	} else {
 		meta, metaErr := os.ReadFile(filepath.Join(eggDir, "chat.meta"))
