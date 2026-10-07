@@ -28,7 +28,7 @@ func (s *Server) toolSessionPrompt(ctx context.Context, arguments json.RawMessag
 	if err != nil {
 		return nil, err
 	}
-	result, err := eggclient.PromptSession(ctx, s.Cfg, session, args.RequestID, args.Input, durationSeconds(args.TimeoutSeconds), "mcp:"+s.clientActor())
+	result, err := eggclient.PromptSession(ctx, s.Cfg, session, args.RequestID, args.Input, durationSeconds(args.TimeoutSeconds), "mcp:"+s.clientActor(), s.identity.UserID)
 	if err != nil {
 		return nil, err
 	}

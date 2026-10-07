@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strings"
 )
 
 type Codex struct {
@@ -35,6 +36,13 @@ func (c *Codex) Health() error {
 }
 
 func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream, err error) {
+	if strings.TrimSpace(prompt) == "" {
+		return nil, errors.New("prompt is required")
+	}
+	// Codex reserves a literal "-" prompt for reading stdin.
+	if prompt == "-" {
+		prompt += "\n"
+	}
 	// Wingthing tasks are valid in arbitrary working directories. Codex rejects
 	// non-repository directories by default, which made an otherwise healthy
 	// harness fail before the model was contacted.
@@ -49,7 +57,7 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 	if opts.Model != "" {
 		args = append(args, "-m", opts.Model)
 	}
-	args = append(args, prompt, "--json")
+	args = append(args, "--json", "--", prompt)
 
 	var cmd *exec.Cmd
 	if opts.CmdFactory != nil {
@@ -60,6 +68,9 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 	} else {
 		cmd = exec.CommandContext(ctx, c.command, args...)
 	}
+	// A command factory may supply inherited stdin. Headless Codex must get
+	// /dev/null even when its coordinator has a pipe open.
+	cmd.Stdin = nil
 	if opts.WorkDir != "" {
 		cmd.Dir = opts.WorkDir
 	}

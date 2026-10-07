@@ -10,8 +10,9 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 )
 
-// protectContextSecret adds host-owned deny rules after caller policy resolution.
-func protectContextSecret(policy *egg.EggConfig, c *config.ContextConfig, cwd, home string) (*egg.EggConfig, []string, error) {
+// ProtectContextSecret adds host-owned deny rules after caller policy resolution.
+// Interactive and headless launches must both use this guard.
+func ProtectContextSecret(policy *egg.EggConfig, c *config.ContextConfig, cwd, home string) (*egg.EggConfig, []string, error) {
 	if c == nil {
 		return policy, nil, nil
 	}

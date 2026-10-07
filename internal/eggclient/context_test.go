@@ -130,6 +130,10 @@ func TestContextThroughEggTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(root)
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	secretPath := filepath.Join(root, "context.secret")
 	if err := os.WriteFile(secretPath, []byte(secret+"\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -238,7 +242,7 @@ func TestContextThroughEggTools(t *testing.T) {
 		t.Fatalf("taint disabled command tools: %+v", environment)
 	}
 	// SpawnEgg builds its environment from this policy; credentials are never added to it.
-	protected, targets, err := protectContextSecret(egg.DefaultEggConfig(), wc.Context, root, root)
+	protected, targets, err := ProtectContextSecret(egg.DefaultEggConfig(), wc.Context, root, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +266,10 @@ func TestContextThroughEggTools(t *testing.T) {
 }
 
 func TestContextSecretProtectsSymlinkTarget(t *testing.T) {
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	path, alias := filepath.Join(root, "secret"), filepath.Join(root, "alias")
 	if err := os.WriteFile(path, []byte("private"), 0600); err != nil {
 		t.Fatal(err)
@@ -272,7 +279,7 @@ func TestContextSecretProtectsSymlinkTarget(t *testing.T) {
 	}
 	original := egg.DefaultEggConfig()
 	before := append([]string(nil), original.FS...)
-	protected, targets, err := protectContextSecret(original, &config.ContextConfig{URL: "https://context.pants.taxi", ClientID: "wingthing-stage", SecretFile: alias}, root, root)
+	protected, targets, err := ProtectContextSecret(original, &config.ContextConfig{URL: "https://context.pants.taxi", ClientID: "wingthing-stage", SecretFile: alias}, root, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +293,10 @@ func TestContextSecretProtectsSymlinkTarget(t *testing.T) {
 
 func TestContextSecretNeverInEggOrToolEnvironment(t *testing.T) {
 	const secret = "unique-secret-stays-in-wing-memory"
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(root, "context.secret")
 	if err := os.WriteFile(path, []byte(secret), 0600); err != nil {
 		t.Fatal(err)
@@ -296,7 +306,7 @@ func TestContextSecretNeverInEggOrToolEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, paths, err := protectContextSecret(egg.DefaultEggConfig(), contextConfig, root, root)
+	policy, paths, err := ProtectContextSecret(egg.DefaultEggConfig(), contextConfig, root, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,14 +352,14 @@ func TestContextSecretRejectsGrantAliases(t *testing.T) {
 	c := &config.ContextConfig{URL: "https://context.example", ClientID: "wing", SecretFile: secret}
 	for _, grant := range []string{"ro:" + alias, "rw:" + alias, "ro:" + nested, "ro:leak", "rw:~/nested", "ro:" + secret} {
 		t.Run(grant, func(t *testing.T) {
-			if _, _, err := protectContextSecret(&egg.EggConfig{FS: []string{grant}}, c, root, root); err == nil || !strings.Contains(err.Error(), "exposes protected secret path") {
+			if _, _, err := ProtectContextSecret(&egg.EggConfig{FS: []string{grant}}, c, root, root); err == nil || !strings.Contains(err.Error(), "exposes protected secret path") {
 				t.Fatalf("grant accepted: %v", err)
 			}
 		})
 	}
 	// Protected paths can also be directories; no descendant may be granted.
 	c.SecretFile = private
-	if _, _, err := protectContextSecret(&egg.EggConfig{FS: []string{"ro:" + secret}}, c, root, root); err == nil {
+	if _, _, err := ProtectContextSecret(&egg.EggConfig{FS: []string{"ro:" + secret}}, c, root, root); err == nil {
 		t.Fatal("grant inside protected directory accepted")
 	}
 }
@@ -375,7 +385,7 @@ func TestContextSecretMasksAncestorGrantAliases(t *testing.T) {
 	c := &config.ContextConfig{URL: "https://context.example", ClientID: "wing", SecretFile: secret}
 	for _, mode := range []string{"ro", "rw"} {
 		original := &egg.EggConfig{FS: []string{mode + ":" + alias, mode + ":" + nested}}
-		policy, targets, err := protectContextSecret(original, c, root, root)
+		policy, targets, err := ProtectContextSecret(original, c, root, root)
 		if err != nil {
 			t.Fatal(err)
 		}

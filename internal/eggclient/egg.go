@@ -782,7 +782,7 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if err != nil {
 		return nil, err
 	}
-	eggCfg, protected, err := protectContextSecret(eggCfg, contextCfg, cwd, EffectiveSessionHome(cfg, identity))
+	eggCfg, protected, err := ProtectContextSecret(eggCfg, contextCfg, cwd, EffectiveSessionHome(cfg, identity))
 	if err != nil {
 		return nil, err
 	}
@@ -1408,6 +1408,10 @@ func SetupAPIKeyHelper(agentName string, envMap map[string]string, effectiveHome
 	if data, err := os.ReadFile(settingsDst); err == nil {
 		if err := json.Unmarshal(data, &settings); err != nil {
 			return fmt.Errorf("parse API key settings: %w", err)
+		}
+		// A user-writable file containing JSON null decodes to a nil map.
+		if settings == nil {
+			settings = make(map[string]any)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read API key settings: %w", err)

@@ -788,6 +788,15 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		}
 	}
 	var wingEggMu sync.Mutex
+	if options.SetPolicySource != nil {
+		options.SetPolicySource(func() (*config.WingConfig, *egg.EggConfig) {
+			wingCfgMu.Lock()
+			defer wingCfgMu.Unlock()
+			wingEggMu.Lock()
+			defer wingEggMu.Unlock()
+			return wingCfg.Clone(), wingEggCfg
+		})
+	}
 
 	// Load privileged tool configs
 	toolsDir := config.ResolveToolsDir(cfg.Dir, wingCfg.ToolsDir)
@@ -942,6 +951,10 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 					wingCfgMu.Lock()
 					defer wingCfgMu.Unlock()
 					return wingCfg.Clone(), append([]config.AllowKey(nil), allowedKeys...)
+				}, func() *egg.EggConfig {
+					wingEggMu.Lock()
+					defer wingEggMu.Unlock()
+					return wingEggCfg
 				})
 				return
 			}
