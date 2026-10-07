@@ -77,6 +77,14 @@ func TestToolCapabilityReclaimRequiresEggAuthenticationAndPreservesAuthority(t *
 	if _, err := NewToolListenerWithCapability(path, tools, ""); err == nil {
 		t.Fatal("legacy capability bypassed authentication")
 	}
+	ObserveToolController(path, "admin")
+	ObserveToolController(path, "owner")
+	if result := toolCall(t, path, ToolRequest{Tool: "context", Capability: secret}); result.Error != "Context tools are disabled after another user took control of this session" {
+		t.Fatalf("restored listener missed controller revocation: %#v", result)
+	}
+	if result := toolCall(t, path, ToolRequest{Tool: "echo", Capability: secret}); result.Error != "" || result.Stdout != "restored" {
+		t.Fatalf("controller revocation disabled restored command tools: %#v", result)
+	}
 }
 
 // shortSockPath returns a Unix socket path short enough for macOS (104 char limit).

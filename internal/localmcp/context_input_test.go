@@ -65,6 +65,10 @@ func (f *contextInputEgg) Session(stream grpc.BidiStreamingServer[pb.SessionMsg,
 
 func contextInputToolCall(t *testing.T, path string) egg.ToolResponse {
 	t.Helper()
+	capability, err := egg.ToolSocketCapability(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	conn, err := net.DialTimeout("unix", path, time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +77,7 @@ func contextInputToolCall(t *testing.T, path string) egg.ToolResponse {
 	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.NewEncoder(conn).Encode(egg.ToolRequest{Tool: "context"}); err != nil {
+	if err := json.NewEncoder(conn).Encode(egg.ToolRequest{Tool: "context", Capability: capability}); err != nil {
 		t.Fatal(err)
 	}
 	if err := conn.(*net.UnixConn).CloseWrite(); err != nil {
@@ -102,6 +106,8 @@ func contextInputFixture(t *testing.T) (*config.Config, *contextInputEgg, string
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("HOME", root)
+	t.Setenv("WINGTHING_DIR", root)
 	cfg := &config.Config{Dir: root}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
