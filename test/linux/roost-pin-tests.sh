@@ -12,7 +12,7 @@ run() {
   if echo "$out" | grep -q -- '--- SKIP'; then echo "required Linux test skipped: $2"; exit 1; fi
   echo "$out" | grep -q -- '--- PASS' || { echo "no test matched: $2"; exit 1; }
 }
-pattern='^TestRoostPolicy(LinuxSiblingRolesStartWithPins|BlocksLinuxRootReplacement)$'
+pattern='^TestRoostPolicy(LinuxSiblingRolesStartWithPins|BlocksLinuxRootReplacement|LinuxMissingPaths)$'
 run /root/eggclient-tests "$pattern" root
 # /root is not searchable by testuser, including for the sandbox's re-execs.
 nonroot=$(mktemp /tmp/roost-pin-tests.XXXXXX)

@@ -539,3 +539,55 @@ done
 		}
 	})
 }
+
+func TestRoostPolicyMacOSMissingRootCannotBeCreated(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Seatbelt enforcement is macOS-only")
+	}
+	home, root, _, wc := roostPolicyFixture(t)
+	missing := filepath.Join(home, "absent", "role")
+	if err := os.Mkdir(filepath.Dir(missing), 0700); err != nil {
+		t.Fatal(err)
+	}
+	wc.Paths = append(wc.Paths, config.PathEntry{Path: missing})
+	if err := os.WriteFile(filepath.Join(root, "egg.yaml"), []byte("base: none\nfs: [rw:"+home+"]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	start := ws.PTYStart{UserID: "admin", OrgRole: "admin", CWD: root}
+	cfg, _, err := PrepareBrowserLaunch(wc, &start, home, false, egg.DefaultEggConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb, err := sandbox.New(cfg.ToSandboxConfig(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := sb.Destroy(); err != nil {
+			t.Error(err)
+		}
+	})
+	cmd, err := sb.Exec(context.Background(), "/bin/sh", []string{"-c", `
+set -e
+printf ordinary > "$2/ordinary"
+if mkdir -p "$1" 2>/dev/null; then exit 42; fi
+printf launched
+`, "missing-root", missing, root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cmd.Args) < 3 || cmd.Args[1] != "-p" || !strings.Contains(cmd.Args[2], fmt.Sprintf("(deny file-write* (literal %q))", missing)) {
+		t.Fatalf("absent configured root lost its literal Seatbelt deny: %v", cmd.Args)
+	}
+	t.Run("enforcement", func(t *testing.T) {
+		if output, err := exec.Command("sandbox-exec", "-p", "(version 1)(allow default)", "/usr/bin/true").CombinedOutput(); err != nil {
+			t.Skipf("Seatbelt execution unavailable: %v, %s", err, output)
+		}
+		if output, err := cmd.CombinedOutput(); err != nil || string(output) != "launched" {
+			t.Fatalf("absent root was created or ordinary session failed: %v, %s", err, output)
+		}
+		if _, err := os.Stat(missing); !os.IsNotExist(err) {
+			t.Fatalf("absent configured root was created: %v", err)
+		}
+	})
+}

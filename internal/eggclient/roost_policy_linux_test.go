@@ -206,3 +206,94 @@ fi
 		})
 	}
 }
+
+func TestRoostPolicyLinuxMissingPaths(t *testing.T) {
+	if ok, help := sandbox.CheckCapability(); !ok {
+		t.Skip(help)
+	}
+	for _, boundary := range []string{"writable", "readonly", "masked"} {
+		for _, missing := range []string{"root", "egg.yaml"} {
+			t.Run(boundary+"/"+missing, func(t *testing.T) {
+				home := config.CanonicalProviderPath(t.TempDir())
+				t.Setenv("HOME", home)
+				t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
+				parent := config.CanonicalProviderPath(t.TempDir())
+				role := filepath.Join(parent, "a")
+				ancestor := filepath.Join(parent, "new")
+				for _, path := range []string{role, ancestor} {
+					if err := os.Mkdir(path, 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				sibling := filepath.Join(ancestor, "deeper", "b")
+				if missing == "egg.yaml" {
+					if err := os.MkdirAll(sibling, 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				policy := "base: none\nfs:\n  - rw:" + parent + "\n"
+				if boundary == "readonly" {
+					policy += "  - deny-write:" + ancestor + "\n"
+				} else if boundary == "masked" {
+					policy += "  - deny:" + ancestor + "\n"
+				}
+				if err := os.WriteFile(filepath.Join(role, "egg.yaml"), []byte(policy), 0600); err != nil {
+					t.Fatal(err)
+				}
+				wc := &config.WingConfig{Org: "org", Paths: config.PathList{{Path: role}, {Path: sibling}}}
+				start := ws.PTYStart{UserID: "admin", OrgRole: "admin", CWD: role}
+				cfg, _, err := PrepareBrowserLaunch(wc, &start, home, false, egg.DefaultEggConfig())
+				if err != nil {
+					t.Fatal(err)
+				}
+				sb, err := sandbox.New(cfg.ToSandboxConfig(home))
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := sb.Destroy(); err != nil {
+						t.Error(err)
+					}
+				})
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				cmd, err := sb.Exec(ctx, "/bin/sh", []string{"-c", `
+set -e
+printf ordinary > "$2/ordinary"
+if mkdir -p "$1" 2>/dev/null && printf 'base: none\nfs: [rw:/]\n' > "$1/egg.yaml" 2>/dev/null; then exit 42; fi
+printf launched
+`, "missing-policy", sibling, role})
+				if err != nil {
+					t.Fatal(err)
+				}
+				output, runErr := cmd.CombinedOutput()
+				if os.IsPermission(runErr) {
+					t.Skipf("namespace creation unavailable: %v", runErr)
+				}
+				log, err := os.ReadFile(sb.DiagLog())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if boundary == "writable" {
+					writableParent := ancestor
+					if missing == "egg.yaml" {
+						writableParent = sibling
+					}
+					if runErr == nil || !strings.Contains(string(log), sibling) || !strings.Contains(string(log), writableParent+" is writable by this session") {
+						t.Fatalf("creatable absent policy did not refuse launch: %v, output=%q, log=%s", runErr, output, log)
+					}
+					if _, err := os.Stat(filepath.Join(role, "ordinary")); !os.IsNotExist(err) {
+						t.Fatalf("agent ran before missing-policy refusal: %v", err)
+					}
+				} else if runErr != nil || string(output) != "launched" {
+					t.Fatalf("non-writable missing policy blocked launch: %v, output=%q, log=%s", runErr, output, log)
+				} else if !strings.Contains(string(log), "skipped unreachable policy directory") || !strings.Contains(string(log), "path="+sibling) {
+					t.Fatalf("missing policy was not skipped in the agent's view: %s", log)
+				}
+				if _, err := os.Stat(filepath.Join(sibling, "egg.yaml")); !os.IsNotExist(err) {
+					t.Fatalf("agent planted a sibling policy: %v", err)
+				}
+			})
+		}
+	}
+}

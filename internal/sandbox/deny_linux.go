@@ -406,10 +406,12 @@ func DenyInit(args []string) {
 	}
 
 	// Deny-write paths — bind mount read-only so agent can read but not modify.
+	var missingWritePaths []string
 	for _, p := range denyWritePaths {
 		if _, err := os.Stat(p); err != nil {
 			if os.IsNotExist(err) {
 				log.Printf("_deny_init: deny-write path absent at launch: %s", p)
+				missingWritePaths = append(missingWritePaths, p)
 				continue
 			}
 			failEnforcement("inspect deny-write path", p, err)
@@ -425,7 +427,7 @@ func DenyInit(args []string) {
 
 	// Linux cannot rename or unlink a mountpoint. Recursive self-binds keep
 	// each policy directory in place and preserve all descendant mount flags.
-	pins, err := pinRenamePaths(denyRenamePaths, uid, gid, jailMode)
+	pins, err := pinRenamePaths(denyRenamePaths, missingWritePaths, uid, gid, jailMode)
 	if err != nil {
 		failEnforcement("pin policy directories", "sandbox filesystem", err)
 	}
@@ -1269,8 +1271,8 @@ func isPathWithin(path, root string) bool {
 
 // Walk in the agent's credentials and the already-masked mount view. The
 // privileged wrapper receives descriptors, never reopens the returned paths.
-func pinRenamePaths(paths []string, uid, gid int, jail bool) ([]expectedMount, error) {
-	if len(paths) == 0 {
+func pinRenamePaths(paths, missingWritePaths []string, uid, gid int, jail bool) ([]expectedMount, error) {
+	if len(paths) == 0 && len(missingWritePaths) == 0 {
 		return nil, nil
 	}
 	sockets, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_SEQPACKET|unix.SOCK_CLOEXEC, 0)
@@ -1282,6 +1284,10 @@ func pinRenamePaths(paths []string, uid, gid int, jail bool) ([]expectedMount, e
 	defer parent.Close()
 	defer child.Close()
 	args := append([]string{policyPinWalkArg, strconv.Itoa(uid), strconv.Itoa(gid), "--"}, paths...)
+	if len(missingWritePaths) > 0 {
+		args = append(args, "--deny-write")
+		args = append(args, missingWritePaths...)
+	}
 	walker := exec.Command("/proc/self/exe", args...)
 	walker.ExtraFiles = []*os.File{child}
 	walker.Stderr = log.Writer()
@@ -1306,7 +1312,8 @@ func pinRenamePaths(paths []string, uid, gid int, jail bool) ([]expectedMount, e
 	}()
 	debug := slog.New(slog.NewTextHandler(log.Writer(), &slog.HandlerOptions{Level: slog.LevelDebug}))
 	var pins []expectedMount
-	for _, path := range paths {
+	allPaths := append(append([]string(nil), paths...), missingWritePaths...)
+	for _, path := range allPaths {
 		data := make([]byte, 4096)
 		rights := make([]byte, unix.CmsgSpace(4))
 		n, oobn, flags, _, err := unix.Recvmsg(int(parent.Fd()), data, rights, unix.MSG_CMSG_CLOEXEC)
@@ -1317,7 +1324,7 @@ func pinRenamePaths(paths []string, uid, gid int, jail bool) ([]expectedMount, e
 			return nil, fmt.Errorf("incomplete policy pin response for %q", path)
 		}
 		switch data[0] {
-		case 1: // Only ENOENT and EACCES from the no-follow walk are skippable.
+		case 1: // ENOENT is safe only after the kernel refuses ancestor writes.
 			debug.Debug("skipped unreachable policy directory", "path", path, "error", string(data[1:n]))
 			continue
 		case 2:
@@ -1346,8 +1353,16 @@ func pinRenamePaths(paths []string, uid, gid int, jail bool) ([]expectedMount, e
 }
 
 func walkPolicyPins(paths []string) {
+	directory := true
 	for _, path := range paths {
-		fd, err := openRenamePath(path)
+		if path == "--deny-write" {
+			directory = false
+			continue
+		}
+		fd, err := openPolicyPath(path, directory)
+		if err == nil && !directory {
+			err = fmt.Errorf("deny-write path %q appeared during launch; retry the launch", path)
+		}
 		data := []byte{0}
 		var rights []byte
 		if err != nil {
@@ -1372,6 +1387,10 @@ func walkPolicyPins(paths []string) {
 // openRenamePath walks from / without following links. O_PATH needs search,
 // rather than read permission, matching access needed to rename an entry.
 func openRenamePath(path string) (int, error) {
+	return openPolicyPath(path, true)
+}
+
+func openPolicyPath(path string, directory bool) (int, error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return -1, fmt.Errorf("policy directory must be a clean absolute path: %q", path)
 	}
@@ -1381,16 +1400,36 @@ func openRenamePath(path string) (int, error) {
 		return -1, err
 	}
 	defer func() { _ = unix.Close(fd) }()
-	for _, part := range strings.Split(strings.TrimPrefix(path, "/"), "/") {
+	ancestor := "/"
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	for i, part := range parts {
 		if part == "" {
 			continue
 		}
-		next, err := unix.Openat(fd, part, flags, 0)
+		openFlags := flags
+		if !directory && i == len(parts)-1 {
+			openFlags &^= unix.O_DIRECTORY
+		}
+		next, err := unix.Openat(fd, part, openFlags, 0)
 		if err != nil {
+			if errors.Is(err, unix.ENOENT) {
+				// Use the kernel directly: Faccessat's compatibility fallback
+				// checks mode bits in userspace and misses read-only mounts.
+				accessErr := unix.Faccessat2(fd, ".", unix.W_OK|unix.X_OK, unix.AT_EACCESS)
+				switch {
+				case accessErr == nil:
+					return -1, fmt.Errorf("configured roost path %s does not exist and %s is writable by this session; create the role directory and its egg.yaml", path, ancestor)
+				case errors.Is(accessErr, unix.EROFS), errors.Is(accessErr, unix.EACCES):
+					return -1, err
+				default:
+					return -1, fmt.Errorf("check creation of missing policy path %q under %q: %v", path, ancestor, accessErr)
+				}
+			}
 			return -1, err
 		}
 		_ = unix.Close(fd)
 		fd = next
+		ancestor = filepath.Join(ancestor, part)
 	}
 	opened := fd
 	fd = -1 // descriptor ownership passes to the wrapper

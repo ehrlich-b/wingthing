@@ -40,8 +40,26 @@ func TestOpenRenamePathNeedsSearchRatherThanReadPermission(t *testing.T) {
 		t.Fatal(err)
 	}
 	unix.Close(fd)
-	if _, err := openRenamePath(filepath.Join(root, "absent")); !errors.Is(err, unix.ENOENT) {
-		t.Fatalf("absent pin error = %v", err)
+}
+
+func TestOpenPolicyPathRejectsCreatableMissingPaths(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		path      string
+		directory bool
+	}{
+		{filepath.Join(root, "absent"), true},
+		{filepath.Join(root, "absent", "role"), true},
+		{filepath.Join(root, "absent", "role", "egg.yaml"), false},
+		{filepath.Join(root, "egg.yaml"), false},
+	} {
+		fd, err := openPolicyPath(tc.path, tc.directory)
+		if fd >= 0 {
+			unix.Close(fd)
+		}
+		if err == nil || errors.Is(err, unix.ENOENT) || !strings.Contains(err.Error(), root+" is writable by this session") {
+			t.Fatalf("creatable missing policy path %s was not refused: %v", tc.path, err)
+		}
 	}
 }
 
