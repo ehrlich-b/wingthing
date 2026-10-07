@@ -90,6 +90,17 @@ func TestHeadlessContextSecretPolicy(t *testing.T) {
 	}
 }
 
+func TestHeadlessContextSecretRefusesHardLink(t *testing.T) {
+	root, c := contextSecretFixture(t)
+	if err := os.Link(filepath.Join(root, "private", "context.secret"), filepath.Join(root, "work", "ordinary")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := directAgentSandboxConfigForTask(nil, "custom", "standard", filepath.Join(root, "home"), filepath.Join(root, "work"), []string{filepath.Join(root, "work")}, false, c)
+	if err == nil || !strings.Contains(err.Error(), "hard links") {
+		t.Fatalf("workspace link exposes Context secret: %v", err)
+	}
+}
+
 func TestHeadlessContextSecretRejectsDirectGrant(t *testing.T) {
 	root, c := contextSecretFixture(t)
 	for _, mode := range []string{"ro:", "rw:"} {

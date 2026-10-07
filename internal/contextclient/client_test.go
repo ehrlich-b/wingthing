@@ -21,6 +21,20 @@ import (
 
 type handlerTransport struct{ handler http.Handler }
 
+func TestContextSecretReaderRefusesHardLink(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sensitive-filename")
+	if err := os.WriteFile(path, []byte("private-credential"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(path, filepath.Join(t.TempDir(), "ordinary")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := New(&config.ContextConfig{URL: "https://context.example", ClientID: "wing", SecretFile: path})
+	if err == nil || !strings.Contains(err.Error(), "hard links") || strings.Contains(err.Error(), path) || strings.Contains(err.Error(), "private-credential") {
+		t.Fatalf("unsafe secret read/error: %v", err)
+	}
+}
+
 func (rt handlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	recorder := httptest.NewRecorder()
 	rt.handler.ServeHTTP(recorder, r)

@@ -306,7 +306,15 @@ func IsolateControl(cfg sandbox.Config, sessionDir string, bridges []sandbox.Mou
 	cfg.Deny = filtered
 	if runtime.GOOS == "linux" {
 		// Resolve masks before HOME aliases become independent jail mounts.
+		cfg.Deny, err = sandbox.PhysicalDenyPaths(cfg.Deny)
+		if err != nil {
+			return sandbox.Config{}, fmt.Errorf("protect deny aliases: %w", err)
+		}
 		cfg.Deny = sandbox.CanonicalDenyPaths(cfg.Deny)
+		cfg.DenyWrite, err = sandbox.PhysicalDenyPaths(cfg.DenyWrite)
+		if err != nil {
+			return sandbox.Config{}, fmt.Errorf("protect policy aliases: %w", err)
+		}
 		cfg.DenyWrite = sandbox.CanonicalDenyPaths(cfg.DenyWrite)
 		cfg.Mounts, err = isolateLinuxEggControl(cfg.Mounts, control, bridges, cfg.Deny)
 		if err != nil {

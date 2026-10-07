@@ -80,6 +80,15 @@ type linuxSandbox struct {
 // newPlatform tries to create a namespace+seccomp sandbox.
 // Returns an error if capabilities are insufficient so the factory falls back.
 func newPlatform(cfg Config) (Sandbox, error) {
+	var err error
+	cfg.Deny, err = PhysicalDenyPaths(cfg.Deny)
+	if err != nil {
+		return nil, fmt.Errorf("protect deny aliases: %w", err)
+	}
+	cfg.DenyWrite, err = PhysicalDenyPaths(cfg.DenyWrite)
+	if err != nil {
+		return nil, fmt.Errorf("protect write-deny aliases: %w", err)
+	}
 	if err := verifyLinuxProtectedWriteTargets(cfg); err != nil {
 		return nil, err
 	}

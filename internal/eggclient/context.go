@@ -8,6 +8,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/protectedfile"
 )
 
 // ProtectContextSecret adds host-owned deny rules after caller policy resolution.
@@ -19,13 +20,24 @@ func ProtectContextSecret(policy *egg.EggConfig, c *config.ContextConfig, cwd, h
 	if err := c.Validate(); err != nil {
 		return nil, nil, err
 	}
-	resolved, err := filepath.EvalSymlinks(c.SecretFile)
+	file, err := protectedfile.OpenResolved(c.SecretFile)
 	if err != nil {
-		return nil, nil, fmt.Errorf("context: cannot resolve secret_file")
+		return nil, nil, fmt.Errorf("context: cannot resolve secret_file: %w", err)
 	}
+	defer file.Close()
+	resolved := file.Name()
 	paths := []string{filepath.Clean(c.SecretFile)}
 	if resolved != paths[0] {
 		paths = append(paths, resolved)
+	}
+	aliases, err := file.Aliases()
+	if err != nil {
+		return nil, nil, fmt.Errorf("context: cannot protect secret_file aliases: %w", err)
+	}
+	for _, alias := range aliases {
+		if !ContainsExactPath(paths, alias) {
+			paths = append(paths, alias)
+		}
 	}
 	// Resolve grants after all caller/base policy merges, using the same CWD
 	// and HOME expansion as the child. Bind mounts can turn symlinks into

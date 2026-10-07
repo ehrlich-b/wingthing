@@ -5,16 +5,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/mail"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/protectedfile"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
@@ -43,8 +44,12 @@ func New(cfg *config.ContextConfig) (*Client, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	secret, err := os.ReadFile(cfg.SecretFile)
+	secret, err := protectedfile.ReadResolved(cfg.SecretFile)
 	if err != nil {
+		var violation *protectedfile.Error
+		if errors.As(err, &violation) {
+			return nil, fmt.Errorf("context: cannot read secret_file: %s", violation.Reason)
+		}
 		return nil, fmt.Errorf("context: cannot read secret_file")
 	}
 	secret = bytes.TrimSpace(secret)

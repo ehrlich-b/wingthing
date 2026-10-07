@@ -5,7 +5,31 @@ import (
 	"strings"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/protectedfile"
 )
+
+// PhysicalDenyPaths also seals bind aliases visible in the host mount table.
+// A missing or unreadable identity/mount table refuses the launch.
+func PhysicalDenyPaths(paths []string) ([]string, error) {
+	canonical := CanonicalDenyPaths(paths)
+	var masks []string
+	jail := false
+	for _, path := range canonical {
+		if path == "/" {
+			jail = true
+			continue
+		}
+		masks = append(masks, path)
+	}
+	aliases, err := protectedfile.Aliases(masks)
+	if err != nil {
+		return nil, err
+	}
+	if jail {
+		aliases = append(aliases, "/")
+	}
+	return CanonicalDenyPaths(aliases), nil
+}
 
 // CanonicalDenyPaths preserves both a deny's declared name and its resolved
 // target. A jail can turn a symlink into a separate bind mount, so masking only
