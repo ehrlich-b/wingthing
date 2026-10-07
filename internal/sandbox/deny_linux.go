@@ -4,9 +4,11 @@ package sandbox
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -21,6 +23,7 @@ import (
 
 const jailAgentInitArg = "_jail_agent_init"
 const jailAgentDropArg = "_jail_agent_drop"
+const policyPinWalkArg = "_policy_pin_walk"
 
 // The sealed jail runs the agent through two nested user-namespace stages so it
 // can both swap /proc AND run unprivileged:
@@ -43,6 +46,9 @@ func init() {
 		return
 	}
 	switch os.Args[1] {
+	case policyPinWalkArg:
+		walkPolicyPins(os.Args[5:])
+		os.Exit(0)
 	case jailAgentInitArg:
 		jailAgentInit(os.Args[2], os.Args[3], os.Args[5:])
 	case jailAgentDropArg:
@@ -419,12 +425,11 @@ func DenyInit(args []string) {
 
 	// Linux cannot rename or unlink a mountpoint. Recursive self-binds keep
 	// each policy directory in place and preserve all descendant mount flags.
-	for _, path := range denyRenamePaths {
-		if err := pinRenamePath(path); err != nil {
-			failEnforcement("pin policy directory", path, err)
-		}
-		expectedMounts = append(expectedMounts, expectedMount{Path: path})
+	pins, err := pinRenamePaths(denyRenamePaths, uid, gid, jailMode)
+	if err != nil {
+		failEnforcement("pin policy directories", "sandbox filesystem", err)
 	}
+	expectedMounts = append(expectedMounts, pins...)
 
 	// Syscall success is necessary but the live mount table is the security
 	// boundary. Verify every requested mask before seccomp and before the agent
@@ -1262,16 +1267,118 @@ func isPathWithin(path, root string) bool {
 	return cleanPath == cleanRoot || strings.HasPrefix(cleanPath, cleanRoot+string(filepath.Separator))
 }
 
-// pinRenamePath walks from / without following links, then mounts through the
-// pinned descriptor so a concurrent directory replacement cannot redirect it.
-func pinRenamePath(path string) error {
-	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return fmt.Errorf("policy directory must be a clean absolute path: %q", path)
+// Walk in the agent's credentials and the already-masked mount view. The
+// privileged wrapper receives descriptors, never reopens the returned paths.
+func pinRenamePaths(paths []string, uid, gid int, jail bool) ([]expectedMount, error) {
+	if len(paths) == 0 {
+		return nil, nil
 	}
-	flags := unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC
+	sockets, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_SEQPACKET|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	parent := os.NewFile(uintptr(sockets[0]), "policy-pin-parent")
+	child := os.NewFile(uintptr(sockets[1]), "policy-pin-child")
+	defer parent.Close()
+	defer child.Close()
+	args := append([]string{policyPinWalkArg, strconv.Itoa(uid), strconv.Itoa(gid), "--"}, paths...)
+	walker := exec.Command("/proc/self/exe", args...)
+	walker.ExtraFiles = []*os.File{child}
+	walker.Stderr = log.Writer()
+	// Jail agents always drop into a further user namespace; non-jail agents
+	// do so only for nonzero UIDs. Mirror those filesystem credentials here.
+	if jail || uid != 0 {
+		walker.SysProcAttr = &syscall.SysProcAttr{
+			Cloneflags:  syscall.CLONE_NEWUSER,
+			UidMappings: []syscall.SysProcIDMap{{ContainerID: uid, HostID: 0, Size: 1}},
+			GidMappings: []syscall.SysProcIDMap{{ContainerID: gid, HostID: 0, Size: 1}},
+		}
+	}
+	if err := walker.Start(); err != nil {
+		return nil, err
+	}
+	child.Close()
+	defer func() {
+		if walker.ProcessState == nil {
+			_ = walker.Process.Kill()
+			_ = walker.Wait()
+		}
+	}()
+	debug := slog.New(slog.NewTextHandler(log.Writer(), &slog.HandlerOptions{Level: slog.LevelDebug}))
+	var pins []expectedMount
+	for _, path := range paths {
+		data := make([]byte, 4096)
+		rights := make([]byte, unix.CmsgSpace(4))
+		n, oobn, flags, _, err := unix.Recvmsg(int(parent.Fd()), data, rights, unix.MSG_CMSG_CLOEXEC)
+		if err != nil {
+			return nil, fmt.Errorf("walk %q: %w", path, err)
+		}
+		if n == 0 || flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 {
+			return nil, fmt.Errorf("incomplete policy pin response for %q", path)
+		}
+		switch data[0] {
+		case 1: // Only ENOENT and EACCES from the no-follow walk are skippable.
+			debug.Debug("skipped unreachable policy directory", "path", path, "error", string(data[1:n]))
+			continue
+		case 2:
+			return nil, fmt.Errorf("walk %q: %s", path, data[1:n])
+		case 0:
+		default:
+			return nil, fmt.Errorf("invalid policy pin response for %q", path)
+		}
+		messages, err := unix.ParseSocketControlMessage(rights[:oobn])
+		if err != nil || len(messages) != 1 {
+			return nil, fmt.Errorf("missing policy directory descriptor for %q", path)
+		}
+		fds, err := unix.ParseUnixRights(&messages[0])
+		if err != nil || len(fds) != 1 {
+			return nil, fmt.Errorf("invalid policy directory descriptor for %q", path)
+		}
+		pinned := fmt.Sprintf("/proc/self/fd/%d", fds[0])
+		err = unix.Mount(pinned, pinned, "", unix.MS_BIND|unix.MS_REC, "")
+		_ = unix.Close(fds[0])
+		if err != nil {
+			return nil, fmt.Errorf("mount %q: %w", path, err)
+		}
+		pins = append(pins, expectedMount{Path: path})
+	}
+	return pins, walker.Wait()
+}
+
+func walkPolicyPins(paths []string) {
+	for _, path := range paths {
+		fd, err := openRenamePath(path)
+		data := []byte{0}
+		var rights []byte
+		if err != nil {
+			data[0] = 2
+			if errors.Is(err, unix.ENOENT) || errors.Is(err, unix.EACCES) {
+				data[0] = 1
+			}
+			data = append(data, err.Error()...)
+		} else {
+			rights = unix.UnixRights(fd)
+		}
+		sendErr := unix.Sendmsg(3, data, rights, nil, 0)
+		if fd >= 0 {
+			_ = unix.Close(fd)
+		}
+		if sendErr != nil {
+			log.Fatalf("policy pin walk: %v", sendErr)
+		}
+	}
+}
+
+// openRenamePath walks from / without following links. O_PATH needs search,
+// rather than read permission, matching access needed to rename an entry.
+func openRenamePath(path string) (int, error) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return -1, fmt.Errorf("policy directory must be a clean absolute path: %q", path)
+	}
+	flags := unix.O_PATH | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC
 	fd, err := unix.Open("/", flags, 0)
 	if err != nil {
-		return err
+		return -1, err
 	}
 	defer func() { _ = unix.Close(fd) }()
 	for _, part := range strings.Split(strings.TrimPrefix(path, "/"), "/") {
@@ -1280,13 +1387,14 @@ func pinRenamePath(path string) error {
 		}
 		next, err := unix.Openat(fd, part, flags, 0)
 		if err != nil {
-			return err
+			return -1, err
 		}
 		_ = unix.Close(fd)
 		fd = next
 	}
-	pinned := fmt.Sprintf("/proc/self/fd/%d", fd)
-	return unix.Mount(pinned, pinned, "", unix.MS_BIND|unix.MS_REC, "")
+	opened := fd
+	fd = -1 // descriptor ownership passes to the wrapper
+	return opened, nil
 }
 
 // jailMkTarget creates the bind-mount target inside the jail root.

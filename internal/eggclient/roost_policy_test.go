@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -367,14 +368,21 @@ func TestRoostPolicyPinsRootsAndAncestors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := []string{role, root, other, missing, filepath.Dir(missing)}
+		var want []string
+		for _, path := range []string{role, other, missing} {
+			for dir := path; dir != "/"; dir = filepath.Dir(dir) {
+				if !slices.Contains(want, dir) {
+					want = append(want, dir)
+				}
+			}
+		}
 		if got := cfg.ToSandboxConfig(home).DenyRename; !slices.Equal(got, want) {
 			t.Fatalf("root pins (cwd=%s) = %v, want %v", cwd, got, want)
 		}
 	}
 }
 
-func TestRoostPolicyPinsOnlyWritableParents(t *testing.T) {
+func TestRoostPolicyPinsRegardlessOfWriteRules(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		fs    []string
@@ -386,48 +394,58 @@ func TestRoostPolicyPinsOnlyWritableParents(t *testing.T) {
 			fs: []string{"deny:/", "ro:/usr", "rw:/opt/wingthing/a",
 				"deny:/opt/wingthing/b", "deny-write:/opt/wingthing/a/egg.yaml"},
 			roots: []string{"/opt/wingthing/a", "/opt/wingthing/b"},
+			want:  []string{"/opt/wingthing/a", "/opt/wingthing", "/opt", "/opt/wingthing/b"},
+		},
+		{
+			name: "default base outside HOME",
+			fs:   egg.DefaultEggConfig().FS, roots: []string{"/work/team/role"},
+			want: []string{"/work/team/role", "/work/team", "/work"},
 		},
 		{
 			name: "macOS writable parent",
 			fs:   []string{"rw:/work"}, roots: []string{"/work/role"},
-			want: []string{"/work/role"},
+			want: []string{"/work/role", "/work"},
 		},
 		{
 			name: "writable ancestor",
 			fs:   []string{"rw:/work"}, roots: []string{"/work/group/role"},
-			want: []string{"/work/group/role", "/work/group"},
+			want: []string{"/work/group/role", "/work/group", "/work"},
 		},
 		{
 			name: "read-only parent",
 			fs:   []string{"rw:/work", "ro:/work/group"}, roots: []string{"/work/group/role"},
-			want: []string{"/work/group"},
+			want: []string{"/work/group/role", "/work/group", "/work"},
 		},
 		{
 			name: "denied parent",
 			fs:   []string{"rw:/work", "deny:/work/group"}, roots: []string{"/work/group/role"},
-			want: []string{"/work/group"},
+			want: []string{"/work/group/role", "/work/group", "/work"},
 		},
 		{
 			name: "write-denied parent",
 			fs:   []string{"rw:/work", "deny-write:/work/group"}, roots: []string{"/work/group/role"},
-			want: []string{"/work/group"},
+			want: []string{"/work/group/role", "/work/group", "/work"},
 		},
 		{
 			name: "relative fallback grant",
 			fs:   []string{"rw:.."}, roots: []string{"/work/role"},
-			want: []string{"/work/role"},
+			want: []string{"/work/role", "/work"},
 		},
 		{
 			name: "duplicate roots",
 			fs:   []string{"rw:/work"}, roots: []string{"/work/role", "/work/role"},
-			want: []string{"/work/role"},
+			want: []string{"/work/role", "/work"},
 		},
 		{
 			name: "no writable grants", roots: []string{"/work/role"},
+			want: []string{"/work/role", "/work"},
+		},
+		{
+			name: "filesystem root", roots: []string{"/"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := protectRoostRootPolicies(&egg.EggConfig{FS: tc.fs}, tc.roots, "/work/role")
+			cfg := protectRoostRootPolicies(&egg.EggConfig{FS: tc.fs}, tc.roots)
 			if got := cfg.ToSandboxConfig("").DenyRename; !slices.Equal(got, tc.want) {
 				t.Fatalf("root pins = %v, want %v", got, tc.want)
 			}
@@ -436,9 +454,9 @@ func TestRoostPolicyPinsOnlyWritableParents(t *testing.T) {
 	home := config.CanonicalProviderPath(t.TempDir())
 	t.Setenv("HOME", home)
 	root := filepath.Join(home, "role")
-	cfg := protectRoostRootPolicies(&egg.EggConfig{FS: []string{"rw:~"}}, []string{root}, root)
-	if got := cfg.ToSandboxConfig(home).DenyRename; !slices.Equal(got, []string{root}) {
-		t.Fatalf("tilde root pins = %v, want %v", got, []string{root})
+	cfg := protectRoostRootPolicies(&egg.EggConfig{FS: []string{"rw:~"}}, []string{root})
+	if got := cfg.ToSandboxConfig(home).DenyRename; !slices.Contains(got, root) || !slices.Contains(got, home) || slices.Contains(got, "/") {
+		t.Fatalf("tilde root pins = %v", got)
 	}
 }
 
@@ -481,16 +499,43 @@ func TestRoostPolicyPinsSeatbeltProfile(t *testing.T) {
 	if allow < 0 {
 		t.Fatal("ordinary role-root writes lost their grant")
 	}
-	for _, path := range []string{root, parent} {
+	for path := root; path != "/"; path = filepath.Dir(path) {
 		rule := fmt.Sprintf("(deny file-write* (literal %q))", path)
 		if strings.Index(profile, rule) <= allow {
 			t.Fatalf("policy directory can be replaced through writable parent: %s", path)
 		}
-		if strings.Contains(profile, fmt.Sprintf("(deny file-write* (subpath %q))", path)) {
+		if path != home && strings.Contains(profile, fmt.Sprintf("(deny file-write* (subpath %q))", path)) {
 			t.Fatalf("ordinary role-root files became unwritable: %s", path)
 		}
 	}
-	if strings.Contains(profile, fmt.Sprintf("(deny file-write* (literal %q))", home)) {
-		t.Fatal("HOME entry pinned even though its parent has no write grant")
-	}
+	t.Run("ordinary session", func(t *testing.T) {
+		if output, err := exec.Command("sandbox-exec", "-p", "(version 1)(allow default)", "/bin/true").CombinedOutput(); err != nil {
+			t.Skipf("Seatbelt execution unavailable: %v, %s", err, output)
+		}
+		cmd, err := sb.Exec(context.Background(), "/bin/sh", []string{"-c", `
+set -e
+mkdir -p "$1/.claude" "$1/.codex"
+printf settings > "$1/.claude/settings.json"
+printf config > "$1/.codex/config.toml"
+printf home-file > "$1/ordinary"
+cd "$2"
+git init -q
+printf ordinary > ordinary
+git add ordinary
+git -c user.name=Test -c user.email=test@example.com commit -qm initial
+printf changed > ordinary-new
+mv ordinary-new ordinary
+git add ordinary
+git -c user.name=Test -c user.email=test@example.com commit -qm changed
+for path in "$1" "$2" "$3"; do
+  if mv "$path" "$path-old" 2>/dev/null; then exit 42; fi
+done
+`, "pinned-session", home, root, parent})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("ordinary session failed or policy directory was replaced: %v, %s", err, output)
+		}
+	})
 }

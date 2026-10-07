@@ -26,7 +26,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestRoostPolicyLinuxSiblingRolesStartWithoutPins(t *testing.T) {
+func TestRoostPolicyLinuxSiblingRolesStartWithPins(t *testing.T) {
 	if ok, help := sandbox.CheckCapability(); !ok {
 		t.Skip(help)
 	}
@@ -35,6 +35,12 @@ func TestRoostPolicyLinuxSiblingRolesStartWithoutPins(t *testing.T) {
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
 	parent := config.CanonicalProviderPath(t.TempDir())
 	roles := []string{filepath.Join(parent, "a"), filepath.Join(parent, "b")}
+	// This configured sibling exists on the host, but its ancestor is masked
+	// in each role's jail. Its pin must be skipped after the masks are applied.
+	hidden := filepath.Join(parent, "hidden", "c")
+	if err := os.MkdirAll(hidden, 0700); err != nil {
+		t.Fatal(err)
+	}
 	for i, role := range roles {
 		if err := os.Mkdir(role, 0700); err != nil {
 			t.Fatal(err)
@@ -45,7 +51,7 @@ func TestRoostPolicyLinuxSiblingRolesStartWithoutPins(t *testing.T) {
 				policy += "  - ro:" + path + "\n"
 			}
 		}
-		policy += "  - rw:" + role + "\n  - deny:" + roles[1-i] + "\n  - deny-write:./egg.yaml\n"
+		policy += "  - rw:" + role + "\n  - deny:" + roles[1-i] + "\n  - deny:" + filepath.Dir(hidden) + "\n  - deny-write:./egg.yaml\n"
 		if err := os.WriteFile(filepath.Join(role, "egg.yaml"), []byte(policy), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -53,45 +59,80 @@ func TestRoostPolicyLinuxSiblingRolesStartWithoutPins(t *testing.T) {
 	wc := &config.WingConfig{Org: "org", Paths: config.PathList{
 		{Path: roles[0], Members: []string{"alice@example.com"}},
 		{Path: roles[1], Members: []string{"bob@example.com"}},
+		{Path: hidden},
 	}}
-	start := ws.PTYStart{UserID: "alice", Email: "alice@example.com", OrgRole: "member", CWD: roles[0]}
-	cfg, _, err := PrepareBrowserLaunch(wc, &start, home, false, egg.DefaultEggConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, rule := range cfg.FS {
-		if strings.HasPrefix(rule, "deny-rename:") {
-			t.Fatalf("role policy emitted an unnecessary pin: %s", rule)
-		}
-	}
-	sb, err := sandbox.New(cfg.ToSandboxConfig(home))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := sb.Destroy(); err != nil {
-			t.Error(err)
-		}
-	})
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	cmd, err := sb.Exec(ctx, "/bin/sh", []string{"-c", `
+	for i, role := range roles {
+		t.Run(filepath.Base(role), func(t *testing.T) {
+			start := ws.PTYStart{UserID: "member", Email: []string{"alice@example.com", "bob@example.com"}[i], OrgRole: "member", CWD: role}
+			cfg, _, err := PrepareBrowserLaunch(wc, &start, home, false, egg.DefaultEggConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			sandboxCfg := cfg.ToSandboxConfig(home)
+			for _, path := range []string{role, parent, filepath.Dir(parent), hidden} {
+				if !ContainsExactPath(sandboxCfg.DenyRename, path) {
+					t.Fatalf("missing configured root or ancestor pin: %s", path)
+				}
+			}
+			// The wrapper can search this directory as root; the jailed agent cannot.
+			// Prove EACCES is evaluated with the agent's filesystem credentials.
+			blocked := filepath.Join(role, "unsearchable")
+			if err := os.MkdirAll(filepath.Join(blocked, "child"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(blocked, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(blocked, 0700) })
+			sandboxCfg.DenyRename = append(sandboxCfg.DenyRename, filepath.Join(blocked, "child"))
+			sb, err := sandbox.New(sandboxCfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := sb.Destroy(); err != nil {
+					t.Error(err)
+				}
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			cmd, err := sb.Exec(ctx, "/bin/sh", []string{"-c", `
 set -e
 printf ordinary > "$1/ordinary"
 if cat "$2/egg.yaml" 2>/dev/null; then exit 42; fi
 if printf replaced > "$1/egg.yaml" 2>/dev/null; then exit 43; fi
-`, "sibling-roles", roles[0], roles[1]})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if output, err := cmd.CombinedOutput(); err != nil {
-		if os.IsPermission(err) {
-			t.Skipf("namespace creation unavailable: %v", err)
-		}
-		t.Fatalf("role policy failed to start or enforce its boundaries: %v, %s", err, output)
-	}
-	if data, err := os.ReadFile(filepath.Join(roles[0], "ordinary")); err != nil || string(data) != "ordinary" {
-		t.Fatalf("ordinary role-root write failed: %q, %v", data, err)
+if mv "$1" "$1-old" 2>/dev/null; then exit 44; fi
+if mv "$3" "$3-old" 2>/dev/null; then exit 45; fi
+if test -e "$1/unsearchable/child"; then exit 46; fi
+`, "sibling-roles", role, roles[1-i], parent})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if output, err := cmd.CombinedOutput(); err != nil {
+				if os.IsPermission(err) {
+					t.Skipf("namespace creation unavailable: %v", err)
+				}
+				t.Fatalf("role policy failed to start or enforce its boundaries: %v, %s", err, output)
+			}
+			if data, err := os.ReadFile(filepath.Join(role, "ordinary")); err != nil || string(data) != "ordinary" {
+				t.Fatalf("ordinary role-root write failed: %q, %v", data, err)
+			}
+			log, err := os.ReadFile(sb.DiagLog())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, path := range []string{hidden, filepath.Join(blocked, "child")} {
+				found := false
+				for _, line := range strings.Split(string(log), "\n") {
+					if strings.Contains(line, "level=DEBUG") && strings.Contains(line, "skipped unreachable policy directory") && strings.Contains(line, "path="+path) {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("unreachable sibling or unsearchable pin was not skipped: %s\n%s", path, log)
+				}
+			}
+		})
 	}
 }
 

@@ -3,6 +3,7 @@
 package sandbox
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,39 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+func TestOpenRenamePathRefusesSymlinksAndInvalidPaths(t *testing.T) {
+	root := t.TempDir()
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{alias, filepath.Join(alias, "child"), "relative", root + "/../elsewhere"} {
+		if fd, err := openRenamePath(path); err == nil {
+			unix.Close(fd)
+			t.Fatalf("unsafe policy directory accepted: %s", path)
+		} else if errors.Is(err, unix.ENOENT) || errors.Is(err, unix.EACCES) {
+			t.Fatalf("unsafe path became a skippable pin: %s: %v", path, err)
+		}
+	}
+}
+
+func TestOpenRenamePathNeedsSearchRatherThanReadPermission(t *testing.T) {
+	root := t.TempDir()
+	searchable := filepath.Join(root, "searchable")
+	if err := os.Mkdir(searchable, 0111); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(searchable, 0700) })
+	fd, err := openRenamePath(searchable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unix.Close(fd)
+	if _, err := openRenamePath(filepath.Join(root, "absent")); !errors.Is(err, unix.ENOENT) {
+		t.Fatalf("absent pin error = %v", err)
+	}
+}
 
 func TestReadMountInfoParsesEffectiveMounts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mountinfo")

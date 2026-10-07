@@ -194,7 +194,7 @@ func TestAuthenticatedBrowserRoleRootsUseCanonicalPaths(t *testing.T) {
 	wc := &config.WingConfig{Org: "org", Paths: config.PathList{{Path: root}, {Path: nested}}}
 	start := ws.PTYStart{UserID: "eng", OrgRole: "member", CWD: filepath.Join(alias, "sub")}
 	cfg, _, err := PrepareBrowserLaunch(wc, &start, home, false, egg.DefaultEggConfig())
-	if err != nil || cfg.Shell != nested || ContainsExactPath(cfg.FS, "deny-rename:"+nested) || !ContainsExactPath(cfg.FS, "deny-write:"+filepath.Join(nested, "egg.yaml")) {
+	if err != nil || cfg.Shell != nested || !ContainsExactPath(cfg.FS, "deny-rename:"+nested) || !ContainsExactPath(cfg.FS, "deny-write:"+filepath.Join(nested, "egg.yaml")) {
 		t.Fatalf("canonical selected root not selected: %#v, %v", cfg, err)
 	}
 	start.CWD = escape

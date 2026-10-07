@@ -92,7 +92,7 @@ func LoadRoostEggConfig(cwd string, roots, allowedRoots []string, member bool, w
 		if member {
 			return nil, fmt.Errorf("working directory %q is outside this user's roost paths", cwd)
 		}
-		return protectRoostRootPolicies(egg.RuntimeEggConfig(wingDefault), roots, cwd), nil
+		return protectRoostRootPolicies(egg.RuntimeEggConfig(wingDefault), roots), nil
 	}
 	// Check the selected root's ACL before reading its policy.
 	if member && !wingpolicy.IsExactPath(root, allowedRoots) {
@@ -105,7 +105,7 @@ func LoadRoostEggConfig(cwd string, roots, allowedRoots []string, member bool, w
 			if member {
 				return nil, fmt.Errorf("no egg.yaml in %s — ask the wing owner to add a sandbox config", root)
 			}
-			return protectRoostRootPolicies(egg.RuntimeEggConfig(wingDefault), roots, cwd), nil
+			return protectRoostRootPolicies(egg.RuntimeEggConfig(wingDefault), roots), nil
 		}
 		return nil, err
 	}
@@ -121,7 +121,7 @@ func LoadRoostEggConfig(cwd string, roots, allowedRoots []string, member bool, w
 			}
 		}
 	}
-	return protectRoostRootPolicies(cfg, roots, cwd), nil
+	return protectRoostRootPolicies(cfg, roots), nil
 }
 
 func loadRoostRolePolicy(path string) (*egg.EggConfig, error) {
@@ -181,7 +181,7 @@ func loadRoostRolePolicy(path string) (*egg.EggConfig, error) {
 	return egg.MergeEggConfig(parent, cfg), nil
 }
 
-func protectRoostRootPolicies(cfg *egg.EggConfig, roots []string, cwd string) *egg.EggConfig {
+func protectRoostRootPolicies(cfg *egg.EggConfig, roots []string) *egg.EggConfig {
 	// Copy the FS slice so fallbacks cannot mutate the captured runtime policy.
 	copyCfg := *cfg
 	copyCfg.FS = append([]string(nil), cfg.FS...)
@@ -191,35 +191,11 @@ func protectRoostRootPolicies(cfg *egg.EggConfig, roots []string, cwd string) *e
 			copyCfg.FS = append(copyCfg.FS, rule)
 		}
 	}
-	home, _ := os.UserHomeDir()
-	mounts, deny, denyWrite := egg.ParseFSRules(copyCfg.FS, home)
-	resolve := func(path string) string {
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(cwd, path)
-		}
-		return wingpolicy.CanonicalPolicyPath(path)
-	}
-	var writable, readOnly []string
-	for _, mount := range mounts {
-		if mount.ReadOnly {
-			readOnly = append(readOnly, resolve(mount.Source))
-		} else {
-			writable = append(writable, resolve(mount.Source))
-		}
-	}
-	for i, path := range deny {
-		deny[i] = resolve(path)
-	}
-	for i, path := range denyWrite {
-		denyWrite[i] = resolve(path)
-	}
 	for _, root := range roots {
 		// A file deny cannot stop a writable parent from replacing the whole
-		// policy directory. Pin only entries whose parent grants write access.
+		// policy directory. Pin every root and ancestor regardless of FS rules;
+		// each backend decides which entries the sandbox can reach.
 		for dir := filepath.Clean(root); dir != "/"; dir = filepath.Dir(dir) {
-			if _, ok := wingpolicy.WritablePolicyRoot(filepath.Dir(dir), writable, readOnly, deny, denyWrite); !ok {
-				continue
-			}
 			rule := "deny-rename:" + dir
 			if !ContainsExactPath(copyCfg.FS, rule) {
 				copyCfg.FS = append(copyCfg.FS, rule)
