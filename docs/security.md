@@ -249,6 +249,11 @@ sessions are owner-scoped and use the sealed shared-host boundary. Existing OAut
 shared-roost identities with an empty organization role retain member privilege,
 while an empty role outside shared-roost mode fails closed.
 
+Roost policy roots and their ancestors must not be writable through any other
+path granted to a session, including Linux bind mounts, macOS firmlinks, or
+shares. Policy pins protect pathnames, not inodes, so an alias can expose a root
+masked at its configured path.
+
 Coordinator-derived user and organization identity has a 15-minute maximum lifetime
 on a direct data channel. The wing closes the channel when that lease expires, so
 continued use requires a fresh access-filtered discovery and signaling exchange.
