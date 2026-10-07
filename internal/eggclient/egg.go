@@ -148,7 +148,7 @@ type ExplainedHole struct {
 // error here, unlike discovery, which is allowed to fall back.
 func LoadEggConfigForExplain(configPath, cwd string) (*egg.EggConfig, string, error) {
 	if configPath != "" {
-		cfg, err := egg.ResolveEggConfig(configPath)
+		cfg, err := egg.ResolveEggConfig(configPath, cwd)
 		if err != nil {
 			return nil, "", fmt.Errorf("load egg config: %w", err)
 		}
@@ -160,7 +160,8 @@ func LoadEggConfigForExplain(configPath, cwd string) (*egg.EggConfig, string, er
 			source = path
 		}
 	}
-	return egg.DiscoverEggConfig(cwd, nil), source, nil
+	cfg := egg.DiscoverEggConfig(cwd, nil)
+	return cfg, source, cfg.ResolutionError()
 }
 
 func fileExists(path string) bool {
@@ -443,13 +444,14 @@ func LoadSpawnEggConfig(configPath, cwd string, unsandboxed bool) (*egg.EggConfi
 		return egg.UnsandboxedEggConfig(), nil
 	}
 	if configPath != "" {
-		cfg, err := egg.ResolveEggConfig(configPath)
+		cfg, err := egg.ResolveEggConfig(configPath, cwd)
 		if err != nil {
 			return nil, fmt.Errorf("load egg config: %w", err)
 		}
 		return cfg, nil
 	}
-	return egg.DiscoverEggConfig(cwd, nil), nil
+	cfg := egg.DiscoverEggConfig(cwd, nil)
+	return cfg, cfg.ResolutionError()
 }
 
 // EggIdentity holds the authenticated user's identity for per-session env injection.
@@ -528,27 +530,58 @@ func PrepareIsolatedClaudeConfig(home string, envMap map[string]string) error {
 	// release. Seed the new path from the old file if it hasn't been created
 	// yet. Only a regular file is migrated — a symlink at the root is the
 	// shared empty stub, whose users never had persisted state to preserve.
-	newCfg := filepath.Join(claudeDir, ".claude.json")
-	oldCfg := filepath.Join(home, ".claude.json")
-	if _, err := os.Stat(newCfg); errors.Is(err, os.ErrNotExist) {
-		if fi, legacyErr := os.Lstat(oldCfg); legacyErr == nil && fi.Mode().IsRegular() {
-			data, readErr := os.ReadFile(oldCfg)
-			if readErr != nil {
-				return fmt.Errorf("read legacy Claude config: %w", readErr)
-			}
-			if err := os.MkdirAll(claudeDir, 0700); err != nil {
-				return fmt.Errorf("prepare Claude config directory: %w", err)
-			}
-			if err := daemonctl.WriteAtomicMetadataFile(newCfg, data, 0600); err != nil {
-				return fmt.Errorf("migrate Claude config: %w", err)
-			}
-		} else if legacyErr != nil && !errors.Is(legacyErr, os.ErrNotExist) {
-			return fmt.Errorf("inspect legacy Claude config: %w", legacyErr)
-		}
-	} else if err != nil {
-		return fmt.Errorf("inspect Claude config: %w", err)
+	homeDir, err := openProviderDirectory(home, ".", false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
+	if err != nil {
+		return fmt.Errorf("inspect Claude home: %w", err)
+	}
+	defer homeDir.Close()
+	profileDir, err := openProviderSubdirectory(homeDir, ".claude", false)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect Claude config directory: %w", err)
+	}
+	if profileDir != nil {
+		defer profileDir.Close()
+		exists, err := providerFileExists(profileDir, ".claude.json")
+		if err != nil {
+			return fmt.Errorf("inspect Claude config: %w", err)
+		}
+		if exists {
+			return nil
+		}
+	}
+	data, err := readProviderFile(homeDir, ".claude.json")
+	// Preserve the legacy shared empty stub; it contains no persisted state.
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ELOOP) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read legacy Claude config: %w", err)
+	}
+	if profileDir == nil {
+		profileDir, err = openProviderSubdirectory(homeDir, ".claude", true)
+		if err != nil {
+			return fmt.Errorf("prepare Claude config directory: %w", err)
+		}
+		defer profileDir.Close()
+	}
+	if err := writeProviderFile(profileDir, ".claude.json", data, 0600); err != nil {
+		return fmt.Errorf("migrate Claude config: %w", err)
+	}
+
 	return nil
+}
+
+func prepareSpawnClaudeConfig(home string, env map[string]string, agentName, platform string, isolated, outerBoundary bool) error {
+	if agentName != "claude" || (!isolated && (outerBoundary || platform != "linux" || env["CLAUDE_CONFIG_DIR"] != "")) {
+		return nil
+	}
+	// The control-tree jail keeps HOME ancestors private. Put Claude's
+	// atomically replaced profile and lockfiles inside its persistent
+	// writable directory, preserving an existing personal profile.
+	return PrepareIsolatedClaudeConfig(home, env)
 }
 
 func WriteEggOwner(dir, userID, email string) error {
@@ -609,6 +642,24 @@ type SpawnEggOpts struct {
 	// OmitBrowserBridge launches without the optional browser-open bridge.
 	// False preserves ordinary launches.
 	OmitBrowserBridge bool
+}
+
+func prepareToolSessionEnvironment(env map[string]string, socketPath string) error {
+	capability, err := egg.ToolSocketCapability(socketPath)
+	if err != nil {
+		return fmt.Errorf("prepare authenticated tools: %w", err)
+	}
+	env[egg.ToolCapabilityEnv] = capability
+	return nil
+}
+
+func privateToolEnvironment(env map[string]string) []string {
+	capability := env[egg.ToolCapabilityEnv]
+	delete(env, egg.ToolCapabilityEnv)
+	if capability == "" {
+		return nil
+	}
+	return []string{egg.ToolCapabilityEnv + "=" + capability}
 }
 
 const (
@@ -731,6 +782,9 @@ func effectiveSpawnProviderSession(agentName string, opts SpawnEggOpts) (string,
 
 // spawnEgg starts a per-session egg child process and returns a connected client.
 func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte, trace bool, identity EggIdentity, idleTimeout time.Duration, opts ...SpawnEggOpts) (*egg.Client, error) {
+	if err := eggCfg.ResolutionError(); err != nil {
+		return nil, err
+	}
 	if err := ValidateSessionID(sessionID); err != nil {
 		return nil, err
 	}
@@ -778,11 +832,28 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		}
 		eggCfg = sealed
 	}
+	contextCfg, err := config.LoadContextConfig(cfg.Dir)
+	if err != nil {
+		return nil, err
+	}
+	eggCfg, protected, err := ProtectContextSecret(eggCfg, contextCfg, cwd, EffectiveSessionHome(cfg, identity))
+	if err != nil {
+		return nil, err
+	}
+	// Seatbelt verifies protected targets against its emitted policy. Linux's
+	// protected-write contract deliberately refuses every nonempty set; its
+	// read+write deny mounts enforce these secret paths instead.
+	if runtime.GOOS == "darwin" {
+		o.ProtectedWriteTargets = append(append([]string(nil), o.ProtectedWriteTargets...), protected...)
+	}
 	outerBoundary := !egg.RequiresSandbox(eggCfg, agentName)
 	if err := egg.ValidatePreviewClaudeBoundary(agentName, o.Command, outerBoundary); err != nil {
 		return nil, err
 	}
 	if err := egg.ValidateProtectedWriteTargetBoundary(o.ProtectedWriteTargets, !outerBoundary); err != nil {
+		return nil, err
+	}
+	if err := egg.RequireLegacySecretProtection(dir, o.ToolSocketPath != ""); err != nil {
 		return nil, err
 	}
 	// Pre-flight: verify the sandbox can work before spawning a child process.
@@ -1037,10 +1108,8 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// Point CLAUDE_CONFIG_DIR at ~/.claude, which is bind-mounted read-write to
 	// the per-user home: onboarding and theme now land there immediately and
 	// survive across sessions regardless of how the previous one ended.
-	if isolatedUser && agentName == "claude" {
-		if err := PrepareIsolatedClaudeConfig(effectiveHome, envMap); err != nil {
-			return nil, err
-		}
+	if err := prepareSpawnClaudeConfig(effectiveHome, envMap, agentName, runtime.GOOS, isolatedUser, outerBoundary); err != nil {
+		return nil, err
 	}
 	// Rebuild agent settings every session for org wing users.
 	// Reads existing prefs, layers host settings on top (host always wins
@@ -1048,13 +1117,15 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if isolatedUser && !identity.SharedHost && config.Channel() != "preview" && agentName != "claude" {
 		agentProfile := egg.Profile(agentName)
 		if agentProfile.SettingsFile != "" {
-			settingsDst := filepath.Join(effectiveHome, agentProfile.SettingsFile)
-			if err := os.MkdirAll(filepath.Dir(settingsDst), 0700); err != nil {
+			settingsDir, err := openProviderDirectory(effectiveHome, filepath.Dir(agentProfile.SettingsFile), true)
+			if err != nil {
 				return nil, fmt.Errorf("prepare agent settings directory: %w", err)
 			}
+			defer settingsDir.Close()
+			settingsName := filepath.Base(agentProfile.SettingsFile)
 			baseSettings := make(map[string]any)
 			// Read existing session settings to preserve user preferences
-			if data, err := os.ReadFile(settingsDst); err == nil {
+			if data, err := readProviderFile(settingsDir, settingsName); err == nil {
 				if err := json.Unmarshal(data, &baseSettings); err != nil {
 					return nil, fmt.Errorf("parse agent settings: %w", err)
 				}
@@ -1087,7 +1158,7 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 				if err != nil {
 					return nil, fmt.Errorf("encode agent settings: %w", err)
 				}
-				if err := daemonctl.WriteAtomicMetadataFile(settingsDst, append(data, '\n'), 0644); err != nil {
+				if err := writeProviderFile(settingsDir, settingsName, append(data, '\n'), 0644); err != nil {
 					return nil, fmt.Errorf("write agent settings: %w", err)
 				}
 			}
@@ -1156,6 +1227,9 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		args = append(args, "--provider-session-id", providerSessionID)
 	}
 	if o.ToolSocketPath != "" && len(o.ToolNames) > 0 {
+		if err := prepareToolSessionEnvironment(sessionEnv, o.ToolSocketPath); err != nil {
+			return nil, err
+		}
 		args = append(args, "--tool-socket", o.ToolSocketPath)
 		for _, tn := range o.ToolNames {
 			args = append(args, "--tool-name", tn)
@@ -1175,6 +1249,7 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if err != nil {
 		return nil, fmt.Errorf("open egg log: %w", err)
 	}
+	toolEnv := privateToolEnvironment(sessionEnv)
 	args, envPath, err := prepareEggEnvironmentTransport(dir, args, sessionEnv)
 	if err != nil {
 		cmdutil.CloseWithLog("egg log", logFile)
@@ -1184,8 +1259,9 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 
 	child := exec.Command(exe, args...)
 	// Always build a clean env for the wt-egg-run child process.
-	// Base system vars only. Session values move through an owner-only file so
-	// credentials never appear in the wrapper's argv or ambient environment.
+	// Base system vars plus this egg's tool capability. Other session values
+	// move through an owner-only file so provider credentials never appear in
+	// the wrapper's argv or ambient environment.
 	// This prevents server secrets (WT_JWT_SECRET, GOOGLE_CLIENT_SECRET)
 	// from leaking when eggs are spawned from the roost process (org wings),
 	// while still passing platform vars agents need (e.g. macOS Keychain).
@@ -1201,7 +1277,7 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 				childEnv = append(childEnv, e)
 			}
 		}
-		child.Env = childEnv
+		child.Env = append(childEnv, toolEnv...)
 	}
 	child.Stdout = logFile
 	child.Stderr = logFile
@@ -1375,28 +1451,37 @@ func SetupAPIKeyHelper(agentName string, envMap map[string]string, effectiveHome
 	if v == "" {
 		return nil
 	}
+
 	keyFile := filepath.Join(effectiveHome, ".anthropic_key")
-	if err := os.MkdirAll(effectiveHome, 0700); err != nil {
+	homeDir, err := openProviderDirectory(effectiveHome, ".", true)
+	if err != nil {
 		return fmt.Errorf("prepare API key helper directory: %w", err)
 	}
-	if err := daemonctl.WriteAtomicMetadataFile(keyFile, []byte(v), 0400); err != nil {
-		return fmt.Errorf("write API key helper: %w", err)
-	}
+	defer homeDir.Close()
 	agentProfile := egg.Profile(agentName)
 	if agentProfile.SettingsFile == "" {
-		return nil
+		return writeProviderFile(homeDir, ".anthropic_key", []byte(v), 0400)
 	}
-	settingsDst := filepath.Join(effectiveHome, agentProfile.SettingsFile)
-	if err := os.MkdirAll(filepath.Dir(settingsDst), 0700); err != nil {
+	settingsDir, err := openProviderSubdirectory(homeDir, filepath.Dir(agentProfile.SettingsFile), true)
+	if err != nil {
 		return fmt.Errorf("prepare API key settings directory: %w", err)
 	}
+	defer settingsDir.Close()
+	settingsName := filepath.Base(agentProfile.SettingsFile)
 	settings := make(map[string]any)
-	if data, err := os.ReadFile(settingsDst); err == nil {
+	if data, err := readProviderFile(settingsDir, settingsName); err == nil {
 		if err := json.Unmarshal(data, &settings); err != nil {
 			return fmt.Errorf("parse API key settings: %w", err)
 		}
+		// A user-writable file containing JSON null decodes to a nil map.
+		if settings == nil {
+			settings = make(map[string]any)
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read API key settings: %w", err)
+	}
+	if err := writeProviderFile(homeDir, ".anthropic_key", []byte(v), 0400); err != nil {
+		return fmt.Errorf("write API key helper: %w", err)
 	}
 	helper := "cat " + keyFile
 	if settings["apiKeyHelper"] == helper {
@@ -1407,7 +1492,7 @@ func SetupAPIKeyHelper(agentName string, envMap map[string]string, effectiveHome
 	if err != nil {
 		return fmt.Errorf("encode API key settings: %w", err)
 	}
-	if err := daemonctl.WriteAtomicMetadataFile(settingsDst, append(data, '\n'), 0644); err != nil {
+	if err := writeProviderFile(settingsDir, settingsName, append(data, '\n'), 0644); err != nil {
 		return fmt.Errorf("write API key settings: %w", err)
 	}
 	return nil

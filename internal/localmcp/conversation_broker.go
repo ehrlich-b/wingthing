@@ -121,6 +121,7 @@ type conversationBrokerRegistration struct {
 	SessionID         string   `json:"session_id"`
 	Principal         string   `json:"principal"`
 	LauncherActor     string   `json:"launcher_actor"`
+	LauncherClient    string   `json:"launcher_client,omitempty"`
 	LauncherSurface   string   `json:"launcher_surface"`
 	UserID            string   `json:"user_id,omitempty"`
 	Email             string   `json:"email,omitempty"`
@@ -221,9 +222,9 @@ func brokerChildPolicySnapshot(eggCfg *egg.EggConfig, workspace string) (string,
 	return snapshot.YAML()
 }
 
-// prepareBrokerParentMCP selects the host mailbox only where the direct
-// in-sandbox stdio server is already refused because it cannot write the
-// Wingthing state. Writable-state configurations keep the original transport.
+// prepareBrokerParentMCP selects the host mailbox for sandboxed parents.
+// Controller state stays sealed; only bounded task-tree operations cross the
+// workspace mailbox. Outer-boundary sessions retain direct stdio.
 //
 // The returned registration's launchOpts must be applied to the parent spawn.
 func (s *Server) prepareBrokerParentMCP(c *store.Conversation, eggCfg *egg.EggConfig, args []string) ([]string, *conversationBrokerRegistration, error) {
@@ -275,6 +276,9 @@ func (s *Server) prepareBrokerParentMCP(c *store.Conversation, eggCfg *egg.EggCo
 		AllowedPaths: paths, EnforcePathBounds: s.enforcePathBounds,
 		Workspace: workspace, Mailbox: filepath.Join(relative, "mailbox"), EggConfig: snapshot,
 		Executable: executable, RegisteredAt: time.Now().Unix(),
+	}
+	if s.controlSurface() == control.SurfaceLocalMCP {
+		reg.LauncherClient = s.conversationMCPClient()
 	}
 	if reg.RootID == "" {
 		reg.RootID = c.ID
@@ -484,12 +488,16 @@ func (r *conversationBrokerRegistration) server(version string, cfg *config.Conf
 		return nil
 	}
 	if r.LauncherSurface == string(control.SurfaceLocalMCP) {
-		entry, configured := clients.Clients[r.LauncherActor]
+		client := r.LauncherClient
+		if client == "" {
+			client = r.LauncherActor // registrations made before client/actor separation
+		}
+		entry, configured := clients.Clients[client]
 		if !configured && (len(clients.Clients) > 0 || clients.RequireClient) {
-			return nil, nil, fmt.Errorf("launcher MCP client %q is no longer configured in clients.yaml", r.LauncherActor)
+			return nil, nil, fmt.Errorf("launcher MCP client %q is no longer configured in clients.yaml", client)
 		}
 		if configured {
-			if err := restrict(r.LauncherActor, entry); err != nil {
+			if err := restrict(client, entry); err != nil {
 				return nil, nil, err
 			}
 		}

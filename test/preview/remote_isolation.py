@@ -57,7 +57,7 @@ def tree(root, skip_logs=True):
     return result
 
 
-base = Path(tempfile.mkdtemp(prefix="wtr-", dir="/tmp"))
+base = Path(tempfile.mkdtemp(prefix="wtr-"))
 client_home = base / "client"
 remote_home = base / "rh"
 remote_bin = base / "rbin"

@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/ehrlich-b/wingthing/internal/fsutil"
+	"github.com/ehrlich-b/wingthing/internal/protectedfile"
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 )
@@ -76,7 +77,7 @@ func Load() (*Config, error) {
 		providerDataHome: providerDataHome,
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	data, err := protectedfile.ReadPolicyResolved(filepath.Join(dir, "config.yaml"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			cfg.WingID, err = defaultWingID(dir)

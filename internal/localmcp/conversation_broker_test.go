@@ -656,9 +656,55 @@ func TestHostMailboxDurableSpawnRateSurvivesBrokerRestart(t *testing.T) {
 	}
 }
 
-func TestHostMailboxActivationKeepsDirectTransportAndCapturesFiniteAuthority(t *testing.T) {
+// Transport/identity tests model the broker preflight and process start;
+// protection and dispatch have separate real-policy tests in this package.
+func mockParentBroker(t *testing.T) *[]conversationBrokerRegistration {
+	t.Helper()
+	oldChannel, oldProtection, oldStart := config.ReleaseChannel, conversationBrokerProtection, startConversationBroker
+	config.ReleaseChannel = "preview"
+	conversationBrokerProtection = func(*config.Config, *egg.EggConfig, string, string, string, eggclient.EggIdentity, []string) error {
+		return nil
+	}
+	started := new([]conversationBrokerRegistration)
+	startConversationBroker = func(_ *config.Config, reg conversationBrokerRegistration) error {
+		*started = append(*started, reg)
+		return nil
+	}
+	t.Cleanup(func() {
+		config.ReleaseChannel, conversationBrokerProtection, startConversationBroker = oldChannel, oldProtection, oldStart
+	})
+	return started
+}
+
+func TestSandboxedParentUsesHostBrokerEvenWithWritableState(t *testing.T) {
+	oldChannel, oldProtection := config.ReleaseChannel, conversationBrokerProtection
+	config.ReleaseChannel = "preview"
+	t.Cleanup(func() {
+		config.ReleaseChannel, conversationBrokerProtection = oldChannel, oldProtection
+	})
 	workspace := wingpolicy.CanonicalPolicyPath(t.TempDir())
-	direct := &Server{Version: "dev", Cfg: &config.Config{Dir: filepath.Join(workspace, "state")}, Principal: "owner"}
+	state := filepath.Join(workspace, "state")
+	if err := os.MkdirAll(state, 0700); err != nil {
+		t.Fatal(err)
+	}
+	launcher := &Server{Version: "dev", Cfg: &config.Config{Dir: state}, Principal: "owner"}
+	parent := &store.Conversation{ID: "parent", RootID: "parent", SessionID: "execution", CWD: workspace, Agent: "claude"}
+	checked := false
+	conversationBrokerProtection = func(*config.Config, *egg.EggConfig, string, string, string, eggclient.EggIdentity, []string) error {
+		checked = true
+		return errors.New("protected state overlaps workspace")
+	}
+	if _, _, err := launcher.prepareBoundParentLaunch(parent, egg.DefaultEggConfig(), nil); !checked || err == nil || !strings.Contains(err.Error(), "protected state overlaps workspace") {
+		t.Fatalf("sandboxed MCP bypassed host broker protection: checked=%t err=%v", checked, err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".wingthing-conversations")); !os.IsNotExist(err) {
+		t.Fatal("refused launch wrote a direct MCP configuration")
+	}
+}
+
+func TestHostMailboxActivationKeepsOuterBoundaryTransportAndCapturesFiniteAuthority(t *testing.T) {
+	workspace := wingpolicy.CanonicalPolicyPath(t.TempDir())
+	direct := &Server{Version: "dev", Cfg: &config.Config{Dir: filepath.Join(workspace, "state")}, Principal: "owner", Unsandboxed: true}
 	c := &store.Conversation{ID: "parent", RootID: "parent", SessionID: "parent-exec", CWD: workspace, Agent: "claude"}
 	args, err := direct.prepareBoundParentMCP(c, egg.DefaultEggConfig(), nil)
 	if err != nil {
@@ -668,7 +714,8 @@ func TestHostMailboxActivationKeepsDirectTransportAndCapturesFiniteAuthority(t *
 	if bytes.Contains(data, []byte("--host-mailbox")) || !bytes.Contains(data, []byte("WINGTHING_DIR")) {
 		t.Fatalf("writable-state layout changed transport: %s", data)
 	}
-	// Only the workspace is writable, so state elsewhere selects the mailbox.
+	// Sandboxed parents always select the mailbox, even if the workspace
+	// contains state: the runtime seals that state from the parent.
 	narrow := func() *egg.EggConfig { return &egg.EggConfig{FS: []string{"ro:/", "rw:./"}} }
 	exposed := &Server{Version: "dev", Cfg: &config.Config{Dir: t.TempDir()}, Principal: "owner"}
 	var protectedTargets []string
@@ -687,9 +734,9 @@ func TestHostMailboxActivationKeepsDirectTransportAndCapturesFiniteAuthority(t *
 		startConversationBroker = refuseTestBrokerStart
 		config.ReleaseChannel = oldChannel
 	})
-	// Stable keeps its deployed refusal byte for byte and never registers.
+	// Stable without opt-in refuses before registering a broker.
 	config.ReleaseChannel = "stable"
-	stableRefusal := `parent MCP cannot write isolated Wingthing state "` + exposed.Cfg.Dir + `" under the existing sandbox policy; use an already writable workspace containing that state directory (no mounts or grants were changed)`
+	stableRefusal := `parent MCP cannot access sealed Wingthing state "` + exposed.Cfg.Dir + `" from a sandboxed egg; use the personal host mailbox with protected state outside the writable workspace (stable requires conversations: enabled)`
 	if _, err := exposed.prepareBoundParentMCP(c, narrow(), nil); err == nil || err.Error() != stableRefusal || protectedTargets != nil {
 		t.Fatalf("stable layout changed: %v", err)
 	}
@@ -919,8 +966,8 @@ func TestStableConversationHostMailboxOptIn(t *testing.T) {
 	if _, _, err := managed.server("dev", cfg, NewMCPAdmissionState()); err == nil {
 		t.Fatal("stable broker survived revocation of the opt-in")
 	}
-	// A disabled stable launch retains the historical refusal exactly.
-	want := fmt.Sprintf("parent MCP cannot write isolated Wingthing state %q under the existing sandbox policy; use an already writable workspace containing that state directory (no mounts or grants were changed)", cfg.Dir)
+	// A disabled stable launch refuses without starting another broker.
+	want := fmt.Sprintf("parent MCP cannot access sealed Wingthing state %q from a sandboxed egg; use the personal host mailbox with protected state outside the writable workspace (stable requires conversations: enabled)", cfg.Dir)
 	if _, _, err := launcher.prepareBoundParentLaunch(c, policy, nil); err == nil || err.Error() != want || len(started) != 1 {
 		t.Fatalf("disabled stable behavior changed: %v", err)
 	}
@@ -930,8 +977,8 @@ func TestStableConversationHostMailboxOptIn(t *testing.T) {
 	if _, _, err := launcher.prepareBoundParentLaunch(c, policy, nil); err == nil || err.Error() != want || len(started) != 1 {
 		t.Fatalf("default stable behavior changed: %v", err)
 	}
-	// A writable-state launch keeps identical direct configuration and argv,
-	// whether or not stable has opted in.
+	// Only an explicit outer-boundary launch retains direct configuration.
+	launcher.Unsandboxed = true
 	direct := &store.Conversation{ID: "direct", CWD: filepath.Dir(cfg.Dir), Agent: "claude"}
 	directArgs, reg, err := launcher.prepareBoundParentLaunch(direct, policy, nil)
 	if err != nil || reg != nil {
@@ -953,6 +1000,7 @@ func TestStableConversationHostMailboxOptIn(t *testing.T) {
 		t.Fatalf("opt-in changed direct configuration: %s %v", optedData, err)
 	}
 	for _, identity := range []eggclient.EggIdentity{{UserID: "user", OrgWing: true}, {UserID: "user", SharedHost: true}} {
+		launcher.Unsandboxed = false
 		launcher.identity = identity
 		if _, _, err := launcher.prepareBoundParentLaunch(c, policy, nil); err == nil || !strings.Contains(err.Error(), "only for personal wings") || len(started) != 1 {
 			t.Fatalf("nonpersonal stable wing admitted: identity=%+v err=%v", identity, err)
@@ -1002,5 +1050,34 @@ func TestHostMailboxChildLaunchCarriesContract(t *testing.T) {
 	args, err := eggclient.ProtectedWriteTargetArgs(opts.ProtectedWriteTargets)
 	if err != nil || len(args) != 2 {
 		t.Fatalf("protected argv %v %v", args, err)
+	}
+}
+
+func TestLinuxHostMailboxProviderWriteProtection(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux jail preflight")
+	}
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	state := filepath.Join(home, ".wingthing")
+	t.Setenv("HOME", home)
+	cfg := &config.Config{Dir: state}
+	model, err := modelProviderWrites(cfg, egg.DefaultEggConfig(), "claude", workspace, "parent", eggclient.EggIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := model.verifyProtected(state, []string{"/opt/wt/bin/wt"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{workspace, filepath.Join(home, ".claude", "settings.json")} {
+		if _, writable := model.writable(path); !writable {
+			t.Fatalf("legitimate write refused: %s", path)
+		}
+	}
+	if err := model.verifyProtected(filepath.Join(workspace, "state"), nil); err == nil {
+		t.Fatal("workspace state accepted")
+	}
+	if _, writable := model.writable("/tmp/host-state"); writable {
+		t.Fatal("private tmp grants host write authority")
 	}
 }

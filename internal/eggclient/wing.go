@@ -81,7 +81,8 @@ func ReapDeadEggs(cfg *config.Config) {
 		return
 	}
 	for _, e := range entries {
-		if !e.IsDir() {
+		// Reserved credential staging is permanently denied, not a session.
+		if e.Name() == ".credential-staging" || !e.IsDir() {
 			continue
 		}
 		dir := filepath.Join(eggsDir, e.Name())
@@ -108,6 +109,8 @@ func ReapDeadEggs(cfg *config.Config) {
 // cleanEggDir removes the files in an egg session directory, then the directory itself.
 // If recordings or lifecycle history exist, preserves metadata and data.
 func CleanEggDir(dir string) {
+	egg.RemoveControlCredentials(dir)
+	cmdutil.RemoveWithLog(filepath.Join(dir, "egg.control"))
 	cmdutil.RemoveWithLog(filepath.Join(dir, "egg.sock"))
 	cmdutil.RemoveWithLog(filepath.Join(dir, "egg.token"))
 	cmdutil.RemoveWithLog(filepath.Join(dir, "egg.pid"))

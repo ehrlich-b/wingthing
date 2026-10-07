@@ -38,6 +38,28 @@ func TestCopyFileDoesNotFollowDestinationSymlink(t *testing.T) {
 	}
 }
 
+func TestCopyFileDoesNotModifyHardLinkedDestination(t *testing.T) {
+	dir := t.TempDir()
+	src, dst, secret := filepath.Join(dir, "source"), filepath.Join(dir, ".claude.json"), filepath.Join(dir, "secret")
+	for path, data := range map[string]string{src: "session update", secret: "host secret"} {
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Link(secret, dst); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFile(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(secret); err != nil || string(data) != "host secret" {
+		t.Fatalf("copy-back overwrote hard-linked host secret: %q, %v", data, err)
+	}
+	if data, err := os.ReadFile(dst); err != nil || string(data) != "session update" {
+		t.Fatalf("session update was not published: %q, %v", data, err)
+	}
+}
+
 // TestPersistFunctionRemovesSymlinks verifies that the persist logic in
 // setupOverlayHome removes symlinks at the destination before copying, so
 // writes stay within the per-user home and don't escape via symlinks to

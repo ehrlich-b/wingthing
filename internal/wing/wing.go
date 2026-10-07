@@ -703,6 +703,10 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		return err
 	}
 
+	var releaseContext func()
+	wingCfg.Context, releaseContext = config.FreezeContextConfig(cfg.Dir, wingCfg.Context)
+	defer releaseContext()
+
 	// Merge wing.yaml with CLI flags (CLI extends yaml)
 	if roostFlag == "" && wingCfg.Roost != "" {
 		roostFlag = wingCfg.Roost
@@ -712,6 +716,8 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	} else if orgFlag != "" && wingCfg.Org != "" && orgFlag != wingCfg.Org {
 		return fmt.Errorf("org conflict: --org %q vs wing.yaml %q", orgFlag, wingCfg.Org)
 	}
+	// Keep registration and every runtime launch selector on the same binding.
+	wingCfg.Org = orgFlag
 	// Merge paths: CLI extends yaml (same pattern as labels)
 	var cliPaths []string
 	if pathsFlag != "" {
@@ -783,10 +789,19 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		}
 	}
 	var wingEggMu sync.Mutex
+	if options.SetPolicySource != nil {
+		options.SetPolicySource(func() (*config.WingConfig, *egg.EggConfig) {
+			wingCfgMu.Lock()
+			defer wingCfgMu.Unlock()
+			wingEggMu.Lock()
+			defer wingEggMu.Unlock()
+			return wingCfg.Clone(), wingEggCfg
+		})
+	}
 
 	// Load privileged tool configs
 	toolsDir := config.ResolveToolsDir(cfg.Dir, wingCfg.ToolsDir)
-	wingTools, toolErr := config.LoadToolsDir(toolsDir)
+	wingTools, toolErr := config.LoadWingTools(toolsDir, wingCfg.Context)
 	if toolErr != nil {
 		log.Printf("wing: load tools: %v (continuing without tools)", toolErr)
 	} else if len(wingTools) > 0 {
@@ -937,6 +952,10 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 					wingCfgMu.Lock()
 					defer wingCfgMu.Unlock()
 					return wingCfg.Clone(), append([]config.AllowKey(nil), allowedKeys...)
+				}, func() *egg.EggConfig {
+					wingEggMu.Lock()
+					defer wingEggMu.Unlock()
+					return wingEggCfg
 				})
 				return
 			}
@@ -1139,6 +1158,10 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 				}
 				if sig == syscall.SIGHUP {
 					log.Println("SIGHUP: reloading wing config")
+					if err := egg.CheckLoaderReloadIsolation(cfg.Dir); err != nil {
+						log.Printf("reload failed: %v", err)
+						continue
+					}
 					newCfg, err := config.LoadWingConfig(cfg.Dir)
 					if err != nil {
 						log.Printf("reload failed: %v", err)
@@ -1149,6 +1172,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 						continue
 					}
 					wingCfgMu.Lock()
+					config.RetainContextConfig(newCfg, wingCfg.Context)
 					wingCfg.Locked = newCfg.Locked
 					wingCfg.Spectate = newCfg.Spectate
 					wingCfg.AllowKeys = newCfg.AllowKeys
@@ -1198,7 +1222,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 
 					// Hot-reload tools
 					newToolsDir := config.ResolveToolsDir(cfg.Dir, newCfg.ToolsDir)
-					if newTools, tErr := config.LoadToolsDir(newToolsDir); tErr == nil {
+					if newTools, tErr := config.LoadWingTools(newToolsDir, newCfg.Context); tErr == nil {
 						wingToolsMu.Lock()
 						wingTools = newTools
 						wingToolsMu.Unlock()
@@ -1600,6 +1624,7 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 		}
 
 		agent, _ := eggclient.ReadEggMeta(dir)
+		prepareReclaimedEggIsolation(dir)
 
 		// Alive — dial and set up input routing
 		sockPath := filepath.Join(dir, "egg.sock")
@@ -1625,6 +1650,16 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 			handleReclaimedPTY(ctx, cfg, ec, sid, dir, write, input, wingCfg, allowedKeys, passkeyCache, passkeyPolicy, authTTL, tools)
 		}(sessionID, ec, dir)
 	}
+}
+
+// Preserve terminal access while withholding privileged authority from old
+// sandboxes. The marker makes the required replacement visible to the owner.
+func prepareReclaimedEggIsolation(dir string) bool {
+	if !egg.HasCurrentControlIsolation(dir) {
+		egg.MarkLegacyEggForReplacement(dir)
+		return false
+	}
+	return true
 }
 
 // handleReclaimedPTY sets up I/O routing for a reclaimed (surviving) egg session.
@@ -1654,14 +1689,19 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 	// Recreate the tool socket listener. It was owned by the previous daemon
 	// process and died with it, but the surviving egg still points at this path
-	// via --tool-socket. Re-listen on the same socket so privileged tools keep
-	// working after a daemon restart. Only sessions that were started with tools
+	// via --tool-socket. Recover its capability through the host-only egg RPC;
+	// generating a new secret would strand the surviving agent. Only sessions with tools
 	// have a .tools dir; skip the rest.
-	if len(tools) > 0 {
+	if len(tools) > 0 && prepareReclaimedEggIsolation(eggDir) {
 		toolsDir := filepath.Join(eggDir, ".tools")
 		if _, statErr := os.Stat(toolsDir); statErr == nil {
 			toolSocketPath := filepath.Join(toolsDir, "tool.sock")
-			if tl, tlErr := egg.NewToolListener(toolSocketPath, tools); tlErr != nil {
+			toolCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			capability, capabilityErr := ec.ReclaimToolCapability(toolCtx)
+			cancel()
+			if capabilityErr != nil {
+				log.Printf("pty session %s: reclaim tool capability unavailable: %v", sessionID, capabilityErr)
+			} else if tl, tlErr := egg.NewToolListenerWithCapability(toolSocketPath, tools, capability, egg.ToolContext{Reclaimed: true}); tlErr != nil {
 				log.Printf("pty session %s: reclaim tool listener failed: %v", sessionID, tlErr)
 			} else {
 				log.Printf("pty session %s: reclaim tool listener restarted (%d tools)", sessionID, len(tools))
@@ -2200,8 +2240,10 @@ authDone:
 		log.Printf("pty session %s: E2E encryption enabled", start.SessionID)
 	}
 
+	hostHome, _ := os.UserHomeDir()
+	identity := eggclient.BrowserEggIdentity(wingCfg, start, hostHome, sharedHost)
 	toolOpts := eggclient.SpawnEggOpts{}
-	toolListener, toolErr := eggclient.PrepareBrowserTools(cfg, start.SessionID, tools, &toolOpts)
+	toolListener, toolErr := eggclient.PrepareBrowserTools(cfg, start.SessionID, tools, &toolOpts, identity)
 	if toolErr != nil {
 		log.Printf("pty session %s: %v", start.SessionID, toolErr)
 		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: toolErr.Error()})
@@ -2212,7 +2254,6 @@ authDone:
 	}
 
 	// Spawn a per-session egg
-	hostHome, _ := os.UserHomeDir()
 	sharedAllowedPaths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, start.Email, start.OrgRole, hostHome))
 	providerResumeID := ""
 	var releaseProviderResume func(bool)
@@ -2226,16 +2267,17 @@ authDone:
 		}
 		defer func() { releaseProviderResume(providerResumeSpawned) }()
 	}
-	resumeArgs, resumePrincipal, resumeBindingErr := localmcp.PrepareConversationResumeMCP(version, cfg, wingCfg, start, eggCfg, sharedHost)
+	resumeArgs, resumePrincipal, resumeBindingErr := localmcp.PrepareConversationResumeMCP(version, cfg, wingCfg, start, eggCfg, sharedHost, &toolOpts)
 	if resumeBindingErr != nil {
 		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: resumeBindingErr.Error()})
 		return
 	}
 	ec, err := eggclient.SpawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, eggCfg.Trace,
-		eggclient.BrowserEggIdentity(wingCfg, start, hostHome, sharedHost), idleTimeout, eggclient.SpawnEggOpts{
+		identity, idleTimeout, eggclient.SpawnEggOpts{
 			ResumeSessionID: providerResumeID, ResumeSourceSessionID: start.ResumeSessionID,
 			ProviderReserved: providerResumeID != "", ToolNames: toolOpts.ToolNames, ToolSocketPath: toolOpts.ToolSocketPath,
 			Principal: resumePrincipal, AgentArgs: resumeArgs,
+			ProtectedWriteTargets: toolOpts.ProtectedWriteTargets, OmitBrowserBridge: toolOpts.OmitBrowserBridge,
 		})
 	if err != nil {
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
@@ -2275,7 +2317,7 @@ authDone:
 
 	// Attach to egg session stream
 	streamCtx, sCancel := context.WithCancel(ctx)
-	stream, err := ec.AttachSessionWithOptions(streamCtx, start.SessionID, egg.AttachOptions{Claim: true, Owner: "browser:" + start.UserID})
+	stream, err := eggclient.AttachBrowserController(streamCtx, ec, start.SessionID, egg.AttachOptions{Claim: true, Owner: "browser:" + start.UserID}, toolListener, start.UserID)
 	writerConfirmed := err == nil
 	if err != nil {
 		log.Printf("pty: egg attach failed: %v", err)
@@ -2574,7 +2616,7 @@ authDone:
 				}
 				log.Printf("pty session %s: re-keyed E2E for reattach", start.SessionID)
 				newStreamCtx, newSCancel := context.WithCancel(ctx)
-				newStream, reErr := ec.AttachSessionWithOptions(newStreamCtx, start.SessionID, egg.AttachOptions{Claim: true, Takeover: attach.Takeover, Owner: "browser:" + attach.UserID, Rows: attach.Rows, Cols: attach.Cols})
+				newStream, reErr := eggclient.AttachBrowserController(newStreamCtx, ec, start.SessionID, egg.AttachOptions{Claim: true, Takeover: attach.Takeover, Owner: "browser:" + attach.UserID, Rows: attach.Rows, Cols: attach.Cols}, toolListener, attach.UserID)
 				if reErr != nil {
 					newSCancel()
 					log.Printf("pty session %s: reattach to egg failed: %v", start.SessionID, reErr)

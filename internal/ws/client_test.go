@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -36,6 +37,39 @@ func TestClientClassifiesOnlyHTTPUnauthorizedAsAuthFailure(t *testing.T) {
 				t.Fatalf("auth rejection = %v, want %v (error: %v)", got, test.wantReject, err)
 			}
 		})
+	}
+}
+
+func TestClientRunBacksOffOn503AndStopsOn401(t *testing.T) {
+	var mu sync.Mutex
+	var attempts []time.Time
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		attempts = append(attempts, time.Now())
+		attempt := len(attempts)
+		mu.Unlock()
+		status := http.StatusServiceUnavailable
+		if attempt >= 3 {
+			status = http.StatusUnauthorized
+		}
+		http.Error(w, "validation failed", status)
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	client := &Client{RoostURL: strings.Replace(server.URL, "http://", "ws://", 1), Token: "token"}
+	if err := client.Run(ctx); !errors.Is(err, ErrAuthRejected) {
+		t.Fatalf("Run = %v, want definitive authentication rejection", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(attempts) != 3 {
+		t.Fatalf("handshake attempts = %d, want two retries then stop on 401", len(attempts))
+	}
+	for i, minimum := range []time.Duration{time.Second, 2 * time.Second} {
+		if delay := attempts[i+1].Sub(attempts[i]); delay < minimum {
+			t.Fatalf("retry %d delay = %v, want at least %v", i+1, delay, minimum)
+		}
 	}
 }
 

@@ -4,6 +4,7 @@ package sandbox
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -198,10 +200,12 @@ func verifyPrivateProcfs() error {
 // [--rlimit RESOURCE=VALUE...] -- CMD ARGS...
 func DenyInit(args []string) {
 	var denyPaths []string
+	var denyRenamePaths []string
 	var denyWritePaths []string
 	var writablePaths []string
 	var overlayPrefixes []string
 	var roMounts []string
+	var readAliases []Mount
 	var home string
 	var logPath string
 	var uid, gid int
@@ -227,6 +231,9 @@ func DenyInit(args []string) {
 			case "--deny":
 				denyPaths = append(denyPaths, args[i+1])
 				i++
+			case "--deny-rename":
+				denyRenamePaths = append(denyRenamePaths, args[i+1])
+				i++
 			case "--deny-write":
 				denyWritePaths = append(denyWritePaths, args[i+1])
 				i++
@@ -236,6 +243,12 @@ func DenyInit(args []string) {
 			case "--overlay-prefix":
 				overlayPrefixes = append(overlayPrefixes, args[i+1])
 				i++
+			case "--mount-ro-alias":
+				if i+2 >= len(args) {
+					log.Fatal("_deny_init: read alias needs source and target")
+				}
+				readAliases = append(readAliases, Mount{Source: args[i+1], Target: args[i+2], ReadOnly: true})
+				i += 2
 			case "--mount-ro":
 				roMounts = append(roMounts, args[i+1])
 				i++
@@ -293,12 +306,65 @@ func DenyInit(args []string) {
 	}
 
 	tmpDir := filepath.Dir(logPath)
+	// Resolve host aliases before setupJail hides or recreates their names.
+	// Project descendant masks into every separately bound read alias too.
+	denyPaths = CanonicalDenyPaths(denyPaths, readAliases...)
+	denyWritePaths = CanonicalDenyPaths(denyWritePaths, readAliases...)
 
 	// Jail mode: deny:/ creates an allowlist filesystem. Only explicitly
 	// mounted paths are visible; everything else is inaccessible.
+	var overlayPersistFn func()
 	jailMode := containsPath(denyPaths, "/")
+	allDenied := append(append([]string(nil), denyPaths...), denyWritePaths...)
+	var granted []string
+	for _, path := range writablePaths {
+		masked := false
+		for _, denied := range allDenied {
+			masked = masked || (denied != "/" && isPathWithin(path, denied))
+		}
+		if !masked {
+			granted = append(granted, path)
+		}
+	}
+	writablePaths = granted
+	if err := prepareJailWritablePaths(writablePaths); err != nil {
+		failEnforcement("prepare writable paths", home, err)
+	}
+	privateWritable := append([]string(nil), writablePaths...)
+	if home != "" {
+		files, err := writablePrefixFiles(home, writablePaths, overlayPrefixes)
+		if err != nil {
+			failEnforcement("prepare writable prefix files", home, err)
+		}
+		privateWritable = append(privateWritable, files...)
+	}
+	var prepare []string
+	for _, path := range allDenied {
+		if path == "/" {
+			continue
+		}
+		if !jailMode {
+			prepare = append(prepare, path)
+			continue
+		}
+		// Paths outside host binds get placeholders in the private jail root.
+		sources := append(append([]string(nil), roMounts...), writablePaths...)
+		for _, alias := range readAliases {
+			sources = append(sources, alias.Source)
+		}
+		for _, source := range sources {
+			if isPathWithin(path, source) {
+				prepare = append(prepare, path)
+				break
+			}
+		}
+	}
+	denyMountCleanup, err := prepareDenyMountpoints(prepare, tmpDir, privateWritable)
+	if err != nil {
+		failEnforcement("prepare private deny mountpoints", "/", err)
+	}
 	if jailMode {
-		setupJail(tmpDir, roMounts, writablePaths, home)
+		overlayPersistFn = setupJailWithDenyMountpoints(tmpDir, roMounts, writablePaths, home, readAliases, allDenied, overlayPrefixes...)
 		var filtered []string
 		for _, d := range denyPaths {
 			if d != "/" {
@@ -306,14 +372,6 @@ func DenyInit(args []string) {
 			}
 		}
 		denyPaths = filtered
-	}
-
-	// Deny mounts need a concrete mountpoint. Prepare absent paths while their
-	// parent is still writable; write isolation below may remount HOME read-only.
-	// The later mount and mount-table verification remain mandatory, so an
-	// existing secret path can never pass through after a masking failure.
-	if operation, path, err := prepareDenyMountpoints(denyPaths); err != nil {
-		failEnforcement(operation, path, err)
 	}
 
 	// Write isolation: make HOME read-only, then punch writable holes.
@@ -324,14 +382,13 @@ func DenyInit(args []string) {
 	// instead of simple bind-mount+RO. Overlayfs provides a copy-on-write layer
 	// so new files can be created and renames work (needed for atomic writes).
 	// Prefix-matching files are persisted back to the real HOME on exit.
-	var overlayPersistFn func()
 	if !jailMode && home != "" && len(writablePaths) > 0 && !containsPath(writablePaths, home) {
 		if len(overlayPrefixes) > 0 {
 			overlayPersistFn = setupOverlayHome(home, writablePaths, overlayPrefixes, tmpDir)
 		}
 		if overlayPersistFn == nil {
 			// No overlay needed or overlay failed — fall back to bind-mount approach.
-			if err := setupReadonlyHome(home, writablePaths); err != nil {
+			if err := setupReadonlyHome(home, writablePaths, overlayPrefixes); err != nil {
 				failEnforcement("isolate HOME writes", home, err)
 			}
 		}
@@ -397,20 +454,32 @@ func DenyInit(args []string) {
 
 	// Deny-write paths — bind mount read-only so agent can read but not modify.
 	for _, p := range denyWritePaths {
-		if _, err := os.Stat(p); err != nil {
-			if os.IsNotExist(err) {
-				log.Printf("_deny_init: deny-write path absent at launch: %s", p)
-				continue
-			}
+		file, err := openConfinedExisting("/", p)
+		if err != nil {
 			failEnforcement("inspect deny-write path", p, err)
 		}
-		if err := unix.Mount(p, p, "", unix.MS_BIND, ""); err != nil {
+		if err := unix.Mount(mountFDPath(file), mountFDPath(file), "", unix.MS_BIND, ""); err != nil {
 			failEnforcement("bind deny-write path", p, err)
 		}
-		if err := remountBindReadonly(p); err != nil {
+		if err := remountConfinedBindReadonly("/", p); err != nil {
 			failEnforcement("make deny-write path read-only", p, err)
 		}
+		file.Close()
 		expectedMounts = append(expectedMounts, expectedMount{Path: p, ReadOnly: true})
+	}
+
+	// Linux cannot rename or unlink a mountpoint. Bind each policy ancestor
+	// to itself with its existing flags: descendants keep their write grants.
+	for _, path := range denyRenamePaths {
+		file, err := openConfinedExisting("/", path)
+		if err != nil {
+			failEnforcement("inspect protected ancestor", path, err)
+		}
+		if err := unix.Mount(mountFDPath(file), mountFDPath(file), "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+			failEnforcement("pin protected ancestor", path, err)
+		}
+		file.Close()
+		expectedMounts = append(expectedMounts, expectedMount{Path: path})
 	}
 
 	// Syscall success is necessary but the live mount table is the security
@@ -463,6 +532,13 @@ func DenyInit(args []string) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
+	// Resolve cwd through the completed mount tree. An inherited directory FD
+	// from before a parent bind/overlay would bypass masks beneath that parent.
+	var cwdErr error
+	cmd.Dir, cwdErr = os.Getwd()
+	if cwdErr != nil {
+		failEnforcement("resolve agent working directory", ".", cwdErr)
+	}
 
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWPID,
@@ -472,12 +548,14 @@ func DenyInit(args []string) {
 		// never leaves survivors running detached from the runtime.
 		Pdeathsig: syscall.SIGKILL,
 	}
-	if uid != 0 {
+	if uid != 0 || overlayPersistFn != nil || denyMountCleanup != nil {
+		// Even a root agent must not share the wrapper's user namespace when
+		// it retains backing-directory FDs: /proc/PID/fd must remain private.
 		// CLONE_NEWNS must accompany CLONE_NEWUSER: the nested user namespace
 		// holds no capabilities over the wrapper's mount namespace, so without
 		// its own namespace the PID-namespace init cannot swap /proc at all —
 		// every mount call fails EPERM (observed on 5.15 shared hosts; masked
-		// on root runs, which skip CLONE_NEWUSER and keep full capabilities).
+		// on root runs without persistence, which keep full capabilities).
 		cmd.SysProcAttr.Cloneflags |= syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS
 		// Jail mode maps the init to inner-UID 0 so it keeps CAP_SYS_ADMIN across
 		// execve and can swap /proc; _jail_agent_init then drops to the real
@@ -517,6 +595,9 @@ func DenyInit(args []string) {
 		if overlayPersistFn != nil {
 			overlayPersistFn()
 		}
+		if denyMountCleanup != nil {
+			denyMountCleanup()
+		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			os.Exit(exitErr.ExitCode())
 		}
@@ -526,25 +607,258 @@ func DenyInit(args []string) {
 	if overlayPersistFn != nil {
 		overlayPersistFn()
 	}
+	if denyMountCleanup != nil {
+		denyMountCleanup()
+	}
 	os.Exit(0)
 }
 
-func prepareDenyMountpoints(paths []string) (operation, path string, err error) {
+type denyMountpointPlan struct {
+	Parent string
+	Paths  []string
+}
+
+// Planning only inspects confined paths: no placeholder is ever made on the
+// host. Missing suffixes are materialized in a private overlay below.
+func planDenyMountpoints(paths []string) ([]denyMountpointPlan, error) {
+	byParent := make(map[string][]string)
 	for _, path := range paths {
-		if _, statErr := os.Lstat(path); statErr == nil {
+		file, err := openConfinedExisting("/", path)
+		if err == nil {
+			file.Close()
 			continue
-		} else if !os.IsNotExist(statErr) {
-			return "inspect deny path", path, statErr
 		}
-		if mkdirErr := os.MkdirAll(path, 0o755); mkdirErr != nil {
-			return "create deny mountpoint", path, mkdirErr
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("inspect deny path %s: %w", path, err)
 		}
-		if _, statErr := os.Lstat(path); statErr != nil {
-			return "inspect created deny path", path, statErr
+		parent := filepath.Dir(path)
+		for {
+			file, err = openConfinedExisting("/", parent)
+			if err == nil {
+				info, statErr := file.Stat()
+				file.Close()
+				if statErr != nil {
+					return nil, statErr
+				}
+				if !info.IsDir() {
+					return nil, fmt.Errorf("deny parent %s is not a directory", parent)
+				}
+				break
+			}
+			if !os.IsNotExist(err) || parent == "/" {
+				return nil, fmt.Errorf("inspect deny parent %s: %w", parent, err)
+			}
+			parent = filepath.Dir(parent)
 		}
-		log.Printf("_deny_init: prepared absent deny mountpoint %s", path)
+		byParent[parent] = append(byParent[parent], path)
 	}
-	return "", "", nil
+	var plan []denyMountpointPlan
+	for parent, paths := range byParent {
+		plan = append(plan, denyMountpointPlan{parent, paths})
+	}
+	sort.Slice(plan, func(i, j int) bool { return len(plan[i].Parent) < len(plan[j].Parent) })
+	return plan, nil
+}
+
+func prepareDenyMountpoints(paths []string, tmpDir string, writable []string) (func(), error) {
+	plans, err := planDenyMountpoints(paths)
+	if err != nil || len(plans) == 0 {
+		return nil, err
+	}
+	var cleanups []func()
+	cleanup := func() {
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			cleanups[i]()
+		}
+	}
+	for _, plan := range plans {
+		persist := false
+		for _, grant := range writable {
+			persist = persist || isPathWithin(plan.Parent, grant)
+		}
+		remove, err := installPrivateDenyMountpoints(plan, tmpDir, persist, writable)
+		if err != nil {
+			cleanup()
+			return nil, err
+		}
+		cleanups = append(cleanups, remove)
+	}
+	return cleanup, nil
+}
+
+// A private lower layer supplies missing directory mountpoints. For a writable
+// parent the real directory is the upper layer, so ordinary new files still go
+// straight to the host. For a read-only parent, use a private COW upper instead.
+func installPrivateDenyMountpoints(plan denyMountpointPlan, tmpDir string, persist bool, writable []string) (func(), error) {
+	parent, err := openConfinedExisting("/", plan.Parent)
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close()
+	entries, err := readMountInfo("/proc/self/mountinfo")
+	if err != nil {
+		return nil, err
+	}
+	// Overlay lookup does not carry inherited submounts. Pin those
+	// without turning ordinary files/directories
+	// into mountpoints (which would prevent their normal atomic replacement).
+	bindPaths := make(map[string]bool)
+	for path := range entries {
+		if path != plan.Parent && isPathWithin(path, plan.Parent) {
+			bindPaths[path] = true
+		}
+	}
+	// A writable descendant does not make its read-only parent a host upper
+	// layer. Pin those grants before covering the parent, then bind them back
+	// so cache/config writes persist without copying unrelated HOME files up.
+	if !persist {
+		for _, path := range writable {
+			if path != plan.Parent && isPathWithin(path, plan.Parent) {
+				bindPaths[path] = true
+			}
+		}
+	}
+	var bindNames []string
+	for path := range bindPaths {
+		bindNames = append(bindNames, path)
+	}
+	sort.Slice(bindNames, func(i, j int) bool { return len(bindNames[i]) < len(bindNames[j]) })
+	var sources []*os.File
+	defer func() {
+		for _, source := range sources {
+			source.Close()
+		}
+	}()
+	for _, path := range bindNames {
+		source, err := openConfinedExisting("/", path)
+		if err != nil {
+			return nil, err
+		}
+		sources = append(sources, source)
+	}
+	// Keep staging outside the covered directory: rebinding its children must
+	// never publish another alias to the private placeholder backing tree.
+	stagingBase := tmpDir
+	if isPathWithin(stagingBase, plan.Parent) {
+		stagingBase = os.TempDir()
+	}
+	if isPathWithin(stagingBase, plan.Parent) {
+		return nil, fmt.Errorf("no private staging directory outside %s", plan.Parent)
+	}
+	staging, err := os.MkdirTemp(stagingBase, "deny-view-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(staging)
+	if err := unix.Mount("tmpfs", staging, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "size=64m"); err != nil {
+		return nil, err
+	}
+	defer unix.Unmount(staging, unix.MNT_DETACH)
+	lower, upper, work := filepath.Join(staging, "lower"), filepath.Join(staging, "upper"), filepath.Join(staging, "work")
+	for _, dir := range []string{lower, upper, work} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			return nil, err
+		}
+	}
+	for _, path := range plan.Paths {
+		relative, err := filepath.Rel(plan.Parent, path)
+		if err != nil {
+			return nil, err
+		}
+		file, err := createConfinedMountpoint(lower, "/"+relative, true)
+		if err != nil {
+			return nil, err
+		}
+		file.Close()
+	}
+	var workFD, workParent *os.File
+	var workName string
+	cleanup := func() {
+		if workFD != nil {
+			_ = os.RemoveAll(mountFDPath(workFD) + "/work")
+			_ = unix.Unlinkat(int(workParent.Fd()), workName, unix.AT_REMOVEDIR)
+			workFD.Close()
+			workParent.Close()
+		}
+	}
+	succeeded := false
+	defer func() {
+		if !succeeded {
+			cleanup()
+		}
+	}()
+	if persist {
+		// Overlay work must share the upper filesystem and be outside its tree.
+		workBase := tmpDir
+		if isPathWithin(workBase, plan.Parent) {
+			workBase = os.TempDir()
+		}
+		var upperStat, workStat unix.Stat_t
+		if err := unix.Fstat(int(parent.Fd()), &upperStat); err != nil {
+			return nil, err
+		}
+		if err := unix.Stat(workBase, &workStat); err != nil {
+			return nil, err
+		}
+		if workStat.Dev != upperStat.Dev || isPathWithin(workBase, plan.Parent) {
+			workBase = filepath.Dir(plan.Parent)
+		}
+		workPath, err := os.MkdirTemp(workBase, ".deny-work-")
+		if err != nil {
+			return nil, fmt.Errorf("prepare overlay work outside %s: %w", plan.Parent, err)
+		}
+		workFD, err = openConfinedExisting("/", workPath)
+		if err != nil {
+			os.Remove(workPath)
+			return nil, err
+		}
+		workParent, err = openConfinedExisting("/", filepath.Dir(workPath))
+		if err != nil {
+			workFD.Close()
+			workFD = nil
+			os.Remove(workPath)
+			return nil, err
+		}
+		workName = filepath.Base(workPath)
+		if err := unix.Mkdirat(int(workFD.Fd()), "work", 0o700); err != nil {
+			return nil, err
+		}
+		upper, work = mountFDPath(parent), mountFDPath(workFD)+"/work"
+		// Hide the retained work directory while overlayfs keeps its backing FD.
+		if err := unix.Mount("tmpfs", workPath, "tmpfs", unix.MS_RDONLY|unix.MS_NOSUID|unix.MS_NODEV, "size=0"); err != nil {
+			return nil, err
+		}
+	}
+	options := fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lower, upper, work)
+	if persist {
+		// A disk-backed upper otherwise syncs its entire host filesystem when
+		// the last namespace reference goes away, delaying even SIGKILL. Keep
+		// ordinary workspace writes persistent, but do not promise durability
+		// through overlay fsync or teardown (volatile requires Linux 5.10+).
+		options += ",volatile"
+	} else {
+		options = fmt.Sprintf("lowerdir=%s:%s,upperdir=%s,workdir=%s", lower, mountFDPath(parent), upper, work)
+	}
+	if err := unix.Mount("overlay", mountFDPath(parent), "overlay", 0, options); err != nil {
+		if persist {
+			// Never retry with a syncing host upper or discard writable files in
+			// a tmpfs upper. The affected jail must fail closed on older kernels.
+			return nil, fmt.Errorf("private writable deny view at %s requires volatile overlayfs (Linux 5.10+): %w", plan.Parent, err)
+		}
+		return nil, fmt.Errorf("private deny view at %s: %w", plan.Parent, err)
+	}
+	for i, path := range bindNames {
+		target, err := openConfinedExisting("/", path)
+		if err == nil {
+			err = unix.Mount(mountFDPath(sources[i]), mountFDPath(target), "", unix.MS_BIND|unix.MS_REC, "")
+			target.Close()
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	succeeded = true
+	return cleanup, nil
 }
 
 // setupOverlayHome mounts overlayfs on HOME so that new file creation and
@@ -564,10 +878,34 @@ func setupOverlayHome(home string, writablePaths, prefixes []string, tmpDir stri
 		log.Printf("_deny_init: bind real-home: %v", err)
 		return nil
 	}
+	// Never leave the saved HOME alias visible, including fallback paths. The
+	// overlay and writable bind mounts retain their own kernel references.
+	defer func() {
+		if err := unix.Unmount(realHome, unix.MNT_DETACH); err != nil {
+			failEnforcement("hide overlay backing HOME", realHome, err)
+		}
+	}()
 
-	// Create overlay upper (COW layer) and work dirs.
-	upperDir := filepath.Join(tmpDir, "overlay-upper")
-	workDir := filepath.Join(tmpDir, "overlay-work")
+	// Keep the scratch COW upper and work directory on private tmpfs. A disk
+	// upper would sync unrelated host writes when its namespace is destroyed.
+	backing := filepath.Join(tmpDir, "overlay-cow")
+	if err := os.MkdirAll(backing, 0755); err != nil {
+		log.Printf("_deny_init: mkdir overlay backing: %v", err)
+		return nil
+	}
+	if err := unix.Mount("tmpfs", backing, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "size=64m"); err != nil {
+		log.Printf("_deny_init: mount overlay backing: %v (falling back to bind-mount)", err)
+		return nil
+	}
+	// Kernel references and the private persistence FD retain the contents;
+	// no alias to this backing tree remains accessible to the agent.
+	defer func() {
+		if err := unix.Unmount(backing, unix.MNT_DETACH); err != nil {
+			failEnforcement("hide overlay backing tree", backing, err)
+		}
+	}()
+	upperDir := filepath.Join(backing, "upper")
+	workDir := filepath.Join(backing, "work")
 	if err := os.MkdirAll(upperDir, 0755); err != nil {
 		log.Printf("_deny_init: mkdir overlay-upper: %v", err)
 		return nil
@@ -578,7 +916,7 @@ func setupOverlayHome(home string, writablePaths, prefixes []string, tmpDir stri
 	}
 
 	// Mount overlayfs on HOME. Lower layer is the real HOME (via saved ref).
-	// Upper layer is the tmpdir COW — writes go here, real HOME is untouched.
+	// Upper layer is private tmpfs — writes go here, real HOME is untouched.
 	opts := fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", realHome, upperDir, workDir)
 	if err := unix.Mount("overlay", home, "overlay", 0, opts); err != nil {
 		log.Printf("_deny_init: overlay HOME: %v (falling back to bind-mount)", err)
@@ -633,11 +971,37 @@ func setupOverlayHome(home string, writablePaths, prefixes []string, tmpDir stri
 		log.Printf("_deny_init: overlay aborted, falling back to bind-mount")
 		return nil
 	}
+	// Keep a CLOEXEC directory handle for the wrapper's post-exit persistence.
+	// It is not inherited by the agent; the nested user namespace also denies
+	// access to the ancestor wrapper's /proc/PID/fd directory.
+	realHomeFD, err := os.Open(realHome)
+	if err != nil {
+		failEnforcement("retain overlay persistence directory", realHome, err)
+	}
+	persistHome := mountFDPath(realHomeFD)
+	upperFD, err := os.Open(upperDir)
+	if err != nil {
+		failEnforcement("retain overlay upper directory", upperDir, err)
+	}
+	persistUpper := mountFDPath(upperFD)
+	// Raw upper/work aliases would let the agent bypass visible deny mounts
+	// and inject files that the wrapper later persists. Keep only private FDs.
+	for _, path := range []string{upperDir, workDir} {
+		if err := unix.Mount("tmpfs", path, "tmpfs", unix.MS_RDONLY|unix.MS_NOSUID|unix.MS_NODEV, "size=0"); err != nil {
+			failEnforcement("hide overlay backing directory", path, err)
+		}
+		expected = append(expected, expectedMount{Path: path, FSType: "tmpfs", ReadOnly: true})
+	}
+	if err := verifyExpectedMounts(expected); err != nil {
+		failEnforcement("verify hidden overlay backing directories", tmpDir, err)
+	}
 
 	// Return function that persists prefix-matching files from overlay upper
 	// back to real HOME. Called after the agent process exits.
 	return func() {
-		entries, err := os.ReadDir(upperDir)
+		defer realHomeFD.Close()
+		defer upperFD.Close()
+		entries, err := os.ReadDir(persistUpper)
 		if err != nil {
 			return
 		}
@@ -656,11 +1020,11 @@ func setupOverlayHome(home string, writablePaths, prefixes []string, tmpDir stri
 			if e.IsDir() {
 				// Persist directory contents if they ended up in the overlay
 				// upper (shouldn't happen with working bind-mounts, but be safe).
-				persistDir(filepath.Join(upperDir, name), filepath.Join(realHome, name))
+				persistDir(filepath.Join(persistUpper, name), filepath.Join(persistHome, name))
 				continue
 			}
-			src := filepath.Join(upperDir, name)
-			dst := filepath.Join(realHome, name)
+			src := filepath.Join(persistUpper, name)
+			dst := filepath.Join(persistHome, name)
 			// Remove symlinks at dst so we don't follow them and write
 			// outside the per-user home (e.g. stale symlink to /opt/wingthing/.claude.json).
 			if fi, err := os.Lstat(dst); err == nil && fi.Mode()&os.ModeSymlink != 0 {
@@ -675,63 +1039,99 @@ func setupOverlayHome(home string, writablePaths, prefixes []string, tmpDir stri
 	}
 }
 
-// setupReadonlyHome is the original write isolation approach: bind-mount HOME,
-// punch writable holes for specific paths + prefix-matching files, then
-// remount HOME read-only. Works for overwriting existing files but cannot
+// setupReadonlyHome binds and recursively seals HOME, then reopens only
+// declared writable paths and prefix-matching files. Works for overwriting existing files but cannot
 // handle new file creation or renames in HOME.
-func setupReadonlyHome(home string, writablePaths []string) error {
-	if err := unix.Mount(home, home, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
-		return fmt.Errorf("bind HOME: %w", err)
+func setupReadonlyHome(home string, writablePaths, prefixes []string) error {
+	// Pin original writable mounts before sealing the new HOME tree. Binding a
+	// source resolved afterward would inherit the newly read-only mount flags.
+	files, err := writablePrefixFiles(home, writablePaths, prefixes)
+	if err != nil {
+		return err
 	}
-
-	// Bind-mount each writable path BEFORE remounting HOME read-only.
-	var expected []expectedMount
-	for _, p := range writablePaths {
+	paths := append(append([]string(nil), writablePaths...), files...)
+	var sources []*os.File
+	defer func() {
+		for _, source := range sources {
+			source.Close()
+		}
+	}()
+	for _, p := range paths {
 		if err := prepareWritableMountpoint(p, p); err != nil {
 			return fmt.Errorf("create writable mountpoint %s: %w", p, err)
 		}
-		if err := unix.Mount(p, p, "", unix.MS_BIND, ""); err != nil {
+		file, err := openConfinedExisting("/", p)
+		if err != nil {
+			return err
+		}
+		sources = append(sources, file)
+	}
+	if err := unix.Mount(home, home, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+		return fmt.Errorf("bind HOME: %w", err)
+	}
+	if err := remountBindReadonly(home); err != nil {
+		return fmt.Errorf("remount HOME read-only: %w", err)
+	}
+	expected := []expectedMount{{Path: home, ReadOnly: true, RecursiveReadOnly: true}}
+	for i, p := range paths {
+		target, err := openConfinedExisting("/", p)
+		if err != nil {
+			return err
+		}
+		err = unix.Mount(mountFDPath(sources[i]), mountFDPath(target), "", unix.MS_BIND|unix.MS_REC, "")
+		target.Close()
+		if err != nil {
 			return fmt.Errorf("bind writable path %s: %w", p, err)
 		}
 		expected = append(expected, expectedMount{Path: p, Writable: true})
 	}
-
-	// Bind-mount files adjacent to writable dirs that share the same prefix.
-	// e.g., writable ~/.claude also makes ~/.claude.json writable.
-	for _, p := range writablePaths {
-		dir := filepath.Dir(p)
-		base := filepath.Base(p)
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			name := e.Name()
-			if name == base || !strings.HasPrefix(name, base) {
-				continue
-			}
-			if e.IsDir() {
-				continue
-			}
-			fp := filepath.Join(dir, name)
-			if err := unix.Mount(fp, fp, "", unix.MS_BIND, ""); err != nil {
-				return fmt.Errorf("bind writable prefix file %s: %w", fp, err)
-			}
-			expected = append(expected, expectedMount{Path: fp, Writable: true})
-			log.Printf("_deny_init: bind writable file %s (prefix match)", fp)
-		}
-	}
-
-	// Remount HOME read-only. Child bind-mounts stay read-write.
-	if err := remountBindReadonly(home); err != nil {
-		return fmt.Errorf("remount HOME read-only: %w", err)
-	}
-	expected = append(expected, expectedMount{Path: home, ReadOnly: true})
 	if err := verifyExpectedMounts(expected); err != nil {
 		return fmt.Errorf("verify HOME write isolation: %w", err)
 	}
 	log.Printf("_deny_init: write isolation: HOME=%s ro, %d writable paths", home, len(writablePaths))
 	return nil
+}
+
+func writablePrefixFiles(home string, writablePaths, prefixes []string) ([]string, error) {
+	var files []string
+	for _, prefix := range prefixes {
+		p := filepath.Join(home, prefix)
+		if !isPathWithin(p, home) || p == home || !containsPath(writablePaths, p) {
+			return nil, fmt.Errorf("writable prefix is not a declared HOME mount: %s", prefix)
+		}
+		dir := filepath.Dir(p)
+		parent, err := openConfinedExisting("/", dir)
+		if err != nil {
+			return nil, err
+		}
+		entries, err := os.ReadDir(mountFDPath(parent))
+		if err != nil {
+			parent.Close()
+			return nil, err
+		}
+		for _, entry := range entries {
+			if entry.Name() == filepath.Base(p) || !strings.HasPrefix(entry.Name(), filepath.Base(p)) || entry.Type()&os.ModeSymlink != 0 {
+				continue
+			}
+			path := filepath.Join(dir, entry.Name())
+			file, err := openMountpointAt(parent, entry.Name(), path)
+			if err != nil {
+				parent.Close()
+				return nil, err
+			}
+			info, err := file.Stat()
+			file.Close()
+			if err != nil {
+				parent.Close()
+				return nil, err
+			}
+			if info.Mode().IsRegular() {
+				files = append(files, path)
+			}
+		}
+		parent.Close()
+	}
+	return files, nil
 }
 
 // prepareWritableMountpoint makes target suitable for a bind mount of source.
@@ -821,50 +1221,120 @@ func persistDir(src, dst string) {
 	}
 }
 
-// copyFile copies src to dst, preserving permissions.
-func copyFile(src, dst string) error {
-	sourceInfo, err := os.Lstat(src)
+// copyFile publishes a fresh inode in the pinned destination directory. Never
+// truncate the old inode: a sandbox may have hard-linked it to a host secret.
+func copyFile(src, dst string, expected ...os.FileInfo) error {
+	fd, err := unix.Open(src, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return err
 	}
-	if !sourceInfo.Mode().IsRegular() || sourceInfo.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("refusing non-regular persistence source %s", src)
-	}
-	if destinationInfo, err := os.Lstat(dst); err == nil {
-		if destinationInfo.Mode()&os.ModeSymlink != 0 || !destinationInfo.Mode().IsRegular() {
-			if err := os.RemoveAll(dst); err != nil {
-				return err
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
+	in := os.NewFile(uintptr(fd), src)
 	defer in.Close()
-
 	info, err := in.Stat()
 	if err != nil {
 		return err
 	}
-
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("refusing non-regular persistence source %s", src)
+	}
+	parent, err := os.Open(filepath.Dir(dst))
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer parent.Close()
+	return publishPinnedFile(in, info.Mode().Perm(), parent, filepath.Base(dst), expected...)
+}
 
-	_, err = io.Copy(out, in)
-	return err
+func publishPinnedFile(in *os.File, mode os.FileMode, parent *os.File, name string, expected ...os.FileInfo) error {
+	var before os.FileInfo
+	if len(expected) > 0 {
+		before = expected[0]
+	} else {
+		var err error
+		before, err = os.Lstat(filepath.Join(mountFDPath(parent), name))
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	out, err := os.CreateTemp(mountFDPath(parent), ".wingthing-persist-*")
+	if err != nil {
+		return err
+	}
+	temporary := filepath.Base(out.Name())
+	removeTemporary := true
+	defer func() {
+		if removeTemporary {
+			_ = unix.Unlinkat(int(parent.Fd()), temporary, 0)
+		}
+	}()
+	defer out.Close()
+	if err := out.Chmod(mode); err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	fd := int(parent.Fd())
+	saveConflict := func(version string) error {
+		conflict, err := os.CreateTemp(mountFDPath(parent), ".wingthing-conflict-"+name+"-*")
+		if err == nil {
+			err = conflict.Close()
+			if err == nil {
+				err = unix.Renameat(fd, temporary, fd, filepath.Base(conflict.Name()))
+			}
+			if err != nil {
+				_ = unix.Unlinkat(fd, filepath.Base(conflict.Name()), 0)
+			}
+		}
+		if err != nil {
+			// After an exchange this is the displaced host version. Never
+			// delete it if conflict publication itself fails.
+			removeTemporary = false
+			return fmt.Errorf("save %s conflict for %s (retained %s): %w", version, name, temporary, err)
+		}
+		log.Printf("_deny_init: host prefix changed during publication of %s; saved %s version to %s", name, version, filepath.Base(conflict.Name()))
+		return nil
+	}
+	flags := uint(unix.RENAME_EXCHANGE)
+	if before == nil {
+		flags = unix.RENAME_NOREPLACE
+	}
+	err = unix.Renameat2(fd, temporary, fd, name, flags)
+	if err == nil {
+		if before == nil {
+			return nil
+		}
+		displaced, err := os.Lstat(filepath.Join(mountFDPath(parent), temporary))
+		if err == nil && samePrefixSnapshot(before, displaced) {
+			return nil
+		}
+		return saveConflict("displaced host")
+	}
+	if err == unix.EEXIST || err == unix.ENOENT {
+		// A host creation or deletion also wins over the session snapshot.
+		return saveConflict("session")
+	}
+	if err != unix.ENOSYS && err != unix.EINVAL && err != unix.EOPNOTSUPP {
+		return err
+	}
+	// Without atomic exchange/no-replace there is no safe comparison before
+	// publication: a host edit can arrive between stat and rename. Preserve
+	// the destination and retain the session version as a logged conflict.
+	return saveConflict("session")
 }
 
 type expectedMount struct {
-	Path     string
-	FSType   string
-	ReadOnly bool
-	Writable bool
+	Path              string
+	FSType            string
+	ReadOnly          bool
+	Writable          bool
+	RecursiveReadOnly bool
 }
 
 type mountInfoEntry struct {
@@ -872,22 +1342,82 @@ type mountInfoEntry struct {
 	Options map[string]bool
 }
 
-// remountBindReadonly changes only the bind mount's read-only state while
-// preserving its current per-mount flags. Passing a minimal flag set works on
+// remountBindReadonly seals the bind and every inherited submount while
+// preserving each mount's current flags. Passing a minimal flag set works on
 // many Linux kernels, but WSL returns EPERM when a remount would implicitly
 // discard flags inherited from the source mount.
 func remountBindReadonly(path string) error {
+	return remountBindReadonlyAt(path, path)
+}
+
+func remountBindReadonlyAt(path, target string) error {
 	entries, err := readMountInfo("/proc/self/mountinfo")
 	if err != nil {
 		return err
 	}
-	entry, ok := effectiveMountEntry(entries, path)
-	if !ok {
-		return fmt.Errorf("bind mount missing at %s", path)
+	plan, err := readonlyBindMountPlan(entries, path)
+	if err != nil {
+		return err
 	}
-	flags := uintptr(unix.MS_REMOUNT | unix.MS_BIND | unix.MS_RDONLY)
-	flags |= mountFlagsFromOptions(entry.Options)
-	return unix.Mount("", path, "", flags, "")
+	var expected []expectedMount
+	for _, step := range plan {
+		mountTarget := target
+		var file *os.File
+		if step.Path != filepath.Clean(path) {
+			file, err = openConfinedExisting("/", step.Path)
+			if err != nil {
+				return err
+			}
+			mountTarget = mountFDPath(file)
+		}
+		err = unix.Mount("", mountTarget, "", step.Flags, "")
+		if file != nil {
+			file.Close()
+		}
+		if err != nil {
+			return fmt.Errorf("seal inherited mount %s: %w", step.Path, err)
+		}
+		expected = append(expected, expectedMount{Path: step.Path, ReadOnly: true})
+	}
+	return verifyExpectedMounts(expected)
+}
+
+type bindRemount struct {
+	Path  string
+	Flags uintptr
+}
+
+func readonlyBindMountPlan(entries map[string]mountInfoEntry, root string) ([]bindRemount, error) {
+	root = filepath.Clean(root)
+	if _, ok := entries[root]; !ok {
+		return nil, fmt.Errorf("bind mount missing at %s", root)
+	}
+	var plan []bindRemount
+	for path, entry := range entries {
+		if isPathWithin(path, root) {
+			plan = append(plan, bindRemount{path, uintptr(unix.MS_REMOUNT|unix.MS_BIND|unix.MS_RDONLY) | mountFlagsFromOptions(entry.Options)})
+		}
+	}
+	// Seal children first, so inherited writable mounts cannot survive sealing
+	// their parent. Explicit writable grants are rebound only after this pass.
+	sort.Slice(plan, func(i, j int) bool {
+		if len(plan[i].Path) != len(plan[j].Path) {
+			return len(plan[i].Path) > len(plan[j].Path)
+		}
+		return plan[i].Path < plan[j].Path
+	})
+	return plan, nil
+}
+
+func remountConfinedBindReadonly(root, path string) error {
+	// A handle opened before the bind still refers to the covered mount.
+	// Resolve again through confined parent FDs to pin the new top mount.
+	file, err := openConfinedExisting(root, path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	return remountBindReadonlyAt(filepath.Join(root, path), mountFDPath(file))
 }
 
 func mountFlagsFromOptions(options map[string]bool) uintptr {
@@ -960,6 +1490,22 @@ func verifyMountEntries(entries map[string]mountInfoEntry, expected []expectedMo
 		}
 		if want.Writable && !got.Options["rw"] {
 			return fmt.Errorf("mount at %s is read-only", want.Path)
+		}
+		if want.RecursiveReadOnly {
+			for path, entry := range entries {
+				if !isPathWithin(path, want.Path) || entry.Options["ro"] {
+					continue
+				}
+				mode := want
+				for _, grant := range expected {
+					if (grant.ReadOnly || grant.Writable) && isPathWithin(path, grant.Path) && len(grant.Path) > len(mode.Path) {
+						mode = grant
+					}
+				}
+				if !mode.Writable {
+					return fmt.Errorf("inherited mount at %s is writable", path)
+				}
+			}
 		}
 	}
 	return nil
@@ -1084,7 +1630,16 @@ func containsPath(paths []string, target string) bool {
 // writablePaths (read-write), plus essential virtual filesystems (/proc, /dev,
 // /tmp). After pivot_root, the old root is lazily unmounted — nothing outside
 // the explicit mounts is accessible.
-func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
+func setupJail(tmpDir string, roMounts, writablePaths []string, home string, readAliases []Mount, prefixes ...string) func() {
+	return setupJailWithDenyMountpoints(tmpDir, roMounts, writablePaths, home, readAliases, nil, prefixes...)
+}
+
+func setupJailWithDenyMountpoints(tmpDir string, roMounts, writablePaths []string, home string, readAliases []Mount, denied []string, prefixes ...string) func() {
+	// Prepare persistent writable directories before a read-only ancestor is
+	// bound into the jail. Fresh homes may not yet have their declared caches.
+	if err := prepareJailWritablePaths(writablePaths); err != nil {
+		failEnforcement("prepare jail writable paths", home, err)
+	}
 	newRoot := filepath.Join(tmpDir, "newroot")
 	if err := os.MkdirAll(newRoot, 0755); err != nil {
 		log.Fatalf("_deny_init: jail mkdir newroot: %v", err)
@@ -1093,18 +1648,87 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 		log.Fatalf("_deny_init: jail mount newroot: %v", err)
 	}
 	// Recreate merged-usr symlinks (/bin -> usr/bin, etc.) if the host uses them.
+	aliases := make(map[string]string)
 	for _, link := range [][2]string{
 		{"bin", "usr/bin"}, {"sbin", "usr/sbin"}, {"lib", "usr/lib"}, {"lib64", "usr/lib64"},
 	} {
 		if target, err := os.Readlink("/" + link[0]); err == nil {
-			if err := os.Symlink(target, filepath.Join(newRoot, link[0])); err != nil {
+			if target != link[1] && target != "/"+link[1] {
+				failEnforcement("validate jail system symlink", "/"+link[0], fmt.Errorf("unexpected target %q", target))
+			}
+			aliases["/"+link[0]] = "/" + link[1]
+			if err := os.Symlink(link[1], filepath.Join(newRoot, link[0])); err != nil {
 				failEnforcement("recreate jail symlink", "/"+link[0], err)
 			}
 			log.Printf("_deny_init: jail symlink /%s -> %s", link[0], target)
 		}
 	}
-	// Essential virtual filesystems FIRST — user bind-mounts may land on top
-	// of these (e.g. a writable path under /tmp).
+	// Private virtual filesystems precede placeholders, so mounts under /tmp,
+	// /dev and /dev/shm cannot hide their deny targets.
+	devPath := filepath.Join(newRoot, "dev")
+	if err := os.MkdirAll(devPath, 0755); err != nil {
+		failEnforcement("create jail /dev", "/dev", err)
+	}
+	if err := unix.Mount("tmpfs", devPath, "tmpfs", unix.MS_NOSUID, "size=65536,mode=755"); err != nil {
+		failEnforcement("mount jail /dev", "/dev", err)
+	}
+	shmPath := filepath.Join(devPath, "shm")
+	if err := os.MkdirAll(shmPath, 01777); err != nil {
+		failEnforcement("create jail /dev/shm", "/dev/shm", err)
+	}
+	if err := unix.Mount("tmpfs", shmPath, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "size=64m"); err != nil {
+		failEnforcement("mount jail /dev/shm", "/dev/shm", err)
+	}
+	tmpPath := filepath.Join(newRoot, "tmp")
+	if err := os.MkdirAll(tmpPath, 01777); err != nil {
+		failEnforcement("create jail /tmp", "/tmp", err)
+	}
+	if err := unix.Mount("tmpfs", tmpPath, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "size=1g"); err != nil {
+		failEnforcement("mount jail /tmp", "/tmp", err)
+	}
+	// Recreate tmpDir inside jail so HOME/TMPDIR env vars resolve.
+	tmpFD, err := createConfinedMountpoint(newRoot, tmpDir, true)
+	if err != nil {
+		failEnforcement("create sandbox temp directory inside jail", tmpDir, err)
+	}
+	tmpFD.Close()
+	// No host /proc or device binds exist yet. Placeholder creation touches
+	// only the private root and its private virtual filesystems.
+	for _, path := range denied {
+		if path == "/" {
+			continue
+		}
+		directory := true
+		if info, err := os.Lstat(path); err == nil {
+			directory = info.IsDir()
+		} else if isPathWithin(path, "/proc") {
+			// The host proc bind would cover a private placeholder. Never
+			// recreate it through that bind or an inherited host submount.
+			failEnforcement("create private jail deny mountpoint", path, fmt.Errorf("refusing deny placeholder beneath host /proc: %w", err))
+		}
+		file, err := createConfinedMountpoint(newRoot, path, directory)
+		if err != nil {
+			failEnforcement("create private jail deny mountpoint", path, err)
+		}
+		file.Close()
+	}
+	// HOME itself is an empty jail directory unless explicitly declared. Agent
+	// config directories are already included in writablePaths by its profile.
+	if home != "" {
+		homeFD, err := createConfinedMountpoint(newRoot, home, true)
+		if err != nil {
+			failEnforcement("create jail HOME directory", home, err)
+		}
+		homeFD.Close()
+	}
+	// Prefix config files live in the otherwise empty jail HOME, where atomic
+	// replacement remains possible. Persist only those declared prefixes; the
+	// agent's config directories already persist through their bind mounts.
+	persist, extraWritable, err := prepareJailPrefixFiles(newRoot, home, roMounts, writablePaths, prefixes)
+	if err != nil {
+		failEnforcement("prepare jail prefix config", home, err)
+	}
+	writablePaths = append(append([]string(nil), writablePaths...), extraWritable...)
 	// Bind-mount host /proc temporarily. The outer wrapper needs host PIDs while
 	// Go writes the nested user namespace's uid_map. The nested PID-namespace
 	// init replaces this mount before it executes the agent.
@@ -1122,13 +1746,6 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 	if err := unix.Mount("/proc", procPath, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
 		failEnforcement("bind jail /proc", "/proc", err)
 	}
-	devPath := filepath.Join(newRoot, "dev")
-	if err := os.MkdirAll(devPath, 0755); err != nil {
-		failEnforcement("create jail /dev", "/dev", err)
-	}
-	if err := unix.Mount("tmpfs", devPath, "tmpfs", unix.MS_NOSUID, "size=65536,mode=755"); err != nil {
-		failEnforcement("mount jail /dev", "/dev", err)
-	}
 	for _, dev := range []string{"null", "zero", "urandom", "tty", "random"} {
 		dp := filepath.Join(devPath, dev)
 		f, err := os.Create(dp)
@@ -1142,25 +1759,7 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 			failEnforcement("bind jail device", "/dev/"+dev, err)
 		}
 	}
-	shmPath := filepath.Join(devPath, "shm")
-	if err := os.MkdirAll(shmPath, 01777); err != nil {
-		failEnforcement("create jail /dev/shm", "/dev/shm", err)
-	}
-	if err := unix.Mount("tmpfs", shmPath, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "size=64m"); err != nil {
-		failEnforcement("mount jail /dev/shm", "/dev/shm", err)
-	}
-	tmpPath := filepath.Join(newRoot, "tmp")
-	if err := os.MkdirAll(tmpPath, 01777); err != nil {
-		failEnforcement("create jail /tmp", "/tmp", err)
-	}
-	if err := unix.Mount("tmpfs", tmpPath, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "size=1g"); err != nil {
-		failEnforcement("mount jail /tmp", "/tmp", err)
-	}
-	// Recreate tmpDir inside jail so HOME/TMPDIR env vars resolve.
-	if err := os.MkdirAll(filepath.Join(newRoot, tmpDir), 0755); err != nil {
-		failEnforcement("create sandbox temp directory inside jail", tmpDir, err)
-	}
-	// Bind-mount read-only paths from real root.
+	// Mount parents before children so each declared child retains its mode.
 	expected := []expectedMount{
 		{Path: "/", FSType: "tmpfs", Writable: true},
 		{Path: "/proc"},
@@ -1168,49 +1767,46 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 		{Path: "/dev/shm", FSType: "tmpfs", Writable: true},
 		{Path: "/tmp", FSType: "tmpfs", Writable: true},
 	}
-	for _, p := range roMounts {
-		target := filepath.Join(newRoot, p)
-		if err := jailMkTarget(p, target); err != nil {
-			failEnforcement("create jail read-only mountpoint", p, err)
+	for _, mount := range jailMounts(roMounts, writablePaths, aliases) {
+		p := mount.Path
+		sourceFD, targetFD, err := jailMkTarget(newRoot, p)
+		if err != nil {
+			failEnforcement("create jail mountpoint", p, err)
 		}
-		if err := unix.Mount(p, target, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
-			failEnforcement("bind jail read-only path", p, err)
+		if err := unix.Mount(mountFDPath(sourceFD), mountFDPath(targetFD), "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+			failEnforcement("bind jail path", p, err)
 		}
-		if err := remountBindReadonly(target); err != nil {
-			failEnforcement("make jail path read-only", p, err)
+		if mount.ReadOnly {
+			if err := remountConfinedBindReadonly(newRoot, p); err != nil {
+				failEnforcement("make jail path read-only", p, err)
+			}
 		}
-		expected = append(expected, expectedMount{Path: p, ReadOnly: true})
-		log.Printf("_deny_init: jail ro %s", p)
-	}
-	// Bind-mount writable paths (order matters: rw mounts override ro parents).
-	for _, p := range writablePaths {
-		// HOME is mounted as one persistent owner-scoped tree below. Mounting a
-		// child separately is redundant and would follow a user-created symlink
-		// on the host side before pivot_root.
-		if home != "" && isPathWithin(p, home) {
-			continue
-		}
-		target := filepath.Join(newRoot, p)
-		if err := jailMkTarget(p, target); err != nil {
-			failEnforcement("create jail writable mountpoint", p, err)
-		}
-		if err := unix.Mount(p, target, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
-			failEnforcement("bind jail writable path", p, err)
-		}
-		expected = append(expected, expectedMount{Path: p, Writable: true})
-		log.Printf("_deny_init: jail rw %s", p)
-	}
-	// Bind-mount home directory (writable).
-	if home != "" {
-		target := filepath.Join(newRoot, home)
-		if err := os.MkdirAll(target, 0755); err != nil {
-			failEnforcement("create jail HOME mountpoint", home, err)
-		} else if err := unix.Mount(home, target, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
-			failEnforcement("bind jail HOME", home, err)
+		sourceFD.Close()
+		targetFD.Close()
+		if mount.ReadOnly {
+			expected = append(expected, expectedMount{Path: p, ReadOnly: true, RecursiveReadOnly: true})
+			log.Printf("_deny_init: jail ro %s", p)
 		} else {
-			expected = append(expected, expectedMount{Path: home, Writable: true})
-			log.Printf("_deny_init: jail home %s", home)
+			expected = append(expected, expectedMount{Path: p, Writable: true})
+			log.Printf("_deny_init: jail rw %s", p)
 		}
+	}
+	// Aliases use resolved, confined sources and synthetic read-only targets.
+	// A changed symlink is never followed during mountpoint creation.
+	for _, alias := range readAliases {
+		sourceFD, targetFD, err := jailMkTargetAt(newRoot, alias.Source, alias.Target)
+		if err != nil {
+			failEnforcement("create jail read alias", alias.Target, err)
+		}
+		if err := unix.Mount(mountFDPath(sourceFD), mountFDPath(targetFD), "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+			failEnforcement("bind jail read alias", alias.Target, err)
+		}
+		if err := remountConfinedBindReadonly(newRoot, alias.Target); err != nil {
+			failEnforcement("make jail read alias read-only", alias.Target, err)
+		}
+		sourceFD.Close()
+		targetFD.Close()
+		expected = append(expected, expectedMount{Path: alias.Target, ReadOnly: true, RecursiveReadOnly: true})
 	}
 	// pivot_root: swap new root into place, old root at .pivot.
 	// Save cwd so we can restore it after pivot (cmd.Dir set by parent).
@@ -1241,31 +1837,365 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 		failEnforcement("verify jail filesystem policy", "/proc/self/mountinfo", err)
 	}
 	log.Printf("_deny_init: jail active (ro=%d rw=%d home=%s)", len(roMounts), len(writablePaths), home)
+	return persist
+}
+
+func prepareJailWritablePaths(paths []string) error {
+	for _, path := range paths {
+		file, err := openConfinedExisting("/", path)
+		if os.IsNotExist(err) {
+			file, err = createConfinedMountpoint("/", path, true)
+		}
+		if err != nil {
+			return fmt.Errorf("prepare %s: %w", path, err)
+		}
+		file.Close()
+	}
+	return nil
+}
+
+func prepareJailPrefixFiles(root, home string, readonly, writable, prefixes []string) (func(), []string, error) {
+	files, err := writablePrefixFiles(home, writable, prefixes)
+	if err != nil {
+		return nil, nil, err
+	}
+	declared := append(append([]string(nil), readonly...), writable...)
+	covered := func(path string) bool {
+		for _, mount := range declared {
+			if isPathWithin(path, mount) {
+				return true
+			}
+		}
+		return false
+	}
+	type snapshot struct {
+		info os.FileInfo
+		hash [sha256.Size]byte
+	}
+	snapshots := make(map[string]snapshot)
+	var extraWritable []string
+	for _, path := range files {
+		if covered(path) {
+			// Keep explicit file mounts' modes. Otherwise, a declared prefix
+			// punches a writable file hole in its explicitly mounted parent.
+			if !containsPath(declared, path) {
+				extraWritable = append(extraWritable, path)
+			}
+			continue
+		}
+		source, err := openConfinedExisting("/", path)
+		if err != nil {
+			return nil, nil, err
+		}
+		before, err := source.Stat()
+		if err != nil {
+			source.Close()
+			return nil, nil, err
+		}
+		target, err := createConfinedMountpoint(root, path, false)
+		if err == nil {
+			err = copyPinnedFile(source, target)
+			if err == nil {
+				var data []byte
+				data, err = os.ReadFile(mountFDPath(target))
+				snapshots[path] = snapshot{before, sha256.Sum256(data)}
+			}
+			target.Close()
+		}
+		after, statErr := source.Stat()
+		if err == nil && (statErr != nil || !samePrefixSnapshot(before, after)) {
+			err = fmt.Errorf("host prefix config changed during snapshot: %s", path)
+		}
+		source.Close()
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	type prefixDirectory struct {
+		path, prefix string
+		host         *os.File
+	}
+	var directories []prefixDirectory
+	for _, prefix := range prefixes {
+		path := filepath.Join(home, prefix)
+		parent := filepath.Dir(path)
+		if covered(parent) {
+			continue
+		}
+		pinned, err := openConfinedExisting("/", parent)
+		var host *os.File
+		if err == nil {
+			host, err = os.Open(mountFDPath(pinned))
+			pinned.Close()
+		}
+		if err != nil {
+			for _, directory := range directories {
+				directory.host.Close()
+			}
+			return nil, nil, err
+		}
+		directories = append(directories, prefixDirectory{parent, filepath.Base(path), host})
+	}
+	if len(directories) == 0 {
+		return nil, extraWritable, nil
+	}
+	return func() {
+		for _, directory := range directories {
+			// Serialize cooperating sessions' comparison and publication.
+			if err := unix.Flock(int(directory.host.Fd()), unix.LOCK_EX); err != nil {
+				log.Printf("_deny_init: lock jail prefix destination %s: %v", directory.path, err)
+				directory.host.Close()
+				continue
+			}
+			entries, err := os.ReadDir(directory.path)
+			if err == nil {
+				for _, entry := range entries {
+					path := filepath.Join(directory.path, entry.Name())
+					if entry.Name() == directory.prefix || !strings.HasPrefix(entry.Name(), directory.prefix) || covered(path) || !entry.Type().IsRegular() {
+						continue
+					}
+					data, err := os.ReadFile(path)
+					if err != nil {
+						log.Printf("_deny_init: read jail prefix %s: %v", path, err)
+						continue
+					}
+					snapshot, existed := snapshots[path]
+					if existed && sha256.Sum256(data) == snapshot.hash {
+						continue
+					}
+					destination := filepath.Join(mountFDPath(directory.host), entry.Name())
+					current, statErr := os.Lstat(destination)
+					unchanged := existed && statErr == nil && samePrefixSnapshot(snapshot.info, current)
+					if !existed && os.IsNotExist(statErr) {
+						unchanged = true
+					}
+					if !unchanged {
+						// Keep both versions, outside the agent's prefix so future
+						// sessions do not import and copy back conflict artifacts.
+						conflict, err := os.CreateTemp(mountFDPath(directory.host), ".wingthing-conflict-"+entry.Name()+"-*")
+						if err == nil {
+							_, err = conflict.Write(data)
+							closeErr := conflict.Close()
+							if err == nil {
+								err = closeErr
+							}
+							log.Printf("_deny_init: host prefix changed; kept %s and saved session version to %s (error: %v)", path, filepath.Join(directory.path, filepath.Base(conflict.Name())), err)
+						} else {
+							log.Printf("_deny_init: save jail prefix conflict %s: %v", path, err)
+						}
+						continue
+					}
+					if err := copyFile(path, destination, snapshot.info); err != nil {
+						log.Printf("_deny_init: persist jail prefix %s: %v", path, err)
+					}
+				}
+			}
+			directory.host.Close()
+		}
+	}, extraWritable, nil
+}
+
+func samePrefixSnapshot(before, after os.FileInfo) bool {
+	return before != nil && after != nil && os.SameFile(before, after) &&
+		before.Size() == after.Size() && before.ModTime().Equal(after.ModTime())
+}
+
+func copyPinnedFile(source, target *os.File) error {
+	in, err := os.Open(mountFDPath(source))
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	targetInfo, err := target.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || !targetInfo.Mode().IsRegular() || targetInfo.Size() != 0 {
+		return fmt.Errorf("refusing to initialize a nonempty or non-regular jail config target")
+	}
+	out, err := os.OpenFile(mountFDPath(target), os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if err := out.Chmod(info.Mode().Perm()); err != nil {
+		return err
+	}
+	_, err = io.Copy(out, in)
+	return err
 }
 
 func isPathWithin(path, root string) bool {
 	cleanPath := filepath.Clean(path)
 	cleanRoot := filepath.Clean(root)
-	return cleanPath == cleanRoot || strings.HasPrefix(cleanPath, cleanRoot+string(filepath.Separator))
+	return cleanPath == cleanRoot || strings.HasPrefix(cleanPath, strings.TrimSuffix(cleanRoot, string(filepath.Separator))+string(filepath.Separator))
 }
 
-// jailMkTarget creates the bind-mount target inside the jail root.
-// For directories it creates the full path; for files/sockets it creates the
-// parent directory and an empty file as the mount point.
-func jailMkTarget(src, target string) error {
-	info, err := os.Stat(src)
+func jailMounts(readonly, writable []string, aliases map[string]string) []expectedMount {
+	// Bind the validated merged-usr destinations directly. The confined walker
+	// still rejects every symlink in the source and target; aliases recreated by
+	// setupJail must not be mistaken for agent-controlled mountpoint symlinks.
+	canonical := func(path string) string {
+		path = filepath.Clean(path)
+		for alias, target := range aliases {
+			if path == alias || strings.HasPrefix(path, alias+"/") {
+				return target + strings.TrimPrefix(path, alias)
+			}
+		}
+		return path
+	}
+	byPath := make(map[string]expectedMount)
+	for _, p := range readonly {
+		p = canonical(p)
+		byPath[p] = expectedMount{Path: p, ReadOnly: true}
+	}
+	for _, p := range writable {
+		p = canonical(p)
+		byPath[p] = expectedMount{Path: p, Writable: true}
+	}
+	mounts := make([]expectedMount, 0, len(byPath))
+	for _, mount := range byPath {
+		mounts = append(mounts, mount)
+	}
+	sort.Slice(mounts, func(i, j int) bool {
+		left, right := mounts[i].Path, mounts[j].Path
+		if strings.Count(left, "/") != strings.Count(right, "/") {
+			return strings.Count(left, "/") < strings.Count(right, "/")
+		}
+		return left < right
+	})
+	return mounts
+}
+
+// jailMkTarget pins both sides of a jail bind mount. No component may be a
+// symlink, and existing target files are opened without truncating them.
+func jailMkTarget(root, src string) (source, target *os.File, err error) {
+	return jailMkTargetAt(root, src, src)
+}
+
+func jailMkTargetAt(root, src, dst string) (source, target *os.File, err error) {
+	source, err = openConfinedExisting("/", src)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	if info.IsDir() {
-		return os.MkdirAll(target, 0755)
+	info, err := source.Stat()
+	if err == nil {
+		target, err = createConfinedMountpoint(root, dst, info.IsDir())
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-		return err
-	}
-	f, err := os.Create(target)
 	if err != nil {
-		return err
+		source.Close()
+		return nil, nil, err
 	}
-	return f.Close()
+	return source, target, nil
+}
+
+func mountFDPath(file *os.File) string {
+	return fmt.Sprintf("/proc/self/fd/%d", file.Fd())
+}
+
+// openConfinedParent walks from a pinned root, refusing symlinks at every
+// component. mkdirat/openat also keep creation confined if a component is
+// replaced while setup is running.
+func openConfinedParent(root, path string, create bool) (*os.File, string, error) {
+	if !filepath.IsAbs(path) || !filepath.IsAbs(root) {
+		return nil, "", fmt.Errorf("mount path must be absolute: %s", path)
+	}
+	for _, part := range strings.Split(path, "/") {
+		if part == ".." {
+			return nil, "", fmt.Errorf("mount path contains parent traversal: %s", path)
+		}
+	}
+	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, "", err
+	}
+	parts := strings.Split(strings.TrimPrefix(filepath.Clean(path), "/"), "/")
+	var rootParts []string
+	if filepath.Clean(root) != "/" {
+		rootParts = strings.Split(strings.TrimPrefix(filepath.Clean(root), "/"), "/")
+	}
+	parents := append(append([]string(nil), rootParts...), parts[:len(parts)-1]...)
+	for i, part := range parents {
+		next, openErr := unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if openErr == unix.ENOENT && create && i >= len(rootParts) {
+			if mkdirErr := unix.Mkdirat(fd, part, 0o755); mkdirErr != nil && mkdirErr != unix.EEXIST {
+				unix.Close(fd)
+				return nil, "", mkdirErr
+			}
+			next, openErr = unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		}
+		unix.Close(fd)
+		if openErr != nil {
+			return nil, "", openErr
+		}
+		fd = next
+	}
+	base := parts[len(parts)-1]
+	if base == "" {
+		base = "."
+	}
+	return os.NewFile(uintptr(fd), path), base, nil
+}
+
+func openConfinedExisting(root, path string) (*os.File, error) {
+	parent, base, err := openConfinedParent(root, path, false)
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close()
+	return openMountpointAt(parent, base, path)
+}
+
+func openMountpointAt(parent *os.File, base, path string) (*os.File, error) {
+	fd, err := unix.Openat(int(parent.Fd()), base, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), path)
+	info, err := file.Stat()
+	if err != nil || info.Mode()&os.ModeSymlink != 0 {
+		file.Close()
+		if err == nil {
+			err = fmt.Errorf("refusing symlink mountpoint: %s", path)
+		}
+		return nil, err
+	}
+	return file, nil
+}
+
+func createConfinedMountpoint(root, path string, directory bool) (*os.File, error) {
+	parent, base, err := openConfinedParent(root, path, true)
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close()
+	if directory {
+		err = unix.Mkdirat(int(parent.Fd()), base, 0o755)
+	} else {
+		var fd int
+		fd, err = unix.Openat(int(parent.Fd()), base, unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_CREAT|unix.O_EXCL, 0o644)
+		if err == nil {
+			err = unix.Close(fd)
+		}
+	}
+	if err != nil && err != unix.EEXIST {
+		return nil, err
+	}
+	file, err := openMountpointAt(parent, base, path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil || info.IsDir() != directory {
+		file.Close()
+		if err == nil {
+			err = fmt.Errorf("incompatible mountpoint type: %s", path)
+		}
+		return nil, err
+	}
+	return file, nil
 }

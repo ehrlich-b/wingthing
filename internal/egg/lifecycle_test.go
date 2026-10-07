@@ -29,6 +29,7 @@ func lifecycleFixture(t *testing.T) (dir, home, cwd, path string) {
 		t.Fatal(err)
 	}
 	path = filepath.Join(project, "ours.jsonl")
+	lifecycleWrite(t, filepath.Join(dir, "egg.meta"), "agent=claude\nprovider_session_id=ours\nprovider_home="+home+"\n")
 	return
 }
 
@@ -363,12 +364,8 @@ func TestLifecycleTerminalFailureMissingProcessAndUnknownProvider(t *testing.T) 
 	if v.State != "unknown" || v.StateSource != "unsupported" || v.Ready {
 		t.Fatalf("unsupported provider guessed ready: %+v", v)
 	}
-	v, err = ReadSessionLifecycle(unknown, "claude", cwd, home, "ours", false, 0, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if v.State != "unknown" || !strings.Contains(v.Reason, "without a recorded exit") {
-		t.Fatalf("lost provider was reported completed: %+v", v)
+	if _, err = ReadSessionLifecycle(unknown, "claude", cwd, home, "ours", false, 0, 10); err == nil {
+		t.Fatal("unknown egg imported another egg's native transcript without ownership metadata")
 	}
 }
 

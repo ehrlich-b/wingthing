@@ -1,16 +1,21 @@
 package egg
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	wingconfig "github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/protectedfile"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"golang.org/x/sys/unix"
 	"gopkg.in/yaml.v3"
 )
 
@@ -178,6 +183,7 @@ func (b BaseField) HasMasks() bool {
 
 // EggConfig holds the sandbox and environment configuration for egg sessions.
 type EggConfig struct {
+	resolutionError            error
 	Base                       BaseField         `yaml:"base,omitempty"`
 	FS                         []string          `yaml:"fs"`
 	Network                    NetworkField      `yaml:"network"`
@@ -200,10 +206,350 @@ type EggResources struct {
 
 // DefaultDenyPaths returns paths that should be blocked by default in sandboxed sessions.
 func DefaultDenyPaths() []string {
-	return []string{
+	paths, _ := defaultDenyPaths()
+	return paths
+}
+
+func defaultDenyPaths() ([]string, error) {
+	paths := []string{
 		"~/.ssh", "~/.gnupg", "~/.aws", "~/.docker",
 		"~/.kube", "~/.netrc", "~/.bash_history", "~/.zsh_history",
 	}
+	// Defaults are loaded before a session workspace is known. Resolve and
+	// seal aliases now, then validate their write surface at session discovery.
+	control, err := eggControlDenyPaths("", nil)
+	return append(paths, control...), err
+}
+
+// Include both release channels and an explicitly selected state directory.
+// An egg never needs a controller token, even its own egg.token.
+func eggControlDenyPaths(sessionDir string, grants ...[]sandbox.Mount) ([]string, error) {
+	home, _ := os.UserHomeDir()
+	states := []string{filepath.Join(home, ".wingthing"), filepath.Join(home, ".wingthing-preview")}
+	if state, err := wingconfig.StateDir(); err == nil {
+		states = append(states, state)
+	}
+	if filepath.Base(filepath.Dir(sessionDir)) == "eggs" {
+		states = append(states, filepath.Dir(filepath.Dir(sessionDir)))
+	}
+	seen := make(map[string]bool)
+	var paths []string
+	var loaders []string
+	var credentials []string
+	tokenTrees := []string{wingconfig.CanonicalProviderPath(filepath.Join(home, ".gnupg", "wingthing-control"))}
+	paths = append(paths, wingconfig.CanonicalProviderPath(filepath.Join(home, ".gnupg", "wingthing-control")))
+	for _, state := range states {
+		loaderState := state
+		state = wingconfig.CanonicalProviderPath(state)
+		// Validate the lexical path too, before canonicalization hides links
+		// that could redirect the host's next configuration load.
+		loaders = append(loaders, filepath.Join(loaderState, "wing.yaml"), filepath.Join(loaderState, "egg.yaml"))
+		if seen[state] {
+			continue
+		}
+		seen[state] = true
+		for _, name := range []string{"eggs", "tools", "device_token.yaml", "local_device_token.yaml", "wing_key", "sync.key", "wing.yaml", "egg.yaml", "config.yaml", "remotes.yaml", "clients.yaml", "roost.db", "wt.db"} {
+			paths = append(paths, filepath.Join(state, name))
+		}
+		// Seal the entire TLS tree, including a configured directory alias and
+		// keys created after launch, on both Linux and macOS.
+		tls := filepath.Join(state, "local-tls")
+		paths = append(paths, tls, wingconfig.CanonicalProviderPath(tls))
+		// SQLite may create these after launch; they can contain the same
+		// bearer tokens as the main databases and must be masked in advance.
+		for _, database := range []string{"roost.db", "wt.db"} {
+			for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+				paths = append(paths, filepath.Join(state, database+suffix))
+			}
+		}
+		for _, name := range []string{"wing_key", "sync.key", "device_token.yaml", "local_device_token.yaml"} {
+			credentials = append(credentials, filepath.Join(state, name))
+		}
+		loaders = append(loaders, filepath.Join(loaderState, "config.yaml"), filepath.Join(loaderState, "remotes.yaml"), filepath.Join(loaderState, "clients.yaml"))
+		tokenTrees = append(tokenTrees, filepath.Join(state, "eggs"))
+		toolsDir := filepath.Join(loaderState, "tools")
+		if cfg, err := wingconfig.LoadWingConfig(state); err == nil {
+			toolsDir = wingconfig.ResolveToolsDir(loaderState, cfg.ToolsDir)
+		}
+		loaders = append(loaders, toolsDir)
+		// YAML definitions can themselves be aliases to files outside the
+		// configured directory. Protect the files actually loaded by the host.
+		if entries, err := os.ReadDir(toolsDir); err == nil {
+			for _, entry := range entries {
+				if !entry.IsDir() && (strings.HasSuffix(entry.Name(), ".yaml") || strings.HasSuffix(entry.Name(), ".yml")) {
+					loader := filepath.Join(toolsDir, entry.Name())
+					loaders = append(loaders, loader)
+				}
+			}
+		}
+	}
+	// Both the v0.147.0 compatibility token and current controller token are
+	// host credentials. Refuse existing hard links before exposing a workspace.
+	for _, tree := range tokenTrees {
+		entries, err := os.ReadDir(tree)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return paths, fmt.Errorf("inspect controller tokens: %w", err)
+		}
+		for _, entry := range entries {
+			info, err := os.Stat(filepath.Join(tree, entry.Name()))
+			if os.IsNotExist(err) {
+				// Concurrent session cleanup can remove an entry after ReadDir.
+				continue
+			}
+			if err != nil {
+				return paths, fmt.Errorf("inspect controller session: %w", err)
+			}
+			if !info.IsDir() {
+				continue
+			}
+			for _, name := range []string{"egg.token", "egg.control", "isolation"} {
+				credentials = append(credentials, filepath.Join(tree, entry.Name(), name))
+			}
+		}
+	}
+	sealed, err := physicalControlAliases(paths)
+	if err != nil {
+		return paths, fmt.Errorf("resolve controller aliases: %w", err)
+	}
+	for _, path := range credentials {
+		f, err := protectedfile.Open(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return paths, fmt.Errorf("protect controller credential %s: %w", path, err)
+		}
+		aliases, err := f.Aliases()
+		f.Close()
+		if err != nil {
+			return paths, fmt.Errorf("resolve controller credential %s: %w", path, err)
+		}
+		for _, alias := range aliases {
+			covered := false
+			for _, tree := range sealed {
+				covered = covered || controlPathWithin(alias, tree)
+			}
+			// Keep validating every token, but avoid child masks beneath a
+			// directory already sealed by the allowlist or a parent mask.
+			if !covered {
+				paths = append(paths, alias)
+			}
+		}
+	}
+	for _, loader := range loaders {
+		resolved, err := resolveLoaderPath(loader, true, grants...)
+		if err != nil {
+			return paths, fmt.Errorf("protect tool loader %s: %w", loader, err)
+		}
+		paths = append(paths, loader, resolved)
+	}
+	return paths, nil
+}
+
+// IsolateControl protects controller secrets and loader paths for both
+// interactive eggs and headless tasks. Only interactive sessions provide
+// bridges back into their otherwise sealed controller directories.
+func IsolateControl(cfg sandbox.Config, sessionDir string, bridges []sandbox.Mount, toolSocket string) (sandbox.Config, error) {
+	if runtime.GOOS == "linux" {
+		cfg.Mounts = linuxEggReadMounts(cfg.Mounts, cfg.Deny)
+	}
+	control, err := eggControlDenyPaths(sessionDir, cfg.Mounts)
+	if err != nil {
+		return sandbox.Config{}, err
+	}
+	cfg.Deny = append(cfg.Deny, control...)
+	// The OS policies handle these trees with exact bridge exceptions.
+	// Retain ordinary file denies so they still override bridges.
+	var filtered []string
+	for _, path := range cfg.Deny {
+		isTree := false
+		for _, target := range control {
+			if (filepath.Base(target) == "eggs" || filepath.Base(target) == "wingthing-control") && wingconfig.CanonicalProviderPath(path) == target {
+				isTree = true
+				break
+			}
+		}
+		if !isTree {
+			filtered = append(filtered, path)
+		}
+	}
+	cfg.Deny = filtered
+	if runtime.GOOS == "linux" {
+		// Resolve masks before HOME aliases become independent jail mounts.
+		cfg.Deny, err = sandbox.PhysicalDenyPaths(cfg.Deny)
+		if err != nil {
+			return sandbox.Config{}, fmt.Errorf("protect deny aliases: %w", err)
+		}
+		cfg.Deny = sandbox.CanonicalDenyPaths(cfg.Deny)
+		cfg.DenyWrite, err = sandbox.PhysicalDenyPaths(cfg.DenyWrite)
+		if err != nil {
+			return sandbox.Config{}, fmt.Errorf("protect policy aliases: %w", err)
+		}
+		cfg.DenyWrite = sandbox.CanonicalDenyPaths(cfg.DenyWrite)
+		cfg.Mounts, err = isolateLinuxEggControl(cfg.Mounts, control, bridges, cfg.Deny)
+		if err != nil {
+			return sandbox.Config{}, err
+		}
+		cfg.Deny = append(cfg.Deny, "/")
+		// The jail's synthetic mask ancestors must not be moved either. They
+		// are prepared with the masks even when missing on the host; omitted
+		// control trees without masks need not exist in the private jail.
+		pinned := make(map[string]bool)
+		for _, path := range cfg.DenyRename {
+			pinned[path] = true
+		}
+		for _, path := range cfg.Deny {
+			for dir := filepath.Dir(wingconfig.CanonicalProviderPath(path)); dir != "/"; dir = filepath.Dir(dir) {
+				if !pinned[dir] {
+					cfg.DenyRename = append(cfg.DenyRename, dir)
+					pinned[dir] = true
+				}
+			}
+		}
+	} else {
+		cfg.Mounts = append(cfg.Mounts, bridges...)
+		if runtime.GOOS == "darwin" {
+			// Seatbelt also pins each controller ancestor after bridge allows.
+			cfg.ControlDenyPaths = control
+			cfg.ControlBridges = bridges
+			cfg.ControlSocket = toolSocket
+			cfg.DenyOtherProcessInfo = true
+		}
+	}
+	return cfg, nil
+}
+
+// Linux deny masks cannot have holes: they are applied after writable mounts.
+// Compile the existing mounts into a jail allowlist with the control trees
+// omitted, then add only this session's bridge mounts. Splitting ancestor
+// mounts also keeps future sibling eggs out; enumerating current eggs alone
+// would leave a race with the next session launch.
+func isolateLinuxEggControl(mounts []sandbox.Mount, control []string, bridges []sandbox.Mount, deny ...[]string) ([]sandbox.Mount, error) {
+	var denied []string
+	for _, paths := range deny {
+		for _, path := range sandbox.CanonicalDenyPaths(paths) {
+			if path != "/" { // jail marker, not a deny inside the allowlist
+				denied = append(denied, path)
+			}
+		}
+	}
+	var trees []string
+	for _, path := range control {
+		trees = append(trees, wingconfig.CanonicalProviderPath(path))
+	}
+	var err error
+	trees, err = physicalControlAliases(trees)
+	if err != nil {
+		return nil, err
+	}
+	var result []sandbox.Mount
+	splitting := make(map[string]bool)
+	var splittingIdentity []os.FileInfo
+	var split func(sandbox.Mount) error
+	split = func(m sandbox.Mount) error {
+		path := wingconfig.CanonicalProviderPath(m.Source)
+		ancestor := false
+		for _, tree := range trees {
+			if controlPathWithin(path, tree) {
+				return nil
+			}
+			ancestor = ancestor || controlPathWithin(tree, path)
+		}
+		if !ancestor {
+			// The jail recreates fixed merged-usr links itself. Mount their
+			// destinations directly instead of trying to overmount the link.
+			source := filepath.Clean(m.Source)
+			if (source == "/bin" || source == "/sbin" || source == "/lib" || source == "/lib64") && path == "/usr"+source {
+				m.Source, m.Target = path, path
+			}
+			if info, err := os.Lstat(m.Source); err == nil && info.Mode()&os.ModeSymlink != 0 {
+				for _, root := range denied {
+					if controlPathWithin(path, root) {
+						return nil // never reopen a masked target through an alias
+					}
+				}
+				// Safe HOME aliases remain readable, but never inherit a
+				// writable grant. Bind the resolved source into a synthetic
+				// target rather than following a symlink in the jail walker.
+				if _, err := os.Stat(path); os.IsNotExist(err) {
+					return nil // dangling aliases were unreadable on the host too
+				}
+				m.Target, m.Source, m.ReadOnly = m.Source, path, true
+			}
+			result = append(result, m)
+			return nil
+		}
+		if splitting[path] {
+			return nil // an alias back to an ancestor must not reopen the tree
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		for _, active := range splittingIdentity {
+			if os.SameFile(info, active) {
+				return nil
+			}
+		}
+		splittingIdentity = append(splittingIdentity, info)
+		defer func() { splittingIdentity = splittingIdentity[:len(splittingIdentity)-1] }()
+		splitting[path] = true
+		defer delete(splitting, path)
+		// Split the resolved ancestor, so an alias cannot leave symlink
+		// components in the child sources handed to the confined jail builder.
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return fmt.Errorf("split control-tree ancestor %s: %w", m.Source, err)
+		}
+		for _, entry := range entries {
+			child := filepath.Join(path, entry.Name())
+			if filepath.Clean(m.Source) == "/" {
+				// The jail supplies private proc, dev and tmp. It recreates
+				// merged-usr aliases before installing the other mounts.
+				mergedUSR := child == "/bin" || child == "/sbin" || child == "/lib" || child == "/lib64"
+				if child == "/proc" || child == "/dev" || child == "/tmp" || (mergedUSR && entry.Type()&os.ModeSymlink != 0) {
+					continue
+				}
+			}
+			origin := m.InheritedFrom
+			if origin == "" {
+				origin = m.Source
+			}
+			if err := split(sandbox.Mount{Source: child, Target: child, ReadOnly: m.ReadOnly, InheritedFrom: origin}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, m := range mounts {
+		if err := split(m); err != nil {
+			return nil, err
+		}
+	}
+	return append(result, bridges...), nil
+}
+
+func controlPathWithin(path, root string) bool {
+	return path == root || strings.HasPrefix(path, strings.TrimSuffix(root, "/")+"/")
+}
+
+func linuxEggReadMounts(mounts []sandbox.Mount, deny []string) []sandbox.Mount {
+	for _, path := range deny {
+		if path == "/" {
+			return mounts // an explicit jail already has an allowlist
+		}
+	}
+	for _, mount := range mounts {
+		if filepath.Clean(mount.Source) == "/" {
+			return mounts
+		}
+	}
+	// Outside explicit jail mode, the Linux backend implicitly allows reads
+	// everywhere. Preserve those reads when compiling control-tree isolation.
+	return append([]sandbox.Mount{{Source: "/", Target: "/", ReadOnly: true}}, mounts...)
 }
 
 // DefaultCacheDirs returns OS-standard cache directories that build tools need.
@@ -225,13 +571,15 @@ func DefaultEggConfig() *EggConfig {
 	for _, d := range DefaultCacheDirs() {
 		fs = append(fs, "rw:"+d)
 	}
-	for _, d := range DefaultDenyPaths() {
+	deny, err := defaultDenyPaths()
+	for _, d := range deny {
 		fs = append(fs, "deny:"+d)
 	}
 	fs = append(fs, "deny-write:./egg.yaml")
 	return &EggConfig{
-		FS:  fs,
-		Env: EnvField{"HOME", "PATH", "TERM", "LANG", "USER"},
+		resolutionError: err,
+		FS:              fs,
+		Env:             EnvField{"HOME", "PATH", "TERM", "LANG", "USER"},
 	}
 }
 
@@ -274,15 +622,25 @@ func RequiresSandbox(cfg *EggConfig, agentName string) bool {
 
 // LoadEggConfig reads and parses an egg.yaml file.
 func LoadEggConfig(path string) (*EggConfig, error) {
-	data, err := os.ReadFile(path)
+	cfg, _, err := loadEggConfig(path)
+	return cfg, err
+}
+
+func loadEggConfig(path string) (*EggConfig, os.FileInfo, error) {
+	f, err := protectedfile.OpenPolicyResolved(path)
 	if err != nil {
-		return nil, fmt.Errorf("read egg config: %w", err)
+		return nil, nil, fmt.Errorf("read egg config: %w", err)
+	}
+	defer f.Close()
+	data, err := f.ReadAll()
+	if err != nil {
+		return nil, nil, fmt.Errorf("read egg config: %w", err)
 	}
 	var cfg EggConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse egg config: %w", err)
+		return nil, nil, fmt.Errorf("parse egg config: %w", err)
 	}
-	return &cfg, nil
+	return &cfg, f.Info, nil
 }
 
 // LoadEggConfigFromYAML parses an egg config from a YAML string.
@@ -301,15 +659,18 @@ func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 	if cwd != "" {
 		path := filepath.Join(cwd, "egg.yaml")
 		if _, statErr := os.Stat(path); statErr == nil {
-			cfg, err := ResolveEggConfig(path)
+			cfg, err := ResolveEggConfig(path, cwd)
 			if err == nil {
 				return cfg
 			}
 			log.Printf("egg: config discovery failed for %s: %v", path, err)
+			if isUnsafePolicyPath(err) {
+				return &EggConfig{resolutionError: err}
+			}
 		}
 	}
 	if wingDefault != nil {
-		return wingDefault
+		return configForWorkspace(wingDefault, cwd)
 	}
 	if dir, err := wingconfig.StateDir(); err == nil {
 		path := filepath.Join(dir, "egg.yaml")
@@ -319,14 +680,65 @@ func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 			}
 		}
 		if _, statErr := os.Stat(path); statErr == nil {
-			cfg, resolveErr := ResolveEggConfig(path)
+			cfg, resolveErr := ResolveEggConfig(path, cwd)
 			if resolveErr == nil {
 				return cfg
 			}
 			log.Printf("egg: global config discovery failed for %s: %v", path, resolveErr)
+			if isUnsafePolicyPath(resolveErr) {
+				return &EggConfig{resolutionError: resolveErr}
+			}
 		}
 	}
-	return DefaultEggConfig()
+	return configForWorkspace(DefaultEggConfig(), cwd)
+}
+
+// RuntimeEggConfig validates the administrator's captured policy for a session
+// without consulting caller-writable workspace or global configuration files.
+func RuntimeEggConfig(wingDefault *EggConfig, cwd string) *EggConfig {
+	if wingDefault == nil {
+		wingDefault = DefaultEggConfig()
+	}
+	cfg := *wingDefault
+	return configForWorkspace(&cfg, cwd)
+}
+
+func policyMountsForWorkspace(cfg *EggConfig, cwd string) []sandbox.Mount {
+	if cwd == "" {
+		return nil // Wing startup and reload have no session write surface yet.
+	}
+	home, _ := os.UserHomeDir()
+	mounts, _, _ := ParseFSRules(cfg.FS, home)
+	for i := range mounts {
+		if !filepath.IsAbs(mounts[i].Source) {
+			mounts[i].Source = filepath.Join(cwd, mounts[i].Source)
+		}
+	}
+	return mounts
+}
+
+// Copy the shared wing default before validating it for one session. A refusal
+// in a writable dotfiles workspace must not poison launches elsewhere.
+func configForWorkspace(cfg *EggConfig, cwd string) *EggConfig {
+	if cwd == "" || cfg.ResolutionError() != nil || !RequiresSandbox(cfg, "") {
+		return cfg
+	}
+	resolved := *cfg
+	resolved.FS = append([]string(nil), cfg.FS...)
+	mounts := policyMountsForWorkspace(cfg, cwd)
+	home, _ := os.UserHomeDir()
+	_, _, denyWrite := ParseFSRules(cfg.FS, home)
+	for _, path := range denyWrite {
+		if cwd != "" && !filepath.IsAbs(path) {
+			path = filepath.Join(cwd, path)
+		}
+		if _, err := resolveLoaderPath(path, true, mounts); err != nil {
+			resolved.resolutionError = err
+			return &resolved
+		}
+	}
+	_, resolved.resolutionError = eggControlDenyPaths("", mounts)
+	return &resolved
 }
 
 const maxBaseDepth = 10
@@ -334,11 +746,80 @@ const maxBaseDepth = 10
 // ResolveEggConfig loads an egg.yaml and resolves its base chain, returning
 // a fully merged config. If base is empty, merges on top of DefaultEggConfig.
 // If base is "none", returns the config as-is (empty slate).
-func ResolveEggConfig(path string) (*EggConfig, error) {
-	return resolveEggConfig(path, make(map[string]bool), 0)
+// An optional cwd anchors relative filesystem grants to the session workspace.
+// Without it, alias write checks are deferred until session discovery/runtime.
+func ResolveEggConfig(path string, cwds ...string) (*EggConfig, error) {
+	dependencies := make(map[string]os.FileInfo)
+	cfg, err := resolveEggConfig(path, dependencies, 0)
+	if err != nil {
+		return nil, err
+	}
+	// Add these after all inheritance and section masks, so clearing the FS
+	// section cannot discard protection for a policy that was already read.
+	// Explicit trusted-host policies have no OS sandbox to enforce it.
+	if RequiresSandbox(cfg, "") {
+		cwd := ""
+		if len(cwds) > 0 {
+			cwd = cwds[0]
+		}
+		mounts := policyMountsForWorkspace(cfg, cwd)
+		protected := make(map[string]bool)
+		ancestors := make(map[string]bool)
+		workspace := wingconfig.CanonicalProviderPath(filepath.Dir(path))
+		for dependency, identity := range dependencies {
+			real, err := resolveLoaderPath(dependency, false, mounts)
+			if err != nil {
+				return nil, fmt.Errorf("resolve policy dependency: %w", err)
+			}
+			f, err := protectedfile.OpenPolicy(real)
+			if err != nil {
+				return nil, err
+			}
+			same := os.SameFile(identity, f.Info)
+			f.Close()
+			if !same {
+				return nil, &protectedfile.Error{Path: dependency, Reason: "policy changed after being read"}
+			}
+			protected[real] = true
+			// System aliases are immutable; only user-managed aliases need a
+			// lexical rule to recheck after later agent grants are installed.
+			if _, err := resolveLoaderPath(dependency, false, []sandbox.Mount{{Source: "/"}}); isUnsafePolicyPath(err) {
+				protected[dependency] = true
+			}
+			// Pin every directory entry that could relocate a loaded policy.
+			// External bases need their chain protected to the filesystem root.
+			for dir := filepath.Dir(real); dir != "/"; dir = filepath.Dir(dir) {
+				ancestors[dir] = true
+				if dir == workspace {
+					break
+				}
+			}
+		}
+		paths := make([]string, 0, len(protected))
+		for dependency := range protected {
+			paths = append(paths, dependency)
+		}
+		sort.Strings(paths)
+		for _, dependency := range paths {
+			cfg.FS = append(cfg.FS, "deny-write:"+dependency)
+		}
+		paths = paths[:0]
+		for dir := range ancestors {
+			paths = append(paths, dir)
+		}
+		sort.Strings(paths)
+		for _, dir := range paths {
+			cfg.FS = append(cfg.FS, "deny-rename:"+dir)
+		}
+		cfg = configForWorkspace(cfg, cwd)
+		if err := cfg.ResolutionError(); err != nil {
+			return nil, err
+		}
+	}
+	return cfg, nil
 }
 
-func resolveEggConfig(path string, visited map[string]bool, depth int) (*EggConfig, error) {
+func resolveEggConfig(path string, visited map[string]os.FileInfo, depth int) (*EggConfig, error) {
 	if depth > maxBaseDepth {
 		return nil, fmt.Errorf("egg config base chain too deep (max %d)", maxBaseDepth)
 	}
@@ -346,15 +827,21 @@ func resolveEggConfig(path string, visited map[string]bool, depth int) (*EggConf
 	if err != nil {
 		return nil, err
 	}
-	if visited[abs] {
+	if _, exists := visited[abs]; exists {
 		return nil, fmt.Errorf("egg config circular base reference: %s", abs)
 	}
-	visited[abs] = true
+	visited[abs] = nil
+	// Read the chain before checking aliases against the final inherited FS.
+	if _, err := resolveLoaderPath(abs, false, nil); err != nil {
+		return nil, err
+	}
 
-	child, err := LoadEggConfig(abs)
+	child, identity, err := loadEggConfig(abs)
 	if err != nil {
 		return nil, err
 	}
+
+	visited[abs] = identity
 
 	var parent *EggConfig
 	switch child.Base.Name {
@@ -373,6 +860,9 @@ func resolveEggConfig(path string, visited map[string]bool, depth int) (*EggConf
 			return nil, fmt.Errorf("resolve base %q: %w", child.Base.Name, err)
 		}
 	}
+	if err := parent.ResolutionError(); err != nil {
+		return nil, err
+	}
 
 	if child.Base.HasMasks() {
 		if err := applySectionMasks(parent, child.Base, filepath.Dir(abs), visited, depth); err != nil {
@@ -381,6 +871,158 @@ func resolveEggConfig(path string, visited map[string]bool, depth int) (*EggConf
 	}
 
 	return MergeEggConfig(parent, child), nil
+}
+
+// PolicyPathError refuses replaceable symlinks and regular-file hard links
+// whose other names cannot be sealed by the sandbox's pathname protections.
+// Host-user write permissions alone do not make a symlink unsafe.
+type PolicyPathError struct {
+	Path  string
+	Links uint64
+}
+
+func (e *PolicyPathError) Error() string {
+	if e.Links > 1 {
+		return fmt.Sprintf("policy path has multiple hard links (%d): %s", e.Links, e.Path)
+	}
+	return fmt.Sprintf("policy path traverses a replaceable symlink: %s", e.Path)
+}
+
+func isUnsafePolicyPath(err error) bool {
+	var pathErr *PolicyPathError
+	var fileErr *protectedfile.Error
+	return errors.As(err, &pathErr) || errors.As(err, &fileErr)
+}
+
+// Walk the actual loader path, including links in link targets. System aliases
+// such as macOS /var remain usable when their ancestor entries are immutable to
+// this UID. A read-only child directory inside a writable tree is not enough.
+func validatePolicyPath(path string) error {
+	_, err := resolveLoaderPath(path, false)
+	return err
+}
+
+// Return the actual loader destination so immutable aliases are sealed at their
+// target too, including paths containing .. after a system symlink.
+func resolveLoaderPath(path string, allowMissing bool, grants ...[]sandbox.Mount) (string, error) {
+	var mounts []sandbox.Mount
+	if len(grants) > 0 {
+		mounts = grants[0]
+	} else {
+		home, _ := os.UserHomeDir()
+		fs := []string{"rw:./"}
+		for _, cache := range DefaultCacheDirs() {
+			fs = append(fs, "rw:"+cache)
+		}
+		mounts, _, _ = ParseFSRules(fs, home)
+	}
+	checkAncestors := func(dir, alias string) error {
+		for parent := dir; ; parent = filepath.Dir(parent) {
+			if loaderDirectoryWritable(parent, mounts) && unix.Access(parent, unix.W_OK|unix.X_OK) == nil {
+				return &PolicyPathError{Path: alias}
+			}
+			if parent == "/" {
+				return nil
+			}
+		}
+	}
+	if !filepath.IsAbs(path) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		// Preserve .. components until their preceding symlinks are inspected.
+		path = cwd + "/" + path
+	}
+	pending := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	current := "/"
+	links := 0
+	var mutableAlias string
+	for len(pending) > 0 {
+		part := pending[0]
+		pending = pending[1:]
+		if part == "" || part == "." {
+			continue
+		}
+		next := filepath.Join(current, part)
+		info, err := os.Lstat(next)
+		if err != nil {
+			if allowMissing && os.IsNotExist(err) {
+				if mutableAlias != "" {
+					if err := checkAncestors(current, mutableAlias); err != nil {
+						return "", err
+					}
+				}
+				// An absent loader is sealed before creation.
+				return filepath.Join(append([]string{next}, pending...)...), nil
+			}
+			return "", fmt.Errorf("inspect policy path: %w", err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+
+			current = next
+			continue
+		}
+		if err := checkAncestors(current, next); err != nil {
+			return "", err
+		}
+		// Immutable system aliases need no target-chain check. User-managed
+		// links also require their destination's ancestors to remain unwritable.
+		if unix.Access(current, unix.W_OK|unix.X_OK) == nil {
+			mutableAlias = next
+		}
+		links++
+		if links > 255 {
+			return "", fmt.Errorf("policy path has too many symlinks: %s", path)
+		}
+		target, err := os.Readlink(next)
+		if err != nil {
+			return "", err
+		}
+		if filepath.IsAbs(target) {
+			current = "/"
+		}
+		pending = append(strings.Split(target, "/"), pending...)
+	}
+	if mutableAlias != "" {
+		if err := checkAncestors(filepath.Dir(current), mutableAlias); err != nil {
+			return "", err
+		}
+	}
+	info, err := os.Stat(current)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		f, err := protectedfile.OpenPolicy(current)
+		if err != nil {
+			return "", err
+		}
+		f.Close()
+	}
+	return current, nil
+}
+
+func loaderDirectoryWritable(path string, mounts []sandbox.Mount) bool {
+	for _, mount := range mounts {
+		if mount.ReadOnly {
+			continue
+		}
+		root := wingconfig.CanonicalProviderPath(mount.Source)
+		if controlPathWithin(path, root) || (mount.UseRegex && strings.HasPrefix(path, root)) {
+			return true
+		}
+	}
+	return false
+}
+
+// ResolutionError preserves a security refusal through legacy discovery APIs.
+// Callers must check it before rendering or executing the returned config.
+func (c *EggConfig) ResolutionError() error {
+	if c == nil {
+		return nil
+	}
+	return c.resolutionError
 }
 
 // resolveBasePath turns a base value into an absolute path.
@@ -411,7 +1053,7 @@ func resolveBasePath(base, configDir string) string {
 // per-section mask values. "none" clears the section; a name/path resolves
 // that file's full chain and extracts the section.
 func applySectionMasks(parent *EggConfig, masks BaseField, configDir string,
-	visited map[string]bool, depth int) error {
+	visited map[string]os.FileInfo, depth int) error {
 	if masks.FS != "" {
 		if masks.FS == "none" {
 			parent.FS = nil
@@ -647,6 +1289,8 @@ func ParseFSRules(fs []string, home string) ([]sandbox.Mount, []string, []string
 		switch mode {
 		case "deny":
 			deny = append(deny, expanded)
+		case "deny-rename":
+			// Consumed separately by the runtime; never a writable grant.
 		case "deny-write":
 			denyWrite = append(denyWrite, expanded)
 		case "ro":
@@ -656,6 +1300,18 @@ func ParseFSRules(fs []string, home string) ([]sandbox.Mount, []string, []string
 		}
 	}
 	return mounts, deny, denyWrite
+}
+
+// denyRenamePaths preserves directory contents' existing permissions while
+// preventing replacement of the directory entry itself.
+func denyRenamePaths(fs []string, home string) []string {
+	var paths []string
+	for _, entry := range fs {
+		if path, ok := strings.CutPrefix(entry, "deny-rename:"); ok {
+			paths = append(paths, expandTilde(path, home))
+		}
+	}
+	return paths
 }
 
 // ToSandboxConfig converts the egg config to a sandbox.Config.
@@ -672,6 +1328,7 @@ func (c *EggConfig) ToSandboxConfig(home string) sandbox.Config {
 		Mounts:      mounts,
 		Deny:        deny,
 		DenyWrite:   denyWrite,
+		DenyRename:  denyRenamePaths(c.FS, home),
 		NetworkNeed: netNeed,
 		NetworkMode: c.Network.Mode,
 		Domains:     c.Network.Domains,
@@ -812,6 +1469,9 @@ func (c *EggConfig) BuildEnvMap(home string) map[string]string {
 
 // YAML returns the config serialized as YAML.
 func (c *EggConfig) YAML() (string, error) {
+	if err := c.ResolutionError(); err != nil {
+		return "", err
+	}
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return "", err

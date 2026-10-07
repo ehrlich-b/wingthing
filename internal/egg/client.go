@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	"github.com/ehrlich-b/wingthing/internal/protectedfile"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -25,7 +27,16 @@ type Client struct {
 
 // Dial connects to an egg's Unix socket and reads its auth token.
 func Dial(socketPath, tokenPath string) (*Client, error) {
-	tokenData, err := os.ReadFile(tokenPath)
+	dir := filepath.Dir(tokenPath)
+	if controlDir, err := readControlDirectory(dir); err == nil {
+		if !hasControlIsolationAt(controlDir) {
+			return nil, fmt.Errorf("egg controller isolation marker is unavailable")
+		}
+		tokenPath = filepath.Join(controlDir, "egg.token")
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	tokenData, err := protectedfile.ReadFile(tokenPath)
 	if err != nil {
 		return nil, fmt.Errorf("read egg token: %w", err)
 	}
@@ -54,6 +65,19 @@ func (c *Client) authCtx(ctx context.Context) context.Context {
 func (c *Client) Kill(ctx context.Context, sessionID string) error {
 	_, err := c.client.Kill(c.authCtx(ctx), &pb.KillRequest{SessionId: sessionID})
 	return err
+}
+
+// ReclaimToolCapability recovers a surviving egg's original tool authority.
+// The egg token is host-only; neither ordinary status nor the sandbox exposes it.
+func (c *Client) ReclaimToolCapability(ctx context.Context) (string, error) {
+	response, err := c.client.Status(c.authCtx(ctx), &pb.StatusRequest{ReclaimTools: true})
+	if err != nil {
+		return "", err
+	}
+	if response.ToolCapability == "" {
+		return "", fmt.Errorf("egg has no recoverable tool capability; start a new egg session")
+	}
+	return response.ToolCapability, nil
 }
 
 // Resize changes terminal dimensions.

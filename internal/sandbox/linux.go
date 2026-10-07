@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"golang.org/x/sys/unix"
 )
 
@@ -79,9 +80,16 @@ type linuxSandbox struct {
 // newPlatform tries to create a namespace+seccomp sandbox.
 // Returns an error if capabilities are insufficient so the factory falls back.
 func newPlatform(cfg Config) (Sandbox, error) {
-	// Writes outside HOME and through overlay prefixes are not a closed rule
-	// list here, so a protected set cannot be verified against final policy.
-	if err := refuseProtectedWriteTargets(cfg, "linux"); err != nil {
+	var err error
+	cfg.Deny, err = PhysicalDenyPaths(cfg.Deny)
+	if err != nil {
+		return nil, fmt.Errorf("protect deny aliases: %w", err)
+	}
+	cfg.DenyWrite, err = PhysicalDenyPaths(cfg.DenyWrite)
+	if err != nil {
+		return nil, fmt.Errorf("protect write-deny aliases: %w", err)
+	}
+	if err := verifyLinuxProtectedWriteTargets(cfg); err != nil {
 		return nil, err
 	}
 	hasNamespaceCapability := hasEffectiveCAPSYSADMIN()
@@ -102,6 +110,36 @@ func newPlatform(cfg Config) (Sandbox, error) {
 
 	log.Printf("linux sandbox: created tmpdir=%s network=%s cgroup=%v", dir, cfg.NetworkNeed, cg != nil)
 	return &linuxSandbox{cfg: cfg, tmpDir: dir, cgroup: cg, userNamespace: !hasNamespaceCapability}, nil
+}
+
+// A jail has a closed set of host write grants. Its private root, HOME and
+// temporary directories cannot rename host ancestors outside those binds.
+func verifyLinuxProtectedWriteTargets(cfg Config) error {
+	if len(cfg.ProtectedWriteTargets) == 0 {
+		return nil
+	}
+	if err := ValidateProtectedWriteTargets(cfg.ProtectedWriteTargets); err != nil {
+		return err
+	}
+	if !containsPath(cfg.Deny, "/") {
+		return refuseProtectedWriteTargets(cfg, "linux non-jail")
+	}
+	for _, target := range cfg.ProtectedWriteTargets {
+		for _, mount := range cfg.Mounts {
+			if mount.ReadOnly {
+				continue
+			}
+			path := mount.Source
+			overlaps, err := config.PathsPhysicallyOverlap(path, target)
+			if err != nil {
+				return &ProtectedWriteTargetError{Target: target, Reason: err.Error()}
+			}
+			if overlaps {
+				return &ProtectedWriteTargetError{Target: target, Rule: "writable bind " + path, Reason: "overlaps protected host state"}
+			}
+		}
+	}
+	return nil
 }
 
 func hasEffectiveCAPSYSADMIN() bool {
@@ -301,6 +339,9 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		for _, d := range s.cfg.Deny {
 			wrapArgs = append(wrapArgs, "--deny", d)
 		}
+		for _, d := range s.cfg.DenyRename {
+			wrapArgs = append(wrapArgs, "--deny-rename", d)
+		}
 		for _, d := range s.cfg.DenyWrite {
 			wrapArgs = append(wrapArgs, "--deny-write", d)
 		}
@@ -319,7 +360,17 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 			if d == "/" {
 				for _, m := range s.cfg.Mounts {
 					if m.ReadOnly && m.Source != "/" {
-						wrapArgs = append(wrapArgs, "--mount-ro", m.Source)
+						// Root enumeration supplies default reads, not an explicit
+						// file grant. Prefix files need private copies so replacement
+						// and persistence work instead of hitting a bind mountpoint.
+						if inferredPrefixFile(m, s.cfg.Mounts, home) {
+							continue
+						}
+						if m.Target != "" && m.Target != m.Source {
+							wrapArgs = append(wrapArgs, "--mount-ro-alias", m.Source, m.Target)
+						} else {
+							wrapArgs = append(wrapArgs, "--mount-ro", m.Source)
+						}
 					}
 				}
 				break
@@ -390,6 +441,22 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		cmd.ExtraFiles = append(cmd.ExtraFiles, child)
 	}
 	return cmd, nil
+}
+
+func inferredPrefixFile(m Mount, mounts []Mount, home string) bool {
+	if m.InheritedFrom != "/" || home == "" || (m.Target != "" && m.Target != m.Source) {
+		return false
+	}
+	for _, prefix := range mounts {
+		if prefix.ReadOnly || !prefix.UseRegex || !isPathWithin(prefix.Source, home) {
+			continue
+		}
+		if filepath.Dir(m.Source) == filepath.Dir(prefix.Source) && m.Source != prefix.Source && strings.HasPrefix(m.Source, prefix.Source) {
+			info, err := os.Lstat(m.Source)
+			return err == nil && info.Mode().IsRegular()
+		}
+	}
+	return false
 }
 
 // straceSupportsKillOnExit reports whether the strace binary understands

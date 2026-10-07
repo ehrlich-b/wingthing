@@ -19,6 +19,39 @@ Local CLI and MCP access use authenticated Unix sockets and operating-system fil
 permissions. SSH attach uses OpenSSH's authentication, encryption, and host-key
 verification. Neither path uses Wingthing's relay encryption.
 
+## Replacing legacy eggs after a sandbox upgrade
+
+Surviving eggs from v0.147.0 and earlier isolation builds keep their PTYs so
+owners can finish or save work. The wing marks them `replacement-required` and
+does not restore their privileged tool listeners. New controller tokens and
+durable isolation markers live under `~/.gnupg/wingthing-control`, which the
+v0.147.0 default policy denies. New PTYs can start alongside those sessions.
+A custom legacy policy that exposes this directory requires that specific
+session to restart before publishing new controller credentials. Legacy macOS
+policies also permit inspecting sibling process environments, so new privileged
+tool capabilities are withheld until those sessions restart; new browser PTYs
+still start without tools. Existing eggs are never terminated automatically.
+
+### Limits while legacy eggs are still live
+
+An upgrade cannot retroactively contain an old sandbox. A live legacy egg can
+retain writable descriptors to loader YAML after unlinking its aliases, tamper
+with writable PID metadata or isolation markers, and evade discovery in another
+state directory. Reload guards reduce exposure but cannot prove these eggs safe.
+Strict mode is the remedy: set `legacy_isolation: strict` in `wing.yaml` to refuse
+operations with detected legacy exposure, and stop all legacy eggs before
+upgrading or restarting the wing. Strict mode does not terminate them for you.
+
+Use `wt session ps --json` to list live sessions and their isolation warnings;
+`replacement-required` files under the state's `eggs/<session>` directory also
+identify sessions needing replacement. Check every custom `WINGTHING_DIR` and
+the stable and preview state directories, since tampered metadata can hide a
+session. Save work, then run `wt egg stop <session-id>` in each applicable state
+(`WINGTHING_DIR=/path/to/state wt egg stop <session-id>` for a custom directory).
+Review/restore policy and tool YAML, restart with the current binary, and only
+then reload. The owner must ensure all old processes have ended; writable
+metadata and markers are not an authoritative inventory.
+
 ## Local self-hosted HTTPS
 
 `wt serve --local --https` and `wt roost start --https` add an HTTPS browser

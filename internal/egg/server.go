@@ -50,6 +50,7 @@ type Server struct {
 
 	dir            string // ~/.wingthing/eggs/<session-id>/
 	token          string
+	toolCapability string // private wrapper memory; recovered only via authenticated RPC
 	session        *Session
 	mu             sync.RWMutex
 	grpcServer     *grpc.Server
@@ -526,6 +527,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	if err := ValidateSocketPath(filepath.Join(s.dir, "egg.sock")); err != nil {
 		return err
 	}
+	if rc.ToolSocketPath != "" && config.CanonicalProviderPath(rc.ToolSocketPath) != config.CanonicalProviderPath(filepath.Join(s.dir, ".tools", "tool.sock")) {
+		return errors.New("tool socket must belong to this egg's .tools directory")
+	}
 	defer func() {
 		if runErr != nil {
 			if err := RecordSessionProcessEvent(s.dir, "session_failed", "failed", "egg startup or control process failed"); err != nil {
@@ -561,6 +565,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	if err := ValidateProtectedWriteTargetBoundary(rc.ProtectedWriteTargets, hasSandbox); err != nil {
 		return err
 	}
+	if err := RequireLegacySecretProtection(s.dir, rc.ToolSocketPath != ""); err != nil {
+		return err
+	}
 	if hasSandbox {
 		if ok, help := sandbox.CheckCapability(); !ok {
 			return fmt.Errorf("sandbox not available: %s\nrun: wt doctor --fix", help)
@@ -584,6 +591,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	envMap := make(map[string]string, len(rc.Env))
 	for k, v := range rc.Env {
 		envMap[k] = v
+	}
+	if rc.ToolSocketPath != "" {
+		// The parent injects this directly into this wrapper's environment,
+		// never into its argv or the one-shot environment file in state.
+		envMap[ToolCapabilityEnv] = os.Getenv(ToolCapabilityEnv)
+		s.toolCapability = envMap[ToolCapabilityEnv]
 	}
 	// Merge required env vars from agent profile
 	if !rc.SkipHostAgentEnv {
@@ -639,14 +652,23 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	// native installation and don't warn about missing PATH entries.
 	home := envMap["HOME"]
 	lifecycleSettingsPath := ""
-	if rc.Agent == "claude" && len(rc.Command) == 0 && rc.ProviderSessionID != "" {
-		args, err = prepareClaudeLifecycleArgs(args, home, s.dir, rc.ProviderSessionID, rc.CWD)
+	prepareLifecycle := func(policy *sandbox.Config) error {
+		if rc.Agent != "claude" || len(rc.Command) != 0 || rc.ProviderSessionID == "" {
+			return nil
+		}
+		var err error
+		args, err = prepareClaudeLifecycleArgs(args, home, s.dir, rc.ProviderSessionID, rc.CWD, policy)
 		if err != nil {
 			return fmt.Errorf("prepare native lifecycle hooks: %w", err)
 		}
 		lifecycleSettingsPath = args[providerOptionsEnd(args)-1]
-		defer func() { _ = os.Remove(lifecycleSettingsPath) }()
+		return nil
 	}
+	defer func() {
+		if lifecycleSettingsPath != "" {
+			_ = os.Remove(lifecycleSettingsPath)
+		}
+	}()
 	if rc.Agent == "codex" && len(rc.Command) == 0 && codexLifecycleSupported(binPath) {
 		args, err = CodexLifecycleArgs(args, home, filepath.Base(s.dir))
 		if err != nil {
@@ -663,7 +685,13 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	}
 
 	// Snapshot agent config before session so we can restore on exit
-	configSnap := SnapshotAgentConfig(rc.Agent, rc.UserHome)
+	var configSnap *ConfigSnapshot
+	snapshotOwnedByProcess := false
+	defer func() {
+		if !snapshotOwnedByProcess {
+			configSnap.Close()
+		}
+	}()
 
 	// Resolve declared, agent-profile, and provider-derived domains through the
 	// same policy path used by `wt egg explain`.
@@ -774,11 +802,13 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			fsHome = rc.UserHome
 		}
 		mounts, deny, denyWrite := ParseFSRules(rc.FS, fsHome)
-		if lifecycleSettingsPath != "" {
-			mounts = append(mounts, sandbox.Mount{Source: lifecycleSettingsPath, Target: lifecycleSettingsPath, ReadOnly: true})
+		if runtime.GOOS == "linux" {
+			mounts = linuxEggReadMounts(mounts, deny)
 		}
+		var bridgeMounts []sandbox.Mount
 		if browserRequestsPath != "" {
-			mounts = append(mounts, sandbox.Mount{
+			bridgeMounts = append(bridgeMounts, sandbox.Mount{Source: shimDir, Target: shimDir, ReadOnly: true})
+			bridgeMounts = append(bridgeMounts, sandbox.Mount{
 				Source: browserRequestsPath,
 				Target: browserRequestsPath,
 			})
@@ -820,10 +850,16 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			}
 		}
 
-		// Mount wt binary dir and .tools dir for tool shim access in jail mode.
-		// Only .tools is mounted — the rest of the session dir (audit logs, chat
-		// data) stays invisible to the sandboxed agent.
-		if rc.ToolSocketPath != "" && len(rc.ToolNames) > 0 {
+		if helper, err := agentKeyHelperMount(rc.Agent, profileHome); err != nil {
+			return err
+		} else if helper.Source != "" {
+			mounts = append(mounts, helper)
+			denyWrite = append(denyWrite, helper.Source)
+		}
+
+		// The Linux jail re-execs wt even without tools. Mount its binary
+		// directory explicitly, including when a development binary is in tmp.
+		if runtime.GOOS == "linux" || (rc.ToolSocketPath != "" && len(rc.ToolNames) > 0) {
 			wtBin, err := os.Executable()
 			if err != nil {
 				return fmt.Errorf("locate wt binary for sandbox mounts: %w", err)
@@ -832,9 +868,26 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 				wtBin = resolved
 			}
 			wtDir := filepath.Dir(wtBin)
-			toolsDir := filepath.Dir(rc.ToolSocketPath)
 			mounts = append(mounts, sandbox.Mount{Source: wtDir, Target: wtDir, ReadOnly: true})
-			mounts = append(mounts, sandbox.Mount{Source: toolsDir, Target: toolsDir, ReadOnly: true})
+		}
+		if rc.ToolSocketPath != "" && len(rc.ToolNames) > 0 {
+			toolsDir := filepath.Dir(rc.ToolSocketPath)
+			bridgeMounts = append(bridgeMounts, sandbox.Mount{Source: toolsDir, Target: toolsDir, ReadOnly: true})
+		}
+		for _, path := range denyWrite {
+			if _, err := resolveLoaderPath(path, true, mounts); err != nil {
+				return err
+			}
+		}
+		sandboxHome := rc.UserHome
+		if runtime.GOOS == "linux" {
+			// The existing jail always binds its HOME writable. Give that
+			// implicit mount an empty directory; real HOME and agent config
+			// directories keep their explicitly compiled mount permissions.
+			sandboxHome = filepath.Join(s.dir, ".sandbox-home")
+			if err := os.MkdirAll(sandboxHome, 0o700); err != nil {
+				return fmt.Errorf("create private sandbox home mount: %w", err)
+			}
 		}
 
 		proxyPort := 0
@@ -843,18 +896,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		}
 
 		allowSockets := sandboxAllowedSockets(rc.ToolSocketPath, envMap)
-		if previewClaudeOSHome != "" {
-			protected, err := GuardPreviewClaudeMounts(mounts, previewClaudeOSHome)
-			if err != nil {
-				return err
-			}
-			deny = append(deny, protected...)
-		}
 
 		sbCfg := sandbox.Config{
 			Mounts:       mounts,
 			Deny:         deny,
 			DenyWrite:    denyWrite,
+			DenyRename:   denyRenamePaths(rc.FS, fsHome),
 			NetworkNeed:  netNeed,
 			NetworkMode:  networkPolicy.Mode,
 			Domains:      mergedDomains,
@@ -865,13 +912,39 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			MaxFDs:       rc.MaxFDs,
 			PidLimit:     rc.PidLimit,
 			SessionID:    sessionID,
-			UserHome:     rc.UserHome,
+			UserHome:     sandboxHome,
 			Trace:        rc.Trace,
 			AllowSockets: allowSockets,
 			// Enforced against the final emitted policy inside sandbox.New.
 			ProtectedWriteTargets: append([]string(nil), rc.ProtectedWriteTargets...),
 		}
+		sourceConfig := sbCfg
+		sbCfg, err = IsolateControl(sbCfg, s.dir, bridgeMounts, rc.ToolSocketPath)
+		if err != nil {
+			return err
+		}
+		if previewClaudeOSHome != "" {
+			protected, err := GuardPreviewClaudeMounts(sbCfg.Mounts, previewClaudeOSHome)
+			if err != nil {
+				return err
+			}
+			sbCfg.Deny = append(sbCfg.Deny, protected...)
+		}
 
+		if err := prepareLifecycle(&sbCfg); err != nil {
+			return err
+		}
+		if lifecycleSettingsPath != "" {
+			bridgeMounts = append(bridgeMounts, sandbox.Mount{Source: lifecycleSettingsPath, Target: lifecycleSettingsPath, ReadOnly: true})
+			finalCfg, err := IsolateControl(sourceConfig, s.dir, bridgeMounts, rc.ToolSocketPath)
+			if err != nil {
+				return err
+			}
+			// Retain any OS-context denies added after control compilation.
+			finalCfg.Deny = append(finalCfg.Deny, sbCfg.Deny...)
+			sbCfg = finalCfg
+		}
+		configSnap = SnapshotAgentConfig(rc.Agent, rc.UserHome, &sbCfg)
 		sb, err = sandbox.New(sbCfg)
 		if err != nil {
 			return fmt.Errorf("sandbox: %w", err)
@@ -888,6 +961,10 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			cmd.Dir = rc.CWD
 		}
 	} else {
+		if err := prepareLifecycle(nil); err != nil {
+			return err
+		}
+		configSnap = SnapshotAgentConfig(rc.Agent, rc.UserHome)
 		log.Printf("SECURITY: egg runs in outer-boundary mode with the full authority of the local OS user; Wingthing filesystem, network, syscall, and resource isolation is disabled")
 		cmd = exec.CommandContext(context.Background(), binPath, args...)
 		cmd.Env = envSlice
@@ -983,6 +1060,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		audit:          rc.Audit,
 	}
 
+	if isolation := ReadLegacyIsolation(s.dir); isolation != nil {
+		warning := []byte("\r\n" + isolation.Warning() + "\r\n")
+		sess.replay.Write(warning)
+		_, _ = sess.vterm.Write(warning)
+	}
+
 	// Set up input auditor if audit is enabled
 	if rc.Audit {
 		auditPath := filepath.Join(s.dir, "audit.log")
@@ -1062,6 +1145,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	log.Printf("egg: serving on %s (pid %d)", lis.Addr(), os.Getpid())
 
 	// Wait for process exit in background
+	snapshotOwnedByProcess = true
 	go func() {
 		exitCode := 0
 		if err := cmd.Wait(); err != nil {
@@ -1256,6 +1340,9 @@ func (s *Server) prepareEndpoint() (net.Listener, error) {
 	if err := ValidateSocketPath(sockPath); err != nil {
 		return nil, err
 	}
+	if err := RequireLegacySecretProtection(s.dir, s.toolCapability != ""); err != nil {
+		return nil, err
+	}
 	tokenPath := filepath.Join(s.dir, "egg.token")
 	pidPath := filepath.Join(s.dir, "egg.pid")
 
@@ -1273,8 +1360,24 @@ func (s *Server) prepareEndpoint() (net.Listener, error) {
 	if err := os.Chmod(sockPath, 0o600); err != nil {
 		return fail("secure socket", err)
 	}
-	if err := os.WriteFile(tokenPath, []byte(s.token), 0o600); err != nil {
+	controlDir, err := prepareControlDirectory(s.dir)
+	if err != nil {
+		return fail("prepare controller directory", err)
+	}
+	if err := atomicWritePrivate(filepath.Join(controlDir, "egg.token"), []byte(s.token)); err != nil {
 		return fail("write token", err)
+	}
+	// v0.147.0 controllers read this path directly. Current sandboxes deny the
+	// whole control tree; surviving policies that expose it require degraded
+	// admission (or a strict-mode refusal) before publishing either token.
+	if err := atomicWritePrivate(tokenPath, []byte(s.token)); err != nil {
+		return fail("write compatibility token", err)
+	}
+	if err := atomicWritePrivate(filepath.Join(s.dir, "egg.control"), []byte(controlDirectoryLocator(s.dir)+"\n")); err != nil {
+		return fail("write controller locator", err)
+	}
+	if err := atomicWritePrivate(filepath.Join(controlDir, "isolation"), []byte(ControlIsolationVersion+"\n")); err != nil {
+		return fail("write isolation marker", err)
 	}
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
 		return fail("write pid", err)
@@ -1290,6 +1393,8 @@ func (s *Server) closeEndpoint(lis net.Listener) {
 	_ = os.Remove(filepath.Join(s.dir, "egg.sock"))
 	_ = os.Remove(filepath.Join(s.dir, "egg.token"))
 	_ = os.Remove(filepath.Join(s.dir, "egg.pid"))
+	RemoveControlCredentials(s.dir)
+	_ = os.Remove(filepath.Join(s.dir, "egg.control"))
 }
 
 func runConfigPolicy(rc RunConfig) *EggConfig {
@@ -1349,7 +1454,8 @@ func (s *Server) cleanup() {
 	// Logs are not audits — always keep them so `wt support` can capture crash reasons.
 	s.preserveEggLog()
 
-	for _, name := range []string{"egg.sock", "egg.token", "egg.pid", claudeLifecycleSettingsFile} {
+	RemoveControlCredentials(s.dir)
+	for _, name := range []string{"egg.sock", "egg.token", "egg.control", "egg.pid", claudeLifecycleSettingsFile} {
 		if err := os.Remove(filepath.Join(s.dir, name)); err != nil && !os.IsNotExist(err) {
 			log.Printf("egg: remove %s during cleanup: %v", name, err)
 		}
@@ -1737,6 +1843,13 @@ func (s *Server) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusR
 	st := sess.replay.Stats()
 	lease := s.inputLease.info(nil)
 	idleSec := int64(sess.idleDuration().Seconds())
+	capability := ""
+	if req.ReclaimTools {
+		if !HasCurrentControlIsolation(s.dir) {
+			return nil, status.Error(codes.FailedPrecondition, "legacy egg tool capability recovery requires restarting this session; its PTY remains available")
+		}
+		capability = s.toolCapability
+	}
 	return &pb.StatusResponse{
 		SessionId:      sess.ID,
 		Agent:          sess.Agent,
@@ -1748,7 +1861,8 @@ func (s *Server) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusR
 		RenderedConfig: sess.RenderedConfig,
 		IdleSeconds:    idleSec,
 		WriterId:       lease.WriterId, WriterOwner: lease.WriterOwner, InputEpoch: lease.InputEpoch,
-		ProcessPid: int32(sess.PID),
+		ProcessPid:     int32(sess.PID),
+		ToolCapability: capability,
 	}, nil
 }
 
@@ -2237,4 +2351,24 @@ func installRoot(binDir, home string) string {
 	}
 	parts := strings.SplitN(rel, string(filepath.Separator), 2)
 	return filepath.Join(home, parts[0])
+}
+
+// The shared-host Claude helper belongs to the effective session owner. Never
+// follow a substituted link to another owner's key or grant writes to the key.
+func agentKeyHelperMount(agentName, home string) (sandbox.Mount, error) {
+	if agentName != "claude" || home == "" {
+		return sandbox.Mount{}, nil
+	}
+	path := filepath.Join(home, ".anthropic_key")
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return sandbox.Mount{}, nil
+	}
+	if err != nil {
+		return sandbox.Mount{}, fmt.Errorf("inspect agent key helper: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return sandbox.Mount{}, fmt.Errorf("agent key helper must be a regular file: %s", path)
+	}
+	return sandbox.Mount{Source: path, Target: path, ReadOnly: true}, nil
 }

@@ -44,7 +44,7 @@ func BrowserSessionControl(version string, ctx context.Context, cfg *config.Conf
 	paths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wc.Paths, req.SenderEmail, req.SenderOrgRole, home))
 	server := &Server{Version: version, Cfg: cfg, Logs: os.Stderr, Principal: roostSessionPrincipal(req.SenderUserID), Actor: "browser", Surface: control.SurfaceHTTPMCP,
 		Grants: GrantSet(defaultDirectMCPGrants), MaxSessions: defaultDirectMCPMaxSessions, MaxSpawnsPerHour: defaultDirectMCPMaxSpawnsPerHour, admission: browserConversationAdmission,
-		allowedPaths: paths, enforcePathBounds: len(paths) > 0 || wingpolicy.IsMemberFiltered(req), identity: eggclient.EggIdentity{UserID: req.SenderUserID, Email: req.SenderEmail, OrgWing: wc.Org != "", SharedHost: sharedHost, SealedFS: sharedHost, AllowedPaths: paths}}
+		allowedPaths: paths, enforcePathBounds: len(paths) > 0 || wingpolicy.IsMemberFiltered(req), identity: eggclient.BrowserEggIdentity(wc, ws.PTYStart{UserID: req.SenderUserID, Email: req.SenderEmail, OrgRole: req.SenderOrgRole}, home, sharedHost)}
 	if operation == "session_fork" {
 		var current BrowserLaunchConfig
 		if len(launchConfig) > 0 {
@@ -131,6 +131,9 @@ func configureBrowserFork(s *Server, wc *config.WingConfig, req ws.TunnelRequest
 	s.identity = eggclient.BrowserEggIdentity(wc, start, home, sharedHost)
 	s.allowedPaths = s.identity.AllowedPaths
 	s.enforcePathBounds = len(s.allowedPaths) > 0 || wingpolicy.IsMemberRole(start.OrgRole)
+	if req.SenderUserID != "" && (wc.Org != "" || sharedHost) {
+		s.enforcePathBounds = wingpolicy.IsMemberRole(start.OrgRole)
+	}
 	s.forkIdleTimeout, _ = time.ParseDuration(wc.IdleTimeout)
 	s.forkTrace = true
 	s.forkTools = append([]*config.ToolConfig(nil), tools...)

@@ -198,6 +198,7 @@ func TestBrowserSessionForkSharedOwnerRules(t *testing.T) {
 }
 
 func TestSessionForkMCPBindsNewRootWithFreshIsolation(t *testing.T) {
+	mockParentBroker(t)
 	s := forkServerFixture(t)
 	dir := filepath.Join(s.Cfg.Dir, "eggs", "source")
 	if err := os.WriteFile(filepath.Join(dir, "session.launch.json"), []byte(`{"config":"base: none\nnetwork: '*'\nenv: '*'","model":"attacker-model"}`), 0600); err != nil {
@@ -244,6 +245,12 @@ func TestSessionForkIdentityMatchesFreshLaunchOnEverySurface(t *testing.T) {
 			s.Cfg.Dir = cwd
 			wc := &config.WingConfig{Org: "org", Paths: config.PathList{{Path: cwd, Members: []string{"alice@example.com"}}}}
 			req := ws.TunnelRequest{SenderUserID: "alice", SenderEmail: "alice@example.com", SenderOrgRole: "member"}
+			if err := os.WriteFile(filepath.Join(cwd, "egg.yaml"), []byte("base: none\nfs: [deny:/, rw:"+cwd+"]\nnetwork: none\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := config.SaveWingConfig(s.Cfg.Dir, wc); err != nil {
+				t.Fatal(err)
+			}
 			var freshIdentity eggclient.EggIdentity
 			var freshConfig *egg.EggConfig
 			var err error
@@ -257,10 +264,12 @@ func TestSessionForkIdentityMatchesFreshLaunchOnEverySurface(t *testing.T) {
 				}
 				s.Surface, s.identity = control.SurfaceDirectMCP, policy.identity
 				s.allowedPaths, s.enforcePathBounds = policy.allowedPaths, policy.enforcePathBounds
+				s.launchConfig = runtimeLaunchConfig(wc, cwd, true, s.allowedPaths, egg.DefaultEggConfig(), nil)
 			case "HTTP shared host":
 				server := newRoostNativeMCPServer("dev", s.Cfg, true, NewMCPAdmissionState(), mcppkg.Principal{UserID: req.SenderUserID, Email: req.SenderEmail}, []string{cwd})
 				s.Surface, s.identity = server.Surface, server.identity
 				s.allowedPaths, s.enforcePathBounds = server.allowedPaths, server.enforcePathBounds
+				s.launchConfig = server.launchConfig
 			case "browser org member", "browser shared host":
 				if err := os.WriteFile(filepath.Join(cwd, "egg.yaml"), []byte("base: none\nfs: [deny:/, rw:"+cwd+"]\nnetwork: none\n"), 0600); err != nil {
 					t.Fatal(err)
@@ -282,12 +291,12 @@ func TestSessionForkIdentityMatchesFreshLaunchOnEverySurface(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			wantShared := surface == "direct org member" || surface == "HTTP shared host" || surface == "browser shared host"
+			wantShared := surface == "direct org member" || surface == "HTTP shared host" || surface == "browser shared host" || surface == "browser org member"
 			if freshIdentity.SharedHost != wantShared || freshIdentity.SealedFS != wantShared {
 				t.Fatalf("wrong fresh credential boundary: %#v", freshIdentity)
 			}
 			// A Direct MCP source is sealed even on a stable, non-shared org
-			// wing. Its browser fork must instead match a new browser PTY.
+			// wing. Its browser fork must match the same sealed fresh browser PTY.
 			dir := filepath.Join(s.Cfg.Dir, "eggs", "source")
 			if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=claude\ncwd="+cwd+"\nprovider_home=/agent-chosen\nshared_host=true\norg_wing=false\n"), 0600); err != nil {
 				t.Fatal(err)
@@ -344,6 +353,7 @@ func TestBrowserForkRefusesCWDThatFreshPTYWouldRedirect(t *testing.T) {
 }
 
 func TestSessionForkCLIClientIsIndependentOfAuditActor(t *testing.T) {
+	started := mockParentBroker(t)
 	s := forkServerFixture(t)
 	s.Actor, s.MCPClient = "cli:session-fork", "coordinator"
 	if err := os.WriteFile(filepath.Join(s.Cfg.Dir, "clients.yaml"), []byte("require_client: true\nclients:\n  coordinator:\n    owner: owner\n    grants: [terminal.start]\n"), 0600); err != nil {
@@ -372,10 +382,15 @@ func TestSessionForkCLIClientIsIndependentOfAuditActor(t *testing.T) {
 				if err := json.Unmarshal(data, &binding); err != nil {
 					return err
 				}
-				client := binding.Servers["wingthing"].Args[3]
-				clients, err := LoadLocalMCPClientsConfig(s.Cfg)
-				if err != nil || eggclient.ValidateSessionName(client) != nil || client != "coordinator" || clients.Clients[client].Owner != "owner" || s.clientActor() != "cli:session-fork" {
-					t.Fatalf("invalid fork binding: %s, %v", data, err)
+				if len(*started) != 1 {
+					t.Fatal("fork omitted its host broker")
+				}
+				reg := (*started)[0]
+				if reg.LauncherClient != "coordinator" || reg.Principal != "owner" || reg.LauncherActor != "cli:session-fork" {
+					t.Fatalf("invalid fork broker identity: %+v", reg)
+				}
+				if _, _, err := reg.server("dev", s.Cfg, NewMCPAdmissionState()); err != nil {
+					return err
 				}
 				return nil
 			}
@@ -443,7 +458,11 @@ func TestBrowserForkInitializesCurrentToolsAndCleansUpFailedSpawn(t *testing.T) 
 	config.ReleaseChannel = "stable"
 	t.Cleanup(func() { config.ReleaseChannel = old })
 	t.Setenv("HOME", t.TempDir())
-	root, err := os.MkdirTemp("/tmp", "wt-fork-tools-")
+	root, err := os.MkdirTemp("../..", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err = filepath.Abs(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,7 +491,11 @@ func TestBrowserForkInitializesCurrentToolsAndCleansUpFailedSpawn(t *testing.T) 
 		if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
 			return err
 		}
-		if err := json.NewEncoder(conn).Encode(egg.ToolRequest{Tool: "current-tool"}); err != nil {
+		capability, err := egg.ToolSocketCapability(socket)
+		if err != nil {
+			return err
+		}
+		if err := json.NewEncoder(conn).Encode(egg.ToolRequest{Tool: "current-tool", Capability: capability}); err != nil {
 			return err
 		}
 		if err := conn.(*net.UnixConn).CloseWrite(); err != nil {

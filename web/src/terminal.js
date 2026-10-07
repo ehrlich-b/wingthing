@@ -124,10 +124,10 @@ export function initTerminal() {
     });
 
     S.term.onSelectionChange(function() {
-        DOM.terminalCopyBtn.disabled = !S.term.hasSelection();
-        DOM.terminalCopyBtn.title = S.term.hasSelection()
-            ? 'Copy selection without terminal line padding'
-            : 'Select terminal text to copy';
+        var selected = S.term.hasSelection();
+        DOM.terminalCopyBtn.disabled = !selected;
+        DOM.terminalCopyBtn.style.display = selected && S.ptySessionId ? '' : 'none';
+        DOM.terminalCopyBtn.title = 'Copy selection without terminal line padding';
     });
     DOM.terminalCopyBtn.addEventListener('click', function() { copyTerminalSelection(); });
 

@@ -364,10 +364,14 @@ func TestNamespaceCreation(t *testing.T) {
 	if results.Probes.Namespace.NSpid == "" {
 		t.Error("expected NSpid to be populated")
 	}
-	// NSpid should have multiple tab-separated entries when in a namespace
-	parts := strings.Split(strings.TrimSpace(results.Probes.Namespace.NSpid), "\t")
-	if len(parts) < 2 {
-		t.Errorf("expected NSpid to have 2+ entries (in namespace), got %d: %q", len(parts), results.Probes.Namespace.NSpid)
+	// A procfs mounted inside the egg reports only its own namespace's PID.
+	// The mock compares namespace identities with the host; also assert that
+	// procfs does not disclose outer PIDs or the host's processes.
+	if parts := strings.Fields(results.Probes.Namespace.NSpid); len(parts) != 1 {
+		t.Errorf("private procfs disclosed outer PIDs: %q", results.Probes.Namespace.NSpid)
+	}
+	if results.Probes.Namespace.PIDNamespace == "" || results.Probes.Isolation.VisiblePids > 20 || results.Probes.Isolation.HostSecretVisible {
+		t.Errorf("private PID namespace/procfs isolation failed: namespace=%+v isolation=%+v", results.Probes.Namespace, results.Probes.Isolation)
 	}
 }
 

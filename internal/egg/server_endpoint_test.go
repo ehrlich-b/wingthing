@@ -1,6 +1,7 @@
 package egg
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -19,9 +20,10 @@ func TestPrepareEndpointCreatesPrivateCompleteEndpoint(t *testing.T) {
 	defer server.closeEndpoint(listener)
 
 	for name, wantMode := range map[string]os.FileMode{
-		"egg.sock":  0o600,
-		"egg.token": 0o600,
-		"egg.pid":   0o644,
+		"egg.sock":    0o600,
+		"egg.token":   0o600,
+		"egg.control": 0o600,
+		"egg.pid":     0o644,
 	} {
 		info, statErr := os.Stat(filepath.Join(dir, name))
 		if statErr != nil {
@@ -31,9 +33,19 @@ func TestPrepareEndpointCreatesPrivateCompleteEndpoint(t *testing.T) {
 			t.Errorf("%s mode = %o, want %o", name, got, wantMode)
 		}
 	}
-	token, err := os.ReadFile(filepath.Join(dir, "egg.token"))
+	token, err := os.ReadFile(filepath.Join(controlDirectory(dir), "egg.token"))
 	if err != nil || string(token) != "test-token" {
 		t.Fatalf("token = %q, err=%v", token, err)
+	}
+	compatible, err := os.ReadFile(filepath.Join(dir, "egg.token"))
+	if err != nil || string(compatible) != string(token) {
+		t.Fatalf("old controllers cannot read the same token: %q %v", compatible, err)
+	}
+	if info, err := os.Lstat(filepath.Join(dir, "egg.token")); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("compatibility token is not a regular file: %v", err)
+	}
+	if isolation := ReadLegacyIsolation(dir); isolation != nil {
+		t.Fatalf("no legacy sessions but admission degraded: %+v", isolation)
 	}
 	connection, err := net.Dial("unix", filepath.Join(dir, "egg.sock"))
 	if err != nil {
@@ -69,6 +81,12 @@ func TestPrepareEndpointRollsBackOnCredentialFailure(t *testing.T) {
 			if _, statErr := os.Stat(filepath.Join(dir, "egg.sock")); !os.IsNotExist(statErr) {
 				t.Fatalf("socket survived rollback: %v", statErr)
 			}
+			if HasCurrentControlIsolation(dir) {
+				t.Fatal("failed creation retained a current isolation marker")
+			}
+			if _, statErr := os.Stat(controlDirectory(dir)); !os.IsNotExist(statErr) {
+				t.Fatalf("controller credentials survived rollback: %v", statErr)
+			}
 			if blocked == "egg.pid" {
 				if _, statErr := os.Stat(filepath.Join(dir, "egg.token")); !os.IsNotExist(statErr) {
 					t.Fatalf("token survived PID rollback: %v", statErr)
@@ -100,12 +118,76 @@ func TestPrepareEndpointRefusesUnremovableStaleSocket(t *testing.T) {
 	}
 }
 
+func TestPrepareEndpointSupportsSymlinkedGnuPG(t *testing.T) {
+	for _, relative := range []bool{false, true} {
+		t.Run(fmt.Sprint(relative), func(t *testing.T) {
+			home := shortEndpointTempDir(t)
+			real := filepath.Join(home, "gpg-state")
+			if err := os.Mkdir(real, 0700); err != nil {
+				t.Fatal(err)
+			}
+			target := real
+			if relative {
+				target = "gpg-state"
+			}
+			if err := os.Symlink(target, filepath.Join(home, ".gnupg")); err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Join(home, "state", "eggs", "new")
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			server := &Server{dir: dir, token: "test-token"}
+			listener, err := server.prepareEndpoint()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer server.closeEndpoint(listener)
+			path, err := readControlDirectory(dir)
+			if err != nil || !controlPathWithin(path, canonicalPolicyTestPath(t, real)) || !HasCurrentControlIsolation(dir) {
+				t.Fatalf("resolved controller identity = %q: %v", path, err)
+			}
+			protected := false
+			denies, err := eggControlDenyPaths(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, denied := range denies {
+				protected = protected || controlPathWithin(path, denied)
+			}
+			if !protected {
+				t.Fatal("resolved controller path missing from sandbox denies")
+			}
+			t.Setenv("HOME", filepath.Join(home, "other-home"))
+			client, err := Dial(filepath.Join(dir, "egg.sock"), filepath.Join(dir, "egg.token"))
+			if err != nil {
+				t.Fatalf("controller with another HOME: %v", err)
+			}
+			client.Close()
+			server.closeEndpoint(listener)
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("resolved credentials survived cleanup: %v", err)
+			}
+		})
+	}
+}
+
 func shortEndpointTempDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "wt-egg-endpoint-")
+	parent := os.TempDir()
+	if repository, err := filepath.Abs("../.."); err == nil && len(repository) < len(parent) {
+		parent = repository
+	}
+	dir, err := os.MkdirTemp(parent, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err = filepath.Abs(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Setenv("HOME", dir)
+	t.Setenv("WINGTHING_DIR", filepath.Join(dir, "state"))
 	return dir
 }

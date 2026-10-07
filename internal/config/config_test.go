@@ -48,6 +48,19 @@ func TestLoadRestrictsExistingStateDirectory(t *testing.T) {
 	}
 }
 
+func TestLoadConfigUnderSystemTemp(t *testing.T) {
+	t.Setenv("TMPDIR", "/tmp")
+	dir := t.TempDir()
+	t.Setenv("WINGTHING_DIR", dir)
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("default_agent: codex\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil || cfg.DefaultAgent != "codex" {
+		t.Fatalf("load owned settings below /tmp: %v, %v", cfg, err)
+	}
+}
+
 func TestDefaultWingIDConcurrentFirstLoadIsStable(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "new-config")
 	const callers = 32

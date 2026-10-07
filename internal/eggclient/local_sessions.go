@@ -39,24 +39,26 @@ var ErrSessionNameInUse = errors.New("session name is already in use")
 
 type LocalSession struct {
 	ConversationLink
-	ID           string `json:"id"`
-	Name         string `json:"name,omitempty"`
-	Principal    string `json:"principal,omitempty"`
-	Kind         string `json:"kind"`
-	Agent        string `json:"agent,omitempty"`
-	Status       string `json:"status"`
-	Command      string `json:"command,omitempty"`
-	CWD          string `json:"cwd,omitempty"`
-	Isolation    string `json:"isolation,omitempty"`
-	PID          int    `json:"pid"`
-	Readers      int32  `json:"readers"`
-	WriterID     string `json:"writer_id,omitempty"`
-	WriterOwner  string `json:"writer_owner,omitempty"`
-	InputEpoch   uint64 `json:"input_epoch,omitempty"`
-	UptimeSecs   int64  `json:"uptime_seconds"`
-	IdleSecs     int64  `json:"idle_seconds"`
-	BufferBytes  int64  `json:"buffer_bytes"`
-	TotalWritten int64  `json:"total_written"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name,omitempty"`
+	Principal       string   `json:"principal,omitempty"`
+	Kind            string   `json:"kind"`
+	Agent           string   `json:"agent,omitempty"`
+	Status          string   `json:"status"`
+	Command         string   `json:"command,omitempty"`
+	CWD             string   `json:"cwd,omitempty"`
+	Isolation       string   `json:"isolation,omitempty"`
+	IsolationReason string   `json:"isolation_reason,omitempty"`
+	LegacySessions  []string `json:"legacy_sessions,omitempty"`
+	PID             int      `json:"pid"`
+	Readers         int32    `json:"readers"`
+	WriterID        string   `json:"writer_id,omitempty"`
+	WriterOwner     string   `json:"writer_owner,omitempty"`
+	InputEpoch      uint64   `json:"input_epoch,omitempty"`
+	UptimeSecs      int64    `json:"uptime_seconds"`
+	IdleSecs        int64    `json:"idle_seconds"`
+	BufferBytes     int64    `json:"buffer_bytes"`
+	TotalWritten    int64    `json:"total_written"`
 }
 
 func DiscoverActiveSessions(ctx context.Context, cfg *config.Config) ([]LocalSession, error) {
@@ -130,6 +132,11 @@ func DiscoverSessionRefs(cfg *config.Config) ([]LocalSession, error) {
 			CWD:              meta["cwd"],
 			Isolation:        meta["isolation"],
 			PID:              pid,
+		}
+		if isolation := egg.ReadLegacyIsolation(dir); isolation != nil {
+			s.Isolation = "degraded"
+			s.IsolationReason = isolation.Reason
+			s.LegacySessions = isolation.LegacySessions
 		}
 		if s.Kind == "" {
 			if s.Agent != "" {
@@ -393,7 +400,7 @@ func sessionInputChunks(input []byte, enter bool) [][]byte {
 	return chunks
 }
 
-func SendSessionInput(ctx context.Context, cfg *config.Config, ref string, input []byte, enter bool) (LocalSession, error) {
+func SendSessionInput(ctx context.Context, cfg *config.Config, ref string, input []byte, enter bool, verifiedUserIDs ...string) (LocalSession, error) {
 	session, ec, err := OpenLocalEgg(ctx, cfg, ref)
 	if err != nil {
 		return LocalSession{}, err
@@ -408,6 +415,7 @@ func SendSessionInput(ctx context.Context, cfg *config.Config, ref string, input
 	if _, err := stream.Recv(); err != nil {
 		return LocalSession{}, fmt.Errorf("send to session %s: %w", session.ID, err)
 	}
+	observeSessionController(cfg, session.ID, verifiedUserIDs)
 	chunks := sessionInputChunks(input, enter)
 	for index, chunk := range chunks {
 		if index > 0 && len(input) > 0 {

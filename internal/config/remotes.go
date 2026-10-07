@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/ehrlich-b/wingthing/internal/fsutil"
+	"github.com/ehrlich-b/wingthing/internal/protectedfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -72,7 +73,7 @@ func validateRemotes(remotes map[string]Remote) error {
 
 // LoadRemotes is read-only, including when no registry has been created yet.
 func LoadRemotes(dir string) (map[string]Remote, error) {
-	data, err := os.ReadFile(filepath.Join(dir, "remotes.yaml"))
+	data, err := protectedfile.ReadPolicyResolved(filepath.Join(dir, "remotes.yaml"))
 	if errors.Is(err, os.ErrNotExist) {
 		return map[string]Remote{}, nil
 	}

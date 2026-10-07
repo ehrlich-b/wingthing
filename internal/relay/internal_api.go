@@ -8,11 +8,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const entitlementDecisionVersionHeader = "X-Wingthing-Entitlement-Version"
+const entitlementNextHeader = "X-Wingthing-Entitlement-Next"
+const maxEntitlementPageSize = 1000
 const internalSecretHeader = "X-Internal-Secret"
 
 func authorizeInternalRequest(request *http.Request, secret string) {
@@ -31,6 +34,7 @@ func (s *Server) registerInternalRoutes() {
 	s.mux.HandleFunc("GET /internal/status", s.withInternalAuth(s.handleInternalStatus))
 	s.mux.HandleFunc("GET /internal/entitlements", s.withInternalAuth(s.handleInternalEntitlements))
 	s.mux.HandleFunc("GET /internal/sessions/{token}", s.withInternalAuth(s.handleInternalSession))
+	s.mux.HandleFunc("GET /internal/tokens/{token}", s.withInternalAuth(s.handleInternalToken))
 	s.mux.HandleFunc("POST /internal/wing-register", s.withInternalAuth(s.handleWingRegister))
 	s.mux.HandleFunc("POST /internal/wing-deregister", s.withInternalAuth(s.handleWingDeregister))
 	s.mux.HandleFunc("GET /internal/wing-locate/{wingID}", s.withInternalAuth(s.handleWingLocate))
@@ -221,7 +225,7 @@ func (s *Server) handleInternalEntitlements(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	rows, err := s.Store.DB().Query(`
+	query := `
 		SELECT u.id,
 			CASE WHEN EXISTS (
 				SELECT 1
@@ -230,7 +234,29 @@ func (s *Server) handleInternalEntitlements(w http.ResponseWriter, r *http.Reque
 				WHERE e.user_id = u.id AND s.status = 'active'
 			) THEN 'pro' ELSE 'free' END as tier
 		FROM users u
-	`)
+	`
+	var args []any
+	limit := 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		var err error
+		limit, err = strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > maxEntitlementPageSize {
+			writeError(w, http.StatusBadRequest, "entitlement page limit must be between 1 and 1000")
+			return
+		}
+		after := r.URL.Query().Get("after")
+		if len(after) > 1024 {
+			writeError(w, http.StatusBadRequest, "entitlement cursor is too long")
+			return
+		}
+		query += " WHERE u.id > ? ORDER BY u.id LIMIT ?"
+		args = append(args, after, limit+1)
+	} else if r.URL.Query().Get("after") != "" {
+		writeError(w, http.StatusBadRequest, "entitlement pagination requires a limit")
+		return
+	}
+	// Requests without pagination preserve the complete N-1 response shape.
+	rows, err := s.Store.DB().Query(query, args...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -247,6 +273,10 @@ func (s *Server) handleInternalEntitlements(w http.ResponseWriter, r *http.Reque
 	if err := rows.Close(); err != nil {
 		writeError(w, http.StatusInternalServerError, "close entitlement users: "+err.Error())
 		return
+	}
+	if limit > 0 && len(entries) > limit {
+		entries = entries[:limit]
+		w.Header().Set(entitlementNextHeader, entries[len(entries)-1].UserID)
 	}
 	for index := range entries {
 		e := &entries[index]

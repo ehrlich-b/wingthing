@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -389,6 +390,10 @@ func (r *WingRegistry) CloseAll() {
 
 // handleWingWS handles the WebSocket connection from a wing.
 func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
+	s.handleWingWSWithAuthInterval(w, r, 30*time.Second)
+}
+
+func (s *Server) handleWingWSWithAuthInterval(w http.ResponseWriter, r *http.Request, authInterval time.Duration) {
 	token := r.URL.Query().Get("token")
 	if token == "" {
 		auth := r.Header.Get("Authorization")
@@ -401,30 +406,12 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try JWT validation first, fall back to DB token
-	var userID string
-	var wingPublicKey string
-	var credentialWingID string
-	if s.JWTPubKey() != nil {
-		claims, jwtErr := ValidateWingJWT(s.JWTPubKey(), token)
-		if jwtErr == nil {
-			userID = claims.Subject
-			wingPublicKey = claims.PublicKey
-			credentialWingID = claims.WingID
-		}
-	}
-	if userID == "" && s.Store != nil {
-		var err error
-		userID, credentialWingID, err = s.Store.ValidateToken(token)
-		if err != nil {
-			http.Error(w, "invalid token", http.StatusUnauthorized)
-			return
-		}
-	}
-	if userID == "" {
-		http.Error(w, "invalid token", http.StatusUnauthorized)
+	claims, err := s.validateWingCredential(r.Context(), token)
+	if err != nil {
+		writeCredentialError(w, err)
 		return
 	}
+	userID, credentialWingID, wingPublicKey := claims.Subject, claims.WingID, claims.PublicKey
 	if !s.roostUserIDAllowed(userID) {
 		http.Error(w, "this account is not enrolled in this roost", http.StatusForbidden)
 		return
@@ -433,15 +420,39 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	// Wings are native clients and send no Origin header. Keep the library's
 	// default Origin enforcement so an arbitrary web page cannot turn a leaked
 	// or browser-visible device credential into a cross-site wing connection.
-	conn, err := websocket.Accept(w, r, nil)
+	conn, ctx, release, err := s.acceptSocket(w, r, userID, nil)
 	if err != nil {
 		log.Printf("websocket accept: %v", err)
 		return
 	}
+	defer release()
 	conn.SetReadLimit(512 * 1024) // 512KB — replay chunks can be large
 	defer func() { _ = conn.CloseNow() }()
 
-	ctx := r.Context()
+	// Pin the admitted credential and identity for the entire socket, including
+	// idle wings and registrations whose runtime ID differs in local/roost mode.
+	authCtx, cancelAuthorization := context.WithCancel(ctx)
+	var registeredOrg atomic.Pointer[string]
+	authorizationDone := make(chan struct{})
+	go func() {
+		defer close(authorizationDone)
+		revalidateSocketAuthorization(authCtx, conn, authInterval, nil, func() bool {
+			current, err := s.validateWingCredential(authCtx, token)
+			if err != nil || current.Subject != userID || current.WingID != credentialWingID || !s.roostUserIDAllowed(userID) {
+				return false
+			}
+			orgID := registeredOrg.Load()
+			if orgID == nil || *orgID == "" {
+				return true
+			}
+			if s.Store != nil {
+				return s.Store.GetOrgMemberRole(*orgID, userID) != ""
+			}
+			orgs, ok := s.currentUserOrgContext(authCtx, userID)
+			return ok && orgs.OrgRoles[*orgID] != ""
+		})
+	}()
+	defer func() { cancelAuthorization(); <-authorizationDone }()
 
 	// Read registration message
 	_, data, err := conn.Read(ctx)
@@ -559,6 +570,10 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Publish only the immutable, resolved registration scope to the validator;
+	// the read loop may replace wing with later registry snapshots.
+	orgID := wing.OrgID
+	registeredOrg.Store(&orgID)
 	var superseded []*ConnectedWing
 	var active bool
 	wing, superseded, active = s.Wings.Activate(wing)

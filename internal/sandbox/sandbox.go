@@ -24,16 +24,18 @@ type Sandbox interface {
 
 // Mount describes a filesystem mount for the sandbox.
 type Mount struct {
-	Source   string
-	Target   string
-	ReadOnly bool
-	UseRegex bool // macOS: emit regex rule instead of subpath (covers adjacent files like ~/.claude.json)
+	Source        string
+	Target        string
+	ReadOnly      bool
+	UseRegex      bool   // macOS: emit regex rule instead of subpath (covers adjacent files like ~/.claude.json)
+	InheritedFrom string // ancestor split to produce this mount; empty for explicit grants
 }
 
 // Config holds sandbox creation parameters.
 type Config struct {
 	Mounts       []Mount
 	Deny         []string      // paths to mask (e.g. ~/.ssh) — deny read+write
+	DenyRename   []string      // pin directory entries without denying writes to descendants
 	DenyWrite    []string      // paths to deny writes only (e.g. ./egg.yaml) — read allowed
 	NetworkNeed  NetworkNeed   // granular network access required by the agent
 	NetworkMode  string        // ""/"enforce" or "observe" for domain decisions
@@ -48,6 +50,13 @@ type Config struct {
 	UserHome     string        // per-user home override (empty = os.UserHomeDir)
 	Trace        bool          // wrap command with strace (Linux only)
 	AllowSockets []string      // Unix socket paths to allow outbound connections (macOS Seatbelt)
+	// macOS control isolation is part of the single Seatbelt profile. General
+	// mount/socket allows cannot reopen these paths; only the session's bridges
+	// and tool socket are exempt. Writable bridges allow writes to Source itself.
+	ControlDenyPaths     []string
+	ControlBridges       []Mount
+	ControlSocket        string
+	DenyOtherProcessInfo bool
 	// ProtectedWriteTargets are host-owned absolute paths (e.g. controller
 	// state) that no effective writable rule may reach. The final policy is
 	// refused with ProtectedWriteTargetError on any overlap, and backends that

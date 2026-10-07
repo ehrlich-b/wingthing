@@ -1,29 +1,59 @@
 package egg
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/contextclient"
 )
 
 const (
+	ToolCapabilityEnv                  = "WT_TOOL_CAPABILITY"
 	maxToolRequestBytes                = 256 << 10
 	maxConcurrentToolSocketConnections = 64
 )
 
 // ToolRequest is sent by `wt tool-call` over the Unix socket.
 type ToolRequest struct {
-	Action string   `json:"action,omitempty"` // "list" for tool discovery
-	Tool   string   `json:"tool,omitempty"`
-	Args   []string `json:"args,omitempty"`
+	Capability string   `json:"capability,omitempty"`
+	Action     string   `json:"action,omitempty"` // "list" for tool discovery
+	Tool       string   `json:"tool,omitempty"`
+	Args       []string `json:"args,omitempty"`
+}
+
+// MarshalJSON keeps tool-call's argv contract unchanged. Generated shims use
+// the session-only environment, including for discovery; host callers can
+// supply a capability explicitly. Never accept ambient environment on decode.
+func (req ToolRequest) MarshalJSON() ([]byte, error) {
+	if req.Capability == "" {
+		req.Capability = os.Getenv(ToolCapabilityEnv)
+	}
+	type wireRequest ToolRequest
+	return json.Marshal(wireRequest(req))
+}
+
+// Capabilities remain in controller and egg wrapper memory, never on disk.
+var toolSocketCapabilities sync.Map // canonical socket path -> *ToolListener
+
+// ToolSocketCapability supplies only the same-process egg spawn plumbing.
+func ToolSocketCapability(sockPath string) (string, error) {
+	listener, ok := toolSocketCapabilities.Load(config.CanonicalProviderPath(sockPath))
+	if !ok {
+		return "", fmt.Errorf("tool listener is not active for this egg")
+	}
+	return listener.(*ToolListener).capability, nil
 }
 
 // ToolResponse is returned to the client.
@@ -50,17 +80,70 @@ type ToolListResponse struct {
 // shared ToolRunner. Egg sessions reach tools this way; the remote MCP server wraps the
 // same runner over HTTP.
 type ToolListener struct {
+	capability  string
+	owner       string
+	ownerID     string
+	socketPath  string
 	runner      *ToolRunner
 	listener    net.Listener
 	connections chan struct{}
 	wg          sync.WaitGroup
 }
 
+// Only host adapters in this process can observe a verified controller. The
+// egg-facing tool socket never accepts controller identity from its callers.
+var toolListeners sync.Map // canonical socket path -> *ToolListener
+
+func toolSocketKey(path string) string {
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	if canonical, err := filepath.EvalSymlinks(path); err == nil {
+		path = canonical
+	}
+	return filepath.Clean(path)
+}
+
+// ObserveToolController routes a host-verified input claim to its live listener.
+// Sessions without tools have no listener; reclaimed listeners already refuse
+// Context authority. Call this before routing any input for the verified user.
+func ObserveToolController(sockPath, userID string) {
+	if listener, ok := toolListeners.Load(toolSocketKey(sockPath)); ok {
+		listener.(*ToolListener).ObserveController(userID)
+	}
+}
+
+// ToolContext binds a listener to its wing-owned Context client and verified owner.
+type ToolContext struct {
+	Client    *contextclient.Client
+	Owner     string // verified EggIdentity.Email, fixed for this listener's lifetime
+	OwnerID   string // verified EggIdentity.UserID, also fixed
+	Reclaimed bool   // surviving egg has no trusted owner/client binding after restart
+}
+
 // NewToolListener creates and starts a tool socket listener.
 // sockPath is the path for the Unix socket (e.g. ~/.wingthing/eggs/<session>/tool.sock).
-func NewToolListener(sockPath string, tools []*config.ToolConfig) (*ToolListener, error) {
+func NewToolListener(sockPath string, tools []*config.ToolConfig, contexts ...ToolContext) (*ToolListener, error) {
 	if err := ValidateSocketPath(sockPath); err != nil {
 		return nil, err
+	}
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return nil, fmt.Errorf("generate tool capability: %w", err)
+	}
+	capability := hex.EncodeToString(secret)
+	return NewToolListenerWithCapability(sockPath, tools, capability, contexts...)
+}
+
+// NewToolListenerWithCapability restores authority recovered through an egg's
+// authenticated host endpoint. Missing/legacy capabilities must fail closed.
+func NewToolListenerWithCapability(sockPath string, tools []*config.ToolConfig, capability string, contexts ...ToolContext) (*ToolListener, error) {
+	if err := ValidateSocketPath(sockPath); err != nil {
+		return nil, err
+	}
+	secret, err := hex.DecodeString(capability)
+	if err != nil || len(secret) != 32 {
+		return nil, fmt.Errorf("invalid egg tool capability")
 	}
 	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("remove stale tool socket: %w", err)
@@ -74,20 +157,51 @@ func NewToolListener(sockPath string, tools []*config.ToolConfig) (*ToolListener
 		_ = os.Remove(sockPath)
 		return nil, fmt.Errorf("secure tool socket: %w", err)
 	}
+	var tc ToolContext
+	if len(contexts) > 0 {
+		tc = contexts[0]
+	}
 	tl := &ToolListener{
-		runner:      NewToolRunner(tools),
+		capability:  capability,
+		owner:       tc.Owner,
+		ownerID:     tc.OwnerID,
+		socketPath:  toolSocketKey(sockPath),
+		runner:      newSessionToolRunner(tools, tc),
 		listener:    ln,
 		connections: make(chan struct{}, maxConcurrentToolSocketConnections),
 	}
+	toolSocketCapabilities.Store(config.CanonicalProviderPath(sockPath), tl)
+	toolListeners.Store(tl.socketPath, tl)
 	tl.wg.Add(1)
 	go tl.acceptLoop()
 	return tl, nil
 }
 
+func newSessionToolRunner(tools []*config.ToolConfig, tc ToolContext) *ToolRunner {
+	runner := NewToolRunner(tools, tc.Client)
+	if tc.Reclaimed {
+		runner.contextUnavailable = "Context tools are unavailable in sessions that survived a wing restart; start a new session"
+	}
+	return runner
+}
+
+// ObserveController permanently revokes Context authority when another verified
+// user claims input. Returning to the original owner never restores it.
+func (tl *ToolListener) ObserveController(userID string) {
+	if tl == nil || userID == tl.ownerID {
+		return
+	}
+	tl.runner.mu.Lock()
+	tl.runner.contextUnavailable = "Context tools are disabled after another user took control of this session"
+	tl.runner.mu.Unlock()
+}
+
 // Close stops the listener and waits for in-flight requests to finish.
 func (tl *ToolListener) Close() error {
+	toolSocketCapabilities.CompareAndDelete(config.CanonicalProviderPath(tl.listener.Addr().String()), tl)
 	err := tl.listener.Close()
 	tl.wg.Wait()
+	toolListeners.CompareAndDelete(tl.socketPath, tl)
 	return err
 }
 
@@ -147,6 +261,12 @@ func (tl *ToolListener) handleConn(conn net.Conn) {
 		}
 		return
 	}
+	if subtle.ConstantTimeCompare([]byte(req.Capability), []byte(tl.capability)) != 1 {
+		if err := writeJSON(conn, ToolResponse{Error: "tool authentication failed: missing or invalid egg capability; start a new egg session if this is a legacy egg"}); err != nil {
+			log.Printf("tool socket write authentication error: %v", err)
+		}
+		return
+	}
 	if req.Action == "list" {
 		if err := writeJSON(conn, ToolListResponse{Tools: tl.runner.List()}); err != nil {
 			log.Printf("tool socket write list: %v", err)
@@ -168,7 +288,7 @@ func (tl *ToolListener) handleConn(conn net.Conn) {
 		log.Printf("tool socket extended deadline: %v", err)
 		return
 	}
-	if err := writeJSON(conn, tl.runner.Call(req.Tool, req.Args)); err != nil {
+	if err := writeJSON(conn, tl.runner.CallAs(req.Tool, req.Args, tl.owner, nil)); err != nil {
 		log.Printf("tool socket write response: %v", err)
 	}
 }

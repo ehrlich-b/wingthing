@@ -21,24 +21,27 @@ import (
 )
 
 // tokenUser authenticates a request via Bearer token (CLI device auth).
-func (s *Server) tokenUser(r *http.Request) *User {
+func (s *Server) tokenUser(r *http.Request) (*User, error) {
 	auth := r.Header.Get("Authorization")
 	if !strings.HasPrefix(auth, "Bearer ") {
-		return nil
+		return nil, nil
 	}
 	token := strings.TrimPrefix(auth, "Bearer ")
 	if s.Store == nil {
-		return nil
+		return nil, fmt.Errorf("%w: no credential store", errCredentialValidationUnavailable)
 	}
-	userID, _, err := s.Store.ValidateToken(token)
+	claims, err := s.validateWingCredential(r.Context(), token)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	user, err := s.Store.GetUserByID(userID)
-	if err != nil || !s.roostUserAllowed(user) {
-		return nil
+	user, err := s.Store.GetUserByID(claims.Subject)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errCredentialValidationUnavailable, err)
 	}
-	return user
+	if !s.roostUserAllowed(user) {
+		return nil, errInvalidCredential
+	}
+	return user, nil
 }
 
 // handleResolveEmail resolves an email to a user ID.
@@ -46,7 +49,12 @@ func (s *Server) tokenUser(r *http.Request) *User {
 func (s *Server) handleResolveEmail(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
 	if user == nil {
-		user = s.tokenUser(r)
+		var err error
+		user, err = s.tokenUser(r)
+		if err != nil {
+			writeCredentialError(w, err)
+			return
+		}
 	}
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, "not logged in")
@@ -119,7 +127,12 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 	if user == nil {
 		// Native wing discovery (wt wings, wt session sync) authenticates with
 		// the device token from wt login rather than a web session cookie.
-		user = s.tokenUser(r)
+		var err error
+		user, err = s.tokenUser(r)
+		if err != nil {
+			writeCredentialError(w, err)
+			return
+		}
 	}
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, "not logged in")
@@ -347,16 +360,30 @@ func fetchLatestGitHubVersion(ctx context.Context) (string, error) {
 
 // handleAppWS is a dashboard WebSocket that pushes wing.online/wing.offline events.
 func (s *Server) handleAppWS(w http.ResponseWriter, r *http.Request) {
+	s.handleAppWSWithAuthInterval(w, r, 30*time.Second)
+}
+
+func (s *Server) handleAppWSWithAuthInterval(w http.ResponseWriter, r *http.Request, authInterval time.Duration) {
 	user := s.sessionUser(r)
 	if user == nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	credential := ptyCredential{local: s.LocalMode && s.localUser != nil}
+	if !credential.local {
+		cookie, _ := r.Cookie(sessionCookieNameForChannel()) // sessionUser selected this cookie
+		credential.token, credential.session = cookie.Value, true
+		if !s.ptyCredentialValid(r.Context(), credential, user.ID) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
 
-	conn, err := websocket.Accept(w, r, s.browserWebSocketAcceptOptions())
+	conn, socketCtx, release, err := s.acceptSocket(w, r, user.ID, s.browserWebSocketAcceptOptions())
 	if err != nil {
 		return
 	}
+	defer release()
 	defer func() { _ = conn.CloseNow() }()
 
 	s.trackBrowser(conn, user.ID)
@@ -381,9 +408,16 @@ func (s *Server) handleAppWS(w http.ResponseWriter, r *http.Request) {
 	s.Wings.Subscribe(user.ID, orgIDs, ch)
 	defer s.Wings.Unsubscribe(user.ID, ch)
 
-	ctx := conn.CloseRead(r.Context())
+	ctx := conn.CloseRead(socketCtx)
+	authTicker := time.NewTicker(authInterval)
+	defer authTicker.Stop()
 	for {
 		select {
+		case <-authTicker.C:
+			if !s.ptyCredentialValid(ctx, credential, user.ID) || !s.roostUserIDAllowed(user.ID) {
+				_ = conn.Close(websocket.StatusPolicyViolation, "authorization revoked")
+				return
+			}
 		case ev := <-ch:
 			data, _ := json.Marshal(ev)
 			writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)

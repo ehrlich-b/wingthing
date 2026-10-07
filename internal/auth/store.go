@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/fsutil"
+	"github.com/ehrlich-b/wingthing/internal/protectedfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -42,34 +43,9 @@ func (s *TokenStore) Save(token *DeviceToken) error {
 	if err := os.MkdirAll(s.Dir, 0700); err != nil {
 		return fmt.Errorf("create token directory: %w", err)
 	}
-	temporary, err := os.CreateTemp(s.Dir, ".device-token-*")
-	if err != nil {
-		return fmt.Errorf("create temporary token: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	committed := false
-	defer func() {
-		_ = temporary.Close()
-		if !committed {
-			_ = os.Remove(temporaryPath)
-		}
-	}()
-	if err := temporary.Chmod(0600); err != nil {
-		return fmt.Errorf("protect temporary token: %w", err)
-	}
-	if _, err := temporary.Write(data); err != nil {
-		return fmt.Errorf("write temporary token: %w", err)
-	}
-	if err := temporary.Sync(); err != nil {
-		return fmt.Errorf("sync temporary token: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close temporary token: %w", err)
-	}
-	if err := os.Rename(temporaryPath, s.tokenPath()); err != nil {
+	if err := protectedfile.WriteFile(s.tokenPath(), data); err != nil {
 		return fmt.Errorf("replace token: %w", err)
 	}
-	committed = true
 	if err := fsutil.SyncDirectory(s.Dir); err != nil {
 		return fmt.Errorf("persist token replacement: %w", err)
 	}
@@ -77,7 +53,7 @@ func (s *TokenStore) Save(token *DeviceToken) error {
 }
 
 func (s *TokenStore) Load() (*DeviceToken, error) {
-	data, err := os.ReadFile(s.tokenPath())
+	data, err := protectedfile.ReadFile(s.tokenPath())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

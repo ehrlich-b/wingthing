@@ -363,7 +363,11 @@ func (s *Server) handleCall(w http.ResponseWriter, r *http.Request, req rpcReque
 	if s.callEnv != nil {
 		extraEnv = s.callEnv(r)
 	}
-	resp := s.runner.CallWithEnv(params.Name, args, extraEnv)
+	owner := ""
+	if s.principalOf != nil {
+		owner = s.principalOf(r).Email
+	}
+	resp := s.runner.CallAs(params.Name, args, owner, extraEnv)
 	s.observeCall(r, params.Name, args, resp)
 	writeToolResult(w, req.ID, resp)
 }

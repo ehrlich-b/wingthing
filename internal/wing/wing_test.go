@@ -3,8 +3,10 @@ package wing
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	pionwebrtc "github.com/pion/webrtc/v4"
 )
@@ -510,5 +513,44 @@ func TestForgetAttentionStateRemovesAllSessionEntries(t *testing.T) {
 	}
 	if _, exists := wingAttentionNonce.Load(sessionID); exists {
 		t.Fatal("attention nonce was retained")
+	}
+}
+
+func TestReclaimedLegacyEggKeepsPTYButRequiresReplacement(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("WINGTHING_DIR", filepath.Join(home, ".wingthing"))
+	dir := filepath.Join(home, ".wingthing", "eggs", "old")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=claude\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "egg.pid"), []byte("fixture-pid"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if prepareReclaimedEggIsolation(dir) {
+		t.Fatal("legacy tool recovery allowed")
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "replacement-required")); err != nil || !strings.Contains(string(data), "privileged tools are not recovered") {
+		t.Fatalf("replacement not marked: %q %v", data, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "egg.pid")); err != nil || string(data) != "fixture-pid" {
+		t.Fatalf("legacy PTY was removed: %q %v", data, err)
+	}
+	key := sha256.Sum256([]byte(config.CanonicalProviderPath(dir)))
+	control := filepath.Join(home, ".gnupg", "wingthing-control", fmt.Sprintf("%x", key))
+	if err := os.MkdirAll(control, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "egg.control"), []byte(control+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(control, "isolation"), []byte(egg.ControlIsolationVersion+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !prepareReclaimedEggIsolation(dir) {
+		t.Fatal("current isolated tool recovery refused")
 	}
 }

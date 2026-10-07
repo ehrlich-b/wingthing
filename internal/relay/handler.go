@@ -2,6 +2,7 @@ package relay
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,7 +29,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
 	userID := s.requireToken(w, r)
 	if userID == "" {
-		return // requireToken already wrote 401
+		return // requireToken already wrote an error response
 	}
 	resp := map[string]any{"ok": true, "user_id": userID}
 	if u, _ := s.Store.GetUserByID(userID); u != nil {
@@ -54,6 +55,22 @@ func (s *Server) handleAuthDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "wing_id is required")
 		return
 	}
+	// Historical wings may omit the key and use hostname-like IDs. New keys
+	// are raw 32-byte X25519/ed25519 public keys in standard padded base64.
+	if len(req.WingID) > 256 || strings.IndexFunc(req.WingID, func(c rune) bool {
+		return !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || strings.ContainsRune("._:-", c))
+	}) >= 0 {
+		writeError(w, http.StatusBadRequest, "wing_id must be at most 256 letters, digits, dots, underscores, colons or hyphens")
+		return
+	}
+	if req.PublicKey != "" {
+		key, err := base64.StdEncoding.Strict().DecodeString(req.PublicKey)
+		if len(req.PublicKey) != 44 || err != nil || len(key) != 32 || base64.StdEncoding.EncodeToString(key) != req.PublicKey {
+			writeError(w, http.StatusBadRequest, "public_key must be a base64-encoded 32-byte X25519 or ed25519 key")
+			return
+		}
+	}
 
 	expiresAt := time.Now().Add(deviceCodeExpiry)
 	var deviceCode, userCode string
@@ -65,11 +82,16 @@ func (s *Server) handleAuthDevice(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "generate secure device code")
 			return
 		}
-		err = s.Store.CreateDeviceCodeWithKey(deviceCode, userCode, req.WingID, req.PublicKey, expiresAt)
+		err = s.Store.createDeviceCode(deviceCode, userCode, req.WingID, req.PublicKey, expiresAt,
+			deviceGrantAdmission{IP: clientIP(r), Limits: s.Config.ResourceLimits})
 		if err == nil {
 			break
 		}
 		if !errors.Is(err, ErrDeviceUserCodeExists) {
+			if errors.Is(err, ErrDeviceGrantLimit) || errors.Is(err, ErrDeviceGrantIPLimit) {
+				writeError(w, http.StatusTooManyRequests, err.Error())
+				return
+			}
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -305,18 +327,27 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, deviceID, err := s.Store.ValidateToken(req.Token)
+	claims, err := s.validateWingCredential(r.Context(), req.Token)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid token")
+		writeCredentialError(w, err)
 		return
 	}
+	userID, deviceID := claims.Subject, claims.WingID
 	if !s.roostUserIDAllowed(userID) {
 		writeError(w, http.StatusForbidden, "this account is not enrolled in this roost")
 		return
 	}
 
-	newToken := uuid.New().String()
-	if err := s.Store.RotateDeviceToken(req.Token, newToken, userID, deviceID, nil); err != nil {
+	if s.jwtKey == nil {
+		writeError(w, http.StatusInternalServerError, "jwt key not initialized")
+		return
+	}
+	newToken, exp, err := IssueWingJWT(s.jwtKey, userID, claims.PublicKey, deviceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "issue jwt: "+err.Error())
+		return
+	}
+	if err := s.Store.RotateDeviceToken(req.Token, newToken, userID, deviceID, &exp); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -327,7 +358,7 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token":      newToken,
-		"expires_at": 0,
+		"expires_at": exp.Unix(),
 	})
 }
 
@@ -378,23 +409,12 @@ func (s *Server) requireToken(w http.ResponseWriter, r *http.Request) string {
 		return ""
 	}
 
-	// Try JWT first
-	if s.JWTPubKey() != nil {
-		if claims, err := ValidateWingJWT(s.JWTPubKey(), token); err == nil {
-			if !s.roostUserIDAllowed(claims.Subject) {
-				writeError(w, http.StatusForbidden, "this account is not enrolled in this roost")
-				return ""
-			}
-			return claims.Subject
-		}
-	}
-
-	// Fall back to DB token
-	userID, _, err := s.Store.ValidateToken(token)
+	claims, err := s.validateWingCredential(r.Context(), token)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid or expired token")
+		writeCredentialError(w, err)
 		return ""
 	}
+	userID := claims.Subject
 	if !s.roostUserIDAllowed(userID) {
 		writeError(w, http.StatusForbidden, "this account is not enrolled in this roost")
 		return ""

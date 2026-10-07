@@ -38,3 +38,7 @@ RUN useradd -m -u 1001 testuser && \
     mkdir -p /home/testuser/.wingthing/eggs /home/testuser/.wingthing/logs /home/testuser/.claude && \
     chown -R testuser:testuser /home/testuser
 WORKDIR /root
+
+# Policy fixtures require a trusted directory chain, including their temp root.
+RUN mkdir -p /var/lib/wingthing-tests && chmod 0755 /var/lib/wingthing-tests
+ENV TMPDIR=/var/lib/wingthing-tests

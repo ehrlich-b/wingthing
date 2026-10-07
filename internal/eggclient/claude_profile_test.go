@@ -60,6 +60,47 @@ func TestPrepareIsolatedClaudeConfigNeverOverwritesCurrentProfile(t *testing.T) 
 	}
 }
 
+func TestSpawnClaudeConfigPreservesWritableLinuxProfile(t *testing.T) {
+	for _, test := range []struct {
+		name, platform, explicit string
+		isolated, outer, migrate bool
+	}{
+		{name: "Linux sandbox", platform: "linux", migrate: true},
+		{name: "Linux outer boundary", platform: "linux", outer: true},
+		{name: "macOS personal", platform: "darwin"},
+		{name: "isolated macOS", platform: "darwin", isolated: true, migrate: true},
+		{name: "explicit config directory", platform: "linux", explicit: "/custom/claude"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			legacy := filepath.Join(home, ".claude.json")
+			data := []byte(`{"hasCompletedOnboarding":true,"theme":"dark"}`)
+			if err := os.WriteFile(legacy, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			env := map[string]string{}
+			if test.explicit != "" {
+				env["CLAUDE_CONFIG_DIR"] = test.explicit
+			}
+			if err := prepareSpawnClaudeConfig(home, env, "claude", test.platform, test.isolated, test.outer); err != nil {
+				t.Fatal(err)
+			}
+			profile, err := os.ReadFile(filepath.Join(home, ".claude", ".claude.json"))
+			if test.migrate {
+				if err != nil || string(profile) != string(data) || env["CLAUDE_CONFIG_DIR"] != filepath.Join(home, ".claude") {
+					t.Fatal("Linux/isolated writable profile lost preferences", err)
+				}
+			} else if !os.IsNotExist(err) || env["CLAUDE_CONFIG_DIR"] != test.explicit {
+				t.Fatal("unrelated config layout changed", err)
+			}
+			original, err := os.ReadFile(legacy)
+			if err != nil || string(original) != string(data) {
+				t.Fatal("legacy personal profile changed", err)
+			}
+		})
+	}
+}
+
 func TestPrepareIsolatedClaudeConfigDoesNotFollowLegacySymlink(t *testing.T) {
 	home := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside.json")

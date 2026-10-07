@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -281,8 +283,8 @@ const claudeLifecycleSettingsFile = "claude-settings.json"
 
 // prepareClaudeLifecycleArgs keeps merged credentials out of the process argv.
 // Only this file, rather than the egg directory, is exposed to the sandbox.
-func prepareClaudeLifecycleArgs(args []string, home, eggDir, providerID, cwd string) ([]string, error) {
-	out, err := claudeLifecycleArgs(args, home, filepath.Base(eggDir), providerID, cwd)
+func prepareClaudeLifecycleArgs(args []string, home, eggDir, providerID, cwd string, policies ...*sandbox.Config) ([]string, error) {
+	out, err := claudeLifecycleArgs(args, home, filepath.Base(eggDir), providerID, cwd, policies...)
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +321,136 @@ func prepareClaudeLifecycleArgs(args []string, home, eggDir, providerID, cwd str
 	return out, nil
 }
 
-func claudeLifecycleArgs(args []string, home, sessionID, providerID, cwd string) ([]string, error) {
+// Check the opened identity, never a separately reopened settings path. The
+// caller passes the compiled session policy before adding the settings bridge.
+func validateClaudeSettingsFile(f *os.File, policy *sandbox.Config) error {
+	refuse := func() error { return errors.New("settings file is outside the session filesystem policy") }
+	var stat unix.Stat_t
+	if err := unix.Fstat(int(f.Fd()), &stat); err != nil {
+		return err
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Nlink != 1 {
+		return refuse()
+	}
+	path, err := filepath.Abs(f.Name())
+	if err != nil {
+		return err
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return refuse()
+	}
+	info, err := os.Stat(resolved)
+	opened, statErr := f.Stat()
+	if err != nil || statErr != nil || !os.SameFile(info, opened) {
+		return refuse()
+	}
+	if policy == nil {
+		return nil
+	} // explicit outer host boundary
+	masks, err := sandbox.PhysicalDenyPaths(append(append([]string(nil), policy.Deny...), policy.ControlDenyPaths...))
+	if err != nil {
+		return err
+	}
+	jail := false
+	for _, mask := range masks {
+		if mask == "/" && runtime.GOOS == "linux" {
+			jail = true
+			continue
+		}
+		if controlPathWithin(resolved, mask) || controlPathWithin(path, mask) {
+			return refuse()
+		}
+	}
+	if !jail {
+		return nil
+	} // Seatbelt and non-jail Linux permit other host reads.
+	// Rewalk the most-specific mount without following any directory links.
+	// A lexical workspace match must not import an unmounted host inode.
+	exposed, err := openJailedClaudeSettingsFile(path, policy.Mounts)
+	if err != nil {
+		return refuse()
+	}
+	defer exposed.Close()
+	info, err = exposed.Stat()
+	if err != nil || !os.SameFile(opened, info) {
+		return refuse()
+	}
+	return nil
+}
+
+func openClaudeSettingsFile(path string, policy *sandbox.Config) (*os.File, error) {
+	if policy != nil && runtime.GOOS == "linux" {
+		for _, masks := range [][]string{policy.Deny, policy.ControlDenyPaths} {
+			for _, mask := range masks {
+				if filepath.Clean(mask) == "/" {
+					return openJailedClaudeSettingsFile(path, policy.Mounts)
+				}
+			}
+		}
+	}
+	return openBoundRegularFile(path)
+}
+
+// Pin the mounted source and each descendant with openat/O_NOFOLLOW. Walking
+// the source's ancestors too prevents a replaced root from redirecting the read.
+func openJailedClaudeSettingsFile(path string, mounts []sandbox.Mount) (*os.File, error) {
+	refuse := func() (*os.File, error) {
+		return nil, errors.New("settings file is outside the session filesystem policy")
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	best := -1
+	source := ""
+	for _, mount := range mounts {
+		target := mount.Target
+		if target == "" {
+			target = mount.Source
+		}
+		target = filepath.Clean(target)
+		if !controlPathWithin(path, target) || len(target) < best {
+			continue
+		}
+		relative, err := filepath.Rel(target, path)
+		if err != nil {
+			return refuse()
+		}
+		best, source = len(target), filepath.Join(mount.Source, relative)
+	}
+	if best < 0 {
+		return refuse()
+	}
+	source, err = filepath.Abs(source)
+	if err != nil {
+		return nil, err
+	}
+	flags := unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC
+	fd, err := unix.Open("/", flags|unix.O_DIRECTORY, 0)
+	if err != nil {
+		return refuse()
+	}
+	defer func() { _ = unix.Close(fd) }()
+	parts := strings.Split(strings.TrimPrefix(source, "/"), "/")
+	for i, part := range parts {
+		openFlags := flags
+		if i < len(parts)-1 {
+			openFlags |= unix.O_DIRECTORY
+		}
+		next, err := unix.Openat(fd, part, openFlags, 0)
+		if err != nil {
+			return refuse()
+		}
+		_ = unix.Close(fd)
+		fd = next
+	}
+	f := os.NewFile(uintptr(fd), path)
+	fd = -1 // ownership of the final descriptor passes to the caller
+	return f, nil
+}
+
+func claudeLifecycleArgs(args []string, home, sessionID, providerID, cwd string, policies ...*sandbox.Config) ([]string, error) {
 	if home == "" || !validLifecycleID(sessionID) || !validLifecycleID(providerID) {
 		return nil, errors.New("exact session identity and provider home required for lifecycle hooks")
 	}
@@ -345,11 +476,22 @@ func claudeLifecycleArgs(args []string, home, sessionID, providerID, cwd string)
 			if !filepath.IsAbs(value) {
 				value = filepath.Join(cwd, value)
 			}
-			f, err := openBoundRegularFile(value)
+			var policy *sandbox.Config
+			if len(policies) > 0 {
+				policy = policies[0]
+			}
+			f, err := openClaudeSettingsFile(value, policy)
 			if err != nil {
 				return nil, fmt.Errorf("read lifecycle settings: %w", err)
 			}
+			if err = validateClaudeSettingsFile(f, policy); err != nil {
+				_ = f.Close()
+				return nil, err
+			}
 			data, err = io.ReadAll(io.LimitReader(f, maxLifecycleRecord+1))
+			if err == nil {
+				err = validateClaudeSettingsFile(f, policy)
+			}
 			_ = f.Close()
 			if err != nil {
 				return nil, err
@@ -438,6 +580,9 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		}
 	}
 	if agent == "claude" && validLifecycleID(exactProviderID) {
+		if err = verifyProviderSession(eggDir, agent, providerHome, exactProviderID); err != nil {
+			return view, err
+		}
 		if err = j.importTranscript(eggDir, cwd, providerHome, exactProviderID, processEnded); err != nil {
 			return view, err
 		}
@@ -599,19 +744,14 @@ func (j *lifecycleJournal) importTranscript(eggDir, cwd, home, id string, proces
 			offset = e.SourceOffset
 		}
 	}
-	path, _, err := findClaudeSession(cwd, home, Profile("claude").SessionDir, time.Time{}, id)
+	source, _, err := openAgentSession("claude", cwd, home, Profile("claude").SessionDir, time.Time{}, id)
 	if err != nil {
 		return err
 	}
 	var reader io.Reader
-	var source *os.File
 	var gz *gzip.Reader
-	if path != "" {
-		source, err = openBoundRegularFile(path)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = source.Close() }()
+	if source != nil {
+		defer source.Close()
 		reader = source
 	} else {
 		meta, metaErr := os.ReadFile(filepath.Join(eggDir, "chat.meta"))

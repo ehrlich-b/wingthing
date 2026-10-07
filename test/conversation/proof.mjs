@@ -1,9 +1,9 @@
 // Actual browser tunnel -> egg -> injected stdio MCP -> two child eggs.
 // The provider is a clearly labeled protocol fixture; no model credentials.
 //
-// --expect-nested-proxy-block: state inside the parent's writable workspace, so
-//   the parent keeps the direct in-sandbox MCP server and the nested child egg
-//   is denied its proxy bind (the regression this transport addresses).
+// --expect-protected-state-refusal: state inside the writable workspace must
+//   fail host-broker protection before the parent launches. Sandboxed parents
+//   cannot use direct stdio to reopen the controller tree.
 // --state-root <dir>: Wingthing state in a fresh directory under <dir>, outside
 //   /tmp and the workspace, with the OS-account HOME as the sandbox write-deny
 //   root. The parent's injected client then reaches the host mailbox broker,
@@ -31,11 +31,11 @@ if (!/^wt-preview version \S+-preview\./m.test(reportedVersion)) throw new Error
 const binarySHA256 = createHash('sha256').update(await readFile(binary)).digest('hex');
 const expectedSHAIndex = process.argv.indexOf('--expect-sha256');
 if (expectedSHAIndex > 0 && process.argv[expectedSHAIndex + 1]?.toLowerCase() !== binarySHA256) throw new Error(`receiver ${binary} sha256 ${binarySHA256} differs from the frozen binary`);
-const expectProxyBlock = process.argv.includes('--expect-nested-proxy-block');
+const expectStateRefusal = process.argv.includes('--expect-protected-state-refusal');
 const stateRootIndex = process.argv.indexOf('--state-root');
 const stateRoot = stateRootIndex > 0 ? process.argv[stateRootIndex + 1] : '';
 if (stateRootIndex > 0 && !stateRoot) throw new Error('--state-root requires a directory');
-if (stateRoot && expectProxyBlock) throw new Error('--state-root and --expect-nested-proxy-block select different layouts');
+if (stateRoot && expectStateRefusal) throw new Error('--state-root and --expect-protected-state-refusal select different layouts');
 const scratch = await mkdtemp('/tmp/wtc-');
 const workspace = path.join(scratch, 'workspace');
 const bin = path.join(scratch, 'bin');
@@ -206,6 +206,13 @@ try {
         }
     };
     const launchArgs = { agent: 'claude', cwd: workspace, label: 'fixture-parent', conversation_role: 'parent', request_id: 'fixture-parent-intent' };
+    if (expectStateRefusal) {
+        await assert.rejects(control('agent_start', launchArgs), /host mailbox unavailable:.*(provider data home|provider-writable|protected)/);
+        const inventory = await request({ type: 'sessions.list' });
+        assert.equal(inventory.sessions?.length || 0, 0, 'unsafe state layout launched an egg');
+        proof = { protected_state_overlap_refused_before_launch: true, controller_credentials_exposed: false, scratch };
+        console.log(JSON.stringify(proof, null, 2));
+    } else {
     const parent = await control('agent_start', launchArgs);
     sessions.push(parent.session);
     const replay = await control('agent_start', launchArgs);
@@ -213,27 +220,10 @@ try {
     assert.equal(replay.reused, true);
     // Runs beside the wait below; settles to its proof or its error.
     const restart = stateRoot ? restartBroker(parent.session).catch(error => error) : null;
-    let done = await control('session_wait', { session: parent.session, state: 'completed', timeout_seconds: expectProxyBlock ? 10 : 25 });
-    for (let round = 0; !expectProxyBlock && !done.matched && done.lifecycle?.process_alive && round < 4; round++) {
+    let done = await control('session_wait', { session: parent.session, state: 'completed', timeout_seconds: 25 });
+    for (let round = 0; !done.matched && done.lifecycle?.process_alive && round < 4; round++) {
         done = await control('session_wait', { session: parent.session, state: 'completed', timeout_seconds: 25 });
     }
-    if (expectProxyBlock) {
-        assert.equal(done.matched, false);
-        assert.equal(done.lifecycle.state, 'failed');
-        const blockedTree = await control('conversation_read', { conversation_id: parent.conversation_id });
-        const child = blockedTree.tasks.find(task => task.conversation.parent_conversation_id === parent.conversation_id)?.conversation;
-        assert.ok(child, 'bound MCP never reserved a linked child');
-        const diagnostic = await readFile(path.join(state, 'eggs', child.session_id, 'egg.failed.log'), 'utf8');
-        assert.match(diagnostic, /proxy listen: listen tcp4 127\.0\.0\.1:0: bind: operation not permitted/);
-        const native = await control('session_read', { session: parent.session, after_cursor: 0, limit: 100 });
-        assert.ok(native.lifecycle.events.some(event => event.text === 'FIXTURE_BOUND_MCP_INITIALIZED'));
-        for (const session of [parent.session, child.session_id]) {
-            assert.equal((await readFile(path.join(state, 'eggs', session, 'egg.owner'), 'utf8')).split('\n')[0], user.id);
-        }
-        proof = { provider: 'disposable native protocol fixture; no model invocation', automatic_parent_mcp_initialized: true, child_launch_reserved_by_bound_mcp: true, same_browser_owner: true, full_two_child_orchestration: false, blocker: 'nested child egg network proxy loopback bind denied by existing parent sandbox', diagnostic_path: path.join(state, 'eggs', child.session_id, 'egg.failed.log'), parent_conversation_id: parent.conversation_id, stable_or_org_state_touched: false, scratch };
-        console.log(JSON.stringify(proof, null, 2));
-        await writeFile(path.join(scratch, 'blocked-proof.json'), JSON.stringify(proof, null, 2), { mode: 0o600 });
-    } else {
     if (!done.matched) {
         const failure = await readFile(path.join(workspace, '.fixture-error.json'), 'utf8').catch(() => 'no fixture error artifact');
         throw new Error('parent did not observe two children: ' + JSON.stringify(done.lifecycle) + '\n' + failure);

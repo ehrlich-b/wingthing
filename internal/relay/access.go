@@ -41,18 +41,17 @@ func (s *Server) canAccessWing(userID string, wing *ConnectedWing, userOrgIDs ..
 	}
 
 	if wing.OrgID != "" {
-		// Check via session org IDs (works on edge nodes)
+		// The store is authoritative on login/standalone nodes. A stale
+		// socket or session snapshot must never override membership removal.
+		if !s.IsEdge() && s.Store != nil {
+			return s.Store.IsOrgMember(wing.OrgID, userID)
+		}
+		// Edge callers supply a freshly validated membership snapshot.
 		if len(userOrgIDs) > 0 {
 			for _, oid := range userOrgIDs[0] {
 				if oid == wing.OrgID {
 					return true
 				}
-			}
-		}
-		// Check via store (login node)
-		if s.Store != nil {
-			if s.Store.IsOrgMember(wing.OrgID, userID) {
-				return true
 			}
 		}
 	}

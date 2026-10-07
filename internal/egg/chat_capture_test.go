@@ -231,6 +231,7 @@ func TestCaptureSessionHistory_Claude_ExactIDDoesNotSelectNewerConversation(t *t
 	if err := os.Chtimes(filepath.Join(projectDir, "other.jsonl"), now, now); err != nil {
 		t.Fatal(err)
 	}
+	lifecycleWrite(t, filepath.Join(eggDir, "egg.meta"), "agent=claude\nprovider_session_id=ours\nprovider_home="+home+"\n")
 	if err := CaptureSessionHistory("claude", cwd, eggDir, home, now.Add(time.Minute), "ours"); err != nil {
 		t.Fatal(err)
 	}
@@ -312,5 +313,64 @@ func TestCaptureSessionHistory_AtomicWrite(t *testing.T) {
 		if filepath.Ext(e.Name()) == ".tmp" {
 			t.Errorf("temp file left behind: %s", e.Name())
 		}
+	}
+}
+
+func TestTranscriptRefusesProviderDirectorySymlinks(t *testing.T) {
+	for _, component := range []string{".claude", "projects", "project"} {
+		t.Run(component, func(t *testing.T) {
+			home, victim, eggDir := t.TempDir(), t.TempDir(), t.TempDir()
+			cwd := "/shared/work"
+			relative := filepath.Join(".claude", "projects", encodeCWDForClaude(cwd))
+			link := filepath.Join(home, relative)
+			suffix := ""
+			if component == ".claude" {
+				link = filepath.Join(home, ".claude")
+				suffix = filepath.Join("projects", encodeCWDForClaude(cwd))
+			}
+			if component == "projects" {
+				link = filepath.Join(home, ".claude", "projects")
+				suffix = encodeCWDForClaude(cwd)
+			}
+			if err := os.MkdirAll(filepath.Dir(link), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(victim, suffix), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(victim, suffix, "victim-id.jsonl"), []byte("{\"type\":\"assistant\",\"sessionId\":\"victim-id\",\"message\":{\"role\":\"assistant\",\"content\":\"victim-secret\"}}\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(victim, link); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(eggDir, "egg.meta"), []byte("agent=claude\nprovider_session_id=victim-id\nprovider_home="+home+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if path, _, err := findClaudeSession(cwd, home, Profile("claude").SessionDir, time.Time{}, "victim-id"); err == nil && path != "" {
+				t.Errorf("discovery followed %s symlink: %s", component, path)
+			}
+			if err := CaptureSessionHistory("claude", cwd, eggDir, home, time.Time{}, "victim-id"); err == nil {
+				t.Error("capture accepted directory symlink")
+			}
+			if _, err := os.Stat(filepath.Join(eggDir, "chat.jsonl.gz")); !os.IsNotExist(err) {
+				t.Errorf("victim transcript captured: %v", err)
+			}
+			if view, err := ReadSessionLifecycle(eggDir, "claude", cwd, home, "victim-id", true, 0, 10); err == nil {
+				t.Errorf("lifecycle imported victim through symlink: %#v", view.Events)
+			}
+		})
+	}
+}
+
+func TestTranscriptRejectsProviderIDFromAnotherEgg(t *testing.T) {
+	dir, home, cwd, path := lifecycleFixture(t)
+	lifecycleWrite(t, path, "{\"type\":\"assistant\",\"sessionId\":\"ours\",\"message\":{\"content\":\"other-egg-secret\"}}\n")
+	lifecycleWrite(t, filepath.Join(dir, "egg.meta"), "agent=claude\nprovider_session_id=actual-owner\nprovider_home="+home+"\n")
+	if view, err := ReadSessionLifecycle(dir, "claude", cwd, home, "ours", true, 0, 10); err == nil {
+		t.Errorf("wrong provider ID imported: %#v", view.Events)
+	}
+	if err := CaptureSessionHistory("claude", cwd, dir, home, time.Time{}, "ours"); err == nil {
+		t.Error("wrong provider ID captured")
 	}
 }

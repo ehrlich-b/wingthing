@@ -22,12 +22,15 @@ func TestWingWebSocketRejectsCrossOriginBrowser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := NewServer(nil, ServerConfig{})
+	store := testStore(t)
+	mustTest(t, store.CreateUser("wing-user"))
+	server := NewServer(store, ServerConfig{})
 	server.SetJWTKey(key)
 	token, _, err := IssueWingJWT(key, "wing-user", "public-key", "wing-id")
 	if err != nil {
 		t.Fatal(err)
 	}
+	mustTest(t, store.CreateDeviceToken(token, "wing-user", "wing-id", nil))
 	httpServer := httptest.NewServer(server)
 	defer httpServer.Close()
 

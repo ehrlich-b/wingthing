@@ -53,6 +53,9 @@ func ResolvePolicy(cfg *EggConfig, agent, home string) EffectivePolicy {
 // host replaces the profile's static vendor domains and remains visible as a
 // distinct source in explain output.
 func ResolvePolicyWithProvider(cfg *EggConfig, agent, home, providerURL string) (EffectivePolicy, error) {
+	if err := cfg.ResolutionError(); err != nil {
+		return EffectivePolicy{}, err
+	}
 	mounts, deny, denyWrite := ParseFSRules(cfg.FS, home)
 
 	policy := EffectivePolicy{
@@ -140,6 +143,19 @@ func ResolvePolicyWithProvider(cfg *EggConfig, agent, home, providerURL string) 
 				Agent:  agent,
 				Reason: fmt.Sprintf("agent %q reads %s from the host environment", agent, name),
 			})
+		}
+	}
+
+	// Agent profile holes are part of the final write surface. Recheck lexical
+	// policy aliases and controller loaders after those holes have been added.
+	for _, path := range policy.DenyWrite {
+		if _, err := resolveLoaderPath(path, true, policy.Mounts); err != nil {
+			return EffectivePolicy{}, err
+		}
+	}
+	if RequiresSandbox(cfg, agent) {
+		if _, err := eggControlDenyPaths("", policy.Mounts); err != nil {
+			return EffectivePolicy{}, err
 		}
 	}
 

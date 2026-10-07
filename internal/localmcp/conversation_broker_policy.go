@@ -40,8 +40,8 @@ type providerWriteModel struct {
 
 func modelProviderWrites(cfg *config.Config, eggCfg *egg.EggConfig, agentName, cwd, sessionID string, identity eggclient.EggIdentity) (providerWriteModel, error) {
 	var model providerWriteModel
-	if runtime.GOOS != "darwin" {
-		return model, fmt.Errorf("provider write protection is modeled only for the macOS Seatbelt profile, not %s", runtime.GOOS)
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		return model, fmt.Errorf("provider write protection is unavailable on %s", runtime.GOOS)
 	}
 	if eggCfg == nil || !egg.RequiresSandbox(eggCfg, agentName) {
 		return model, errors.New("an outer-boundary session has the full authority of the OS user")
@@ -51,7 +51,12 @@ func modelProviderWrites(cfg *config.Config, eggCfg *egg.EggConfig, agentName, c
 		return model, errors.New("egg HOME is unavailable, so no write-deny root exists")
 	}
 	model.DenyRoot = wingpolicy.CanonicalPolicyPath(home)
-	if model.DenyRoot == string(filepath.Separator) {
+	if runtime.GOOS == "linux" {
+		// Every sandboxed Linux egg is a jail: only explicit writable
+		// binds can change host files. Its root, tmp and HOME are private.
+		model.DenyRoot = string(filepath.Separator)
+	}
+	if runtime.GOOS != "linux" && model.DenyRoot == string(filepath.Separator) {
 		return model, errors.New("egg HOME is the filesystem root")
 	}
 	// Same per-user data home selection as spawnEgg/egg runtime (rc.UserHome).
@@ -90,9 +95,11 @@ func modelProviderWrites(cfg *config.Config, eggCfg *egg.EggConfig, agentName, c
 	for _, dir := range profile.WriteDirs {
 		add(filepath.Join(dataHome, dir), "agent profile write directory", false, false)
 	}
-	add(filepath.Join(model.DenyRoot, "Library", "Keychains"), "keychain directory", false, false)
-	add(os.TempDir(), "TMPDIR", false, false)
-	add("/private/tmp", "system temporary directory", false, false)
+	if runtime.GOOS == "darwin" {
+		add(filepath.Join(model.DenyRoot, "Library", "Keychains"), "keychain directory", false, false)
+		add(os.TempDir(), "TMPDIR", false, false)
+		add("/private/tmp", "system temporary directory", false, false)
+	}
 	return model, nil
 }
 
@@ -134,6 +141,9 @@ func (m providerWriteModel) verifyProtected(stateDir string, targets []string) e
 			continue
 		}
 		return fmt.Errorf("provider-writable %s %s is inside protected state %s", region.Reason, region.Path, state)
+	}
+	if m.DenyRoot == string(filepath.Separator) {
+		return nil // jail ancestors outside host binds are synthetic directories
 	}
 	return verifyAncestorsNotRenamable(m.DenyRoot)
 }

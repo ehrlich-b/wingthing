@@ -10,6 +10,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
@@ -22,7 +23,7 @@ func TestPublicCoordinatorRoleInjectedAndInspectableThroughBootstrap(t *testing.
 	}
 	defer func() { _ = db.Close() }()
 	c := fixtureConversation(t, db, cfg, "root-role", "", "owner", "idle")
-	server := &Server{Version: "dev", Cfg: cfg, Principal: c.OwnerID, BoundConversation: c.ID, Logs: &bytes.Buffer{}}
+	server := &Server{Version: "dev", Cfg: cfg, Principal: c.OwnerID, BoundConversation: c.ID, Logs: &bytes.Buffer{}, Unsandboxed: true}
 	args, err := server.prepareBoundParentMCP(c, egg.DefaultEggConfig(), []string{"--model", "already-selected-model"})
 	if err != nil {
 		t.Fatal(err)
@@ -106,6 +107,7 @@ func TestConversationReadReportsContextForActualLocalTasks(t *testing.T) {
 }
 
 func TestResumedCoordinatorRoleUsesNewInvocationWithSameLogicalRoot(t *testing.T) {
+	mockParentBroker(t)
 	cfg := &config.Config{Dir: t.TempDir()}
 	db, err := store.Open(cfg.DBPath())
 	if err != nil {
@@ -114,12 +116,16 @@ func TestResumedCoordinatorRoleUsesNewInvocationWithSameLogicalRoot(t *testing.T
 	defer func() { _ = db.Close() }()
 	user := "role-personal-owner"
 	c := fixtureConversation(t, db, cfg, "resume-role", "", roostSessionPrincipal(user), "idle")
-	args, principal, err := PrepareConversationResumeMCP("dev", cfg, &config.WingConfig{}, ws.PTYStart{SessionID: "new-execution", ResumeSessionID: c.SessionID, UserID: user, CWD: c.CWD}, egg.DefaultEggConfig(), false)
+	opts := eggclient.SpawnEggOpts{}
+	args, principal, err := PrepareConversationResumeMCP("dev", cfg, &config.WingConfig{}, ws.PTYStart{SessionID: "new-execution", ResumeSessionID: c.SessionID, UserID: user, CWD: c.CWD}, egg.DefaultEggConfig(), false, &opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if principal != c.OwnerID || len(args) != 4 {
 		t.Fatalf("lost existing binding %q %v", principal, args)
+	}
+	if !opts.OmitBrowserBridge || len(opts.ProtectedWriteTargets) != 2 {
+		t.Fatalf("resume dropped host broker protection: %+v", opts)
 	}
 	invocation := *c
 	invocation.SessionID = "new-execution"

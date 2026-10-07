@@ -117,8 +117,11 @@ func TestHeadlessContinuationAdvertisementEligibility(t *testing.T) {
 				s.allowedPaths = []string{t.TempDir()}
 			}
 			result, err := s.toolSessionRead(context.Background(), json.RawMessage(`{"session":"source"}`))
-			if err != nil && name != "foreign principal" && name != "path revoked" {
+			if err != nil && name != "foreign principal" && name != "path revoked" && name != "provider mismatch" {
 				t.Fatal(err)
+			}
+			if name == "provider mismatch" && (err == nil || !strings.Contains(err.Error(), "does not belong to this egg")) {
+				t.Fatalf("mismatched provider identity was not refused: %v", err)
 			}
 			available := result["headless_continuation"]
 			if name == "ended owned resumable" {

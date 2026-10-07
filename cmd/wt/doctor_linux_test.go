@@ -19,14 +19,18 @@ func TestValidateAppArmorExecutablePathAcceptsSystemBinary(t *testing.T) {
 	}
 }
 
-func TestValidateAppArmorExecutablePathRejectsTemporaryTree(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "wt")
+func TestValidateAppArmorExecutablePathRejectsSharedWritableTree(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0777); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "wt")
 	if err := os.WriteFile(path, []byte("test"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	err := validateAppArmorExecutablePath(path)
 	if err == nil {
-		t.Fatal("temporary executable path accepted")
+		t.Fatal("shared-writable executable path accepted")
 	}
 	if !strings.Contains(err.Error(), "root-owned, root-writable-only") ||
 		!strings.Contains(err.Error(), "/usr/local/bin/wt") {

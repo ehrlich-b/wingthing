@@ -1,10 +1,12 @@
 package egg
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	wingconfig "github.com/ehrlich-b/wingthing/internal/config"
@@ -158,8 +160,8 @@ fs:
 			t.Errorf("base:none should not have deny entries, got %s", entry)
 		}
 	}
-	if len(cfg.FS) != 2 {
-		t.Errorf("expected 2 FS rules, got %d: %v", len(cfg.FS), cfg.FS)
+	if mounts, _, denied := ParseFSRules(cfg.FS, ""); len(mounts) != 2 || len(denied) != 1 {
+		t.Errorf("expected 2 FS rules plus policy protection, got %d: %v", len(cfg.FS), cfg.FS)
 	}
 }
 
@@ -237,8 +239,8 @@ fs:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.FS) != 2 {
-		t.Errorf("expected 2 FS rules, got %d: %v", len(cfg.FS), cfg.FS)
+	if mounts, _, denied := ParseFSRules(cfg.FS, ""); len(mounts) != 1 || len(denied) != 2 {
+		t.Errorf("expected filesystem grants plus 2 protected policies, got %d: %v", len(cfg.FS), cfg.FS)
 	}
 }
 
@@ -402,6 +404,371 @@ func TestResolveEggConfig_FileNotFound(t *testing.T) {
 	}
 }
 
+func TestResolvedPoliciesDenyWriteEveryDependency(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
+	bases := filepath.Join(home, "state", "bases")
+	makeEggConfigTestDir(t, bases)
+	project := t.TempDir()
+	base := filepath.Join(project, "base.yaml")
+	named := filepath.Join(bases, "team.yaml")
+	env := filepath.Join(project, "env.yaml")
+	network := filepath.Join(project, "network.yaml")
+	policy := filepath.Join(project, "egg.yaml")
+	writeEggConfigTestFile(t, base, "base: none\nfs: [rw:./]\n")
+	writeEggConfigTestFile(t, named, "base: "+base+"\n")
+	writeEggConfigTestFile(t, env, "base: none\nenv: [HOME]\n")
+	writeEggConfigTestFile(t, network, "base: none\nnetwork: [example.com]\n")
+	writeEggConfigTestFile(t, policy, "base:\n  name: team\n  fs: none\n  env: ./env.yaml\n  network: ./network.yaml\nfs: [rw:"+base+"]\n")
+	cfg, err := ResolveEggConfig(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, denied := ParseFSRules(cfg.FS, home)
+	for _, dependency := range []string{policy, base, named, env, network} {
+		found := false
+		for _, path := range denied {
+			if path == canonicalPolicyTestPath(t, dependency) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("dependency %s can be overwritten: %v", dependency, denied)
+		}
+	}
+}
+
+func TestDiscoveredGlobalPolicyRefusesReplaceableSymlink(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	state := filepath.Join(home, "state")
+	t.Setenv("WINGTHING_DIR", state)
+	makeEggConfigTestDir(t, state)
+	t.Chdir(t.TempDir())
+	base := filepath.Join(home, "base.yaml")
+	alias := filepath.Join(state, "alias.yaml")
+	policy := filepath.Join(state, "egg.yaml")
+	writeEggConfigTestFile(t, base, "fs: [rw:./]\n")
+	if err := os.Symlink(base, alias); err != nil {
+		t.Fatal(err)
+	}
+	writeEggConfigTestFile(t, policy, "base: ./alias.yaml\n")
+	cfg := DiscoverEggConfig(home, nil)
+	if !isUnsafePolicyPath(cfg.ResolutionError()) {
+		t.Fatalf("replaceable global policy alias admitted: %v", cfg.ResolutionError())
+	}
+	if _, err := cfg.YAML(); !isUnsafePolicyPath(err) {
+		t.Fatalf("security refusal lost during serialization: %v", err)
+	}
+	if _, err := ResolvePolicyWithProvider(cfg, "claude", home, ""); !isUnsafePolicyPath(err) {
+		t.Fatalf("security refusal lost during policy resolution: %v", err)
+	}
+}
+
+func TestDefaultPolicyRefusesReplaceableToolLoaderPaths(t *testing.T) {
+	for _, kind := range []string{"directory", "ancestor", "missing", "dotdot", "definition", "chain", "wing config"} {
+		t.Run(kind, func(t *testing.T) {
+			home := canonicalPolicyTestPath(t, t.TempDir())
+			t.Setenv("HOME", home)
+			state := filepath.Join(home, ".wingthing")
+			t.Setenv("WINGTHING_DIR", state)
+			makeEggConfigTestDir(t, state)
+			work := filepath.Join(home, "work")
+			makeEggConfigTestDir(t, work)
+			t.Chdir(work)
+			real := filepath.Join(home, "host-tools")
+			makeEggConfigTestDir(t, real)
+			definition := filepath.Join(real, "host.yaml")
+			writeEggConfigTestFile(t, definition, "name: host\nrun: true\n")
+			toolsDir := real
+			link := filepath.Join(work, "tools")
+			switch kind {
+			case "directory", "ancestor", "missing", "dotdot":
+				if err := os.Symlink(real, link); err != nil {
+					t.Fatal(err)
+				}
+				toolsDir = link
+				if kind == "dotdot" {
+					toolsDir = link + "/../host-tools"
+				} else if kind != "directory" {
+					toolsDir = filepath.Join(link, "nested")
+					if kind == "ancestor" {
+						makeEggConfigTestDir(t, filepath.Join(real, "nested"))
+					}
+				}
+			case "definition", "chain":
+				toolsDir = filepath.Join(work, "definitions")
+				makeEggConfigTestDir(t, toolsDir)
+				if kind == "chain" {
+					link = filepath.Join(real, "chain.yaml")
+					if err := os.Symlink(definition, link); err != nil {
+						t.Fatal(err)
+					}
+					definition = link
+				}
+				if err := os.Symlink(definition, filepath.Join(toolsDir, "host.yaml")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			wingPath := filepath.Join(state, "wing.yaml")
+			if kind == "wing config" {
+				wingSource := filepath.Join(work, "wing.yaml")
+				writeEggConfigTestFile(t, wingSource, "tools_dir: "+toolsDir+"\n")
+				if err := os.Symlink(wingSource, wingPath); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writeEggConfigTestFile(t, wingPath, "tools_dir: "+toolsDir+"\n")
+			}
+			cfg := DiscoverEggConfig(work, nil)
+			if !isUnsafePolicyPath(cfg.ResolutionError()) {
+				t.Fatalf("replaceable tool %s admitted: %v", kind, cfg.ResolutionError())
+			}
+			if _, err := cfg.YAML(); !isUnsafePolicyPath(err) {
+				t.Fatalf("tool loader refusal lost during serialization: %v", err)
+			}
+			policy := filepath.Join(work, "egg.yaml")
+			writeEggConfigTestFile(t, policy, "fs: [rw:./]\n")
+			if _, err := ResolveEggConfig(policy, work); !isUnsafePolicyPath(err) {
+				t.Fatalf("inherited tool loader refusal lost: %v", err)
+			}
+		})
+	}
+}
+
+func TestLoaderPathsRejectHardLinkAliases(t *testing.T) {
+	for _, kind := range []string{"tool yaml", "tool yml", "tool symlink", "wing config", "clients config", "remotes config", "legacy config", "global policy", "project policy", "base policy", "section policy"} {
+		t.Run(kind, func(t *testing.T) {
+			home := canonicalPolicyTestPath(t, t.TempDir())
+			t.Setenv("HOME", home)
+			state := filepath.Join(home, ".wingthing")
+			t.Setenv("WINGTHING_DIR", state)
+			work := filepath.Join(home, "workspace")
+			tools := filepath.Join(state, "tools")
+			for _, dir := range []string{work, tools} {
+				makeEggConfigTestDir(t, dir)
+			}
+			t.Chdir(work)
+			loader := filepath.Join(tools, "host.yaml")
+			body := "name: host\nrun: /bin/true\n"
+			switch kind {
+			case "tool yml":
+				loader = filepath.Join(tools, "host.yml")
+			case "tool symlink":
+				loader = filepath.Join(home, "host.yaml")
+				if err := os.Symlink(loader, filepath.Join(tools, "host.yaml")); err != nil {
+					t.Fatal(err)
+				}
+			case "wing config":
+				loader, body = filepath.Join(state, "wing.yaml"), "tools_dir: tools\n"
+			case "clients config":
+				loader, body = filepath.Join(state, "clients.yaml"), "require_client: true\n"
+			case "remotes config":
+				loader, body = filepath.Join(state, "remotes.yaml"), "{}\n"
+			case "legacy config":
+				loader, body = filepath.Join(state, "config.yaml"), "{}\n"
+			case "global policy":
+				loader, body = filepath.Join(state, "egg.yaml"), "fs: [rw:./]\n"
+			case "project policy":
+				loader, body = filepath.Join(work, "egg.yaml"), "base: none\nfs: [rw:./]\n"
+			case "base policy", "section policy":
+				loader, body = filepath.Join(home, "base.yaml"), "base: none\nfs: [rw:./]\n"
+				base := "base: " + loader + "\n"
+				if kind == "section policy" {
+					base = "base:\n  fs: " + loader + "\n"
+				}
+				writeEggConfigTestFile(t, filepath.Join(work, "egg.yaml"), base)
+			}
+			writeEggConfigTestFile(t, loader, body)
+			alias := filepath.Join(work, "writable-alias.yaml")
+			if err := os.Link(loader, alias); err != nil {
+				t.Fatal(err)
+			}
+			// This is a regular-file alias, not a symlink. Path masks cannot
+			// stop writes through the workspace's second name for the inode.
+			original, err := os.Stat(loader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			linked, err := os.Lstat(alias)
+			if err != nil || !linked.Mode().IsRegular() || !os.SameFile(original, linked) {
+				t.Fatalf("invalid hard-link fixture: %v", err)
+			}
+			cfg := DiscoverEggConfig(work, nil)
+			if err := cfg.ResolutionError(); !isUnsafePolicyPath(err) || !strings.Contains(err.Error(), "hard links") {
+				t.Fatalf("writable hard-link alias admitted: %v", err)
+			}
+			if _, err := cfg.YAML(); !isUnsafePolicyPath(err) {
+				t.Fatalf("hard-link refusal lost during serialization: %v", err)
+			}
+			if _, err := ResolvePolicyWithProvider(cfg, "codex", home, ""); !isUnsafePolicyPath(err) {
+				t.Fatalf("hard-link refusal lost during policy resolution: %v", err)
+			}
+			// Removing the alias restores the supported one-link layout.
+			if err := os.Remove(alias); err != nil {
+				t.Fatal(err)
+			}
+			if err := DiscoverEggConfig(work, nil).ResolutionError(); err != nil {
+				t.Fatalf("one-link loader refused: %v", err)
+			}
+		})
+	}
+}
+
+func TestToolLoaderSealsResolvedDirectory(t *testing.T) {
+	home := t.TempDir() // includes the immutable /var alias on macOS
+	t.Setenv("HOME", home)
+	state := filepath.Join(home, ".wingthing")
+	t.Setenv("WINGTHING_DIR", state)
+	tools := filepath.Join(home, "workspace", "tools")
+	makeEggConfigTestDir(t, state)
+	makeEggConfigTestDir(t, tools)
+	writeEggConfigTestFile(t, filepath.Join(state, "wing.yaml"), "tools_dir: "+tools+"\n")
+	cfg := DefaultEggConfig()
+	if err := cfg.ResolutionError(); err != nil {
+		t.Fatal(err)
+	}
+	_, deny, _ := ParseFSRules(cfg.FS, home)
+	resolved := canonicalPolicyTestPath(t, tools)
+	if !containsString(deny, resolved) {
+		t.Fatalf("resolved tools directory remains accessible: %v", deny)
+	}
+	mounts, err := isolateLinuxEggControl([]sandbox.Mount{{Source: filepath.Dir(tools)}}, deny, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mount := range mounts {
+		if controlPathWithin(resolved, mount.Source) {
+			t.Fatalf("resolved tools directory remains mounted: %+v", mount)
+		}
+	}
+}
+
+func TestUserManagedLoaderAliasesFollowSandboxWriteGrants(t *testing.T) {
+	for _, loaderName := range []string{"wing.yaml", "egg.yaml"} {
+		for _, writable := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/writable=%t", loaderName, writable), func(t *testing.T) {
+				home := canonicalPolicyTestPath(t, t.TempDir())
+				t.Setenv("HOME", home)
+				state, dotfiles, work := filepath.Join(home, ".wingthing"), filepath.Join(home, "dotfiles"), filepath.Join(home, "work")
+				for _, dir := range []string{state, dotfiles, work} {
+					makeEggConfigTestDir(t, dir)
+				}
+				t.Setenv("WINGTHING_DIR", state)
+				t.Chdir(work)
+				target, loader := filepath.Join(dotfiles, loaderName), filepath.Join(state, loaderName)
+				writeEggConfigTestFile(t, target, "fs: [rw:./]\n")
+				if err := os.Symlink(target, loader); err != nil {
+					t.Fatal(err)
+				}
+				if writable {
+					t.Chdir(dotfiles)
+				}
+				cwd, err := os.Getwd()
+				if err != nil {
+					t.Fatal(err)
+				}
+				cfg := DiscoverEggConfig(cwd, DefaultEggConfig())
+				if writable {
+					if !isUnsafePolicyPath(cfg.ResolutionError()) {
+						t.Fatalf("agent-writable loader target admitted: %v", cfg.ResolutionError())
+					}
+					return
+				}
+				if err := cfg.ResolutionError(); err != nil {
+					t.Fatalf("read-only dotfiles layout refused: %v", err)
+				}
+				_, deny, _ := ParseFSRules(cfg.FS, home)
+				if !containsString(deny, loader) || !containsString(deny, target) {
+					t.Fatalf("controller loader alias was not sealed: %v", deny)
+				}
+				if loaderName == "egg.yaml" {
+					loaded, err := ResolveEggConfig(loader)
+					if err != nil {
+						t.Fatal(err)
+					}
+					_, _, denied := ParseFSRules(loaded.FS, home)
+					if !containsString(denied, target) {
+						t.Fatalf("resolved policy file remains writable: %v", denied)
+					}
+				}
+				// Later grants must not make an already admitted alias unsafe.
+				mounts := []sandbox.Mount{{Source: work}, {Source: dotfiles}}
+				if _, err := eggControlDenyPaths("", mounts); !isUnsafePolicyPath(err) {
+					t.Fatalf("runtime write grant bypassed alias guard: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestLoaderAliasRejectsAgentProfileWriteGrant(t *testing.T) {
+	home := canonicalPolicyTestPath(t, t.TempDir())
+	t.Setenv("HOME", home)
+	state, codex, work := filepath.Join(home, ".wingthing"), filepath.Join(home, ".codex"), filepath.Join(home, "work")
+	for _, dir := range []string{state, codex, work} {
+		makeEggConfigTestDir(t, dir)
+	}
+	t.Setenv("WINGTHING_DIR", state)
+	t.Chdir(work)
+	target := filepath.Join(codex, "wing.yaml")
+	writeEggConfigTestFile(t, target, "{}\n")
+	if err := os.Symlink(target, filepath.Join(state, "wing.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	cfg := DefaultEggConfig()
+	if err := cfg.ResolutionError(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolvePolicyWithProvider(cfg, "codex", home, ""); !isUnsafePolicyPath(err) {
+		t.Fatalf("agent profile reopened a loader alias: %v", err)
+	}
+}
+
+func TestResolvedPoliciesRefuseReplaceableSymlinkComponents(t *testing.T) {
+	for _, kind := range []string{"file", "directory", "chain", "section", "root"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			outside := t.TempDir()
+			base := filepath.Join(outside, "base.yaml")
+			writeEggConfigTestFile(t, base, "base: none\nfs: [rw:./]\n")
+			alias := filepath.Join(root, "alias.yaml")
+			target := base
+			if kind == "directory" {
+				target = outside
+			}
+			if kind == "chain" {
+				link := filepath.Join(outside, "link.yaml")
+				if err := os.Symlink(base, link); err != nil {
+					t.Fatal(err)
+				}
+				target = link
+			}
+			if err := os.Symlink(target, alias); err != nil {
+				t.Fatal(err)
+			}
+			ref := "./alias.yaml"
+			if kind == "directory" {
+				ref += "/base.yaml"
+			}
+			policy := filepath.Join(root, "egg.yaml")
+			body := "base: " + ref + "\n"
+			if kind == "section" {
+				body = "base:\n  fs: " + ref + "\n"
+			}
+			writeEggConfigTestFile(t, policy, body)
+			if kind == "root" {
+				policy = alias
+			}
+			if _, err := ResolveEggConfig(policy, root); !isUnsafePolicyPath(err) {
+				t.Fatalf("replaceable %s alias admitted: %v", kind, err)
+			}
+		})
+	}
+}
+
 func TestDiscoverEggConfig_FallsBackToDefault(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cfg := DiscoverEggConfig("/nonexistent", nil)
@@ -479,8 +846,8 @@ fs:
 `)
 
 	cfg := DiscoverEggConfig(dir, nil)
-	if len(cfg.FS) != 1 {
-		t.Errorf("expected 1 FS rule from project config, got %d: %v", len(cfg.FS), cfg.FS)
+	if mounts, _, denied := ParseFSRules(cfg.FS, ""); len(mounts) != 1 || len(denied) != 1 {
+		t.Errorf("expected 1 FS rule plus policy protection, got %d: %v", len(cfg.FS), cfg.FS)
 	}
 }
 
@@ -608,9 +975,9 @@ func TestSectionMask_None(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// FS should be empty (cut from defaults)
-	if len(cfg.FS) != 0 {
-		t.Errorf("fs should be empty with base.fs: none, got %v", cfg.FS)
+	// Masking defaults must leave the policy itself write-protected.
+	if len(cfg.FS) != 2 || cfg.FS[0] != "deny-write:"+canonicalPolicyTestPath(t, path) || cfg.FS[1] != "deny-rename:"+canonicalPolicyTestPath(t, dir) {
+		t.Errorf("fs should contain only policy protection, got %v", cfg.FS)
 	}
 	// Env should still come from defaults
 	hasHome := false
@@ -715,9 +1082,9 @@ func TestSectionMask_Combo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// FS: masked to none, so empty
-	if len(cfg.FS) != 0 {
-		t.Errorf("fs should be empty (masked none), got %v", cfg.FS)
+	// FS: masked to none, except protection for all three dependencies.
+	if _, _, protected := ParseFSRules(cfg.FS, home); len(protected) != 3 {
+		t.Errorf("fs should contain 3 protected policies and their ancestors, got %v", cfg.FS)
 	}
 	// Network: from strict
 	if len(cfg.Network.Domains) != 1 || cfg.Network.Domains[0] != "api.internal.corp" {
@@ -768,7 +1135,7 @@ func TestBaseField_BackwardCompat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.FS) != 1 || cfg.FS[0] != "rw:./" {
+	if mounts, _, denied := ParseFSRules(cfg.FS, ""); len(mounts) != 1 || len(denied) != 1 || cfg.FS[0] != "rw:./" {
 		t.Errorf("base:none backward compat failed, fs = %v", cfg.FS)
 	}
 
@@ -785,7 +1152,7 @@ func TestBaseField_BackwardCompat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg2.FS) != 1 || cfg2.FS[0] != "rw:./" {
+	if mounts, _, denied := ParseFSRules(cfg2.FS, ""); len(mounts) != 1 || len(denied) != 2 || cfg2.FS[0] != "rw:./" {
 		t.Errorf("base:strict backward compat failed, fs = %v", cfg2.FS)
 	}
 	hasCustom := false
@@ -1151,5 +1518,83 @@ func TestSectionMask_EnvNone_RemovesEssentials(t *testing.T) {
 		if k == "HOME" || k == "PATH" {
 			t.Errorf("BuildEnv should not include %s with env: none mask", k)
 		}
+	}
+}
+
+func canonicalPolicyTestPath(t *testing.T, path string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return real
+}
+
+func TestResolvedPoliciesPinAncestorsToWorkspace(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, "policy", "nested", "base.yaml")
+	makeEggConfigTestDir(t, filepath.Dir(base))
+	writeEggConfigTestFile(t, base, "base: none\nfs: [rw:./]\n")
+	policy := filepath.Join(root, "egg.yaml")
+	writeEggConfigTestFile(t, policy, "base: ./policy/nested/base.yaml\n")
+	cfg, err := ResolveEggConfig(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.ToSandboxConfig(root)
+	for _, dir := range []string{root, filepath.Dir(base), filepath.Dir(filepath.Dir(base))} {
+		found := false
+		for _, pinned := range got.DenyRename {
+			found = found || pinned == canonicalPolicyTestPath(t, dir)
+		}
+		if !found {
+			t.Fatalf("replaceable policy ancestor %s: %v", dir, got.DenyRename)
+		}
+	}
+}
+
+func TestEggPolicyAcceptsRootOwnedReadonlyLoader(t *testing.T) {
+	// A real root-owned descriptor exercises the non-root roost ownership
+	// check without requiring chown privileges on the developer or rig host.
+	path := "/etc/passwd"
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Skip(err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != 0 || os.Getuid() == 0 {
+		t.Skip("requires a non-root service account and a root-owned fixture")
+	}
+	_, err = LoadEggConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "parse egg config") {
+		t.Fatalf("root-owned 0644 loader was refused before YAML parsing: %v", err)
+	}
+}
+
+func TestEggPolicyRefusesGroupWritableLoader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "egg.yaml")
+	writeEggConfigTestFile(t, path, "base: none\n")
+	if err := os.Chmod(path, 0664); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadEggConfig(path); err == nil {
+		t.Fatal("accepted group-writable policy")
+	}
+}
+
+func TestControlPolicyIgnoresVanishedSessionEntries(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	state := filepath.Join(home, "state")
+	t.Setenv("WINGTHING_DIR", state)
+	tree := filepath.Join(state, "eggs")
+	makeEggConfigTestDir(t, tree)
+	// A dangling entry deterministically produces the same ENOENT from Stat
+	// as removal between ReadDir and Stat, without a timing-dependent race.
+	if err := os.Symlink(filepath.Join(tree, "already-removed"), filepath.Join(tree, "retired")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eggControlDenyPaths(""); err != nil {
+		t.Fatalf("vanished session prevented policy resolution: %v", err)
 	}
 }

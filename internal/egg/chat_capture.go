@@ -27,23 +27,23 @@ func CaptureSessionHistory(agent, cwd, eggDir, home string, startedAfter time.Ti
 	if len(exactSessionID) > 0 {
 		requestedID = exactSessionID[0]
 	}
-	sessionFile, agentSessionID, err := findAgentSession(agent, cwd, home, profile.SessionDir, startedAfter, requestedID)
+	if agent == "claude" && requestedID != "" {
+		if err := verifyProviderSession(eggDir, agent, home, requestedID); err != nil {
+			return err
+		}
+	}
+	src, agentSessionID, err := openAgentSession(agent, cwd, home, profile.SessionDir, startedAfter, requestedID)
 	if err != nil {
 		return err
 	}
-	if sessionFile == "" {
+	if src == nil {
 		return nil
 	}
+	defer src.Close()
 
 	// Atomic private write: the captured chat may contain secrets, and replacing
 	// the final path must never follow a stale or attacker-created symlink.
 	dstPath := filepath.Join(eggDir, "chat.jsonl.gz")
-
-	src, err := openBoundRegularFile(sessionFile)
-	if err != nil {
-		return fmt.Errorf("open session file: %w", err)
-	}
-	defer func() { _ = src.Close() }()
 
 	tmp, err := os.CreateTemp(eggDir, ".chat-jsonl-*.tmp")
 	if err != nil {
@@ -137,86 +137,112 @@ func FindLiveSessionFile(agent, cwd, home string) (string, error) {
 	return path, err
 }
 
-// findAgentSession locates the agent's most recent session file modified after startedAfter.
-func findAgentSession(agent, cwd, home, sessionDir string, startedAfter time.Time, exactSessionID ...string) (filePath, sessionID string, err error) {
+// Discovery returns only a name inspected through the same pinned descriptors
+// used by capture and lifecycle imports. Those readers keep the returned file.
+func findAgentSession(agent, cwd, home, sessionDir string, startedAfter time.Time, exactSessionID ...string) (string, string, error) {
 	requestedID := ""
 	if len(exactSessionID) > 0 {
 		requestedID = exactSessionID[0]
 	}
-	switch agent {
-	case "claude":
-		return findClaudeSession(cwd, home, sessionDir, startedAfter, requestedID)
-	case "codex":
-		return findNewestInDir(filepath.Join(home, sessionDir), ".jsonl", startedAfter)
-	case "opencode":
-		return findNewestInDir(filepath.Join(home, sessionDir), ".jsonl", startedAfter)
-	default:
-		return "", "", nil
+	file, id, err := openAgentSession(agent, cwd, home, sessionDir, startedAfter, requestedID)
+	if err != nil || file == nil {
+		return "", "", err
 	}
+	defer file.Close()
+	return file.Name(), id, nil
 }
 
-// findClaudeSession finds the Claude session file for a given CWD.
-// Claude encodes CWD by replacing "/" with "-" for the project directory name.
 func findClaudeSession(cwd, home, sessionDir string, startedAfter time.Time, exactSessionID ...string) (string, string, error) {
-	encoded := encodeCWDForClaude(cwd)
-	projectDir := filepath.Join(home, sessionDir, encoded)
-	if len(exactSessionID) > 0 && exactSessionID[0] != "" {
-		id := exactSessionID[0]
-		if filepath.Base(id) != id || id == "." || id == ".." || strings.ContainsAny(id, "\x00\r\n") || len(id) > 240 {
-			return "", "", errors.New("invalid exact provider session ID")
-		}
-		path := filepath.Join(projectDir, id+".jsonl")
-		info, err := os.Lstat(path)
-		if errors.Is(err, os.ErrNotExist) {
-			return "", "", nil
-		}
-		if err != nil {
-			return "", "", fmt.Errorf("inspect exact provider session: %w", err)
-		}
-		if !info.Mode().IsRegular() {
-			return "", "", errors.New("exact provider session is not a regular file")
-		}
-		return path, id, nil
+	return findAgentSession("claude", cwd, home, sessionDir, startedAfter, exactSessionID...)
+}
+
+func openAgentSession(agent, cwd, home, sessionDir string, startedAfter time.Time, requestedID string) (*os.File, string, error) {
+	if agent != "claude" && agent != "codex" && agent != "opencode" {
+		return nil, "", nil
 	}
-	return findNewestInDir(projectDir, ".jsonl", startedAfter)
+	root, err := openProviderHome(home)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	defer root.Close()
+	relative := sessionDir
+	if agent == "claude" {
+		relative = filepath.Join(relative, encodeCWDForClaude(cwd))
+	}
+	dir, err := openProviderDirectory(root, relative, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	defer dir.Close()
+	if agent == "claude" && requestedID != "" {
+		if !validLifecycleID(requestedID) {
+			return nil, "", errors.New("invalid exact provider session ID")
+		}
+		file, err := openProviderLeaf(dir, requestedID+".jsonl")
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, "", nil
+		}
+		return file, requestedID, err
+	}
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
+		return nil, "", err
+	}
+	var best *os.File
+	var bestTime time.Time
+	var bestID string
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		file, err := openProviderLeaf(dir, entry.Name())
+		if err != nil {
+			continue
+		}
+		info, err := file.Stat()
+		if err != nil || !info.ModTime().After(startedAfter) || !info.ModTime().After(bestTime) {
+			file.Close()
+			continue
+		}
+		if best != nil {
+			best.Close()
+		}
+		best, bestTime, bestID = file, info.ModTime(), strings.TrimSuffix(entry.Name(), ".jsonl")
+	}
+	return best, bestID, nil
+}
+
+// The caller's egg metadata is host-owned and masked from provider writes.
+// An exact transcript ID must be the one recorded when that egg was launched.
+func verifyProviderSession(eggDir, agent, home, id string) error {
+	root, err := openProviderHome(eggDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	file, err := openProviderLeaf(root, "egg.meta")
+	if err != nil {
+		return fmt.Errorf("verify provider session ownership: %w", err)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxRestoreChatMetadataBytes+1))
+	if err != nil {
+		return err
+	}
+	meta := ParseChatMeta(string(data))
+	if len(data) > maxRestoreChatMetadataBytes || meta["agent"] != agent || meta["provider_session_id"] != id || filepath.Clean(meta["provider_home"]) != filepath.Clean(home) {
+		return errors.New("provider session does not belong to this egg")
+	}
+	return nil
 }
 
 // encodeCWDForClaude encodes a CWD path the same way Claude Code does for project directories.
 func encodeCWDForClaude(cwd string) string {
 	return strings.ReplaceAll(cwd, "/", "-")
-}
-
-// findNewestInDir finds the newest file with the given extension modified after startedAfter.
-func findNewestInDir(dir, ext string, startedAfter time.Time) (filePath, sessionID string, err error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", "", nil
-		}
-		return "", "", fmt.Errorf("read dir %s: %w", dir, err)
-	}
-
-	var bestPath string
-	var bestTime time.Time
-	var bestID string
-
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ext) {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if !info.ModTime().After(startedAfter) {
-			continue
-		}
-		if info.ModTime().After(bestTime) {
-			bestTime = info.ModTime()
-			bestPath = filepath.Join(dir, e.Name())
-			bestID = strings.TrimSuffix(e.Name(), ext)
-		}
-	}
-
-	return bestPath, bestID, nil
 }

@@ -1,6 +1,7 @@
 package eggclient
 
 import (
+	"bytes"
 	"encoding/json"
 
 	"os"
@@ -8,6 +9,7 @@ import (
 
 	"testing"
 
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -68,6 +70,22 @@ func TestSetupAPIKeyHelper_RemovesKeyFromEnv(t *testing.T) {
 	}
 	if envMap["OTHER"] != "keep" {
 		t.Error("other env vars should be preserved")
+	}
+}
+
+func TestSetupAPIKeyHelper_NullSettingsDoNotPanic(t *testing.T) {
+	home := t.TempDir()
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, []byte("null\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	requireSetupAPIKeyHelper(t, "claude", map[string]string{"ANTHROPIC_API_KEY": "sk-ant-test123"}, home)
+	data, err := os.ReadFile(settingsPath)
+	if err != nil || !bytes.Contains(data, []byte("apiKeyHelper")) {
+		t.Fatalf("settings after null input = %q, %v", data, err)
 	}
 }
 
@@ -211,5 +229,21 @@ func TestSetupAPIKeyHelper_NoKey_Noop(t *testing.T) {
 	settingsPath := filepath.Join(home, ".claude", "settings.json")
 	if _, err := os.Stat(settingsPath); err == nil {
 		t.Error("settings should not be created when no API key present")
+	}
+}
+
+func TestReapDeadEggsPreservesCredentialStaging(t *testing.T) {
+	state := t.TempDir()
+	staging := filepath.Join(state, "eggs", ".credential-staging")
+	if err := os.MkdirAll(staging, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(staging, "active-secret-write")
+	if err := os.WriteFile(path, []byte("secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ReapDeadEggs(&config.Config{Dir: state})
+	if data, err := os.ReadFile(path); err != nil || string(data) != "secret" {
+		t.Fatalf("session cleanup destroyed an active credential write: %q, %v", data, err)
 	}
 }

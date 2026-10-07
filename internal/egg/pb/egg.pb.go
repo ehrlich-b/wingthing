@@ -22,7 +22,9 @@ const (
 )
 
 type StatusRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Host controller recovery only; ordinary status never returns secrets.
+	ReclaimTools  bool `protobuf:"varint,1,opt,name=reclaim_tools,json=reclaimTools,proto3" json:"reclaim_tools,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -57,6 +59,13 @@ func (*StatusRequest) Descriptor() ([]byte, []int) {
 	return file_egg_proto_rawDescGZIP(), []int{0}
 }
 
+func (x *StatusRequest) GetReclaimTools() bool {
+	if x != nil {
+		return x.ReclaimTools
+	}
+	return false
+}
+
 type StatusResponse struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	SessionId      string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -72,6 +81,7 @@ type StatusResponse struct {
 	WriterOwner    string                 `protobuf:"bytes,11,opt,name=writer_owner,json=writerOwner,proto3" json:"writer_owner,omitempty"`
 	InputEpoch     uint64                 `protobuf:"varint,12,opt,name=input_epoch,json=inputEpoch,proto3" json:"input_epoch,omitempty"`
 	ProcessPid     int32                  `protobuf:"varint,13,opt,name=process_pid,json=processPid,proto3" json:"process_pid,omitempty"`
+	ToolCapability string                 `protobuf:"bytes,14,opt,name=tool_capability,json=toolCapability,proto3" json:"tool_capability,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -195,6 +205,13 @@ func (x *StatusResponse) GetProcessPid() int32 {
 		return x.ProcessPid
 	}
 	return 0
+}
+
+func (x *StatusResponse) GetToolCapability() string {
+	if x != nil {
+		return x.ToolCapability
+	}
+	return ""
 }
 
 type KillRequest struct {
@@ -783,8 +800,9 @@ var File_egg_proto protoreflect.FileDescriptor
 
 const file_egg_proto_rawDesc = "" +
 	"\n" +
-	"\tegg.proto\x12\x03egg\"\x0f\n" +
-	"\rStatusRequest\"\xc1\x03\n" +
+	"\tegg.proto\x12\x03egg\"4\n" +
+	"\rStatusRequest\x12#\n" +
+	"\rreclaim_tools\x18\x01 \x01(\bR\freclaimTools\"\xea\x03\n" +
 	"\x0eStatusResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
@@ -802,7 +820,8 @@ const file_egg_proto_rawDesc = "" +
 	"\vinput_epoch\x18\f \x01(\x04R\n" +
 	"inputEpoch\x12\x1f\n" +
 	"\vprocess_pid\x18\r \x01(\x05R\n" +
-	"processPid\",\n" +
+	"processPid\x12'\n" +
+	"\x0ftool_capability\x18\x0e \x01(\tR\x0etoolCapability\",\n" +
 	"\vKillRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"\x0e\n" +

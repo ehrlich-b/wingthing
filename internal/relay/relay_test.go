@@ -215,7 +215,7 @@ func TestAuthDeviceFlow(t *testing.T) {
 
 	// 1. Request device code (dev mode auto-claims)
 	resp, err := http.Post(ts.URL+"/auth/device", "application/json",
-		strings.NewReader(`{"wing_id":"mac1","public_key":"dGVzdGtleQ=="}`))
+		strings.NewReader(`{"wing_id":"mac1","public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`))
 	if err != nil {
 		t.Fatalf("POST /auth/device: %v", err)
 	}
@@ -803,7 +803,7 @@ func TestAuthTokenReturnsUserInfo(t *testing.T) {
 
 	// Device flow: request code (dev mode auto-claims)
 	resp, err := http.Post(ts.URL+"/auth/device", "application/json",
-		strings.NewReader(`{"wing_id":"mac1","public_key":"dGVzdGtleQ=="}`))
+		strings.NewReader(`{"wing_id":"mac1","public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`))
 	if err != nil {
 		t.Fatalf("POST /auth/device: %v", err)
 	}

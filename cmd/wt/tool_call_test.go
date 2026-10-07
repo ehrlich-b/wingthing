@@ -75,6 +75,11 @@ func TestExecuteCLIPrivilegedToolPreservesNativeArgsAndAuthority(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = listener.Close() })
 	t.Setenv("WT_TOOL_SOCKET", sockPath)
+	capability, err := egg.ToolSocketCapability(sockPath)
+	if err != nil {
+		t.Fatalf("get tool capability: %v", err)
+	}
+	t.Setenv(egg.ToolCapabilityEnv, capability)
 
 	args := append([]string{"tool-call", "argv-canary"}, wantArgs...)
 	if err := executeCLI(context.Background(), args, remotepkg.IO{}); err != nil {

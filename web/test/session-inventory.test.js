@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionIsViewed, sessionResourceKey, sessionProjectRoot, groupSessionInventory, sessionGroupHeader } from '../src/session-inventory.js';
+import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionIsViewed, sessionResourceKey, sessionProjectRoot, groupSessionInventory, groupSessionsByWing, sessionGroupHeader, sessionExceptionLabel, sessionTabMarkup, sessionCardMarkup, inventorySearchVisible, inventoryCountLabel } from '../src/session-inventory.js';
 import { sessionRoute, parseSessionRoute } from '../src/session-route.js';
 
 const wing = { wing_id: 'mac', wing_label: 'Personal Mac', hostname: 'mac-mini', online: true, capabilities: ['session.rename.v1'] };
@@ -26,6 +26,20 @@ test('groups use exact wing IDs and cwd roots, not names or basename collisions'
     assert.deepEqual(groups.map(group => group.sessions.length), [2, 1, 1, 1]);
     assert.equal(new Set(groups.map(group => group.key)).size, 4);
     assert.equal(groups[3].project, '');
+});
+
+test('Home groups by wing, keeping attention order across that wing\'s projects', () => {
+    const wings = [wing, { ...wing, wing_id: 'linux' }];
+    const row = (id, status, wingId, cwd) => ({ ...session, id, wing_id: wingId, cwd, lifecycle: { status, state_source: 'claude_hook' } });
+    // Project /a holds the most urgent session, so its idle session would
+    // otherwise sit ahead of /b's working one.
+    const sessions = [row('a-idle', 'idle', 'mac', '/a'), row('a-blocked', 'blocked', 'mac', '/a'), row('b-working', 'working', 'mac', '/b'),
+        row('linux-working', 'working', 'linux', '/c'), row('c-unknown', 'unknown', 'mac', '/c')];
+    const groups = groupSessionsByWing(groupSessionInventory(sessions, wings));
+    assert.deepEqual(groups.map(group => group.wingId), ['mac', 'linux']);
+    assert.deepEqual(groups[0].sessions.map(item => item.id), ['a-blocked', 'b-working', 'a-idle', 'c-unknown']);
+    assert.deepEqual(groups[1].sessions.map(item => item.id), ['linux-working']);
+    assert.equal(new Set(groups.map(group => group.key)).size, 2);
 });
 
 test('project grouping uses the nearest known root and respects path boundaries', () => {
@@ -65,17 +79,87 @@ test('blocked keeps the attention tone offline and group headers escape remote p
     const markup = sessionGroupHeader(group);
     assert.doesNotMatch(markup, /<script>|<svg>|<img>/);
     assert.match(markup, /1 blocked/);
-    assert.match(markup, /0 working/);
+    assert.doesNotMatch(markup, /0 working|0 idle/, 'zero counts are omitted');
     assert.match(markup, /1 unseen completion/);
-    assert.match(markup, /Mark completions seen/);
-    assert.match(markup, /mac&lt;svg&gt;/);
+    assert.match(markup, />mark seen</);
+    assert.match(markup, /&lt;img&gt;<\/span>/, 'the visible wing label is its name');
+    assert.match(markup, /title="&lt;img&gt; · mac&lt;svg&gt;"/, 'the wing ID stays in the tooltip');
+});
+
+test('the compact Home group header names only the wing, escaped, with no rollup or action', () => {
+    const hostile = { ...session, wing_id: 'mac<svg>', cwd: '/repo/<script>', lifecycle: { status: 'blocked', state_source: 'claude_hook' } };
+    const [group] = groupSessionInventory([hostile], [{ ...wing, wing_id: hostile.wing_id, wing_label: '<img>' }], {}, new Set([sessionResourceKey(hostile)]));
+    const markup = sessionGroupHeader(group, { compact: true });
+    assert.doesNotMatch(markup, /<script>|<svg>|<img>/);
+    assert.equal(markup.match(/<h4>/g).length, 1);
+    assert.doesNotMatch(markup, /<button|\d+ (blocked|working|idle)|unseen completion|mark seen/);
+    assert.doesNotMatch(markup, /inventory-group-project|repo/, 'the project lives in card details, not a header');
+    assert.match(markup, /<h4><span class="inventory-group-wing" title="&lt;img&gt; · mac&lt;svg&gt;">&lt;img&gt;<\/span><\/h4>/);
+});
+
+test('only exceptions earn a visible status word', () => {
+    const state = (status, wingState = wing, attention) => sessionInventoryState({ ...session, lifecycle: { status, state_source: 'claude_hook' } }, wingState, attention);
+    for (const status of ['working', 'idle', 'done', 'unknown']) assert.equal(sessionExceptionLabel(state(status)), '', status);
+    assert.equal(sessionExceptionLabel(state('blocked')), 'needs input');
+    assert.equal(sessionExceptionLabel(state('exited')), 'exited');
+    assert.equal(sessionExceptionLabel(state('idle', wing, true)), 'attention', 'a bell is not relabelled as needing input');
+    assert.equal(sessionExceptionLabel(state('working', { ...wing, online: false })), 'wing offline');
+    assert.equal(sessionExceptionLabel(state('working', { ...wing, tunnel_error: 'passkey_required' })), 'wing locked');
+    assert.equal(sessionExceptionLabel(sessionInventoryState({ ...session, swept: false }, wing)), '', 'checking is transient');
+});
+
+test('a sidebar row is one actionless line that keeps every fact in its label', () => {
+    const state = sessionInventoryState({ ...session, lifecycle: { status: 'working', state_source: 'claude_hook' } }, wing);
+    const markup = sessionTabMarkup(session, state, { wingName: 'Personal Mac', unseen: true, active: true });
+    assert.equal(markup.match(/class="tab-label"/g).length, 1);
+    assert.doesNotMatch(markup, /<button|tab-meta|session-tab-actions|inventory-group-header/);
+    assert.match(markup, /data-unseen="true"/);
+    assert.match(markup, /aria-current="page"/);
+    assert.match(markup, /title="release-notes · claude · Personal Mac · \/home\/bryan\/repos\/wingthing · wing online · working · unseen completion"/);
+    assert.match(sessionTabMarkup(session, state, {}), /data-unseen="false"/);
+    assert.match(markup, /data-attention="false"/);
+    // A bell marks the row; blocked already has its own marker and needs no second one.
+    const bell = sessionInventoryState({ ...session, lifecycle: { status: 'idle', state_source: 'claude_hook' } }, wing, true);
+    assert.match(sessionTabMarkup(session, bell, {}), /data-attention="true"/);
+    assert.doesNotMatch(sessionTabMarkup(session, bell, {}), /needs input/);
+    const blocked = sessionInventoryState({ ...session, lifecycle: { status: 'blocked', state_source: 'claude_hook' } }, wing);
+    assert.match(sessionTabMarkup(session, blocked, {}), /data-blocked="true" data-attention="false"/);
+    const hostile = sessionTabMarkup({ ...session, id: '"><img>', name: '<b>x' }, state, { wingName: '<svg>' });
+    assert.doesNotMatch(hostile, /<img>|<b>|<svg>/);
+});
+
+test('a Home card is one line with a single details trigger and no runtime actions', () => {
+    const idle = sessionInventoryState({ ...session, lifecycle: { status: 'idle', state_source: 'claude_hook' } }, wing);
+    const markup = sessionCardMarkup(session, idle, { wingName: 'Personal Mac', owner: 'carol@example.com' });
+    assert.equal(markup.match(/<button/g).length, 1);
+    assert.match(markup, /class="box-menu-btn inventory-details"/);
+    assert.doesNotMatch(markup, /inventory-attach|inventory-rename|inventory-stop|session-fork-btn|session-role|inventory-session-meta|egg-preview|<img/);
+    assert.doesNotMatch(markup, /inventory-exception/, 'idle prints no status word');
+    const facts = 'release-notes · claude · Personal Mac · /home/bryan/repos/wingthing · carol@example.com · wing online · idle';
+    assert.ok(markup.includes('aria-label="' + facts + '"'));
+    // The facts tooltip belongs to the details trigger, not the whole row.
+    assert.equal(markup.match(/ title="/g).length, 1);
+    assert.match(markup, new RegExp('<button class="box-menu-btn inventory-details"[^>]* title="' + facts.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&') + '"'));
+    const blocked = sessionInventoryState({ ...session, lifecycle: { status: 'blocked', state_source: 'claude_hook' } }, wing);
+    assert.match(sessionCardMarkup(session, blocked, {}), /<span class="inventory-exception status-attention">needs input<\/span>/);
+    assert.match(sessionCardMarkup(session, idle, { error: '<b>failed' }), /role="status">&lt;b&gt;failed</);
+    const hostile = sessionCardMarkup({ ...session, id: '"><img>', name: '<b>x', cwd: '/<script>' }, idle, { wingName: '<svg>' });
+    assert.doesNotMatch(hostile, /<img>|<b>|<svg>|<script>/);
+});
+
+test('search appears for long or filtered inventories and the count only while filtered', () => {
+    assert.equal(inventorySearchVisible(7, ''), false);
+    assert.equal(inventorySearchVisible(8, ''), true);
+    assert.equal(inventorySearchVisible(2, 'case'), true);
+    assert.equal(inventoryCountLabel(2, 2, false), '');
+    assert.equal(inventoryCountLabel(12, 3, true), '3 of 12');
 });
 
 test('terminal attachment, silence and bell signals never invent provider completion', () => {
     for (const status of ['active', 'detached', 'idle', 'completed']) {
         const state = sessionInventoryState({ ...session, status, idle_seconds: 1000 }, wing, true);
         assert.equal(state.state, 'unknown');
-        assert.equal(state.agentLabel, 'agent state unknown · attention signal');
+        assert.equal(state.agentLabel, 'unknown · attention signal');
         assert.equal(state.attachment, status === 'active' ? 'attached' : 'detached');
     }
     assert.equal(sessionInventoryState({ ...session, lifecycle: { state: 'completed', state_source: 'terminal_idle' } }, wing).state, 'unknown');
@@ -138,7 +222,7 @@ test('inventory dots and labels use the shared six-value status for both provide
         for (const status of ['working', 'blocked', 'idle', 'done', 'exited', 'unknown']) {
             const state = sessionInventoryState({ ...session, lifecycle: { state: 'completed', status, state_source: source } }, wing);
             assert.equal(state.status, status);
-            assert.equal(state.agentLabel, status === 'unknown' ? 'agent state unknown' : status);
+            assert.equal(state.agentLabel, status);
             assert.equal(state.attention, status === 'blocked');
             assert.equal(sessionStatusDot(state.status), `<span class="session-dot agent-status-${status}" aria-hidden="true"></span>`);
             assert.equal(sessionStatusDot(state.status, true), `<span class="tab-dot agent-status-${status}" aria-hidden="true"></span>`);

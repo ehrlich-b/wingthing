@@ -203,7 +203,7 @@ func ForkSession(ctx context.Context, cfg *config.Config, sourceRef, label strin
 		}
 		var toolListener *egg.ToolListener
 		if err == nil {
-			toolListener, err = PrepareBrowserTools(cfg, id, scope.Tools, &plan.Options)
+			toolListener, err = PrepareBrowserTools(cfg, id, scope.Tools, &plan.Options, plan.Identity)
 		}
 		defer func() {
 			if toolListener != nil {

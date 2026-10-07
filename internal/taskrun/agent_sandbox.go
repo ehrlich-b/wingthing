@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
@@ -55,10 +56,10 @@ func directAgentSandboxConfig(agentName, isolation, home string, mountPaths []st
 }
 
 func directAgentSandboxConfigWithPolicy(agentName, isolation, home string, mountPaths []string, sharedHost bool) (sandbox.Config, error) {
-	return directAgentSandboxConfigForTask(&egg.EggConfig{}, agentName, isolation, home, "", mountPaths, sharedHost)
+	return directAgentSandboxConfigForTask(&egg.EggConfig{}, agentName, isolation, home, "", mountPaths, sharedHost, nil)
 }
 
-func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation, home, cwd string, mountPaths []string, sharedHost bool) (sandbox.Config, error) {
+func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation, home, cwd string, mountPaths []string, sharedHost bool, contextCfg *config.ContextConfig) (sandbox.Config, error) {
 	if eggCfg == nil {
 		eggCfg = &egg.EggConfig{}
 	}
@@ -83,6 +84,24 @@ func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation
 
 	for _, mount := range declared.Mounts {
 		appendMount(mount)
+	}
+	if sharedHost {
+		definition, ok := agent.LookupDefinition(agentName)
+		if !ok {
+			return sandbox.Config{}, fmt.Errorf("unknown shared-host agent %q", agentName)
+		}
+		// Expose only the copied runtime and this owner's credential helper;
+		// the rest of the shared-host HOME stays outside the jail allowlist.
+		runtimePath := filepath.Join(home, ".local", "bin", definition.Command)
+		appendMount(sandbox.Mount{Source: runtimePath, Target: runtimePath, ReadOnly: true})
+		if agentName == "claude" {
+			keyPath := filepath.Join(home, ".anthropic_key")
+			if _, err := os.Lstat(keyPath); err == nil {
+				appendMount(sandbox.Mount{Source: keyPath, Target: keyPath, ReadOnly: true})
+			} else if !os.IsNotExist(err) {
+				return sandbox.Config{}, fmt.Errorf("inspect shared-host credential helper: %w", err)
+			}
+		}
 	}
 	// On shared hosts egg.yaml is the administrator-authored filesystem policy.
 	// Prompt-derived mounts must never widen it.
@@ -112,6 +131,7 @@ func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation
 
 	result := sandbox.Config{
 		Mounts:      mounts,
+		DenyRename:  declared.DenyRename,
 		NetworkMode: policy.Mode,
 		Domains:     domains,
 		LocalPorts:  append([]int(nil), policy.LocalPorts...),
@@ -137,6 +157,18 @@ func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation
 		result.DenyWrite = declared.DenyWrite
 	}
 	result.NetworkNeed = netNeed
+	if runtime.GOOS == "linux" {
+		// The jail re-execs wt even for headless agents. Preserve a development
+		// executable under /tmp, which the jail replaces with private storage.
+		executable, err := os.Executable()
+		if err != nil {
+			return sandbox.Config{}, fmt.Errorf("locate wt binary for sandbox mount: %w", err)
+		}
+		if resolved, err := filepath.EvalSymlinks(executable); err == nil {
+			executable = resolved
+		}
+		result.Mounts = append(result.Mounts, sandbox.Mount{Source: executable, Target: executable, ReadOnly: true})
+	}
 	if config.Channel() == "preview" && runtime.GOOS == "darwin" && agentName == "claude" {
 		osHome, _, err := egg.PreviewClaudeOSContext(home)
 		if err != nil {
@@ -148,7 +180,29 @@ func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation
 		}
 		result.Deny = append(result.Deny, protected...)
 	}
-	return result, nil
+	// Include prompt mounts and agent profile grants in alias checks: these
+	// become filesystem grants even though they are absent from egg.yaml.
+	if contextCfg != nil {
+		grants := &egg.EggConfig{}
+		for _, mount := range result.Mounts {
+			mode := "rw:"
+			if mount.ReadOnly {
+				mode = "ro:"
+			}
+			grants.FS = append(grants.FS, mode+mount.Source)
+		}
+		_, protected, err := eggclient.ProtectContextSecret(grants, contextCfg, cwd, home)
+		if err != nil {
+			return sandbox.Config{}, err
+		}
+		result.Deny = append(result.Deny, protected...)
+		// Match interactive eggs: Seatbelt verifies the final write policy;
+		// Linux enforces the read+write deny mounts instead.
+		if runtime.GOOS == "darwin" {
+			result.ProtectedWriteTargets = protected
+		}
+	}
+	return egg.IsolateControl(result, "", nil, "")
 }
 
 // eggConfigWithResolvedFSPaths matches the interactive egg path: relative fs
