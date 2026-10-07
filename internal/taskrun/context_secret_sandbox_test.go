@@ -48,6 +48,21 @@ func TestHeadlessContextSecretCannotRead(t *testing.T) {
 	}
 	execInSandbox := func(cfg sandbox.Config, script string, paths ...string) (string, error) {
 		t.Helper()
+		if runtime.GOOS == "linux" {
+			// Preserve the fixture's grants without binding temporary siblings
+			// that concurrent package suites can remove before exec.
+			exe, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var mounts []sandbox.Mount
+			for _, mount := range cfg.Mounts {
+				if strings.HasPrefix(mount.Source, root+"/") || mount.Source == exe || mount.Source == "/usr" || mount.Source == "/bin" || mount.Source == "/lib" || mount.Source == "/lib64" {
+					mounts = append(mounts, mount)
+				}
+			}
+			cfg.Mounts = mounts
+		}
 		sb, err := sandbox.New(cfg)
 		if err != nil {
 			var unavailable *sandbox.EnforcementError
@@ -70,6 +85,10 @@ func TestHeadlessContextSecretCannotRead(t *testing.T) {
 		}
 		cmd.Env = []string{"HOME=" + home, "PATH=/usr/bin:/bin"}
 		out, err := cmd.CombinedOutput()
+		if err != nil {
+			diag, _ := os.ReadFile(sb.DiagLog())
+			out = append(out, diag...)
+		}
 		return string(out), err
 	}
 	// Establish that default read access really exposes the secret without

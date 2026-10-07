@@ -269,8 +269,13 @@ func TestContextThroughEggTools(t *testing.T) {
 	if strings.Contains(string(envData), secret) || strings.Contains(string(envData), "user-token-") {
 		t.Fatal("credential in egg env")
 	}
-	if len(targets) != 1 || targets[0] != secretPath || !ContainsExactPath(protected.FS, "deny:"+secretPath) {
+	if !ContainsExactPath(targets, secretPath) || !ContainsExactPath(protected.FS, "deny:"+secretPath) {
 		t.Fatalf("secret unprotected: %v %v", targets, protected.FS)
+	}
+	for _, target := range targets {
+		if !ContainsExactPath(protected.FS, "deny:"+target) {
+			t.Fatalf("unmasked secret alias %s", target)
+		}
 	}
 	if err := egg.ValidateProtectedWriteTargetBoundary(targets, false); err == nil {
 		t.Fatal("secret accepted without sandbox")
@@ -294,8 +299,13 @@ func TestContextSecretProtectsSymlinkTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(targets) != 2 || !ContainsExactPath(protected.FS, "deny:"+path) || !ContainsExactPath(protected.FS, "deny:"+alias) {
+	if !ContainsExactPath(targets, path) || !ContainsExactPath(targets, alias) || !ContainsExactPath(protected.FS, "deny:"+path) || !ContainsExactPath(protected.FS, "deny:"+alias) {
 		t.Fatalf("incomplete protection: %v %v", protected.FS, targets)
+	}
+	for _, target := range targets {
+		if !ContainsExactPath(protected.FS, "deny:"+target) {
+			t.Fatalf("unmasked secret alias %s", target)
+		}
 	}
 	if fmt.Sprint(before) != fmt.Sprint(original.FS) {
 		t.Fatal("mutated caller config")
@@ -320,8 +330,13 @@ func TestContextSecretNeverInEggOrToolEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(paths) != 1 || !ContainsExactPath(policy.FS, "deny:"+path) || !egg.RequiresSandbox(policy, "claude") {
+	if !ContainsExactPath(paths, path) || !ContainsExactPath(policy.FS, "deny:"+path) || !egg.RequiresSandbox(policy, "claude") {
 		t.Fatal("secret lacks enforced deny policy")
+	}
+	for _, target := range paths {
+		if !ContainsExactPath(policy.FS, "deny:"+target) {
+			t.Fatalf("unmasked secret alias %s", target)
+		}
 	}
 	envFile, err := writeEggEnvironment(root, policy.BuildEnvMap(root))
 	if err != nil {

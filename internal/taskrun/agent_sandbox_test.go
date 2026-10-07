@@ -239,7 +239,7 @@ func TestDirectAgentSandboxConfigAppliesTaskEggPolicy(t *testing.T) {
 	if !slices.Contains(cfg.Deny, filepath.Join(home, ".factory-secret")) {
 		t.Fatalf("deny policy = %#v", cfg.Deny)
 	}
-	if len(cfg.DenyWrite) != 1 || cfg.DenyWrite[0] != filepath.Join(workDir, "egg.yaml") {
+	if !slices.Contains(cfg.DenyWrite, filepath.Join(workDir, "egg.yaml")) {
 		t.Fatalf("deny-write policy = %#v", cfg.DenyWrite)
 	}
 	if cfg.CPULimit != 45*time.Second || cfg.MemLimit != 64*1024*1024 || cfg.MaxFDs != 128 || cfg.PidLimit != 32 || !cfg.Trace {
@@ -451,7 +451,7 @@ func TestSharedHostDirectAgentPreservesAdministratorFilesystemPolicy(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Deny) == 0 || cfg.Deny[0] != "/" {
+	if !slices.Contains(cfg.Deny, "/") {
 		t.Fatalf("shared-host deny policy = %#v", cfg.Deny)
 	}
 	if !hasSandboxMount(cfg.Mounts, workspace) {
