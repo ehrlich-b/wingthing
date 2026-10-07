@@ -509,7 +509,7 @@ func TestRoostPolicyPinsSeatbeltProfile(t *testing.T) {
 		}
 	}
 	t.Run("ordinary session", func(t *testing.T) {
-		if output, err := exec.Command("sandbox-exec", "-p", "(version 1)(allow default)", "/bin/true").CombinedOutput(); err != nil {
+		if output, err := exec.Command("sandbox-exec", "-p", "(version 1)(allow default)", "/usr/bin/true").CombinedOutput(); err != nil {
 			t.Skipf("Seatbelt execution unavailable: %v, %s", err, output)
 		}
 		cmd, err := sb.Exec(context.Background(), "/bin/sh", []string{"-c", `

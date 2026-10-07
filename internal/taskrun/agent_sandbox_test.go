@@ -397,7 +397,7 @@ func TestDirectAgentSandboxPreservesRoostRootPins(t *testing.T) {
 	if !strings.Contains(cmd.Args[2], fmt.Sprintf("(deny file-write* (literal %q))", root)) {
 		t.Fatalf("headless task can replace policy directory: %s", root)
 	}
-	if strings.Contains(cmd.Args[2], fmt.Sprintf("(deny file-write* (literal %q))", home)) {
-		t.Fatal("headless task pinned HOME without a writable parent")
+	if !strings.Contains(cmd.Args[2], fmt.Sprintf("(deny file-write* (literal %q))", home)) {
+		t.Fatalf("headless task can replace policy ancestor: %s", home)
 	}
 }
