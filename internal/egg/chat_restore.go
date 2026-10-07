@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"golang.org/x/sys/unix"
 )
 
 var restoreSessionHistoryMu sync.Mutex
@@ -47,8 +49,12 @@ func openBoundRegularFile(path string) (*os.File, error) {
 func RestoreSessionHistory(agent, cwd, eggDir, home string) (agentSessionID string, err error) {
 	restoreSessionHistoryMu.Lock()
 	defer restoreSessionHistoryMu.Unlock()
-	metaPath := filepath.Join(eggDir, "chat.meta")
-	metaFile, err := openBoundRegularFile(metaPath)
+	eggRoot, err := openProviderHome(eggDir)
+	if err != nil {
+		return "", fmt.Errorf("open history directory: %w", err)
+	}
+	defer eggRoot.Close()
+	metaFile, err := openProviderPath(eggRoot, "chat.meta", false)
 	if err != nil {
 		return "", fmt.Errorf("no chat history: %w", err)
 	}
@@ -72,9 +78,15 @@ func RestoreSessionHistory(agent, cwd, eggDir, home string) (agentSessionID stri
 	if filepath.Base(agentSessionID) != agentSessionID || agentSessionID == "." || agentSessionID == ".." || strings.ContainsAny(agentSessionID, "\x00\r\n") || len(agentSessionID) > 240 {
 		return "", fmt.Errorf("chat.meta contains invalid agent_session_id")
 	}
+	recordedID, err := recordedProviderSessionID(eggDir, agent)
+	if err != nil {
+		return "", err
+	}
+	if recordedID != "" && recordedID != agentSessionID {
+		return "", errors.New("captured provider session ID does not match egg metadata")
+	}
 
-	gzPath := filepath.Join(eggDir, "chat.jsonl.gz")
-	gzFile, err := openBoundRegularFile(gzPath)
+	gzFile, err := openProviderPath(eggRoot, "chat.jsonl.gz", false)
 	if err != nil {
 		return "", fmt.Errorf("open chat.jsonl.gz: %w", err)
 	}
@@ -94,16 +106,13 @@ func RestoreSessionHistory(agent, cwd, eggDir, home string) (agentSessionID stri
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return agentSessionID, fmt.Errorf("create provider home: %w", err)
 	}
-	homeRoot, err := os.OpenRoot(home)
+	homeRoot, err := openProviderHome(home)
 	if err != nil {
 		return agentSessionID, fmt.Errorf("open provider home: %w", err)
 	}
 	defer func() { _ = homeRoot.Close() }()
 	dstDir, dstFile := restoreRelativeDestination(agent, cwd, profile.SessionDir, agentSessionID)
-	if err := homeRoot.MkdirAll(dstDir, 0o755); err != nil {
-		return agentSessionID, fmt.Errorf("create provider session directory: %w", err)
-	}
-	dstRoot, err := homeRoot.OpenRoot(dstDir)
+	dstRoot, err := openProviderPathMode(homeRoot, dstDir, true, true)
 	if err != nil {
 		return agentSessionID, fmt.Errorf("open provider session directory: %w", err)
 	}
@@ -112,15 +121,17 @@ func RestoreSessionHistory(agent, cwd, eggDir, home string) (agentSessionID stri
 	if err != nil {
 		return agentSessionID, fmt.Errorf("create restore name: %w", err)
 	}
-	out, err := dstRoot.OpenFile(temporaryName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	dstFD := int(dstRoot.Fd())
+	outFD, err := unix.Openat(dstFD, temporaryName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
 		return agentSessionID, fmt.Errorf("create provider session: %w", err)
 	}
+	out := os.NewFile(uintptr(outFD), filepath.Join(dstRoot.Name(), temporaryName))
 	committed := false
 	defer func() {
 		_ = out.Close()
 		if !committed {
-			_ = dstRoot.Remove(temporaryName)
+			_ = unix.Unlinkat(dstFD, temporaryName, 0)
 		}
 	}()
 	if err := out.Chmod(0o600); err != nil {
@@ -136,8 +147,9 @@ func RestoreSessionHistory(agent, cwd, eggDir, home string) (agentSessionID stri
 	if err := out.Close(); err != nil {
 		return agentSessionID, fmt.Errorf("close dest: %w", err)
 	}
-	if existing, statErr := dstRoot.Lstat(dstFile); statErr == nil {
-		if !existing.Mode().IsRegular() {
+	var existing unix.Stat_t
+	if statErr := unix.Fstatat(dstFD, dstFile, &existing, unix.AT_SYMLINK_NOFOLLOW); statErr == nil {
+		if existing.Mode&unix.S_IFMT != unix.S_IFREG {
 			return agentSessionID, fmt.Errorf("existing provider session is not a regular file")
 		}
 		capturedPrefix, compareErr := rootFileHasPrefix(dstRoot, dstFile, temporaryName)
@@ -147,7 +159,7 @@ func RestoreSessionHistory(agent, cwd, eggDir, home string) (agentSessionID stri
 		if !capturedPrefix {
 			return agentSessionID, fmt.Errorf("existing provider session has advanced; refusing to replace it with an older snapshot")
 		}
-		if err := dstRoot.Remove(temporaryName); err != nil {
+		if err := unix.Unlinkat(dstFD, temporaryName, 0); err != nil {
 			return agentSessionID, fmt.Errorf("remove duplicate restore: %w", err)
 		}
 		committed = true
@@ -155,29 +167,19 @@ func RestoreSessionHistory(agent, cwd, eggDir, home string) (agentSessionID stri
 	} else if !os.IsNotExist(statErr) {
 		return agentSessionID, fmt.Errorf("inspect existing provider session: %w", statErr)
 	}
-	if err := dstRoot.Link(temporaryName, dstFile); err != nil {
+	if err := unix.Linkat(dstFD, temporaryName, dstFD, dstFile, 0); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return agentSessionID, fmt.Errorf("provider session appeared during restore; retry against the latest captured conversation")
 		}
 		return agentSessionID, fmt.Errorf("commit provider session: %w", err)
 	}
-	if err := dstRoot.Remove(temporaryName); err != nil {
-		_ = dstRoot.Remove(dstFile)
+	if err := unix.Unlinkat(dstFD, temporaryName, 0); err != nil {
+		_ = unix.Unlinkat(dstFD, dstFile, 0)
 		return agentSessionID, fmt.Errorf("remove temporary provider session: %w", err)
 	}
-	directory, err := dstRoot.Open(".")
-	if err != nil {
-		_ = dstRoot.Remove(dstFile)
-		return agentSessionID, fmt.Errorf("open provider session directory: %w", err)
-	}
-	if err := directory.Sync(); err != nil {
-		_ = directory.Close()
-		_ = dstRoot.Remove(dstFile)
+	if err := dstRoot.Sync(); err != nil {
+		_ = unix.Unlinkat(dstFD, dstFile, 0)
 		return agentSessionID, fmt.Errorf("persist provider session: %w", err)
-	}
-	if err := directory.Close(); err != nil {
-		_ = dstRoot.Remove(dstFile)
-		return agentSessionID, fmt.Errorf("close provider session directory: %w", err)
 	}
 	committed = true
 
@@ -196,13 +198,13 @@ func restoreTemporaryName() (string, error) {
 // prefixPath. Providers append to native transcripts while Wingthing is down;
 // an existing valid suffix is newer data and must be kept rather than treated
 // as a restore conflict.
-func rootFileHasPrefix(root *os.Root, fullPath, prefixPath string) (bool, error) {
-	full, err := root.Open(fullPath)
+func rootFileHasPrefix(root *os.File, fullPath, prefixPath string) (bool, error) {
+	full, err := openProviderPath(root, fullPath, false)
 	if err != nil {
 		return false, err
 	}
 	defer func() { _ = full.Close() }()
-	prefix, err := root.Open(prefixPath)
+	prefix, err := openProviderPath(root, prefixPath, false)
 	if err != nil {
 		return false, err
 	}

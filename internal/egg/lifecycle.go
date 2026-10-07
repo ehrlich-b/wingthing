@@ -406,6 +406,15 @@ func validLifecycleID(id string) bool {
 	return id != "" && id != "." && id != ".." && filepath.Base(id) == id && !strings.ContainsAny(id, "\x00\r\n") && len(id) <= 240
 }
 
+func recordedCodexSessionID(events []SessionEvent) string {
+	for _, event := range events {
+		if event.Source == "codex_hook" && event.Type == "session_ready" && validLifecycleID(event.ProviderSessionID) {
+			return event.ProviderSessionID
+		}
+	}
+	return ""
+}
+
 // ReadSessionLifecycle imports exact native records into a durable journal and
 // returns bounded cursor replay. State completion means the foreground turn;
 // process_alive separately identifies whether this conversation can accept work.
@@ -429,6 +438,28 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		return view, err
 	}
 	defer j.close()
+	recordedID, err := recordedProviderSessionID(eggDir, agent)
+	if err != nil {
+		return view, err
+	}
+	if agent == "codex" && recordedID == "" {
+		recordedID = recordedCodexSessionID(j.events)
+	}
+	if exactProviderID != "" && exactProviderID != recordedID {
+		return view, errors.New("provider session ID does not match this egg's recorded session")
+	}
+	exactProviderID = recordedID
+	view.ProviderSessionID = recordedID
+	var providerRoot *os.File
+	if providerHome != "" && ((agent == "claude" && validLifecycleID(exactProviderID)) || agent == "codex") {
+		providerRoot, err = openProviderHome(providerHome)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return view, err
+		}
+		if providerRoot != nil {
+			defer providerRoot.Close()
+		}
+	}
 	processEnded := false
 	var processEnd SessionEvent
 	for _, event := range j.events {
@@ -438,14 +469,14 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		}
 	}
 	if agent == "claude" && validLifecycleID(exactProviderID) {
-		if err = j.importTranscript(eggDir, cwd, providerHome, exactProviderID, processEnded); err != nil {
+		if err = j.importTranscript(providerRoot, eggDir, cwd, exactProviderID, processEnded); err != nil {
 			return view, err
 		}
-		if err = j.importHooks(providerHome, view.SessionID, exactProviderID); err != nil {
+		if err = j.importHooks(providerRoot, view.SessionID, exactProviderID); err != nil {
 			return view, err
 		}
 	} else if agent == "codex" {
-		view.ProviderSessionID, err = j.importCodexHooks(providerHome, view.SessionID, exactProviderID)
+		view.ProviderSessionID, err = j.importCodexHooks(providerRoot, view.SessionID, exactProviderID)
 		if err != nil {
 			return view, err
 		}
@@ -592,33 +623,47 @@ func boundedLifecycleString(value string) string {
 	return value
 }
 
-func (j *lifecycleJournal) importTranscript(eggDir, cwd, home, id string, processEnded bool) error {
+func (j *lifecycleJournal) importTranscript(root *os.File, eggDir, cwd, id string, processEnded bool) error {
 	var offset int64
 	for _, e := range j.events {
 		if e.SourceKey == "transcript" && e.SourceOffset > offset {
 			offset = e.SourceOffset
 		}
 	}
-	path, _, err := findClaudeSession(cwd, home, Profile("claude").SessionDir, time.Time{}, id)
+	source, _, err := openAgentSession(root, "claude", cwd, Profile("claude").SessionDir, time.Time{}, id)
 	if err != nil {
 		return err
 	}
 	var reader io.Reader
-	var source *os.File
 	var gz *gzip.Reader
-	if path != "" {
-		source, err = openBoundRegularFile(path)
-		if err != nil {
-			return err
-		}
+	if source != nil {
 		defer func() { _ = source.Close() }()
 		reader = source
 	} else {
-		meta, metaErr := os.ReadFile(filepath.Join(eggDir, "chat.meta"))
-		if metaErr != nil || ParseChatMeta(string(meta))["agent_session_id"] != id {
+		archiveRoot, err := openProviderHome(eggDir)
+		if err != nil {
+			return err
+		}
+		defer archiveRoot.Close()
+		metaFile, err := openProviderPath(archiveRoot, "chat.meta", false)
+		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		source, err = openBoundRegularFile(filepath.Join(eggDir, "chat.jsonl.gz"))
+		if err != nil {
+			return err
+		}
+		meta, err := io.ReadAll(io.LimitReader(metaFile, maxRestoreChatMetadataBytes+1))
+		_ = metaFile.Close()
+		if err != nil {
+			return err
+		}
+		if len(meta) > maxRestoreChatMetadataBytes {
+			return errors.New("chat metadata is too large")
+		}
+		if ParseChatMeta(string(meta))["agent_session_id"] != id {
+			return nil
+		}
+		source, err = openProviderPath(archiveRoot, "chat.jsonl.gz", false)
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
@@ -758,29 +803,32 @@ func sequencedLifecycleHook(name string) bool {
 	return true
 }
 
-func (j *lifecycleJournal) importHooks(home, sessionID, providerID string) error {
-	_, err := j.importProviderHooks(lifecycleHookDir(home, sessionID), providerID, "claude")
+func (j *lifecycleJournal) importHooks(root *os.File, sessionID, providerID string) error {
+	_, err := j.importProviderHooks(root, filepath.Join(".claude", "wingthing-events", sessionID), providerID, "claude")
 	return err
 }
 
-func (j *lifecycleJournal) importCodexHooks(home, sessionID, providerID string) (string, error) {
-	return j.importProviderHooks(filepath.Join(home, ".codex", "wingthing-events", sessionID), providerID, "codex")
+func (j *lifecycleJournal) importCodexHooks(root *os.File, sessionID, providerID string) (string, error) {
+	return j.importProviderHooks(root, filepath.Join(".codex", "wingthing-events", sessionID), providerID, "codex")
 }
 
-func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) (string, error) {
+func (j *lifecycleJournal) importProviderHooks(root *os.File, spool, providerID, agent string) (string, error) {
 	source := agent + "_hook"
 	if providerID == "" && agent == "codex" {
-		for _, e := range j.events {
-			if e.Source == source && e.Type == "session_ready" {
-				providerID = e.ProviderSessionID
-				break
-			}
-		}
+		providerID = recordedCodexSessionID(j.events)
 	}
-	entries, err := os.ReadDir(spool)
+	if root == nil {
+		return providerID, nil
+	}
+	dir, err := openProviderPath(root, spool, true)
 	if errors.Is(err, os.ErrNotExist) {
 		return providerID, nil
 	}
+	if err != nil {
+		return providerID, err
+	}
+	defer dir.Close()
+	entries, err := dir.ReadDir(-1)
 	if err != nil {
 		return providerID, err
 	}
@@ -797,10 +845,14 @@ func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) 
 	var files []hookFile
 	for _, entry := range entries {
 		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") && !seen["hook:"+entry.Name()] {
-			info, e := entry.Info()
-			if e == nil {
-				files = append(files, hookFile{entry.Name(), info.ModTime()})
+			var stat unix.Stat_t
+			if err := unix.Fstatat(int(dir.Fd()), entry.Name(), &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+				return providerID, err
 			}
+			if stat.Mode&unix.S_IFMT != unix.S_IFREG {
+				return providerID, errors.New("native hook is not a regular file")
+			}
+			files = append(files, hookFile{entry.Name(), time.Unix(stat.Mtim.Unix())})
 		}
 	}
 	// Sequenced names order by fixed-width publish sequence. Legacy names come
@@ -819,7 +871,7 @@ func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) 
 		return files[a].modified.Before(files[b].modified)
 	})
 	for _, file := range files[:min(len(files), 500)] {
-		f, err := openBoundRegularFile(filepath.Join(spool, file.name))
+		f, err := openProviderPath(dir, file.name, false)
 		if err != nil {
 			return providerID, err
 		}

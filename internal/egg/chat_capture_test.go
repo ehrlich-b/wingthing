@@ -35,6 +35,7 @@ func TestCaptureSessionHistory_Claude(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	lifecycleWrite(t, filepath.Join(eggDir, "egg.meta"), "agent=claude\nprovider_session_id=abc123\n")
 	err := CaptureSessionHistory("claude", cwd, eggDir, home, startedAfter)
 	if err != nil {
 		t.Fatalf("CaptureSessionHistory: %v", err)
@@ -109,6 +110,7 @@ func TestCaptureSessionHistory_ReplacesMetadataSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	lifecycleWrite(t, filepath.Join(eggDir, "egg.meta"), "agent=claude\nprovider_session_id=abc123\n")
 	if err := CaptureSessionHistory("claude", cwd, eggDir, home, time.Now().Add(-time.Minute)); err != nil {
 		t.Fatal(err)
 	}
@@ -149,9 +151,10 @@ func TestCaptureSessionHistory_Claude_NoMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Start time is after the file
+	// No recorded session file exists; an older unrelated file is not guessed.
 	startedAfter := time.Now().Add(-30 * time.Minute)
 
+	lifecycleWrite(t, filepath.Join(eggDir, "egg.meta"), "agent=claude\nprovider_session_id=missing\n")
 	err := CaptureSessionHistory("claude", cwd, eggDir, home, startedAfter)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -194,19 +197,20 @@ func TestCaptureSessionHistory_Claude_MultipleFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	lifecycleWrite(t, filepath.Join(eggDir, "egg.meta"), "agent=claude\nprovider_session_id=older\n")
 	err := CaptureSessionHistory("claude", cwd, eggDir, home, startedAfter)
 	if err != nil {
 		t.Fatalf("CaptureSessionHistory: %v", err)
 	}
 
-	// Should pick the newest file
+	// Select the recorded session even when a different conversation is newer.
 	meta, err := os.ReadFile(filepath.Join(eggDir, "chat.meta"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	m := ParseChatMeta(string(meta))
-	if m["agent_session_id"] != "newer" {
-		t.Errorf("picked %q, want newer", m["agent_session_id"])
+	if m["agent_session_id"] != "older" {
+		t.Errorf("picked %q, want older", m["agent_session_id"])
 	}
 }
 
@@ -231,6 +235,7 @@ func TestCaptureSessionHistory_Claude_ExactIDDoesNotSelectNewerConversation(t *t
 	if err := os.Chtimes(filepath.Join(projectDir, "other.jsonl"), now, now); err != nil {
 		t.Fatal(err)
 	}
+	lifecycleWrite(t, filepath.Join(eggDir, "egg.meta"), "agent=claude\nprovider_session_id=ours\n")
 	if err := CaptureSessionHistory("claude", cwd, eggDir, home, now.Add(time.Minute), "ours"); err != nil {
 		t.Fatal(err)
 	}
@@ -275,6 +280,7 @@ func TestCaptureSessionHistory_UnknownAgent(t *testing.T) {
 
 func TestCaptureSessionHistory_MissingDir(t *testing.T) {
 	eggDir := t.TempDir()
+	lifecycleWrite(t, filepath.Join(eggDir, "egg.meta"), "agent=claude\nprovider_session_id=missing\n")
 	err := CaptureSessionHistory("claude", "/nonexistent/path", eggDir, "/nonexistent/home", time.Now())
 	if err != nil {
 		t.Fatalf("expected nil for missing dir, got: %v", err)
@@ -298,6 +304,7 @@ func TestCaptureSessionHistory_AtomicWrite(t *testing.T) {
 	}
 
 	startedAfter := time.Now().Add(-1 * time.Minute)
+	lifecycleWrite(t, filepath.Join(eggDir, "egg.meta"), "agent=claude\nprovider_session_id=test\n")
 	err := CaptureSessionHistory("claude", cwd, eggDir, home, startedAfter)
 	if err != nil {
 		t.Fatalf("CaptureSessionHistory: %v", err)

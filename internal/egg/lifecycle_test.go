@@ -29,6 +29,7 @@ func lifecycleFixture(t *testing.T) (dir, home, cwd, path string) {
 		t.Fatal(err)
 	}
 	path = filepath.Join(project, "ours.jsonl")
+	lifecycleWrite(t, filepath.Join(dir, "egg.meta"), "agent=claude\nprovider_session_id=ours\n")
 	return
 }
 
@@ -363,6 +364,7 @@ func TestLifecycleTerminalFailureMissingProcessAndUnknownProvider(t *testing.T) 
 	if v.State != "unknown" || v.StateSource != "unsupported" || v.Ready {
 		t.Fatalf("unsupported provider guessed ready: %+v", v)
 	}
+	lifecycleWrite(t, filepath.Join(unknown, "egg.meta"), "agent=claude\nprovider_session_id=ours\n")
 	v, err = ReadSessionLifecycle(unknown, "claude", cwd, home, "ours", false, 0, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -727,6 +729,7 @@ func TestLifecycleOversizedHookInvalidatesStateAndReadiness(t *testing.T) {
 	for _, agent := range []string{"claude", "codex"} {
 		t.Run(agent, func(t *testing.T) {
 			dir, home, cwd, path := lifecycleFixture(t)
+			lifecycleWrite(t, filepath.Join(dir, "egg.meta"), "agent="+agent+"\nprovider_session_id=ours\n")
 			spool := filepath.Join(home, "."+agent, "wingthing-events", filepath.Base(dir))
 			if err := os.MkdirAll(spool, 0700); err != nil {
 				t.Fatal(err)
