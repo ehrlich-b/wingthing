@@ -837,9 +837,14 @@ function ptyReconnectAttach(sessionId, attempt, wingId) {
     innerWs.onclose = function () {
         if (innerWs !== S.ptyWs) return;
         if (S.ptyInputBlocked) return;
-        var delay = Math.min(1000 * Math.pow(2, attempt), 30000);
+        // A socket that already recovered starts a fresh cycle when it drops again;
+        // ptyReconnectAttach ignores calls once the previous cycle has finished.
+        var retrying = S.ptyReconnecting;
+        S.ptyReconnecting = true;
+        var next = retrying ? attempt + 1 : 0;
+        var delay = retrying ? Math.min(1000 * Math.pow(2, attempt), 30000) : 1000;
         setTimeout(function () {
-            if (terminalReferenceMatches(S, sessionId, wingId, innerWs)) ptyReconnectAttach(sessionId, attempt + 1, wingId);
+            if (terminalReferenceMatches(S, sessionId, wingId, innerWs)) ptyReconnectAttach(sessionId, next, wingId);
         }, delay);
     };
 
