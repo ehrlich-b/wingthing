@@ -17,6 +17,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ehrlich-b/wingthing/internal/sandbox"
+
 	"golang.org/x/sys/unix"
 )
 
@@ -281,8 +283,8 @@ const claudeLifecycleSettingsFile = "claude-settings.json"
 
 // prepareClaudeLifecycleArgs keeps merged credentials out of the process argv.
 // Only this file, rather than the egg directory, is exposed to the sandbox.
-func prepareClaudeLifecycleArgs(args []string, home, eggDir, providerID, cwd string) ([]string, error) {
-	out, err := claudeLifecycleArgs(args, home, filepath.Base(eggDir), providerID, cwd)
+func prepareClaudeLifecycleArgs(args []string, home, eggDir, providerID, cwd string, policies ...*sandbox.Config) ([]string, error) {
+	out, err := claudeLifecycleArgs(args, home, filepath.Base(eggDir), providerID, cwd, policies...)
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +321,7 @@ func prepareClaudeLifecycleArgs(args []string, home, eggDir, providerID, cwd str
 	return out, nil
 }
 
-func claudeLifecycleArgs(args []string, home, sessionID, providerID, cwd string) ([]string, error) {
+func claudeLifecycleArgs(args []string, home, sessionID, providerID, cwd string, policies ...*sandbox.Config) ([]string, error) {
 	if home == "" || !validLifecycleID(sessionID) || !validLifecycleID(providerID) {
 		return nil, errors.New("exact session identity and provider home required for lifecycle hooks")
 	}
@@ -345,11 +347,22 @@ func claudeLifecycleArgs(args []string, home, sessionID, providerID, cwd string)
 			if !filepath.IsAbs(value) {
 				value = filepath.Join(cwd, value)
 			}
-			f, err := openBoundRegularFile(value)
+			var policy *sandbox.Config
+			if len(policies) > 0 {
+				policy = policies[0]
+			}
+			f, err := openClaudeSettingsFile(value, policy)
 			if err != nil {
 				return nil, fmt.Errorf("read lifecycle settings: %w", err)
 			}
+			if err = validateClaudeSettingsFile(f, policy); err != nil {
+				_ = f.Close()
+				return nil, err
+			}
 			data, err = io.ReadAll(io.LimitReader(f, maxLifecycleRecord+1))
+			if err == nil {
+				err = validateClaudeSettingsFile(f, policy)
+			}
 			_ = f.Close()
 			if err != nil {
 				return nil, err

@@ -639,14 +639,23 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	// native installation and don't warn about missing PATH entries.
 	home := envMap["HOME"]
 	lifecycleSettingsPath := ""
-	if rc.Agent == "claude" && len(rc.Command) == 0 && rc.ProviderSessionID != "" {
-		args, err = prepareClaudeLifecycleArgs(args, home, s.dir, rc.ProviderSessionID, rc.CWD)
+	prepareLifecycle := func(policy *sandbox.Config) error {
+		if rc.Agent != "claude" || len(rc.Command) != 0 || rc.ProviderSessionID == "" {
+			return nil
+		}
+		var err error
+		args, err = prepareClaudeLifecycleArgs(args, home, s.dir, rc.ProviderSessionID, rc.CWD, policy)
 		if err != nil {
 			return fmt.Errorf("prepare native lifecycle hooks: %w", err)
 		}
 		lifecycleSettingsPath = args[providerOptionsEnd(args)-1]
-		defer func() { _ = os.Remove(lifecycleSettingsPath) }()
+		return nil
 	}
+	defer func() {
+		if lifecycleSettingsPath != "" {
+			_ = os.Remove(lifecycleSettingsPath)
+		}
+	}()
 	if rc.Agent == "codex" && len(rc.Command) == 0 && codexLifecycleSupported(binPath) {
 		args, err = CodexLifecycleArgs(args, home, filepath.Base(s.dir))
 		if err != nil {
@@ -774,9 +783,6 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			fsHome = rc.UserHome
 		}
 		mounts, deny, denyWrite := ParseFSRules(rc.FS, fsHome)
-		if lifecycleSettingsPath != "" {
-			mounts = append(mounts, sandbox.Mount{Source: lifecycleSettingsPath, Target: lifecycleSettingsPath, ReadOnly: true})
-		}
 		if browserRequestsPath != "" {
 			mounts = append(mounts, sandbox.Mount{
 				Source: browserRequestsPath,
@@ -872,6 +878,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			ProtectedWriteTargets: append([]string(nil), rc.ProtectedWriteTargets...),
 		}
 
+		if err := prepareLifecycle(&sbCfg); err != nil {
+			return err
+		}
+		if lifecycleSettingsPath != "" {
+			sbCfg.Mounts = append(sbCfg.Mounts, sandbox.Mount{Source: lifecycleSettingsPath, Target: lifecycleSettingsPath, ReadOnly: true})
+		}
 		sb, err = sandbox.New(sbCfg)
 		if err != nil {
 			return fmt.Errorf("sandbox: %w", err)
@@ -888,6 +900,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			cmd.Dir = rc.CWD
 		}
 	} else {
+		if err := prepareLifecycle(nil); err != nil {
+			return err
+		}
 		log.Printf("SECURITY: egg runs in outer-boundary mode with the full authority of the local OS user; Wingthing filesystem, network, syscall, and resource isolation is disabled")
 		cmd = exec.CommandContext(context.Background(), binPath, args...)
 		cmd.Env = envSlice
