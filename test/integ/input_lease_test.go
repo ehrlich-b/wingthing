@@ -71,6 +71,7 @@ func TestPreviewInputLeaseAcrossAttachments(t *testing.T) {
 		defer stop()
 		if err := client.Kill(cleanup, started.Session); err != nil {
 			t.Errorf("fixture cleanup: %v", err)
+			logLeaseCleanupDiagnostics(t, dir)
 		}
 	})
 	attach := func(options egg.AttachOptions) pb.Egg_SessionClient {
@@ -172,4 +173,31 @@ func TestPreviewInputLeaseAcrossAttachments(t *testing.T) {
 		t.Fatalf("provider/readers changed: before=%v after=%v err=%v", before, after, err)
 	}
 	t.Logf("provider PID %d survived; two observers, busy writer, takeover epoch %d->%d, stale/unattached resize rejection, detach and reattach proved", after.ProcessPid, oldLease.InputEpoch, nextLease.InputEpoch)
+}
+
+// logLeaseCleanupDiagnostics prints what a hung egg shutdown left behind, so a
+// runner-only failure explains itself without rerunning locally.
+func logLeaseCleanupDiagnostics(t *testing.T, dir string) {
+	t.Helper()
+	tail := func(path string) string {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err.Error()
+		}
+		lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+		if len(lines) > 60 {
+			lines = lines[len(lines)-60:]
+		}
+		return strings.Join(lines, "\n")
+	}
+	eggLog := tail(filepath.Join(dir, "egg.log"))
+	t.Logf("egg.log tail:\n%s", eggLog)
+	for _, line := range strings.Split(eggLog, "\n") {
+		if _, rest, ok := strings.Cut(line, "created tmpdir="); ok {
+			t.Logf("deny_init.log tail:\n%s", tail(filepath.Join(strings.Fields(rest)[0], "deny_init.log")))
+		}
+	}
+	if out, err := exec.Command("ps", "-eo", "pid,ppid,stat,wchan:20,args").CombinedOutput(); err == nil {
+		t.Logf("processes:\n%s", out)
+	}
 }
