@@ -74,17 +74,22 @@ func TestRoostPolicyLinuxSiblingRolesStartWithPins(t *testing.T) {
 					t.Fatalf("missing configured root or ancestor pin: %s", path)
 				}
 			}
-			// The wrapper can search this directory as root; the jailed agent cannot.
-			// Prove EACCES is evaluated with the agent's filesystem credentials.
-			blocked := filepath.Join(role, "unsearchable")
-			if err := os.MkdirAll(filepath.Join(blocked, "child"), 0700); err != nil {
-				t.Fatal(err)
+			skipped := []string{hidden}
+			// The wrapper can search this directory as root; a non-root jailed agent
+			// cannot. Prove EACCES is evaluated with the agent's filesystem credentials.
+			// A root agent ignores mode bits, so only the non-root run can check it.
+			if os.Geteuid() != 0 {
+				blocked := filepath.Join(role, "unsearchable")
+				if err := os.MkdirAll(filepath.Join(blocked, "child"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(blocked, 0); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(blocked, 0700) })
+				sandboxCfg.DenyRename = append(sandboxCfg.DenyRename, filepath.Join(blocked, "child"))
+				skipped = append(skipped, filepath.Join(blocked, "child"))
 			}
-			if err := os.Chmod(blocked, 0); err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = os.Chmod(blocked, 0700) })
-			sandboxCfg.DenyRename = append(sandboxCfg.DenyRename, filepath.Join(blocked, "child"))
 			sb, err := sandbox.New(sandboxCfg)
 			if err != nil {
 				t.Fatal(err)
@@ -121,7 +126,7 @@ if test -e "$1/unsearchable/child"; then exit 46; fi
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, path := range []string{hidden, filepath.Join(blocked, "child")} {
+			for _, path := range skipped {
 				found := false
 				for _, line := range strings.Split(string(log), "\n") {
 					if strings.Contains(line, "level=DEBUG") && strings.Contains(line, "skipped unreachable policy directory") && strings.Contains(line, "path="+path) {
