@@ -248,7 +248,7 @@ func serveDirectMCPChannelWithPolicySourceAndLease(version string, cfg *config.C
 				wingDefault = eggSources[0]()
 			}
 			if server.identity.SharedHost || server.identity.OrgWing {
-				server.launchConfig = runtimeLaunchConfig(wingDefault, eggErr)
+				server.launchConfig = runtimeLaunchConfig(wingDefault, eggErr, wingpolicy.CanonicalPaths(wingpolicy.ResolvePathStrings(wingCfg.Paths.Strings(), home)), wingpolicy.IsMemberRole(policy.role))
 			}
 			arguments := request.Arguments
 			if len(arguments) == 0 {

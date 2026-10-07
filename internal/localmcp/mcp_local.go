@@ -368,8 +368,8 @@ func RoostNativeMCPTools(version string, cfg *config.Config, sharedHost bool, so
 				}
 				server := newRoostNativeMCPServer(version, cfg, sharedHost, admission, principal, paths, wingDefault)
 				server.identity.OrgWing = wingCfg.Org != ""
-				if server.identity.OrgWing {
-					server.launchConfig = runtimeLaunchConfig(wingDefault, nil)
+				if sharedHost || server.identity.OrgWing {
+					server.launchConfig = runtimeLaunchConfig(wingDefault, nil, wingpolicy.CanonicalPaths(wingpolicy.ResolvePathStrings(wingCfg.Paths.Strings(), homeForRoostPolicy())), !wingCfg.IsAdmin(principal.Email))
 				} else if !sharedHost {
 					server.launchConfig = nil
 				}
@@ -406,6 +406,7 @@ func newRoostNativeMCPServer(version string, cfg *config.Config, sharedHost bool
 		},
 	}
 	var wingDefault *egg.EggConfig
+	var wingCfg *config.WingConfig
 	var err error
 	if len(defaults) > 0 {
 		wingDefault = defaults[0]
@@ -413,7 +414,6 @@ func newRoostNativeMCPServer(version string, cfg *config.Config, sharedHost bool
 			err = errors.New("roost runtime egg policy is not ready")
 		}
 	} else {
-		var wingCfg *config.WingConfig
 		wingCfg, err = config.LoadWingConfig(cfg.Dir)
 		if err == nil {
 			server.identity.OrgWing = wingCfg.Org != ""
@@ -421,7 +421,12 @@ func newRoostNativeMCPServer(version string, cfg *config.Config, sharedHost bool
 		}
 	}
 	if sharedHost || server.identity.OrgWing {
-		server.launchConfig = runtimeLaunchConfig(wingDefault, err)
+		roots, member := paths, true
+		if wingCfg != nil {
+			roots = wingpolicy.CanonicalPaths(wingpolicy.ResolvePathStrings(wingCfg.Paths.Strings(), homeForRoostPolicy()))
+			member = !wingCfg.IsAdmin(principal.Email)
+		}
+		server.launchConfig = runtimeLaunchConfig(wingDefault, err, roots, member)
 	}
 	return server
 }
@@ -439,7 +444,9 @@ func loadRuntimeEggDefault(dir string, wingCfg *config.WingConfig) (*egg.EggConf
 	return cfg, err
 }
 
-func runtimeLaunchConfig(wingDefault *egg.EggConfig, loadErr error) func(string) (*egg.EggConfig, error) {
+func homeForRoostPolicy() string { home, _ := os.UserHomeDir(); return home }
+
+func runtimeLaunchConfig(wingDefault *egg.EggConfig, loadErr error, roots []string, member bool) func(string) (*egg.EggConfig, error) {
 	return func(cwd string) (*egg.EggConfig, error) {
 		if loadErr != nil {
 			return nil, loadErr
@@ -447,8 +454,7 @@ func runtimeLaunchConfig(wingDefault *egg.EggConfig, loadErr error) func(string)
 		if wingDefault == nil {
 			return nil, errors.New("administrator runtime egg policy is not ready")
 		}
-		cfg := egg.RuntimeEggConfig(wingDefault, cwd)
-		return cfg, cfg.ResolutionError()
+		return eggclient.LoadRoostEggConfig(cwd, roots, member, wingDefault)
 	}
 }
 

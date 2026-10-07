@@ -98,6 +98,9 @@ func TestRoostTransportsExplainCapturedAdministratorPolicy(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace, "egg.yaml"), []byte(malicious), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(workspace), "egg.yaml"), []byte(admin), 0600); err != nil {
+		t.Fatal(err)
+	}
 	for _, shared := range []bool{false, true} {
 		if err := os.WriteFile(filepath.Join(cfg.Dir, "egg.yaml"), []byte(admin), 0600); err != nil {
 			t.Fatal(err)
@@ -150,10 +153,13 @@ func TestRoostLaunchesIgnoreCallerWorkspacePolicy(t *testing.T) {
 	if err := config.SaveWingConfig(cfg.Dir, &config.WingConfig{Org: "org", Paths: config.PathList{{Path: filepath.Dir(workspace), Members: []string{"eng@example.com"}}}}); err != nil {
 		t.Fatal(err)
 	}
-	admin := "base: none\nfs: [deny:/, ro:/usr, rw:.]\nenv: [HOME]\nnetwork: [corp.example]\n"
+	admin := "base: none\nfs: [deny:/, ro:/usr, rw:., deny:/opt/wingthing/support]\naudit: true\ndangerously_skip_permissions: true\nenv: [HOME, WT_USER_EMAIL]\nnetwork: [corp.example]\n"
 	malicious := "base: none\nfs: [deny:/, ro:/usr, rw:., ro:/opt/wingthing/support]\nenv: ['*']\nnetwork: ['*']\n"
-	for _, path := range []string{filepath.Join(cfg.Dir, "egg.yaml"), filepath.Join(workspace, "egg.yaml")} {
-		data := admin
+	for _, path := range []string{filepath.Join(cfg.Dir, "egg.yaml"), filepath.Join(filepath.Dir(workspace), "egg.yaml"), filepath.Join(workspace, "egg.yaml")} {
+		data := strings.ReplaceAll(admin, "corp.example", "role.example")
+		if filepath.Dir(path) == cfg.Dir {
+			data = admin
+		}
 		if filepath.Dir(path) == workspace {
 			data = malicious
 		}
@@ -167,7 +173,7 @@ func TestRoostLaunchesIgnoreCallerWorkspacePolicy(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(strings.Join(policy.FS, "\n"), "/opt/wingthing/support") || policy.IsAllEnv() || len(policy.Network.Domains) != 1 || policy.Network.Domains[0] != "corp.example" {
+		if eggclient.ContainsExactPath(policy.FS, "ro:/opt/wingthing/support") || !policy.Audit || !policy.DangerouslySkipPermissions || !eggclient.ContainsExactPath(policy.Env, "WT_USER_EMAIL") || policy.IsAllEnv() || len(policy.Network.Domains) != 1 || policy.Network.Domains[0] != "role.example" {
 			t.Fatalf("roost admitted caller's workspace policy (shared=%v): %#v", shared, policy)
 		}
 		// Keep the runtime policy stable even if the on-disk global default changes.
@@ -175,7 +181,7 @@ func TestRoostLaunchesIgnoreCallerWorkspacePolicy(t *testing.T) {
 			t.Fatal(err)
 		}
 		current, err := server.loadLaunchConfig(workspace)
-		if err != nil || strings.Contains(strings.Join(current.FS, "\n"), "/opt/wingthing/support") {
+		if err != nil || eggclient.ContainsExactPath(current.FS, "ro:/opt/wingthing/support") {
 			t.Fatalf("launch reloaded caller-writable policy: %#v, %v", current, err)
 		}
 		if err := os.WriteFile(filepath.Join(cfg.Dir, "egg.yaml"), []byte(admin), 0600); err != nil {
@@ -230,7 +236,7 @@ func TestRoostLaunchesIgnoreCallerWorkspacePolicy(t *testing.T) {
 		for range 2 {
 			select {
 			case task := <-started:
-				if task.EggConfigYAML == "" || strings.Contains(task.EggConfigYAML, "/opt/wingthing/support") || !strings.Contains(task.EggConfigYAML, "corp.example") {
+				if task.EggConfigYAML == "" || strings.Contains(task.EggConfigYAML, "ro:/opt/wingthing/support") || !strings.Contains(task.EggConfigYAML, "role.example") || !strings.Contains(task.EggConfigYAML, "audit: true") || !strings.Contains(task.EggConfigYAML, "WT_USER_EMAIL") {
 					t.Fatalf("headless %s rediscovered caller policy: %s", task.Type, task.EggConfigYAML)
 				}
 			case <-time.After(time.Second):

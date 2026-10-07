@@ -77,37 +77,57 @@ func TestBrowserWingDefaultsValidateLoaderAliasesAgainstSessionWorkspace(t *test
 	}
 }
 
-func TestAuthenticatedBrowserLaunchIgnoresWorkspacePolicy(t *testing.T) {
-	home := t.TempDir()
+func TestAuthenticatedBrowserLaunchUsesRoleRootPolicy(t *testing.T) {
+	home := config.CanonicalProviderPath(t.TempDir())
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
-	workspace := filepath.Join(home, "eng")
-	if err := os.MkdirAll(workspace, 0700); err != nil {
+	root := filepath.Join(home, "eng")
+	sub := filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(workspace, "egg.yaml"), []byte("base: none\nfs: [deny:/, ro:/usr, rw:., ro:/opt/wingthing/support]\nenv: ['*']\nnetwork: ['*']\n"), 0600); err != nil {
+	role := "base: none\nfs: [deny:/, ro:/usr, rw:., deny:/opt/wingthing/support, deny-write:./egg.yaml]\naudit: true\ndangerously_skip_permissions: true\nenv: [WT_USER, WT_USER_EMAIL, WT_SESSION_ID, DISABLE_TELEMETRY=1]\nnetwork: [role.example]\n"
+	if err := os.WriteFile(filepath.Join(root, "egg.yaml"), []byte(role), 0600); err != nil {
 		t.Fatal(err)
 	}
-	admin := &egg.EggConfig{FS: []string{"deny:/", "ro:/usr", "rw:./"}, Env: egg.EnvField{"HOME"}, Network: egg.NetworkField{Domains: []string{"corp.example"}}}
+	if err := os.WriteFile(filepath.Join(sub, "egg.yaml"), []byte("base: none\nfs: [ro:/opt/wingthing/support]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	admin := &egg.EggConfig{FS: []string{"deny:/", "ro:/usr", "rw:./"}, Network: egg.NetworkField{Domains: []string{"wing.example"}}}
 	for _, shared := range []bool{false, true} {
-		wc := &config.WingConfig{Org: "org", Paths: config.PathList{{Path: workspace, Members: []string{"eng@example.com"}}}}
-		start := ws.PTYStart{UserID: "eng", Email: "eng@example.com", OrgRole: "member", CWD: workspace}
-		cfg, _, err := PrepareBrowserLaunch(wc, &start, home, shared, admin)
-		if err != nil {
-			t.Fatal(err)
+		wc := &config.WingConfig{Org: "org", Paths: config.PathList{{Path: root, Members: []string{"eng@example.com"}}}}
+		for _, cwd := range []string{root, sub} {
+			start := ws.PTYStart{UserID: "eng", Email: "eng@example.com", OrgRole: "member", CWD: cwd}
+			cfg, _, err := PrepareBrowserLaunch(wc, &start, home, shared, admin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if start.CWD != cwd || !cfg.Audit || !cfg.DangerouslySkipPermissions || !ContainsExactPath(cfg.Env, "WT_USER_EMAIL") || !ContainsExactPath(cfg.FS, "deny:/opt/wingthing/support") || !ContainsExactPath(cfg.FS, "rw:"+root) || ContainsExactPath(cfg.FS, "ro:/opt/wingthing/support") {
+				t.Fatalf("lost role policy or trusted planted config: cwd=%s start=%s cfg=%#v", cwd, start.CWD, cfg)
+			}
 		}
-		if strings.Contains(strings.Join(cfg.FS, "\n"), "/opt/wingthing/support") || cfg.IsAllEnv() || !ContainsExactPath(cfg.Network.Domains, "corp.example") {
-			t.Fatalf("caller policy replaced administrator policy (shared=%v): %#v", shared, cfg)
-		}
-		if err := os.Remove(filepath.Join(workspace, "egg.yaml")); err != nil && !os.IsNotExist(err) {
-			t.Fatal(err)
-		}
-		if _, _, err := PrepareBrowserLaunch(wc, &start, home, shared, admin); err != nil {
-			t.Fatalf("runtime policy required a workspace egg.yaml: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(workspace, "egg.yaml"), []byte("base: none\nfs: [ro:/opt/wingthing/support]\n"), 0600); err != nil {
-			t.Fatal(err)
-		}
+	}
+	if err := os.Remove(filepath.Join(root, "egg.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	wc := &config.WingConfig{Org: "org", Paths: config.PathList{{Path: root, Members: []string{"eng@example.com"}}}}
+	start := ws.PTYStart{UserID: "eng", Email: "eng@example.com", OrgRole: "member", CWD: sub}
+	if _, _, err := PrepareBrowserLaunch(wc, &start, home, true, admin); err == nil || !strings.Contains(err.Error(), "ask the wing owner") {
+		t.Fatalf("missing role policy admitted: %v", err)
+	}
+	start.OrgRole = "admin"
+	cfg, _, err := PrepareBrowserLaunch(wc, &start, home, true, admin)
+	if err != nil || !ContainsExactPath(cfg.Network.Domains, "wing.example") {
+		t.Fatalf("admin default lost: %#v %v", cfg, err)
+	}
+	wc.Org = ""
+	// Personal wings retain their existing exact-path selection; unrestricted
+	// personal workspaces discover a subdirectory policy.
+	wc.Paths = nil
+	start.CWD = sub
+	cfg, _, err = PrepareBrowserLaunch(wc, &start, home, false, admin)
+	if err != nil || !ContainsExactPath(cfg.FS, "ro:/opt/wingthing/support") {
+		t.Fatalf("personal discovery changed: %#v %v", cfg, err)
 	}
 }
 
@@ -171,5 +191,40 @@ func TestLaunchDiscoveryAllowsReadOnlyPolicyAlias(t *testing.T) {
 	}
 	if _, _, err := PrepareBrowserLaunch(&config.WingConfig{}, &ws.PTYStart{CWD: workspace, OrgRole: "admin"}, home, false, nil); err != nil {
 		t.Fatalf("browser discovery refused read-only alias: %v", err)
+	}
+}
+
+func TestRoostPolicySelectsDeepestRootAndRefusesEscapingAlias(t *testing.T) {
+	home := config.CanonicalProviderPath(t.TempDir())
+	t.Setenv("HOME", home)
+	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
+	outer, inner := filepath.Join(home, "eng"), filepath.Join(home, "eng", "nested")
+	cwd := filepath.Join(inner, "sub")
+	if err := os.MkdirAll(cwd, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for path, data := range map[string]string{
+		filepath.Join(outer, "egg.yaml"): "base: none\nnetwork: [outer.example]\n",
+		filepath.Join(inner, "egg.yaml"): "base: none\nnetwork: [inner.example]\n",
+		filepath.Join(cwd, "egg.yaml"):   "base: none\nnetwork: [planted.example]\n",
+	} {
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wc := &config.WingConfig{Org: "org", Paths: config.PathList{{Path: outer}, {Path: inner}}}
+	start := ws.PTYStart{UserID: "user", OrgRole: "admin", CWD: cwd}
+	cfg, _, err := PrepareBrowserLaunch(wc, &start, home, true, egg.DefaultEggConfig())
+	if err != nil || len(cfg.Network.Domains) != 1 || cfg.Network.Domains[0] != "inner.example" {
+		t.Fatalf("wrong root: %#v %v", cfg, err)
+	}
+	if err := os.Remove(filepath.Join(inner, "egg.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outer, "egg.yaml"), filepath.Join(inner, "egg.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := PrepareBrowserLaunch(wc, &start, home, true, egg.DefaultEggConfig()); err == nil {
+		t.Fatal("accepted policy outside deepest root")
 	}
 }
