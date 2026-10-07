@@ -1220,43 +1220,51 @@ func persistDir(src, dst string) {
 	}
 }
 
-// copyFile copies src to dst, preserving permissions.
+// copyFile publishes a fresh inode in the pinned destination directory. Never
+// truncate the old inode: a sandbox may have hard-linked it to a host secret.
 func copyFile(src, dst string) error {
-	sourceInfo, err := os.Lstat(src)
+	fd, err := unix.Open(src, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return err
 	}
-	if !sourceInfo.Mode().IsRegular() || sourceInfo.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("refusing non-regular persistence source %s", src)
-	}
-	if destinationInfo, err := os.Lstat(dst); err == nil {
-		if destinationInfo.Mode()&os.ModeSymlink != 0 || !destinationInfo.Mode().IsRegular() {
-			if err := os.RemoveAll(dst); err != nil {
-				return err
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
+	in := os.NewFile(uintptr(fd), src)
 	defer in.Close()
-
 	info, err := in.Stat()
 	if err != nil {
 		return err
 	}
-
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("refusing non-regular persistence source %s", src)
+	}
+	parent, err := os.Open(filepath.Dir(dst))
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer parent.Close()
+	return publishPinnedFile(in, info.Mode().Perm(), parent, filepath.Base(dst))
+}
 
-	_, err = io.Copy(out, in)
-	return err
+func publishPinnedFile(in *os.File, mode os.FileMode, parent *os.File, name string) error {
+	out, err := os.CreateTemp(mountFDPath(parent), ".wingthing-persist-*")
+	if err != nil {
+		return err
+	}
+	temporary := filepath.Base(out.Name())
+	defer unix.Unlinkat(int(parent.Fd()), temporary, 0)
+	defer out.Close()
+	if err := out.Chmod(mode); err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return unix.Renameat(int(parent.Fd()), temporary, int(parent.Fd()), name)
 }
 
 type expectedMount struct {
