@@ -91,14 +91,18 @@ func sendPromptInput(ctx context.Context, cfg *config.Config, sessionID, input, 
 
 func PromptSession(ctx context.Context, cfg *config.Config, session LocalSession, requestID, input string, timeout time.Duration, owner string, verifiedUserIDs ...string) (egg.SessionPromptResult, error) {
 	dir := filepath.Join(cfg.Dir, "eggs", session.ID)
-	expectedProviderID := ReadEggMetaValues(dir)["provider_session_id"]
+	expectedProviderID := ""
 	return egg.SubmitSessionPrompt(ctx, dir, egg.SessionPromptOptions{
 		RequestID: requestID, Input: input, Timeout: timeout,
 		Read: func(ctx context.Context, after int64, limit int) (egg.SessionView, error) {
 			if err := ctx.Err(); err != nil {
 				return egg.SessionView{}, err
 			}
-			return LifecycleViewForSession(cfg, session, after, limit)
+			view, err := LifecycleViewForSession(cfg, session, after, limit)
+			if err == nil && expectedProviderID == "" {
+				expectedProviderID = view.ProviderSessionID
+			}
+			return view, err
 		},
 		Send: func(ctx context.Context, text string) (egg.PromptDelivery, error) {
 			return sendPromptInput(ctx, cfg, session.ID, text, owner, expectedProviderID, verifiedUserIDs...)

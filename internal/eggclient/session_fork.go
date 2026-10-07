@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
@@ -17,7 +16,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 )
 
-func forkProviderID(dir, agent, cwd string) (string, error) {
+func forkProviderID(cfg *config.Config, dir, agent, cwd string) (string, error) {
 	if agent != "claude" {
 		return "", fmt.Errorf("agent %q does not support session fork; only Claude supports --fork-session", agent)
 	}
@@ -36,7 +35,8 @@ func forkProviderID(dir, agent, cwd string) (string, error) {
 		return id, nil
 	}
 	// Live sources need not have reached the periodic archive capture yet.
-	// Use their pinned identity, never the newest provider file in a workspace.
+	// Follow only their own recorded SessionStart bindings, never the newest
+	// provider file in a workspace.
 	meta := ReadEggMetaValues(dir)
 	id := meta["provider_session_id"]
 	path := filepath.Join(dir, ProviderResumeMetadataFile)
@@ -51,6 +51,17 @@ func forkProviderID(dir, agent, cwd string) (string, error) {
 	reservation := egg.ParseChatMeta(string(data))
 	if reservation["agent"] != agent || reservation["provider_session_id"] != id {
 		return "", errors.New("provider conversation identity was not verified")
+	}
+	home, err := LifecycleProviderHome(cfg, meta["provider_home"])
+	if err != nil {
+		return "", err
+	}
+	id, err = egg.ResolveRecordedProviderSessionID(dir, agent, home, id)
+	if err != nil {
+		return "", err
+	}
+	if !validForkProviderID(id) {
+		return "", errors.New("provider conversation metadata is invalid")
 	}
 	return id, nil
 }
@@ -67,8 +78,8 @@ func validForkProviderID(id string) bool {
 	return true
 }
 
-func SessionForkStatus(dir, agent, cwd string) (bool, string) {
-	if _, err := forkProviderID(dir, agent, cwd); err != nil {
+func SessionForkStatus(cfg *config.Config, dir, agent, cwd string) (bool, string) {
+	if _, err := forkProviderID(cfg, dir, agent, cwd); err != nil {
 		return false, err.Error()
 	}
 	return true, ""
@@ -130,10 +141,6 @@ func ForkSession(ctx context.Context, cfg *config.Config, sourceRef, label strin
 	if scope.EnforcePathBounds && (len(paths) == 0 || !wingpolicy.IsUnderPaths(cwd, paths)) {
 		return nil, errors.New("session not found or not owned by caller")
 	}
-	providerID, err := forkProviderID(dir, source.Agent, cwd)
-	if err != nil {
-		return nil, err
-	}
 	if source.CWD == "" {
 		return nil, errors.New("source working directory is unavailable")
 	}
@@ -159,7 +166,7 @@ func ForkSession(ctx context.Context, cfg *config.Config, sourceRef, label strin
 		return nil, err
 	}
 	plan := &SessionForkPlan{SessionID: id, Source: source, Config: eggCfg, Identity: scope.Identity,
-		Options: SpawnEggOpts{ForkSession: true, Label: label, Kind: "agent", Principal: principal, ResumeSessionID: providerID, ResumeSourceSessionID: source.ID}}
+		Options: SpawnEggOpts{ForkSession: true, Label: label, Kind: "agent", Principal: principal, ResumeSourceSessionID: source.ID}}
 	launch := func() error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -174,6 +181,11 @@ func ForkSession(ctx context.Context, cfg *config.Config, sourceRef, label strin
 		}
 		plan.Options.nameLock = lock
 		home := EffectiveSessionHome(cfg, scope.Identity)
+		providerID, err := forkProviderID(cfg, dir, source.Agent, cwd)
+		if err != nil {
+			return err
+		}
+		plan.Options.ResumeSessionID = providerID
 		release, err := BrowserProviderResumes.ReserveFork(cfg, home, source.Agent, providerID, source.ID, id)
 		if err != nil {
 			return err
@@ -181,10 +193,11 @@ func ForkSession(ctx context.Context, cfg *config.Config, sourceRef, label strin
 		spawned := false
 		defer func() { release(spawned) }()
 		if _, alive := ReadAliveEggPID(dir); alive {
-			native := filepath.Join(home, egg.Profile(source.Agent).SessionDir, strings.ReplaceAll(cwd, "/", "-"), providerID+".jsonl")
-			if info, err := os.Lstat(native); err != nil || !info.Mode().IsRegular() {
-				return errors.New("provider conversation was not captured")
+			native, err := egg.OpenRecordedSessionHistory(source.Agent, cwd, dir, home, providerID)
+			if err != nil {
+				return err
 			}
+			defer cmdutil.CloseWithLog("fork source history", native)
 		} else {
 			restoredID, err := egg.RestoreSessionHistory(source.Agent, cwd, dir, home)
 			if err != nil {

@@ -17,6 +17,7 @@ func TestPreviewClaudeLifecycleSettingsAndHooksKeepDataHome(t *testing.T) {
 	dir := t.TempDir()
 	dataHome := config.CanonicalProviderPath(t.TempDir())
 	cwd := t.TempDir()
+	lifecycleWrite(t, filepath.Join(dir, "egg.meta"), "agent=claude\nprovider_session_id=ours\n")
 	args, err := prepareClaudeLifecycleArgs(nil, dataHome, dir, "ours", cwd)
 	if err != nil {
 		t.Fatal(err)

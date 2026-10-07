@@ -4,6 +4,8 @@ package integ
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,6 +16,10 @@ import (
 func TestCodexNativeJournalReconnectWithoutClaimingAdapterSupport(t *testing.T) {
 	dir := t.TempDir()
 	thread := "fixture-exact-native-thread"
+	// The protocol consumer owns an already-bound thread, as at egg launch.
+	if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=codex\nprovider_session_id="+thread+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	frames := []string{
 		`{"method":"turn/started","params":{"threadId":"fixture-exact-native-thread","turn":{"id":"turn-1","status":"inProgress"}}}`,
 		`{"method":"item/completed","params":{"threadId":"fixture-exact-native-thread","turnId":"turn-1","completedAtMs":1,"item":{"id":"user-1","type":"userMessage","content":[{"type":"text","text":"fixture input"}]}}}`,

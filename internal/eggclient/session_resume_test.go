@@ -7,8 +7,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 func TestProviderResumeReservationExcludesPendingLaunchAcrossProcesses(t *testing.T) {
@@ -183,5 +186,72 @@ func TestEffectiveProviderSessionStopsAtNativeTerminator(t *testing.T) {
 				t.Fatalf("native arguments changed: got %q, want %q; caller %q", args, want, tc.args)
 			}
 		})
+	}
+}
+
+func TestEffectiveProviderSessionRecordsCodexResume(t *testing.T) {
+	args := []string{"-m", "existing-model"}
+	for _, id := range []string{"", "resumed"} {
+		providerID, gotArgs, resumeID, err := EffectiveProviderSession("codex", id, args)
+		if err != nil || providerID != id || resumeID != id || !slices.Equal(gotArgs, args) {
+			t.Fatalf("Codex launch binding = %q args=%v resume=%q err=%v", providerID, gotArgs, resumeID, err)
+		}
+	}
+	if _, _, _, err := EffectiveProviderSession("codex", "../victim", args); err == nil {
+		t.Fatal("invalid Codex resume identity was accepted")
+	}
+}
+
+func TestPrepareBrowserResumeAfterClaudeClearUsesRecordedConversation(t *testing.T) {
+	cfg, dir, scope := forkFixture(t, false)
+	cwd := scope.AllowedPaths[0]
+	home := EffectiveSessionHome(cfg, scope.Identity)
+	want := recordForkSessionStart(t, dir, home, cwd, "after-clear")
+	if err := egg.CaptureSessionHistory("claude", cwd, dir, home, time.Time{}, "provider"); err != nil {
+		t.Fatal(err)
+	}
+	// The archive retains its binding even after the hook spool is removed.
+	if err := os.RemoveAll(filepath.Join(home, ".claude", "wingthing-events", "source")); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(home, ".claude", "projects", strings.ReplaceAll(cwd, "/", "-"))
+	if err := os.Remove(filepath.Join(project, "after-clear.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	start := ws.PTYStart{SessionID: "resumed", ResumeSessionID: "source", UserID: "alice", Agent: "claude", CWD: cwd}
+	id, _, release, err := PrepareBrowserResume(cfg, &config.WingConfig{}, start, []string{cwd}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release(false)
+	if id != "after-clear" {
+		t.Fatalf("resumed %q instead of the recorded conversation", id)
+	}
+	if err := verifyProviderResumeReservation(cfg, home, "claude", id, "source", "resumed"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(project, id+".jsonl")); err != nil || string(got) != want {
+		t.Fatalf("restored history = %q, err = %v", got, err)
+	}
+}
+
+func TestPrepareBrowserResumeRefusesUnrecordedClaudeConversation(t *testing.T) {
+	cfg, dir, scope := forkFixture(t, false)
+	cwd := scope.AllowedPaths[0]
+	home := EffectiveSessionHome(cfg, scope.Identity)
+	recordForkSessionStart(t, dir, home, cwd, "after-clear")
+	if err := egg.CaptureSessionHistory("claude", cwd, dir, home, time.Time{}, "provider"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "chat.meta"), []byte("agent=claude\ncwd="+cwd+"\nagent_session_id=unrecorded\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	start := ws.PTYStart{SessionID: "resumed", ResumeSessionID: "source", UserID: "alice", Agent: "claude", CWD: cwd}
+	if _, _, release, err := PrepareBrowserResume(cfg, &config.WingConfig{}, start, []string{cwd}, false); err == nil {
+		release(false)
+		t.Fatal("resumed an unrecorded conversation")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "projects", strings.ReplaceAll(cwd, "/", "-"), "unrecorded.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("unrecorded conversation was restored: %v", err)
 	}
 }

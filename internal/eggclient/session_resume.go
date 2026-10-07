@@ -190,8 +190,14 @@ func SessionResumeStatus(sessionDir, agent, cwd string) (bool, string) {
 		return false, "provider conversation identity was not verified"
 	}
 	reservation := egg.ParseChatMeta(string(reservationData))
-	if reservation["agent"] != agent || reservation["provider_session_id"] != meta["agent_session_id"] {
+	if reservation["agent"] != agent || !ValidProviderSessionID(reservation["provider_session_id"]) {
 		return false, "provider conversation identity was not verified"
+	}
+	if reservation["provider_session_id"] != meta["agent_session_id"] {
+		id, err := egg.ResolveRecordedProviderSessionID(sessionDir, agent, "", reservation["provider_session_id"])
+		if err != nil || id != meta["agent_session_id"] {
+			return false, "provider conversation identity was not verified"
+		}
 	}
 	info, err := os.Lstat(filepath.Join(sessionDir, "chat.jsonl.gz"))
 	if err != nil || !info.Mode().IsRegular() {
@@ -246,10 +252,14 @@ func PrepareBrowserResume(cfg *config.Config, wingCfg *config.WingConfig, start 
 	if err != nil {
 		return "", "", nil, err
 	}
-	providerSessionID, err = egg.RestoreSessionHistory(agent, cwd, sourceDir, home)
+	restoredID, err := egg.RestoreSessionHistory(agent, cwd, sourceDir, home)
 	if err != nil {
 		release(false)
 		return "", "", nil, fmt.Errorf("restore provider conversation: %w", err)
+	}
+	if restoredID != providerSessionID {
+		release(false)
+		return "", "", nil, errors.New("source provider identity changed during resume")
 	}
 	return providerSessionID, cwd, release, nil
 }
