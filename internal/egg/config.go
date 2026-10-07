@@ -213,7 +213,9 @@ func defaultDenyPaths() ([]string, error) {
 		"~/.ssh", "~/.gnupg", "~/.aws", "~/.docker",
 		"~/.kube", "~/.netrc", "~/.bash_history", "~/.zsh_history",
 	}
-	control, err := eggControlDenyPaths("")
+	// Defaults are loaded before a session workspace is known. Resolve and
+	// seal aliases now, then validate their write surface at session discovery.
+	control, err := eggControlDenyPaths("", nil)
 	return append(paths, control...), err
 }
 
@@ -505,7 +507,7 @@ func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 		}
 	}
 	if wingDefault != nil {
-		return wingDefault
+		return configForWorkspace(wingDefault, cwd)
 	}
 	if dir, err := wingconfig.StateDir(); err == nil {
 		path := filepath.Join(dir, "egg.yaml")
@@ -525,7 +527,45 @@ func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 			}
 		}
 	}
-	return DefaultEggConfig()
+	return configForWorkspace(DefaultEggConfig(), cwd)
+}
+
+func policyMountsForWorkspace(cfg *EggConfig, cwd string) []sandbox.Mount {
+	if cwd == "" {
+		return nil // Wing startup and reload have no session write surface yet.
+	}
+	home, _ := os.UserHomeDir()
+	mounts, _, _ := ParseFSRules(cfg.FS, home)
+	for i := range mounts {
+		if !filepath.IsAbs(mounts[i].Source) {
+			mounts[i].Source = filepath.Join(cwd, mounts[i].Source)
+		}
+	}
+	return mounts
+}
+
+// Copy the shared wing default before validating it for one session. A refusal
+// in a writable dotfiles workspace must not poison launches elsewhere.
+func configForWorkspace(cfg *EggConfig, cwd string) *EggConfig {
+	if cwd == "" || cfg.ResolutionError() != nil || !RequiresSandbox(cfg, "") {
+		return cfg
+	}
+	resolved := *cfg
+	resolved.FS = append([]string(nil), cfg.FS...)
+	mounts := policyMountsForWorkspace(cfg, cwd)
+	home, _ := os.UserHomeDir()
+	_, _, denyWrite := ParseFSRules(cfg.FS, home)
+	for _, path := range denyWrite {
+		if cwd != "" && !filepath.IsAbs(path) {
+			path = filepath.Join(cwd, path)
+		}
+		if _, err := resolveLoaderPath(path, true, mounts); err != nil {
+			resolved.resolutionError = err
+			return &resolved
+		}
+	}
+	_, resolved.resolutionError = eggControlDenyPaths("", mounts)
+	return &resolved
 }
 
 const maxBaseDepth = 10
@@ -534,6 +574,7 @@ const maxBaseDepth = 10
 // a fully merged config. If base is empty, merges on top of DefaultEggConfig.
 // If base is "none", returns the config as-is (empty slate).
 // An optional cwd anchors relative filesystem grants to the session workspace.
+// Without it, alias write checks are deferred until session discovery/runtime.
 func ResolveEggConfig(path string, cwds ...string) (*EggConfig, error) {
 	dependencies := make(map[string]bool)
 	cfg, err := resolveEggConfig(path, dependencies, 0)
@@ -544,15 +585,11 @@ func ResolveEggConfig(path string, cwds ...string) (*EggConfig, error) {
 	// section cannot discard protection for a policy that was already read.
 	// Explicit trusted-host policies have no OS sandbox to enforce it.
 	if RequiresSandbox(cfg, "") {
-		home, _ := os.UserHomeDir()
-		mounts, _, _ := ParseFSRules(cfg.FS, home)
-		if len(cwds) > 0 && cwds[0] != "" {
-			for i := range mounts {
-				if !filepath.IsAbs(mounts[i].Source) {
-					mounts[i].Source = filepath.Join(cwds[0], mounts[i].Source)
-				}
-			}
+		cwd := ""
+		if len(cwds) > 0 {
+			cwd = cwds[0]
 		}
+		mounts := policyMountsForWorkspace(cfg, cwd)
 		protected := make(map[string]bool)
 		ancestors := make(map[string]bool)
 		workspace := wingconfig.CanonicalProviderPath(filepath.Dir(path))
@@ -591,6 +628,10 @@ func ResolveEggConfig(path string, cwds ...string) (*EggConfig, error) {
 		sort.Strings(paths)
 		for _, dir := range paths {
 			cfg.FS = append(cfg.FS, "deny-rename:"+dir)
+		}
+		cfg = configForWorkspace(cfg, cwd)
+		if err := cfg.ResolutionError(); err != nil {
+			return nil, err
 		}
 	}
 	return cfg, nil

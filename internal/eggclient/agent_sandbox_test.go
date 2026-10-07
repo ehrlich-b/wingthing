@@ -8,6 +8,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -22,6 +23,57 @@ func TestAgentRuntimeCommandMatchesSupportedAgentCatalog(t *testing.T) {
 	}
 	if got := agentRuntimeCommand("custom-command"); got != "custom-command" {
 		t.Fatalf("unknown command fallback = %q", got)
+	}
+}
+
+func TestBrowserWingDefaultsValidateLoaderAliasesAgainstSessionWorkspace(t *testing.T) {
+	for _, loader := range []string{"wing.yaml", "egg.yaml", "custom.yaml"} {
+		t.Run(loader, func(t *testing.T) {
+			home := config.CanonicalProviderPath(t.TempDir())
+			state, dotfiles, work := filepath.Join(home, ".wingthing"), filepath.Join(home, "dotfiles"), filepath.Join(home, "work")
+			for _, dir := range []string{state, dotfiles, work} {
+				if err := os.MkdirAll(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("HOME", home)
+			t.Setenv("WINGTHING_DIR", state)
+			t.Chdir(home) // Wing startup has no session workspace yet.
+			target, alias := filepath.Join(dotfiles, loader), filepath.Join(state, loader)
+			if err := os.WriteFile(target, []byte("fs: [rw:./]\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, alias); err != nil {
+				t.Fatal(err)
+			}
+			wingDefault := egg.DefaultEggConfig()
+			if loader != "wing.yaml" {
+				var err error
+				wingDefault, err = egg.ResolveEggConfig(alias)
+				if err != nil {
+					t.Fatalf("wing startup validated against controller CWD: %v", err)
+				}
+			}
+			if err := wingDefault.ResolutionError(); err != nil {
+				t.Fatalf("wing startup validated against controller CWD: %v", err)
+			}
+			for _, workspace := range []string{work, dotfiles, home, work} {
+				start := ws.PTYStart{CWD: workspace, OrgRole: "admin"}
+				policy, _, err := PrepareBrowserLaunch(&config.WingConfig{}, &start, home, false, wingDefault)
+				if workspace != work {
+					if err == nil || !strings.Contains(err.Error(), "replaceable symlink") {
+						t.Fatalf("session-writable loader alias admitted in %s: %v", workspace, err)
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatalf("read-only dotfiles alias refused: %v", err)
+				}
+				if !ContainsExactPath(policy.FS, "deny:"+target) && !ContainsExactPath(policy.FS, "deny-write:"+target) {
+					t.Fatalf("resolved loader remains unprotected: %v", policy.FS)
+				}
+			}
+		})
 	}
 }
 

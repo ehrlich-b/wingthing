@@ -520,7 +520,7 @@ func TestDefaultPolicyRefusesReplaceableToolLoaderPaths(t *testing.T) {
 			} else {
 				writeEggConfigTestFile(t, wingPath, "tools_dir: "+toolsDir+"\n")
 			}
-			cfg := DefaultEggConfig()
+			cfg := DiscoverEggConfig(work, nil)
 			if !isUnsafePolicyPath(cfg.ResolutionError()) {
 				t.Fatalf("replaceable tool %s admitted: %v", kind, cfg.ResolutionError())
 			}
@@ -529,7 +529,7 @@ func TestDefaultPolicyRefusesReplaceableToolLoaderPaths(t *testing.T) {
 			}
 			policy := filepath.Join(work, "egg.yaml")
 			writeEggConfigTestFile(t, policy, "fs: [rw:./]\n")
-			if _, err := ResolveEggConfig(policy); !isUnsafePolicyPath(err) {
+			if _, err := ResolveEggConfig(policy, work); !isUnsafePolicyPath(err) {
 				t.Fatalf("inherited tool loader refusal lost: %v", err)
 			}
 		})
@@ -585,7 +585,11 @@ func TestUserManagedLoaderAliasesFollowSandboxWriteGrants(t *testing.T) {
 				if writable {
 					t.Chdir(dotfiles)
 				}
-				cfg := DefaultEggConfig()
+				cwd, err := os.Getwd()
+				if err != nil {
+					t.Fatal(err)
+				}
+				cfg := DiscoverEggConfig(cwd, DefaultEggConfig())
 				if writable {
 					if !isUnsafePolicyPath(cfg.ResolutionError()) {
 						t.Fatalf("agent-writable loader target admitted: %v", cfg.ResolutionError())
@@ -678,7 +682,7 @@ func TestResolvedPoliciesRefuseReplaceableSymlinkComponents(t *testing.T) {
 			if kind == "root" {
 				policy = alias
 			}
-			if _, err := ResolveEggConfig(policy); !isUnsafePolicyPath(err) {
+			if _, err := ResolveEggConfig(policy, root); !isUnsafePolicyPath(err) {
 				t.Fatalf("replaceable %s alias admitted: %v", kind, err)
 			}
 		})
