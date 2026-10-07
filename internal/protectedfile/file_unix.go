@@ -16,6 +16,9 @@ func Open(path string) (*File, error) { return open(path, false) }
 func OpenPolicy(path string) (*File, error) { return open(path, true) }
 
 func open(path string, policy bool) (*File, error) {
+	if policy {
+		return openPolicyPath(path, false)
+	}
 	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		if err == syscall.ENOENT {

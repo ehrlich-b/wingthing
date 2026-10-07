@@ -174,7 +174,15 @@ func TestPrepareEndpointSupportsSymlinkedGnuPG(t *testing.T) {
 
 func shortEndpointTempDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "wt-egg-endpoint-")
+	parent := os.TempDir()
+	if repository, err := filepath.Abs("../.."); err == nil && len(repository) < len(parent) {
+		parent = repository
+	}
+	dir, err := os.MkdirTemp(parent, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err = filepath.Abs(dir)
 	if err != nil {
 		t.Fatal(err)
 	}

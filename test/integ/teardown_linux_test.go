@@ -25,7 +25,7 @@ func TestSandboxedEggKillWithDirtyPageCache(t *testing.T) {
 	if binary == "" {
 		t.Fatal("WT_TEST_PREVIEW_BINARY is required; run make gate GATE=integration")
 	}
-	root, err := os.MkdirTemp("/tmp", "wt-teardown-")
+	root, err := os.MkdirTemp("", "")
 	if err != nil {
 		t.Fatal(err)
 	}

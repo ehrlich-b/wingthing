@@ -21,7 +21,7 @@ def free_port():
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
-with tempfile.TemporaryDirectory(prefix="wtp-", dir="/tmp") as temporary:
+with tempfile.TemporaryDirectory(prefix="wtp-") as temporary:
     base = Path(temporary)
     home = base / "home"
     home.mkdir()

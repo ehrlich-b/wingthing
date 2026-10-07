@@ -34,7 +34,7 @@ func TestRemoteCLIReattachesExactPersistentSession(t *testing.T) {
 
 func remoteCLIReattachJourney(t *testing.T, binary string) {
 	t.Helper()
-	fixture, err := os.MkdirTemp("/tmp", "wt-remote-integ-")
+	fixture, err := os.MkdirTemp("", "")
 	if err != nil {
 		t.Fatal(err)
 	}

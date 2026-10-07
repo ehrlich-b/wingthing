@@ -45,7 +45,7 @@ func (f *File) ResolvedPath() (string, error) {
 // Sandbox callers must separately seal replaceable alias directory entries.
 func OpenResolved(path string) (*File, error) { return openResolved(path, false) }
 
-func OpenPolicyResolved(path string) (*File, error) { return openResolved(path, true) }
+func OpenPolicyResolved(path string) (*File, error) { return openPolicyResolved(path) }
 
 func openResolved(path string, policy bool) (*File, error) {
 	before, err := os.Stat(path)

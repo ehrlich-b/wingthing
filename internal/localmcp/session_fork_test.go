@@ -450,7 +450,11 @@ func TestBrowserForkInitializesCurrentToolsAndCleansUpFailedSpawn(t *testing.T) 
 	config.ReleaseChannel = "stable"
 	t.Cleanup(func() { config.ReleaseChannel = old })
 	t.Setenv("HOME", t.TempDir())
-	root, err := os.MkdirTemp("/tmp", "wt-fork-tools-")
+	root, err := os.MkdirTemp("../..", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err = filepath.Abs(root)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,3 +17,5 @@ func OpenPolicy(path string) (*File, error)        { return Open(path) }
 func inspectSecretDirectory(info os.FileInfo) error {
 	return &Error{info.Name(), "secret directory validation unsupported on this platform"}
 }
+
+func openPolicyResolved(path string) (*File, error) { return OpenPolicy(path) }

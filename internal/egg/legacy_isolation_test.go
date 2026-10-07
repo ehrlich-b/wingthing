@@ -356,7 +356,8 @@ func TestLinuxCurrentEggStartsWithLegacyCredentialDirectoryDenied(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Include guarded host setup, the race-instrumented wrapper, and shutdown.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	err = server.RunSession(ctx, RunConfig{
 		Command: []string{"/bin/sh", "-c", "printf fixture-ready"}, CWD: workspace,
@@ -367,7 +368,8 @@ func TestLinuxCurrentEggStartsWithLegacyCredentialDirectoryDenied(t *testing.T) 
 		t.Fatal(err)
 	}
 	if server.session == nil || !strings.Contains(string(server.session.replay.Bytes()), "fixture-ready") {
-		t.Fatal("nested credential deny mask prevented the agent from starting")
+		logData, _ := os.ReadFile(filepath.Join(home, "state", "logs", "current.deny_init.log"))
+		t.Fatalf("nested credential deny mask prevented the agent from starting: %s", logData)
 	}
 	output := string(server.session.replay.Bytes())
 	if strings.Count(output, "Warning: isolation: degraded") != 1 || !strings.Contains(output, "legacy sessions: old") {

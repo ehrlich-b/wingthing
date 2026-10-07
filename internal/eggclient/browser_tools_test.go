@@ -44,7 +44,11 @@ func (f *browserToolsSessionFixture) Session(stream grpc.BidiStreamingServer[pb.
 }
 
 func TestBrowserForkToolsLiveUntilSessionExit(t *testing.T) {
-	root, err := os.MkdirTemp("/tmp", "wt-tool-life-")
+	root, err := os.MkdirTemp("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err = filepath.Abs(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +145,11 @@ func TestLegacyMacSessionWithholdsNewToolsWithoutBlockingBrowserPTY(t *testing.T
 }
 
 func TestToolCapabilityTravelsOnlyInSessionEnvironment(t *testing.T) {
-	root, err := os.MkdirTemp("/tmp", "wt-tool-env-")
+	root, err := os.MkdirTemp("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err = filepath.Abs(root)
 	if err != nil {
 		t.Fatal(err)
 	}

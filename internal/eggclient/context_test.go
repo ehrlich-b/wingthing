@@ -138,7 +138,11 @@ func TestContextThroughEggTools(t *testing.T) {
 	}))
 	defer server.Close()
 	endpoint = server.URL
-	root, err := os.MkdirTemp("/tmp", "wt-ctx-")
+	root, err := os.MkdirTemp("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err = filepath.Abs(root)
 	if err != nil {
 		t.Fatal(err)
 	}

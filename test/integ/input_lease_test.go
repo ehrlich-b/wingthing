@@ -25,7 +25,7 @@ func TestPreviewInputLeaseAcrossAttachments(t *testing.T) {
 	if binary == "" {
 		t.Fatal("run make test-integ")
 	}
-	root, err := os.MkdirTemp("/tmp", "wt-lease-")
+	root, err := os.MkdirTemp("", "")
 	if err != nil {
 		t.Fatal(err)
 	}
