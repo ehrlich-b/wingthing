@@ -147,6 +147,109 @@ func TestSessionForkFakeClaudeArgvAndSourcePreserved(t *testing.T) {
 	}
 }
 
+func recordForkSessionStart(t *testing.T, dir, home, cwd, id string) string {
+	t.Helper()
+	project := filepath.Join(home, ".claude", "projects", strings.ReplaceAll(cwd, "/", "-"))
+	spool := filepath.Join(home, ".claude", "wingthing-events", filepath.Base(dir))
+	for _, path := range []string{project, spool} {
+		if err := os.MkdirAll(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	history := "{\"type\":\"user\",\"sessionId\":\"" + id + "\",\"message\":{\"content\":\"history after " + id + "\"}}\n"
+	for path, data := range map[string]string{
+		filepath.Join(project, id+".jsonl"):                   history,
+		filepath.Join(spool, "seq.00000000000000000001.json"): "{\"session_id\":\"" + id + "\",\"hook_event_name\":\"SessionStart\"}",
+	} {
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return history
+}
+
+func TestSessionForkAfterClaudeResumeCarriesRecordedHistory(t *testing.T) {
+	for _, switchDuringLaunch := range []bool{false, true} {
+		t.Run(strconv.FormatBool(switchDuringLaunch), func(t *testing.T) {
+			cfg, dir, scope := forkFixture(t, true)
+			cwd := scope.AllowedPaths[0]
+			home := EffectiveSessionHome(cfg, scope.Identity)
+			var want string
+			switchSession := func() { want = recordForkSessionStart(t, dir, home, cwd, "after-resume") }
+			if switchDuringLaunch {
+				scope.Admit = func(launch func() error) error { switchSession(); return launch() }
+			} else {
+				switchSession()
+			}
+			fake := filepath.Join(t.TempDir(), "claude")
+			if err := os.WriteFile(fake, []byte("#!/bin/sh\n[ \"$1\" = --resume ] || exit 91\ncat \"$WT_FIXTURE_PROJECT/$2.jsonl\"\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			spawned := false
+			scope.Spawn = func(plan *SessionForkPlan) error {
+				spawned = true
+				data, err := os.ReadFile(filepath.Join(cfg.Dir, "eggs", plan.SessionID, "provider.fork"))
+				if err != nil || egg.ParseChatMeta(string(data))["provider_session_id"] != "after-resume" {
+					t.Fatalf("fork reserved stale conversation: %s %v", data, err)
+				}
+				_, args, resume, err := effectiveSpawnProviderSession("claude", plan.Options)
+				if err != nil {
+					return err
+				}
+				_, argv, _ := agentpkg.InteractiveInvocation("claude", false, resume, args...)
+				child := exec.Command(fake, argv...)
+				child.Env = append(os.Environ(), "WT_FIXTURE_PROJECT="+filepath.Join(home, ".claude", "projects", strings.ReplaceAll(cwd, "/", "-")))
+				got, err := child.Output()
+				if err != nil || string(got) != want {
+					t.Fatalf("fork history = %q, want %q, err = %v", got, want, err)
+				}
+				return nil
+			}
+			if _, err := ForkSession(context.Background(), cfg, "source", "branch", scope); err != nil {
+				t.Fatal(err)
+			}
+			if !spawned {
+				t.Fatal("fork did not spawn")
+			}
+		})
+	}
+}
+
+func TestSessionForkRefusesUnrecordedClaudeHistory(t *testing.T) {
+	cfg, dir, scope := forkFixture(t, true)
+	cwd := scope.AllowedPaths[0]
+	home := EffectiveSessionHome(cfg, scope.Identity)
+	recordForkSessionStart(t, dir, home, cwd, "unrecorded")
+	spool := filepath.Join(home, ".claude", "wingthing-events", filepath.Base(dir), "seq.00000000000000000001.json")
+	if err := os.WriteFile(spool, []byte(`{"session_id":"unrecorded","hook_event_name":"UserPromptSubmit"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(home, ".claude", "projects", strings.ReplaceAll(cwd, "/", "-"), "provider.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	scope.Spawn = func(*SessionForkPlan) error { t.Fatal("unrecorded history spawned"); return nil }
+	if _, err := ForkSession(context.Background(), cfg, "source", "branch", scope); err == nil {
+		t.Fatal("fork selected an unrecorded conversation")
+	}
+}
+
+func TestSessionForkRefusesProviderDirectorySymlink(t *testing.T) {
+	cfg, _, scope := forkFixture(t, true)
+	home := EffectiveSessionHome(cfg, scope.Identity)
+	projects := filepath.Join(home, ".claude", "projects")
+	outside := filepath.Join(t.TempDir(), "projects")
+	if err := os.Rename(projects, outside); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, projects); err != nil {
+		t.Fatal(err)
+	}
+	scope.Spawn = func(*SessionForkPlan) error { t.Fatal("symlinked history spawned"); return nil }
+	if _, err := ForkSession(context.Background(), cfg, "source", "branch", scope); err == nil {
+		t.Fatal("fork followed a provider directory symlink")
+	}
+}
+
 func TestSessionForkIgnoresEggDirectoryPolicyAndIdentity(t *testing.T) {
 	for _, snapshot := range []string{"missing", "edited", "symlink"} {
 		t.Run(snapshot, func(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -99,4 +100,65 @@ func recordedProviderSessionID(eggDir, agent string) (string, error) {
 		return "", errors.New("invalid recorded provider session ID")
 	}
 	return id, nil
+}
+
+// ResolveRecordedProviderSessionID follows SessionStart bindings in this egg's
+// journal and own hook spool. An expected ID must already belong to the egg.
+// An empty providerHome reads only the bindings already persisted in the journal.
+func ResolveRecordedProviderSessionID(eggDir, agent, providerHome, expectedID string) (string, error) {
+	launchID, err := recordedProviderSessionID(eggDir, agent)
+	if err != nil {
+		return "", err
+	}
+	j, err := openLifecycleJournal(eggDir)
+	if err != nil {
+		return "", err
+	}
+	defer j.close()
+	id := recordedHookSessionID(j.events, agent, launchID)
+	if providerHome != "" && (agent == "claude" || agent == "codex") {
+		root, err := openProviderHome(providerHome)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		if root != nil {
+			defer root.Close()
+		}
+		id, err = j.importProviderHooks(root, filepath.Join("."+agent, "wingthing-events", filepath.Base(eggDir)), id, agent)
+		if err != nil {
+			return "", err
+		}
+		if j.hooksPending {
+			return "", errors.New("provider session binding import is incomplete; retry")
+		}
+	}
+	if expectedID != "" && !providerSessionRecorded(j.events, agent, launchID, expectedID) {
+		return "", errors.New("provider session ID does not match this egg's recorded session")
+	}
+	return id, nil
+}
+
+// OpenRecordedSessionHistory pins the exact current native transcript beneath
+// the caller's provider home, refusing symlinks at every path component.
+func OpenRecordedSessionHistory(agent, cwd, eggDir, home, expectedID string) (*os.File, error) {
+	id, err := ResolveRecordedProviderSessionID(eggDir, agent, "", expectedID)
+	if err != nil {
+		return nil, err
+	}
+	if !validLifecycleID(id) || id != expectedID {
+		return nil, errors.New("source provider identity changed during fork")
+	}
+	root, err := openProviderHome(home)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	file, _, err := openAgentSession(root, agent, cwd, Profile(agent).SessionDir, time.Time{}, id)
+	if err != nil {
+		return nil, err
+	}
+	if file == nil {
+		return nil, errors.New("provider conversation was not captured")
+	}
+	return file, nil
 }
