@@ -30,7 +30,9 @@ COPY wt /usr/local/bin/wt
 COPY run-tests /root/run-tests
 COPY sandbox-tests /root/sandbox-tests
 COPY wt-tests /root/wt-tests
-RUN chmod +x /usr/local/bin/wt /usr/local/bin/claude /usr/local/bin/mock-agent /root/run-tests /root/sandbox-tests /root/wt-tests
+COPY eggclient-tests /root/eggclient-tests
+COPY roost-pin-tests.sh /root/roost-pin-tests.sh
+RUN chmod +x /usr/local/bin/wt /usr/local/bin/claude /usr/local/bin/mock-agent /root/run-tests /root/sandbox-tests /root/wt-tests /root/eggclient-tests
 RUN mkdir -p /root/.wingthing/eggs /root/.wingthing/logs /root/.claude /root/.ssh
 # Non-root user for namespace failure tests.
 # Ubuntu 24.04 ships with 'ubuntu' UID 1000 — use a different UID.

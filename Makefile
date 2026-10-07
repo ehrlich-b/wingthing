@@ -147,11 +147,12 @@ endif
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) test -p 2 -c -tags 'e2e linux' -o test/linux/run-tests ./test/linux/
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) test -p 2 -c -tags integration -o test/linux/sandbox-tests ./internal/sandbox/
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) test -p 2 -c -tags integration -o test/linux/wt-tests ./cmd/wt/
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) test -p 2 -c -o test/linux/eggclient-tests ./internal/eggclient/
 	@set -e; for distro in $(LINUX_DISTROS); do \
 		case "$$distro" in debian) dockerfile= testimage=wt-test-linux ;; ubuntu) dockerfile=.ubuntu2404 testimage=wt-test-ubuntu ;; *) echo "Unknown distro: $$distro"; exit 1 ;; esac; \
 		docker build -t "$$testimage" -f "test/linux/Dockerfile$$dockerfile" test/linux/; \
 		docker run --rm --privileged "$$testimage" sh -lc \
-			'/root/run-tests -test.v -test.timeout 120s && /root/sandbox-tests -test.v -test.timeout 120s && /root/wt-tests -test.v -test.timeout 120s'; \
+			'/root/run-tests -test.v -test.timeout 120s && /root/sandbox-tests -test.v -test.timeout 120s && /root/wt-tests -test.v -test.timeout 120s && sh /root/roost-pin-tests.sh'; \
 	done
 
 e2e-web: web
