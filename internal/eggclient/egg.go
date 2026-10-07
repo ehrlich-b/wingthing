@@ -530,26 +530,47 @@ func PrepareIsolatedClaudeConfig(home string, envMap map[string]string) error {
 	// release. Seed the new path from the old file if it hasn't been created
 	// yet. Only a regular file is migrated — a symlink at the root is the
 	// shared empty stub, whose users never had persisted state to preserve.
-	newCfg := filepath.Join(claudeDir, ".claude.json")
-	oldCfg := filepath.Join(home, ".claude.json")
-	if _, err := os.Stat(newCfg); errors.Is(err, os.ErrNotExist) {
-		if fi, legacyErr := os.Lstat(oldCfg); legacyErr == nil && fi.Mode().IsRegular() {
-			data, readErr := os.ReadFile(oldCfg)
-			if readErr != nil {
-				return fmt.Errorf("read legacy Claude config: %w", readErr)
-			}
-			if err := os.MkdirAll(claudeDir, 0700); err != nil {
-				return fmt.Errorf("prepare Claude config directory: %w", err)
-			}
-			if err := daemonctl.WriteAtomicMetadataFile(newCfg, data, 0600); err != nil {
-				return fmt.Errorf("migrate Claude config: %w", err)
-			}
-		} else if legacyErr != nil && !errors.Is(legacyErr, os.ErrNotExist) {
-			return fmt.Errorf("inspect legacy Claude config: %w", legacyErr)
-		}
-	} else if err != nil {
-		return fmt.Errorf("inspect Claude config: %w", err)
+	homeDir, err := openProviderDirectory(home, ".", false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
+	if err != nil {
+		return fmt.Errorf("inspect Claude home: %w", err)
+	}
+	defer homeDir.Close()
+	profileDir, err := openProviderSubdirectory(homeDir, ".claude", false)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect Claude config directory: %w", err)
+	}
+	if profileDir != nil {
+		defer profileDir.Close()
+		exists, err := providerFileExists(profileDir, ".claude.json")
+		if err != nil {
+			return fmt.Errorf("inspect Claude config: %w", err)
+		}
+		if exists {
+			return nil
+		}
+	}
+	data, err := readProviderFile(homeDir, ".claude.json")
+	// Preserve the legacy shared empty stub; it contains no persisted state.
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ELOOP) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read legacy Claude config: %w", err)
+	}
+	if profileDir == nil {
+		profileDir, err = openProviderSubdirectory(homeDir, ".claude", true)
+		if err != nil {
+			return fmt.Errorf("prepare Claude config directory: %w", err)
+		}
+		defer profileDir.Close()
+	}
+	if err := writeProviderFile(profileDir, ".claude.json", data, 0600); err != nil {
+		return fmt.Errorf("migrate Claude config: %w", err)
+	}
+
 	return nil
 }
 
@@ -1096,13 +1117,15 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if isolatedUser && !identity.SharedHost && config.Channel() != "preview" && agentName != "claude" {
 		agentProfile := egg.Profile(agentName)
 		if agentProfile.SettingsFile != "" {
-			settingsDst := filepath.Join(effectiveHome, agentProfile.SettingsFile)
-			if err := os.MkdirAll(filepath.Dir(settingsDst), 0700); err != nil {
+			settingsDir, err := openProviderDirectory(effectiveHome, filepath.Dir(agentProfile.SettingsFile), true)
+			if err != nil {
 				return nil, fmt.Errorf("prepare agent settings directory: %w", err)
 			}
+			defer settingsDir.Close()
+			settingsName := filepath.Base(agentProfile.SettingsFile)
 			baseSettings := make(map[string]any)
 			// Read existing session settings to preserve user preferences
-			if data, err := os.ReadFile(settingsDst); err == nil {
+			if data, err := readProviderFile(settingsDir, settingsName); err == nil {
 				if err := json.Unmarshal(data, &baseSettings); err != nil {
 					return nil, fmt.Errorf("parse agent settings: %w", err)
 				}
@@ -1135,7 +1158,7 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 				if err != nil {
 					return nil, fmt.Errorf("encode agent settings: %w", err)
 				}
-				if err := daemonctl.WriteAtomicMetadataFile(settingsDst, append(data, '\n'), 0644); err != nil {
+				if err := writeProviderFile(settingsDir, settingsName, append(data, '\n'), 0644); err != nil {
 					return nil, fmt.Errorf("write agent settings: %w", err)
 				}
 			}
@@ -1428,28 +1451,33 @@ func SetupAPIKeyHelper(agentName string, envMap map[string]string, effectiveHome
 	if v == "" {
 		return nil
 	}
+
 	keyFile := filepath.Join(effectiveHome, ".anthropic_key")
-	if err := os.MkdirAll(effectiveHome, 0700); err != nil {
+	homeDir, err := openProviderDirectory(effectiveHome, ".", true)
+	if err != nil {
 		return fmt.Errorf("prepare API key helper directory: %w", err)
 	}
-	if err := daemonctl.WriteAtomicMetadataFile(keyFile, []byte(v), 0400); err != nil {
-		return fmt.Errorf("write API key helper: %w", err)
-	}
+	defer homeDir.Close()
 	agentProfile := egg.Profile(agentName)
 	if agentProfile.SettingsFile == "" {
-		return nil
+		return writeProviderFile(homeDir, ".anthropic_key", []byte(v), 0400)
 	}
-	settingsDst := filepath.Join(effectiveHome, agentProfile.SettingsFile)
-	if err := os.MkdirAll(filepath.Dir(settingsDst), 0700); err != nil {
+	settingsDir, err := openProviderSubdirectory(homeDir, filepath.Dir(agentProfile.SettingsFile), true)
+	if err != nil {
 		return fmt.Errorf("prepare API key settings directory: %w", err)
 	}
+	defer settingsDir.Close()
+	settingsName := filepath.Base(agentProfile.SettingsFile)
 	settings := make(map[string]any)
-	if data, err := os.ReadFile(settingsDst); err == nil {
+	if data, err := readProviderFile(settingsDir, settingsName); err == nil {
 		if err := json.Unmarshal(data, &settings); err != nil {
 			return fmt.Errorf("parse API key settings: %w", err)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read API key settings: %w", err)
+	}
+	if err := writeProviderFile(homeDir, ".anthropic_key", []byte(v), 0400); err != nil {
+		return fmt.Errorf("write API key helper: %w", err)
 	}
 	helper := "cat " + keyFile
 	if settings["apiKeyHelper"] == helper {
@@ -1460,7 +1488,7 @@ func SetupAPIKeyHelper(agentName string, envMap map[string]string, effectiveHome
 	if err != nil {
 		return fmt.Errorf("encode API key settings: %w", err)
 	}
-	if err := daemonctl.WriteAtomicMetadataFile(settingsDst, append(data, '\n'), 0644); err != nil {
+	if err := writeProviderFile(settingsDir, settingsName, append(data, '\n'), 0644); err != nil {
 		return fmt.Errorf("write API key settings: %w", err)
 	}
 	return nil
