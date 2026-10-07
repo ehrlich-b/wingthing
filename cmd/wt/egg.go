@@ -89,6 +89,7 @@ func eggRunCmd() *cobra.Command {
 		rows                       uint32
 		cols                       uint32
 		fsFlag                     []string
+		roostPolicyPathFlag        []string
 		networkFlag                []string
 		localPortFlag              []int
 		networkModeFlag            string
@@ -170,6 +171,7 @@ func eggRunCmd() *cobra.Command {
 				CWD:                        cwd,
 				Shell:                      shell,
 				FS:                         fsFlag,
+				RoostPolicyPaths:           roostPolicyPathFlag,
 				Network:                    networkFlag,
 				LocalPorts:                 localPortFlag,
 				NetworkMode:                networkModeFlag,
@@ -230,6 +232,10 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().Uint32Var(&rows, "rows", 24, "terminal rows")
 	cmd.Flags().Uint32Var(&cols, "cols", 80, "terminal cols")
 	cmd.Flags().StringArrayVar(&fsFlag, "fs", nil, "filesystem rules (rw:./, deny:~/.ssh)")
+	cmd.Flags().StringArrayVar(&roostPolicyPathFlag, "roost-policy-path", nil, "configured roost policy file (internal)")
+	if err := cmd.Flags().MarkHidden("roost-policy-path"); err != nil {
+		panic(err)
+	}
 	cmd.Flags().StringArrayVar(&networkFlag, "network", nil, "network domains (api.anthropic.com, *, none)")
 	cmd.Flags().IntSliceVar(&localPortFlag, "local-port", nil, "host loopback port forwarded into the network namespace")
 	cmd.Flags().StringVar(&networkModeFlag, "network-mode", "", "network policy mode: enforce or observe (internal)")

@@ -304,6 +304,9 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		for _, d := range s.cfg.DenyRename {
 			wrapArgs = append(wrapArgs, "--deny-rename", d)
 		}
+		for _, p := range s.cfg.RoostPolicyPaths {
+			wrapArgs = append(wrapArgs, "--roost-policy-path", p)
+		}
 		for _, d := range s.cfg.DenyWrite {
 			wrapArgs = append(wrapArgs, "--deny-write", d)
 		}

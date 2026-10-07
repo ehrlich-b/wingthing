@@ -929,6 +929,9 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		}
 		args = append(args, "--fs", mode+":"+path)
 	}
+	for _, path := range eggCfg.RoostPolicyPaths {
+		args = append(args, "--roost-policy-path", path)
+	}
 	for _, path := range eggCfg.SSHAgentSocketDenyPaths(effectiveHome, identity.SharedHost) {
 		args = append(args, "--fs", "deny:"+path)
 	}

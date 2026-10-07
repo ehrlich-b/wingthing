@@ -133,3 +133,18 @@ func TestTerminateSessionEscalatesWhenInteractiveProcessIgnoresSIGTERM(t *testin
 		t.Fatal("terminateSession returned before the child exited")
 	}
 }
+
+func TestRunConfigPolicyPreservesRoostPolicyPaths(t *testing.T) {
+	paths := []string{"/work/a/egg.yaml", "/work/b/egg.yaml"}
+	cfg := runConfigPolicy(RunConfig{RoostPolicyPaths: paths})
+	if got := cfg.ToSandboxConfig("").RoostPolicyPaths; !reflect.DeepEqual(got, paths) {
+		t.Fatalf("egg run dropped roost policy paths: %v, want %v", got, paths)
+	}
+	cfg.RoostPolicyPaths[0] = "changed"
+	if paths[0] != "/work/a/egg.yaml" {
+		t.Fatal("runtime policy aliases launch policy paths")
+	}
+	if got := runConfigPolicy(RunConfig{}).ToSandboxConfig("").RoostPolicyPaths; len(got) != 0 {
+		t.Fatalf("personal launch acquired roost missing-file checks: %v", got)
+	}
+}

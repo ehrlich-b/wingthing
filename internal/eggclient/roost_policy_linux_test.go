@@ -397,3 +397,50 @@ printf launched
 		}
 	}
 }
+
+func TestRoostPolicyLinuxPersonalDefaultWithoutEggYAMLStarts(t *testing.T) {
+	if ok, help := sandbox.CheckCapability(); !ok {
+		t.Skip(help)
+	}
+	home := config.CanonicalProviderPath(t.TempDir())
+	project := config.CanonicalProviderPath(t.TempDir())
+	t.Setenv("HOME", home)
+	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
+	t.Chdir(project)
+	cfg := egg.DefaultEggConfig()
+	// Resolve relative rules as SpawnEgg does before passing them to egg run.
+	for i, rule := range cfg.FS {
+		mode, path, _ := strings.Cut(rule, ":")
+		if !filepath.IsAbs(path) && !strings.HasPrefix(path, "~") {
+			cfg.FS[i] = mode + ":" + filepath.Join(project, path)
+		}
+	}
+	sb, err := sandbox.New(cfg.ToSandboxConfig(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sb.Destroy() })
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd, err := sb.Exec(ctx, "/bin/sh", []string{"-c", "set -e; printf ordinary > ordinary; printf launched"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, runErr := cmd.CombinedOutput()
+	if os.IsPermission(runErr) {
+		t.Skipf("namespace creation unavailable: %v", runErr)
+	}
+	log, _ := os.ReadFile(sb.DiagLog())
+	if runErr != nil || string(output) != "launched" {
+		t.Fatalf("personal default without egg.yaml refused: %v, output=%q, log=%s", runErr, output, log)
+	}
+	if data, err := os.ReadFile(filepath.Join(project, "ordinary")); err != nil || string(data) != "ordinary" {
+		t.Fatalf("personal workspace write failed: %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(project, "egg.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("default launch synthesized egg.yaml: %v", err)
+	}
+	if !strings.Contains(string(log), "deny-write path absent at launch: "+filepath.Join(project, "egg.yaml")) {
+		t.Fatalf("default egg.yaml deny-write rule wasn't exercised: %s", log)
+	}
+}

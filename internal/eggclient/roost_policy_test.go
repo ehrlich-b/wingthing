@@ -379,6 +379,13 @@ func TestRoostPolicyPinsRootsAndAncestors(t *testing.T) {
 		if got := cfg.ToSandboxConfig(home).DenyRename; !slices.Equal(got, want) {
 			t.Fatalf("root pins (cwd=%s) = %v, want %v", cwd, got, want)
 		}
+		policyPaths := []string{filepath.Join(role, "egg.yaml"), filepath.Join(other, "egg.yaml"), filepath.Join(missing, "egg.yaml")}
+		if got := cfg.ToSandboxConfig(home).RoostPolicyPaths; !slices.Equal(got, policyPaths) {
+			t.Fatalf("roost missing-policy checks (cwd=%s) = %v, want %v", cwd, got, policyPaths)
+		}
+		if rendered, err := cfg.YAML(); err != nil || strings.Contains(rendered, "roostpolicypaths") {
+			t.Fatalf("runtime roost paths leaked into author policy: %q, %v", rendered, err)
+		}
 	}
 }
 

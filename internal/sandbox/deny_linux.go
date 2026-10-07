@@ -206,6 +206,7 @@ func DenyInit(args []string) {
 	var denyPaths []string
 	var denyRenamePaths []string
 	var denyWritePaths []string
+	var roostPolicyPaths []string
 	var writablePaths []string
 	var overlayPrefixes []string
 	var roMounts []string
@@ -236,6 +237,9 @@ func DenyInit(args []string) {
 				i++
 			case "--deny-rename":
 				denyRenamePaths = append(denyRenamePaths, args[i+1])
+				i++
+			case "--roost-policy-path":
+				roostPolicyPaths = append(roostPolicyPaths, args[i+1])
 				i++
 			case "--deny-write":
 				denyWritePaths = append(denyWritePaths, args[i+1])
@@ -409,9 +413,13 @@ func DenyInit(args []string) {
 	var missingWritePaths []string
 	for _, p := range denyWritePaths {
 		if _, err := os.Stat(p); err != nil {
-			if os.IsNotExist(err) || errors.Is(err, unix.EACCES) {
+			isRoostPolicy := containsPath(roostPolicyPaths, p)
+			if os.IsNotExist(err) || (isRoostPolicy && errors.Is(err, unix.EACCES)) {
 				log.Printf("_deny_init: deny-write path absent at launch: %s", p)
-				missingWritePaths = append(missingWritePaths, p)
+				// Personal policies retain the missing-file behavior of main.
+				if isRoostPolicy {
+					missingWritePaths = append(missingWritePaths, p)
+				}
 				continue
 			}
 			failEnforcement("inspect deny-write path", p, err)

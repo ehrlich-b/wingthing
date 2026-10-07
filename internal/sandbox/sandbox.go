@@ -54,6 +54,9 @@ type Config struct {
 	// refused with ProtectedWriteTargetError on any overlap, and backends that
 	// cannot verify their final policy refuse a nonempty set. Empty = no contract.
 	ProtectedWriteTargets []string
+
+	// RoostPolicyPaths lists configured policy files whose absence must be checked.
+	RoostPolicyPaths []string
 }
 
 // EnforcementError is returned when the system cannot enforce the requested sandbox config.

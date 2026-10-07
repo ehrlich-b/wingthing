@@ -180,6 +180,7 @@ func (b BaseField) HasMasks() bool {
 type EggConfig struct {
 	Base                       BaseField         `yaml:"base,omitempty"`
 	FS                         []string          `yaml:"fs"`
+	RoostPolicyPaths           []string          `yaml:"-"` // runtime-only configured root policy files
 	Network                    NetworkField      `yaml:"network"`
 	Env                        EnvField          `yaml:"env,omitempty"`
 	Resources                  EggResources      `yaml:"resources"`
@@ -706,6 +707,8 @@ func (c *EggConfig) ToSandboxConfig(home string) sandbox.Config {
 		MaxFDs:      c.Resources.MaxFDs,
 		PidLimit:    c.Resources.MaxPids,
 		Trace:       c.Trace,
+
+		RoostPolicyPaths: append([]string(nil), c.RoostPolicyPaths...),
 	}
 }
 

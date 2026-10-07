@@ -51,3 +51,26 @@ func TestEggRunWithoutProtectedTargetsParsesEmpty(t *testing.T) {
 		t.Fatalf("default protected targets = %#v, %v; want empty", got, err)
 	}
 }
+
+func TestEggRunRoostPolicyPathsAreExplicit(t *testing.T) {
+	paths := []string{"/work/a/egg.yaml", "/work/spaces and,commas/egg.yaml"}
+	for _, roost := range []bool{false, true} {
+		cmd := eggRunCmd()
+		args := []string{"--session-id", "s1", "--fs", "deny-write:./egg.yaml"}
+		if roost {
+			for _, path := range paths {
+				args = append(args, "--roost-policy-path", path)
+			}
+		}
+		if err := cmd.ParseFlags(args); err != nil {
+			t.Fatal(err)
+		}
+		got, err := cmd.Flags().GetStringArray("roost-policy-path")
+		if err != nil || (roost && !reflect.DeepEqual(got, paths)) || (!roost && len(got) != 0) {
+			t.Fatalf("roost=%v: policy paths = %v, %v", roost, got, err)
+		}
+		if !cmd.Flags().Lookup("roost-policy-path").Hidden {
+			t.Fatal("runtime roost policy paths must be internal")
+		}
+	}
+}

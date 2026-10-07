@@ -136,6 +136,7 @@ type RunConfig struct {
 	ToolSocketPath             string        // path to tool.sock (set by wing, empty = no tools)
 	OuterBoundary              bool          // explicit trusted-host marker from the parent process
 	ProtectedWriteTargets      []string      // host-owned paths the final sandbox policy must keep unwritable (empty = no contract)
+	RoostPolicyPaths           []string      // administrator-configured root policy files
 	OmitBrowserBridge          bool          // no browser request file, shim, BROWSER/WT_SESSION_DIR env, PATH entry or mount
 }
 
@@ -889,6 +890,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			AllowSockets: allowSockets,
 			// Enforced against the final emitted policy inside sandbox.New.
 			ProtectedWriteTargets: append([]string(nil), rc.ProtectedWriteTargets...),
+			RoostPolicyPaths:      append([]string(nil), rc.RoostPolicyPaths...),
 		}
 
 		if err := prepareLifecycle(&sbCfg); err != nil {
@@ -1339,6 +1341,8 @@ func runConfigPolicy(rc RunConfig) *EggConfig {
 		},
 		Resources: EggResources{MaxFDs: rc.MaxFDs, MaxPids: rc.PidLimit},
 		Trace:     rc.Trace,
+
+		RoostPolicyPaths: append([]string(nil), rc.RoostPolicyPaths...),
 	}
 	if rc.OuterBoundary {
 		policy.Env = EnvField{"*"}

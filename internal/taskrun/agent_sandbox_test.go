@@ -378,6 +378,9 @@ func TestDirectAgentSandboxPreservesRoostRootPins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(cfg.RoostPolicyPaths) != 1 || cfg.RoostPolicyPaths[0] != filepath.Join(root, "egg.yaml") {
+		t.Fatalf("headless task lost its roost missing-policy check: %v", cfg.RoostPolicyPaths)
+	}
 	sb, err := sandbox.New(cfg)
 	if err != nil {
 		t.Fatal(err)

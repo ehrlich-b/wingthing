@@ -185,8 +185,11 @@ func protectRoostRootPolicies(cfg *egg.EggConfig, roots []string) *egg.EggConfig
 	// Copy the FS slice so fallbacks cannot mutate the captured runtime policy.
 	copyCfg := *cfg
 	copyCfg.FS = append([]string(nil), cfg.FS...)
+	copyCfg.RoostPolicyPaths = nil
 	for _, root := range roots {
-		rule := "deny-write:" + filepath.Join(root, "egg.yaml")
+		path := filepath.Join(root, "egg.yaml")
+		copyCfg.RoostPolicyPaths = append(copyCfg.RoostPolicyPaths, path)
+		rule := "deny-write:" + path
 		if !ContainsExactPath(copyCfg.FS, rule) {
 			copyCfg.FS = append(copyCfg.FS, rule)
 		}

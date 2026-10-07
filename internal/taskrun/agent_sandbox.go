@@ -122,6 +122,8 @@ func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation
 		PidLimit:    declared.PidLimit,
 		UserHome:    home,
 		Trace:       declared.Trace,
+
+		RoostPolicyPaths: declared.RoostPolicyPaths,
 	}
 	if sharedHost {
 		if !eggclient.ContainsExactPath(declared.Deny, string(filepath.Separator)) {
