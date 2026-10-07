@@ -38,8 +38,9 @@ func openPolicyPath(path string, followLeaf bool) (*File, error) {
 		if err := unix.Fstat(fd, &stat); err != nil {
 			return nil, err
 		}
-		if (stat.Uid != 0 && int(stat.Uid) != os.Getuid()) || stat.Mode&0022 != 0 {
-			return nil, &Error{path, "policy directory " + current + " must be owned by root or this OS account and not writable by group or others"}
+		sticky := stat.Mode&unix.S_ISVTX != 0
+		if (stat.Uid != 0 && int(stat.Uid) != os.Getuid()) || (stat.Mode&0022 != 0 && !sticky) {
+			return nil, &Error{path, "policy directory " + current + " must be owned by root or this OS account and not writable by group or others unless sticky"}
 		}
 		for len(pending) > 0 && (pending[0] == "" || pending[0] == ".") {
 			pending = pending[1:]
@@ -55,6 +56,16 @@ func openPolicyPath(path string, followLeaf bool) (*File, error) {
 				return nil, &Error{path, "cannot follow policy link"}
 			}
 			links++
+			// Sticky directories protect only entries owned by a trusted user.
+			// Check the link itself before following a trusted target.
+			if sticky {
+				if err := unix.Fstatat(fd, part, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+					return nil, err
+				}
+				if stat.Uid != 0 && int(stat.Uid) != os.Getuid() {
+					return nil, &Error{path, "policy link in sticky directory must be owned by root or this OS account"}
+				}
+			}
 			buffer := make([]byte, 4096)
 			n, err := unix.Readlinkat(fd, part, buffer)
 			if err != nil || n == len(buffer) {
@@ -81,6 +92,10 @@ func openPolicyPath(path string, followLeaf bool) (*File, error) {
 		if err := unix.Fstat(next, &stat); err != nil {
 			unix.Close(next)
 			return nil, err
+		}
+		if sticky && stat.Uid != 0 && int(stat.Uid) != os.Getuid() {
+			unix.Close(next)
+			return nil, &Error{path, "policy entry in sticky directory must be owned by root or this OS account"}
 		}
 		name := filepath.Join(current, part)
 		if stat.Mode&unix.S_IFMT == unix.S_IFDIR {

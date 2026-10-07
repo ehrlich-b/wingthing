@@ -86,3 +86,55 @@ func TestPolicyPinsPersonalDotfileSymlinkTarget(t *testing.T) {
 		t.Fatalf("policy descriptor followed replaced directory: %q, %v", data, err)
 	}
 }
+
+func TestPolicyStickyDirectoryRequiresTrustedEntries(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, os.ModeSticky|0777); err != nil {
+		t.Fatal(err)
+	}
+	owned := filepath.Join(root, "owned")
+	if err := os.Mkdir(owned, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(owned, "config.yaml")
+	if err := os.WriteFile(path, []byte("trusted"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := ReadPolicyResolved(path); err != nil || string(data) != "trusted" {
+		t.Fatalf("refused owned entry under a sticky parent: %q, %v", data, err)
+	}
+	for _, entry := range []string{"directory", "symlink", "file"} {
+		t.Run(entry, func(t *testing.T) {
+			foreign := filepath.Join(root, entry)
+			var policy string
+			switch entry {
+			case "directory":
+				if err := os.Mkdir(foreign, 0700); err != nil {
+					t.Fatal(err)
+				}
+				policy = filepath.Join(foreign, "config.yaml")
+				if err := os.WriteFile(policy, []byte("untrusted"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				if err := os.Symlink(path, foreign); err != nil {
+					t.Fatal(err)
+				}
+				policy = foreign
+			case "file":
+				if err := os.WriteFile(foreign, []byte("untrusted"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				policy = foreign
+			}
+			if err := os.Lchown(foreign, os.Getuid()+1, -1); err != nil {
+				t.Skipf("cannot change owner: %v", err)
+			}
+			_, err := ReadPolicyResolved(policy)
+			var refusal *Error
+			if !errors.As(err, &refusal) {
+				t.Fatalf("accepted another user's entry in sticky directory: %v", err)
+			}
+		})
+	}
+}
