@@ -2725,7 +2725,6 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .inventory-filters select { max-width: 200px; }
 .inventory-filters .btn-sm { min-height: 40px; }
 .inventory-no-results { padding: 28px 16px; border: 1px dashed var(--border); border-radius: 8px; color: #aeb8cb; font-size: 13px; }
-#sessions-list .egg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 285px), 1fr)); align-items: start; gap: 12px; }
 #sessions-list .inventory-session { width: auto; min-width: 0; border: 1px solid var(--border); padding: 14px; }
 .inventory-session.selected { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
 .inventory-session .egg-footer { padding: 0; gap: 8px; }
