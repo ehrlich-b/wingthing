@@ -1214,7 +1214,7 @@ func (s *Server) toolTerminalSend(ctx context.Context, arguments json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	session, err := eggclient.SendSessionInput(ctx, s.Cfg, owned.ID, input, args.Enter)
+	session, err := eggclient.SendSessionInput(ctx, s.Cfg, owned.ID, input, args.Enter, s.identity.UserID)
 	if err != nil {
 		return nil, err
 	}

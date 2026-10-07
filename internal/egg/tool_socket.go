@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -53,10 +54,34 @@ type ToolListResponse struct {
 type ToolListener struct {
 	owner       string
 	ownerID     string
+	socketPath  string
 	runner      *ToolRunner
 	listener    net.Listener
 	connections chan struct{}
 	wg          sync.WaitGroup
+}
+
+// Only host adapters in this process can observe a verified controller. The
+// egg-facing tool socket never accepts controller identity from its callers.
+var toolListeners sync.Map // canonical socket path -> *ToolListener
+
+func toolSocketKey(path string) string {
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	if canonical, err := filepath.EvalSymlinks(path); err == nil {
+		path = canonical
+	}
+	return filepath.Clean(path)
+}
+
+// ObserveToolController routes a host-verified input claim to its live listener.
+// Sessions without tools have no listener; reclaimed listeners already refuse
+// Context authority. Call this before routing any input for the verified user.
+func ObserveToolController(sockPath, userID string) {
+	if listener, ok := toolListeners.Load(toolSocketKey(sockPath)); ok {
+		listener.(*ToolListener).ObserveController(userID)
+	}
 }
 
 // ToolContext binds a listener to its wing-owned Context client and verified owner.
@@ -92,10 +117,12 @@ func NewToolListener(sockPath string, tools []*config.ToolConfig, contexts ...To
 	tl := &ToolListener{
 		owner:       tc.Owner,
 		ownerID:     tc.OwnerID,
+		socketPath:  toolSocketKey(sockPath),
 		runner:      newSessionToolRunner(tools, tc),
 		listener:    ln,
 		connections: make(chan struct{}, maxConcurrentToolSocketConnections),
 	}
+	toolListeners.Store(tl.socketPath, tl)
 	tl.wg.Add(1)
 	go tl.acceptLoop()
 	return tl, nil
@@ -124,6 +151,7 @@ func (tl *ToolListener) ObserveController(userID string) {
 func (tl *ToolListener) Close() error {
 	err := tl.listener.Close()
 	tl.wg.Wait()
+	toolListeners.CompareAndDelete(tl.socketPath, tl)
 	return err
 }
 

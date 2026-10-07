@@ -85,3 +85,11 @@ func AttachBrowserController(ctx context.Context, client *egg.Client, sessionID 
 	}
 	return stream, err
 }
+
+// Local CLI callers have OS authority but no relay-verified user ID. Authenticated
+// host adapters supply their verified identity separately from writer labels.
+func observeSessionController(cfg *config.Config, sessionID string, verifiedUserIDs []string) {
+	if len(verifiedUserIDs) > 0 && verifiedUserIDs[0] != "" {
+		egg.ObserveToolController(filepath.Join(cfg.Dir, "eggs", sessionID, ".tools", "tool.sock"), verifiedUserIDs[0])
+	}
+}
