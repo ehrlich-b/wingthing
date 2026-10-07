@@ -293,12 +293,12 @@ func TestSessionForkIdentityMatchesFreshLaunchOnEverySurface(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			wantShared := surface == "direct org member" || surface == "HTTP shared host" || surface == "browser shared host"
+			wantShared := surface == "direct org member" || surface == "HTTP shared host" || surface == "browser shared host" || surface == "browser org member"
 			if freshIdentity.SharedHost != wantShared || freshIdentity.SealedFS != wantShared {
 				t.Fatalf("wrong fresh credential boundary: %#v", freshIdentity)
 			}
 			// A Direct MCP source is sealed even on a stable, non-shared org
-			// wing. Its browser fork must instead match a new browser PTY.
+			// wing. Its browser fork must match the same sealed fresh browser PTY.
 			dir := filepath.Join(s.Cfg.Dir, "eggs", "source")
 			if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=claude\ncwd="+cwd+"\nprovider_home=/agent-chosen\nshared_host=true\norg_wing=false\n"), 0600); err != nil {
 				t.Fatal(err)

@@ -15,8 +15,9 @@ import (
 )
 
 func BrowserEggIdentity(wc *config.WingConfig, start ws.PTYStart, home string, sharedHost bool) EggIdentity {
+	sealedBoundary := sharedHost || wc.Org != "" && wingpolicy.IsMemberRole(start.OrgRole)
 	return EggIdentity{UserID: start.UserID, Email: start.Email, DisplayName: start.DisplayName,
-		OrgWing: wc.Org != "", SharedHost: sharedHost, SealedFS: sharedHost,
+		OrgWing: wc.Org != "", SharedHost: sealedBoundary, SealedFS: sealedBoundary,
 		AllowedPaths: wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wc.Paths, start.Email, start.OrgRole, home))}
 }
 
