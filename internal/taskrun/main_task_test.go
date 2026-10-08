@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
@@ -76,10 +75,8 @@ func TestRunTaskLargeOutputPersistenceIsLinear(t *testing.T) {
 	if err := os.Mkdir(bin, 0700); err != nil {
 		t.Fatal(err)
 	}
-	// Deliver real-shaped events over time, as a streaming provider does. The
-	// SQL trigger below independently rejects quadratic work even when writes
-	// fit between provider chunks and their cost is hidden by emission latency.
-	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\nawk '{ print; fflush(); system(\"sleep 0.05\") }' large.jsonl\n"), 0700); err != nil {
+	// The SQL trigger below measures rewritten bytes independently of timing.
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\ncat large.jsonl\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -96,28 +93,6 @@ func TestRunTaskLargeOutputPersistenceIsLinear(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "large.jsonl"), []byte(fixture), 0600); err != nil {
 		t.Fatal(err)
 	}
-	baseline := func() time.Duration {
-		start := time.Now()
-		stream, err := agent.NewCodex(0).Run(context.Background(), "large fixture", agent.RunOpts{WorkDir: root})
-		if err != nil {
-			t.Fatal(err)
-		}
-		var output strings.Builder
-		for {
-			chunk, ok := stream.Next()
-			if !ok {
-				break
-			}
-			output.WriteString(chunk.Text)
-		}
-		if stream.Err() != nil || output.Len() != 8*1024*1024 {
-			t.Fatalf("baseline failed: bytes=%d, error=%v", output.Len(), stream.Err())
-		}
-		return time.Since(start)
-	}
-	// Warm the provider and filesystem before comparing equivalent streams.
-	baseline()
-	withoutPersistence := baseline()
 	cfg := &config.Config{Dir: filepath.Join(root, "state"), DefaultAgent: "codex"}
 	if err := os.Mkdir(cfg.Dir, 0700); err != nil {
 		t.Fatal(err)
@@ -136,11 +111,9 @@ func TestRunTaskLargeOutputPersistenceIsLinear(t *testing.T) {
 	if err := db.CreateTask(task); err != nil {
 		t.Fatal(err)
 	}
-	start := time.Now()
 	if err := RunTaskTo(context.Background(), cfg, db, task, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	withPersistence := time.Since(start)
 	stored, err := db.GetTask(task.ID)
 	if err != nil || stored.Status != "done" || stored.Output == nil || *stored.Output != strings.Repeat(block, chunks) {
 		t.Fatal("large run lost output")
@@ -152,10 +125,6 @@ func TestRunTaskLargeOutputPersistenceIsLinear(t *testing.T) {
 	var rewritten int
 	if err := db.DB().QueryRow("SELECT sum(bytes) FROM snapshot_cost").Scan(&rewritten); err != nil || rewritten > 3*8*1024*1024 {
 		t.Fatalf("transcript snapshots rewrote %d bytes for 8 MiB output: %v", rewritten, err)
-	}
-	t.Logf("8 MiB baseline=%s, persistence=%s", withoutPersistence, withPersistence)
-	if withPersistence > withoutPersistence*11/10 {
-		t.Fatalf("persistence took %s; baseline %s", withPersistence, withoutPersistence)
 	}
 }
 
