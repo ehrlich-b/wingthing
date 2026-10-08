@@ -19,8 +19,9 @@ const redactionMarker = "[redacted]"
 // Redactor is a run-local snapshot of credentials. Use it before persisting,
 // returning, or truncating any provider text, including successful messages.
 type Redactor struct {
-	secrets  []string
-	initials [256]bool
+	secrets   []string
+	initials  [256]bool
+	byInitial [256][]string
 }
 
 func NewRedactor(environment []string, credentials ...string) *Redactor {
@@ -67,6 +68,9 @@ func NewRedactor(environment []string, credentials ...string) *Redactor {
 	}
 	// Overlapping credentials must never leave the suffix of the longer one.
 	sort.Slice(r.secrets, func(i, j int) bool { return len(r.secrets[i]) > len(r.secrets[j]) })
+	for _, secret := range r.secrets {
+		r.byInitial[secret[0]] = append(r.byInitial[secret[0]], secret)
+	}
 	return r
 }
 
@@ -194,7 +198,7 @@ func (r *Redactor) knownText(text string, final bool) (ready, pending string) {
 			return output.String(), strings.Clone(text)
 		}
 		matched := 0
-		for _, secret := range r.secrets {
+		for _, secret := range r.byInitial[text[0]] {
 			if !final && len(text) < len(secret) && strings.HasPrefix(secret, text) {
 				return output.String(), strings.Clone(text)
 			}
