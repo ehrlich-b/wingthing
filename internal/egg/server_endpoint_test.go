@@ -102,7 +102,7 @@ func TestPrepareEndpointRefusesUnremovableStaleSocket(t *testing.T) {
 
 func shortEndpointTempDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "wt-egg-endpoint-")
+	dir, err := os.MkdirTemp("", "wee-")
 	if err != nil {
 		t.Fatal(err)
 	}

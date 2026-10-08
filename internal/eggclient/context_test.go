@@ -125,7 +125,7 @@ func TestContextThroughEggTools(t *testing.T) {
 	}))
 	defer server.Close()
 	endpoint = server.URL
-	root, err := os.MkdirTemp("/tmp", "wt-ctx-")
+	root, err := os.MkdirTemp("", "wc-")
 	if err != nil {
 		t.Fatal(err)
 	}

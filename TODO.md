@@ -129,6 +129,22 @@ The bar: someone new can use a wing without confusion or broken UX.
 
 ## Shipped foundations that still need cleanup
 
+### Agent-run dogfood reliability (2026-10-07)
+
+- [x] Detach headless supervision from the stdio MCP host; persist its PID
+  before accepting the run and reconnect by owner-scoped run ID.
+- [x] Keep partial output/events when a supervisor is lost, report terminal
+  `orphaned` with provider exit unknown, and preserve known provider failures.
+- [x] Stop detached runs from a later owner client after verifying supervisor
+  argv; retain frozen sandbox policy, shared-host home and allowed paths.
+- [x] Verify egg secret argv protection through a live process canary. The
+  0600 one-shot environment transport already existed at `0573c90`.
+- [x] Preserve Codex's final provider error and received agent messages in
+  `agent_result`, including refusals with a zero CLI exit.
+- [ ] Run the native host-exit fixture outside an inherited sandbox and real
+  Codex/Claude long-run canaries. The fake-provider process gate is deterministic
+  evidence; it does not establish live provider or native sandbox acceptance.
+
 ### VTE: Server-Side Virtual Terminal Emulator
 The VTE snapshot reconnect path is shipped. The 2MB raw replay path and
 `findSafeCut`, `trackCursorPos`, and `agentPreamble` compatibility code remain for

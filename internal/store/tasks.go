@@ -141,7 +141,7 @@ func (s *Store) UpdateTaskStatus(id, status string) error {
 	switch status {
 	case "running":
 		col = "started_at"
-	case "done", "failed":
+	case "done", "failed", "orphaned":
 		col = "finished_at"
 	default:
 		_, err := s.db.Exec("UPDATE tasks SET status = ? WHERE id = ?", status, id)
@@ -176,6 +176,30 @@ func (s *Store) SetTaskOutput(id, output string) error {
 func (s *Store) SetTaskError(id, errMsg string) error {
 	now := time.Now().UTC().Format(timeFmt)
 	_, err := s.db.Exec("UPDATE tasks SET error = ?, status = 'failed', finished_at = ? WHERE id = ?", errMsg, now, id)
+	return err
+}
+
+func (s *Store) ClaimAgentRunSupervisor(id string, launcherPID, supervisorPID int) error {
+	result, err := s.db.Exec(`UPDATE tasks SET runner_pid = ? WHERE id = ? AND type = 'agent_run' AND status = 'pending' AND runner_pid = ?`, supervisorPID, id, launcherPID)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return fmt.Errorf("agent run %q is already claimed or terminal", id)
+	}
+	return nil
+}
+
+// Reconciliation must not overwrite a completion racing the liveness probe,
+// or confuse losing a supervisor with a known provider failure.
+func (s *Store) MarkAgentRunOrphaned(id string, pid int, message string) error {
+	_, err := s.db.Exec(`UPDATE tasks SET status = 'orphaned', finished_at = ?,
+		error = CASE WHEN error IS NULL OR error = '' THEN ? ELSE error || char(10) || ? END
+		WHERE id = ? AND type = 'agent_run' AND runner_pid = ? AND status IN ('pending','running')`, time.Now().UTC().Format(timeFmt), message, message, id, pid)
 	return err
 }
 

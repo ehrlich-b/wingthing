@@ -360,6 +360,7 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 	}
 
 	// Stream output to stdout
+	var partial strings.Builder
 	for {
 		chunk, ok := stream.Next()
 		if !ok {
@@ -367,6 +368,15 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		}
 		if _, err := fmt.Fprint(destination, chunk.Text); err != nil {
 			return fmt.Errorf("write agent output: %w", err)
+		}
+		partial.WriteString(chunk.Text)
+		// Persist messages while the provider is alive. Losing a supervisor
+		// must not erase the transcript already received from the provider.
+		if err := s.SetTaskOutput(t.ID, partial.String()); err != nil {
+			return fmt.Errorf("record partial agent output: %w", err)
+		}
+		if err := s.AppendLog(t.ID, "agent_message", &chunk.Text); err != nil {
+			return fmt.Errorf("record agent message: %w", err)
 		}
 	}
 	if _, err := fmt.Fprintln(destination); err != nil {

@@ -893,7 +893,7 @@ func TestUnsandboxedAgentRunPersistsPrivilegedIsolation(t *testing.T) {
 	}
 }
 
-func TestAgentStatusMarksOrphanedRunnerFailed(t *testing.T) {
+func TestAgentStatusMarksOrphanedRunner(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{Dir: dir, DefaultAgent: "claude"}
 	taskStore, err := store.Open(cfg.DBPath())
@@ -916,11 +916,11 @@ func TestAgentStatusMarksOrphanedRunnerFailed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status["status"] != "failed" {
+	if status["status"] != "orphaned" {
 		t.Fatalf("orphan status = %#v", status)
 	}
 	result, err := server.toolAgentResult(json.RawMessage(`{"run_id":"orphaned-run"}`))
-	if err != nil || !strings.Contains(result["error"].(string), "supervising Wingthing process") {
+	if err != nil || !strings.Contains(result["error"].(string), "provider exit unknown") {
 		t.Fatalf("orphan result = %#v err=%v", result, err)
 	}
 }

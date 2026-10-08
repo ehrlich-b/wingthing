@@ -101,8 +101,33 @@ The current local operation set is defined and tested in `internal/control`:
 | Discovery | `wingthing_capabilities`, `sandbox_explain` |
 | Messages | `message_send`, `message_list`, `message_wait` |
 | Sessions | `terminal_list`, `terminal_read`, `terminal_send`, `terminal_wait`, `terminal_start`, `agent_start`, `terminal_rename`, `terminal_stop` |
-| Runs | `agent_run`, `agent_status`, `agent_wait`, `agent_result`, `agent_events`, `agent_steer`, `agent_stop` |
+| Runs | `agent_run`, `agent_status`, `agent_wait`, `agent_wait_any`, `agent_result`, `agent_events`, `agent_steer`, `agent_stop` |
 | Prompt workflows | `prompt_list`, `prompt_get`, `prompt_save`, `prompt_run`, `task_get`, `prompt_loop`, `swarm_run` |
+
+Headless runs now have a dedicated detached `wt egg supervise-run` process,
+independent of the submitting MCP host. The task store records its PID before
+`agent_run` returns. Later clients of the same principal on the same wing use
+the existing run ID for status, wait, results, events and cancellation. The
+supervisor retains the submitted sandbox policy and caller's shared-host home
+and path boundary. No PTY or browser terminal is created.
+
+`orphaned` is a new **terminal** run status: the supervisor was lost and the
+provider's exit is unknown. `agent_wait` and `agent_wait_any` finish for it,
+`agent_result.ready` is true, and received messages remain in `output` and
+`agent_events` (`agent_message` events). A known provider failure stays
+`failed`, carrying its final error and received agent messages. Losing the
+supervisor does not prove the provider exited and does not restart it. Legacy
+in-process runs are also reconciled to `orphaned` if their recorded host dies.
+Tool names, arguments and existing result fields remain unchanged; callers
+must recognize the additional terminal status. Old binaries cannot supervise
+or stop these detached runs; upgrade the MCP host before using that lifecycle.
+
+Codex `turn.failed`, `error` and completed error items contribute their final
+provider message to the existing result `error` field, alongside process exit
+diagnostics. A later completed turn clears transient retry errors. Secret egg
+environment values travel in a 0600 one-shot file removed after reading, never
+in the spawned wrapper's argv; the legacy internal `--env` input remains
+accepted for compatibility, but launchers do not emit it.
 
 The local MCP process has the operating-system authority of the user that
 launched it. The client name controls ownership and audit attribution inside

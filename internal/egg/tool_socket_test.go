@@ -17,7 +17,7 @@ import (
 // shortSockPath returns a Unix socket path short enough for macOS (104 char limit).
 func shortSockPath(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "wt-ts-*")
+	dir, err := os.MkdirTemp("", "wts-*")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func closeToolListenerForTest(t *testing.T, listener *ToolListener) {
 }
 
 func TestToolControllerRoutingUsesCanonicalSessionSocket(t *testing.T) {
-	root, err := os.MkdirTemp("../..", ".ctx-")
+	root, err := os.MkdirTemp("", ".ctx-")
 	if err != nil {
 		t.Fatal(err)
 	}

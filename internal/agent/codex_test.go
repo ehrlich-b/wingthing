@@ -2,10 +2,13 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -199,5 +202,53 @@ func TestParseCodexUsageNonTurn(t *testing.T) {
 	_, _, ok := parseCodexUsage(line)
 	if ok {
 		t.Error("expected not ok for non-turn event")
+	}
+}
+
+func TestCodexFinalProviderError(t *testing.T) {
+	for _, tc := range []struct {
+		name, events string
+		exit         int
+		message      string
+	}{
+		{"turn-failed", `{"type":"turn.failed","error":{"message":"This content was flagged for possible cybersecurity risk."}}`, 1, "This content was flagged for possible cybersecurity risk."},
+		{"error-event", `{"type":"error","message":"Provider refused the request."}`, 1, "Provider refused the request."},
+		{"error-item", `{"type":"item.completed","item":{"type":"error","message":"Provider exhausted the quota."}}`, 1, "Provider exhausted the quota."},
+		{"zero-exit-refusal", `{"type":"turn.failed","error":{"message":"Provider refused the request."}}`, 0, "Provider refused the request."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stream, err := NewCodex(0).Run(context.Background(), "review", RunOpts{CmdFactory: func(ctx context.Context, _ string, _ []string) (*exec.Cmd, error) {
+				cmd := exec.CommandContext(ctx, "/bin/sh", "-c", `printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"last agent message"}}' "$EVENTS"; echo 'Reading additional input from stdin...' >&2; exit "$EXIT"`)
+				cmd.Env = append(os.Environ(), "EVENTS="+tc.events, fmt.Sprintf("EXIT=%d", tc.exit))
+				return cmd, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for {
+				if _, ok := stream.Next(); !ok {
+					break
+				}
+			}
+			if stream.Err() == nil || !strings.Contains(stream.Err().Error(), tc.message) {
+				t.Fatalf("provider error = %v", stream.Err())
+			}
+			if stream.Text() != "last agent message" {
+				t.Fatalf("last message = %q", stream.Text())
+			}
+			if tc.exit != 0 {
+				var exitErr *exec.ExitError
+				if !errors.As(stream.Err(), &exitErr) || exitErr.ExitCode() != tc.exit {
+					t.Fatalf("provider exit lost: %v", stream.Err())
+				}
+			}
+		})
+	}
+}
+
+func TestCodexRecoveredErrorDoesNotFailCompletedTurn(t *testing.T) {
+	stream := runFakeProvider(t, NewCodex(0), `{"type":"error","message":"Reconnecting 1/5"}`+"\n"+`{"type":"item.completed","item":{"type":"agent_message","text":"recovered"}}`+"\n"+`{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":2}}`)
+	if err := stream.Err(); err != nil || stream.Text() != "recovered" {
+		t.Fatalf("recovered turn: %q %v", stream.Text(), err)
 	}
 }

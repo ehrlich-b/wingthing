@@ -20,6 +20,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/localmcp"
 
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
@@ -73,9 +74,38 @@ func eggCmd() *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive("config", "unsandboxed")
 
 	cmd.AddCommand(eggRunCmd())
+	cmd.AddCommand(eggSuperviseRunCmd())
 	cmd.AddCommand(eggStopCmd())
 	cmd.AddCommand(eggListCmd())
 	cmd.AddCommand(eggExplainCmd())
+	return cmd
+}
+
+func eggSuperviseRunCmd() *cobra.Command {
+	var runID, stateDir string
+	cmd := &cobra.Command{
+		Use: "supervise-run", Hidden: true, Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := eggclient.ValidateSessionID(runID); err != nil {
+				return err
+			}
+			if !filepath.IsAbs(stateDir) {
+				return errors.New("supervisor state directory must be absolute")
+			}
+			if err := os.Setenv("WINGTHING_DIR", stateDir); err != nil {
+				return err
+			}
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			ready := os.NewFile(3, "agent-supervisor-ready")
+			defer ready.Close()
+			return localmcp.RunAgentSupervisor(cmd.Context(), cfg, runID, os.Stdin, ready)
+		},
+	}
+	cmd.Flags().StringVar(&runID, "run-id", "", "authorized run ID")
+	cmd.Flags().StringVar(&stateDir, "state-dir", "", "owning Wingthing state directory")
 	return cmd
 }
 

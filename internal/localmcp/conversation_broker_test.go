@@ -966,10 +966,17 @@ func TestStableHostMailboxUsesNormalProviderHomeWriteProtection(t *testing.T) {
 	t.Cleanup(func() { config.ReleaseChannel = oldChannel })
 	// Stable has no preview provider-home binding: its ordinary HOME remains
 	// write-denied except for the provider profile and configured workspace.
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
+	// Model HOME beside TMPDIR so a caller's scratch HOME does not become an
+	// intentional temporary-directory write grant in this protection test.
+	base := t.TempDir()
+	home, tmp := filepath.Join(base, "home"), filepath.Join(base, "tmp")
+	for _, dir := range []string{home, tmp} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
 	}
+	t.Setenv("HOME", home)
+	t.Setenv("TMPDIR", tmp)
 	cfg := &config.Config{Dir: filepath.Join(home, ".wingthing-phone")}
 	if err := brokerProviderHomeOutsideState(cfg); err != nil {
 		t.Fatalf("stable incorrectly checked the preview data home: %v", err)
