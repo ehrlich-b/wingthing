@@ -86,15 +86,24 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 
 	stream := newStream(ctx)
 	go func() {
+		var providerErr error
 		readErr := readProviderLines(stdout, "codex", func(line string) {
 			if text, ok := parseCodexEvent(line); ok {
 				stream.send(Chunk{Text: text})
 			}
 			if input, output, ok := parseCodexUsage(line); ok {
 				stream.SetTokens(input, output)
+				// A completed turn supersedes earlier retry diagnostics.
+				providerErr = nil
+			}
+			if message, ok := parseCodexError(line); ok {
+				providerErr = fmt.Errorf("codex: %s", message)
 			}
 		})
 		err := waitAgentCommand(cmd, diagnostics)
+		if providerErr != nil {
+			err = errors.Join(providerErr, err)
+		}
 		if readErr != nil {
 			err = errors.Join(err, readErr)
 		}
@@ -106,14 +115,38 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 
 // codexEvent represents a Codex CLI NDJSON event.
 type codexEvent struct {
-	Type  string      `json:"type"`
-	Item  *codexItem  `json:"item,omitempty"`
-	Usage *codexUsage `json:"usage,omitempty"`
+	Type    string      `json:"type"`
+	Item    *codexItem  `json:"item,omitempty"`
+	Usage   *codexUsage `json:"usage,omitempty"`
+	Error   *codexError `json:"error,omitempty"`
+	Message string      `json:"message,omitempty"`
 }
 
 type codexItem struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type    string `json:"type"`
+	Text    string `json:"text"`
+	Message string `json:"message,omitempty"`
+}
+
+type codexError struct {
+	Message string `json:"message"`
+}
+
+func parseCodexError(line string) (string, bool) {
+	var ev codexEvent
+	if err := json.Unmarshal([]byte(line), &ev); err != nil {
+		return "", false
+	}
+	var message string
+	switch {
+	case ev.Type == "turn.failed" && ev.Error != nil:
+		message = ev.Error.Message
+	case ev.Type == "error":
+		message = ev.Message
+	case ev.Type == "item.completed" && ev.Item != nil && ev.Item.Type == "error":
+		message = ev.Item.Message
+	}
+	return message, strings.TrimSpace(message) != ""
 }
 
 type codexUsage struct {

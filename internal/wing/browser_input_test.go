@@ -33,7 +33,7 @@ func TestPreviewBrowserInputKeepsConnectionAndEpochBound(t *testing.T) {
 	oldChannel := config.ReleaseChannel
 	config.ReleaseChannel = "preview"
 	t.Cleanup(func() { config.ReleaseChannel = oldChannel })
-	root, err := os.MkdirTemp("/tmp", "wt-browser-lease-")
+	root, err := os.MkdirTemp("", "wbl-")
 	if err != nil {
 		t.Fatal(err)
 	}

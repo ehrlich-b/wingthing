@@ -28,7 +28,6 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
-	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/taskrun"
@@ -1658,11 +1657,18 @@ func (s *Server) submitAgentRun(args agentRunArgs, followup *agentRunFollowup) (
 }
 
 func (s *Server) startAgentRun(runID string, followup *agentRunFollowup) {
-	options, optionsErr := s.agentTaskRunOptions()
-	if optionsErr != nil {
-		s.setAgentRunError(runID, optionsErr)
+	options, err := s.agentTaskRunOptions()
+	if err != nil {
+		s.setAgentRunError(runID, err)
 		return
 	}
+	if s.runAgentTask == nil {
+		if err := s.spawnAgentRun(runID, followup, options); err != nil {
+			s.setAgentRunError(runID, err)
+		}
+		return
+	}
+	// Tests inject a runner in-process; production always uses a detached supervisor.
 	runCtx, cancel := context.WithCancel(context.Background())
 	key := s.agentRunKey(runID)
 	done := make(chan struct{})
@@ -1671,66 +1677,59 @@ func (s *Server) startAgentRun(runID string, followup *agentRunFollowup) {
 		defer close(done)
 		defer cancel()
 		defer activeMCPAgentRuns.Delete(key)
-		var resolvedFollowupPrompt string
-		if followup != nil {
-			if err := s.waitForAgentRunTerminal(runCtx, followup.parentID); err != nil {
-				s.setAgentRunError(runID, err)
-				return
-			}
-			parent, parentStore, err := s.ownedAgentRun(followup.parentID)
-			if err != nil {
-				s.setAgentRunError(runID, err)
-				return
-			}
-			if err := parentStore.Close(); err != nil {
-				s.setAgentRunError(runID, fmt.Errorf("close parent task store: %w", err))
-				return
-			}
-			if !agentRunTerminal(parent.Status) {
-				s.setAgentRunError(runID, fmt.Errorf("parent agent run %s finished with status %s", parent.ID, parent.Status))
-				return
-			}
-			var parentResult string
-			if parent.Output != nil {
-				parentResult = *parent.Output
-			}
-			var parentError string
-			if parent.Error != nil {
-				parentError = *parent.Error
-			}
-			resolvedFollowupPrompt = agentSteerPrompt(parent.What, parentResult, parentError, followup.direction)
-		}
-		taskStore, err := store.Open(s.Cfg.DBPath())
-		if err != nil {
+		if err := s.executeAgentRun(runCtx, runID, followup, options); err != nil {
 			s.setAgentRunError(runID, err)
-			return
-		}
-		defer cmdutil.CloseWithLog("task store", taskStore)
-		task, err := taskStore.GetTask(runID)
-		if err != nil || task == nil {
-			if err == nil {
-				err = fmt.Errorf("run %q disappeared before execution", runID)
-			}
-			s.setAgentRunError(runID, err)
-			return
-		}
-		if followup != nil {
-			if err := taskStore.SetTaskWhat(runID, resolvedFollowupPrompt); err != nil {
-				s.setAgentRunError(runID, fmt.Errorf("record resolved follow-up prompt: %w", err))
-				return
-			}
-			task.What = resolvedFollowupPrompt
-		}
-		var runErr error
-		if s.runAgentTask != nil {
-			runErr = s.runAgentTask(runCtx, s.Cfg, taskStore, task, options)
-		} else {
-			runErr = taskrun.RunTaskToWithOptions(runCtx, s.Cfg, taskStore, task, io.Discard, options)
-		}
-		if runErr != nil {
-			s.setAgentRunError(runID, runErr)
 		}
 	}()
+}
+
+func (s *Server) executeAgentRun(ctx context.Context, runID string, followup *agentRunFollowup, options taskrun.TaskRunOptions) error {
+	var resolvedFollowupPrompt string
+	if followup != nil {
+		if err := s.waitForAgentRunTerminal(ctx, followup.parentID); err != nil {
+			return err
+		}
+		parent, parentStore, err := s.ownedAgentRun(followup.parentID)
+		if err != nil {
+			return err
+		}
+		if err := parentStore.Close(); err != nil {
+			return fmt.Errorf("close parent task store: %w", err)
+		}
+		if !agentRunTerminal(parent.Status) {
+			return fmt.Errorf("parent agent run %s finished with status %s", parent.ID, parent.Status)
+		}
+		var parentResult, parentError string
+		if parent.Output != nil {
+			parentResult = *parent.Output
+		}
+		if parent.Error != nil {
+			parentError = *parent.Error
+		}
+		resolvedFollowupPrompt = agentSteerPrompt(parent.What, parentResult, parentError, followup.direction)
+	}
+	taskStore, err := store.Open(s.Cfg.DBPath())
+	if err != nil {
+		return err
+	}
+	defer cmdutil.CloseWithLog("task store", taskStore)
+	task, err := taskStore.GetTask(runID)
+	if err != nil {
+		return err
+	}
+	if task == nil {
+		return fmt.Errorf("run %q disappeared before execution", runID)
+	}
+	if followup != nil {
+		if err := taskStore.SetTaskWhat(runID, resolvedFollowupPrompt); err != nil {
+			return fmt.Errorf("record resolved follow-up prompt: %w", err)
+		}
+		task.What = resolvedFollowupPrompt
+	}
+	if s.runAgentTask != nil {
+		return s.runAgentTask(ctx, s.Cfg, taskStore, task, options)
+	}
+	return taskrun.RunTaskToWithOptions(ctx, s.Cfg, taskStore, task, io.Discard, options)
 }
 
 func (s *Server) agentTaskRunOptions() (taskrun.TaskRunOptions, error) {
@@ -1822,23 +1821,11 @@ func (s *Server) loadOwnedAgentRun(taskStore *store.Store, runID string) (*store
 	if task == nil || task.Type != "agent_run" || !s.ownsTask(task) {
 		return nil, nil
 	}
-	if (task.Status == "pending" || task.Status == "running") && task.RunnerPID > 0 && !procinfo.OwnedProcessIsAlive(task.RunnerPID) {
-		if err := taskStore.SetTaskError(task.ID, fmt.Sprintf("supervising Wingthing process %d exited", task.RunnerPID)); err != nil {
-			return nil, fmt.Errorf("mark orphaned agent run failed: %w", err)
-		}
-		task, err = taskStore.GetTask(runID)
-		if err != nil {
-			return nil, err
-		}
-		if task == nil {
-			return nil, fmt.Errorf("agent run %q disappeared after orphan cleanup", runID)
-		}
-	}
-	return task, nil
+	return s.reconcileAgentRun(taskStore, task)
 }
 
 func agentRunTerminal(status string) bool {
-	return status == "done" || status == "failed" || status == "timeout" || status == "stopped"
+	return status == "done" || status == "failed" || status == "timeout" || status == "stopped" || status == "orphaned"
 }
 
 func agentRunStatusData(task *store.Task) map[string]any {
@@ -1912,7 +1899,7 @@ func (s *Server) waitForAgentRunTerminal(ctx context.Context, runID string) erro
 		return nil
 	}
 	return waitForAgentRunCondition(ctx, func() (bool, error) {
-		task, err = taskStore.GetTask(runID)
+		task, err = s.loadOwnedAgentRun(taskStore, runID)
 		if err != nil {
 			return false, err
 		}
@@ -2000,11 +1987,11 @@ func (s *Server) toolAgentWaitAny(ctx context.Context, arguments json.RawMessage
 		lookupErrors := []map[string]any{}
 		for _, runID := range runIDs {
 			task := tasks[runID]
-			if task != nil && (task.Status == "pending" || task.Status == "running") && task.RunnerPID > 0 && !procinfo.OwnedProcessIsAlive(task.RunnerPID) {
-				if err := taskStore.SetTaskError(runID, fmt.Sprintf("supervising Wingthing process %d exited", task.RunnerPID)); err != nil {
-					return false, fmt.Errorf("mark orphaned agent run failed: %w", err)
+			if task != nil {
+				task, err = s.reconcileAgentRun(taskStore, task)
+				if err != nil {
+					return false, err
 				}
-				task.Status = "failed"
 			}
 			if task == nil {
 				lookupErrors = append(lookupErrors, map[string]any{"run_id": runID, "error": fmt.Sprintf("agent run %q not found or not owned by caller", runID)})
@@ -2224,14 +2211,21 @@ func (s *Server) toolAgentStop(arguments json.RawMessage) (map[string]any, error
 		if latest != nil && agentRunTerminal(latest.Status) {
 			return agentRunStatusData(latest), nil
 		}
-		return nil, errors.New("run is no longer attached to this Wingthing process")
+		if latest == nil {
+			return nil, errors.New("agent run disappeared")
+		}
+		if err := s.stopDetachedAgentRun(taskStore, latest); err != nil {
+			return nil, err
+		}
+	} else {
+		active.cancel()
+		select {
+		case <-active.done:
+		case <-time.After(15 * time.Second):
+			return nil, errors.New("agent run cancellation is still in progress")
+		}
 	}
-	active.cancel()
-	select {
-	case <-active.done:
-	case <-time.After(15 * time.Second):
-		return nil, errors.New("agent run cancellation is still in progress")
-	}
+
 	latest, err := taskStore.GetTask(args.RunID)
 	if err != nil || latest == nil {
 		return nil, fmt.Errorf("reload stopped agent run: %w", err)

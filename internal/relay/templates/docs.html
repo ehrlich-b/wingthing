@@ -138,7 +138,7 @@
 <tr><td>credentials</td><td>The provider CLI uses the execution owner's agent home on that wing. Shared hosts keep those homes separate. Provider tokens and SSH keys do not belong in prompts or MCP arguments.</td></tr>
 <tr><td>durable memory</td><td>Tasks, results, messages, and threads stay in that wing's <code>~/.wingthing/wt.db</code>; terminal state stays under <code>~/.wingthing/eggs</code>, optional prompt memory under <code>~/.wingthing/memory</code>, and provider history in the provider home. <code>WINGTHING_DIR</code> changes the Wingthing state root. None of this is replicated between wings automatically.</td></tr>
 </table>
-<p>A terminal survives client detachment. A run's record and result persist, but an active headless run still depends on its supervising Wingthing process. Keep the returned run or session ID together with its owning wing for every later operation.</p>
+<p>Terminals and headless runs survive client detachment and MCP host exit. A later client of the same owner can use the run ID to wait, read results and events, or stop its detached supervisor. If that supervisor is lost, the terminal run state is <code>orphaned</code>, with the provider exit reported as unknown and received messages retained. Keep the returned run or session ID together with its owning wing for every later operation.</p>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp stdio --client codex</span><br>
 <span class="prompt">$ </span><span class="cmd">claude mcp add --scope user wingthing -- wt mcp stdio --client claude</span>

@@ -879,7 +879,7 @@ func TestBuildEnv_ExplicitSSHAuthSockOptsIntoAgentOnlyAccess(t *testing.T) {
 }
 
 func TestSSHAgentSocketDenyPathsMasksDiscoverableSocket(t *testing.T) {
-	socketDir, err := os.MkdirTemp("/tmp", "wt-ssh-sock-")
+	socketDir, err := os.MkdirTemp("", "wss-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -922,7 +922,7 @@ func TestSSHAgentSocketDenyPathsMasksDiscoverableSocket(t *testing.T) {
 }
 
 func TestSandboxAllowedSocketsIncludesOnlyFilteredLiveSSHAgent(t *testing.T) {
-	socketDir, err := os.MkdirTemp("/tmp", "wt-allowed-ssh-sock-")
+	socketDir, err := os.MkdirTemp("", "was-")
 	if err != nil {
 		t.Fatal(err)
 	}

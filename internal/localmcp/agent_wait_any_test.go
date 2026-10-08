@@ -382,11 +382,11 @@ func TestAgentWaitAnyPreservesDefaultOwnershipAndOrphanCleanup(t *testing.T) {
 	)
 	server.Principal = ""
 	data, err := server.toolAgentWaitAny(context.Background(), json.RawMessage(`{"run_ids":["orphan","live","foreign"]}`))
-	if err != nil || !reflect.DeepEqual(data["finished"], []map[string]any{{"run_id": "orphan", "status": "failed"}}) || !reflect.DeepEqual(data["pending"], []string{"live"}) {
+	if err != nil || !reflect.DeepEqual(data["finished"], []map[string]any{{"run_id": "orphan", "status": "orphaned"}}) || !reflect.DeepEqual(data["pending"], []string{"live"}) {
 		t.Fatalf("orphan wait = %#v, %v", data, err)
 	}
 	task, err := db.GetTask("orphan")
-	if err != nil || task == nil || task.Status != "failed" || task.Error == nil || !strings.Contains(*task.Error, "supervising Wingthing process") {
+	if err != nil || task == nil || task.Status != "orphaned" || task.Error == nil || !strings.Contains(*task.Error, "provider exit unknown") {
 		t.Fatalf("persisted orphan = %#v, %v", task, err)
 	}
 	task, err = db.GetTask("foreign")

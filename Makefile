@@ -32,6 +32,8 @@ CONVERSATION_FIXTURE_ROOT ?= $(abspath ..)
 CONVERSATION_BINARY ?=
 CONVERSATION_BINARY_SHA256 ?=
 PREVIEW_CONTEXT_BINARY ?= ./wt-preview
+AGENT_RUN_UNIT_RUN ?= .
+CHECK_TEST_SKIP ?=
 ACTION ?= status
 COUNT ?= 1
 LOGIN ?= 1
@@ -63,7 +65,7 @@ endef
 # All untagged Go tests include android-contract and every former focused unit
 # selection (preview, conversation, socket, protected-target, remote and wake).
 check: web
-	$(GO) test -p 2 ./...
+	$(GO) test -p 2 $(if $(CHECK_TEST_SKIP),-skip '$(CHECK_TEST_SKIP)') ./...
 	$(stable-build)
 
 web:
@@ -80,10 +82,10 @@ gate: | web/dist
 ifeq ($(strip $(GATE)),)
 	$(error GATE must select at least one profile)
 endif
-ifneq ($(filter-out integration compat static claude provider-swap coverage input,$(GATE)),)
-	$(error Unknown GATE profile: $(filter-out integration compat static claude provider-swap coverage input,$(GATE)))
+ifneq ($(filter-out integration compat static claude provider-swap coverage input agent-run,$(GATE)),)
+	$(error Unknown GATE profile: $(filter-out integration compat static claude provider-swap coverage input agent-run,$(GATE)))
 endif
-ifneq ($(filter integration static provider-swap,$(GATE)),)
+ifneq ($(filter integration static provider-swap agent-run,$(GATE)),)
 	$(stable-build)
 endif
 ifneq ($(filter integration input,$(GATE)),)
@@ -97,6 +99,10 @@ ifneq ($(filter integration,$(GATE)),)
 	python3 test/preview/remote_reader_drain_regression.py
 	@if [ "$$(uname -s)" = Linux ]; then python3 test/preview/remote_isolation.py ./wt ./wt-preview; fi
 	@if [ "$$(uname -s)" = Linux ]; then $(GO) test -p 2 -c -o test/linux/eggclient-tests ./internal/eggclient/ && sh test/linux/roost-pin-tests.sh test/linux/eggclient-tests; fi
+endif
+ifneq ($(filter agent-run,$(GATE)),)
+	$(GO) test -p 1 -count=1 -run '$(AGENT_RUN_UNIT_RUN)' ./internal/agent ./internal/taskrun ./internal/localmcp ./internal/eggclient ./internal/store
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 1 -count=1 -tags e2e -v -timeout 120s ./test/integ -run '^Test(MCPAgentRun|EggSecret)'
 endif
 ifneq ($(filter compat,$(GATE)),)
 	scripts/test-backward-compat.sh
@@ -166,6 +172,7 @@ e2e-mac: web
 	$(stable-build)
 	$(preview-build)
 	WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 -tags integration -v -timeout 120s ./internal/sandbox ./cmd/wt
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 1 -count=1 -tags e2e -v -timeout 120s ./test/integ -run '^TestSandboxedMCPAgentRun'
 	$(GO) test -p 2 ./internal/egg -run 'TestPreviewClaude(GuardRejectsSymlinkAliases|ContextRejectsAliasedForeignSelector|LifecycleSettingsAndHooksKeepDataHome)$$' -count=1
 	python3 -B -m unittest discover -s test/preview -p test_mac_provider_context.py
 	python3 test/preview/mac_provider_context.py "$(PREVIEW_CONTEXT_BINARY)"

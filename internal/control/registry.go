@@ -446,7 +446,7 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "agent_run", Title: "Run agent task",
-			Description: "Start a supervised headless agent run and return immediately with an owner-scoped run ID. Use agent_wait and agent_result instead of reading terminal ANSI.",
+			Description: "Start a detached supervised headless agent run that survives MCP host exit and return immediately with an owner-scoped run ID. Use agent_wait and agent_result instead of reading terminal ANSI.",
 			InputSchema: objectSchema(map[string]any{
 				"prompt":          stringProperty("Task for the agent"),
 				"agent":           stringProperty("Supported agent name, such as codex or claude"),
@@ -459,7 +459,7 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "agent_status", Title: "Get agent run status",
-			Description: "Read bounded lifecycle metadata for one run owned by this MCP principal.",
+			Description: "Read bounded lifecycle metadata for one run owned by this MCP principal. Terminal orphaned means its supervisor was lost and the provider exit is unknown.",
 			InputSchema: objectSchema(map[string]any{
 				"run_id": stringProperty("Wingthing agent run ID"),
 			}, "run_id"), Annotations: readOnly,
@@ -488,7 +488,7 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "agent_result", Title: "Read agent result",
-			Description: "Read the final semantic output or error for one completed run, with an explicit response bound.",
+			Description: "Read final or retained partial semantic output and provider errors for one owned run, with an explicit response bound.",
 			InputSchema: objectSchema(map[string]any{
 				"run_id":    stringProperty("Wingthing agent run ID"),
 				"max_chars": map[string]any{"type": "integer", "minimum": 1, "maximum": 200000, "default": 50000},
@@ -497,7 +497,7 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "agent_events", Title: "Read agent run events",
-			Description: "Read bounded lifecycle events for one owned run.",
+			Description: "Read bounded lifecycle and agent_message events for one owned run.",
 			InputSchema: objectSchema(map[string]any{
 				"run_id": stringProperty("Wingthing agent run ID"),
 				"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
