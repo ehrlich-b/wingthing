@@ -1,11 +1,14 @@
 package agent
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf16"
 )
 
 var secretName = regexp.MustCompile(`(?i)(key|token|secret|password|passwd|passphrase|credential|authorization|cookie|auth(?:_|$)|(?:^|_)pass(?:_|$))`)
@@ -49,10 +52,9 @@ func NewRedactor(environment []string, credentials ...string) *Redactor {
 		if value == "" {
 			continue
 		}
-		unique[value] = true
-		// Stderr may quote credentials as JSON rather than decoded event text.
-		encoded, _ := json.Marshal(value)
-		unique[string(encoded[1:len(encoded)-1])] = true
+		for _, encoded := range secretEncodings(value) {
+			unique[encoded] = true
+		}
 	}
 	r := &Redactor{}
 	for value := range unique {
@@ -62,6 +64,68 @@ func NewRedactor(environment []string, credentials ...string) *Redactor {
 	// Overlapping credentials must never leave the suffix of the longer one.
 	sort.Slice(r.secrets, func(i, j int) bool { return len(r.secrets[i]) > len(r.secrets[j]) })
 	return r
+}
+
+// Generate a fixed set of common representations, never recursively encode
+// variants. Storage and matching cost stay linear in credential size.
+func secretEncodings(value string) []string {
+	quoted, _ := json.Marshal(value)
+	jsonText := string(quoted[1 : len(quoted)-1])
+	var minimal strings.Builder
+	encoder := json.NewEncoder(&minimal)
+	encoder.SetEscapeHTML(false)
+	_ = encoder.Encode(value)
+	minimalText := minimal.String()[1 : minimal.Len()-2]
+	var percent strings.Builder
+	for i := 0; i < len(value); i++ {
+		fmt.Fprintf(&percent, "%%%02X", value[i])
+	}
+	variants := []string{value, url.QueryEscape(value), url.PathEscape(value), percent.String(), jsonText, minimalText,
+		jsonUnicode(jsonText, false), jsonUnicode(minimalText, false), jsonUnicode(value, true),
+		strings.ReplaceAll(minimalText, "/", `\/`),
+		base64.StdEncoding.EncodeToString([]byte(value)), base64.RawStdEncoding.EncodeToString([]byte(value)),
+		base64.URLEncoding.EncodeToString([]byte(value)), base64.RawURLEncoding.EncodeToString([]byte(value))}
+	for _, encoded := range variants[:9] {
+		variants = append(variants, escapeHexCase(encoded, false), escapeHexCase(encoded, true))
+	}
+	return variants
+}
+
+func jsonUnicode(value string, all bool) string {
+	var output strings.Builder
+	for _, r := range value {
+		if !all && r < 128 {
+			output.WriteRune(r)
+			continue
+		}
+		for _, unit := range utf16.Encode([]rune{r}) {
+			fmt.Fprintf(&output, `\u%04x`, unit)
+		}
+	}
+	return output.String()
+}
+
+func escapeHexCase(value string, upper bool) string {
+	data := []byte(value)
+	for i := 0; i < len(data); i++ {
+		start, count := i+1, 0
+		if data[i] == '%' && i+2 < len(data) {
+			count = 2
+		} else if data[i] == '\\' && i+5 < len(data) && data[i+1] == 'u' {
+			start, count = i+2, 4
+		}
+		for j := start; j < start+count; j++ {
+			if upper && data[j] >= 'a' && data[j] <= 'f' {
+				data[j] -= 'a' - 'A'
+			} else if !upper && data[j] >= 'A' && data[j] <= 'F' {
+				data[j] += 'a' - 'A'
+			}
+		}
+		if count > 0 {
+			i = start + count - 1
+		}
+	}
+	return string(data)
 }
 
 func (r *Redactor) Text(text string) string {

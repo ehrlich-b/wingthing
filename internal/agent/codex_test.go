@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -288,6 +289,33 @@ func TestCodexRedactsProviderSecrets(t *testing.T) {
 				assertProviderErrorChainRedacted(t, stream.Err(), canary)
 			} else if stream.Err() != nil {
 				t.Fatal(stream.Err())
+			}
+		})
+	}
+}
+
+func TestCodexRedactsEncodedProviderSecrets(t *testing.T) {
+	for _, tc := range encodedCredentialCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			message, _ := json.Marshal(map[string]any{"type": "item.completed", "item": map[string]string{"type": "agent_message", "text": "diagnostic " + tc.encoded}})
+			failure, _ := json.Marshal(map[string]any{"type": "turn.failed", "error": map[string]string{"message": "refused " + tc.encoded}})
+			stream, err := NewCodex(0).Run(context.Background(), "review", RunOpts{CmdFactory: func(ctx context.Context, _ string, _ []string) (*exec.Cmd, error) {
+				cmd := exec.CommandContext(ctx, "/bin/sh", "-c", `printf '%s\n' "$MESSAGE" "$FAILURE"; printf 'stderr %s' "$ENCODED" >&2; exit 7`)
+				cmd.Env = []string{"CUSTOM_PASSWORD=" + tc.secret, "MESSAGE=" + string(message), "FAILURE=" + string(failure), "ENCODED=" + tc.encoded}
+				return cmd, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var chunks strings.Builder
+			for c, ok := stream.Next(); ok; c, ok = stream.Next() {
+				chunks.WriteString(c.Text)
+			}
+			if chunks.String() != "diagnostic [redacted]" || stream.Text() != chunks.String() {
+				t.Fatal("provider message exposed an encoded credential")
+			}
+			if stream.Err() == nil || strings.Contains(stream.Err().Error(), tc.encoded) || !strings.Contains(stream.Err().Error(), "refused [redacted]") || !strings.Contains(stream.Err().Error(), "stderr [redacted]") {
+				t.Fatalf("provider diagnostics exposed encoded credential: %v", stream.Err())
 			}
 		})
 	}
