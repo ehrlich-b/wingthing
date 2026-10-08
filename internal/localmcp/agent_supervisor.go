@@ -202,7 +202,8 @@ func (s *Server) agentSupervisorIsAlive(task *store.Task) bool {
 		return false
 	}
 	startedAt, err := procinfo.ProcessStartTime(task.RunnerPID)
-	return err == nil && !startedAt.After(task.CreatedAt)
+	// created_at is stored in whole seconds; allow the truncated fraction.
+	return err == nil && !startedAt.After(task.CreatedAt.Add(time.Second))
 }
 
 func (s *Server) stopDetachedAgentRun(taskStore *store.Store, task *store.Task) error {
