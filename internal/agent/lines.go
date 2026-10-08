@@ -131,6 +131,7 @@ type eventMetadata struct {
 	hasText      bool
 	literal      string
 	isError      bool
+	hasError     bool
 }
 
 func (m *eventMetadata) read(part []byte) {
@@ -156,12 +157,18 @@ func (m *eventMetadata) read(part []byte) {
 		}
 		switch c {
 		case '"':
+			if m.depth == 1 && m.field == "error" {
+				m.hasError = true
+			}
 			m.inString = true
 			m.stringSize = 0
 		case ':':
 			m.field = m.lastString
 			m.lastString = ""
 		case '{', '[':
+			if m.depth == 1 && m.field == "error" {
+				m.hasError = true
+			}
 			if c == '{' && m.depth == 1 {
 				switch m.field {
 				case "item":
@@ -206,6 +213,9 @@ func (m *eventMetadata) finishLiteral() {
 	}
 	if m.depth == 1 && m.field == "is_error" {
 		m.isError = m.literal == "true"
+	}
+	if m.depth == 1 && m.field == "error" {
+		m.hasError = m.literal != "null"
 	}
 	m.literal = ""
 	m.field, m.lastString = "", ""
@@ -252,6 +262,9 @@ func (m *eventMetadata) failure(provider string) (string, bool) {
 		}
 		if m.eventType == "result" && m.isError {
 			return `{"type":"result","is_error":true}`, true
+		}
+		if m.eventType == "assistant" && m.hasError {
+			return `{"type":"assistant","error":true}`, true
 		}
 	}
 	return "", false

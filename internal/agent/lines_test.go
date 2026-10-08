@@ -282,6 +282,12 @@ func TestClaudeOversizedFailureKeepsNoProviderText(t *testing.T) {
 		{"late-error-type", `{"message":"` + canary, `","type":"error"}`},
 		{"result", `{"type":"result","is_error":true,"result":"` + canary, `"}`},
 		{"late-result-fields", `{"result":"` + canary, `","type":"result","is_error":true}`},
+		{"assistant-string", `{"type":"assistant","error":"` + canary, `"}`},
+		{"assistant-object", `{"type":"assistant","error":{"message":"` + canary, `"}}`},
+		{"assistant-array", `{"type":"assistant","error":["` + canary, `"]}`},
+		{"assistant-boolean", `{"padding":"` + canary, `","type":"assistant","error":false}`},
+		{"assistant-number", `{"padding":"` + canary, `","error":0,"type":"assistant"}`},
+		{"late-assistant-fields", `{"message":{"content":[{"type":"text","text":"` + canary, `"}]},"error":"authentication_failed","type":"assistant"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			warnings := captureAgentWarnings(t)
@@ -297,6 +303,20 @@ func TestClaudeOversizedFailureKeepsNoProviderText(t *testing.T) {
 			}
 			checkAgentWarning(t, warnings, "claude", oversizedTestLine)
 		})
+	}
+}
+
+func TestClaudeOversizedAssistantWithoutErrorIsNotFailure(t *testing.T) {
+	for _, suffix := range []string{
+		`","error":null,"type":"assistant"}`,
+		`","message":{"error":"nested"},"type":"assistant"}`,
+	} {
+		warnings := captureAgentWarnings(t)
+		line := sizedEvent(`{"padding":"`, suffix, oversizedTestLine)
+		if err := readProviderLines(strings.NewReader(line), "claude", func(string) { t.Fatal("oversized assistant classified as a failure") }); err != nil {
+			t.Fatal(err)
+		}
+		checkAgentWarning(t, warnings, "claude", oversizedTestLine)
 	}
 }
 
