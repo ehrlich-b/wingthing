@@ -77,9 +77,10 @@ func findCodexRollout(ctx context.Context, home, threadID string, startedAt, now
 	}
 	var found string
 	start, end := startedAt.In(time.Local), now.In(time.Local)
-	// The provider may use a different time zone from its supervisor.
-	day := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.Local).AddDate(0, 0, -1)
-	lastDay := time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, time.Local).AddDate(0, 0, 1)
+	// The provider may use a different time zone from its supervisor. Step
+	// through calendar dates in UTC so a DST change at midnight can't repeat one.
+	day := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
+	lastDay := time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
 	for ; !day.After(lastDay); day = day.AddDate(0, 0, 1) {
 		if ctx.Err() != nil {
 			return ""

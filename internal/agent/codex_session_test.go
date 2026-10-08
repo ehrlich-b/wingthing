@@ -210,6 +210,34 @@ func TestCodexRolloutSearchIncludesAdjacentProviderDates(t *testing.T) {
 	}
 }
 
+func TestCodexRolloutSearchSurvivesMidnightDST(t *testing.T) {
+	const thread = "01998952-827c-7000-8000-123456789abc"
+	// Cuba starts DST at midnight, so 2026-03-08 00:00 does not exist there.
+	havana, err := time.LoadLocation("America/Havana")
+	if err != nil {
+		t.Skip(err)
+	}
+	local := time.Local
+	time.Local = havana
+	t.Cleanup(func() { time.Local = local })
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(home, "sessions", "2026", "03", "07")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "rollout-"+thread+".jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"session_meta","payload":{"id":"`+thread+`"}}`+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 3, 7, 12, 0, 0, 0, havana)
+	if got := findCodexRollout(context.Background(), home, thread, start.UTC(), start.Add(time.Minute).UTC()); got != path {
+		t.Fatalf("rollout lookup across midnight DST = %q, want %q", got, path)
+	}
+}
+
 func TestCodexRolloutOpenRejectsSwappedSymlinkAndFIFO(t *testing.T) {
 	const thread = "01998952-827c-7000-8000-123456789abc"
 	dir := t.TempDir()
