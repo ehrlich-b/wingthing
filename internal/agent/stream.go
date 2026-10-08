@@ -19,6 +19,7 @@ type Stream struct {
 	outputTokens int
 	redactor     *Redactor
 	pending      string
+	final        *Chunk
 }
 
 func newStream(ctx context.Context) *Stream {
@@ -56,13 +57,15 @@ func (s *Stream) sendReady(c Chunk) {
 }
 
 func (s *Stream) close(err error) {
+	s.mu.Lock()
 	if s.pending != "" {
 		// At EOF an incomplete credential prefix is ordinary partial output;
 		// fully matched credentials still pass through the shared redactor.
-		s.sendReady(Chunk{Text: s.redactor.Text(s.pending)})
+		// Reserve the final chunk outside the channel so cancellation cannot
+		// drop it and a full queue cannot block close.
+		s.final = &Chunk{Text: s.redactor.Text(s.pending)}
 		s.pending = ""
 	}
-	s.mu.Lock()
 	s.err = s.redactor.Error(err)
 	s.done = true
 	s.mu.Unlock()
@@ -71,10 +74,14 @@ func (s *Stream) close(err error) {
 
 func (s *Stream) Next() (Chunk, bool) {
 	c, ok := <-s.ch
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !ok && s.final != nil {
+		c, ok = *s.final, true
+		s.final = nil
+	}
 	if ok {
-		s.mu.Lock()
 		s.chunks = append(s.chunks, c)
-		s.mu.Unlock()
 	}
 	return c, ok
 }

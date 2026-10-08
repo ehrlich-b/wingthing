@@ -72,3 +72,31 @@ func TestStreamRedactsCredentialsSplitAcrossChunks(t *testing.T) {
 		t.Fatal("split credential reached returned chunks or the transcript")
 	}
 }
+
+func TestStreamFlushesHeldTailOnCancellationWithFullQueue(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	s := newStream(ctx)
+	s.redactor = NewRedactor([]string{"OPENAI_API_KEY=7Qn3-provider-credential"})
+	for i := 0; i < cap(s.ch); i++ {
+		s.send(Chunk{Text: "safe "})
+	}
+	s.send(Chunk{Text: "7Qn3"})
+	cancel()
+	// close must neither block on the full queue nor discard the held tail.
+	s.close(context.Canceled)
+	var output strings.Builder
+	for {
+		c, ok := s.Next()
+		if !ok {
+			break
+		}
+		output.WriteString(c.Text)
+	}
+	want := strings.Repeat("safe ", cap(s.ch)) + "7Qn3"
+	if output.String() != want || s.Text() != want {
+		t.Fatal("cancellation discarded already received partial output")
+	}
+	if !errors.Is(s.Err(), context.Canceled) {
+		t.Fatal("tail flush lost cancellation identity")
+	}
+}
