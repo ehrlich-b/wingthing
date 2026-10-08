@@ -10,7 +10,10 @@ import (
 
 func TestCodexReturnsExactThreadAndExistingRollout(t *testing.T) {
 	const thread = "01998952-827c-7000-8000-123456789abc"
-	home := t.TempDir()
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	dir := filepath.Join(home, "sessions", "2026", "10", "08")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
