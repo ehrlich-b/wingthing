@@ -282,6 +282,13 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		if policyErr != nil {
 			return fmt.Errorf("resolve sandbox network policy: %w", policyErr)
 		}
+		executable, resolveErr := sandboxAgentExecutable(agentDefinition.Command, home, options.SharedHost)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		if rule := deniedAgentExecutableRule(sbCfg, executable, runtime.GOOS); rule != "" {
+			return fmt.Errorf("effective egg.yaml policy for cwd %q denies agent binary %q via rule %q; use sandbox_explain with this cwd and agent to inspect the policy", workDir, executable, rule)
+		}
 		sbCfg.SessionID = t.ID
 		domainProxy, proxyErr := sandbox.StartPolicyProxyWithMode(sbCfg.NetworkNeed, sbCfg.Domains, sbCfg.NetworkMode)
 		if proxyErr != nil {

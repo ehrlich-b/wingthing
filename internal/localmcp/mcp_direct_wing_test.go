@@ -299,7 +299,10 @@ func TestDirectMCPTransportAppliesConfiguredGrants(t *testing.T) {
 }
 
 func TestDirectMCPTransportPreservesOrgPathBoundary(t *testing.T) {
-	home := t.TempDir()
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	memberPath := filepath.Join(home, "member")
 	ownerPath := filepath.Join(home, "owner-visible")
 	for _, path := range []string{memberPath, ownerPath} {

@@ -272,6 +272,42 @@ func TestSandboxAgentExecutableResolvesHostCommandForPersonalTask(t *testing.T) 
 	}
 }
 
+func TestDeniedAgentExecutableRuleMatchesPlatformMasks(t *testing.T) {
+	root := config.CanonicalProviderPath(t.TempDir())
+	t.Setenv("HOME", root)
+	sshDir := filepath.Join(root, ".ssh")
+	knownHosts := filepath.Join(sshDir, "known_hosts")
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(bin, alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, goos, executable, want string
+		denied                       []string
+	}{
+		{"mac-root", "darwin", "/opt/homebrew/bin/codex", "deny:/", []string{"/"}},
+		{"linux-mounted-root", "linux", "/usr/bin/codex", "", []string{"/"}},
+		{"linux-explicit-mask", "linux", filepath.Join(bin, "codex"), "deny:" + bin, []string{"/", bin}},
+		{"mac-explicit-mask", "darwin", filepath.Join(bin, "codex"), "deny:" + bin, []string{bin}},
+		{"symlink", "darwin", filepath.Join(alias, "codex"), "deny:" + bin, []string{bin}},
+		{"sibling-prefix", "darwin", filepath.Join(root, "binary", "codex"), "", []string{bin}},
+		{"mac-known-hosts-exception", "darwin", knownHosts, "", []string{sshDir}},
+		{"linux-known-hosts-exception", "linux", knownHosts, "", []string{sshDir}},
+		{"explicit-known-hosts-mask", "darwin", knownHosts, "deny:" + knownHosts, []string{sshDir, knownHosts}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := sandbox.Config{Deny: tc.denied, Mounts: []sandbox.Mount{{Source: "/usr", Target: "/usr", ReadOnly: true}}}
+			if got := deniedAgentExecutableRule(cfg, tc.executable, tc.goos); got != tc.want {
+				t.Fatalf("denied rule = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSharedHostDirectAgentPreservesAdministratorFilesystemPolicy(t *testing.T) {
 	t.Setenv("WT_PROVIDER_BASE_URL", "")
 	home := t.TempDir()
