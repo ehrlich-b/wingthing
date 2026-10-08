@@ -220,8 +220,11 @@ func (s *Store) ClaimAgentRunSupervisor(id string, launcherPID, supervisorPID in
 // or confuse losing a supervisor with a known provider failure.
 func (s *Store) MarkAgentRunOrphaned(id string, pid int, message string) error {
 	_, err := s.db.Exec(`UPDATE tasks SET status = 'orphaned', finished_at = ?,
-		output = COALESCE((SELECT group_concat(detail, '') FROM
-			(SELECT detail FROM task_log WHERE task_id = ? AND event = 'agent_message' ORDER BY id)), output),
+		output = (SELECT CASE
+			WHEN COALESCE(length(CAST(tasks.output AS BLOB)), 0) >= COALESCE(length(CAST(transcript AS BLOB)), 0)
+			THEN tasks.output ELSE transcript END FROM
+			(SELECT group_concat(detail, '') AS transcript FROM
+				(SELECT detail FROM task_log WHERE task_id = ? AND event = 'agent_message' ORDER BY id))),
 		error = CASE WHEN error IS NULL OR error = '' THEN ? ELSE error || char(10) || ? END
 		WHERE id = ? AND type = 'agent_run' AND runner_pid = ? AND status IN ('pending','running')`, time.Now().UTC().Format(timeFmt), id, message, message, id, pid)
 	return err

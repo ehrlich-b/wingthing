@@ -63,30 +63,40 @@ func TestAgentSupervisorClaimAndOrphanRaces(t *testing.T) {
 	}
 }
 
-func TestAgentRunOrphanRecoversEventsAfterSnapshot(t *testing.T) {
-	s, err := Open(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	task := &Task{ID: "run", Type: "agent_run", Status: "running", RunnerPID: 10}
-	if err := s.CreateTask(task); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SetTaskOutput(task.ID, "first"); err != nil {
-		t.Fatal(err)
-	}
-	for _, text := range []string{"first", " second", " third"} {
-		if err := s.AppendLog(task.ID, "agent_message", &text); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := s.MarkAgentRunOrphaned(task.ID, 10, "supervisor lost; provider exit unknown"); err != nil {
-		t.Fatal(err)
-	}
-	current, err := s.GetTask(task.ID)
-	if err != nil || current.Output == nil || *current.Output != "first second third" {
-		t.Fatalf("orphan lost its event tail: %#v %v", current, err)
+func TestAgentRunOrphanPreservesLongestOutput(t *testing.T) {
+	for _, snapshot := range []string{"", "first", "first second third", "first second third fourth", strings.Repeat("界", 7)} {
+		t.Run(snapshot, func(t *testing.T) {
+			s, err := Open(":memory:")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			task := &Task{ID: "run", Type: "agent_run", Status: "running", RunnerPID: 10}
+			if err := s.CreateTask(task); err != nil {
+				t.Fatal(err)
+			}
+			if snapshot != "" {
+				if err := s.SetTaskOutput(task.ID, snapshot); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, text := range []string{"first", " second", " third"} {
+				if err := s.AppendLog(task.ID, "agent_message", &text); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := s.MarkAgentRunOrphaned(task.ID, 10, "supervisor lost; provider exit unknown"); err != nil {
+				t.Fatal(err)
+			}
+			want := "first second third"
+			if len(snapshot) > len(want) {
+				want = snapshot
+			}
+			current, err := s.GetTask(task.ID)
+			if err != nil || current.Output == nil || *current.Output != want {
+				t.Fatalf("orphan lost output: %#v, want %q (%v)", current, want, err)
+			}
+		})
 	}
 }
 
