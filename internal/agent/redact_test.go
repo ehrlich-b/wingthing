@@ -149,3 +149,77 @@ func TestStreamFlushesHeldTailOnCancellationWithFullQueue(t *testing.T) {
 		t.Fatal("tail flush lost cancellation identity")
 	}
 }
+
+func TestStreamRedactsTokenShapesAtEverySplit(t *testing.T) {
+	for _, token := range []string{
+		"sk-proj-unknowncredential7Qn3", "ghp_unknowncredential7Qn3", "github_pat_unknowncredential7Qn3",
+		"xoxb-unknowncredential7Qn3", "AIza012345678901234567890", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJjYW5hcnkifQ.signature",
+		"Bearer unknowncredential7Qn3", "bEaReR\tunknowncredential7Qn3",
+	} {
+		want := "before [redacted] after"
+		if strings.Contains(strings.ToLower(token), "bearer") {
+			label := token[:strings.IndexAny(token, " \t")+1]
+			want = "before " + label + "[redacted] after"
+		}
+		for split := 1; split < len(token); split++ {
+			s := newStream(context.Background())
+			s.redactor = NewRedactor(nil)
+			s.send(Chunk{Text: "before " + token[:split]})
+			s.send(Chunk{Text: token[split:] + " after"})
+			s.close(nil)
+			var chunks strings.Builder
+			for c, ok := s.Next(); ok; c, ok = s.Next() {
+				chunks.WriteString(c.Text)
+			}
+			if chunks.String() != want || s.Text() != want {
+				t.Fatalf("token %q split %d: events %q result %q", token, split, chunks.String(), s.Text())
+			}
+		}
+	}
+}
+
+func TestStreamRedactsLongTokenContinuations(t *testing.T) {
+	for _, prefix := range []string{"Bearer ", "sk-proj-", "eyJ"} {
+		s := newStream(context.Background())
+		s.redactor = NewRedactor(nil)
+		s.send(Chunk{Text: "before " + prefix + strings.Repeat("q", 1<<20)})
+		if len(s.shapes.pending) >= maxShapeTail {
+			t.Fatal("long token exceeded the held window")
+		}
+		s.send(Chunk{Text: strings.Repeat("z", 1<<20) + ".part.signature after"})
+		s.close(nil)
+		var chunks strings.Builder
+		for c, ok := s.Next(); ok; c, ok = s.Next() {
+			chunks.WriteString(c.Text)
+		}
+		want := "before [redacted] after"
+		if prefix == "Bearer " {
+			want = "before Bearer [redacted] after"
+		} else if prefix == "sk-proj-" {
+			want = "before [redacted].part.signature after"
+		}
+		if chunks.String() != want || s.Text() != want {
+			t.Fatal("long token continuation leaked or erased ordinary trailing text")
+		}
+	}
+}
+
+func TestStreamShapeBoundariesAndIncompleteTails(t *testing.T) {
+	for _, text := range []string{"alphabetaghp_ordinarytext", "sk-small", "Bea", "Bearer ", "eyJnotajwt", "safe [redacted] tail", "Bearer " + strings.Repeat(" ", 1024)} {
+		s := newStream(context.Background())
+		s.redactor = NewRedactor(nil)
+		go func() {
+			for i := range len(text) {
+				s.send(Chunk{Text: text[i : i+1]})
+			}
+			s.close(nil)
+		}()
+		var chunks strings.Builder
+		for c, ok := s.Next(); ok; c, ok = s.Next() {
+			chunks.WriteString(c.Text)
+		}
+		if chunks.String() != text || s.Text() != text {
+			t.Fatalf("ordinary split output changed: %q -> %q", text, chunks.String())
+		}
+	}
+}

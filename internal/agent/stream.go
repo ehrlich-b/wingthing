@@ -20,6 +20,7 @@ type Stream struct {
 	redactor     *Redactor
 	pending      string
 	final        *Chunk
+	shapes       shapeRedaction
 }
 
 func newStream(ctx context.Context) *Stream {
@@ -39,11 +40,12 @@ func newCommandStream(ctx context.Context, cmd *exec.Cmd, opts RunOpts) *Stream 
 }
 
 func (s *Stream) send(c Chunk) {
-	if c.Text == "" && s.pending == "" {
+	if c.Text == "" && s.pending == "" && s.shapes.pending == "" {
 		s.sendReady(c)
 		return
 	}
-	c.Text, s.pending = s.redactor.streamText(s.pending + c.Text)
+	c.Text, s.pending = s.redactor.knownText(s.pending+c.Text, false)
+	c.Text = s.shapes.write(c.Text)
 	if c.Text != "" {
 		s.sendReady(c)
 	}
@@ -58,12 +60,13 @@ func (s *Stream) sendReady(c Chunk) {
 
 func (s *Stream) close(err error) {
 	s.mu.Lock()
-	if s.pending != "" {
+	if s.pending != "" || s.shapes.pending != "" {
 		// At EOF an incomplete credential prefix is ordinary partial output;
 		// fully matched credentials still pass through the shared redactor.
 		// Reserve the final chunk outside the channel so cancellation cannot
 		// drop it and a full queue cannot block close.
-		s.final = &Chunk{Text: s.redactor.Text(s.pending)}
+		known, _ := s.redactor.knownText(s.pending, true)
+		s.final = &Chunk{Text: s.shapes.write(known) + s.shapes.finish()}
 		s.pending = ""
 	}
 	s.err = s.redactor.Error(err)

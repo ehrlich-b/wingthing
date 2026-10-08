@@ -12,8 +12,6 @@ import (
 )
 
 var secretName = regexp.MustCompile(`(?i)(key|token|secret|password|passwd|passphrase|credential|authorization|cookie|auth(?:_|$)|(?:^|_)pass(?:_|$))`)
-var bearerToken = regexp.MustCompile(`(?i)(bearer[ \t]+)[A-Za-z0-9._~+/=-]+`)
-var commonToken = regexp.MustCompile(`\b(sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{8,}|xox[baprs]-[A-Za-z0-9-]{8,}|AIza[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b`)
 
 // Redactor is a run-local snapshot of credentials. Use it before persisting,
 // returning, or truncating any provider text, including successful messages.
@@ -129,22 +127,23 @@ func escapeHexCase(value string, upper bool) string {
 }
 
 func (r *Redactor) Text(text string) string {
-	if r != nil {
-		for _, secret := range r.secrets {
-			text = strings.ReplaceAll(text, secret, "[redacted]")
-		}
-	}
-	text = bearerToken.ReplaceAllString(text, "${1}[redacted]")
-	return commonToken.ReplaceAllString(text, "[redacted]")
+	known, _ := r.knownText(text, true)
+	var shapes shapeRedaction
+	return shapes.write(known) + shapes.finish()
 }
 
-// streamText withholds only a trailing prefix of a known credential. The
-// withheld text is shorter than the longest credential, regardless of provider
-// output size. This also handles overlapping credentials without emitting the
-// suffix of a longer one after redacting its shorter prefix.
+// streamText exposes one bounded held window for diagnostic probes. Live
+// streams also retain shapeRedaction's continuation state between writes.
 func (r *Redactor) streamText(text string) (ready, pending string) {
+	known, pending := r.knownText(text, false)
+	var shapes shapeRedaction
+	ready = shapes.write(known)
+	return ready, shapes.pending + pending
+}
+
+func (r *Redactor) knownText(text string, final bool) (ready, pending string) {
 	if r == nil || len(r.secrets) == 0 {
-		return r.Text(text), ""
+		return text, ""
 	}
 	var output strings.Builder
 	for text != "" {
@@ -159,8 +158,8 @@ func (r *Redactor) streamText(text string) (ready, pending string) {
 		}
 		matched := 0
 		for _, secret := range r.secrets {
-			if len(text) < len(secret) && strings.HasPrefix(secret, text) {
-				return r.Text(output.String()), text
+			if !final && len(text) < len(secret) && strings.HasPrefix(secret, text) {
+				return output.String(), text
 			}
 			if matched == 0 && strings.HasPrefix(text, secret) {
 				matched = len(secret)
@@ -174,7 +173,7 @@ func (r *Redactor) streamText(text string) (ready, pending string) {
 			text = text[1:]
 		}
 	}
-	return r.Text(output.String()), ""
+	return output.String(), ""
 }
 
 func (r *Redactor) Error(err error) error {
