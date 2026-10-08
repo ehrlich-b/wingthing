@@ -192,7 +192,17 @@ func (s *Server) agentSupervisorIsAlive(task *store.Task) bool {
 	// Runs admitted by older binaries have no saved start identity. Retain
 	// compatibility when argv verifies the run's supervisor or the old host.
 	argv, err := procinfo.ProcessArgv(task.RunnerPID)
-	return err == nil && (agentSupervisorArgvMatches(argv, task.ID, s.Cfg.Dir) || agentLegacyHostArgvMatches(argv))
+	if err != nil {
+		return false
+	}
+	if agentSupervisorArgvMatches(argv, task.ID, s.Cfg.Dir) {
+		return true
+	}
+	if !agentLegacyHostArgvMatches(argv) {
+		return false
+	}
+	startedAt, err := procinfo.ProcessStartTime(task.RunnerPID)
+	return err == nil && !startedAt.After(task.CreatedAt)
 }
 
 func (s *Server) stopDetachedAgentRun(taskStore *store.Store, task *store.Task) error {

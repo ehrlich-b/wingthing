@@ -53,6 +53,9 @@ func TestAgentLegacyMCPHostRemainsRunningAndCannotBeStopped(t *testing.T) {
 	}
 	pid := host.Process.Pid
 	s, db := fakeAgentWaitRuns(t, &store.Task{ID: "run", Type: "agent_run", Principal: "owner", Status: "running", RunnerPID: pid})
+	if _, err := db.DB().Exec("UPDATE tasks SET created_at = ? WHERE id = 'run'", time.Now().Add(time.Second).UTC().Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
 	args := json.RawMessage(`{"run_id":"run"}`)
 	status, err := s.toolAgentStatus(args)
 	if err != nil || status["status"] != "running" {
@@ -79,6 +82,18 @@ func TestAgentLegacyMCPHostRemainsRunningAndCannotBeStopped(t *testing.T) {
 	task, err := db.GetTask("run")
 	if err != nil || task.Status != "running" || task.Error != nil {
 		t.Fatalf("legacy tools changed the run: %#v, %v", task, err)
+	}
+	// A matching MCP host started after admission is a reused PID, even when
+	// argv and UID still match. Reconcile it without signaling the new host.
+	if _, err := db.DB().Exec("UPDATE tasks SET created_at = '2000-01-01T00:00:00Z' WHERE id = 'run'"); err != nil {
+		t.Fatal(err)
+	}
+	status, err = s.toolAgentStatus(args)
+	if err != nil || status["status"] != "orphaned" {
+		t.Errorf("new legacy host kept an older run alive: %#v, %v", status, err)
+	}
+	if !procinfo.OwnedProcessIsAlive(pid) {
+		t.Error("reconciliation killed the new MCP host")
 	}
 }
 

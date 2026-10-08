@@ -297,7 +297,7 @@ func TestAgentWaitAnyBatchesStatusReads(t *testing.T) {
 		}
 		for _, task := range tasks {
 			got := loaded[task.ID]
-			if got == nil || got.Status != task.Status || got.RunnerPID != task.RunnerPID {
+			if got == nil || got.Status != task.Status || got.RunnerPID != task.RunnerPID || got.CreatedAt.IsZero() {
 				t.Fatalf("status for %s = %#v", task.ID, got)
 			}
 		}

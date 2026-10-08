@@ -2068,7 +2068,7 @@ func (s *Server) loadOwnedAgentRunStatuses(db *sql.DB, runIDs []string) (map[str
 		arguments = append(arguments, runID)
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(runIDs)), ",")
-	rows, err := db.Query(`SELECT id, status, runner_pid, runner_identity FROM tasks
+	rows, err := db.Query(`SELECT id, status, runner_pid, runner_identity, created_at FROM tasks
 		WHERE type = 'agent_run' AND (principal = ? OR (principal = '' AND ? = 'default'))
 		AND id IN (`+placeholders+`)`, arguments...)
 	if err != nil {
@@ -2078,8 +2078,13 @@ func (s *Server) loadOwnedAgentRunStatuses(db *sql.DB, runIDs []string) (map[str
 	tasks := make(map[string]*store.Task, len(runIDs))
 	for rows.Next() {
 		task := &store.Task{}
-		if err := rows.Scan(&task.ID, &task.Status, &task.RunnerPID, &task.RunnerIdentity); err != nil {
+		var createdAt string
+		if err := rows.Scan(&task.ID, &task.Status, &task.RunnerPID, &task.RunnerIdentity, &createdAt); err != nil {
 			return nil, err
+		}
+		task.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
+		if err != nil {
+			task.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 		}
 		tasks[task.ID] = task
 	}
