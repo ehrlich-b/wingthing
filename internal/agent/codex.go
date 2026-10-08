@@ -99,7 +99,7 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 			if message, ok := parseCodexError(line); ok {
 				providerErr = fmt.Errorf("codex: %s", message)
 			}
-		})
+		}, stream.redactor)
 		err := waitAgentCommand(cmd, diagnostics)
 		if providerErr != nil {
 			err = errors.Join(providerErr, err)

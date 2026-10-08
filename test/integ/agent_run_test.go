@@ -62,6 +62,12 @@ printf '%s' "$prompt" > received-prompt
 printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"partial transcript"}}'
 touch ready
 while [ ! -f release ]; do sleep 0.05; done
+if [ -f oversized-failure ]; then
+    printf '{"type":"turn.failed","error":{"message":"provider refused %s ' "$OPENAI_API_KEY"
+    /usr/bin/awk 'BEGIN {for (i=0;i<1048576;i++) printf "x"}'
+    printf '"}}\n'
+    exit 0
+fi
 if [ -f secret-output ]; then
     printf '{"type":"item.completed","item":{"type":"agent_message","text":"last provider message %s"}}\n' "$OPENAI_API_KEY"
     if [ -f secret-failure ]; then
@@ -596,6 +602,33 @@ func TestMCPAgentRunLegacySupervisorIdentity(t *testing.T) {
 	result, bad = h.call(t, "agent_stop", map[string]any{"run_id": id})
 	if bad || result["stopped"] != true {
 		t.Fatalf("verified legacy supervisor cannot be stopped: %#v", result)
+	}
+	h.exit(t, false)
+}
+
+func TestMCPAgentRunOversizedFailureWithZeroExit(t *testing.T) {
+	f := newRunFixture(t)
+	const canary = "opaque-oversized-error-canary-7Qn3"
+	f.env = append(f.env, "OPENAI_API_KEY="+canary)
+	for _, marker := range []string{"oversized-failure", "release"} {
+		if err := os.WriteFile(filepath.Join(f.work, marker), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := f.host(t, "owner", false)
+	started, bad := h.call(t, "agent_run", map[string]any{"prompt": "review", "agent": "codex", "cwd": f.work})
+	if bad {
+		t.Fatalf("start: %#v", started)
+	}
+	id := started["run_id"].(string)
+	result, bad := h.call(t, "agent_wait", map[string]any{"run_id": id, "timeout_seconds": 5})
+	if bad || result["status"] != "failed" {
+		t.Fatalf("oversized zero-exit failure: %#v", result)
+	}
+	result, bad = h.call(t, "agent_result", map[string]any{"run_id": id})
+	data, _ := json.Marshal(result)
+	if bad || !strings.Contains(fmt.Sprint(result["error"]), "provider refused [redacted]") || !strings.Contains(fmt.Sprint(result["output"]), "truncated") || bytes.Contains(data, []byte(canary)) {
+		t.Fatal("oversized failure lost its redacted diagnostic")
 	}
 	h.exit(t, false)
 }

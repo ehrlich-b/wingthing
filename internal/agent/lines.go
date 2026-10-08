@@ -6,27 +6,36 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
+	"unicode/utf8"
 )
 
 const maxProviderLine = 1024 * 1024
+const maxProviderDiagnostic = 4096
 
 const (
 	responseEvent = iota
 	resultEventKind
 )
 
-// readProviderLines retains at most one capped line. Oversized lines are drained
-// before parsing resumes, so a noisy tool cannot truncate the rest of a run.
-func readProviderLines(r io.Reader, provider string, handle func(string)) error {
+// readProviderLines retains a capped line and a bounded failure diagnostic.
+// Oversized lines are drained before parsing resumes, so a noisy tool cannot
+// truncate the rest of a run.
+func readProviderLines(r io.Reader, provider string, handle func(string), redactors ...*Redactor) error {
 	reader := bufio.NewReader(r)
 	line := make([]byte, 0, maxProviderLine)
 	jsonEvents := provider == "codex" || provider == "claude" || provider == "cursor"
 	var missing [2]error
+	var redactor *Redactor
+	if len(redactors) > 0 {
+		redactor = redactors[0]
+	}
 	for {
 		line = line[:0]
 		var size int64
 		var last byte
 		var metadata eventMetadata
+		metadata.redactor = redactor
 		var inspecting bool
 		var readErr error
 		for {
@@ -61,6 +70,11 @@ func readProviderLines(r io.Reader, provider string, handle func(string)) error 
 		}
 		if size > maxProviderLine {
 			slog.Warn("agent event skipped", "provider", provider, "byte_length", size, "limit", maxProviderLine)
+			// Draining an oversized failure must not turn a zero-exit refusal
+			// into success. Reconstruct just its type and capped diagnostic.
+			if event, ok := metadata.failure(provider); ok {
+				handle(event)
+			}
 			for kind, required := range metadata.required(provider, true) {
 				if required {
 					missing[kind] = fmt.Errorf("%s final %s event skipped: %d bytes exceeds %d-byte limit", provider, [...]string{"response", "result"}[kind], size, maxProviderLine)
@@ -107,8 +121,8 @@ func receivedProviderEvents(provider, line string) (received [2]bool) {
 	return received
 }
 
-// eventMetadata reads only small JSON names and type values, including those
-// after a large payload. It never retains the payload while the line is drained.
+// eventMetadata reads small JSON names/types and a bounded failure diagnostic,
+// including fields after a large payload, while the rest of the line is drained.
 type eventMetadata struct {
 	depth        int
 	itemDepth    int
@@ -116,6 +130,7 @@ type eventMetadata struct {
 	contentDepth int
 	blockDepth   int
 	deltaDepth   int
+	errorDepth   int
 	inString     bool
 	escaped      bool
 	stringSize   int
@@ -125,6 +140,10 @@ type eventMetadata struct {
 	eventType    string
 	itemType     string
 	hasText      bool
+	redactor     *Redactor
+	messageKind  int
+	messageBuf   []byte
+	messages     [3]string
 }
 
 func (m *eventMetadata) read(part []byte) {
@@ -141,6 +160,9 @@ func (m *eventMetadata) read(part []byte) {
 			if m.stringSize <= len(m.stringBuf) {
 				m.stringSize++
 			}
+			if m.messageKind >= 0 && len(m.messageBuf) < m.diagnosticCaptureLimit() {
+				m.messageBuf = append(m.messageBuf, c)
+			}
 			if m.escaped {
 				m.escaped = false
 			} else if c == '\\' {
@@ -152,6 +174,18 @@ func (m *eventMetadata) read(part []byte) {
 		case '"':
 			m.inString = true
 			m.stringSize = 0
+			m.messageKind = -1
+			m.messageBuf = m.messageBuf[:0]
+			if m.field == "message" {
+				switch {
+				case m.depth == 1:
+					m.messageKind = 0
+				case m.errorDepth > 0 && m.depth == m.errorDepth:
+					m.messageKind = 1
+				case m.itemDepth > 0 && m.depth == m.itemDepth:
+					m.messageKind = 2
+				}
+			}
 		case ':':
 			m.field = m.lastString
 			m.lastString = ""
@@ -164,6 +198,8 @@ func (m *eventMetadata) read(part []byte) {
 					m.messageDepth = m.depth + 1
 				case "delta":
 					m.deltaDepth = m.depth + 1
+				case "error":
+					m.errorDepth = m.depth + 1
 				}
 			} else if c == '[' && m.messageDepth > 0 && m.depth == m.messageDepth && m.field == "content" {
 				m.contentDepth = m.depth + 1
@@ -173,7 +209,7 @@ func (m *eventMetadata) read(part []byte) {
 			m.depth++
 			m.field, m.lastString = "", ""
 		case '}', ']':
-			for _, depth := range []*int{&m.itemDepth, &m.messageDepth, &m.contentDepth, &m.blockDepth, &m.deltaDepth} {
+			for _, depth := range []*int{&m.itemDepth, &m.messageDepth, &m.contentDepth, &m.blockDepth, &m.deltaDepth, &m.errorDepth} {
 				if *depth == m.depth {
 					*depth = 0
 				}
@@ -187,6 +223,26 @@ func (m *eventMetadata) read(part []byte) {
 }
 
 func (m *eventMetadata) finishString() {
+	if m.messageKind >= 0 {
+		// A prefix may end inside a JSON escape. Drop only that incomplete
+		// escape, then decode and redact before applying the display cap.
+		quoted := append([]byte{'"'}, m.messageBuf...)
+		for dropped := 0; dropped <= 6 && len(quoted) > 0; dropped++ {
+			var message string
+			if json.Unmarshal(append(quoted, '"'), &message) == nil {
+				message = m.redactor.Text(message)
+				if len(message) > maxProviderDiagnostic {
+					message = message[:maxProviderDiagnostic]
+					for !utf8.ValidString(message) {
+						message = message[:len(message)-1]
+					}
+				}
+				m.messages[m.messageKind] = message
+				break
+			}
+			quoted = quoted[:len(quoted)-1]
+		}
+	}
 	var value string
 	if m.stringSize <= len(m.stringBuf) {
 		// Decode escapes in short keys/types without decoding any large strings.
@@ -208,6 +264,42 @@ func (m *eventMetadata) finishString() {
 	}
 	m.lastString = value
 	m.field = ""
+}
+
+func (m *eventMetadata) diagnosticCaptureLimit() int {
+	// Retain enough lookahead to redact a known credential crossing the display
+	// boundary, even if every byte in it is encoded as a six-byte JSON escape.
+	limit := 6*maxProviderDiagnostic + 8
+	if m.redactor != nil && len(m.redactor.secrets) > 0 {
+		limit += 6 * len(m.redactor.secrets[0])
+	}
+	return limit
+}
+
+func (m *eventMetadata) failure(provider string) (string, bool) {
+	if provider != "codex" {
+		return "", false
+	}
+	event := codexEvent{Type: m.eventType}
+	message := func(kind int) string {
+		text := strings.TrimSpace(m.messages[kind])
+		if text == "" {
+			text = "provider failure"
+		}
+		return text + " [oversized event truncated]"
+	}
+	switch {
+	case m.eventType == "turn.failed":
+		event.Error = &codexError{Message: message(1)}
+	case m.eventType == "error":
+		event.Message = message(0)
+	case m.eventType == "item.completed" && m.itemType == "error":
+		event.Item = &codexItem{Type: "error", Message: message(2)}
+	default:
+		return "", false
+	}
+	data, _ := json.Marshal(event)
+	return string(data), true
 }
 
 func (m *eventMetadata) required(provider string, nonempty bool) (required [2]bool) {

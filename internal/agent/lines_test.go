@@ -286,3 +286,62 @@ func TestReadProviderLinesReadError(t *testing.T) {
 		t.Fatalf("lines = %q, error = %v", lines, err)
 	}
 }
+
+func TestCodexOversizedFailurePreservesTypeAndDiagnostic(t *testing.T) {
+	for _, event := range []struct{ prefix, suffix string }{
+		{`{"type":"turn.failed","error":{"message":"provider refused: `, `"}}`},
+		{`{"error":{"message":"provider refused: `, `"},"type":"turn.failed"}`},
+		{`{"type":"error","message":"provider refused: `, `"}`},
+		{`{"item":{"message":"provider refused: `, `","type":"error"},"type":"item.completed"}`},
+	} {
+		for _, ending := range []string{"\n", "\r\n", ""} {
+			t.Run(event.prefix+fmt.Sprintf("_%q", ending), func(t *testing.T) {
+				line := sizedEvent(event.prefix, event.suffix, oversizedTestLine)
+				stream := runFakeProvider(t, NewCodex(0), line+ending)
+				if stream.Err() == nil || !strings.Contains(stream.Err().Error(), "provider refused:") || !strings.Contains(stream.Err().Error(), "truncated") || len(stream.Err().Error()) > 8192 {
+					t.Fatalf("oversized failure lost its capped diagnostic: %v", stream.Err())
+				}
+			})
+		}
+	}
+}
+
+func TestCodexOversizedFailureRedactsBeforeTruncation(t *testing.T) {
+	const canary = "7Qn3-provider-secret-canary"
+	t.Setenv("OPENAI_API_KEY", canary)
+	for _, escaped := range []bool{false, true} {
+		t.Run(fmt.Sprint(escaped), func(t *testing.T) {
+			message := "provider refused " + canary + " " + strings.Repeat("x", maxProviderDiagnostic-50) + canary + strings.Repeat("x", oversizedTestLine)
+			encoded, err := json.Marshal(message)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if escaped {
+				var raw strings.Builder
+				for _, c := range message {
+					fmt.Fprintf(&raw, `\u%04x`, c)
+				}
+				encoded = []byte(`"` + raw.String() + `"`)
+			}
+			stream := runFakeProvider(t, NewCodex(0), `{"error":{"message":`+string(encoded)+`},"type":"turn.failed"}`)
+			if stream.Err() == nil || !strings.Contains(stream.Err().Error(), "provider refused [redacted]") || strings.Contains(stream.Err().Error(), canary[:8]) || !strings.Contains(stream.Err().Error(), "truncated") {
+				t.Fatal("oversized failure exposed a credential or lost the diagnostic")
+			}
+		})
+	}
+}
+
+func TestReadProviderLinesOversizedFailureRetainsEventType(t *testing.T) {
+	line := sizedEvent(`{"padding":"`, `","error":{"message":"provider refused"},"type":"turn.failed"}`, oversizedTestLine)
+	var events []codexEvent
+	err := readProviderLines(strings.NewReader(line), "codex", func(line string) {
+		var event codexEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, event)
+	})
+	if err != nil || len(events) != 1 || events[0].Type != "turn.failed" || events[0].Error == nil || events[0].Error.Message != "provider refused [oversized event truncated]" {
+		t.Fatalf("failure event lost: %#v %v", events, err)
+	}
+}
