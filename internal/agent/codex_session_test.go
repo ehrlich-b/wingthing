@@ -140,6 +140,76 @@ func TestCodexRolloutRejectsAmbiguityAndSymlinks(t *testing.T) {
 	}
 }
 
+func TestCodexRolloutRejectsUnsafeDateDirectories(t *testing.T) {
+	const thread = "01998952-827c-7000-8000-123456789abc"
+	day := time.Date(2026, 10, 8, 12, 0, 0, 0, time.Local)
+	components := []string{"sessions", "2026", "10", "08"}
+	for depth, component := range components {
+		for _, kind := range []string{"symlink", "file"} {
+			t.Run(component+"/"+kind, func(t *testing.T) {
+				home := t.TempDir()
+				dir := filepath.Join(home, filepath.Join(components...))
+				if err := os.MkdirAll(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(dir, "rollout-"+thread+".jsonl")
+				if err := os.WriteFile(path, []byte(`{"type":"session_meta","payload":{"id":"`+thread+`"}}`+"\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				unsafe := filepath.Join(home, filepath.Join(components[:depth+1]...))
+				target := filepath.Join(t.TempDir(), "target")
+				if err := os.Rename(unsafe, target); err != nil {
+					t.Fatal(err)
+				}
+				if kind == "symlink" {
+					if err := os.Symlink(target, unsafe); err != nil {
+						t.Fatal(err)
+					}
+				} else if err := os.WriteFile(unsafe, nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+				if got := findCodexRollout(context.Background(), home, thread, day, day); got != "" {
+					t.Fatalf("unsafe date directory returned a rollout: %q", got)
+				}
+			})
+		}
+	}
+}
+
+func TestCodexRolloutSearchIncludesAdjacentProviderDates(t *testing.T) {
+	const thread = "01998952-827c-7000-8000-123456789abc"
+	for _, start := range []time.Time{
+		time.Date(2026, 1, 1, 0, 15, 0, 0, time.Local),
+		time.Date(2026, 3, 8, 0, 15, 0, 0, time.Local),
+		time.Date(2026, 12, 31, 23, 45, 0, 0, time.Local),
+	} {
+		for _, offset := range []int{-2, -1, 0, 1, 2} {
+			day := start.AddDate(0, 0, offset)
+			t.Run(start.Format("2006-01-02")+"/"+day.Format("2006-01-02"), func(t *testing.T) {
+				home, err := filepath.EvalSymlinks(t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+				dir := filepath.Join(home, "sessions", day.Format("2006/01/02"))
+				if err := os.MkdirAll(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(dir, "rollout-"+thread+".jsonl")
+				if err := os.WriteFile(path, []byte(`{"type":"session_meta","payload":{"id":"`+thread+`"}}`+"\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				want := path
+				if offset < -1 || offset > 1 {
+					want = ""
+				}
+				if got := findCodexRollout(context.Background(), home, thread, start.UTC(), start.Add(time.Minute).UTC()); got != want {
+					t.Fatalf("provider date lookup = %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
+
 func TestCodexRolloutOpenRejectsSwappedSymlinkAndFIFO(t *testing.T) {
 	const thread = "01998952-827c-7000-8000-123456789abc"
 	dir := t.TempDir()
@@ -224,8 +294,8 @@ func TestCodexRolloutSearchUsesLocalRunDatesAndDeadline(t *testing.T) {
 		}
 		return path
 	}
-	write(start.AddDate(0, 0, -1), "old")
-	write(now.AddDate(0, 0, 1), "future")
+	write(start.AddDate(0, 0, -2), "old")
+	write(now.AddDate(0, 0, 2), "future")
 	path := write(now, "current")
 	if got := findCodexRollout(context.Background(), home, thread, start.UTC(), now.UTC()); got != path {
 		t.Fatalf("local run date lookup = %q, want %q", got, path)

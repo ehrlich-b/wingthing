@@ -77,13 +77,29 @@ func findCodexRollout(ctx context.Context, home, threadID string, startedAt, now
 	}
 	var found string
 	start, end := startedAt.In(time.Local), now.In(time.Local)
-	day := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.Local)
-	lastDay := time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, time.Local)
+	// The provider may use a different time zone from its supervisor.
+	day := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.Local).AddDate(0, 0, -1)
+	lastDay := time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, time.Local).AddDate(0, 0, 1)
 	for ; !day.After(lastDay); day = day.AddDate(0, 0, 1) {
 		if ctx.Err() != nil {
 			return ""
 		}
-		dir := filepath.Join(root, "sessions", day.Format("2006/01/02"))
+		dir := root
+		missing := false
+		for _, component := range []string{"sessions", day.Format("2006"), day.Format("01"), day.Format("02")} {
+			dir = filepath.Join(dir, component)
+			info, err := os.Lstat(dir)
+			if os.IsNotExist(err) {
+				missing = true
+				break
+			}
+			if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return ""
+			}
+		}
+		if missing {
+			continue
+		}
 		entries, err := os.ReadDir(dir)
 		if os.IsNotExist(err) {
 			continue
