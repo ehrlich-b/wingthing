@@ -74,7 +74,7 @@ func (c *Claude) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 		return nil, fmt.Errorf("start claude: %w", err)
 	}
 
-	stream := newStream(ctx)
+	stream := newCommandStream(ctx, cmd, opts)
 	go func() {
 		readErr := readProviderLines(stdout, "claude", func(line string) {
 			if text, ok := parseStreamEvent(line); ok {

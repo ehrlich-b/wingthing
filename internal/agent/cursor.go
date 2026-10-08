@@ -59,7 +59,7 @@ func (c *Cursor) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 		return nil, fmt.Errorf("start cursor agent: %w", err)
 	}
 
-	stream := newStream(ctx)
+	stream := newCommandStream(ctx, cmd, opts)
 	go func() {
 		readErr := readProviderLines(stdout, "cursor", func(line string) {
 			// Cursor stream-json uses the same event format as Claude Code

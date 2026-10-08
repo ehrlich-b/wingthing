@@ -62,6 +62,14 @@ printf '%s' "$prompt" > received-prompt
 printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"partial transcript"}}'
 touch ready
 while [ ! -f release ]; do sleep 0.05; done
+if [ -f secret-output ]; then
+    printf '{"type":"item.completed","item":{"type":"agent_message","text":"last provider message %s"}}\n' "$OPENAI_API_KEY"
+    if [ -f secret-failure ]; then
+        printf '{"type":"turn.failed","error":{"message":"provider refused %s"}}\n' "$OPENAI_API_KEY"
+        printf 'provider stderr %s\n' "$OPENAI_API_KEY" >&2
+        exit 1
+    fi
+fi
 if [ -f refuse ]; then
     printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"last provider message"}}' '{"type":"turn.failed","error":{"message":"This content was flagged for possible cybersecurity risk."}}'
     echo 'Reading additional input from stdin...' >&2
@@ -458,4 +466,66 @@ func TestMCPAgentRunLostSupervisorKeepsTranscript(t *testing.T) {
 		t.Fatalf("lost supervisor result: %#v", result)
 	}
 	h.exit(t, false)
+}
+
+func TestMCPAgentRunRedactsStoredAndReturnedSecrets(t *testing.T) {
+	for _, failure := range []bool{false, true} {
+		t.Run(fmt.Sprint(failure), func(t *testing.T) {
+			f := newRunFixture(t)
+			const canary = "opaque-run-secret-canary-7Qn3"
+			f.env = append(f.env, "OPENAI_API_KEY="+canary)
+			for _, marker := range []string{"secret-output", "release"} {
+				if err := os.WriteFile(filepath.Join(f.work, marker), nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if failure {
+				if err := os.WriteFile(filepath.Join(f.work, "secret-failure"), nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			h := f.host(t, "owner", false)
+			started, bad := h.call(t, "agent_run", map[string]any{"prompt": "review", "agent": "codex", "cwd": f.work})
+			if bad {
+				t.Fatalf("start: %#v", started)
+			}
+			id := started["run_id"].(string)
+			waited, bad := h.call(t, "agent_wait", map[string]any{"run_id": id, "timeout_seconds": 5})
+			wantStatus := "done"
+			if failure {
+				wantStatus = "failed"
+			}
+			if bad || waited["status"] != wantStatus {
+				t.Fatalf("wait: %#v", waited)
+			}
+			h.exit(t, false)
+			// A new host must not depend on retaining the launch environment in memory.
+			h = f.host(t, "owner", false)
+			for _, tool := range []string{"agent_status", "agent_wait", "agent_result", "agent_events", "agent_stop"} {
+				result, bad := h.call(t, tool, map[string]any{"run_id": id})
+				data, err := json.Marshal(result)
+				if bad || err != nil || bytes.Contains(data, []byte(canary)) {
+					t.Errorf("%s exposed a credential or failed", tool)
+				}
+				if tool == "agent_result" && !strings.Contains(fmt.Sprint(result["output"]), "last provider message [redacted]") {
+					t.Error("redaction lost the last provider message")
+				}
+			}
+			task := f.task(t, id)
+			data, err := json.Marshal(task)
+			if err != nil || bytes.Contains(data, []byte(canary)) {
+				t.Error("task storage exposed a credential")
+			}
+			db, err := store.Open(filepath.Join(f.state, "wt.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			var count int
+			if err := db.DB().QueryRow("SELECT count(*) FROM task_log WHERE task_id = ? AND instr(COALESCE(detail, ''), ?) > 0", id, canary).Scan(&count); err != nil || count != 0 {
+				t.Errorf("event storage exposed a credential: count=%d error=%v", count, err)
+			}
+			h.exit(t, false)
+		})
+	}
 }

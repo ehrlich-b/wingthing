@@ -252,3 +252,42 @@ func TestCodexRecoveredErrorDoesNotFailCompletedTurn(t *testing.T) {
 		t.Fatalf("recovered turn: %q %v", stream.Text(), err)
 	}
 }
+
+func TestCodexRedactsProviderSecrets(t *testing.T) {
+	const canary = "opaque-provider-canary-7Qn3"
+	for _, failure := range []bool{false, true} {
+		t.Run(fmt.Sprint(failure), func(t *testing.T) {
+			stream, err := NewCodex(0).Run(context.Background(), "review", RunOpts{CmdFactory: func(ctx context.Context, _ string, _ []string) (*exec.Cmd, error) {
+				cmd := exec.CommandContext(ctx, "/bin/sh", "-c", `printf '{"type":"item.completed","item":{"type":"agent_message","text":"diagnostic %s"}}\n' "$CUSTOM_PASSWORD"; if [ "$FAIL" = true ]; then printf '{"type":"turn.failed","error":{"message":"provider refused %s"}}\n' "$CUSTOM_PASSWORD"; printf 'stderr %s' "$CUSTOM_PASSWORD" >&2; exit 7; fi`)
+				cmd.Env = []string{"CUSTOM_PASSWORD=" + canary, fmt.Sprintf("FAIL=%t", failure)}
+				return cmd, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for {
+				chunk, ok := stream.Next()
+				if !ok {
+					break
+				}
+				if strings.Contains(chunk.Text, canary) || !strings.Contains(chunk.Text, "[redacted]") {
+					t.Error("provider chunk exposed a credential")
+				}
+			}
+			if strings.Contains(stream.Text(), canary) {
+				t.Error("provider transcript exposed a credential")
+			}
+			if failure {
+				if stream.Err() == nil || strings.Contains(stream.Err().Error(), canary) || !strings.Contains(stream.Err().Error(), "provider refused [redacted]") || !strings.Contains(stream.Err().Error(), "stderr [redacted]") {
+					t.Error("provider failure exposed a credential or lost diagnostics")
+				}
+				var exitErr *exec.ExitError
+				if !errors.As(stream.Err(), &exitErr) || exitErr.ExitCode() != 7 {
+					t.Error("redaction lost the provider exit code")
+				}
+			} else if stream.Err() != nil {
+				t.Fatal(stream.Err())
+			}
+		})
+	}
+}

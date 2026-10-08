@@ -84,7 +84,7 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 		return nil, fmt.Errorf("start codex: %w", err)
 	}
 
-	stream := newStream(ctx)
+	stream := newCommandStream(ctx, cmd, opts)
 	go func() {
 		var providerErr error
 		readErr := readProviderLines(stdout, "codex", func(line string) {

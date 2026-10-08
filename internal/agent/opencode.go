@@ -70,7 +70,7 @@ func (o *OpenCode) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Str
 		return nil, fmt.Errorf("start opencode: %w", err)
 	}
 
-	stream := newStream(ctx)
+	stream := newCommandStream(ctx, cmd, opts)
 	go func() {
 		readErr := readProviderLines(stdout, "opencode", func(line string) {
 			if line != "" {

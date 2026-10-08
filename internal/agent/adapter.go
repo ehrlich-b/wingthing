@@ -28,6 +28,8 @@ type RunOpts struct {
 	WorkDir             string
 	Model               string
 	CmdFactory          CmdFactory
+	// Credentials covers secrets supplied outside the command environment.
+	Credentials []string
 }
 
 type Chunk struct {

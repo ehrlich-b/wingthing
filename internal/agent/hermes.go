@@ -66,7 +66,7 @@ func (h *Hermes) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 		return nil, fmt.Errorf("start hermes: %w", err)
 	}
 
-	stream := newStream(ctx)
+	stream := newCommandStream(ctx, cmd, opts)
 	go func() {
 		readErr := readProviderLines(stdout, "hermes", func(line string) {
 			if line != "" {

@@ -94,6 +94,7 @@ type TaskRunOptions struct {
 }
 
 func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Store, t *store.Task, destination io.Writer, options TaskRunOptions) (runErr error) {
+	redactor := agent.NewRedactor(os.Environ())
 	if err := s.UpdateTaskStatus(t.ID, "running"); err != nil {
 		return fmt.Errorf("mark task running: %w", err)
 	}
@@ -101,6 +102,7 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		if runErr == nil {
 			return
 		}
+		runErr = redactor.Error(runErr)
 		if err := s.SetTaskError(t.ID, runErr.Error()); err != nil {
 			runErr = errors.Join(runErr, fmt.Errorf("record task failure: %w", err))
 		}
@@ -391,7 +393,7 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 	}
 
 	if err := stream.Err(); err != nil {
-		diagnostics := mergeAgentFailureDiagnostics(err, readSandboxDiagnostics(sandboxDiagnosticPath))
+		diagnostics := redactor.Text(mergeAgentFailureDiagnostics(err, readSandboxDiagnostics(sandboxDiagnosticPath)))
 		if outputErr := s.SetTaskOutput(t.ID, mergeAgentFailureOutput(stream.Text(), diagnostics)); outputErr != nil {
 			return errors.Join(fmt.Errorf("agent error: %w", err), fmt.Errorf("record failed agent output: %w", outputErr))
 		}

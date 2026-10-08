@@ -70,7 +70,7 @@ func (o *Ollama) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 		return nil, fmt.Errorf("start ollama: %w", err)
 	}
 
-	stream := newStream(ctx)
+	stream := newCommandStream(ctx, cmd, opts)
 	go func() {
 		readErr := readProviderLines(stdout, "ollama", func(line string) {
 			if line != "" {

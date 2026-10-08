@@ -68,7 +68,7 @@ func (g *Gemini) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 		return nil, fmt.Errorf("start gemini: %w", err)
 	}
 
-	stream := newStream(ctx)
+	stream := newCommandStream(ctx, cmd, opts)
 	go func() {
 		readErr := readProviderLines(stdout, "gemini", func(line string) {
 			if line != "" {
