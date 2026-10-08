@@ -3,14 +3,84 @@ package localmcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	"github.com/ehrlich-b/wingthing/internal/store"
 )
+
+func TestMain(m *testing.M) {
+	if os.Getenv("WT_TEST_LEGACY_MCP_HOST") == "1" {
+		_, _ = os.Stdout.Write([]byte{1})
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		return
+	}
+	os.Exit(m.Run())
+}
+
+func TestAgentLegacyMCPHostRemainsRunningAndCannotBeStopped(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+	host := exec.CommandContext(ctx, os.Args[0], "mcp", "stdio", "--client", "owner", "--unsandboxed")
+	host.Env = append(os.Environ(), "WT_TEST_LEGACY_MCP_HOST=1")
+	input, err := host.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := host.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := host.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = input.Close()
+		if err := host.Wait(); err != nil {
+			t.Errorf("fixture MCP host was killed: %v", err)
+		}
+	})
+	var ready [1]byte
+	if _, err := io.ReadFull(output, ready[:]); err != nil {
+		t.Fatal(err)
+	}
+	pid := host.Process.Pid
+	s, db := fakeAgentWaitRuns(t, &store.Task{ID: "run", Type: "agent_run", Principal: "owner", Status: "running", RunnerPID: pid})
+	args := json.RawMessage(`{"run_id":"run"}`)
+	status, err := s.toolAgentStatus(args)
+	if err != nil || status["status"] != "running" {
+		t.Errorf("live legacy host orphaned: %#v, %v", status, err)
+	}
+	result, err := s.toolAgentResult(args)
+	if err != nil || result["status"] != "running" || result["ready"] != false {
+		t.Errorf("legacy result reported terminal: %#v, %v", result, err)
+	}
+	waited, err := s.toolAgentWait(ctx, json.RawMessage(`{"run_id":"run","timeout_seconds":0.1}`))
+	if err != nil || waited["status"] != "running" || waited["timed_out"] != true {
+		t.Errorf("legacy wait reported terminal: %#v, %v", waited, err)
+	}
+	waitAny, err := s.toolAgentWaitAny(ctx, json.RawMessage(`{"run_ids":["run"],"timeout_seconds":0.1}`))
+	if err != nil || len(waitAny["finished"].([]map[string]any)) != 0 || len(waitAny["pending"].([]string)) != 1 {
+		t.Errorf("legacy wait_any reported terminal: %#v, %v", waitAny, err)
+	}
+	if _, err := s.toolAgentStop(args); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("MCP host PID %d", pid)) {
+		t.Errorf("legacy stop did not refuse with owning host PID: %v", err)
+	}
+	if !procinfo.OwnedProcessIsAlive(pid) {
+		t.Error("legacy stop killed its MCP host")
+	}
+	task, err := db.GetTask("run")
+	if err != nil || task.Status != "running" || task.Error != nil {
+		t.Fatalf("legacy tools changed the run: %#v, %v", task, err)
+	}
+}
 
 func TestAgentSupervisorIdentityAllowsStateAliases(t *testing.T) {
 	state := t.TempDir()
@@ -129,19 +199,35 @@ func TestAgentRunRejectsMismatchedProcessStart(t *testing.T) {
 	}
 }
 
-func TestAgentResultIncludesLiveEventsAfterSnapshot(t *testing.T) {
-	s, db := fakeAgentWaitRuns(t, &store.Task{ID: "run", Type: "agent_run", Principal: "owner", Status: "running"})
-	if err := db.SetTaskOutput("run", "first"); err != nil {
-		t.Fatal(err)
-	}
-	for _, text := range []string{"first", " second", " third"} {
-		if err := db.AppendLog("run", "agent_message", &text); err != nil {
-			t.Fatal(err)
+func TestAgentResultIncludesEventsAfterSnapshot(t *testing.T) {
+	for _, status := range []string{"pending", "running", "orphaned", "failed", "timeout", "stopped", "done"} {
+		for _, snapshot := range []string{"", "first", "first second third fourth"} {
+			t.Run(status+"/"+snapshot, func(t *testing.T) {
+				s, db := fakeAgentWaitRuns(t, &store.Task{ID: "run", Type: "agent_run", Principal: "owner", Status: status})
+				if snapshot != "" {
+					if err := db.SetTaskOutput("run", snapshot); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for _, text := range []string{"first", " second", " third"} {
+					if err := db.AppendLog("run", "agent_message", &text); err != nil {
+						t.Fatal(err)
+					}
+				}
+				want := snapshot
+				if status != "done" && len(want) < len("first second third") {
+					want = "first second third"
+				}
+				result, err := s.toolAgentResult(json.RawMessage(`{"run_id":"run"}`))
+				if err != nil || result["ready"] != agentRunTerminal(status) || (want != "" && result["output"] != want) || (want == "" && result["output"] != nil) {
+					t.Fatalf("result lost output: %#v, want %q (%v)", result, want, err)
+				}
+				stored, err := db.GetTask("run")
+				if err != nil || (snapshot == "" && stored.Output != nil) || (snapshot != "" && (stored.Output == nil || *stored.Output != snapshot)) {
+					t.Fatalf("reading result changed snapshot: %#v, %v", stored, err)
+				}
+			})
 		}
-	}
-	result, err := s.toolAgentResult(json.RawMessage(`{"run_id":"run"}`))
-	if err != nil || result["ready"] != false || result["output"] != "first second third" {
-		t.Fatalf("live result lost event tail: %#v, %v", result, err)
 	}
 }
 

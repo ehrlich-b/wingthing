@@ -1716,14 +1716,18 @@ func (s *Server) executeAgentRun(ctx context.Context, runID string, followup *ag
 		if !agentRunTerminal(parent.Status) {
 			return fmt.Errorf("parent agent run %s finished with status %s", parent.ID, parent.Status)
 		}
-		var parentResult, parentError string
+		var parentResult, parentError, parentStatus string
 		if parent.Output != nil {
 			parentResult = *parent.Output
 		}
-		if parent.Error != nil {
+		if parent.ErrorKind == "" {
+			// Older runs persisted provider stderr. Keep it out of follow-ups
+			// without changing their stored rows or legacy result responses.
+			parentStatus = parent.Status
+		} else if parent.Error != nil {
 			parentError = *parent.Error
 		}
-		resolvedFollowupPrompt = agentSteerPrompt(parent.What, parentResult, parentError, followup.direction)
+		resolvedFollowupPrompt = agentSteerPrompt(parent.What, parentResult, parentError, parentStatus, followup.direction)
 	}
 	taskStore, err := store.Open(s.Cfg.DBPath())
 	if err != nil {
@@ -2101,12 +2105,12 @@ func (s *Server) toolAgentResult(arguments json.RawMessage) (map[string]any, err
 		return nil, err
 	}
 	defer cmdutil.CloseWithLog("task store", taskStore)
-	if task.Status == "running" || task.Status == "orphaned" {
+	if task.Status != "done" {
 		output, err := taskStore.AgentRunOutput(task.ID)
 		if err != nil {
 			return nil, err
 		}
-		if output != nil {
+		if output != nil && (task.Output == nil || len(*output) > len(*task.Output)) {
 			task.Output = output
 		}
 	}
@@ -2206,12 +2210,15 @@ func (s *Server) toolAgentSteer(arguments json.RawMessage) (map[string]any, erro
 	}, &agentRunFollowup{parentID: parentID, direction: args.Prompt})
 }
 
-func agentSteerPrompt(parentRequest, parentResult, parentError, direction string) string {
+func agentSteerPrompt(parentRequest, parentResult, parentError, parentStatus, direction string) string {
 	resultRunes := []rune(parentResult)
 	if len(resultRunes) > maxAgentSteerPriorResultChars {
 		parentResult = string(resultRunes[:maxAgentSteerPriorResultChars]) + "\n\n[Wingthing truncated the prior result for this follow-up.]"
 	}
 	prompt := "Prior request:\n" + parentRequest + "\n\nPrior result:\n" + parentResult
+	if parentStatus != "" {
+		prompt += "\n\nPrior status:\n" + parentStatus
+	}
 	if parentError != "" {
 		prompt += "\n\nPrior error:\n" + parentError
 	}

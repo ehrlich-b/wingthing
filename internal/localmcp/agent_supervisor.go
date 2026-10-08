@@ -190,9 +190,9 @@ func (s *Server) agentSupervisorIsAlive(task *store.Task) bool {
 		return err == nil && identity == task.RunnerIdentity
 	}
 	// Runs admitted by older binaries have no saved start identity. Retain
-	// compatibility only when argv verifies the unique run and state directory.
+	// compatibility when argv verifies the run's supervisor or the old host.
 	argv, err := procinfo.ProcessArgv(task.RunnerPID)
-	return err == nil && agentSupervisorArgvMatches(argv, task.ID, s.Cfg.Dir)
+	return err == nil && (agentSupervisorArgvMatches(argv, task.ID, s.Cfg.Dir) || agentLegacyHostArgvMatches(argv))
 }
 
 func (s *Server) stopDetachedAgentRun(taskStore *store.Store, task *store.Task) error {
@@ -205,6 +205,9 @@ func (s *Server) stopDetachedAgentRun(taskStore *store.Store, task *store.Task) 
 			return nil
 		}
 		return fmt.Errorf("inspect agent supervisor: %w", err)
+	}
+	if agentLegacyHostArgvMatches(argv) {
+		return fmt.Errorf("agent run is owned by legacy Wingthing MCP host PID %d; stop it through that host", task.RunnerPID)
 	}
 	if !agentSupervisorArgvMatches(argv, task.ID, s.Cfg.Dir) {
 		return errors.New("run is no longer attached to a verified Wingthing supervisor")
@@ -231,6 +234,12 @@ func (s *Server) stopDetachedAgentRun(taskStore *store.Store, task *store.Task) 
 		}
 		return !agentSupervisorArgvMatches(argv, task.ID, s.Cfg.Dir), nil
 	})
+}
+
+func agentLegacyHostArgvMatches(argv []string) bool {
+	// The previous release ran agent_run inside `wt mcp stdio`, with optional
+	// client, conversation and isolation flags following the subcommands.
+	return len(argv) >= 3 && argv[1] == "mcp" && argv[2] == "stdio"
 }
 
 func agentSupervisorArgvMatches(argv []string, runID, stateDir string) bool {

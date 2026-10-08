@@ -998,12 +998,14 @@ func TestAgentSteerContinuesTerminalRunsWithPartialResultAndError(t *testing.T) 
 		status string
 		output string
 		error  string
+		kind   string
 	}{
-		{"failed-after-timeout", "failed", "partial review ✓", "agent error: context deadline exceeded"},
-		{"failed-without-result", "failed", "", "review failed"},
-		{"timeout", "timeout", "partial review ✓", "context deadline exceeded"},
-		{"stopped", "stopped", "partial review ✓", "stopped by MCP principal owner"},
-		{"done-without-result", "done", "", ""},
+		{"failed-after-timeout", "failed", "partial review ✓", "agent error: context deadline exceeded", "provider_error"},
+		{"failed-without-result", "failed", "", "review failed", "provider_error"},
+		{"timeout", "timeout", "partial review ✓", "context deadline exceeded", "provider_error"},
+		{"stopped", "stopped", "partial review ✓", "stopped by MCP principal owner", "provider_error"},
+		{"done-without-result", "done", "", "", ""},
+		{"legacy-provider-error", "failed", "partial review ✓", "raw-provider-stderr-canary", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cwd, err := filepath.EvalSymlinks(t.TempDir())
@@ -1021,7 +1023,7 @@ func TestAgentSteerContinuesTerminalRunsWithPartialResultAndError(t *testing.T) 
 				}
 			}
 			if tc.error != "" {
-				if err := taskStore.SetTaskError(parent.ID, tc.error); err != nil {
+				if err := taskStore.SetTaskFailure(parent.ID, tc.error, tc.kind); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -1029,7 +1031,9 @@ func TestAgentSteerContinuesTerminalRunsWithPartialResultAndError(t *testing.T) 
 				t.Fatal(err)
 			}
 			wantPrompt := "Prior request:\noriginal review\n\nPrior result:\n" + tc.output
-			if tc.error != "" {
+			if tc.kind == "" {
+				wantPrompt += "\n\nPrior status:\n" + tc.status
+			} else if tc.error != "" {
 				wantPrompt += "\n\nPrior error:\n" + tc.error
 			}
 			wantPrompt += "\n\nNew direction:\nfocus on auth"
@@ -1069,6 +1073,10 @@ func TestAgentSteerContinuesTerminalRunsWithPartialResultAndError(t *testing.T) 
 			if child.What != wantPrompt || child.ParentID == nil || *child.ParentID != parent.ID ||
 				child.Agent != parent.Agent || child.Model != parent.Model || child.CWD != parent.CWD || child.TimeoutSeconds != parent.TimeoutSeconds {
 				t.Fatalf("steered child = %#v, want prior context and inherited settings", child)
+			}
+			result, err := server.toolAgentResult(json.RawMessage(`{"run_id":"parent"}`))
+			if err != nil || (tc.error != "" && result["error"] != tc.error) {
+				t.Fatalf("parent result error changed: %#v, %v", result, err)
 			}
 		})
 	}
@@ -1140,7 +1148,7 @@ func TestAgentSteerPassesAndPersistsPriorResult(t *testing.T) {
 	}
 	closeForTest(t, "task store", taskStore)
 
-	wantPrompt := agentSteerPrompt(parent.What, "the auth boundary is sound", "", "now review the UI")
+	wantPrompt := agentSteerPrompt(parent.What, "the auth boundary is sound", "", "done", "now review the UI")
 	seenPrompt := make(chan string, 1)
 	server := &Server{Version: "dev",
 		Cfg: cfg, Logs: &bytes.Buffer{}, Principal: "alpha",
@@ -1178,7 +1186,7 @@ func TestAgentSteerPassesAndPersistsPriorResult(t *testing.T) {
 
 func TestAgentSteerBoundsPriorResultWithoutSplittingUnicode(t *testing.T) {
 	prior := strings.Repeat("✓", maxAgentSteerPriorResultChars+1)
-	prompt := agentSteerPrompt("review", prior, "", "continue")
+	prompt := agentSteerPrompt("review", prior, "", "", "continue")
 	if strings.Contains(prompt, strings.Repeat("✓", maxAgentSteerPriorResultChars+1)) {
 		t.Fatal("follow-up retained the unbounded prior result")
 	}
