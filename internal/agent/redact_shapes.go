@@ -54,6 +54,22 @@ func tokenBody(c byte, kind tokenKind) bool {
 	return kind == bearerShape && strings.ContainsRune(".~+/=", rune(c))
 }
 
+func tokenSpan(text string, kind tokenKind) int {
+	end := 0
+	for end < len(text) {
+		// Known-value replacement must not turn a marker into a token
+		// delimiter and expose the remainder of the surrounding token.
+		if strings.HasPrefix(text[end:], redactionMarker) {
+			end += len(redactionMarker)
+		} else if tokenBody(text[end], kind) {
+			end++
+		} else {
+			break
+		}
+	}
+	return end
+}
+
 func shapeCandidate(text string, word bool) (end, label int, kind tokenKind, valid, partial bool) {
 	for _, shape := range tokenShapes {
 		if word && shape.kind != bearerShape {
@@ -83,10 +99,7 @@ func shapeCandidate(text string, word bool) (end, label int, kind tokenKind, val
 			}
 			label = start
 		}
-		end = start
-		for end < len(text) && tokenBody(text[end], shape.kind) {
-			end++
-		}
+		end = start + tokenSpan(text[start:], shape.kind)
 		valid = end-start >= shape.min
 		if shape.kind == jwtToken {
 			parts := strings.Split(text[:end], ".")
@@ -110,16 +123,13 @@ func (s *shapeRedaction) write(text string) string {
 				continue
 			}
 			s.discard = 0
-			if tokenBody(text[0], bearerShape) {
+			if tokenBody(text[0], bearerShape) || strings.HasPrefix(text, redactionMarker) {
 				output.WriteString("[redacted]")
 				s.discard = bearerShape
 			}
 		}
 		if s.discard != 0 {
-			end := 0
-			for end < len(text) && tokenBody(text[end], s.discard) {
-				end++
-			}
+			end := tokenSpan(text, s.discard)
 			if end > 0 {
 				s.word = tokenWord(text[end-1])
 			}
@@ -145,7 +155,7 @@ func (s *shapeRedaction) write(text string) string {
 		}
 		if valid || partial {
 			output.WriteString(text[:label])
-			output.WriteString("[redacted]")
+			output.WriteString(redactionMarker)
 			s.word = tokenWord(text[end-1])
 			text = text[end:]
 			if partial {
@@ -168,7 +178,7 @@ func (s *shapeRedaction) finish() string {
 	}
 	end, label, _, valid, _ := shapeCandidate(text, s.word)
 	if valid {
-		return text[:label] + "[redacted]" + text[end:]
+		return text[:label] + redactionMarker + text[end:]
 	}
 	return text
 }

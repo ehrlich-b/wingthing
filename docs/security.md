@@ -19,6 +19,32 @@ Local CLI and MCP access use authenticated Unix sockets and operating-system fil
 permissions. SSH attach uses OpenSSH's authentication, encryption, and host-key
 verification. Neither path uses Wingthing's relay encryption.
 
+## Headless provider text redaction
+
+Headless `agent_run` snapshots known credentials before returning or storing
+provider messages and diagnostics. Environment names must contain an underscore
+delimited component `key`, `token`, `secret`, `password`, `passwd`, `passphrase`,
+`credential(s)`, `authorization`, `cookie(s)`, `auth`, or `pass` (case insensitive).
+Names such as `KEYCHAIN_ENABLED` and `KEYBOARD_LAYOUT` do not qualify. Explicit
+credential inputs and URL password or secret-named query fields also qualify.
+Values require at least eight Unicode characters, four distinct characters, and
+Shannon entropy of at least two bits per character. Short flags such as `a`, `1`,
+and `on`, and low-diversity repeated values are ignored.
+
+Known values are matched in raw, percent/query/path encoded, JSON escaped,
+ASCII JSON/UTF-16 `\uXXXX` escaped, and standard/URL-safe base64 representations
+(with and without padding). This is a fixed set of representations, without
+recursive encoding combinations. `[redacted]` is preserved across passes and
+chunk boundaries. Independent token-shape rules cover Bearer, common API tokens,
+and JWTs even when their values are absent from the snapshot.
+
+Streaming holds partial known values and up to 255 bytes of a possible token
+shape. Longer shape candidates are conservatively redacted and their remaining
+token bytes suppressed until a delimiter; this also bounds incomplete JWTs.
+Close and cancellation flush legitimate incomplete prefixes through the same
+redactor. Interactive terminal/transcript/archive redaction remains a separate
+design item in `TODO.md`.
+
 ## Local self-hosted HTTPS
 
 `wt serve --local --https` and `wt roost start --https` add an HTTPS browser

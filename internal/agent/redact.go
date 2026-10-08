@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"regexp"
 	"sort"
@@ -11,7 +12,9 @@ import (
 	"unicode/utf16"
 )
 
-var secretName = regexp.MustCompile(`(?i)(key|token|secret|password|passwd|passphrase|credential|authorization|cookie|auth(?:_|$)|(?:^|_)pass(?:_|$))`)
+var secretName = regexp.MustCompile(`(?i)(?:^|_)(?:key|token|secret|password|passwd|passphrase|credentials?|authorization|cookies?|auth|pass)(?:_|$)`)
+
+const redactionMarker = "[redacted]"
 
 // Redactor is a run-local snapshot of credentials. Use it before persisting,
 // returning, or truncating any provider text, including successful messages.
@@ -33,21 +36,24 @@ func NewRedactor(environment []string, credentials ...string) *Redactor {
 		// Connection strings can carry passwords under otherwise ordinary names.
 		if u, err := url.Parse(value); err == nil {
 			if u.User != nil {
-				if password, ok := u.User.Password(); ok {
+				if password, ok := u.User.Password(); ok && plausibleSecret(password) {
 					secrets = append(secrets, password, value)
 				}
 			}
 			for key, values := range u.Query() {
 				if secretName.MatchString(key) {
-					secrets = append(secrets, values...)
-					secrets = append(secrets, value)
+					for _, credential := range values {
+						if plausibleSecret(credential) {
+							secrets = append(secrets, credential, value)
+						}
+					}
 				}
 			}
 		}
 	}
 	unique := make(map[string]bool)
 	for _, value := range secrets {
-		if value == "" {
+		if !plausibleSecret(value) {
 			continue
 		}
 		for _, encoded := range secretEncodings(value) {
@@ -62,6 +68,29 @@ func NewRedactor(environment []string, credentials ...string) *Redactor {
 	// Overlapping credentials must never leave the suffix of the longer one.
 	sort.Slice(r.secrets, func(i, j int) bool { return len(r.secrets[i]) > len(r.secrets[j]) })
 	return r
+}
+
+// Environment values must come from a secret-named component, not incidental
+// names like KEYCHAIN_ENABLED. Explicit credentials and URL password/query
+// fields are also known sources. All require at least eight runes, four distinct
+// runes, and two bits of Shannon entropy per rune; flags and short/low-diversity
+// values would otherwise corrupt ordinary output. See docs/security.md.
+func plausibleSecret(value string) bool {
+	counts := make(map[rune]int)
+	length := 0
+	for _, r := range value {
+		counts[r]++
+		length++
+	}
+	if length < 8 || len(counts) < 4 {
+		return false
+	}
+	entropy := 0.0
+	for _, count := range counts {
+		p := float64(count) / float64(length)
+		entropy -= p * math.Log2(p)
+	}
+	return entropy >= 2
 }
 
 // Generate a fixed set of common representations, never recursively encode
@@ -142,13 +171,13 @@ func (r *Redactor) streamText(text string) (ready, pending string) {
 }
 
 func (r *Redactor) knownText(text string, final bool) (ready, pending string) {
-	if r == nil || len(r.secrets) == 0 {
-		return text, ""
+	if r == nil {
+		r = &Redactor{}
 	}
 	var output strings.Builder
 	for text != "" {
 		next := 0
-		for next < len(text) && !r.initials[text[next]] {
+		for next < len(text) && !r.initials[text[next]] && text[next] != '[' {
 			next++
 		}
 		output.WriteString(text[:next])
@@ -156,17 +185,25 @@ func (r *Redactor) knownText(text string, final bool) (ready, pending string) {
 		if text == "" {
 			break
 		}
+		if strings.HasPrefix(text, redactionMarker) {
+			output.WriteString(redactionMarker)
+			text = text[len(redactionMarker):]
+			continue
+		}
+		if !final && len(text) < len(redactionMarker) && strings.HasPrefix(redactionMarker, text) {
+			return output.String(), strings.Clone(text)
+		}
 		matched := 0
 		for _, secret := range r.secrets {
 			if !final && len(text) < len(secret) && strings.HasPrefix(secret, text) {
-				return output.String(), text
+				return output.String(), strings.Clone(text)
 			}
 			if matched == 0 && strings.HasPrefix(text, secret) {
 				matched = len(secret)
 			}
 		}
 		if matched > 0 {
-			output.WriteString("[redacted]")
+			output.WriteString(redactionMarker)
 			text = text[matched:]
 		} else {
 			output.WriteByte(text[0])

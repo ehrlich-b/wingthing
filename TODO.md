@@ -30,6 +30,20 @@ product brief and CI workflows.
 
 ---
 
+## Interactive Credential Redaction Design
+
+- [ ] Decide the redaction contract for `agent_start`, terminal reads, session
+  transcripts, `lifecycle.jsonl`, and chat archives before changing those paths.
+  Review of `aab42ac` on 2026-10-08 used a fake Claude with the canary
+  `opaque-native-credential-7Qn3`: `terminal_read` returned it in ANSI and base64,
+  `session_read` returned it in lifecycle message text and raw provider content,
+  and the lifecycle journal and chat archive retained it verbatim. Evidence and
+  reproducer: `.scratch/review2/native-surfaces.json` and
+  `.scratch/review2/native_probe.py` (session `c90349963d10407e`). The headless
+  `agent_run` redactor does not cover these interactive surfaces.
+
+---
+
 ## Enterprise Blocker: Project Discovery in Multi-Role Repos
 
 Git repo parent (`ai-playground/`) swallows role subdirs (`dev/`, `qa/`, etc.) that have

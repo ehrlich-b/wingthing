@@ -12,8 +12,8 @@ import (
 func TestRedactorCoversEnvironmentCredentialsAndTokenShapes(t *testing.T) {
 	r := NewRedactor([]string{
 		"OPENAI_API_KEY=opaque-env-canary",
-		"CUSTOM_PASSWORD=short",
-		"CUSTOM_TOKEN=short-longer",
+		"CUSTOM_PASSWORD=overlap-canary",
+		"CUSTOM_TOKEN=overlap-canary-longer",
 		"COOKIE=session-canary",
 		"CUSTOM_AUTH=auth-canary",
 		"DB_PASS=pass-canary",
@@ -22,7 +22,7 @@ func TestRedactorCoversEnvironmentCredentialsAndTokenShapes(t *testing.T) {
 		"PATH=/safe/bin",
 	}, "helper-canary", "escaped\"canary")
 	for _, secret := range []string{
-		"opaque-env-canary", "short-longer", "short", "session-canary", "auth-canary", "pass-canary", "database-canary", "query-canary", "helper-canary", "escaped\"canary", `escaped\"canary`, "encoded?canary", "url+canary", "postgres://user:encoded%3Fcanary@localhost/db?token=url%2Bcanary",
+		"opaque-env-canary", "overlap-canary-longer", "overlap-canary", "session-canary", "auth-canary", "pass-canary", "database-canary", "query-canary", "helper-canary", "escaped\"canary", `escaped\"canary`, "encoded?canary", "url+canary", "postgres://user:encoded%3Fcanary@localhost/db?token=url%2Bcanary",
 		"sk-proj-unknown-canary-token", "ghp_unknowncanarytoken", "github_pat_unknowncanarytoken", "xoxb-123456789-canary", "AIza012345678901234567890", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJjYW5hcnkifQ.signature", "Bearer unknown-canary",
 	} {
 		if got := r.Text("provider refused: " + secret); strings.Contains(got, secret) || !strings.Contains(got, "[redacted]") {
@@ -32,7 +32,7 @@ func TestRedactorCoversEnvironmentCredentialsAndTokenShapes(t *testing.T) {
 	if got := r.Text("provider refused /safe/bin: check your account"); got != "provider refused /safe/bin: check your account" {
 		t.Fatalf("redaction erased useful diagnostics: %q", got)
 	}
-	if got := r.Text("short-longer"); got != "[redacted]" {
+	if got := r.Text("overlap-canary-longer"); got != "[redacted]" {
 		t.Fatal("overlapping credentials left a suffix")
 	}
 }
@@ -220,6 +220,68 @@ func TestStreamShapeBoundariesAndIncompleteTails(t *testing.T) {
 		}
 		if chunks.String() != text || s.Text() != text {
 			t.Fatalf("ordinary split output changed: %q -> %q", text, chunks.String())
+		}
+	}
+}
+
+func TestRedactorIgnoresImplausibleAndNonsecretValues(t *testing.T) {
+	r := NewRedactor([]string{
+		"CUSTOM_PASSWORD=a", "KEYCHAIN_ENABLED=1", "AUTH=on", "TOKEN=1234567", "SECRET=aaaaaaaaaaaaaaaa",
+		"KEYBOARD_LAYOUT=ordinary-long-value", "MONKEY=ordinary-long-value", "PATH=/ordinary-long-value",
+	})
+	text := "A cat can read data and status. Task 1: return 100 rows, version 1.12.1. on ordinary-long-value 1234567 aaaaaaaaaaaaaaaa [redacted]"
+	if got := r.Text(text); got != text {
+		t.Fatalf("ordinary output corrupted by nonsecret values: %q", got)
+	}
+	if len(r.secrets) != 0 {
+		t.Fatal("implausible or nonsecret values entered the snapshot")
+	}
+}
+
+func TestRedactorPreservesMarkerAcrossPassesAndChunks(t *testing.T) {
+	r := NewRedactor([]string{"CUSTOM_PASSWORD=redacted", "OTHER_TOKEN=opaque-canary-value"})
+	text := "[redacted] redacted opaque-canary-value [redacted]"
+	want := "[redacted] [redacted] [redacted] [redacted]"
+	if got := r.Text(text); got != want || r.Text(got) != want {
+		t.Fatalf("redaction marker corrupted: %q", got)
+	}
+	for split := 1; split < len("[redacted]"); split++ {
+		s := newStream(context.Background())
+		s.redactor = r
+		s.send(Chunk{Text: "[redacted]"[:split]})
+		s.send(Chunk{Text: "[redacted]"[split:]})
+		s.close(nil)
+		for _, ok := s.Next(); ok; _, ok = s.Next() {
+		}
+		if s.Text() != "[redacted]" {
+			t.Fatal("split marker was redacted internally")
+		}
+	}
+}
+
+func TestStreamRedactsTokenShapesContainingKnownValues(t *testing.T) {
+	const known = "embeddedCanary7Qn3"
+	r := NewRedactor([]string{"CUSTOM_PASSWORD=" + known})
+	for _, prefix := range []string{"Bearer ", "ghp_", "sk-proj-"} {
+		for _, length := range []int{8, 1024} {
+			for split := range len(known) {
+				s := newStream(context.Background())
+				s.redactor = r
+				s.send(Chunk{Text: "before " + prefix + strings.Repeat("q", length) + known[:split]})
+				s.send(Chunk{Text: known[split:] + "unknownsuffix after"})
+				s.close(nil)
+				var chunks strings.Builder
+				for c, ok := s.Next(); ok; c, ok = s.Next() {
+					chunks.WriteString(c.Text)
+				}
+				want := "before [redacted] after"
+				if prefix == "Bearer " {
+					want = "before Bearer [redacted] after"
+				}
+				if chunks.String() != want || s.Text() != want {
+					t.Fatalf("known marker interrupted token suppression: %q", chunks.String())
+				}
+			}
 		}
 	}
 }
