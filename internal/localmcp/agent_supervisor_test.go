@@ -85,3 +85,46 @@ func TestAgentSupervisorRejectsForeignAndDuplicateLaunches(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentRunReconcilesReusedSupervisorPID(t *testing.T) {
+	for _, tool := range []string{"status", "wait", "stop"} {
+		t.Run(tool, func(t *testing.T) {
+			// The recorded supervisor is gone; an unrelated same-UID process now
+			// occupies its PID. Never signal that process or keep the run alive.
+			s, db := fakeAgentWaitRuns(t, &store.Task{ID: "run", Type: "agent_run", Principal: "owner", Status: "running", RunnerPID: 1 << 30})
+			if _, err := db.DB().Exec("UPDATE tasks SET runner_pid = ? WHERE id = 'run'", os.Getpid()); err != nil {
+				t.Fatal(err)
+			}
+			args := json.RawMessage(`{"run_id":"run"}`)
+			var result map[string]any
+			var err error
+			switch tool {
+			case "status":
+				result, err = s.toolAgentStatus(args)
+			case "wait":
+				result, err = s.toolAgentWait(context.Background(), json.RawMessage(`{"run_id":"run","timeout_seconds":0.1}`))
+			case "stop":
+				result, err = s.toolAgentStop(args)
+			}
+			if err != nil || result["status"] != "orphaned" || result["timed_out"] == true {
+				t.Errorf("reused supervisor PID via %s: %#v %v", tool, result, err)
+			}
+			task, err := db.GetTask("run")
+			if err != nil || task.Status != "orphaned" || task.Error == nil || !strings.Contains(*task.Error, "provider exit unknown") {
+				t.Errorf("reused PID did not persist orphaned state: %#v %v", task, err)
+			}
+		})
+	}
+}
+
+func TestAgentRunRejectsMismatchedProcessStart(t *testing.T) {
+	s, db := fakeAgentWaitRuns(t, &store.Task{ID: "run", Type: "agent_run", Principal: "owner", Status: "running", RunnerPID: os.Getpid(), RunnerIdentity: "previous-process-start"})
+	result, err := s.toolAgentStatus(json.RawMessage(`{"run_id":"run"}`))
+	if err != nil || result["status"] != "orphaned" {
+		t.Fatalf("mismatched start identity accepted: %#v %v", result, err)
+	}
+	task, err := db.GetTask("run")
+	if err != nil || task.Status != "orphaned" {
+		t.Fatalf("mismatched identity was not persisted: %#v %v", task, err)
+	}
+}

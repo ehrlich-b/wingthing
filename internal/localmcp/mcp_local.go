@@ -29,6 +29,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/orchestrator"
+	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/ehrlich-b/wingthing/internal/store"
@@ -1614,12 +1615,16 @@ func (s *Server) submitAgentRun(args agentRunArgs, followup *agentRunFollowup) (
 		parentID = &parent
 	}
 	now := time.Now().UTC()
+	runnerIdentity, err := procinfo.ProcessIdentity(os.Getpid())
+	if err != nil {
+		return nil, fmt.Errorf("identify agent run launcher: %w", err)
+	}
 	task := &store.Task{
 		ID: cmdutil.GenTaskID(), Type: "agent_run", What: args.Prompt,
 		Agent: args.Agent, Model: args.Model, TimeoutSeconds: args.TimeoutSeconds,
 		RunAt: now, CreatedAt: now,
 		ParentID: parentID, DependsOn: dependsOn, CWD: resolvedCWD,
-		Principal: s.clientPrincipal(), RunnerPID: os.Getpid(),
+		Principal: s.clientPrincipal(), RunnerPID: os.Getpid(), RunnerIdentity: runnerIdentity,
 	}
 	if s.Unsandboxed {
 		task.Isolation = "privileged"
@@ -2050,7 +2055,7 @@ func (s *Server) loadOwnedAgentRunStatuses(db *sql.DB, runIDs []string) (map[str
 		arguments = append(arguments, runID)
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(runIDs)), ",")
-	rows, err := db.Query(`SELECT id, status, runner_pid FROM tasks
+	rows, err := db.Query(`SELECT id, status, runner_pid, runner_identity FROM tasks
 		WHERE type = 'agent_run' AND (principal = ? OR (principal = '' AND ? = 'default'))
 		AND id IN (`+placeholders+`)`, arguments...)
 	if err != nil {
@@ -2060,7 +2065,7 @@ func (s *Server) loadOwnedAgentRunStatuses(db *sql.DB, runIDs []string) (map[str
 	tasks := make(map[string]*store.Task, len(runIDs))
 	for rows.Next() {
 		task := &store.Task{}
-		if err := rows.Scan(&task.ID, &task.Status, &task.RunnerPID); err != nil {
+		if err := rows.Scan(&task.ID, &task.Status, &task.RunnerPID, &task.RunnerIdentity); err != nil {
 			return nil, err
 		}
 		tasks[task.ID] = task
