@@ -2,6 +2,7 @@ package taskrun
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -103,4 +104,58 @@ func TestRunTaskPersistsFailureFromEveryEarlyExit(t *testing.T) {
 	if stored == nil || stored.Status != "failed" || stored.Error == nil || *stored.Error == "" {
 		t.Fatalf("failed task state was not persisted: %#v", stored)
 	}
+}
+
+func TestRunTaskLargeOutputRedactsWithoutRescanningTranscript(t *testing.T) {
+	const secret = "review-only-fake-token-7Qn3"
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\ncat large.jsonl\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("OPENAI_API_KEY", secret)
+	t.Setenv("WT_PROVIDER_BASE_URL", "http://127.0.0.1")
+	block := strings.Repeat("common provider output. ", 5500) + secret + " tail\n"
+	line, err := json.Marshal(map[string]any{"type": "item.completed", "item": map[string]string{"type": "agent_message", "text": block}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := strings.Repeat(string(line)+"\n", 64) + "{\"type\":\"turn.completed\"}\n"
+	if err := os.WriteFile(filepath.Join(root, "large.jsonl"), []byte(fixture), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Dir: filepath.Join(root, "state"), DefaultAgent: "codex"}
+	if err := os.Mkdir(cfg.Dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(cfg.DBPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	task := &store.Task{ID: "large", Type: "agent_run", Agent: "codex", What: "large fixture", CWD: root, Isolation: "privileged", RunAt: time.Now()}
+	if err := db.CreateTask(task); err != nil {
+		t.Fatal(err)
+	}
+	// A generous bound catches the quadratic regression (68s on this fixture)
+	// while leaving room above the roughly 5s pre-redaction process baseline.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	start := time.Now()
+	if err := RunTaskTo(ctx, cfg, db, task, io.Discard); err != nil {
+		t.Fatalf("8 MiB run failed after %s: %v", time.Since(start), err)
+	}
+	stored, err := db.GetTask(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Repeat(strings.ReplaceAll(block, secret, "[redacted]"), 64)
+	if stored.Status != "done" || stored.Output == nil || *stored.Output != want {
+		t.Fatal("large run lost output or exposed a credential")
+	}
+	t.Logf("8 MiB run completed in %s", time.Since(start))
 }
