@@ -14,11 +14,14 @@ func TestRedactorCoversEnvironmentCredentialsAndTokenShapes(t *testing.T) {
 		"CUSTOM_PASSWORD=short",
 		"CUSTOM_TOKEN=short-longer",
 		"COOKIE=session-canary",
+		"CUSTOM_AUTH=auth-canary",
+		"DB_PASS=pass-canary",
 		"DATABASE_URL=postgres://user:database-canary@localhost/db?token=query-canary",
+		"CONNECTION=postgres://user:encoded%3Fcanary@localhost/db?token=url%2Bcanary",
 		"PATH=/safe/bin",
 	}, "helper-canary", "escaped\"canary")
 	for _, secret := range []string{
-		"opaque-env-canary", "short-longer", "short", "session-canary", "database-canary", "query-canary", "helper-canary", "escaped\"canary", `escaped\"canary`,
+		"opaque-env-canary", "short-longer", "short", "session-canary", "auth-canary", "pass-canary", "database-canary", "query-canary", "helper-canary", "escaped\"canary", `escaped\"canary`, "encoded?canary", "url+canary", "postgres://user:encoded%3Fcanary@localhost/db?token=url%2Bcanary",
 		"sk-proj-unknown-canary-token", "ghp_unknowncanarytoken", "github_pat_unknowncanarytoken", "xoxb-123456789-canary", "AIza012345678901234567890", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJjYW5hcnkifQ.signature", "Bearer unknown-canary",
 	} {
 		if got := r.Text("provider refused: " + secret); strings.Contains(got, secret) || !strings.Contains(got, "[redacted]") {
@@ -45,5 +48,27 @@ func TestCommandStreamRedactsCredentialsOutsideEnvironment(t *testing.T) {
 	}
 	if !errors.Is(s.Err(), cause) {
 		t.Fatal("redaction lost error identity")
+	}
+}
+
+func TestStreamRedactsCredentialsSplitAcrossChunks(t *testing.T) {
+	const canary = "7Qn3-split-provider-credential"
+	t.Setenv("OPENAI_API_KEY", canary)
+	t.Setenv("CUSTOM_PASSWORD", canary[:12])
+	s := newStream(context.Background())
+	s.send(Chunk{Text: "provider key " + canary[:5]})
+	s.send(Chunk{Text: canary[5:20]})
+	s.send(Chunk{Text: canary[20:] + " safe tail"})
+	s.close(nil)
+	var returned strings.Builder
+	for {
+		chunk, ok := s.Next()
+		if !ok {
+			break
+		}
+		returned.WriteString(chunk.Text)
+	}
+	if got := returned.String(); got != "provider key [redacted] safe tail" || s.Text() != got {
+		t.Fatal("split credential reached returned chunks or the transcript")
 	}
 }

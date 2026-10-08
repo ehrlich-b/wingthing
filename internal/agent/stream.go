@@ -18,6 +18,7 @@ type Stream struct {
 	inputTokens  int
 	outputTokens int
 	redactor     *Redactor
+	pending      string
 }
 
 func newStream(ctx context.Context) *Stream {
@@ -37,7 +38,17 @@ func newCommandStream(ctx context.Context, cmd *exec.Cmd, opts RunOpts) *Stream 
 }
 
 func (s *Stream) send(c Chunk) {
-	c.Text = s.redactor.Text(c.Text)
+	if c.Text == "" && s.pending == "" {
+		s.sendReady(c)
+		return
+	}
+	c.Text, s.pending = s.redactor.streamText(s.pending + c.Text)
+	if c.Text != "" {
+		s.sendReady(c)
+	}
+}
+
+func (s *Stream) sendReady(c Chunk) {
 	select {
 	case s.ch <- c:
 	case <-s.ctx.Done():
@@ -45,6 +56,12 @@ func (s *Stream) send(c Chunk) {
 }
 
 func (s *Stream) close(err error) {
+	if s.pending != "" {
+		// At EOF an incomplete credential prefix is ordinary partial output;
+		// fully matched credentials still pass through the shared redactor.
+		s.sendReady(Chunk{Text: s.redactor.Text(s.pending)})
+		s.pending = ""
+	}
 	s.mu.Lock()
 	s.err = s.redactor.Error(err)
 	s.done = true

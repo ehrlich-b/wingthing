@@ -60,6 +60,9 @@ fi
 for arg; do prompt=$arg; done
 printf '%s' "$prompt" > received-prompt
 printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"partial transcript"}}'
+if [ -f split-secret-output ]; then
+    printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":" key 7Qn3-split-"}}' '{"type":"item.completed","item":{"type":"agent_message","text":"provider-credential"}}'
+fi
 touch ready
 while [ ! -f release ]; do sleep 0.05; done
 if [ -f oversized-failure ]; then
@@ -629,6 +632,60 @@ func TestMCPAgentRunOversizedFailureWithZeroExit(t *testing.T) {
 	data, _ := json.Marshal(result)
 	if bad || !strings.Contains(fmt.Sprint(result["error"]), "provider refused [redacted]") || !strings.Contains(fmt.Sprint(result["output"]), "truncated") || bytes.Contains(data, []byte(canary)) {
 		t.Fatal("oversized failure lost its redacted diagnostic")
+	}
+	h.exit(t, false)
+}
+
+func TestMCPAgentRunRedactsSplitSecretsWhileRunning(t *testing.T) {
+	f := newRunFixture(t)
+	const canary = "7Qn3-split-provider-credential"
+	f.env = append(f.env, "OPENAI_API_KEY="+canary)
+	if err := os.WriteFile(filepath.Join(f.work, "split-secret-output"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	h := f.host(t, "owner", false)
+	started, bad := h.call(t, "agent_run", map[string]any{"prompt": "review", "agent": "codex", "cwd": f.work})
+	if bad {
+		t.Fatalf("start: %#v", started)
+	}
+	id := started["run_id"].(string)
+	t.Cleanup(func() { _ = os.WriteFile(filepath.Join(f.work, "release"), nil, 0600) })
+	waitRunFile(t, filepath.Join(f.work, "ready"))
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		result, bad := h.call(t, "agent_result", map[string]any{"run_id": id})
+		data, _ := json.Marshal(result)
+		if bad || bytes.Contains(data, []byte(canary)) {
+			t.Fatal("running result exposed a split credential")
+		}
+		if strings.Contains(fmt.Sprint(result["output"]), "[redacted]") {
+			if result["status"] != "running" {
+				t.Fatal("provider exited before partial-output inspection")
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("redacted partial transcript was not persisted")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	db, err := store.Open(filepath.Join(f.state, "wt.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var events string
+	if err := db.DB().QueryRow("SELECT COALESCE(group_concat(detail, ''), '') FROM task_log WHERE task_id = ? AND event = 'agent_message'", id).Scan(&events); err != nil || strings.Contains(events, canary) || !strings.Contains(events, "[redacted]") {
+		t.Fatal("stored events exposed a split credential or lost its redaction")
+	}
+	if task := f.task(t, id); task.Output == nil || strings.Contains(*task.Output, canary) {
+		t.Fatal("partial transcript storage exposed a split credential")
+	}
+	if err := os.WriteFile(filepath.Join(f.work, "release"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if result, bad := h.call(t, "agent_wait", map[string]any{"run_id": id, "timeout_seconds": 5}); bad || result["status"] != "done" {
+		t.Fatalf("split-secret run did not complete: %#v", result)
 	}
 	h.exit(t, false)
 }

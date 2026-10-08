@@ -2,18 +2,26 @@ package agent
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+	"unicode/utf8"
 )
 
 const maxAgentStderr = 64 * 1024
 
 type commandDiagnostics struct {
-	stderr cappedBuffer
+	stderr   cappedBuffer
+	redactor *Redactor
 }
 
-func startAgentCommand(cmd *exec.Cmd) (*commandDiagnostics, error) {
-	diagnostics := &commandDiagnostics{stderr: cappedBuffer{limit: maxAgentStderr}}
+func startAgentCommand(cmd *exec.Cmd, credentials ...string) (*commandDiagnostics, error) {
+	redactor := NewRedactor(append(os.Environ(), cmd.Environ()...), credentials...)
+	lookahead := 32
+	if len(redactor.secrets) > 0 && len(redactor.secrets[0]) > lookahead {
+		lookahead = len(redactor.secrets[0])
+	}
+	diagnostics := &commandDiagnostics{stderr: cappedBuffer{limit: maxAgentStderr + lookahead}, redactor: redactor}
 	cmd.Stderr = &diagnostics.stderr
 	configureProcessTree(cmd)
 	if err := cmd.Start(); err != nil {
@@ -27,7 +35,14 @@ func waitAgentCommand(cmd *exec.Cmd, diagnostics *commandDiagnostics) error {
 	if err == nil || diagnostics == nil {
 		return err
 	}
-	stderr := strings.TrimSpace(diagnostics.stderr.String())
+	stderr := diagnostics.redactor.Text(diagnostics.stderr.String())
+	if len(stderr) > maxAgentStderr {
+		stderr = stderr[:maxAgentStderr]
+		for !utf8.ValidString(stderr) {
+			stderr = stderr[:len(stderr)-1]
+		}
+	}
+	stderr = strings.TrimSpace(stderr)
 	if stderr == "" {
 		return err
 	}

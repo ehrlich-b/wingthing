@@ -79,7 +79,7 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 	if err != nil {
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
-	diagnostics, err := startAgentCommand(cmd)
+	diagnostics, err := startAgentCommand(cmd, opts.Credentials...)
 	if err != nil {
 		return nil, fmt.Errorf("start codex: %w", err)
 	}
@@ -97,7 +97,7 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 				providerErr = nil
 			}
 			if message, ok := parseCodexError(line); ok {
-				providerErr = fmt.Errorf("codex: %s", message)
+				providerErr = fmt.Errorf("codex: %s", stream.redactor.Text(message))
 			}
 		}, stream.redactor)
 		err := waitAgentCommand(cmd, diagnostics)

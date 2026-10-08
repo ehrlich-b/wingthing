@@ -69,7 +69,7 @@ func (c *Claude) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 	if err != nil {
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
-	diagnostics, err := startAgentCommand(cmd)
+	diagnostics, err := startAgentCommand(cmd, opts.Credentials...)
 	if err != nil {
 		return nil, fmt.Errorf("start claude: %w", err)
 	}

@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -50,4 +52,25 @@ func TestAgentCommandCancellationStopsProcessGroup(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > 2*time.Second {
 		t.Fatalf("process group cancellation took %s", elapsed)
 	}
+}
+
+func TestAgentCommandRedactsBeforeStderrCap(t *testing.T) {
+	const canary = "7Qn3-stderr-credential-canary"
+	path := filepath.Join(t.TempDir(), "stderr")
+	data := strings.Repeat("x", maxAgentStderr-8) + canary + strings.Repeat("x", maxAgentStderr)
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(context.Background(), "/bin/sh", "-c", `cat "$1" >&2; exit 7`, "fixture", path)
+	// The credential was supplied through an egg helper, outside the env.
+	cmd.Env = []string{"PATH=/usr/bin:/bin"}
+	diagnostics, err := startAgentCommand(cmd, canary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = waitAgentCommand(cmd, diagnostics)
+	if err == nil || strings.Contains(err.Error(), canary[:8]) || len(err.Error()) > maxAgentStderr+64 {
+		t.Fatal("stderr truncation exposed a credential prefix or lost its bound")
+	}
+	assertProviderErrorChainRedacted(t, err, canary[:8])
 }

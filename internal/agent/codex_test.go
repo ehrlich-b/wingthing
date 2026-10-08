@@ -285,9 +285,28 @@ func TestCodexRedactsProviderSecrets(t *testing.T) {
 				if !errors.As(stream.Err(), &exitErr) || exitErr.ExitCode() != 7 {
 					t.Error("redaction lost the provider exit code")
 				}
+				assertProviderErrorChainRedacted(t, stream.Err(), canary)
 			} else if stream.Err() != nil {
 				t.Fatal(stream.Err())
 			}
 		})
+	}
+}
+
+func assertProviderErrorChainRedacted(t *testing.T, err error, canary string) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+	if strings.Contains(err.Error(), canary) {
+		t.Error("unwrapping the provider error exposed a credential")
+	}
+	switch cause := err.(type) {
+	case interface{ Unwrap() []error }:
+		for _, child := range cause.Unwrap() {
+			assertProviderErrorChainRedacted(t, child, canary)
+		}
+	case interface{ Unwrap() error }:
+		assertProviderErrorChainRedacted(t, cause.Unwrap(), canary)
 	}
 }
