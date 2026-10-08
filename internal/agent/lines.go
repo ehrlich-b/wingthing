@@ -129,6 +129,8 @@ type eventMetadata struct {
 	eventType    string
 	itemType     string
 	hasText      bool
+	literal      string
+	isError      bool
 }
 
 func (m *eventMetadata) read(part []byte) {
@@ -177,6 +179,7 @@ func (m *eventMetadata) read(part []byte) {
 			m.depth++
 			m.field, m.lastString = "", ""
 		case '}', ']':
+			m.finishLiteral()
 			for _, depth := range []*int{&m.itemDepth, &m.messageDepth, &m.contentDepth, &m.blockDepth, &m.deltaDepth} {
 				if *depth == m.depth {
 					*depth = 0
@@ -185,9 +188,27 @@ func (m *eventMetadata) read(part []byte) {
 			m.depth--
 			m.field, m.lastString = "", ""
 		case ',':
+			m.finishLiteral()
 			m.field, m.lastString = "", ""
+		case ' ', '\t', '\r', '\n':
+			m.finishLiteral()
+		default:
+			if len(m.literal) < 5 {
+				m.literal += string(c)
+			}
 		}
 	}
+}
+
+func (m *eventMetadata) finishLiteral() {
+	if m.literal == "" {
+		return
+	}
+	if m.depth == 1 && m.field == "is_error" {
+		m.isError = m.literal == "true"
+	}
+	m.literal = ""
+	m.field, m.lastString = "", ""
 }
 
 func (m *eventMetadata) finishString() {
@@ -224,6 +245,13 @@ func (m *eventMetadata) failure(provider string) (string, bool) {
 			return `{"type":"error"}`, true
 		case m.eventType == "item.completed" && m.itemType == "error":
 			return `{"type":"item.completed","item":{"type":"error"}}`, true
+		}
+	case "claude", "cursor":
+		if m.eventType == "error" {
+			return `{"type":"error"}`, true
+		}
+		if m.eventType == "result" && m.isError {
+			return `{"type":"result","is_error":true}`, true
 		}
 	}
 	return "", false

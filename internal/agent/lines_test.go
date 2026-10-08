@@ -273,6 +273,33 @@ func TestEventMetadataIgnoresPayloadTypes(t *testing.T) {
 	}
 }
 
+func TestClaudeOversizedFailureKeepsNoProviderText(t *testing.T) {
+	const canary = "provider-error-canary"
+	for _, tc := range []struct {
+		name, prefix, suffix string
+	}{
+		{"error", `{"type":"error","message":"` + canary, `"}`},
+		{"late-error-type", `{"message":"` + canary, `","type":"error"}`},
+		{"result", `{"type":"result","is_error":true,"result":"` + canary, `"}`},
+		{"late-result-fields", `{"result":"` + canary, `","type":"result","is_error":true}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			warnings := captureAgentWarnings(t)
+			line := sizedEvent(tc.prefix, tc.suffix, oversizedTestLine)
+			// A later small result can replace the missing-result diagnostic,
+			// but must not erase the failure in the skipped envelope.
+			stream := runFakeProvider(t, NewClaude(0), line+"\n"+`{"type":"result","input_tokens":1,"output_tokens":2}`)
+			if err := stream.Err(); err == nil || FailureKind(err) != ProviderError || strings.Contains(err.Error(), canary) || stream.Text() != "" {
+				t.Fatalf("oversized failure = %v, output = %q", err, stream.Text())
+			}
+			if strings.Contains(warnings.String(), canary) {
+				t.Fatal("provider text reached warning log")
+			}
+			checkAgentWarning(t, warnings, "claude", oversizedTestLine)
+		})
+	}
+}
+
 type failingProviderReader struct{ err error }
 
 func (r failingProviderReader) Read([]byte) (int, error) { return 0, r.err }

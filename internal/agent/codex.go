@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 type Codex struct {
@@ -94,9 +96,14 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 				ThreadID string `json:"thread_id"`
 			}
 			if json.Unmarshal([]byte(line), &session) == nil && session.Type == "thread.started" {
-				threadID = session.ThreadID
+				threadID = ""
+				if validCodexThreadID(session.ThreadID) {
+					threadID = session.ThreadID
+				}
 				stream.setProviderSession(threadID, "")
-				stream.send(Chunk{ThreadID: threadID})
+				if threadID != "" {
+					stream.send(Chunk{ThreadID: threadID})
+				}
 			}
 			if text, ok := parseCodexEvent(line); ok {
 				stream.send(Chunk{Text: text})
@@ -119,6 +126,14 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 	}()
 
 	return stream, nil
+}
+
+func validCodexThreadID(id string) bool {
+	if len(id) != 36 {
+		return false
+	}
+	_, err := uuid.Parse(id)
+	return err == nil
 }
 
 // codexEvent represents a Codex CLI NDJSON event.

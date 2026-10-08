@@ -3,12 +3,15 @@ package agent
 import (
 	"bufio"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+const maxCodexRolloutHeader = 1024 * 1024
 
 func codexHome(cmd *exec.Cmd) string {
 	var home, dataHome string
@@ -60,14 +63,14 @@ func codexRolloutPath(home, threadID string) string {
 		if err != nil {
 			return nil
 		}
-		line, readErr := bufio.NewReaderSize(file, 4096).ReadSlice('\n')
+		line, readErr := bufio.NewReader(io.LimitReader(file, maxCodexRolloutHeader+1)).ReadBytes('\n')
 		var meta struct {
 			Type    string `json:"type"`
 			Payload struct {
 				ID string `json:"id"`
 			} `json:"payload"`
 		}
-		valid := readErr == nil && json.Unmarshal(line, &meta) == nil && meta.Type == "session_meta" && meta.Payload.ID == threadID
+		valid := (readErr == nil || readErr == io.EOF) && len(line) <= maxCodexRolloutHeader && json.Unmarshal(line, &meta) == nil && meta.Type == "session_meta" && meta.Payload.ID == threadID
 		_ = file.Close()
 		if valid {
 			if found != "" {

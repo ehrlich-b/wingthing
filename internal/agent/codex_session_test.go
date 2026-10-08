@@ -2,9 +2,11 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -19,7 +21,7 @@ func TestCodexReturnsExactThreadAndExistingRollout(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "rollout-2026-10-08T12-00-00-"+thread+".jsonl")
-	if err := os.WriteFile(path, []byte(`{"type":"session_meta","payload":{"id":"`+thread+`"}}`+"\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"type":"session_meta","payload":{"id":"`+thread+`","base_instructions":{"text":"`+strings.Repeat("instruction ", 2048)+`"}}}`+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	stream, err := NewCodex(0).Run(context.Background(), "review", RunOpts{CmdFactory: func(ctx context.Context, _ string, _ []string) (*exec.Cmd, error) {
@@ -47,6 +49,61 @@ func TestCodexReturnsExactThreadAndExistingRollout(t *testing.T) {
 	}
 	if got := codexRolloutPath(home, "missing-thread"); got != "" {
 		t.Fatalf("missing rollout guessed: %q", got)
+	}
+}
+
+func TestCodexValidatesThreadID(t *testing.T) {
+	const thread = "01998952-827c-7000-8000-123456789abc"
+	for _, tc := range []struct {
+		name, id string
+		valid    bool
+	}{
+		{"lowercase", thread, true},
+		{"uppercase", strings.ToUpper(thread), true},
+		{"provider-text", "provider-error-canary", false},
+		{"empty", "", false},
+		{"compact", strings.ReplaceAll(thread, "-", ""), false},
+		{"braced", "{" + thread + "}", false},
+		{"urn", "urn:uuid:" + thread, false},
+		{"whitespace", thread + " ", false},
+		{"nonhex", thread[:35] + "z", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			data, err := json.Marshal(map[string]string{"type": "thread.started", "thread_id": tc.id})
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(home, "stdout")
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			stream, err := NewCodex(0).Run(context.Background(), "review", RunOpts{CmdFactory: func(ctx context.Context, _ string, _ []string) (*exec.Cmd, error) {
+				cmd := exec.CommandContext(ctx, "cat", path)
+				cmd.Env = []string{"CODEX_HOME=" + home}
+				return cmd, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := ""
+			if tc.valid {
+				want = tc.id
+			}
+			for {
+				chunk, ok := stream.Next()
+				if !ok {
+					break
+				}
+				if chunk.ThreadID != want {
+					t.Errorf("thread chunk = %q, want %q", chunk.ThreadID, want)
+				}
+			}
+			id, rollout := stream.ProviderSession()
+			if id != want || rollout != "" || stream.Err() != nil {
+				t.Fatalf("provider session = %q, %q, %v", id, rollout, stream.Err())
+			}
+		})
 	}
 }
 
