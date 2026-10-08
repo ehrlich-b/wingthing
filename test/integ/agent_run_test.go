@@ -529,3 +529,73 @@ func TestMCPAgentRunRedactsStoredAndReturnedSecrets(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPAgentRunReusedSupervisorPIDBecomesOrphaned(t *testing.T) {
+	f := newRunFixture(t)
+	h := f.host(t, "owner", false)
+	started, bad := h.call(t, "agent_run", map[string]any{"prompt": "review", "agent": "codex", "cwd": f.work})
+	if bad {
+		t.Fatalf("start: %#v", started)
+	}
+	id := started["run_id"].(string)
+	t.Cleanup(func() { _ = os.WriteFile(filepath.Join(f.work, "release"), nil, 0600) })
+	waitRunFile(t, filepath.Join(f.work, "ready"))
+	task := f.task(t, id)
+	if task.RunnerIdentity == "" {
+		t.Fatal("supervisor start identity was not saved")
+	}
+	h.exit(t, false)
+	if err := syscall.Kill(task.RunnerPID, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(filepath.Join(f.state, "wt.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.DB().Exec("UPDATE tasks SET runner_pid = ? WHERE id = ?", os.Getpid(), id); err != nil {
+		t.Fatal(err)
+	}
+	h = f.host(t, "owner", false)
+	for _, tool := range []string{"agent_status", "agent_wait", "agent_result", "agent_stop"} {
+		result, bad := h.call(t, tool, map[string]any{"run_id": id})
+		if bad || result["status"] != "orphaned" || result["timed_out"] == true {
+			t.Fatalf("reused PID via %s: %#v", tool, result)
+		}
+	}
+	if task := f.task(t, id); task.Status != "orphaned" || task.Output == nil || *task.Output != "partial transcript" {
+		t.Fatalf("orphan lost its partial transcript: %#v", task)
+	}
+	h.exit(t, false)
+}
+
+func TestMCPAgentRunLegacySupervisorIdentity(t *testing.T) {
+	f := newRunFixture(t)
+	h := f.host(t, "owner", false)
+	started, bad := h.call(t, "agent_run", map[string]any{"prompt": "review", "agent": "codex", "cwd": f.work})
+	if bad {
+		t.Fatalf("start: %#v", started)
+	}
+	id := started["run_id"].(string)
+	t.Cleanup(func() { _ = os.WriteFile(filepath.Join(f.work, "release"), nil, 0600) })
+	waitRunFile(t, filepath.Join(f.work, "ready"))
+	db, err := store.Open(filepath.Join(f.state, "wt.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.DB().Exec("UPDATE tasks SET runner_identity = '' WHERE id = ?", id); err != nil {
+		t.Fatal(err)
+	}
+	h.exit(t, false)
+	h = f.host(t, "owner", false)
+	result, bad := h.call(t, "agent_status", map[string]any{"run_id": id})
+	if bad || result["status"] != "running" {
+		t.Fatalf("legacy supervisor incorrectly orphaned: %#v", result)
+	}
+	result, bad = h.call(t, "agent_stop", map[string]any{"run_id": id})
+	if bad || result["stopped"] != true {
+		t.Fatalf("verified legacy supervisor cannot be stopped: %#v", result)
+	}
+	h.exit(t, false)
+}

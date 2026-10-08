@@ -135,7 +135,11 @@ func RunAgentSupervisor(ctx context.Context, cfg *config.Config, runID string, i
 	if task.Status != "pending" || task.RunnerPID != launch.LauncherPID {
 		return errors.New("agent run is already claimed or terminal")
 	}
-	if err := taskStore.ClaimAgentRunSupervisor(runID, launch.LauncherPID, os.Getpid()); err != nil {
+	identity, err := procinfo.ProcessIdentity(os.Getpid())
+	if err != nil {
+		return fmt.Errorf("identify agent supervisor: %w", err)
+	}
+	if err := taskStore.ClaimAgentRunSupervisor(runID, launch.LauncherPID, os.Getpid(), identity); err != nil {
 		return err
 	}
 	if _, err := ready.Write([]byte{1}); err != nil {
@@ -167,17 +171,34 @@ func (s *Server) markLostAgentSupervisor(runID string, pid int, message string) 
 }
 
 func (s *Server) reconcileAgentRun(taskStore *store.Store, task *store.Task) (*store.Task, error) {
-	if (task.Status != "pending" && task.Status != "running") || task.RunnerPID <= 0 || procinfo.OwnedProcessIsAlive(task.RunnerPID) {
+	if (task.Status != "pending" && task.Status != "running") || task.RunnerPID <= 0 || s.agentSupervisorIsAlive(task) {
 		return task, nil
 	}
-	message := fmt.Sprintf("supervising Wingthing process %d exited; provider exit unknown", task.RunnerPID)
+	message := fmt.Sprintf("supervising Wingthing process %d exited or changed identity; provider exit unknown", task.RunnerPID)
 	if err := taskStore.MarkAgentRunOrphaned(task.ID, task.RunnerPID, message); err != nil {
 		return nil, fmt.Errorf("mark orphaned agent run: %w", err)
 	}
 	return taskStore.GetTask(task.ID)
 }
 
+func (s *Server) agentSupervisorIsAlive(task *store.Task) bool {
+	if !procinfo.OwnedProcessIsAlive(task.RunnerPID) {
+		return false
+	}
+	if task.RunnerIdentity != "" {
+		identity, err := procinfo.ProcessIdentity(task.RunnerPID)
+		return err == nil && identity == task.RunnerIdentity
+	}
+	// Runs admitted by older binaries have no saved start identity. Retain
+	// compatibility only when argv verifies the unique run and state directory.
+	argv, err := procinfo.ProcessArgv(task.RunnerPID)
+	return err == nil && agentSupervisorArgvMatches(argv, task.ID, s.Cfg.Dir)
+}
+
 func (s *Server) stopDetachedAgentRun(taskStore *store.Store, task *store.Task) error {
+	if !s.agentSupervisorIsAlive(task) {
+		return nil
+	}
 	argv, err := procinfo.ProcessArgv(task.RunnerPID)
 	if err != nil {
 		if !procinfo.OwnedProcessIsAlive(task.RunnerPID) {
@@ -192,13 +213,16 @@ func (s *Server) stopDetachedAgentRun(taskStore *store.Store, task *store.Task) 
 	if err != nil {
 		return err
 	}
-	if err := proc.Signal(syscall.SIGTERM); err != nil && procinfo.OwnedProcessIsAlive(task.RunnerPID) {
+	if !s.agentSupervisorIsAlive(task) {
+		return nil
+	}
+	if err := proc.Signal(syscall.SIGTERM); err != nil && s.agentSupervisorIsAlive(task) {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	return waitForAgentRunCondition(ctx, func() (bool, error) {
-		if !procinfo.OwnedProcessIsAlive(task.RunnerPID) {
+		if !s.agentSupervisorIsAlive(task) {
 			return true, nil
 		}
 		argv, err := procinfo.ProcessArgv(task.RunnerPID)

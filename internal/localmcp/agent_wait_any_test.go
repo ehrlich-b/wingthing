@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"modernc.org/sqlite"
 )
@@ -30,6 +31,13 @@ func fakeAgentWaitRuns(t *testing.T, tasks ...*store.Task) (*Server, *store.Stor
 	}
 	t.Cleanup(func() { closeForTest(t, "fake run store", db) })
 	for _, task := range tasks {
+		// A fixture using this live process must also bind its start identity.
+		if task.RunnerPID == os.Getpid() && task.RunnerIdentity == "" {
+			task.RunnerIdentity, err = procinfo.ProcessIdentity(task.RunnerPID)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 		if err := db.CreateTask(task); err != nil {
 			t.Fatal(err)
 		}

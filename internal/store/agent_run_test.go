@@ -22,17 +22,17 @@ func TestAgentSupervisorClaimAndOrphanRaces(t *testing.T) {
 	if _, err := s.DB().Exec("UPDATE tasks SET error = ? WHERE id = ?", knownError, task.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ClaimAgentRunSupervisor(task.ID, 10, 20); err != nil {
+	if err := s.ClaimAgentRunSupervisor(task.ID, 10, 20, "supervisor-start"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ClaimAgentRunSupervisor(task.ID, 10, 30); err == nil {
+	if err := s.ClaimAgentRunSupervisor(task.ID, 10, 30, "supervisor-start"); err == nil {
 		t.Fatal("duplicate supervisor claimed the same run")
 	}
 	if err := s.MarkAgentRunOrphaned(task.ID, 10, "wrong supervisor"); err != nil {
 		t.Fatal(err)
 	}
 	current, err := s.GetTask(task.ID)
-	if err != nil || current.Status != "pending" || current.RunnerPID != 20 {
+	if err != nil || current.Status != "pending" || current.RunnerPID != 20 || current.RunnerIdentity != "supervisor-start" {
 		t.Fatalf("stale supervisor changed run: %#v %v", current, err)
 	}
 	if err := s.MarkAgentRunOrphaned(task.ID, 20, "supervisor lost; provider exit unknown"); err != nil {
@@ -42,7 +42,7 @@ func TestAgentSupervisorClaimAndOrphanRaces(t *testing.T) {
 	if err != nil || current.Status != "orphaned" || current.FinishedAt == nil || current.Output == nil || *current.Output != partial || current.Error == nil || !strings.Contains(*current.Error, knownError) || !strings.Contains(*current.Error, "provider exit unknown") {
 		t.Fatalf("orphan lost evidence: %#v %v", current, err)
 	}
-	if err := s.ClaimAgentRunSupervisor(task.ID, 20, 30); err == nil {
+	if err := s.ClaimAgentRunSupervisor(task.ID, 20, 30, "supervisor-start"); err == nil {
 		t.Fatal("terminal run was restarted")
 	}
 	if err := s.UpdateTaskStatus(task.ID, "done"); err != nil {
@@ -58,7 +58,7 @@ func TestAgentSupervisorClaimAndOrphanRaces(t *testing.T) {
 	if err := s.CreateTask(&Task{ID: "prompt", Type: "prompt", RunnerPID: 10}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ClaimAgentRunSupervisor("prompt", 10, 20); err == nil {
+	if err := s.ClaimAgentRunSupervisor("prompt", 10, 20, "supervisor-start"); err == nil {
 		t.Fatal("supervisor claimed a non-agent task")
 	}
 }
