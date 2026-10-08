@@ -1803,7 +1803,7 @@ func (s *Server) setAgentRunError(runID string, runErr error) {
 		return
 	}
 	defer cmdutil.CloseWithLog("task store", taskStore)
-	if err := taskStore.SetTaskError(runID, runErr.Error()); err != nil {
+	if err := taskStore.SetTaskFailure(runID, runErr.Error(), string(agentpkg.FailureKind(runErr))); err != nil {
 		log.Printf("record agent run %s failure: %v", runID, err)
 	}
 }
@@ -1851,6 +1851,15 @@ func agentRunStatusData(task *store.Task) map[string]any {
 		"model": task.Model, "cwd": task.CWD, "isolation": task.Isolation,
 		"timeout_seconds": task.TimeoutSeconds,
 		"created_at":      task.CreatedAt.UTC().Format(time.RFC3339),
+	}
+	if task.ErrorKind != "" {
+		data["error_kind"] = task.ErrorKind
+	}
+	if task.ProviderThreadID != "" {
+		data["thread_id"] = task.ProviderThreadID
+	}
+	if task.ProviderRolloutPath != "" {
+		data["rollout_path"] = task.ProviderRolloutPath
 	}
 	if task.StartedAt != nil {
 		data["started_at"] = task.StartedAt.UTC().Format(time.RFC3339)
@@ -2092,6 +2101,15 @@ func (s *Server) toolAgentResult(arguments json.RawMessage) (map[string]any, err
 		return nil, err
 	}
 	defer cmdutil.CloseWithLog("task store", taskStore)
+	if task.Status == "running" || task.Status == "orphaned" {
+		output, err := taskStore.AgentRunOutput(task.ID)
+		if err != nil {
+			return nil, err
+		}
+		if output != nil {
+			task.Output = output
+		}
+	}
 	data := agentRunStatusData(task)
 	data["ready"] = agentRunTerminal(task.Status)
 	if task.Output != nil {

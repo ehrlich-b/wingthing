@@ -62,3 +62,53 @@ func TestAgentSupervisorClaimAndOrphanRaces(t *testing.T) {
 		t.Fatal("supervisor claimed a non-agent task")
 	}
 }
+
+func TestAgentRunOrphanRecoversEventsAfterSnapshot(t *testing.T) {
+	s, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	task := &Task{ID: "run", Type: "agent_run", Status: "running", RunnerPID: 10}
+	if err := s.CreateTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetTaskOutput(task.ID, "first"); err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"first", " second", " third"} {
+		if err := s.AppendLog(task.ID, "agent_message", &text); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.MarkAgentRunOrphaned(task.ID, 10, "supervisor lost; provider exit unknown"); err != nil {
+		t.Fatal(err)
+	}
+	current, err := s.GetTask(task.ID)
+	if err != nil || current.Output == nil || *current.Output != "first second third" {
+		t.Fatalf("orphan lost its event tail: %#v %v", current, err)
+	}
+}
+
+func TestTaskProviderFailureAndSessionRoundTrip(t *testing.T) {
+	s, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	task := &Task{ID: "failure", Type: "agent_run", ErrorKind: "provider_refused", ProviderThreadID: "thread", ProviderRolloutPath: "/fixture/rollout.jsonl"}
+	if err := s.CreateTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetTaskFailure(task.ID, "provider_refused: codex exited with status 1", "provider_refused"); err != nil {
+		t.Fatal(err)
+	}
+	current, err := s.GetTask(task.ID)
+	if err != nil || current.ErrorKind != task.ErrorKind || current.ProviderThreadID != task.ProviderThreadID || current.ProviderRolloutPath != task.ProviderRolloutPath {
+		t.Fatalf("provider metadata lost: %#v %v", current, err)
+	}
+	tasks, err := s.ListRecent(1)
+	if err != nil || len(tasks) != 1 || tasks[0].ErrorKind != task.ErrorKind || tasks[0].ProviderThreadID != task.ProviderThreadID {
+		t.Fatalf("listed provider metadata lost: %#v %v", tasks, err)
+	}
+}

@@ -1,15 +1,15 @@
 package agent
 
 import (
-	"fmt"
+	"errors"
 	"os/exec"
-	"strings"
 )
 
 const maxAgentStderr = 64 * 1024
 
 type commandDiagnostics struct {
-	stderr cappedBuffer
+	stderr  cappedBuffer
+	failure ErrorKind
 }
 
 func startAgentCommand(cmd *exec.Cmd) (*commandDiagnostics, error) {
@@ -22,21 +22,34 @@ func startAgentCommand(cmd *exec.Cmd) (*commandDiagnostics, error) {
 	return diagnostics, nil
 }
 
-func waitAgentCommand(cmd *exec.Cmd, diagnostics *commandDiagnostics) error {
+func waitAgentCommand(cmd *exec.Cmd, diagnostics *commandDiagnostics, provider string) error {
 	err := cmd.Wait()
-	if err == nil || diagnostics == nil {
-		return err
+	var kind ErrorKind
+	if diagnostics != nil {
+		kind = diagnostics.failure
+		if err != nil || kind != "" {
+			kind = preferFailureKind(kind, classifyProviderText(diagnostics.stderr.String()))
+		}
+		// Discard the classification input before returning anything to callers.
+		diagnostics.stderr.data = nil
 	}
-	stderr := strings.TrimSpace(diagnostics.stderr.String())
-	if stderr == "" {
-		return err
+	if err == nil && kind == "" {
+		return nil
 	}
-	return fmt.Errorf("%w: %s", err, stderr)
+	if kind == "" {
+		kind = ProviderExit
+	}
+	failure := &Failure{Kind: kind, Provider: provider}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		// Keep only the process status, never ExitError.Stderr.
+		failure.exit = &exec.ExitError{ProcessState: exit.ProcessState}
+	}
+	return failure
 }
 
-// cappedBuffer keeps CLI diagnostics useful without allowing a noisy child to
-// consume unbounded memory. It intentionally retains the first output, which
-// is where CLIs normally print their actionable startup/authentication error.
+// cappedBuffer retains only a bounded classification input. Its bytes must
+// never be returned to callers or persisted.
 type cappedBuffer struct {
 	data  []byte
 	limit int

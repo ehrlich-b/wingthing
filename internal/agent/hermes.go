@@ -73,9 +73,9 @@ func (h *Hermes) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 				stream.send(Chunk{Text: line + "\n"})
 			}
 		})
-		err := waitAgentCommand(cmd, diagnostics)
+		err := waitAgentCommand(cmd, diagnostics, "hermes")
 		if readErr != nil {
-			err = errors.Join(err, readErr)
+			err = errors.Join(err, &Failure{Kind: ProviderError, Provider: "hermes"}, readErr)
 		}
 		stream.close(err)
 	}()

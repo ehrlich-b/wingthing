@@ -103,6 +103,7 @@ The bar: someone new can use a wing without confusion or broken UX.
 - [ ] WebSocket direct to Fly — bypass Cloudflare for ws:// traffic (ws.wingthing.ai)
 
 ### Security
+- [ ] Interactive egg surfaces (agent_start, session reads, lifecycle.jsonl, chat archive, terminal reads) carry raw provider text; keep secrets out of the provider-visible environment as the long-term fix, rather than redaction.
 - [ ] Stop storing JWTs in device_tokens — new ES256 tokens should be stateless (verify
   by signature only). Remove `CreateDeviceToken` call from JWT issuance, remove
   `ValidateToken` fallback from wing/PTY auth paths. Keep device_tokens for local mode

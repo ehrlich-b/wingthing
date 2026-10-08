@@ -128,3 +128,41 @@ func TestAgentRunRejectsMismatchedProcessStart(t *testing.T) {
 		t.Fatalf("mismatched identity was not persisted: %#v %v", task, err)
 	}
 }
+
+func TestAgentResultIncludesLiveEventsAfterSnapshot(t *testing.T) {
+	s, db := fakeAgentWaitRuns(t, &store.Task{ID: "run", Type: "agent_run", Principal: "owner", Status: "running"})
+	if err := db.SetTaskOutput("run", "first"); err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"first", " second", " third"} {
+		if err := db.AppendLog("run", "agent_message", &text); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := s.toolAgentResult(json.RawMessage(`{"run_id":"run"}`))
+	if err != nil || result["ready"] != false || result["output"] != "first second third" {
+		t.Fatalf("live result lost event tail: %#v, %v", result, err)
+	}
+}
+
+func TestAgentStatusAndResultExposeStructuredFailure(t *testing.T) {
+	s, db := fakeAgentWaitRuns(t, &store.Task{ID: "run", Type: "agent_run", Principal: "owner"})
+	if err := db.SetTaskFailure("run", "provider_refused: codex exited with status 1", "provider_refused"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetTaskProviderSession("run", "thread", "/fixture/rollout.jsonl"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"status", "result"} {
+		var result map[string]any
+		var err error
+		if tool == "status" {
+			result, err = s.toolAgentStatus(json.RawMessage(`{"run_id":"run"}`))
+		} else {
+			result, err = s.toolAgentResult(json.RawMessage(`{"run_id":"run"}`))
+		}
+		if err != nil || result["error_kind"] != "provider_refused" || result["thread_id"] != "thread" || result["rollout_path"] != "/fixture/rollout.jsonl" {
+			t.Fatalf("%s lost failure/session metadata: %#v, %v", tool, result, err)
+		}
+	}
+}

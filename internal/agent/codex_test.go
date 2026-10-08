@@ -209,12 +209,12 @@ func TestCodexFinalProviderError(t *testing.T) {
 	for _, tc := range []struct {
 		name, events string
 		exit         int
-		message      string
+		kind         ErrorKind
 	}{
-		{"turn-failed", `{"type":"turn.failed","error":{"message":"This content was flagged for possible cybersecurity risk."}}`, 1, "This content was flagged for possible cybersecurity risk."},
-		{"error-event", `{"type":"error","message":"Provider refused the request."}`, 1, "Provider refused the request."},
-		{"error-item", `{"type":"item.completed","item":{"type":"error","message":"Provider exhausted the quota."}}`, 1, "Provider exhausted the quota."},
-		{"zero-exit-refusal", `{"type":"turn.failed","error":{"message":"Provider refused the request."}}`, 0, "Provider refused the request."},
+		{"turn-failed", `{"type":"turn.failed","error":{"message":"This content was flagged for possible cybersecurity risk."}}`, 1, ProviderRefused},
+		{"error-event", `{"type":"error","message":"Provider refused the request."}`, 1, ProviderRefused},
+		{"error-item", `{"type":"item.completed","item":{"type":"error","message":"Provider exhausted the quota."}}`, 1, RateLimited},
+		{"zero-exit-refusal", `{"type":"turn.failed","error":{"message":"Provider refused the request."}}`, 0, ProviderRefused},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stream, err := NewCodex(0).Run(context.Background(), "review", RunOpts{CmdFactory: func(ctx context.Context, _ string, _ []string) (*exec.Cmd, error) {
@@ -230,7 +230,7 @@ func TestCodexFinalProviderError(t *testing.T) {
 					break
 				}
 			}
-			if stream.Err() == nil || !strings.Contains(stream.Err().Error(), tc.message) {
+			if stream.Err() == nil || FailureKind(stream.Err()) != tc.kind || strings.Contains(stream.Err().Error(), "Provider ") || strings.Contains(stream.Err().Error(), "cybersecurity risk") || strings.Contains(stream.Err().Error(), "Reading additional input") {
 				t.Fatalf("provider error = %v", stream.Err())
 			}
 			if stream.Text() != "last agent message" {

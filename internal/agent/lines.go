@@ -61,6 +61,10 @@ func readProviderLines(r io.Reader, provider string, handle func(string)) error 
 		}
 		if size > maxProviderLine {
 			slog.Warn("agent event skipped", "provider", provider, "byte_length", size, "limit", maxProviderLine)
+			// Preserve failure detection without retaining any diagnostic text.
+			if event, failed := metadata.failure(provider); failed {
+				handle(event)
+			}
 			for kind, required := range metadata.required(provider, true) {
 				if required {
 					missing[kind] = fmt.Errorf("%s final %s event skipped: %d bytes exceeds %d-byte limit", provider, [...]string{"response", "result"}[kind], size, maxProviderLine)
@@ -208,6 +212,21 @@ func (m *eventMetadata) finishString() {
 	}
 	m.lastString = value
 	m.field = ""
+}
+
+func (m *eventMetadata) failure(provider string) (string, bool) {
+	switch provider {
+	case "codex":
+		switch {
+		case m.eventType == "turn.failed":
+			return `{"type":"turn.failed"}`, true
+		case m.eventType == "error":
+			return `{"type":"error"}`, true
+		case m.eventType == "item.completed" && m.itemType == "error":
+			return `{"type":"item.completed","item":{"type":"error"}}`, true
+		}
+	}
+	return "", false
 }
 
 func (m *eventMetadata) required(provider string, nonempty bool) (required [2]bool) {

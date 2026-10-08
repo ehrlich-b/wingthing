@@ -31,7 +31,8 @@ type RunOpts struct {
 }
 
 type Chunk struct {
-	Text string
+	Text     string
+	ThreadID string
 }
 
 func runHealthCheck(timeout time.Duration, command string, args ...string) error {

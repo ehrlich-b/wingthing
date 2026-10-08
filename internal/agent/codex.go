@@ -84,29 +84,37 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 		return nil, fmt.Errorf("start codex: %w", err)
 	}
 
+	providerHome := codexHome(cmd)
 	stream := newStream(ctx)
 	go func() {
-		var providerErr error
+		var threadID string
 		readErr := readProviderLines(stdout, "codex", func(line string) {
+			var session struct {
+				Type     string `json:"type"`
+				ThreadID string `json:"thread_id"`
+			}
+			if json.Unmarshal([]byte(line), &session) == nil && session.Type == "thread.started" {
+				threadID = session.ThreadID
+				stream.setProviderSession(threadID, "")
+				stream.send(Chunk{ThreadID: threadID})
+			}
 			if text, ok := parseCodexEvent(line); ok {
 				stream.send(Chunk{Text: text})
 			}
 			if input, output, ok := parseCodexUsage(line); ok {
 				stream.SetTokens(input, output)
 				// A completed turn supersedes earlier retry diagnostics.
-				providerErr = nil
+				diagnostics.failure = ""
 			}
-			if message, ok := parseCodexError(line); ok {
-				providerErr = fmt.Errorf("codex: %s", message)
+			if kind, ok := parseCodexFailure(line); ok {
+				diagnostics.failure = preferFailureKind(diagnostics.failure, kind)
 			}
 		})
-		err := waitAgentCommand(cmd, diagnostics)
-		if providerErr != nil {
-			err = errors.Join(providerErr, err)
-		}
+		err := waitAgentCommand(cmd, diagnostics, "codex")
 		if readErr != nil {
-			err = errors.Join(err, readErr)
+			err = errors.Join(err, &Failure{Kind: ProviderError, Provider: "codex"}, readErr)
 		}
+		stream.setProviderSession(threadID, codexRolloutPath(providerHome, threadID))
 		stream.close(err)
 	}()
 
@@ -115,38 +123,40 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 
 // codexEvent represents a Codex CLI NDJSON event.
 type codexEvent struct {
-	Type    string      `json:"type"`
-	Item    *codexItem  `json:"item,omitempty"`
-	Usage   *codexUsage `json:"usage,omitempty"`
-	Error   *codexError `json:"error,omitempty"`
-	Message string      `json:"message,omitempty"`
+	Type  string      `json:"type"`
+	Item  *codexItem  `json:"item,omitempty"`
+	Usage *codexUsage `json:"usage,omitempty"`
 }
 
 type codexItem struct {
-	Type    string `json:"type"`
-	Text    string `json:"text"`
-	Message string `json:"message,omitempty"`
+	Type string `json:"type"`
+	Text string `json:"text"`
 }
 
-type codexError struct {
-	Message string `json:"message"`
-}
-
-func parseCodexError(line string) (string, bool) {
-	var ev codexEvent
+func parseCodexFailure(line string) (ErrorKind, bool) {
+	var ev struct {
+		Type    string          `json:"type"`
+		Message json.RawMessage `json:"message"`
+		Error   json.RawMessage `json:"error"`
+		Item    *struct {
+			Type    string          `json:"type"`
+			Message json.RawMessage `json:"message"`
+		} `json:"item"`
+	}
 	if err := json.Unmarshal([]byte(line), &ev); err != nil {
 		return "", false
 	}
-	var message string
-	switch {
-	case ev.Type == "turn.failed" && ev.Error != nil:
-		message = ev.Error.Message
-	case ev.Type == "error":
-		message = ev.Message
-	case ev.Type == "item.completed" && ev.Item != nil && ev.Item.Type == "error":
-		message = ev.Item.Message
+	message := providerErrorText(ev.Message) + "\n" + providerErrorText(ev.Error)
+	if ev.Item != nil {
+		message += "\n" + providerErrorText(ev.Item.Message)
 	}
-	return message, strings.TrimSpace(message) != ""
+	switch {
+	case ev.Type == "turn.failed", ev.Type == "error":
+		return eventFailureKind(message), true
+	case ev.Type == "item.completed" && ev.Item != nil && ev.Item.Type == "error":
+		return eventFailureKind(message), true
+	}
+	return "", false
 }
 
 type codexUsage struct {

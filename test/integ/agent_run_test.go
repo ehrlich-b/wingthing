@@ -59,9 +59,17 @@ if [ "$1" != exec ]; then
 fi
 for arg; do prompt=$arg; done
 printf '%s' "$prompt" > received-prompt
+printf '%s\n' '{"type":"thread.started","thread_id":"01998952-827c-7000-8000-123456789abc"}'
 printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"partial transcript"}}'
 touch ready
 while [ ! -f release ]; do sleep 0.05; done
+if [ -f canary-failure ]; then
+    printf '{"type":"error","message":"upstream error %s"}\n' "$PROVIDER_ERROR_CANARY"
+    printf '{"type":"turn.failed","error":{"message":"This content was flagged for possible cybersecurity risk. %s"}}\n' "$PROVIDER_ERROR_CANARY"
+    printf 'provider stderr %s\n' "$PROVIDER_ERROR_CANARY" >&2
+    touch canary.emitted
+    exit 1
+fi
 if [ -f refuse ]; then
     printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"last provider message"}}' '{"type":"turn.failed","error":{"message":"This content was flagged for possible cybersecurity risk."}}'
     echo 'Reading additional input from stdin...' >&2
@@ -342,8 +350,108 @@ func TestMCPAgentRunProviderRefusal(t *testing.T) {
 	}
 	h.call(t, "agent_wait", map[string]any{"run_id": id, "timeout_seconds": 5})
 	result, bad := h.call(t, "agent_result", map[string]any{"run_id": id})
-	if bad || result["status"] != "failed" || !strings.Contains(fmt.Sprint(result["error"]), "This content was flagged for possible cybersecurity risk.") || !strings.Contains(fmt.Sprint(result["output"]), "last provider message") {
+	if bad || result["status"] != "failed" || result["error_kind"] != "provider_refused" || strings.Contains(fmt.Sprint(result["error"]), "cybersecurity risk") || !strings.Contains(fmt.Sprint(result["output"]), "last provider message") {
 		t.Fatalf("refusal result: %#v", result)
+	}
+	h.exit(t, false)
+}
+
+func TestMCPAgentRunDiscardsProviderErrorCanary(t *testing.T) {
+	f := newRunFixture(t)
+	const canary = "opaque-provider-error-canary-7Qn3"
+	f.env = append(f.env, "PROVIDER_ERROR_CANARY="+canary)
+	for _, name := range []string{"canary-failure", "release"} {
+		if err := os.WriteFile(filepath.Join(f.work, name), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := f.host(t, "owner", false)
+	started, bad := h.call(t, "agent_run", map[string]any{"prompt": "review", "agent": "codex", "cwd": f.work})
+	if bad {
+		t.Fatalf("start: %#v", started)
+	}
+	id := started["run_id"].(string)
+	waited, bad := h.call(t, "agent_wait", map[string]any{"run_id": id, "timeout_seconds": 5})
+	if bad || waited["status"] != "failed" || waited["error_kind"] != "provider_refused" {
+		t.Fatalf("wait: %#v", waited)
+	}
+	waitRunFile(t, filepath.Join(f.work, "canary.emitted"))
+	h.exit(t, false)
+	// Reattach through a fresh host, without the provider's secret environment.
+	f.env = f.env[:len(f.env)-1]
+	h = f.host(t, "owner", false)
+	for _, tool := range []string{"agent_result", "agent_status", "agent_events", "agent_wait", "agent_wait_any"} {
+		args := map[string]any{"run_id": id}
+		if tool == "agent_wait_any" {
+			args = map[string]any{"run_ids": []string{id}}
+		}
+		result, bad := h.call(t, tool, args)
+		data, err := json.Marshal(result)
+		if bad || err != nil || bytes.Contains(data, []byte(canary)) || bytes.Contains(data, []byte("cybersecurity risk")) || bytes.Contains(data, []byte("upstream error")) {
+			t.Fatalf("%s returned provider text or failed: %#v", tool, result)
+		}
+		if tool == "agent_result" || tool == "agent_status" || tool == "agent_wait" {
+			if result["error_kind"] != "provider_refused" || result["thread_id"] != "01998952-827c-7000-8000-123456789abc" {
+				t.Fatalf("%s lost structured failure/session: %#v", tool, result)
+			}
+		}
+		if tool == "agent_result" && result["error"] != "agent error: provider_refused: codex exited with status 1" {
+			t.Fatalf("unexpected authored diagnostic: %#v", result)
+		}
+	}
+	followup, bad := h.call(t, "agent_steer", map[string]any{"run_id": id, "prompt": "try a narrower request"})
+	if bad {
+		t.Fatalf("steer: %#v", followup)
+	}
+	followupID := followup["run_id"].(string)
+	result, bad := h.call(t, "agent_wait", map[string]any{"run_id": followupID, "timeout_seconds": 5})
+	if bad || result["status"] != "failed" {
+		t.Fatalf("follow-up wait: %#v", result)
+	}
+	prompt, err := os.ReadFile(filepath.Join(f.work, "received-prompt"))
+	if err != nil || bytes.Contains(prompt, []byte(canary)) || bytes.Contains(prompt, []byte("cybersecurity risk")) || !bytes.Contains(prompt, []byte("provider_refused")) {
+		t.Fatalf("steered provider received an unsafe or incomplete prompt: %s, %v", prompt, err)
+	}
+	db, err := store.Open(filepath.Join(f.state, "wt.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, table := range []string{"tasks", "task_log"} {
+		rows, err := db.DB().Query("SELECT * FROM " + table)
+		if err != nil {
+			t.Fatal(err)
+		}
+		columns, err := rows.Columns()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			values := make([]any, len(columns))
+			pointers := make([]any, len(columns))
+			for i := range values {
+				pointers[i] = &values[i]
+			}
+			if err := rows.Scan(pointers...); err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(values)
+			if err != nil || bytes.Contains(data, []byte(canary)) || bytes.Contains(data, []byte("cybersecurity risk")) {
+				t.Fatalf("%s stored provider text: %s, %v", table, data, err)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if err := rows.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, runID := range []string{id, followupID} {
+		data, err := os.ReadFile(filepath.Join(f.state, "runs", runID, "supervisor.log"))
+		if err != nil || bytes.Contains(data, []byte(canary)) || bytes.Contains(data, []byte("cybersecurity risk")) {
+			t.Fatalf("supervisor log contains provider text: %s, %v", data, err)
+		}
 	}
 	h.exit(t, false)
 }

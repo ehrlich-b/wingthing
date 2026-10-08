@@ -77,9 +77,9 @@ func (o *OpenCode) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Str
 				stream.send(Chunk{Text: line + "\n"})
 			}
 		})
-		err := waitAgentCommand(cmd, diagnostics)
+		err := waitAgentCommand(cmd, diagnostics, "opencode")
 		if readErr != nil {
-			err = errors.Join(err, readErr)
+			err = errors.Join(err, &Failure{Kind: ProviderError, Provider: "opencode"}, readErr)
 		}
 		stream.close(err)
 	}()

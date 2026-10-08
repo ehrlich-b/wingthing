@@ -234,8 +234,8 @@ func TestProviderOversizedFinalPreservesCommandError(t *testing.T) {
 		}
 	}
 	err = stream.Err()
-	if err == nil || !strings.Contains(err.Error(), "provider failed") || !strings.Contains(err.Error(), "exit status 7") || !strings.Contains(err.Error(), fmt.Sprint(oversizedTestLine)) {
-		t.Fatalf("error = %v, want exit diagnostics and oversized final size", err)
+	if err == nil || FailureKind(err) != ProviderExit || strings.Contains(err.Error(), "provider failed") || !strings.Contains(err.Error(), "status 7") || !strings.Contains(err.Error(), fmt.Sprint(oversizedTestLine)) {
+		t.Fatalf("error = %v, want structured exit and oversized final size", err)
 	}
 	checkAgentWarning(t, warnings, "codex", oversizedTestLine)
 }

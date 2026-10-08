@@ -101,7 +101,7 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		if runErr == nil {
 			return
 		}
-		if err := s.SetTaskError(t.ID, runErr.Error()); err != nil {
+		if err := s.SetTaskFailure(t.ID, runErr.Error(), string(agent.FailureKind(runErr))); err != nil {
 			runErr = errors.Join(runErr, fmt.Errorf("record task failure: %w", err))
 		}
 	}()
@@ -287,7 +287,7 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 			return resolveErr
 		}
 		if rule := deniedAgentExecutableRule(sbCfg, executable, runtime.GOOS); rule != "" {
-			return fmt.Errorf("effective egg.yaml policy for cwd %q denies agent binary %q via rule %q; use sandbox_explain with this cwd and agent to inspect the policy", workDir, executable, rule)
+			return agent.SandboxFailure(fmt.Errorf("effective egg.yaml policy for cwd %q denies agent binary %q via rule %q; use sandbox_explain with this cwd and agent to inspect the policy", workDir, executable, rule))
 		}
 		sbCfg.SessionID = t.ID
 		domainProxy, proxyErr := sandbox.StartPolicyProxyWithMode(sbCfg.NetworkNeed, sbCfg.Domains, sbCfg.NetworkMode)
@@ -310,7 +310,7 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 
 		sb, sbErr := sandbox.New(sbCfg)
 		if sbErr != nil {
-			return fmt.Errorf("create sandbox: %w", sbErr)
+			return agent.SandboxFailure(fmt.Errorf("create sandbox: %w", sbErr))
 		}
 		defer func() {
 			if err := sb.Destroy(); err != nil {
@@ -368,22 +368,47 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 
 	// Stream output to stdout
 	var partial strings.Builder
+	var snapshotBytes int
+	var savedThreadID string
 	for {
 		chunk, ok := stream.Next()
 		if !ok {
 			break
 		}
+		if chunk.ThreadID != "" {
+			if err := s.SetTaskProviderSession(t.ID, chunk.ThreadID, ""); err != nil {
+				return fmt.Errorf("record provider thread: %w", err)
+			}
+			savedThreadID = chunk.ThreadID
+		}
+		if chunk.Text == "" {
+			continue
+		}
 		if _, err := fmt.Fprint(destination, chunk.Text); err != nil {
 			return fmt.Errorf("write agent output: %w", err)
 		}
 		partial.WriteString(chunk.Text)
-		// Persist messages while the provider is alive. Losing a supervisor
-		// must not erase the transcript already received from the provider.
-		if err := s.SetTaskOutput(t.ID, partial.String()); err != nil {
-			return fmt.Errorf("record partial agent output: %w", err)
-		}
 		if err := s.AppendLog(t.ID, "agent_message", &chunk.Text); err != nil {
 			return fmt.Errorf("record agent message: %w", err)
+		}
+		// Geometric snapshots bound total rewritten bytes to O(output). Events
+		// between snapshots remain durable and recover a lost supervisor's tail.
+		if snapshotBytes == 0 || partial.Len() >= 4*snapshotBytes {
+			if err := s.SetTaskOutput(t.ID, partial.String()); err != nil {
+				return fmt.Errorf("record partial agent output: %w", err)
+			}
+			snapshotBytes = partial.Len()
+		}
+	}
+	threadID, rolloutPath := stream.ProviderSession()
+	if threadID != "" && (threadID != savedThreadID || rolloutPath != "") {
+		if err := s.SetTaskProviderSession(t.ID, threadID, rolloutPath); err != nil {
+			return fmt.Errorf("record provider session: %w", err)
+		}
+	}
+	if snapshotBytes == 0 || snapshotBytes != partial.Len() {
+		if err := s.SetTaskOutput(t.ID, partial.String()); err != nil {
+			return fmt.Errorf("record task output: %w", err)
 		}
 	}
 	if _, err := fmt.Fprintln(destination); err != nil {
@@ -391,6 +416,14 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 	}
 
 	if err := stream.Err(); err != nil {
+		if t.Type == "agent_run" {
+			// Sandbox logs, like stderr, are classification input only. They may
+			// include child-authored text and must not be copied into a run.
+			if strings.Contains(strings.ToLower(readSandboxDiagnostics(sandboxDiagnosticPath)), "sandbox enforcement failed") {
+				return &agent.Failure{Kind: agent.SandboxDenied, Provider: agentName}
+			}
+			return fmt.Errorf("agent error: %w", err)
+		}
 		diagnostics := mergeAgentFailureDiagnostics(err, readSandboxDiagnostics(sandboxDiagnosticPath))
 		if outputErr := s.SetTaskOutput(t.ID, mergeAgentFailureOutput(stream.Text(), diagnostics)); outputErr != nil {
 			return errors.Join(fmt.Errorf("agent error: %w", err), fmt.Errorf("record failed agent output: %w", outputErr))
@@ -407,10 +440,7 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 	}
 
 	// Store result
-	output := stream.Text()
-	if err := s.SetTaskOutput(t.ID, output); err != nil {
-		return fmt.Errorf("record task output: %w", err)
-	}
+	output := partial.String()
 	if err := s.UpdateTaskStatus(t.ID, "done"); err != nil {
 		return fmt.Errorf("mark task done: %w", err)
 	}

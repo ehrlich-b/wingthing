@@ -62,6 +62,10 @@ func (c *Cursor) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 	stream := newStream(ctx)
 	go func() {
 		readErr := readProviderLines(stdout, "cursor", func(line string) {
+			if kind, failed := parseClaudeFailure(line); failed {
+				diagnostics.failure = preferFailureKind(diagnostics.failure, kind)
+				return
+			}
 			// Cursor stream-json uses the same event format as Claude Code
 			if text, ok := parseStreamEvent(line); ok {
 				stream.send(Chunk{Text: text})
@@ -70,9 +74,9 @@ func (c *Cursor) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 				stream.SetTokens(input, output)
 			}
 		})
-		err := waitAgentCommand(cmd, diagnostics)
+		err := waitAgentCommand(cmd, diagnostics, "cursor")
 		if readErr != nil {
-			err = errors.Join(err, readErr)
+			err = errors.Join(err, &Failure{Kind: ProviderError, Provider: "cursor"}, readErr)
 		}
 		stream.close(err)
 	}()
