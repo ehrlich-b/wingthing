@@ -30,8 +30,10 @@ func TestClaudeLifecycleRefusesHostSettingsOutsideFinalPolicy(t *testing.T) {
 			defer os.RemoveAll(temp)
 			temp = config.CanonicalProviderPath(temp)
 			home, cwd, state := filepath.Join(temp, "home"), filepath.Join(temp, "work"), filepath.Join(temp, "state")
-			dir := filepath.Join(state, "eggs", "ours")
-			for _, path := range []string{home, cwd, dir, filepath.Join(temp, "private")} {
+			// Keep the socket separate from the nested policy fixture: macOS
+			// sockaddr_un cannot fit state/eggs/ours below its long temp root.
+			dir := config.CanonicalProviderPath(filepath.Dir(shortSockPath(t)))
+			for _, path := range []string{home, cwd, state, dir, filepath.Join(temp, "private")} {
 				if err := os.MkdirAll(path, 0700); err != nil {
 					t.Fatal(err)
 				}

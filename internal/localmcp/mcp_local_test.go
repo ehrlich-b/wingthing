@@ -826,6 +826,73 @@ func TestLocalMCPAgentRunLifecycleIsSemanticAndOwnerScoped(t *testing.T) {
 	}
 }
 
+func TestAgentRunAcceptsHumanReadableLabel(t *testing.T) {
+	cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "codex"}
+	server := &Server{Version: "dev", Cfg: cfg, Principal: "owner", runAgentTask: func(_ context.Context, _ *config.Config, db *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
+		return db.UpdateTaskStatus(task.ID, "done")
+	}}
+	label := "Review branch: security & tests ✓"
+	args, _ := json.Marshal(agentRunArgs{Prompt: "review", Agent: "codex", CWD: t.TempDir(), Label: label})
+	created, err := server.toolAgentRun(args)
+	if err != nil || created["label"] != label {
+		t.Fatalf("human-readable label: %#v, %v", created, err)
+	}
+	id := created["run_id"].(string)
+	if _, err := server.toolAgentWait(context.Background(), json.RawMessage(`{"run_id":`+strconv.Quote(id)+`,"timeout_seconds":2}`)); err != nil {
+		t.Fatal(err)
+	}
+	events, err := server.toolAgentEvents(json.RawMessage(`{"run_id":` + strconv.Quote(id) + `}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events["events"].([]map[string]any) {
+		if event["event"] == "label" && event["detail"] == label {
+			return
+		}
+	}
+	t.Fatalf("label missing from events: %#v", events)
+}
+
+func TestAgentRunReportsResolvedIsolationAtCreation(t *testing.T) {
+	for _, tc := range []struct {
+		name, agentIsolation, want string
+		unsandboxed                bool
+	}{
+		{"default", "", "standard", false},
+		{"legacy-unresolved", "none", "standard", false},
+		{"strict", "strict", "strict", false},
+		{"network", "network", "network", false},
+		{"outer", "strict", "privileged", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "codex"}
+			db, err := store.Open(cfg.DBPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if tc.agentIsolation != "" {
+				if err := db.UpsertAgent(&store.Agent{Name: "codex", DefaultIsolation: tc.agentIsolation}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			server := &Server{Version: "dev", Cfg: cfg, Principal: "owner", Unsandboxed: tc.unsandboxed, runAgentTask: func(_ context.Context, _ *config.Config, db *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
+				return db.UpdateTaskStatus(task.ID, "done")
+			}}
+			args, _ := json.Marshal(agentRunArgs{Prompt: "review", Agent: "codex", CWD: t.TempDir()})
+			created, err := server.toolAgentRun(args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			statusArgs := json.RawMessage(`{"run_id":` + strconv.Quote(created["run_id"].(string)) + `,"timeout_seconds":2}`)
+			later, err := server.toolAgentWait(context.Background(), statusArgs)
+			if err != nil || created["isolation"] != tc.want || later["isolation"] != tc.want {
+				t.Fatalf("create isolation=%v, later=%#v, want %s (%v)", created["isolation"], later, tc.want, err)
+			}
+		})
+	}
+}
+
 func TestAgentStopWinsCompletionRace(t *testing.T) {
 	dir := t.TempDir()
 	cwd := t.TempDir()

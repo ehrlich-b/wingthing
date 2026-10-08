@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -38,10 +39,13 @@ func newRunFixture(t *testing.T) *runFixture {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	f := &runFixture{binary: binary, root: root, state: filepath.Join(root, "s"), work: filepath.Join(root, "w")}
-	for _, dir := range []string{f.work, filepath.Join(root, "h"), filepath.Join(root, "b")} {
+	for _, dir := range []string{f.work, filepath.Join(root, "h"), filepath.Join(root, "b"), filepath.Join(f.state, "memory")} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.WriteFile(filepath.Join(f.state, "memory", "index.md"), []byte("# Memory Index\n\nThis file is always loaded into every prompt.\n"), 0600); err != nil {
+		t.Fatal(err)
 	}
 	// The first completed message precedes the barrier. The second message and
 	// artifact prove the provider kept working after its submitting host exited.
@@ -53,6 +57,8 @@ if [ "$1" != exec ]; then
     touch secret.received
     while :; do sleep 1; done
 fi
+for arg; do prompt=$arg; done
+printf '%s' "$prompt" > received-prompt
 printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"partial transcript"}}'
 touch ready
 while [ ! -f release ]; do sleep 0.05; done
@@ -233,18 +239,29 @@ func TestSandboxedMCPAgentRunSurvivesHostExit(t *testing.T) {
 func testMCPAgentRunSurvivesHostExit(t *testing.T, mode string) {
 	f := newRunFixture(t)
 	h := f.host(t, "owner", mode == "sandboxed")
-	started, bad := h.call(t, "agent_run", map[string]any{"prompt": "continue after host exit", "agent": "codex", "cwd": f.work, "timeout_seconds": 10})
+	label := "Continue after MCP host exit"
+	started, bad := h.call(t, "agent_run", map[string]any{"prompt": "continue after host exit", "agent": "codex", "cwd": f.work, "label": label, "timeout_seconds": 10})
 	if bad {
 		t.Fatalf("start: %#v", started)
 	}
 	id := started["run_id"].(string)
+	wantIsolation := "privileged"
+	if mode == "sandboxed" {
+		wantIsolation = "standard"
+	}
+	if started["label"] != label || started["isolation"] != wantIsolation {
+		t.Fatalf("creation metadata: %#v", started)
+	}
 	// Ensure any live fixture is stopped even if an assertion fails.
 	t.Cleanup(func() { _ = os.WriteFile(filepath.Join(f.work, "release"), nil, 0600) })
 	waitRunFile(t, filepath.Join(f.work, "ready"), func() any { result, _ := h.call(t, "agent_result", map[string]any{"run_id": id}); return result })
+	if prompt, err := os.ReadFile(filepath.Join(f.work, "received-prompt")); err != nil || string(prompt) != "continue after host exit" {
+		t.Fatalf("worker prompt = %q, %v", prompt, err)
+	}
 	h.exit(t, mode == "killed")
 	reconnected := f.host(t, "owner", mode == "sandboxed")
 	partial, bad := reconnected.call(t, "agent_result", map[string]any{"run_id": id})
-	if bad || partial["status"] != "running" || partial["ready"] != false || partial["output"] != "partial transcript" {
+	if bad || partial["status"] != "running" || partial["ready"] != false || partial["output"] != "partial transcript" || partial["isolation"] != wantIsolation {
 		t.Fatalf("reattached partial result: %#v", partial)
 	}
 	outsider := f.host(t, "outsider", false)
@@ -272,6 +289,36 @@ func testMCPAgentRunSurvivesHostExit(t *testing.T, mode string) {
 	}
 	waitRunFile(t, filepath.Join(f.work, "completed"))
 	reconnected.exit(t, false)
+}
+
+func TestMCPAgentRunPolicyDenialNamesRule(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Seatbelt deny:/ masks mounted binaries; Linux uses an allowlist jail")
+	}
+	f := newRunFixture(t)
+	if err := os.WriteFile(filepath.Join(f.work, "egg.yaml"), []byte("base: none\nfs: [deny:/, rw:./]\nnetwork: none\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	h := f.host(t, "owner", true)
+	created, bad := h.call(t, "agent_run", map[string]any{"prompt": "must not execute", "agent": "codex", "cwd": f.work})
+	if bad || created["isolation"] != "standard" {
+		t.Fatalf("create denied run: %#v", created)
+	}
+	waited, bad := h.call(t, "agent_wait", map[string]any{"run_id": created["run_id"], "timeout_seconds": 5})
+	if bad || waited["status"] != "failed" {
+		t.Fatalf("denied run status: %#v", waited)
+	}
+	result, bad := h.call(t, "agent_result", map[string]any{"run_id": created["run_id"]})
+	message, _ := result["error"].(string)
+	for _, want := range []string{"egg.yaml", f.work, filepath.Join(f.root, "b", "codex"), "deny:/", "sandbox_explain"} {
+		if bad || !strings.Contains(message, want) {
+			t.Errorf("denied run missing %q: %#v", want, result)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(f.work, "provider.pid")); !os.IsNotExist(err) {
+		t.Fatalf("denied provider started: %v", err)
+	}
+	h.exit(t, false)
 }
 
 func TestMCPAgentRunProviderRefusal(t *testing.T) {

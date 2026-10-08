@@ -46,6 +46,33 @@ func sandboxAgentExecutable(name, home string, sharedHost bool) (string, error) 
 	return resolved, nil
 }
 
+// Explain explicit masks before exec, which otherwise reports only EPERM (or
+// a missing executable). Linux deny:/ is an allowlist jail, so its root mask
+// alone does not imply that a mounted runtime is denied.
+func deniedAgentExecutableRule(cfg sandbox.Config, executable, goos string) string {
+	executable = config.CanonicalProviderPath(executable)
+	home, _ := os.UserHomeDir()
+	if goos == "linux" && cfg.UserHome != "" {
+		home = cfg.UserHome
+	}
+	sshDir := config.CanonicalProviderPath(filepath.Join(home, ".ssh"))
+	for _, denied := range cfg.Deny {
+		path := config.CanonicalProviderPath(denied)
+		if goos == "linux" && path == "/" {
+			continue
+		}
+		// Both backends preserve known_hosts under the .ssh directory mask.
+		// An explicit mask of that file is still checked on its own iteration.
+		if path == sshDir && executable == filepath.Join(sshDir, "known_hosts") {
+			continue
+		}
+		if executable == path || strings.HasPrefix(executable, strings.TrimSuffix(path, string(filepath.Separator))+string(filepath.Separator)) {
+			return "deny:" + denied
+		}
+	}
+	return ""
+}
+
 // directAgentSandboxConfig applies the same agent capabilities used by the
 // interactive egg path to non-interactive `wt run` tasks. Keeping these paths
 // in sync is important: an agent that works in a terminal must not silently

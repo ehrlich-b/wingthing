@@ -111,6 +111,21 @@ the existing run ID for status, wait, results, events and cancellation. The
 supervisor retains the submitted sandbox policy and caller's shared-host home
 and path boundary. No PTY or browser terminal is created.
 
+`agent_run.prompt` reaches the worker verbatim, without Wingthing's memory index,
+daily thread or schedule/memory output instructions. Prompt and skill workflows
+retain their existing assembly. Run labels accept human-readable text and are
+stored unchanged in creation metadata and label events; filesystem paths use
+generated run IDs. Isolation is resolved and frozen before creation, so the
+initial response and later status agree with execution (`standard` by default,
+or `privileged` under an explicit `--unsandboxed` outer boundary).
+
+An explicit filesystem rule that masks the headless agent binary fails before
+execution with the effective egg.yaml policy, cwd, binary and matching `deny:`
+rule, plus a pointer to `sandbox_explain`. Seatbelt's `deny:/` masks all binaries;
+Linux's `deny:/` is an allowlist jail and does not by itself deny mounted runtimes.
+This diagnostic does not grant access or alter network policy: scalar
+`network: none` still merges agent domains under the established policy contract.
+
 `orphaned` is a new **terminal** run status: the supervisor was lost and the
 provider's exit is unknown. `agent_wait` and `agent_wait_any` finish for it,
 `agent_result.ready` is true, and received messages remain in `output` and

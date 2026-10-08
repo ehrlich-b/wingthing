@@ -28,7 +28,9 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
+	"github.com/ehrlich-b/wingthing/internal/orchestrator"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
+	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/taskrun"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
@@ -1592,9 +1594,6 @@ func (s *Server) submitAgentRun(args agentRunArgs, followup *agentRunFollowup) (
 	if _, err := agentModelArgs(args.Agent, args.Model); err != nil {
 		return nil, err
 	}
-	if err := eggclient.ValidateSessionName(args.Label); err != nil {
-		return nil, err
-	}
 	if args.TimeoutSeconds == 0 {
 		args.TimeoutSeconds = 900
 	}
@@ -1634,6 +1633,19 @@ func (s *Server) submitAgentRun(args agentRunArgs, followup *agentRunFollowup) (
 			return openErr
 		}
 		defer cmdutil.CloseWithLog("task store", taskStore)
+		// Freeze the same isolation the prompt builder would resolve, before
+		// returning creation metadata or handing the task to its supervisor.
+		if task.Isolation == "" {
+			agentDefaults, err := taskStore.GetAgent(task.Agent)
+			if err != nil {
+				return err
+			}
+			isolation := ""
+			if agentDefaults != nil {
+				isolation = agentDefaults.DefaultIsolation
+			}
+			task.Isolation = sandbox.ParseLevel(orchestrator.ResolveConfig(nil, task.Agent, isolation, s.Cfg).Isolation).String()
+		}
 		if createErr := taskStore.CreateTask(task); createErr != nil {
 			return createErr
 		}

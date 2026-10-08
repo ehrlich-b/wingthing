@@ -448,7 +448,7 @@ func buildTools() []Tool {
 			Name: "agent_run", Title: "Run agent task",
 			Description: "Start a detached supervised headless agent run that survives MCP host exit and return immediately with an owner-scoped run ID. Use agent_wait and agent_result instead of reading terminal ANSI.",
 			InputSchema: objectSchema(map[string]any{
-				"prompt":          stringProperty("Task for the agent"),
+				"prompt":          stringProperty("Exact task prompt for the headless worker; no Wingthing memory or structured-output instructions are added"),
 				"agent":           stringProperty("Supported agent name, such as codex or claude"),
 				"model":           stringProperty("Provider model name, such as gpt-5.6-terra or opus"),
 				"cwd":             stringProperty("Working directory; defaults to the MCP server's current directory"),
