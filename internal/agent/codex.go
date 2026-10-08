@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -81,6 +82,7 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 	if err != nil {
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
+	startedAt := time.Now()
 	diagnostics, err := startAgentCommand(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("start codex: %w", err)
@@ -121,7 +123,7 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 		if readErr != nil {
 			err = errors.Join(err, &Failure{Kind: ProviderError, Provider: "codex"}, readErr)
 		}
-		stream.setProviderSession(threadID, codexRolloutPath(providerHome, threadID))
+		stream.setProviderSession(threadID, codexRolloutPath(providerHome, threadID, startedAt))
 		stream.close(err)
 	}()
 
