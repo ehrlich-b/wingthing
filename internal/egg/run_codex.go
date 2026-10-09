@@ -57,6 +57,7 @@ func CodexRunArgs(args []string, home, sessionID string) ([]string, bool, error)
 	for i, value := range values {
 		quoted[i] = strconv.Quote(value)
 	}
+	// This overrides config.toml notify; no effective-config reader exists to chain it.
 	prefix := []string{"--no-daemon", "-c", "notify=[" + strings.Join(quoted, ",") + "]"}
 	return append(prefix, hooked...), true, nil
 }
