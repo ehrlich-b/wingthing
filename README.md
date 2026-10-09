@@ -439,7 +439,7 @@ promotion policy.
 curl -fsSL https://wingthing.ai/install.sh | sh
 ```
 
-Or build from source with Go 1.26.6+ and Node.js:
+Or build from source with Go 1.26.9+ and Node.js:
 
 ```bash
 git clone https://github.com/ehrlich-b/wingthing.git
