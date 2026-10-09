@@ -13,9 +13,13 @@ type commandDiagnostics struct {
 }
 
 func startAgentCommand(cmd *exec.Cmd) (*commandDiagnostics, error) {
+	configureProcessTree(cmd)
+	return startConfiguredAgentCommand(cmd)
+}
+
+func startConfiguredAgentCommand(cmd *exec.Cmd) (*commandDiagnostics, error) {
 	diagnostics := &commandDiagnostics{stderr: cappedBuffer{limit: maxAgentStderr}}
 	cmd.Stderr = &diagnostics.stderr
-	configureProcessTree(cmd)
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}

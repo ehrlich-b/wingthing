@@ -27,10 +27,17 @@ func TestCodexCompletionProcess(t *testing.T) {
 		return
 	}
 	if strings.Contains(mode, "child") {
-		child := exec.Command("/bin/sleep", "60")
+		duration := "60"
+		if mode == "escaped-stderr-child" {
+			duration = "4"
+		}
+		child := exec.Command("/bin/sleep", duration)
 		child.Stdout, child.Stderr = os.Stdout, os.Stderr
-		if mode == "stderr-child" {
+		if mode == "stderr-child" || mode == "escaped-stderr-child" || mode == "self-killed-stderr-child" {
 			child.Stdout = nil
+		}
+		if mode == "escaped-stderr-child" {
+			child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		}
 		if mode == "escaped-no-terminal-child" {
 			child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -67,7 +74,7 @@ func TestCodexCompletionProcess(t *testing.T) {
 	default:
 		fmt.Fprintln(os.Stdout, `{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":5}}`)
 	}
-	if mode == "stdout-child" || mode == "stderr-child" {
+	if mode == "stdout-child" || mode == "stderr-child" || mode == "escaped-stderr-child" {
 		os.Exit(0)
 	}
 	if mode == "nonzero" || mode == "nonzero-child" {
@@ -75,6 +82,9 @@ func TestCodexCompletionProcess(t *testing.T) {
 	}
 	if mode == "signaled-child" {
 		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
+	}
+	if mode == "self-killed-child" || mode == "self-killed-stderr-child" {
+		_ = syscall.Kill(os.Getpid(), syscall.SIGKILL)
 	}
 	if mode == "closed-stdout" {
 		_ = os.Stdout.Close()
@@ -87,9 +97,14 @@ func TestCodexCompletionProcess(t *testing.T) {
 
 func runCodexCompletionFixture(t *testing.T, ctx context.Context, mode string) (*Stream, *exec.Cmd, string) {
 	t.Helper()
+	return runCodexCompletionFixtureWithProvider(t, ctx, mode, NewCodex(0))
+}
+
+func runCodexCompletionFixtureWithProvider(t *testing.T, ctx context.Context, mode string, provider *Codex) (*Stream, *exec.Cmd, string) {
+	t.Helper()
 	pidPath := filepath.Join(t.TempDir(), "child.pid")
 	var cmd *exec.Cmd
-	stream, err := NewCodex(0).Run(ctx, "lifecycle fixture", RunOpts{CmdFactory: func(ctx context.Context, _ string, _ []string) (*exec.Cmd, error) {
+	stream, err := provider.Run(ctx, "lifecycle fixture", RunOpts{CmdFactory: func(ctx context.Context, _ string, _ []string) (*exec.Cmd, error) {
 		cmd = exec.CommandContext(ctx, os.Args[0], "-test.run=^TestCodexCompletionProcess$")
 		cmd.Env = append(os.Environ(), "WT_CODEX_COMPLETION_MODE="+mode, "WT_CODEX_CHILD_PID="+pidPath)
 		return cmd, nil
@@ -98,6 +113,77 @@ func runCodexCompletionFixture(t *testing.T, ctx context.Context, mode string) (
 		t.Fatal(err)
 	}
 	return stream, cmd, pidPath
+}
+
+func TestCodexCompletionNeverSignalsReapedGroup(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	provider := NewCodex(0)
+	signals := make(chan error, 2)
+	provider.signalGroup = func(process *os.Process) error {
+		// Process.Signal refuses an already-reaped leader. Observe every actual
+		// group signal, including cancellation, without trying to reuse a PGID.
+		err := process.Signal(syscall.Signal(0))
+		signals <- err
+		if err != nil {
+			return err
+		}
+		return syscall.Kill(-process.Pid, syscall.SIGKILL)
+	}
+	stream, cmd, pidPath := runCodexCompletionFixtureWithProvider(t, ctx, "escaped-stderr-child", provider)
+	t.Cleanup(func() {
+		if data, err := os.ReadFile(pidPath); err == nil {
+			if pid, err := strconv.Atoi(string(data)); err == nil && codexFixtureChildRunning(t, pid) {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
+	for {
+		if _, ok := stream.Next(); !ok {
+			break
+		}
+	}
+	if stream.Err() != nil || ctx.Err() != nil || cmd.ProcessState == nil {
+		t.Fatalf("completed provider was not successfully reaped: %v, %v", stream.Err(), ctx.Err())
+	}
+	select {
+	case err := <-signals:
+		if err != nil {
+			t.Fatalf("group signal attempted after leader reap: %v", err)
+		}
+	default:
+		t.Fatal("completion cleanup did not signal the owned group")
+	}
+	if err := cmd.Cancel(); !errors.Is(err, os.ErrProcessDone) {
+		t.Errorf("cancellation after reap = %v, want os.ErrProcessDone", err)
+	}
+	select {
+	case err := <-signals:
+		t.Fatalf("another group signal attempted after reap: %v", err)
+	default:
+	}
+}
+
+func TestCodexCompletionPreservesProviderSIGKILL(t *testing.T) {
+	for _, mode := range []string{"self-killed-child", "self-killed-stderr-child"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			defer cancel()
+			stream, cmd, _ := runCodexCompletionFixture(t, ctx, mode)
+			for {
+				if _, ok := stream.Next(); !ok {
+					break
+				}
+			}
+			var exit *exec.ExitError
+			if ctx.Err() != nil || FailureKind(stream.Err()) != ProviderExit || !errors.As(stream.Err(), &exit) || exit.Sys().(syscall.WaitStatus).Signal() != syscall.SIGKILL {
+				t.Fatalf("provider's own SIGKILL was lost: %v, context %v", stream.Err(), ctx.Err())
+			}
+			if cmd.ProcessState == nil || stream.Text() != "finished" {
+				t.Errorf("provider was not reaped with its final output: %v, %q", cmd.ProcessState, stream.Text())
+			}
+		})
+	}
 }
 
 func TestCodexCompletedTurnReapsProvider(t *testing.T) {

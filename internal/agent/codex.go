@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,6 +41,46 @@ func (p *codexOutputPipe) close() {
 type Codex struct {
 	command   string
 	ctxWindow int
+	// Tests may observe the actual group signal without relying on PID reuse.
+	signalGroup func(*os.Process) error
+}
+
+// The unreaped provider pins its PID (and therefore our PGID). All group
+// signals must finish before Wait can release that ownership, including calls
+// from exec.CommandContext's cancellation watcher.
+type codexProcess struct {
+	mu      sync.Mutex
+	cmd     *exec.Cmd
+	signal  func() error
+	waiting bool
+}
+
+func (p *codexProcess) cancel() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.waiting {
+		// Only the process handle is safe once Wait may have reaped the leader.
+		return p.cmd.Process.Kill()
+	}
+	return p.signal()
+}
+
+func (p *codexProcess) complete() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.waiting {
+		return false
+	}
+	// A successful group signal can kill descendants of an already-dead
+	// provider. It does not establish that we killed the provider itself.
+	exited, err := processExited(p.cmd.Process)
+	return p.signal() == nil && err == nil && !exited
+}
+
+func (p *codexProcess) beginWait() {
+	p.mu.Lock()
+	p.waiting = true
+	p.mu.Unlock()
 }
 
 func NewCodex(ctxWindow int) *Codex {
@@ -108,7 +149,17 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
 	startedAt := time.Now()
-	diagnostics, err := startAgentCommand(cmd)
+	configureProcessTree(cmd)
+	process := &codexProcess{cmd: cmd, signal: cmd.Cancel}
+	if c.signalGroup != nil {
+		process.signal = func() error { return c.signalGroup(cmd.Process) }
+	} else if process.signal == nil {
+		process.signal = func() error { return cmd.Process.Kill() }
+	}
+	if cmd.Cancel != nil {
+		cmd.Cancel = process.cancel
+	}
+	diagnostics, err := startConfiguredAgentCommand(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("start codex: %w", err)
 	}
@@ -124,21 +175,18 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 		var completionTimer *time.Timer
 		cleanupDone := make(chan struct{})
 		var completed, killed bool
+		completionCleanup := func() {
+			killed = process.complete()
+			output.close()
+			close(cleanupDone)
+		}
 		startCompletionCleanup := func() {
 			if completionTimer != nil {
 				return
 			}
 			// Keep draining during normal CLI shutdown, then stop our process
 			// group and close stdout without depending on EOF or cmd.Wait.
-			completionTimer = time.AfterFunc(codexCompletionGrace, func() {
-				if cmd.Cancel != nil {
-					killed = cmd.Cancel() == nil
-				} else {
-					killed = cmd.Process.Kill() == nil
-				}
-				output.close()
-				close(cleanupDone)
-			})
+			completionTimer = time.AfterFunc(codexCompletionGrace, completionCleanup)
 		}
 		var threadID string
 		readErr := readProviderLines(output, "codex", func(line string) {
@@ -177,11 +225,18 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 				diagnostics.failure = preferFailureKind(diagnostics.failure, kind)
 			}
 		})
-		err := waitAgentCommand(cmd, diagnostics, "codex")
-		if completionTimer != nil && !completionTimer.Stop() {
-			// Join a running callback before reading its result or returning.
+		if completionTimer != nil {
+			// Even EOF on stdout does not mean inherited stderr has closed.
+			// Finish the last group signal while the leader is still unreaped.
+			// A known exit or cancellation needs no further shutdown grace.
+			exited, exitErr := processExited(cmd.Process)
+			if (ctx.Err() != nil || exitErr == nil && exited) && completionTimer.Stop() {
+				completionCleanup()
+			}
 			<-cleanupDone
 		}
+		process.beginWait()
+		err := waitAgentCommand(cmd, diagnostics, "codex")
 		if completed && killed && ctx.Err() == nil && diagnostics.failure == "" && processTreeKilled(err) {
 			// Only our forced SIGKILL after a successful terminal event is
 			// expected. Preserve natural nonzero exits and provider failures.
