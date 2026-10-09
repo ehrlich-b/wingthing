@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -73,7 +72,7 @@ type codexTurnNotification struct {
 
 // Read only our egg's native notification spool. Thread identity comes from
 // SessionStart and turn identity from UserPromptSubmit, never file recency.
-func codexRunScanner(home, sessionID, providerID, prompt string, read func(context.Context, int64, int) (SessionView, error)) (func() (turnEvidence, error), error) {
+func codexRunScanner(home, sessionID, providerID, prompt string, read func(context.Context, int64, int) (SessionView, error), readFile runFileReader) (func() (turnEvidence, error), error) {
 	if !validCodexNativeID(providerID) {
 		return nil, errors.New("exact native Codex thread required")
 	}
@@ -83,7 +82,7 @@ func codexRunScanner(home, sessionID, providerID, prompt string, read func(conte
 	}
 	defer root.Close()
 	spoolPath := filepath.Join(".codex", "wingthing-run-notify", sessionID)
-	initialFiles, err := codexRunNotifications(root, spoolPath)
+	initialFiles, err := codexRunNotifications(root, spoolPath, nil, readFile)
 	if err != nil {
 		return nil, err
 	}
@@ -95,12 +94,11 @@ func codexRunScanner(home, sessionID, providerID, prompt string, read func(conte
 	if err != nil {
 		return nil, err
 	}
-	reserved := initial.HeadCursor
+	cursor := initial.HeadCursor
 	var evidence turnEvidence
 	var receiptKey string
 	pending := make(map[string]codexTurnNotification)
 	return func() (turnEvidence, error) {
-		cursor := reserved
 		for {
 			view, err := read(context.Background(), cursor, 200)
 			if err != nil {
@@ -113,7 +111,7 @@ func codexRunScanner(home, sessionID, providerID, prompt string, read func(conte
 				if event.Source != "codex_hook" {
 					continue
 				}
-				data, err := readRunHook(home, "codex", sessionID, event.SourceKey)
+				data, err := readRunHook(home, "codex", sessionID, event.SourceKey, readFile)
 				if err != nil {
 					return evidence, err
 				}
@@ -143,16 +141,17 @@ func codexRunScanner(home, sessionID, providerID, prompt string, read func(conte
 					evidence.Failure = agent.Stopped
 				}
 			}
-			if !view.HasMore || view.Cursor <= cursor {
+			advanced := view.Cursor > cursor
+			cursor = view.Cursor
+			if !view.HasMore || !advanced {
 				break
 			}
-			cursor = view.Cursor
 		}
 		root, err := openProviderHome(home)
 		if err != nil {
 			return evidence, err
 		}
-		files, err := codexRunNotifications(root, spoolPath)
+		files, err := codexRunNotifications(root, spoolPath, seen, readFile)
 		root.Close()
 		if err != nil {
 			return evidence, err
@@ -194,7 +193,7 @@ func codexRunScanner(home, sessionID, providerID, prompt string, read func(conte
 	}, nil
 }
 
-func codexRunNotifications(root *os.File, path string) (map[string][]byte, error) {
+func codexRunNotifications(root *os.File, path string, seen map[string]bool, readFile runFileReader) (map[string][]byte, error) {
 	out := make(map[string][]byte)
 	dir, err := openProviderPath(root, path, true)
 	if errors.Is(err, os.ErrNotExist) {
@@ -209,15 +208,10 @@ func codexRunNotifications(root *os.File, path string) (map[string][]byte, error
 		return nil, err
 	}
 	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".json") {
+		if !strings.HasSuffix(entry.Name(), ".json") || seen[entry.Name()] {
 			continue
 		}
-		file, err := openProviderPath(dir, entry.Name(), false)
-		if err != nil {
-			return nil, err
-		}
-		data, err := io.ReadAll(file)
-		file.Close()
+		data, err := readFile(dir, entry.Name())
 		if err != nil {
 			return nil, err
 		}
