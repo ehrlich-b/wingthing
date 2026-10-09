@@ -145,6 +145,21 @@ func TestCodexRunIDReplayAndConflictingInput(t *testing.T) {
 	}
 }
 
+func TestCodexRunDifferentSubmittedPromptFails(t *testing.T) {
+	rt, home, request, sent := codexRunFixture(t)
+	if _, err := rt.submit(request); err != nil {
+		t.Fatal(err)
+	}
+	<-sent
+	spool := filepath.Join(home, ".codex", "wingthing-events", filepath.Base(rt.dir))
+	lifecycleWrite(t, filepath.Join(spool, "seq.00000000000000000003.json"), `{"session_id":"thread-exact","turn_id":"human-turn","hook_event_name":"UserPromptSubmit","prompt":"human prompt"}`)
+	publishCodexNotify(t, home, filepath.Base(rt.dir), "complete", "thread-exact", "turn-exact", request.Prompt, "final")
+	result, err := rt.wait(context.Background(), request.RunID)
+	if err != nil || result.Status != "failed" || result.FailureKind != agent.InputConflict {
+		t.Fatalf("submitted prompt conflict: %+v %v", result, err)
+	}
+}
+
 func TestCodexRunArgsExactArgvAndNativePublisher(t *testing.T) {
 	home := t.TempDir()
 	input := []string{"resume", "thread-exact", "-m", "fixture-model"}

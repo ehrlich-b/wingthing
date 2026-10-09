@@ -370,15 +370,3 @@ func (rt *runTurnRuntime) stop(id string) (RunTurnResult, error) {
 	<-run.done
 	return rt.get(id, false)
 }
-
-func (rt *runTurnRuntime) inputConflict() {
-	rt.mu.Lock()
-	var active []*ownedRunTurn
-	for _, run := range rt.runs {
-		active = append(active, run)
-	}
-	rt.mu.Unlock()
-	for _, run := range active {
-		rt.finish(run, "failed", agent.InputConflict, turnEvidence{}, false)
-	}
-}

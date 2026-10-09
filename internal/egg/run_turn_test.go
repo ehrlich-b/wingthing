@@ -21,6 +21,7 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/ehrlich-b/wingthing/internal/agent"
+	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"golang.org/x/term"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -241,25 +242,87 @@ func TestRunTurnRPCAuthenticatesEveryOperationAndStrictlyDecodes(t *testing.T) {
 	}
 }
 
-func TestRunTurnHumanInputAndNativeConflictFail(t *testing.T) {
-	for _, rawInput := range []bool{true, false} {
-		t.Run(fmt.Sprint(rawInput), func(t *testing.T) {
-			fixture := newRunFixture(t)
-			if _, err := fixture.runtime.submit(fixture.request); err != nil {
+func TestRunTurnTerminalRepliesAllowCompletion(t *testing.T) {
+	for _, provider := range []string{"claude", "codex"} {
+		t.Run(provider, func(t *testing.T) {
+			var rt *runTurnRuntime
+			var request RunTurnRequest
+			var sent <-chan struct{}
+			var complete func()
+			if provider == "claude" {
+				fixture := newRunFixture(t)
+				rt, request, sent = fixture.runtime, fixture.request, fixture.sent
+				complete = func() { appendNative(t, fixture.path, assistantRecord("final", "end_turn")) }
+			} else {
+				var home string
+				rt, home, request, sent = codexRunFixture(t)
+				complete = func() {
+					publishCodexNotify(t, home, filepath.Base(rt.dir), "complete", "thread-exact", "turn-exact", request.Prompt, "final")
+				}
+			}
+			if _, err := rt.submit(request); err != nil {
 				t.Fatal(err)
 			}
-			<-fixture.sent
-			if rawInput {
-				fixture.runtime.inputConflict()
-			} else {
-				writeNativeUserPrompt(t, fixture.path, "human prompt")
+			<-sent
+			master, slave := blockedInputPTY(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			handler := &Server{runTurns: rt, session: &Session{ID: filepath.Base(rt.dir), ptmx: master, replay: newReplayBuffer(provider), done: make(chan struct{})}}
+			listener := bufconn.Listen(1 << 20)
+			server := grpc.NewServer()
+			pb.RegisterEggServer(server, handler)
+			go func() { _ = server.Serve(listener) }()
+			defer server.Stop()
+			conn, err := grpc.NewClient("passthrough:///fixture", grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return listener.Dial() }))
+			if err != nil {
+				t.Fatal(err)
 			}
-			appendNative(t, fixture.path, assistantRecord("another turn's success", "end_turn"))
-			result := waitRunFixture(t, fixture)
-			if result.Status != "failed" || result.FailureKind != agent.InputConflict || result.Text != "" {
-				t.Fatal(result)
+			defer conn.Close()
+			stream, err := pb.NewEggClient(conn).Session(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = stream.Send(&pb.SessionMsg{SessionId: handler.session.ID, Payload: &pb.SessionMsg_Attach{Attach: true}}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = stream.Recv(); err != nil {
+				t.Fatal(err)
+			}
+			for _, reply := range []string{"\x1b[I", "\x1b[O", "\x1b[24;80R", "\x1b[?1;2c"} {
+				if err = stream.Send(&pb.SessionMsg{Payload: &pb.SessionMsg_Input{Input: []byte(reply)}}); err != nil {
+					t.Fatal(err)
+				}
+				// Reading the slave proves the handler processed the input.
+				data := make([]byte, len(reply))
+				if _, err = io.ReadFull(slave, data); err != nil || string(data) != reply {
+					t.Fatalf("terminal reply: %q %v", data, err)
+				}
+				if result, err := rt.get(request.RunID, true); err != nil || result.Status != "running" {
+					t.Fatalf("terminal reply %q ended run: %s %s %v", reply, result.Status, result.FailureKind, err)
+				}
+			}
+			complete()
+			if _, err = rt.wait(context.Background(), request.RunID); err != nil {
+				t.Fatal(err)
+			}
+			if result, err := rt.get(request.RunID, true); err != nil || result.Status != "done" || result.Text != "final" {
+				t.Fatalf("terminal replies prevented completion: %+v %v", result, err)
 			}
 		})
+	}
+}
+
+func TestRunTurnDifferentSubmittedPromptFails(t *testing.T) {
+	fixture := newRunFixture(t)
+	if _, err := fixture.runtime.submit(fixture.request); err != nil {
+		t.Fatal(err)
+	}
+	<-fixture.sent
+	writeNativeUserPrompt(t, fixture.path, "human prompt")
+	appendNative(t, fixture.path, assistantRecord("another turn's success", "end_turn"))
+	result := waitRunFixture(t, fixture)
+	if result.Status != "failed" || result.FailureKind != agent.InputConflict || result.Text != "" {
+		t.Fatal(result)
 	}
 }
 
