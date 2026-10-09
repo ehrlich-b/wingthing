@@ -8,6 +8,14 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func (s *Server) prepareSessionPTYInput(file *os.File, rc RunConfig, codexRun bool) (bool, error) {
+	if !s.exclusiveInput && !nativeRunSupported(rc.Kind, rc.Agent, rc.Command, codexRun) {
+		return false, nil
+	}
+	// Native runs need nonblocking writes so the egg deadline can cancel prompt input.
+	return true, preparePTYInput(file)
+}
+
 // Darwin PTYs do not support os.File deadlines reliably. Use nonblocking
 // syscalls and bounded poll waits so cancellation never leaves a write behind.
 func preparePTYInput(file *os.File) error {

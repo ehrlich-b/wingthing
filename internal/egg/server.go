@@ -67,6 +67,7 @@ type Session struct {
 	PID            int
 	processGroupID int
 	codexRun       bool
+	nonblockInput  bool
 	Agent          string
 	Kind           string
 	Command        []string
@@ -975,7 +976,8 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		}
 		return fmt.Errorf("start pty: %v", err)
 	}
-	if err := preparePTYInput(ptmx); err != nil {
+	cancellableInput, err := s.prepareSessionPTYInput(ptmx, rc, codexRun)
+	if err != nil {
 		_ = ptmx.Close()
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
@@ -998,6 +1000,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		PID:            cmd.Process.Pid,
 		processGroupID: cmd.Process.Pid,
 		codexRun:       codexRun,
+		nonblockInput:  cancellableInput,
 		Agent:          rc.Agent,
 		Kind:           rc.Kind,
 		Command:        append([]string(nil), rc.Command...),
@@ -1523,7 +1526,7 @@ func (s *Server) readPTY(sess *Session) {
 	firstByte := true
 	for {
 		n, err := sess.ptmx.Read(buf)
-		if s.exclusiveInput && errors.Is(err, unix.EAGAIN) {
+		if (s.exclusiveInput || sess.nonblockInput) && errors.Is(err, unix.EAGAIN) {
 			if err = waitPTYReady(context.Background(), sess.ptmx, unix.POLLIN); err == nil {
 				continue
 			}
@@ -1754,7 +1757,7 @@ func (s *Server) Resize(ctx context.Context, req *pb.ResizeRequest) (*pb.ResizeR
 func (s *Server) resizeSession(sess *Session, rows, cols uint32) error {
 	size := &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}
 	var err error
-	if s.exclusiveInput {
+	if s.exclusiveInput || sess.nonblockInput {
 		// os.File.Fd (used by pty.Setsize) can restore blocking mode on Linux.
 		var raw syscall.RawConn
 		raw, err = sess.ptmx.SyscallConn()
@@ -1994,7 +1997,7 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 					sess.auditor.Process(p.Input)
 				}
 				var err error
-				if s.exclusiveInput {
+				if s.exclusiveInput || sess.nonblockInput {
 					err = writePTYInput(ctx, sess.ptmx, p.Input)
 				} else {
 					_, err = sess.ptmx.Write(p.Input)

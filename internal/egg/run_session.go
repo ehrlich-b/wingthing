@@ -8,6 +8,10 @@ import (
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 )
 
+func nativeRunSupported(kind, agent string, command []string, codexRun bool) bool {
+	return kind == "agent" && len(command) == 0 && (agent == "claude" || (agent == "codex" && codexRun))
+}
+
 func (s *Server) sessionRunTurns(sess *Session, home, providerID string) *runTurnRuntime {
 	tree := &runProcessTree{root: sess.PID}
 	read := func(ctx context.Context, after int64, limit int) (SessionView, error) {
@@ -23,7 +27,7 @@ func (s *Server) sessionRunTurns(sess *Session, home, providerID string) *runTur
 		return ReadSessionLifecycle(s.dir, sess.Agent, sess.CWD, home, providerID, alive, after, limit)
 	}
 	backend := runTurnBackend{Agent: sess.Agent, Read: read, Done: sess.done, Kill: func() ([]RunDescendant, error) { return tree.kill(sess) }}
-	if sess.Kind != "agent" || len(sess.Command) != 0 || (sess.Agent == "codex" && !sess.codexRun) {
+	if !nativeRunSupported(sess.Kind, sess.Agent, sess.Command, sess.codexRun) {
 		backend.Agent = ""
 	}
 	backend.Prepare = func(prompt, exactID string) (func() (turnEvidence, error), error) {
