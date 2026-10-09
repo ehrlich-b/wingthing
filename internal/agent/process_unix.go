@@ -3,10 +3,20 @@
 package agent
 
 import (
+	"errors"
 	"os/exec"
 	"syscall"
 	"time"
 )
+
+func processTreeKilled(err error) bool {
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		return false
+	}
+	status, ok := exit.Sys().(syscall.WaitStatus)
+	return ok && status.Signaled() && status.Signal() == syscall.SIGKILL
+}
 
 func configureProcessTree(cmd *exec.Cmd) {
 	if cmd.SysProcAttr == nil {

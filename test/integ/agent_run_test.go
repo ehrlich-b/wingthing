@@ -238,6 +238,52 @@ func TestMCPAgentRunSurvivesHostExit(t *testing.T) {
 	}
 }
 
+func TestMCPAgentRunTerminalEventReapsLingeringProvider(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("failed=%v", failed), func(t *testing.T) {
+			f := newRunFixture(t)
+			terminal := `{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":5}}`
+			if failed {
+				terminal = `{"type":"turn.failed","error":{"message":"Provider refused the request."}}`
+			}
+			script := "#!/bin/sh\necho $$ > provider.pid\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"01998952-827c-7000-8000-123456789abc\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"final transcript\"}}' '" + terminal + "'\nexec /bin/sleep 60\n"
+			if err := os.WriteFile(filepath.Join(f.root, "b", "codex"), []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			h := f.host(t, "owner", false)
+			started, bad := h.call(t, "agent_run", map[string]any{"agent": "codex", "prompt": "lifecycle fixture", "cwd": f.work, "timeout_seconds": 15})
+			if bad {
+				t.Fatalf("start: %#v", started)
+			}
+			id := started["run_id"].(string)
+			waited, bad := h.call(t, "agent_wait", map[string]any{"run_id": id, "timeout_seconds": 8})
+			wantStatus := "done"
+			if failed {
+				wantStatus = "failed"
+			}
+			if bad || waited["status"] != wantStatus {
+				t.Fatalf("terminal event did not end run: %#v", waited)
+			}
+			result, bad := h.call(t, "agent_result", map[string]any{"run_id": id})
+			if bad || result["output"] != "final transcript" || result["thread_id"] != "01998952-827c-7000-8000-123456789abc" {
+				t.Fatalf("terminal result lost output or thread: %#v", result)
+			}
+			if failed && result["error_kind"] != "provider_refused" {
+				t.Fatalf("terminal failure was lost: %#v", result)
+			}
+			data, err := os.ReadFile(filepath.Join(f.work, "provider.pid"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			if err != nil || procinfo.OwnedProcessIsAlive(pid) {
+				t.Fatalf("terminal provider was not reaped: PID %d, %v", pid, err)
+			}
+			h.exit(t, false)
+		})
+	}
+}
+
 // Native enforcement belongs to e2e-mac (or the full integration profile on
 // a capable Linux host), separately from the credential-free process gate.
 func TestSandboxedMCPAgentRunSurvivesHostExit(t *testing.T) {

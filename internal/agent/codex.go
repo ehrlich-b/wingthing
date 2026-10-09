@@ -5,12 +5,37 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+const codexCompletionGrace = 2 * time.Second
+
+// Closing an inherited pipe after completion is an EOF for the event parser,
+// which must still report any oversized final events it skipped earlier.
+type codexOutputPipe struct {
+	io.ReadCloser
+	closing atomic.Bool
+}
+
+func (p *codexOutputPipe) Read(b []byte) (int, error) {
+	n, err := p.ReadCloser.Read(b)
+	if p.closing.Load() && errors.Is(err, os.ErrClosed) {
+		err = io.EOF
+	}
+	return n, err
+}
+
+func (p *codexOutputPipe) close() {
+	p.closing.Store(true)
+	_ = p.ReadCloser.Close()
+}
 
 type Codex struct {
 	command   string
@@ -91,20 +116,55 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 	providerHome := codexHome(cmd)
 	stream := newStream(ctx)
 	go func() {
+		output := &codexOutputPipe{ReadCloser: stdout}
+		// Even a descendant that escapes the process group must not keep the
+		// supervisor stuck reading stdout after the caller cancels the run.
+		stopContextClose := context.AfterFunc(ctx, output.close)
+		defer stopContextClose()
+		var completionTimer *time.Timer
+		cleanupDone := make(chan struct{})
+		var completed, killed bool
+		startCompletionCleanup := func() {
+			if completionTimer != nil {
+				return
+			}
+			// Keep draining during normal CLI shutdown, then stop our process
+			// group and close stdout without depending on EOF or cmd.Wait.
+			completionTimer = time.AfterFunc(codexCompletionGrace, func() {
+				if cmd.Cancel != nil {
+					killed = cmd.Cancel() == nil
+				} else {
+					killed = cmd.Process.Kill() == nil
+				}
+				output.close()
+				close(cleanupDone)
+			})
+		}
 		var threadID string
-		readErr := readProviderLines(stdout, "codex", func(line string) {
+		readErr := readProviderLines(output, "codex", func(line string) {
 			var session struct {
 				Type     string `json:"type"`
 				ThreadID string `json:"thread_id"`
 			}
-			if json.Unmarshal([]byte(line), &session) == nil && session.Type == "thread.started" {
-				threadID = ""
-				if validCodexThreadID(session.ThreadID) {
-					threadID = session.ThreadID
-				}
-				stream.setProviderSession(threadID, "")
-				if threadID != "" {
-					stream.send(Chunk{ThreadID: threadID})
+			if json.Unmarshal([]byte(line), &session) == nil {
+				switch session.Type {
+				case "thread.started":
+					threadID = ""
+					if validCodexThreadID(session.ThreadID) {
+						threadID = session.ThreadID
+					}
+					stream.setProviderSession(threadID, "")
+					if threadID != "" {
+						stream.send(Chunk{ThreadID: threadID})
+					}
+				case "turn.completed":
+					completed = true
+					// A completed turn supersedes earlier retry diagnostics,
+					// including terminal events without optional usage fields.
+					diagnostics.failure = ""
+					startCompletionCleanup()
+				case "turn.failed":
+					startCompletionCleanup()
 				}
 			}
 			if text, ok := parseCodexEvent(line); ok {
@@ -112,14 +172,21 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 			}
 			if input, output, ok := parseCodexUsage(line); ok {
 				stream.SetTokens(input, output)
-				// A completed turn supersedes earlier retry diagnostics.
-				diagnostics.failure = ""
 			}
 			if kind, ok := parseCodexFailure(line); ok {
 				diagnostics.failure = preferFailureKind(diagnostics.failure, kind)
 			}
 		})
 		err := waitAgentCommand(cmd, diagnostics, "codex")
+		if completionTimer != nil && !completionTimer.Stop() {
+			// Join a running callback before reading its result or returning.
+			<-cleanupDone
+		}
+		if completed && killed && ctx.Err() == nil && diagnostics.failure == "" && processTreeKilled(err) {
+			// Only our forced SIGKILL after a successful terminal event is
+			// expected. Preserve natural nonzero exits and provider failures.
+			err = nil
+		}
 		if readErr != nil {
 			err = errors.Join(err, &Failure{Kind: ProviderError, Provider: "codex"}, readErr)
 		}
