@@ -21,7 +21,7 @@ func (s *Server) startSession(id, agent, cwd string, cfg *egg.EggConfig, opts eg
 		return nil, errors.New("session launch policy was not prepared")
 	}
 	launch.Config = cfg
-	return s.Sessions.Start(context.Background(), launch, wingsession.StartOptions{SessionID: id, Agent: agent, Egg: opts})
+	return s.Sessions.Start(context.Background(), launch, wingsession.StartOptions{SessionID: id, Agent: agent, Egg: opts, Tools: s.forkTools, Trace: s.forkTrace && cfg.Trace, IdleTimeout: s.forkIdleTimeout})
 }
 
 func (s *Server) loadSessionLaunchConfig(cwd string) (*egg.EggConfig, error) {

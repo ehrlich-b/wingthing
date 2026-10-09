@@ -10,6 +10,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -145,8 +146,12 @@ func detachBrowserAttachment(sessionID string, detach ws.PTYDetach) {
 
 // A writer connection is disposable. This observer keeps lifecycle/attention
 // forwarding alive while the browser detaches or another surface owns input.
-func watchPreviewBrowserEgg(ctx context.Context, client *egg.Client, sessionID, agent, cwd string, idle *sessionIdleState, write ws.PTYWriteFunc, sessionCancel context.CancelFunc) error {
-	stream, err := client.AttachSessionWithOptions(ctx, sessionID, egg.AttachOptions{ReadOnly: true, Owner: "wing:observer"})
+func watchPreviewBrowserEgg(ctx context.Context, client *egg.Client, sessionID, agent, cwd string, idle *sessionIdleState, write ws.PTYWriteFunc, sessionCancel context.CancelFunc, services ...*wingsession.Service) error {
+	sessions := &wingsession.Service{}
+	if len(services) > 0 {
+		sessions = services[0]
+	}
+	stream, err := sessions.Observe(ctx, client, sessionID, "wing:observer")
 	if err != nil {
 		return err
 	}

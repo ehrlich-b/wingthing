@@ -1078,6 +1078,11 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		wingEggMu.Unlock()
 		return wingsession.Policy{Wing: wc, Egg: ec, Keys: keys, Audit: auditLive.Load()}
 	}}
+	configureSessionRegistration(sessions, ctx, client, currentPasskeyPolicy, func() []*config.ToolConfig {
+		wingToolsMu.Lock()
+		defer wingToolsMu.Unlock()
+		return append([]*config.ToolConfig(nil), wingTools...)
+	})
 	directMCPAdmission.Sessions = sessions
 	if options.SetSessionService != nil {
 		options.SetSessionService(sessions)
@@ -1151,7 +1156,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		wingToolsMu.Lock()
 		reclaimTools := append([]*config.ToolConfig{}, wingTools...)
 		wingToolsMu.Unlock()
-		reclaimEggSessions(rctx, cfg, client, reconnectWingCfg, reconnectAllowedKeys, passkeyCache, currentPasskeyPolicy(), authTTL, reclaimTools)
+		reclaimEggSessions(rctx, cfg, client, reconnectWingCfg, reconnectAllowedKeys, passkeyCache, currentPasskeyPolicy(), authTTL, reclaimTools, sessions)
 	}
 
 	// SIGHUP reload goroutine — caller owns SIGTERM/SIGINT via ctx cancellation
@@ -1605,7 +1610,7 @@ func (p *pendingReattachAuths) resetTimer() {
 // reclaimEggSessions discovers surviving egg sessions and re-registers their
 // input routing goroutines. The relay no longer tracks sessions — browser
 // discovers them via E2E tunnel and reattaches directly via wing_id.
-func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Client, wingCfg *config.WingConfig, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, passkeyPolicy auth.PasskeyPolicy, authTTL time.Duration, tools []*config.ToolConfig) {
+func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Client, wingCfg *config.WingConfig, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, passkeyPolicy auth.PasskeyPolicy, authTTL time.Duration, tools []*config.ToolConfig, services ...*wingsession.Service) {
 	// Small delay to let registration complete
 	time.Sleep(500 * time.Millisecond)
 
@@ -1666,13 +1671,17 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 		go func(sid string, ec *egg.Client, dir string) {
 			defer cleanup()
 			defer cmdutil.CloseWithLog("reclaimed egg client", ec)
-			handleReclaimedPTY(ctx, cfg, ec, sid, dir, write, input, wingCfg, allowedKeys, passkeyCache, passkeyPolicy, authTTL, tools)
+			handleReclaimedPTY(ctx, cfg, ec, sid, dir, write, input, wingCfg, allowedKeys, passkeyCache, passkeyPolicy, authTTL, tools, services...)
 		}(sessionID, ec, dir)
 	}
 }
 
 // handleReclaimedPTY sets up I/O routing for a reclaimed (surviving) egg session.
-func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client, sessionID, eggDir string, write ws.PTYWriteFunc, input <-chan []byte, wingCfg *config.WingConfig, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, passkeyPolicy auth.PasskeyPolicy, authTTL time.Duration, tools []*config.ToolConfig) {
+func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client, sessionID, eggDir string, write ws.PTYWriteFunc, input <-chan []byte, wingCfg *config.WingConfig, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, passkeyPolicy auth.PasskeyPolicy, authTTL time.Duration, tools []*config.ToolConfig, services ...*wingsession.Service) {
+	sessions := &wingsession.Service{Config: cfg}
+	if len(services) > 0 {
+		sessions = services[0]
+	}
 	reclaimAgent, reclaimCWD := eggclient.ReadEggMeta(eggDir)
 	var mu sync.Mutex
 	var gcm cipher.AEAD
@@ -1701,13 +1710,18 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 	// via --tool-socket. Re-listen on the same socket so privileged tools keep
 	// working after a daemon restart. Only sessions that were started with tools
 	// have a .tools dir; skip the rest.
-	if len(tools) > 0 {
+	toolListener := sessions.ToolListener(sessionID)
+	if toolListener != nil {
+		defer sessions.ReleaseTools(sessionID)
+	}
+	if toolListener == nil && len(tools) > 0 {
 		toolsDir := filepath.Join(eggDir, ".tools")
 		if _, statErr := os.Stat(toolsDir); statErr == nil {
 			toolSocketPath := filepath.Join(toolsDir, "tool.sock")
 			if tl, tlErr := egg.NewToolListener(toolSocketPath, tools, egg.ToolContext{Reclaimed: true}); tlErr != nil {
 				log.Printf("pty session %s: reclaim tool listener failed: %v", sessionID, tlErr)
 			} else {
+				toolListener = tl
 				log.Printf("pty session %s: reclaim tool listener restarted (%d tools)", sessionID, len(tools))
 				defer cmdutil.CloseWithLog("reclaimed egg tool listener", tl)
 			}
@@ -1716,7 +1730,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 	// Attach to existing egg session
 	streamCtx, sCancel := context.WithCancel(ctx)
-	stream, err := ec.AttachSessionWithOptions(streamCtx, sessionID, egg.AttachOptions{ReadOnly: config.Channel() == "preview", Owner: "wing:observer"})
+	stream, err := sessions.Observe(streamCtx, ec, sessionID, "wing:observer")
 	if err != nil {
 		sCancel()
 		log.Printf("pty session %s: reclaim attach failed: %v", sessionID, err)
@@ -1909,7 +1923,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 						continue
 					}
 					specCtx, specCancel := context.WithCancel(ctx)
-					specStream, specErr := ec.AttachSessionWithOptions(specCtx, sessionID, egg.AttachOptions{ReadOnly: true, Owner: "browser:observer"})
+					specStream, specErr := sessions.Attach(specCtx, attachmentAuthority(wingCfg, attach), ec, sessionID, egg.AttachOptions{ReadOnly: true, Owner: "browser:observer"}, nil)
 					if specErr != nil {
 						specCancel()
 						ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator attach failed", SessionID: sessionID, ViewerID: attach.ViewerID})
@@ -1957,7 +1971,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				}
 				log.Printf("pty session %s: re-keyed E2E for reattach", sessionID)
 				newStreamCtx, newSCancel := context.WithCancel(ctx)
-				newStream, reErr := ec.AttachSessionWithOptions(newStreamCtx, sessionID, egg.AttachOptions{Claim: true, Takeover: attach.Takeover, Owner: "browser:" + attach.UserID, Rows: attach.Rows, Cols: attach.Cols})
+				newStream, reErr := sessions.Attach(newStreamCtx, attachmentAuthority(wingCfg, attach), ec, sessionID, egg.AttachOptions{Claim: true, Takeover: attach.Takeover, Owner: "browser:" + attach.UserID, Rows: attach.Rows, Cols: attach.Cols}, toolListener)
 				if reErr != nil {
 					newSCancel()
 					log.Printf("pty session %s: reattach to egg failed: %v", sessionID, reErr)
@@ -2069,7 +2083,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				if decErr != nil {
 					continue
 				}
-				if err := currentStream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Input{Input: decoded}}); err != nil {
+				if err := sessions.Input(currentStream, sessionID, decoded); err != nil {
 					log.Printf("pty session %s: send input to reclaimed egg: %v", sessionID, err)
 					if config.Channel() == "preview" {
 						continue reclaimInputLoop
@@ -2115,7 +2129,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 			case ws.TypePTYKill:
 				log.Printf("pty session %s: kill received", sessionID)
-				if err := ec.Kill(ctx, sessionID); err != nil {
+				if err := sessions.StopAttached(ctx, ec, sessionID); err != nil {
 					log.Printf("pty session %s: kill reclaimed egg: %v", sessionID, err)
 				}
 				sessionCancel()
@@ -2336,7 +2350,7 @@ authDone:
 
 	// Attach to egg session stream
 	streamCtx, sCancel := context.WithCancel(ctx)
-	stream, err := eggclient.AttachBrowserController(streamCtx, ec, start.SessionID, egg.AttachOptions{Claim: true, Owner: "browser:" + start.UserID}, toolListener, start.UserID)
+	stream, err := sessions.Attach(streamCtx, startAuthority(wingCfg, start), ec, start.SessionID, egg.AttachOptions{Claim: true, Owner: "browser:" + start.UserID}, toolListener)
 	writerConfirmed := err == nil
 	if err != nil {
 		log.Printf("pty: egg attach failed: %v", err)
@@ -2352,7 +2366,7 @@ authDone:
 		}
 		// Another surface may claim a newly visible egg before the browser's
 		// initial attach. Keep its bridge alive for a deliberate takeover.
-		stream, err = ec.AttachSessionWithOptions(streamCtx, start.SessionID, egg.AttachOptions{ReadOnly: true, Owner: "wing:pending-browser"})
+		stream, err = sessions.Observe(streamCtx, ec, start.SessionID, "wing:pending-browser")
 		if err != nil {
 			sCancel()
 			return
@@ -2382,7 +2396,7 @@ authDone:
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
 	defer sessionCancel()
 	if config.Channel() == "preview" {
-		if err := watchPreviewBrowserEgg(sessionCtx, ec, start.SessionID, start.Agent, start.CWD, idleState, write, sessionCancel); err != nil {
+		if err := watchPreviewBrowserEgg(sessionCtx, ec, start.SessionID, start.Agent, start.CWD, idleState, write, sessionCancel, sessions); err != nil {
 			ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, SessionID: start.SessionID, Message: err.Error()})
 			return
 		}
@@ -2572,7 +2586,7 @@ authDone:
 
 					// Open independent egg stream (gets replay + live cursor)
 					specCtx, specCancel := context.WithCancel(ctx)
-					specStream, specErr := ec.AttachSessionWithOptions(specCtx, start.SessionID, egg.AttachOptions{ReadOnly: true, Owner: "browser:observer"})
+					specStream, specErr := sessions.Attach(specCtx, attachmentAuthority(wingCfg, attach), ec, start.SessionID, egg.AttachOptions{ReadOnly: true, Owner: "browser:observer"}, nil)
 					if specErr != nil {
 						specCancel()
 						log.Printf("pty session %s: spectator attach to egg failed: %v", start.SessionID, specErr)
@@ -2635,7 +2649,7 @@ authDone:
 				}
 				log.Printf("pty session %s: re-keyed E2E for reattach", start.SessionID)
 				newStreamCtx, newSCancel := context.WithCancel(ctx)
-				newStream, reErr := eggclient.AttachBrowserController(newStreamCtx, ec, start.SessionID, egg.AttachOptions{Claim: true, Takeover: attach.Takeover, Owner: "browser:" + attach.UserID, Rows: attach.Rows, Cols: attach.Cols}, toolListener, attach.UserID)
+				newStream, reErr := sessions.Attach(newStreamCtx, attachmentAuthority(wingCfg, attach), ec, start.SessionID, egg.AttachOptions{Claim: true, Takeover: attach.Takeover, Owner: "browser:" + attach.UserID, Rows: attach.Rows, Cols: attach.Cols}, toolListener)
 				if reErr != nil {
 					newSCancel()
 					log.Printf("pty session %s: reattach to egg failed: %v", start.SessionID, reErr)
@@ -2837,7 +2851,7 @@ authDone:
 
 			case ws.TypePTYKill:
 				log.Printf("pty session %s: kill received", start.SessionID)
-				if err := ec.Kill(ctx, start.SessionID); err != nil {
+				if err := sessions.StopAttached(ctx, ec, start.SessionID); err != nil {
 					log.Printf("pty session %s: kill egg: %v", start.SessionID, err)
 				}
 				sessionCancel()

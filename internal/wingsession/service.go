@@ -7,11 +7,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
@@ -45,6 +47,9 @@ type Service struct {
 	Inventory  func(*config.Config) []ws.SessionInfo
 	// Spawn is replaceable by isolated protocol fixtures; production uses SpawnEgg.
 	Spawn func(*Launch, StartOptions) (*egg.Client, error)
+	// Register installs wing input routing before Start acknowledges the egg.
+	Register func(string) error
+	tools    sync.Map // session ID -> wing-owned tool listener
 }
 
 type Launch struct {
@@ -61,6 +66,7 @@ type StartOptions struct {
 	Debug, VTE, Trace bool
 	IdleTimeout       time.Duration
 	Egg               eggclient.SpawnEggOpts
+	Tools             []*config.ToolConfig
 }
 
 func (s *Service) PrepareLaunch(a Authority, cwd string) (*Launch, error) {
@@ -108,6 +114,9 @@ func (s *Service) Start(ctx context.Context, launch *Launch, opts StartOptions) 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if s.Register == nil {
+		return nil, errors.New("wing session registration is not ready")
+	}
 	if launch == nil || launch.service != s {
 		return nil, errors.New("launch was not prepared by this wing")
 	}
@@ -116,6 +125,8 @@ func (s *Service) Start(ctx context.Context, launch *Launch, opts StartOptions) 
 	}
 	if launch.authority.Principal != "" {
 		opts.Egg.Principal = launch.authority.Principal
+	} else if opts.Egg.Principal == "" {
+		opts.Egg.Principal = UserPrincipal(launch.authority.UserID)
 	}
 	if opts.Rows == 0 {
 		opts.Rows = 24
@@ -123,15 +134,45 @@ func (s *Service) Start(ctx context.Context, launch *Launch, opts StartOptions) 
 	if opts.Cols == 0 {
 		opts.Cols = 80
 	}
-	if s.Spawn != nil {
-		return s.Spawn(launch, opts)
+	listener, toolErr := eggclient.PrepareBrowserTools(s.Config, opts.SessionID, opts.Tools, &opts.Egg, launch.Identity)
+	if toolErr != nil {
+		return nil, toolErr
 	}
-	return eggclient.SpawnEgg(s.Config, opts.SessionID, opts.Agent, launch.Config, opts.Rows, opts.Cols, launch.CWD, opts.Debug, opts.VTE, opts.Trace, launch.Identity, opts.IdleTimeout, opts.Egg)
+	if listener != nil {
+		s.tools.Store(opts.SessionID, listener)
+	}
+	accepted := false
+	defer func() {
+		if !accepted {
+			s.ReleaseTools(opts.SessionID)
+		}
+	}()
+	var client *egg.Client
+	var err error
+	if s.Spawn != nil {
+		client, err = s.Spawn(launch, opts)
+	} else {
+		client, err = eggclient.SpawnEgg(s.Config, opts.SessionID, opts.Agent, launch.Config, opts.Rows, opts.Cols, launch.CWD, opts.Debug, opts.VTE, opts.Trace, launch.Identity, opts.IdleTimeout, opts.Egg)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if s.Register != nil {
+		if err = s.Register(opts.SessionID); err != nil {
+			stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = client.Kill(stopCtx, opts.SessionID)
+			cancel()
+			_ = client.Close()
+			return nil, err
+		}
+	}
+	return client, nil
+
 }
 
 func (s *Service) Owns(a Authority, session eggclient.LocalSession) bool {
 	dir := filepath.Join(s.Config.Dir, "eggs", session.ID)
-	if a.UserID == "" || eggclient.ReadEggOwner(dir) != a.UserID {
+	if a.UserID == "" || (!a.Browser && eggclient.ReadEggOwner(dir) != a.UserID) || (a.Browser && !wingpolicy.CanAttachSession(a.UserID, a.Role, eggclient.ReadEggOwner(dir))) {
 		return false
 	}
 	if a.EnforcePaths && (len(a.AllowedPaths) == 0 || !wingpolicy.IsUnderPaths(wingpolicy.CanonicalSessionPath(session.CWD), a.AllowedPaths)) {
@@ -193,7 +234,7 @@ func (s *Service) Stop(ctx context.Context, a Authority, ref string) (eggclient.
 		return eggclient.LocalSession{}, err
 	}
 	defer client.Close()
-	return session, client.Kill(ctx, session.ID)
+	return session, s.StopAttached(ctx, client, session.ID)
 }
 
 // AuthorityForWeb preserves authenticated roles and the wing's path ACLs.
@@ -209,4 +250,82 @@ func AuthorityForWeb(wc *config.WingConfig, req ws.TunnelRequest, home string) A
 func UserPrincipal(userID string) string {
 	digest := sha256.Sum256([]byte(userID))
 	return "user-" + hex.EncodeToString(digest[:10])
+}
+
+// Attach authenticates the session separately from transport key exchange.
+func (s *Service) Attach(ctx context.Context, a Authority, client *egg.Client, id string, opts egg.AttachOptions, tools *egg.ToolListener) (pb.Egg_SessionClient, error) {
+	if _, err := s.Resolve(ctx, a, id, true); err != nil {
+		return nil, err
+	}
+	if opts.ReadOnly {
+		return client.AttachSessionWithOptions(ctx, id, opts)
+	}
+	return eggclient.AttachBrowserController(ctx, client, id, opts, tools, a.UserID)
+}
+
+// Observe belongs to the wing, so it does not acquire a client writer lease.
+func (s *Service) Observe(ctx context.Context, client *egg.Client, id, owner string) (pb.Egg_SessionClient, error) {
+	return client.AttachSessionWithOptions(ctx, id, egg.AttachOptions{ReadOnly: true, Owner: owner})
+}
+
+// Input uses the already acknowledged attachment capability. The transport
+// verifies its controller/key binding before passing decrypted bytes here.
+func (s *Service) Input(stream pb.Egg_SessionClient, id string, data []byte) error {
+	return stream.Send(&pb.SessionMsg{SessionId: id, Payload: &pb.SessionMsg_Input{Input: data}})
+}
+
+func (s *Service) Send(ctx context.Context, a Authority, ref string, input []byte, enter bool) (eggclient.LocalSession, error) {
+	session, err := s.Resolve(ctx, a, ref, false)
+	if err != nil {
+		return eggclient.LocalSession{}, err
+	}
+	return eggclient.SendSessionInput(ctx, s.Config, session.ID, input, enter, a.UserID)
+}
+
+// StopAttached is for a wing bridge holding an authenticated attachment.
+func (s *Service) StopAttached(ctx context.Context, client *egg.Client, id string) error {
+	return client.Kill(ctx, id)
+}
+
+func (s *Service) ToolListener(id string) *egg.ToolListener {
+	if value, ok := s.tools.Load(id); ok {
+		return value.(*egg.ToolListener)
+	}
+	return nil
+}
+func (s *Service) ReleaseTools(id string) {
+	if value, ok := s.tools.LoadAndDelete(id); ok {
+		_ = value.(*egg.ToolListener).Close()
+	}
+}
+
+// Fork keeps provider/name reservations and the resulting egg under the same
+// wing lifecycle as fresh launches. Prepare/Admit preserve the caller's bounds
+// and conversation metadata without handing it a process executor.
+func (s *Service) Fork(ctx context.Context, a Authority, ref, label string, scope eggclient.SessionForkScope) (*eggclient.SessionForkResult, error) {
+	source, err := s.Resolve(ctx, a, ref, true)
+	if err != nil {
+		return nil, err
+	}
+	var launch *Launch
+	tools := scope.Tools
+	scope.Tools = nil
+	scope.Principal = a.Principal
+	scope.LoadConfig = func(cwd string) (*egg.EggConfig, error) {
+		var err error
+		launch, err = s.PrepareLaunch(a, cwd)
+		if err != nil {
+			return nil, err
+		}
+		return launch.Config, nil
+	}
+	scope.Spawn = func(plan *eggclient.SessionForkPlan) error {
+		launch.Config = plan.Config
+		client, err := s.Start(ctx, launch, StartOptions{SessionID: plan.SessionID, Agent: plan.Source.Agent, Egg: plan.Options, Tools: tools, Trace: scope.TraceFromConfig && plan.Config.Trace, IdleTimeout: scope.IdleTimeout})
+		if client != nil {
+			_ = client.Close()
+		}
+		return err
+	}
+	return eggclient.ForkSession(ctx, s.Config, source.ID, label, scope)
 }

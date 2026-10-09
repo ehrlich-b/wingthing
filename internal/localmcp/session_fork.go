@@ -19,7 +19,13 @@ func (s *Server) ToolSessionFork(ctx context.Context, arguments json.RawMessage)
 	if s.BoundConversation != "" {
 		return nil, errors.New("fork is unavailable on conversation-bound MCP connections; a sibling may be outside their task tree")
 	}
-	result, err := eggclient.ForkSession(ctx, s.Cfg, args.Session, args.Name, s.sessionForkScope())
+	var result *eggclient.SessionForkResult
+	var err error
+	if s.Sessions != nil {
+		result, err = s.Sessions.Fork(ctx, s.sessionAuthority(), args.Session, args.Name, s.sessionForkScope())
+	} else {
+		result, err = eggclient.ForkSession(ctx, s.Cfg, args.Session, args.Name, s.sessionForkScope())
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -28,20 +34,9 @@ func (s *Server) ToolSessionFork(ctx context.Context, arguments json.RawMessage)
 }
 
 func (s *Server) sessionForkScope() eggclient.SessionForkScope {
-	spawn := s.spawnFork
-	if s.Sessions != nil {
-		spawn = func(plan *eggclient.SessionForkPlan) error {
-			ec, err := s.startSession(plan.SessionID, plan.Source.Agent, plan.Source.CWD, plan.Config, plan.Options)
-			if ec != nil {
-				_ = ec.Close()
-			}
-			return err
-		}
-	}
-
 	return eggclient.SessionForkScope{
 		Principal: s.clientPrincipal(), Identity: s.identity, AllowedPaths: s.allowedPaths, EnforcePathBounds: s.enforcePathBounds,
-		Admit: s.admitSpawn, CheckSpawn: s.checkSessionBounds, LoadConfig: s.loadSessionLaunchConfig, Spawn: spawn, TraceFromConfig: s.forkTrace, IdleTimeout: s.forkIdleTimeout,
+		Admit: s.admitSpawn, CheckSpawn: s.checkSessionBounds, LoadConfig: s.loadSessionLaunchConfig, Spawn: s.spawnFork, TraceFromConfig: s.forkTrace, IdleTimeout: s.forkIdleTimeout,
 		Tools: s.forkTools,
 		Prepare: func(plan *eggclient.SessionForkPlan) error {
 			if plan.Conversation == nil {
