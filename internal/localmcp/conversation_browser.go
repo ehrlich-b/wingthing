@@ -147,6 +147,9 @@ func configureBrowserFork(s *Server, wc *config.WingConfig, req ws.TunnelRequest
 	s.forkIdleTimeout, _ = time.ParseDuration(wc.IdleTimeout)
 	s.forkTrace = true
 	s.forkTools = append([]*config.ToolConfig(nil), tools...)
+	if s.Sessions != nil {
+		return
+	}
 	s.launchConfig = func(cwd string) (*egg.EggConfig, error) {
 		launch := start
 		launch.CWD = cwd

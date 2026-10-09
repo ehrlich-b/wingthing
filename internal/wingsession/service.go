@@ -23,6 +23,7 @@ import (
 type Authority struct {
 	Principal            string
 	UserID, Email, Role  string
+	DisplayName          string
 	Browser              bool
 	PublicKey, AuthToken string
 	AllowedPaths         []string
@@ -70,7 +71,10 @@ type StartOptions struct {
 }
 
 func (s *Service) PrepareLaunch(a Authority, cwd string) (*Launch, error) {
-	p := s.Policy()
+	return s.prepareLaunch(s.Policy(), a, cwd)
+}
+
+func (s *Service) prepareLaunch(p Policy, a Authority, cwd string) (*Launch, error) {
 	if p.Wing == nil || p.Egg == nil {
 		return nil, errors.New("wing runtime policy is not ready")
 	}
@@ -91,8 +95,8 @@ func (s *Service) PrepareLaunch(a Authority, cwd string) (*Launch, error) {
 			return nil, errors.New("passkey authentication is required")
 		}
 	}
-	start := ws.PTYStart{CWD: cwd, UserID: a.UserID, Email: a.Email, OrgRole: a.Role}
-	cfg, identity, err := eggclient.PrepareBrowserLaunch(p.Wing, &start, s.Home, s.SharedHost, p.Egg)
+	start := ws.PTYStart{CWD: cwd, UserID: a.UserID, Email: a.Email, OrgRole: a.Role, DisplayName: a.DisplayName}
+	cfg, identity, err := eggclient.PrepareBrowserLaunch(p.Wing, &start, s.Home, s.SharedHost || a.SealedFS, p.Egg)
 	if err != nil {
 		return nil, err
 	}
@@ -108,6 +112,35 @@ func (s *Service) PrepareLaunch(a Authority, cwd string) (*Launch, error) {
 	copyCfg := *cfg
 	copyCfg.Audit = copyCfg.Audit || p.Audit
 	return &Launch{Config: &copyCfg, CWD: start.CWD, Identity: identity, authority: a, service: s}, nil
+}
+
+// PrepareWebStart also owns resume admission and provider reservation. It uses
+// one policy snapshot for the launch and the source's owner/path checks.
+func (s *Service) PrepareWebStart(start *ws.PTYStart) (*Launch, string, func(bool), error) {
+	p := s.Policy()
+	if p.Wing == nil {
+		return nil, "", nil, errors.New("wing runtime policy is not ready")
+	}
+	if p.Wing.IsAdmin(start.Email) && wingpolicy.IsMemberRole(start.OrgRole) {
+		start.OrgRole = "admin"
+	}
+	a := Authority{UserID: start.UserID, Email: start.Email, Role: start.OrgRole, DisplayName: start.DisplayName, Browser: true, PublicKey: start.PublicKey, AuthToken: start.AuthToken}
+	launch, err := s.prepareLaunch(p, a, start.CWD)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	start.CWD = launch.CWD
+	if start.ResumeSessionID == "" {
+		return launch, "", nil, nil
+	}
+	paths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(p.Wing.Paths, start.Email, start.OrgRole, s.Home))
+	provider, cwd, release, err := eggclient.PrepareBrowserResume(s.Config, p.Wing, *start, paths, s.SharedHost)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	start.CWD = cwd
+	launch.CWD = cwd
+	return launch, provider, release, nil
 }
 
 func (s *Service) Start(ctx context.Context, launch *Launch, opts StartOptions) (*egg.Client, error) {
@@ -157,17 +190,15 @@ func (s *Service) Start(ctx context.Context, launch *Launch, opts StartOptions) 
 	if err != nil {
 		return nil, err
 	}
-	if s.Register != nil {
-		if err = s.Register(opts.SessionID); err != nil {
-			stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			_ = client.Kill(stopCtx, opts.SessionID)
-			cancel()
-			_ = client.Close()
-			return nil, err
-		}
+	if err = s.Register(opts.SessionID); err != nil {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = s.StopAttached(stopCtx, client, opts.SessionID)
+		cancel()
+		_ = client.Close()
+		return nil, err
 	}
+	accepted = true
 	return client, nil
-
 }
 
 func (s *Service) Owns(a Authority, session eggclient.LocalSession) bool {
@@ -328,4 +359,40 @@ func (s *Service) Fork(ctx context.Context, a Authority, ref, label string, scop
 		return err
 	}
 	return eggclient.ForkSession(ctx, s.Config, source.ID, label, scope)
+}
+
+func (s *Service) Snapshot(ctx context.Context, a Authority, ref string) (eggclient.LocalSession, []byte, error) {
+	session, err := s.Resolve(ctx, a, ref, false)
+	if err != nil {
+		return eggclient.LocalSession{}, nil, err
+	}
+	return eggclient.ReadSessionSnapshot(ctx, s.Config, session.ID)
+}
+
+func (s *Service) Read(ctx context.Context, a Authority, ref string, after int64, limit int) (egg.SessionView, error) {
+	if err := ctx.Err(); err != nil {
+		return egg.SessionView{}, err
+	}
+	session, err := s.Resolve(ctx, a, ref, true)
+	if err != nil {
+		return egg.SessionView{}, err
+	}
+	return eggclient.LifecycleViewForSession(s.Config, session, after, limit)
+}
+
+func (s *Service) Prompt(ctx context.Context, a Authority, ref, request, input string, timeout time.Duration, actor string) (eggclient.LocalSession, egg.SessionPromptResult, error) {
+	session, err := s.Resolve(ctx, a, ref, true)
+	if err != nil {
+		return eggclient.LocalSession{}, egg.SessionPromptResult{}, err
+	}
+	receipt, err := eggclient.PromptSession(ctx, s.Config, session, request, input, timeout, actor, a.UserID)
+	return session, receipt, err
+}
+
+func (s *Service) Wait(ctx context.Context, a Authority, ref string, after int64, state string) (egg.SessionView, bool, error) {
+	session, err := s.Resolve(ctx, a, ref, true)
+	if err != nil {
+		return egg.SessionView{}, false, err
+	}
+	return eggclient.WaitSessionLifecycle(ctx, s.Config, session, after, state)
 }

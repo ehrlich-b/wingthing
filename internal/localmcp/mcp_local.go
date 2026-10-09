@@ -443,11 +443,8 @@ func newRoostNativeMCPServer(version string, cfg *config.Config, sharedHost bool
 	if (sharedHost || server.identity.OrgWing) && (wingCfg == nil || !wingCfg.IsAdmin(principal.Email)) {
 		server.sessionRole = "member"
 	}
-	if admission != nil && admission.Sessions != nil {
+	if admission != nil {
 		server.Sessions = admission.Sessions
-	} else {
-		home, _ := os.UserHomeDir()
-		server.Sessions = &wingsession.Service{Config: cfg, Home: home, SharedHost: sharedHost, Policy: func() wingsession.Policy { return wingsession.Policy{Wing: wingCfg, Egg: wingDefault} }}
 	}
 
 	return server
@@ -1304,7 +1301,13 @@ func (s *Server) toolTerminalRead(ctx context.Context, arguments json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	session, snapshot, err := eggclient.ReadSessionSnapshot(ctx, s.Cfg, owned.ID)
+	var session eggclient.LocalSession
+	var snapshot []byte
+	if s.Sessions != nil {
+		session, snapshot, err = s.Sessions.Snapshot(ctx, s.sessionAuthority(), owned.ID)
+	} else {
+		session, snapshot, err = eggclient.ReadSessionSnapshot(ctx, s.Cfg, owned.ID)
+	}
 	if err != nil {
 		return nil, err
 	}

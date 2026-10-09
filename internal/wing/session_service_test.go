@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -39,13 +40,17 @@ import (
 // dispatch, ownership files, and egg-client RPCs are exercised unchanged.
 type sessionEggFixture struct {
 	pb.UnimplementedEggServer
-	mu       sync.Mutex
-	snapshot []byte
-	input    chan []byte
-	killed   chan struct{}
-	stop     sync.Once
-	dir      string
-	agent    string
+	mu         sync.Mutex
+	snapshot   []byte
+	input      chan []byte
+	killed     chan struct{}
+	stop       sync.Once
+	dir        string
+	agent      string
+	transcript string
+	spool      string
+	prompt     string
+	sequence   int
 }
 
 func (f *sessionEggFixture) Status(context.Context, *pb.StatusRequest) (*pb.StatusResponse, error) {
@@ -100,6 +105,20 @@ func (f *sessionEggFixture) Session(stream grpc.BidiStreamingServer[pb.SessionMs
 				f.mu.Lock()
 				f.snapshot = append(f.snapshot, data...)
 				f.mu.Unlock()
+				if strings.HasPrefix(string(data), "\x1b[200~") {
+					f.prompt = strings.TrimSuffix(strings.TrimPrefix(string(data), "\x1b[200~"), "\x1b[201~")
+				}
+				if string(data) == "\r" && f.prompt != "" {
+					f.sequence++
+					if err := f.hook("UserPromptSubmit", f.prompt); err != nil {
+						return err
+					}
+					f.sequence++
+					if err := f.hook("Stop", ""); err != nil {
+						return err
+					}
+					f.prompt = ""
+				}
 				f.input <- data
 			case *pb.SessionMsg_Detach:
 				return nil
@@ -230,7 +249,7 @@ func (f *sessionTransportFixture) spawn(launch *wingsession.Launch, opts wingses
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	for name, value := range map[string]string{"egg.pid": strconv.Itoa(os.Getpid()), "egg.token": "fixture-token", "egg.meta": "kind=" + opts.Egg.Kind + "\nagent=" + opts.Agent + "\ncwd=" + launch.CWD + "\nprovider_home=" + f.home + "\n"} {
+	for name, value := range map[string]string{"egg.pid": strconv.Itoa(os.Getpid()), "egg.token": "fixture-token", "egg.meta": "kind=" + opts.Egg.Kind + "\nagent=" + opts.Agent + "\ncwd=" + launch.CWD + "\nprovider_home=" + f.home + "\nprovider_session_id=ours\n"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0600); err != nil {
 			return nil, err
 		}
@@ -242,6 +261,21 @@ func (f *sessionTransportFixture) spawn(launch *wingsession.Launch, opts wingses
 		return nil, err
 	}
 	ef := &sessionEggFixture{snapshot: []byte("fixture ready\n"), input: make(chan []byte, 16), killed: make(chan struct{}), dir: dir, agent: opts.Agent}
+	if opts.Agent == "claude" {
+		ef.transcript = filepath.Join(f.home, ".claude", "projects", strings.ReplaceAll(launch.CWD, "/", "-"), "ours.jsonl")
+		if err := os.MkdirAll(filepath.Dir(ef.transcript), 0700); err != nil {
+			return nil, err
+		}
+
+		ef.spool = filepath.Join(f.home, ".claude", "wingthing-events", opts.SessionID)
+		if err := os.MkdirAll(ef.spool, 0700); err != nil {
+			return nil, err
+		}
+		if err := ef.hook("SessionStart", ""); err != nil {
+			return nil, err
+		}
+	}
+
 	listener, err := net.Listen("unix", filepath.Join(dir, "egg.sock"))
 	if err != nil {
 		return nil, err
@@ -476,5 +510,187 @@ func TestSessionStartRequiresWingRegistrationAndRollsBackFailure(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestWebStartControllableViaMCP(t *testing.T) {
+	for _, mode := range []string{"http", "direct"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newSessionTransportFixture(t)
+			key := base64.StdEncoding.EncodeToString(f.browserKey.PublicKey().Bytes())
+			id := "web-fixture"
+			f.send(ws.PTYStart{Type: ws.TypePTYStart, SessionID: id, Agent: "claude", CWD: f.work, UserID: "alice", Email: "alice@example.com", OrgRole: "owner", PublicKey: key, Cols: 80, Rows: 24})
+			var started ws.PTYStarted
+			if err := json.Unmarshal(f.next(ws.TypePTYStarted), &started); err != nil {
+				t.Fatal(err)
+			}
+			if started.SessionID != id {
+				t.Fatalf("web did not start requested session: %+v", started)
+			}
+			owner := f.mcp(mode, "alice")
+			read := callSessionMCP(t, owner, "terminal_read", map[string]any{"session": id})
+			if read["ansi"] != "fixture ready\n" {
+				t.Fatalf("MCP snapshot of web session: %v", read)
+			}
+			lifecycle := callSessionMCP(t, owner, "session_read", map[string]any{"session": id})
+			if lifecycle["session"] != id {
+				t.Fatalf("MCP lifecycle of web session: %v", lifecycle)
+			}
+			other := f.mcp(mode, "bob")
+			inventory := callSessionMCP(t, other, "terminal_list", map[string]any{})
+			encoded, _ := json.Marshal(inventory["sessions"])
+			var hidden []any
+			if err := json.Unmarshal(encoded, &hidden); err != nil || len(hidden) != 0 {
+				t.Fatalf("foreign MCP listed web session: %v %v", inventory, err)
+			}
+			for _, tool := range []string{"terminal_read", "terminal_send", "terminal_stop", "session_read", "session_prompt"} {
+				args := map[string]any{"session": id}
+				if tool == "session_prompt" {
+					args["request_id"] = "denied"
+					args["input"] = "not yours"
+				}
+				encoded, _ := json.Marshal(args)
+				if result, isError, err := other(tool, encoded); err != nil || !isError {
+					t.Fatalf("foreign MCP %s admitted: %v %v", tool, result, err)
+				}
+			}
+			send := callSessionMCP(t, owner, "terminal_send", map[string]any{"session": id, "input": "from MCP", "enter": true})
+			if send["bytes_sent"] != 9 && send["bytes_sent"] != float64(9) {
+				t.Fatalf("MCP input count: %v", send)
+			}
+			if input := string(<-f.egg(id).input); input != "from MCP" {
+				t.Fatalf("MCP input=%q", input)
+			}
+			if enter := string(<-f.egg(id).input); enter != "\r" {
+				t.Fatalf("MCP enter=%q", enter)
+			}
+			read = callSessionMCP(t, owner, "terminal_read", map[string]any{"session": id})
+			if read["ansi"] != "fixture ready\nfrom MCP\r" {
+				t.Fatalf("MCP post-input snapshot: %v", read)
+			}
+			callSessionMCP(t, owner, "terminal_stop", map[string]any{"session": id})
+			select {
+			case <-f.egg(id).killed:
+			default:
+				t.Fatal("MCP stop did not reach web egg")
+			}
+		})
+	}
+}
+
+func (f *sessionEggFixture) hook(kind, input string) error {
+	if kind == "UserPromptSubmit" {
+		record, err := json.Marshal(map[string]any{"type": "user", "sessionId": "ours", "message": map[string]any{"role": "user", "content": input}})
+		if err != nil {
+			return err
+		}
+		file, err := os.OpenFile(f.transcript, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			return err
+		}
+		_, writeErr := file.Write(append(record, '\n'))
+		closeErr := file.Close()
+		if writeErr != nil {
+			return writeErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+
+	data, err := json.Marshal(map[string]any{"session_id": "ours", "hook_event_name": kind, "prompt": input})
+	if err != nil {
+		return err
+	}
+	name := filepath.Join(f.spool, "seq."+fmt.Sprintf("%020d", f.sequence)+".json")
+	staged := name + ".pending"
+	if err := os.WriteFile(staged, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(staged, name)
+}
+
+func TestSessionPromptReceiptSharedByWebAndMCP(t *testing.T) {
+	for _, mode := range []string{"http", "direct"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newSessionTransportFixture(t)
+			owner := f.mcp(mode, "alice")
+			started := callSessionMCP(t, owner, "agent_start", map[string]any{"agent": "claude", "cwd": f.work})
+			id := started["session"].(string)
+			args := map[string]any{"session": id, "request_id": "shared-prompt", "input": "shared text"}
+			result := f.tunnel("alice", map[string]any{"type": "session.control", "operation": "session_prompt", "arguments": args})
+			if result["error"] != nil {
+				t.Fatalf("web prompt: %v", result)
+			}
+			encoded, _ := json.Marshal(result["receipt"])
+			var first egg.SessionPromptResult
+			if err := json.Unmarshal(encoded, &first); err != nil {
+				t.Fatal(err)
+			}
+			if !first.NativeReceiptObserved || !first.TransportEnqueued {
+				t.Fatalf("web lost native receipt: %+v", first)
+			}
+			if got := string(<-f.egg(id).input); got != "\x1b[200~shared text\x1b[201~" {
+				t.Fatalf("prompt paste=%q", got)
+			}
+			if got := string(<-f.egg(id).input); got != "\r" {
+				t.Fatalf("prompt enter=%q", got)
+			}
+			replay := callSessionMCP(t, owner, "session_prompt", args)
+			encoded, _ = json.Marshal(replay["receipt"])
+			var retried egg.SessionPromptResult
+			if err := json.Unmarshal(encoded, &retried); err != nil {
+				t.Fatal(err)
+			}
+			if !retried.Retried || retried.ReceiptCursor != first.ReceiptCursor || !retried.NativeReceiptObserved {
+				t.Fatalf("MCP retry lost web receipt: %+v", retried)
+			}
+			select {
+			case input := <-f.egg(id).input:
+				t.Fatalf("MCP retry resent prompt: %q", input)
+			default:
+			}
+			read := callSessionMCP(t, owner, "session_read", map[string]any{"session": id})
+			encoded, _ = json.Marshal(read["lifecycle"])
+			var view egg.SessionView
+			if err := json.Unmarshal(encoded, &view); err != nil {
+				t.Fatal(err)
+			}
+			if view.ProviderSessionID != "ours" || view.HeadCursor < first.ReceiptCursor {
+				t.Fatalf("shared lifecycle missing receipt: %+v", view)
+			}
+			denied := f.tunnel("bob", map[string]any{"type": "session.control", "operation": "session_prompt", "arguments": args})
+			if denied["error"] == nil {
+				t.Fatal("foreign web prompt admitted")
+			}
+			callSessionMCP(t, owner, "terminal_stop", map[string]any{"session": id})
+		})
+	}
+}
+
+func TestRegisteredSessionKeepsWingToolsAfterStartReturns(t *testing.T) {
+	f := newSessionTransportFixture(t)
+	authority := wingsession.Authority{UserID: "alice", Email: "alice@example.com", Role: "owner", Principal: wingsession.UserPrincipal("alice")}
+	launch, err := f.sessions.PrepareLaunch(authority, f.work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := f.sessions.Start(f.ctx, launch, wingsession.StartOptions{SessionID: "tools", Tools: []*config.ToolConfig{{Name: "fixture", Run: "fixture-command"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if f.sessions.ToolListener("tools") == nil {
+		t.Fatal("start released wing-owned tools")
+	}
+	conn, err := net.Dial("unix", filepath.Join(f.cfg.Dir, "eggs", "tools", ".tools", "tool.sock"))
+	if err != nil {
+		t.Fatalf("registered tools unavailable after start: %v", err)
+	}
+	_ = conn.Close()
+	if _, err = f.sessions.Stop(f.ctx, authority, "tools"); err != nil {
+		t.Fatal(err)
 	}
 }

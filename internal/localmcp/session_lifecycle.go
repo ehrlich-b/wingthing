@@ -45,7 +45,7 @@ func (s *Server) toolSessionStatus(ctx context.Context, arguments json.RawMessag
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
-	view, err := eggclient.LifecycleViewForSession(s.Cfg, session, 0, 1)
+	view, err := s.readSessionView(ctx, session, 0, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +70,7 @@ func (s *Server) toolSessionRead(ctx context.Context, arguments json.RawMessage)
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
-	view, err := eggclient.LifecycleViewForSession(s.Cfg, session, args.AfterCursor, args.Limit)
+	view, err := s.readSessionView(ctx, session, args.AfterCursor, args.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +103,13 @@ func (s *Server) toolSessionWait(ctx context.Context, arguments json.RawMessage)
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, durationSeconds(args.TimeoutSeconds))
 	defer cancel()
-	view, matched, err := eggclient.WaitSessionLifecycle(waitCtx, s.Cfg, session, args.AfterCursor, args.State)
+	var view egg.SessionView
+	var matched bool
+	if s.Sessions != nil {
+		view, matched, err = s.Sessions.Wait(waitCtx, s.sessionAuthority(), session.ID, args.AfterCursor, args.State)
+	} else {
+		view, matched, err = eggclient.WaitSessionLifecycle(waitCtx, s.Cfg, session, args.AfterCursor, args.State)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -111,4 +117,11 @@ func (s *Server) toolSessionWait(ctx context.Context, arguments json.RawMessage)
 	result["matched"] = matched
 	result["timed_out"] = !matched
 	return result, nil
+}
+
+func (s *Server) readSessionView(ctx context.Context, session eggclient.LocalSession, after int64, limit int) (egg.SessionView, error) {
+	if s.Sessions != nil {
+		return s.Sessions.Read(ctx, s.sessionAuthority(), session.ID, after, limit)
+	}
+	return eggclient.LifecycleViewForSession(s.Cfg, session, after, limit)
 }
