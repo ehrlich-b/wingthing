@@ -20,7 +20,7 @@ func HasRetainedSessionData(dir string) bool {
 		return !errors.Is(err, os.ErrNotExist)
 	}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), "prompt.") && strings.HasSuffix(entry.Name(), ".json") {
+		if (strings.HasPrefix(entry.Name(), "prompt.") || strings.HasPrefix(entry.Name(), "run.")) && strings.HasSuffix(entry.Name(), ".json") {
 			return true
 		}
 	}
