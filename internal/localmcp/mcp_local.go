@@ -1334,7 +1334,12 @@ func (s *Server) toolTerminalSend(ctx context.Context, arguments json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	session, err := eggclient.SendSessionInput(ctx, s.Cfg, owned.ID, input, args.Enter, s.identity.UserID)
+	var session eggclient.LocalSession
+	if s.Sessions != nil {
+		session, err = s.Sessions.Send(ctx, s.sessionAuthority(), owned.ID, input, args.Enter)
+	} else {
+		session, err = eggclient.SendSessionInput(ctx, s.Cfg, owned.ID, input, args.Enter, s.identity.UserID)
+	}
 	if err != nil {
 		return nil, err
 	}
