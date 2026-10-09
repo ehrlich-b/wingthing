@@ -6,6 +6,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -13,6 +14,7 @@ import (
 // Mutexes and configuration pointers retain their original identities.
 type References struct {
 	Version                   string
+	Sessions                  *wingsession.Service
 	WingCfg                   *config.WingConfig
 	WingCfgMu                 *sync.Mutex
 	AllowedKeys               *[]config.AllowKey

@@ -13,14 +13,17 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
+	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 var browserConversationAdmission = NewMCPAdmissionState()
 
 type BrowserLaunchConfig struct {
-	EggConfig *egg.EggConfig
-	Tools     []*config.ToolConfig
+	Sessions             *wingsession.Service
+	PublicKey, AuthToken string
+	EggConfig            *egg.EggConfig
+	Tools                []*config.ToolConfig
 }
 
 // browserSessionControl is a narrow adapter over the same typed MCP handlers.
@@ -45,6 +48,13 @@ func BrowserSessionControl(version string, ctx context.Context, cfg *config.Conf
 	server := &Server{Version: version, Cfg: cfg, Logs: os.Stderr, Principal: roostSessionPrincipal(req.SenderUserID), Actor: "browser", Surface: control.SurfaceHTTPMCP,
 		Grants: GrantSet(defaultDirectMCPGrants), MaxSessions: defaultDirectMCPMaxSessions, MaxSpawnsPerHour: defaultDirectMCPMaxSpawnsPerHour, admission: browserConversationAdmission,
 		allowedPaths: paths, enforcePathBounds: len(paths) > 0 || wingpolicy.IsMemberFiltered(req), identity: eggclient.EggIdentity{UserID: req.SenderUserID, Email: req.SenderEmail, OrgWing: wc.Org != "", SharedHost: sharedHost, SealedFS: sharedHost, AllowedPaths: paths}}
+	if len(launchConfig) > 0 {
+		server.Sessions = launchConfig[0].Sessions
+		server.sessionPublicKey = launchConfig[0].PublicKey
+		server.sessionAuthToken = launchConfig[0].AuthToken
+	}
+	server.sessionBrowser = true
+	server.sessionRole = req.SenderOrgRole
 	if operation == "session_fork" {
 		var current BrowserLaunchConfig
 		if len(launchConfig) > 0 {

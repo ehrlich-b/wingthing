@@ -20,6 +20,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/taskrun"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
+	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -426,15 +427,9 @@ func TestRoostLaunchesUseRoleRootPolicy(t *testing.T) {
 		server.admission.spawnTimes[server.clientPrincipal()] = []time.Time{time.Now()}
 		for _, tool := range []string{"terminal_start", "agent_start"} {
 			var loaded bool
-			load := server.launchConfig
-			server.launchConfig = func(cwd string) (*egg.EggConfig, error) {
-				loaded = true
-				cfg, err := load(cwd)
-				if err == nil {
-					assertRoostRolePolicy(t, cfg)
-				}
-				return cfg, err
-			}
+			load := server.Sessions.Policy
+			server.Sessions.Policy = func() wingsession.Policy { loaded = true; return load() }
+
 			args := `{"cwd":` + strconv.Quote(workspace) + `}`
 			if tool == "agent_start" {
 				args = `{"agent":"claude","cwd":` + strconv.Quote(workspace) + `}`
@@ -443,7 +438,8 @@ func TestRoostLaunchesUseRoleRootPolicy(t *testing.T) {
 			if !loaded || !isError || protocolErr != nil {
 				t.Fatalf("%s bypassed runtime launch policy: loaded=%v error=%v protocol=%v", tool, loaded, isError, protocolErr)
 			}
-			server.launchConfig = load
+			assertRoostRolePolicy(t, server.sessionLaunch.Config)
+			server.Sessions.Policy = load
 		}
 		server.MaxSpawnsPerHour = 60
 		delete(server.admission.spawnTimes, server.clientPrincipal())

@@ -259,7 +259,7 @@ func (s *Server) toolAgentContinue(arguments json.RawMessage) (map[string]any, e
 }
 
 func (s *Server) launchHeadlessContinuation(c *store.Conversation, turn *store.ConversationContinuation, model, input string) error {
-	eggCfg, err := s.loadLaunchConfig(c.CWD)
+	eggCfg, err := s.loadSessionLaunchConfig(c.CWD)
 	if err != nil {
 		return err
 	}
@@ -293,7 +293,7 @@ func (s *Server) launchHeadlessContinuation(c *store.Conversation, turn *store.C
 			err = s.startContinuation(c, eggCfg, opts)
 		} else {
 			var client *egg.Client
-			client, err = eggclient.SpawnEgg(s.Cfg, c.SessionID, "claude", eggCfg, 24, 80, c.CWD, false, false, false, s.identity, 0, opts)
+			client, err = s.startSession(c.SessionID, "claude", c.CWD, eggCfg, opts)
 			if err == nil {
 				cmdutil.CloseWithLog("continued agent egg client", client)
 			}

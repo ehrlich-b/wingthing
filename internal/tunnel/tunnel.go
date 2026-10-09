@@ -33,6 +33,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/sessionfiles"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
+	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -389,21 +390,16 @@ func HandleTunnelRequest(refs References, ctx context.Context, cfg *config.Confi
 		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"sdp": answerSDP}, write)
 
 	case "sessions.list":
-		sessions := listAliveEggSessions(cfg)
-		for i := range sessions {
-			session := &sessions[i]
-			session.Forkable, session.ForkUnavailableReason = eggclient.SessionForkStatus(cfg, filepath.Join(cfg.Dir, "eggs", session.SessionID), session.Agent, session.CWD)
+		sessionsService := refs.Sessions
+		if sessionsService == nil {
+			sessionsService = &wingsession.Service{Config: cfg, Inventory: listAliveEggSessions}
 		}
-		if wingpolicy.IsMemberFiltered(req) {
-			userPaths := wingpolicy.PathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
-			var filtered []ws.SessionInfo
-			for _, s := range sessions {
-				if wingpolicy.CanSeeSession(req, s.UserID) && wingpolicy.CanAccessSessionPath(req, s.CWD, userPaths) {
-					filtered = append(filtered, s)
-				}
-			}
-			sessions = filtered
+		sessions, listErr := sessionsService.ListWeb(ctx, wingsession.AuthorityForWeb(wingCfg, req, home))
+		if listErr != nil {
+			ws.TunnelRespond(gcm, req.RequestID, map[string]any{"error": listErr.Error()}, write)
+			return
 		}
+
 		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions}, write)
 
 	case "session.control":
@@ -422,7 +418,7 @@ func HandleTunnelRequest(refs References, ctx context.Context, cfg *config.Confi
 		if inner.Operation == "session_fork" && refs.BrowserTools != nil {
 			tools = refs.BrowserTools()
 		}
-		result, err := localmcp.BrowserSessionControl(version, ctx, cfg, wingCfg, req, inner.Operation, inner.Arguments, home, sharedHost, localmcp.BrowserLaunchConfig{EggConfig: currentEggCfg, Tools: tools})
+		result, err := localmcp.BrowserSessionControl(version, ctx, cfg, wingCfg, req, inner.Operation, inner.Arguments, home, sharedHost, localmcp.BrowserLaunchConfig{EggConfig: currentEggCfg, Tools: tools, Sessions: refs.Sessions, PublicKey: req.SenderPub, AuthToken: inner.AuthToken})
 		if err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]any{"error": err.Error()}, write)
 			return
@@ -608,15 +604,15 @@ func HandleTunnelRequest(refs References, ctx context.Context, cfg *config.Confi
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing session_id"}, write)
 			return
 		}
-		if wingpolicy.IsMemberFiltered(req) {
-			owner := eggclient.ReadEggOwner(filepath.Join(cfg.Dir, "eggs", inner.SessionID))
-			if !wingpolicy.CanSeeSession(req, owner) {
-				log.Printf("tunnel %s: denied kill (user=%s session_owner=%s)", req.RequestID, req.SenderUserID, owner)
-				ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
-				return
-			}
+		sessionsService := refs.Sessions
+		if sessionsService == nil {
+			sessionsService = &wingsession.Service{Config: cfg}
 		}
-		eggclient.KillOrphanEgg(cfg, inner.SessionID)
+		if _, err := sessionsService.Stop(ctx, wingsession.AuthorityForWeb(wingCfg, req, home), inner.SessionID); err != nil {
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+
 		ws.TunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	case "pty.resize":
