@@ -57,12 +57,15 @@ type Server struct {
 	metaMu         sync.Mutex
 	exclusiveInput bool
 	inputLease     inputLease
+	inputMu        sync.Mutex
+	runTurns       *runTurnRuntime
 }
 
 // Session holds a single PTY process and its state.
 type Session struct {
 	ID             string
 	PID            int
+	processGroupID int
 	Agent          string
 	Kind           string
 	Command        []string
@@ -970,16 +973,14 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		}
 		return fmt.Errorf("start pty: %v", err)
 	}
-	if s.exclusiveInput {
-		if err := preparePTYInput(ptmx); err != nil {
-			_ = ptmx.Close()
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
-			if sb != nil {
-				_ = sb.Destroy()
-			}
-			return fmt.Errorf("prepare cancellable PTY input: %w", err)
+	if err := preparePTYInput(ptmx); err != nil {
+		_ = ptmx.Close()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		if sb != nil {
+			_ = sb.Destroy()
 		}
+		return fmt.Errorf("prepare cancellable PTY input: %w", err)
 	}
 
 	// Apply post-start hooks (rlimits on Linux)
@@ -993,6 +994,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	sess := &Session{
 		ID:             sessionID,
 		PID:            cmd.Process.Pid,
+		processGroupID: cmd.Process.Pid,
 		Agent:          rc.Agent,
 		Kind:           rc.Kind,
 		Command:        append([]string(nil), rc.Command...),
@@ -1060,6 +1062,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		captureHome, _ = os.UserHomeDir()
 	}
 	providerIdentityVerified := rc.Agent != "claude" || rc.ProviderSessionID != ""
+	s.runTurns = s.sessionRunTurns(sess, captureHome, rc.ProviderSessionID)
 	if profile := Profile(rc.Agent); profile.SessionDir != "" && captureHome != "" && providerIdentityVerified {
 		go func() {
 			ticker := time.NewTicker(30 * time.Second)
@@ -1097,6 +1100,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		grpc.ChainStreamInterceptor(recoveryStream, s.authStream),
 	)
 	pb.RegisterEggServer(s.grpcServer, s)
+	RegisterRunTurnRPC(s.grpcServer, s)
 
 	log.Printf("egg: serving on %s (pid %d)", lis.Addr(), os.Getpid())
 
@@ -1175,6 +1179,8 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		if err := recordSessionProcessExit(s.dir, exitCode, cancelled); err != nil {
 			log.Printf("egg: persist lifecycle exit: %v", err)
 		}
+		// Do not let the egg leave before its accepted run outcome is durable.
+		s.runTurns.awaitProcessExit()
 
 		// Give gRPC a moment to send exit_code, then stop
 		time.Sleep(500 * time.Millisecond)
@@ -1674,6 +1680,9 @@ func (s *Server) Kill(ctx context.Context, req *pb.KillRequest) (*pb.KillRespons
 	sess.mu.Lock()
 	sess.cancelled = true
 	sess.mu.Unlock()
+	if s.runTurns != nil {
+		s.runTurns.stopActive()
+	}
 	if err := terminateSession(ctx, sess, 3*time.Second); err != nil {
 		return nil, status.Errorf(codes.Internal, "terminate session: %v", err)
 	}
@@ -1690,7 +1699,7 @@ func terminateSession(ctx context.Context, sess *Session, grace time.Duration) e
 		return nil
 	}
 
-	if err := sess.cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if err := signalSessionGroup(sess, syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return fmt.Errorf("signal: %w", err)
 	}
 
@@ -1698,13 +1707,13 @@ func terminateSession(ctx context.Context, sess *Session, grace time.Duration) e
 	defer timer.Stop()
 	select {
 	case <-sess.done:
-		return nil
+		return signalSessionGroup(sess, syscall.SIGKILL)
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-timer.C:
 	}
 
-	if err := sess.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if err := signalSessionGroup(sess, syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return fmt.Errorf("kill after %s grace period: %w", grace, err)
 	}
 	select {
@@ -1972,6 +1981,11 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 		switch p := msg.Payload.(type) {
 		case *pb.SessionMsg_Input:
 			writeInput := func(ctx context.Context) error {
+				s.inputMu.Lock()
+				defer s.inputMu.Unlock()
+				if len(p.Input) > 0 && s.runTurns != nil {
+					s.runTurns.inputConflict()
+				}
 				sess.mu.Lock()
 				sess.lastInput = time.Now()
 				sess.mu.Unlock()
