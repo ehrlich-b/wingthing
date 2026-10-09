@@ -95,7 +95,7 @@ func validateSessionPromptOptions(o SessionPromptOptions) error {
 // NativePromptReady requires a living exact-provider session and native
 // foreground idle/completion evidence; it does not certify a visible composer.
 func NativePromptReady(view SessionView) bool {
-	return view.Agent == "claude" && validLifecycleID(view.ProviderSessionID) && view.ProcessAlive && view.Ready && view.StateSource == "claude_hook" && (view.State == "idle" || view.State == "completed")
+	return (view.Agent == "claude" || view.Agent == "codex") && validLifecycleID(view.ProviderSessionID) && view.ProcessAlive && view.Ready && view.StateSource == view.Agent+"_hook" && (view.State == "idle" || view.State == "completed")
 }
 
 func lockPromptSession(ctx context.Context, dir string) (*os.File, error) {
@@ -271,7 +271,7 @@ func SubmitSessionPrompt(ctx context.Context, dir string, o SessionPromptOptions
 			}
 			initial = next
 		}
-		if initial.Agent != "claude" || !validLifecycleID(initial.ProviderSessionID) {
+		if (initial.Agent != "claude" && initial.Agent != "codex") || !validLifecycleID(initial.ProviderSessionID) {
 			return result, errors.New("provider has no exact native prompt receipt adapter; use terminal_send for raw input")
 		}
 		if !NativePromptReady(initial) {
@@ -345,6 +345,9 @@ func waitForPromptReceipt(ctx context.Context, path string, reservation promptRe
 				result.NativeReceiptObserved = true
 				result.Status = "native_receipt_observed"
 				result.ReceiptKind = "exact_provider_user_text_match"
+				if event.Source == "codex_hook" {
+					result.ReceiptKind = "exact_provider_prompt_hook_match"
+				}
 				result.ReceiptCursor = event.Sequence
 				reservation.Phase = "native_receipt_observed"
 				return persist("matching human user prompt observed in exact provider transcript; concurrent identical human input cannot be causally distinguished")
@@ -367,6 +370,9 @@ func waitForPromptReceipt(ctx context.Context, path string, reservation promptRe
 }
 
 func nativeHumanPromptReceipt(event SessionEvent, providerID, input string) bool {
+	if event.Source == "codex_hook" {
+		return event.ProviderSessionID == providerID && event.Type == "prompt_submitted" && event.Text == input
+	}
 	if event.Source != "claude_transcript" || event.ProviderSessionID != providerID || event.Type != "message" || len(event.Raw) == 0 {
 		return false
 	}

@@ -1,8 +1,8 @@
 package egg
 
 // This is a native-protocol building block, not an enabled provider adapter.
-// The interactive Codex profile remains unsupported until an egg owns both the
-// app-server and remote TUI, including auth, input ownership and reconnect.
+// The app-server/remote-TUI path is not enabled. Interactive run turns use the
+// egg's PTY TUI, native hooks and notify records in run_codex.go instead.
 import (
 	"bytes"
 	"encoding/json"
