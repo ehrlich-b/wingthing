@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 )
 
@@ -34,9 +35,13 @@ func (s *Server) ToolSessionFork(ctx context.Context, arguments json.RawMessage)
 }
 
 func (s *Server) sessionForkScope() eggclient.SessionForkScope {
+	spawn := s.spawnFork
+	if s.Sessions == nil && spawn == nil && (s.Surface == control.SurfaceHTTPMCP || s.Surface == control.SurfaceDirectMCP) {
+		spawn = func(*eggclient.SessionForkPlan) error { return errors.New("wing session service is not ready") }
+	}
 	return eggclient.SessionForkScope{
 		Principal: s.clientPrincipal(), Identity: s.identity, AllowedPaths: s.allowedPaths, EnforcePathBounds: s.enforcePathBounds,
-		Admit: s.admitSpawn, CheckSpawn: s.checkSessionBounds, LoadConfig: s.loadSessionLaunchConfig, Spawn: s.spawnFork, TraceFromConfig: s.forkTrace, IdleTimeout: s.forkIdleTimeout,
+		Admit: s.admitSpawn, CheckSpawn: s.checkSessionBounds, LoadConfig: s.loadSessionLaunchConfig, Spawn: spawn, TraceFromConfig: s.forkTrace, IdleTimeout: s.forkIdleTimeout,
 		Tools: s.forkTools,
 		Prepare: func(plan *eggclient.SessionForkPlan) error {
 			if plan.Conversation == nil {

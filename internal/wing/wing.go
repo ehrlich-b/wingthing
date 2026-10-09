@@ -2143,7 +2143,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 // handlePTYSession bridges a PTY session between a per-session egg and the relay.
 // E2E encryption stays in the wing — the egg sees plaintext only.
-func handlePTYSession(version string, ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, passkeyPolicy auth.PasskeyPolicy, authTTL time.Duration, idleTimeout time.Duration, sw *webrtcpkg.SwappableWriter, dcSessions *sync.Map, tools []*config.ToolConfig, sharedHost bool, services ...*wingsession.Service) {
+func handlePTYSession(version string, ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, passkeyPolicy auth.PasskeyPolicy, authTTL time.Duration, idleTimeout time.Duration, sw *webrtcpkg.SwappableWriter, dcSessions *sync.Map, tools []*config.ToolConfig, sharedHost bool, sessions *wingsession.Service) {
 	allowedKeys := *allowedKeysPtr
 	if start.PublicKey == "" {
 		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "E2E client key required"})
@@ -2234,21 +2234,6 @@ func handlePTYSession(version string, ctx context.Context, cfg *config.Config, w
 	}
 authDone:
 
-	var sessions *wingsession.Service
-	if len(services) > 0 {
-		sessions = services[0]
-	} else {
-		hostHome, _ := os.UserHomeDir()
-		sessions = &wingsession.Service{Config: cfg, Home: hostHome, SharedHost: sharedHost, AuthCache: passkeyCache, Policy: func() wingsession.Policy { return wingsession.Policy{Wing: wingCfg, Egg: eggCfg, Keys: allowedKeys} }}
-	}
-	launch, launchErr := sessions.PrepareLaunch(wingsession.Authority{UserID: start.UserID, Email: start.Email, Role: start.OrgRole, Browser: true, PublicKey: start.PublicKey, AuthToken: start.AuthToken}, start.CWD)
-	if launchErr != nil {
-		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: launchErr.Error()})
-		return
-	}
-	start.CWD = launch.CWD
-	eggCfg = launch.Config
-
 	// Set up E2E encryption — required, no plaintext fallback
 	var mu sync.Mutex
 	var gcm cipher.AEAD
@@ -2273,8 +2258,18 @@ authDone:
 		log.Printf("pty session %s: E2E encryption enabled", start.SessionID)
 	}
 
-	hostHome, _ := os.UserHomeDir()
-	identity := eggclient.BrowserEggIdentity(wingCfg, start, hostHome, sharedHost)
+	launch, providerResumeID, releaseProviderResume, launchErr := sessions.PrepareWebStart(&start)
+	if launchErr != nil {
+		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: launchErr.Error()})
+		return
+	}
+	eggCfg = launch.Config
+	providerResumeSpawned := false
+	if releaseProviderResume != nil {
+		defer func() { releaseProviderResume(providerResumeSpawned) }()
+	}
+	identity := launch.Identity
+
 	toolOpts := eggclient.SpawnEggOpts{}
 	toolListener, toolErr := eggclient.PrepareBrowserTools(cfg, start.SessionID, tools, &toolOpts, identity)
 	if toolErr != nil {
@@ -2286,20 +2281,8 @@ authDone:
 		defer cmdutil.CloseWithLog("egg tool listener", toolListener)
 	}
 
-	// Spawn a per-session egg
-	sharedAllowedPaths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, start.Email, start.OrgRole, hostHome))
-	providerResumeID := ""
-	var releaseProviderResume func(bool)
-	providerResumeSpawned := false
-	if start.ResumeSessionID != "" {
-		var resumeErr error
-		providerResumeID, start.CWD, releaseProviderResume, resumeErr = eggclient.PrepareBrowserResume(cfg, wingCfg, start, sharedAllowedPaths, sharedHost)
-		if resumeErr != nil {
-			ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: resumeErr.Error()})
-			return
-		}
-		defer func() { releaseProviderResume(providerResumeSpawned) }()
-	}
+	// Start the admitted egg through the wing service.
+
 	resumeArgs, resumePrincipal, resumeBindingErr := localmcp.PrepareConversationResumeMCP(version, cfg, wingCfg, start, eggCfg, sharedHost)
 	if resumeBindingErr != nil {
 		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: resumeBindingErr.Error()})
@@ -2329,7 +2312,7 @@ authDone:
 	providerResumeSpawned = providerResumeID != ""
 	if err := localmcp.InheritConversationExecution(cfg, start.ResumeSessionID, start.SessionID); err != nil {
 		killCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		_ = ec.Kill(killCtx, start.SessionID)
+		_ = sessions.StopAttached(killCtx, ec, start.SessionID)
 		cancel()
 		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "persist resumed conversation identity: " + err.Error()})
 		return

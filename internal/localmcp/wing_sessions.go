@@ -3,6 +3,8 @@ package localmcp
 import (
 	"context"
 	"errors"
+
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
@@ -14,6 +16,9 @@ func (s *Server) sessionAuthority() wingsession.Authority {
 
 func (s *Server) startSession(id, agent, cwd string, cfg *egg.EggConfig, opts eggclient.SpawnEggOpts) (*egg.Client, error) {
 	if s.Sessions == nil {
+		if s.Surface != "" && s.Surface != control.SurfaceLocalMCP {
+			return nil, errors.New("wing session service is not ready")
+		}
 		return eggclient.SpawnEgg(s.Cfg, id, agent, cfg, 24, 80, cwd, false, false, false, s.identity, 0, opts)
 	}
 	launch := s.sessionLaunch

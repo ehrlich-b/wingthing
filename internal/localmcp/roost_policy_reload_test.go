@@ -421,6 +421,11 @@ func TestRoostLaunchesUseRoleRootPolicy(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(cfg.Dir, "egg.yaml"), []byte(admin), 0600); err != nil {
 			t.Fatal(err)
 		}
+		wc, err := config.LoadWingConfig(cfg.Dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		server.Sessions = &wingsession.Service{Config: cfg, Home: home, SharedHost: shared, Policy: func() wingsession.Policy { return wingsession.Policy{Wing: wc, Egg: egg.DefaultEggConfig()} }}
 		// Both interactive tools resolve through the same runtime loader before
 		// admission. Stop at admission so the fixture never launches a real egg.
 		server.MaxSpawnsPerHour = 1

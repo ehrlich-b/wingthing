@@ -16,7 +16,6 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
-	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	pionwebrtc "github.com/pion/webrtc/v4"
 )
 
@@ -252,13 +251,10 @@ func serveDirectMCPChannelWithPolicySourceAndLease(version string, cfg *config.C
 				server.launchConfig = runtimeLaunchConfig(wingCfg, home, policy.role == "member", policy.allowedPaths, wingDefault, eggErr)
 			}
 			server.sessionRole = policy.role
-			if admission != nil && admission.Sessions != nil {
+			if admission != nil {
 				server.Sessions = admission.Sessions
-			} else {
-				server.Sessions = &wingsession.Service{Config: cfg, Home: home, SharedHost: sharedHost, Policy: func() wingsession.Policy {
-					return wingsession.Policy{Wing: wingCfg, Egg: wingDefault, Keys: allowedKeys}
-				}}
 			}
+
 			arguments := request.Arguments
 			if len(arguments) == 0 {
 				arguments = json.RawMessage(`{}`)
