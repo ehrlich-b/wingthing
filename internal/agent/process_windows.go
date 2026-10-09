@@ -4,9 +4,16 @@ package agent
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"time"
 )
+
+func processSignalGone(err error) bool { return errors.Is(err, os.ErrProcessDone) }
+
+func stopProcessForCleanup(_ *os.Process) (bool, error) {
+	return false, errors.ErrUnsupported
+}
 
 func processTreeKilled(err error) bool {
 	var exit *exec.ExitError

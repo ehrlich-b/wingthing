@@ -27,7 +27,10 @@ func startConfiguredAgentCommand(cmd *exec.Cmd) (*commandDiagnostics, error) {
 }
 
 func waitAgentCommand(cmd *exec.Cmd, diagnostics *commandDiagnostics, provider string) error {
-	err := cmd.Wait()
+	return agentCommandError(cmd.Wait(), diagnostics, provider)
+}
+
+func agentCommandError(err error, diagnostics *commandDiagnostics, provider string) error {
 	var kind ErrorKind
 	if diagnostics != nil {
 		kind = diagnostics.failure

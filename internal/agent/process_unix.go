@@ -4,10 +4,35 @@ package agent
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"syscall"
 	"time"
 )
+
+func processSignalGone(err error) bool {
+	return errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH)
+}
+
+func stopProcessForCleanup(process *os.Process) (bool, error) {
+	if err := process.Signal(syscall.SIGSTOP); err != nil {
+		return false, err
+	}
+	// A stopped leader cannot race our kill with a self-originated signal.
+	// Unknown or uninterruptible states fail closed: cleanup still kills the
+	// group, but its exit must not be rewritten as success.
+	deadline := time.Now().Add(time.Second)
+	for {
+		stopped, exited, err := processStopped(process)
+		if err != nil || exited || stopped {
+			return stopped && !exited, err
+		}
+		if time.Now().After(deadline) {
+			return false, errors.New("provider did not stop for cleanup")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
 
 func processTreeKilled(err error) bool {
 	var exit *exec.ExitError
