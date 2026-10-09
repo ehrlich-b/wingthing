@@ -28,9 +28,20 @@ func (s *Server) ToolSessionFork(ctx context.Context, arguments json.RawMessage)
 }
 
 func (s *Server) sessionForkScope() eggclient.SessionForkScope {
+	spawn := s.spawnFork
+	if s.Sessions != nil {
+		spawn = func(plan *eggclient.SessionForkPlan) error {
+			ec, err := s.startSession(plan.SessionID, plan.Source.Agent, plan.Source.CWD, plan.Config, plan.Options)
+			if ec != nil {
+				_ = ec.Close()
+			}
+			return err
+		}
+	}
+
 	return eggclient.SessionForkScope{
 		Principal: s.clientPrincipal(), Identity: s.identity, AllowedPaths: s.allowedPaths, EnforcePathBounds: s.enforcePathBounds,
-		Admit: s.admitSpawn, CheckSpawn: s.checkSessionBounds, LoadConfig: s.loadLaunchConfig, Spawn: s.spawnFork, TraceFromConfig: s.forkTrace, IdleTimeout: s.forkIdleTimeout,
+		Admit: s.admitSpawn, CheckSpawn: s.checkSessionBounds, LoadConfig: s.loadSessionLaunchConfig, Spawn: spawn, TraceFromConfig: s.forkTrace, IdleTimeout: s.forkIdleTimeout,
 		Tools: s.forkTools,
 		Prepare: func(plan *eggclient.SessionForkPlan) error {
 			if plan.Conversation == nil {

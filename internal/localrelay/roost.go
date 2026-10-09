@@ -24,6 +24,7 @@ import (
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/relay"
 	"github.com/ehrlich-b/wingthing/internal/wing"
+	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
 const (
@@ -187,12 +188,14 @@ func RunRoostForeground(version string, addrFlag string, devFlag bool, labelsFla
 		return err
 	}
 	var runtimePolicy atomic.Pointer[func() (*config.WingConfig, *egg.EggConfig)]
-	nativeTools := roostMCPControlTools(version, srv, cfg, hasAuth, func() (*config.WingConfig, *egg.EggConfig) {
+	var runtimeSessions atomic.Pointer[wingsession.Service]
+	nativeTools := localmcp.RoostNativeMCPToolsWithSessions(version, cfg, hasAuth, runtimeSessions.Load, func() (*config.WingConfig, *egg.EggConfig) {
 		if source := runtimePolicy.Load(); source != nil {
 			return (*source)()
 		}
 		return nil, nil
 	})
+	nativeTools = append(nativeTools, srv.PortalNativeMCPTools(cfg.WingID)...)
 	if hasAuth || policy != nil {
 		runner, err := roostToolRunner(cfg.Dir, tools)
 		if err != nil {
@@ -281,7 +284,7 @@ func RunRoostForeground(version string, addrFlag string, devFlag bool, labelsFla
 	_ = os.Remove(daemonctl.WingStatusPath())
 	wingErrCh := make(chan error, 1)
 	go func() {
-		wingErrCh <- wing.RunWingWithContext(wing.EntryOptions{Version: version, SetPolicySource: func(source func() (*config.WingConfig, *egg.EggConfig)) { runtimePolicy.Store(&source) }}, ctx, sighupCh, LocalHTTPURL(addrFlag), labelsFlag, "auto", eggConfigFlag, orgFlag, nil, pathsFlag, debugFlag, auditFlag, true, false, hasAuth, embeddedWingToken)
+		wingErrCh <- wing.RunWingWithContext(wing.EntryOptions{Version: version, SetSessionService: runtimeSessions.Store, SetPolicySource: func(source func() (*config.WingConfig, *egg.EggConfig)) { runtimePolicy.Store(&source) }}, ctx, sighupCh, LocalHTTPURL(addrFlag), labelsFlag, "auto", eggConfigFlag, orgFlag, nil, pathsFlag, debugFlag, auditFlag, true, false, hasAuth, embeddedWingToken)
 	}()
 	if err := awaitEmbeddedWingReady(ctx, wingErrCh, listeners.ErrCh, daemonctl.ReadWingStatus, roostWingReadyTimeout); err != nil {
 		_ = listeners.Shutdown(srv, 8*time.Second)

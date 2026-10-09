@@ -43,6 +43,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/tunnel"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
+	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/fsnotify/fsnotify"
 	pionwebrtc "github.com/pion/webrtc/v4"
@@ -1067,6 +1068,20 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		}
 	}
 
+	sessions := &wingsession.Service{Config: cfg, Home: home, SharedHost: sharedHost, AuthCache: passkeyCache, Inventory: ListAliveEggSessions, Policy: func() wingsession.Policy {
+		wingCfgMu.Lock()
+		wc := wingCfg.Clone()
+		keys := append([]config.AllowKey(nil), allowedKeys...)
+		wingCfgMu.Unlock()
+		wingEggMu.Lock()
+		ec := wingEggCfg
+		wingEggMu.Unlock()
+		return wingsession.Policy{Wing: wc, Egg: ec, Keys: keys, Audit: auditLive.Load()}
+	}}
+	directMCPAdmission.Sessions = sessions
+	if options.SetSessionService != nil {
+		options.SetSessionService(sessions)
+	}
 	client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
 		wingCfgMu.Lock()
 		sessionWingCfg := wingCfg.Clone()
@@ -1075,14 +1090,8 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		wingEggMu.Lock()
 		currentEggCfg := wingEggCfg
 		wingEggMu.Unlock()
-		eggCfg, _, launchErr := eggclient.PrepareBrowserLaunch(sessionWingCfg, &start, home, sharedHost, currentEggCfg)
-		if launchErr != nil {
-			ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: launchErr.Error()})
-			return
-		}
-		if auditLive.Load() {
-			eggCfg.Audit = true
-		}
+		eggCfg := currentEggCfg
+
 		var authTTL time.Duration // default 0 = boot-scoped, no expiry
 		if sessionWingCfg.AuthTTL != "" {
 			if d, err := time.ParseDuration(sessionWingCfg.AuthTTL); err == nil {
@@ -1105,14 +1114,14 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 			sw = webrtcpkg.NewSwappableWriter(webrtcpkg.WriteFn(write))
 			swSessions.Store(start.SessionID, sw)
 			defer swSessions.Delete(start.SessionID)
-			handlePTYSession(version, ctx, cfg, sessionWingCfg, start, sw.Write, input, eggCfg, debugLive.Load(), vte, &sessionAllowedKeys, passkeyCache, currentPasskeyPolicy(), authTTL, idleTimeout, sw, &dcSessions, sessionTools, sharedHost)
+			handlePTYSession(version, ctx, cfg, sessionWingCfg, start, sw.Write, input, eggCfg, debugLive.Load(), vte, &sessionAllowedKeys, passkeyCache, currentPasskeyPolicy(), authTTL, idleTimeout, sw, &dcSessions, sessionTools, sharedHost, sessions)
 		} else {
-			handlePTYSession(version, ctx, cfg, sessionWingCfg, start, write, input, eggCfg, debugLive.Load(), vte, &sessionAllowedKeys, passkeyCache, currentPasskeyPolicy(), authTTL, idleTimeout, nil, nil, sessionTools, sharedHost)
+			handlePTYSession(version, ctx, cfg, sessionWingCfg, start, write, input, eggCfg, debugLive.Load(), vte, &sessionAllowedKeys, passkeyCache, currentPasskeyPolicy(), authTTL, idleTimeout, nil, nil, sessionTools, sharedHost, sessions)
 		}
 	}
 
 	client.OnTunnel = func(ctx context.Context, req ws.TunnelRequest, write ws.PTYWriteFunc) {
-		tunnel.HandleTunnelRequest(tunnel.References{Version: version, WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowedKeys, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs, BrowserTools: func() []*config.ToolConfig {
+		tunnel.HandleTunnelRequest(tunnel.References{Version: version, WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowedKeys, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs, Sessions: sessions, BrowserTools: func() []*config.ToolConfig {
 			wingToolsMu.Lock()
 			defer wingToolsMu.Unlock()
 			return append([]*config.ToolConfig(nil), wingTools...)
@@ -2120,7 +2129,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 // handlePTYSession bridges a PTY session between a per-session egg and the relay.
 // E2E encryption stays in the wing — the egg sees plaintext only.
-func handlePTYSession(version string, ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, passkeyPolicy auth.PasskeyPolicy, authTTL time.Duration, idleTimeout time.Duration, sw *webrtcpkg.SwappableWriter, dcSessions *sync.Map, tools []*config.ToolConfig, sharedHost bool) {
+func handlePTYSession(version string, ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, passkeyPolicy auth.PasskeyPolicy, authTTL time.Duration, idleTimeout time.Duration, sw *webrtcpkg.SwappableWriter, dcSessions *sync.Map, tools []*config.ToolConfig, sharedHost bool, services ...*wingsession.Service) {
 	allowedKeys := *allowedKeysPtr
 	if start.PublicKey == "" {
 		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "E2E client key required"})
@@ -2211,6 +2220,21 @@ func handlePTYSession(version string, ctx context.Context, cfg *config.Config, w
 	}
 authDone:
 
+	var sessions *wingsession.Service
+	if len(services) > 0 {
+		sessions = services[0]
+	} else {
+		hostHome, _ := os.UserHomeDir()
+		sessions = &wingsession.Service{Config: cfg, Home: hostHome, SharedHost: sharedHost, AuthCache: passkeyCache, Policy: func() wingsession.Policy { return wingsession.Policy{Wing: wingCfg, Egg: eggCfg, Keys: allowedKeys} }}
+	}
+	launch, launchErr := sessions.PrepareLaunch(wingsession.Authority{UserID: start.UserID, Email: start.Email, Role: start.OrgRole, Browser: true, PublicKey: start.PublicKey, AuthToken: start.AuthToken}, start.CWD)
+	if launchErr != nil {
+		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: launchErr.Error()})
+		return
+	}
+	start.CWD = launch.CWD
+	eggCfg = launch.Config
+
 	// Set up E2E encryption — required, no plaintext fallback
 	var mu sync.Mutex
 	var gcm cipher.AEAD
@@ -2267,12 +2291,13 @@ authDone:
 		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: resumeBindingErr.Error()})
 		return
 	}
-	ec, err := eggclient.SpawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, eggCfg.Trace,
-		identity, idleTimeout, eggclient.SpawnEggOpts{
-			ResumeSessionID: providerResumeID, ResumeSourceSessionID: start.ResumeSessionID,
-			ProviderReserved: providerResumeID != "", ToolNames: toolOpts.ToolNames, ToolSocketPath: toolOpts.ToolSocketPath,
-			Principal: resumePrincipal, AgentArgs: resumeArgs,
-		})
+	launch.CWD = start.CWD
+	launch.Config = eggCfg
+	ec, err := sessions.Start(ctx, launch, wingsession.StartOptions{SessionID: start.SessionID, Agent: start.Agent, Rows: uint32(start.Rows), Cols: uint32(start.Cols), Debug: debug, VTE: vte, Trace: eggCfg.Trace, IdleTimeout: idleTimeout, Egg: eggclient.SpawnEggOpts{
+		ResumeSessionID: providerResumeID, ResumeSourceSessionID: start.ResumeSessionID,
+		ProviderReserved: providerResumeID != "", ToolNames: toolOpts.ToolNames, ToolSocketPath: toolOpts.ToolSocketPath,
+		Principal: resumePrincipal, AgentArgs: resumeArgs,
+	}})
 	if err != nil {
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
 		crashInfo := eggclient.ReadEggCrashInfo(eggDir)

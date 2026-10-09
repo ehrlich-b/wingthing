@@ -33,6 +33,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/taskrun"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
+	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"github.com/google/uuid"
 )
 
@@ -43,34 +44,39 @@ const maxConcurrentLocalMCPCalls = 64
 const maxConcurrentAgentWaitAnyCalls = 4
 
 type Server struct {
-	Version           string
-	Cfg               *config.Config
-	In                io.Reader
-	Out               io.Writer
-	Logs              io.Writer
-	Principal         string
-	Unsandboxed       bool
-	Grants            map[string]bool
-	MaxSessions       int
-	MaxSpawnsPerHour  int
-	spawnMu           sync.Mutex
-	admitMu           sync.Mutex // held across bounds check + spawn + record
-	spawnTimes        []time.Time
-	admission         *AdmissionState // shared by remote connections on one wing
-	identity          eggclient.EggIdentity
-	Actor             string
-	MCPClient         string // local clients.yaml identity, independent of the audit actor
-	BoundConversation string
-	Surface           control.Surface
-	allowedPaths      []string
-	enforcePathBounds bool
-	runAgentTask      func(context.Context, *config.Config, *store.Store, *store.Task, taskrun.TaskRunOptions) error
-	startContinuation func(*store.Conversation, *egg.EggConfig, eggclient.SpawnEggOpts) error
-	spawnFork         func(*eggclient.SessionForkPlan) error
-	launchConfig      func(string) (*egg.EggConfig, error)
-	forkTrace         bool
-	forkIdleTimeout   time.Duration
-	forkTools         []*config.ToolConfig
+	Sessions                           *wingsession.Service
+	sessionLaunch                      *wingsession.Launch
+	sessionRole                        string
+	sessionBrowser                     bool
+	sessionPublicKey, sessionAuthToken string
+	Version                            string
+	Cfg                                *config.Config
+	In                                 io.Reader
+	Out                                io.Writer
+	Logs                               io.Writer
+	Principal                          string
+	Unsandboxed                        bool
+	Grants                             map[string]bool
+	MaxSessions                        int
+	MaxSpawnsPerHour                   int
+	spawnMu                            sync.Mutex
+	admitMu                            sync.Mutex // held across bounds check + spawn + record
+	spawnTimes                         []time.Time
+	admission                          *AdmissionState // shared by remote connections on one wing
+	identity                           eggclient.EggIdentity
+	Actor                              string
+	MCPClient                          string // local clients.yaml identity, independent of the audit actor
+	BoundConversation                  string
+	Surface                            control.Surface
+	allowedPaths                       []string
+	enforcePathBounds                  bool
+	runAgentTask                       func(context.Context, *config.Config, *store.Store, *store.Task, taskrun.TaskRunOptions) error
+	startContinuation                  func(*store.Conversation, *egg.EggConfig, eggclient.SpawnEggOpts) error
+	spawnFork                          func(*eggclient.SessionForkPlan) error
+	launchConfig                       func(string) (*egg.EggConfig, error)
+	forkTrace                          bool
+	forkIdleTimeout                    time.Duration
+	forkTools                          []*config.ToolConfig
 	// tools, when set, further limits callable tools by name; grants are
 	// per category and cannot express the host mailbox's fixed subset.
 	tools map[string]bool
@@ -86,6 +92,7 @@ type Server struct {
 // this lock, so two data channels cannot race through the final available slot.
 // This remains a guardrail rather than a durable quota across wing restarts.
 type AdmissionState struct {
+	Sessions   *wingsession.Service
 	mu         sync.Mutex
 	spawnTimes map[string][]time.Time
 }
@@ -332,6 +339,10 @@ func LocalMCPTools() []LocalMCPTool {
 // Streamable HTTP MCP. The request principal is supplied by the roost after
 // bearer-token verification and never accepted from tool arguments.
 func RoostNativeMCPTools(version string, cfg *config.Config, sharedHost bool, sources ...func() (*config.WingConfig, *egg.EggConfig)) []mcppkg.NativeTool {
+	return RoostNativeMCPToolsWithSessions(version, cfg, sharedHost, nil, sources...)
+}
+
+func RoostNativeMCPToolsWithSessions(version string, cfg *config.Config, sharedHost bool, sessionSource func() *wingsession.Service, sources ...func() (*config.WingConfig, *egg.EggConfig)) []mcppkg.NativeTool {
 	// Standalone callers capture once; the embedded roost supplies the wing's
 	// synchronized runtime snapshot, which changes on administrator reloads.
 	var initial *config.WingConfig
@@ -367,6 +378,12 @@ func RoostNativeMCPTools(version string, cfg *config.Config, sharedHost bool, so
 					return nil, true, err
 				}
 				server := newRoostNativeMCPServer(version, cfg, sharedHost, admission, principal, paths, func() (*config.WingConfig, *egg.EggConfig) { return wingCfg, wingDefault })
+				if sessionSource != nil {
+					server.Sessions = sessionSource()
+					if server.Sessions == nil {
+						return nil, true, errors.New("wing session service is not ready")
+					}
+				}
 				data, isError, protocolErr := server.callTool(ctx, tool.Name, arguments)
 				if protocolErr != nil {
 					return map[string]any{"error": protocolErr.Message}, true, nil
@@ -422,6 +439,17 @@ func newRoostNativeMCPServer(version string, cfg *config.Config, sharedHost bool
 		home, _ := os.UserHomeDir()
 		server.launchConfig = runtimeLaunchConfig(wingCfg, home, member, paths, wingDefault, err)
 	}
+	server.sessionRole = "owner"
+	if (sharedHost || server.identity.OrgWing) && (wingCfg == nil || !wingCfg.IsAdmin(principal.Email)) {
+		server.sessionRole = "member"
+	}
+	if admission != nil && admission.Sessions != nil {
+		server.Sessions = admission.Sessions
+	} else {
+		home, _ := os.UserHomeDir()
+		server.Sessions = &wingsession.Service{Config: cfg, Home: home, SharedHost: sharedHost, Policy: func() wingsession.Policy { return wingsession.Policy{Wing: wingCfg, Egg: wingDefault} }}
+	}
+
 	return server
 }
 
@@ -1056,6 +1084,9 @@ func (s *Server) resolveConfigPath(path string) (string, error) {
 }
 
 func (s *Server) ownsSession(session eggclient.LocalSession) bool {
+	if s.Sessions != nil {
+		return s.Sessions.Owns(s.sessionAuthority(), session)
+	}
 	principal := s.clientPrincipal()
 	if principal == "default" {
 		return session.Principal == "" || session.Principal == principal
@@ -1223,7 +1254,13 @@ func (s *Server) ToolTerminalList(ctx context.Context, arguments json.RawMessage
 		}
 		return map[string]any{"sessions": owned}, nil
 	}
-	sessions, err := eggclient.DiscoverActiveSessions(ctx, s.Cfg)
+	var sessions []eggclient.LocalSession
+	var err error
+	if s.Sessions != nil {
+		sessions, err = s.Sessions.List(ctx, s.sessionAuthority())
+	} else {
+		sessions, err = eggclient.DiscoverActiveSessions(ctx, s.Cfg)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1392,13 +1429,13 @@ func (s *Server) toolTerminalStart(arguments json.RawMessage) (map[string]any, e
 		args.Command = []string{shell}
 		kind = "shell"
 	}
-	eggCfg, err := s.loadLaunchConfig(args.CWD)
+	eggCfg, err := s.loadSessionLaunchConfig(args.CWD)
 	if err != nil {
 		return nil, err
 	}
 	sessionID := cmdutil.NewRuntimeID()
 	if err := s.admitSpawn(func() error {
-		ec, spawnErr := eggclient.SpawnEgg(s.Cfg, sessionID, "", eggCfg, 24, 80, args.CWD, false, false, false, s.identity, 0,
+		ec, spawnErr := s.startSession(sessionID, "", args.CWD, eggCfg,
 			eggclient.SpawnEggOpts{Label: args.Label, Kind: kind, Command: args.Command, Principal: s.clientPrincipal()})
 		if spawnErr != nil {
 			return spawnErr
@@ -1460,7 +1497,7 @@ func (s *Server) toolAgentStart(arguments json.RawMessage) (map[string]any, erro
 	}
 	args.CWD = resolvedCWD
 	var eggCfg *egg.EggConfig
-	eggCfg, err = s.loadLaunchConfig(args.CWD)
+	eggCfg, err = s.loadSessionLaunchConfig(args.CWD)
 	if err != nil {
 		return nil, err
 	}
@@ -1516,7 +1553,7 @@ func (s *Server) toolAgentStart(arguments json.RawMessage) (map[string]any, erro
 		} else if s.broker != nil {
 			opts = s.broker.launchOpts(s.Cfg, opts)
 		}
-		ec, spawnErr := eggclient.SpawnEgg(s.Cfg, sessionID, args.Agent, eggCfg, 24, 80, args.CWD, false, false, false, s.identity, 0, opts)
+		ec, spawnErr := s.startSession(sessionID, args.Agent, args.CWD, eggCfg, opts)
 		if spawnErr != nil {
 			return spawnErr
 		}
@@ -2293,14 +2330,24 @@ func (s *Server) toolTerminalStop(ctx context.Context, arguments json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	session, ec, err := eggclient.OpenLocalEgg(ctx, s.Cfg, owned.ID)
-	if err != nil {
-		return nil, err
+	var session eggclient.LocalSession
+	if s.Sessions != nil {
+		session, err = s.Sessions.Stop(ctx, s.sessionAuthority(), owned.ID)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		var ec *egg.Client
+		session, ec, err = eggclient.OpenLocalEgg(ctx, s.Cfg, owned.ID)
+		if err != nil {
+			return nil, err
+		}
+		defer cmdutil.CloseWithLog("egg client", ec)
+		if err := ec.Kill(ctx, session.ID); err != nil {
+			return nil, err
+		}
 	}
-	defer cmdutil.CloseWithLog("egg client", ec)
-	if err := ec.Kill(ctx, session.ID); err != nil {
-		return nil, err
-	}
+
 	return map[string]any{"session": session.ID, "status": "stopped"}, nil
 }
 
