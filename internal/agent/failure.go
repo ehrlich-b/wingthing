@@ -78,9 +78,9 @@ func classifyProviderText(text string) ErrorKind {
 	switch {
 	case contains("content was flagged", "content_policy", "content policy", "policy violation", "safety policy", "provider refused", "content_filter", "cybersecurity risk"):
 		return ProviderRefused
-	case contains("authentication failed", "authentication_failed", "authentication_error", "auth_failed", "invalid api key", "invalid_api_key", "incorrect api key", "unauthorized", "not logged in", "login required", "token expired", "401"):
+	case contains("authentication failed", "authentication_failed", "authentication_error", "auth_failed", "invalid api key", "invalid_api_key", "incorrect api key", "unauthorized", "not logged in", "not signed in", "sign in again", "login required", "token expired", "token has expired"):
 		return AuthFailed
-	case contains("rate limit", "rate_limit", "too many requests", "quota exceeded", "exhausted the quota", "insufficient_quota", "429"):
+	case contains("rate limit", "rate_limit", "too many requests", "quota exceeded", "exhausted the quota", "insufficient_quota", "usage limit", "usage_limit", "hit your", "credit limit", "out of credits"):
 		return RateLimited
 	case contains("context window", "context length", "context_length", "prompt is too long", "prompt too long", "prompt_too_long", "max_tokens", "token limit exceeded"):
 		return ContextExhausted
