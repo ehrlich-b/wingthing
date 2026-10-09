@@ -35,7 +35,7 @@ func codexRunFixture(t *testing.T) (rt *runTurnRuntime, home string, request Run
 	sentCh := make(chan struct{})
 	backend := runTurnBackend{Agent: "codex", Read: read}
 	backend.Prepare = func(prompt, id string) (func() (turnEvidence, error), error) {
-		return codexRunScanner(home, sessionID, id, prompt, read)
+		return codexRunScanner(home, sessionID, id, prompt, read, readRunFile)
 	}
 	backend.Send = func(ctx context.Context, prompt string) (PromptDelivery, error) {
 		wire, _ := json.Marshal(map[string]string{"session_id": "thread-exact", "turn_id": "turn-exact", "hook_event_name": "UserPromptSubmit", "prompt": prompt})
@@ -188,7 +188,7 @@ func TestCodexRunArgsExactArgvAndNativePublisher(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer root.Close()
-	files, err := codexRunNotifications(root, filepath.Join(".codex", "wingthing-run-notify", "egg-exact"))
+	files, err := codexRunNotifications(root, filepath.Join(".codex", "wingthing-run-notify", "egg-exact"), nil, readRunFile)
 	if err != nil || len(files) != 1 {
 		t.Fatalf("publication: %d %v", len(files), err)
 	}

@@ -56,7 +56,7 @@ func newRunFixture(t *testing.T) *runFixture {
 		return PromptDelivery{BytesEnqueued: len(input) + 1}, nil
 	}
 	backend.Prepare = func(prompt, id string) (func() (turnEvidence, error), error) {
-		scan, err := claudeRunScanner(home, "/fixture/shared-workspace", id, prompt, options.Read)
+		scan, err := claudeRunScanner(home, "/fixture/shared-workspace", id, prompt, options.Read, readRunFile)
 		return func() (turnEvidence, error) {
 			evidence, err := scan()
 			select {

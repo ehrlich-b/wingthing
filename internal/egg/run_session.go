@@ -30,9 +30,9 @@ func (s *Server) sessionRunTurns(sess *Session, home, providerID string) *runTur
 		var scan func() (turnEvidence, error)
 		var err error
 		if sess.Agent == "codex" {
-			scan, err = codexRunScanner(home, sess.ID, exactID, prompt, read)
+			scan, err = codexRunScanner(home, sess.ID, exactID, prompt, read, readRunFile)
 		} else {
-			scan, err = claudeRunScanner(home, sess.CWD, exactID, prompt, read)
+			scan, err = claudeRunScanner(home, sess.CWD, exactID, prompt, read, readRunFile)
 		}
 		if err != nil {
 			return nil, err

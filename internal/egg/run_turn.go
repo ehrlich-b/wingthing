@@ -228,7 +228,7 @@ func (rt *runTurnRuntime) execute(ctx context.Context, run *ownedRunTurn, option
 			<-promptDone
 		}
 	}()
-	ticker := time.NewTicker(50 * time.Millisecond)
+	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	exited := false
 	for {

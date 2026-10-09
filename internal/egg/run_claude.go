@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -16,8 +17,8 @@ import (
 // Read the exact transcript directly: lifecycle pages intentionally truncate
 // records and cannot supply a complete run result. Only newline-terminated
 // native records advance the offset, including when Stop precedes the flush.
-func claudeRunScanner(home, cwd, providerID, prompt string, read func(context.Context, int64, int) (SessionView, error)) (func() (turnEvidence, error), error) {
-	open := func() (io.ReadCloser, error) {
+func claudeRunScanner(home, cwd, providerID, prompt string, read func(context.Context, int64, int) (SessionView, error), readFile runFileReader) (func() (turnEvidence, error), error) {
+	open := func() (*os.File, error) {
 		root, err := openProviderHome(home)
 		if err != nil {
 			return nil, err
@@ -37,7 +38,7 @@ func claudeRunScanner(home, cwd, providerID, prompt string, read func(context.Co
 		return nil, err
 	}
 	if f != nil {
-		offset, err = io.Copy(io.Discard, f)
+		offset, err = f.Seek(0, io.SeekEnd)
 		f.Close()
 		if err != nil {
 			return nil, err
@@ -47,10 +48,12 @@ func claudeRunScanner(home, cwd, providerID, prompt string, read func(context.Co
 	if err != nil {
 		return nil, err
 	}
-	reserved := view.HeadCursor
+	cursor := view.HeadCursor
 	var evidence turnEvidence
 	var messageID string
 	var lastText string
+	var stopLast string
+	background := false
 	return func() (turnEvidence, error) {
 		f, err := open()
 		if err != nil {
@@ -60,8 +63,15 @@ func claudeRunScanner(home, cwd, providerID, prompt string, read func(context.Co
 			return evidence, nil
 		}
 		defer f.Close()
-		if _, err = io.CopyN(io.Discard, f, offset); err != nil {
+		info, err := f.Stat()
+		if err != nil {
+			return evidence, err
+		}
+		if info.Size() < offset {
 			return evidence, errors.New("exact native transcript was truncated")
+		}
+		if _, err = f.Seek(offset, io.SeekStart); err != nil {
+			return evidence, err
 		}
 		r := bufio.NewReader(f)
 		flushed := true
@@ -124,8 +134,6 @@ func claudeRunScanner(home, cwd, providerID, prompt string, read func(context.Co
 		}
 		// Stop alone cannot prove that a delayed final message has flushed.
 		// Its native last_assistant_message must match the receipt-scoped text.
-		cursor := reserved
-		background := false
 		for {
 			view, err := read(context.Background(), cursor, 200)
 			if err != nil {
@@ -138,7 +146,7 @@ func claudeRunScanner(home, cwd, providerID, prompt string, read func(context.Co
 				if event.Source != "claude_hook" {
 					continue
 				}
-				data, err := readRunHook(home, "claude", view.SessionID, event.SourceKey)
+				data, err := readRunHook(home, "claude", view.SessionID, event.SourceKey, readFile)
 				if err != nil {
 					return evidence, err
 				}
@@ -159,16 +167,18 @@ func claudeRunScanner(home, cwd, providerID, prompt string, read func(context.Co
 					}
 					if json.Unmarshal(data, &stop) == nil {
 						background = len(stop.Background) > 0
-						if !background && stop.Last != "" && (stop.Last == evidence.Text || stop.Last == lastText) {
-							evidence.Complete = true
-						}
+						stopLast = stop.Last
 					}
 				}
 			}
-			if !view.HasMore || view.Cursor <= cursor {
+			advanced := view.Cursor > cursor
+			cursor = view.Cursor
+			if !view.HasMore || !advanced {
 				break
 			}
-			cursor = view.Cursor
+		}
+		if !background && stopLast != "" && (stopLast == evidence.Text || stopLast == lastText) {
+			evidence.Complete = true
 		}
 		out := evidence
 		out.Complete = evidence.Complete && flushed && !background
@@ -178,7 +188,7 @@ func claudeRunScanner(home, cwd, providerID, prompt string, read func(context.Co
 
 // Hook lifecycle pages omit payloads. Open only the already-journaled exact
 // spool entry; preserve full last_assistant_message for flush correlation.
-func readRunHook(home, provider, sessionID, key string) ([]byte, error) {
+func readRunHook(home, provider, sessionID, key string, readFile runFileReader) ([]byte, error) {
 	name, ok := strings.CutPrefix(key, "hook:")
 	if !ok || !validLifecycleID(name) || !validLifecycleID(sessionID) {
 		return nil, errors.New("invalid native hook identity")
@@ -188,7 +198,13 @@ func readRunHook(home, provider, sessionID, key string) ([]byte, error) {
 		return nil, err
 	}
 	defer root.Close()
-	f, err := openProviderPath(root, filepath.Join("."+provider, "wingthing-events", sessionID, name), false)
+	return readFile(root, filepath.Join("."+provider, "wingthing-events", sessionID, name))
+}
+
+type runFileReader func(*os.File, string) ([]byte, error)
+
+func readRunFile(root *os.File, path string) ([]byte, error) {
+	f, err := openProviderPath(root, path, false)
 	if err != nil {
 		return nil, err
 	}
