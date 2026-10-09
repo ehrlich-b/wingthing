@@ -167,7 +167,7 @@ func (rt *runTurnRuntime) submit(request RunTurnRequest) (RunTurnResult, error) 
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return RunTurnResult{}, err
 	}
-	if rt.backend.Agent != "claude" {
+	if rt.backend.Agent != "claude" && rt.backend.Agent != "codex" {
 		return RunTurnResult{}, errors.New("provider has no native run-turn adapter")
 	}
 	for _, run := range rt.runs {
@@ -237,6 +237,18 @@ func (rt *runTurnRuntime) execute(ctx context.Context, run *ownedRunTurn, option
 			rt.finish(run, "failed", agent.UnknownOutcome, turnEvidence{}, false)
 			return
 		}
+		if evidence.Receipt && evidence.TurnID != "" {
+			run.mu.Lock()
+			if !run.finishing && run.record.Result.TurnID != evidence.TurnID {
+				run.record.Result.TurnID = evidence.TurnID
+				err = persistRunTurn(rt.dir, run.record)
+			}
+			run.mu.Unlock()
+			if err != nil {
+				rt.finish(run, "failed", agent.UnknownOutcome, turnEvidence{}, false)
+				return
+			}
+		}
 		if evidence.Conflict {
 			rt.finish(run, "failed", agent.InputConflict, turnEvidence{}, false)
 			return
@@ -293,7 +305,10 @@ func (rt *runTurnRuntime) finish(run *ownedRunTurn, status string, kind agent.Er
 		}
 	}
 	result.Status, result.FailureKind, result.EndedAt = status, kind, time.Now().UTC()
-	result.Text, result.TurnID = evidence.Text, evidence.TurnID
+	result.Text = evidence.Text
+	if evidence.TurnID != "" {
+		result.TurnID = evidence.TurnID
+	}
 	if kind != "" {
 		result.Error = "Egg run turn ended: " + string(kind) + "."
 	}

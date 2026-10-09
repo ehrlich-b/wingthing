@@ -23,8 +23,11 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"golang.org/x/term"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 type runFixture struct {
@@ -196,6 +199,45 @@ func TestRunTurnSurvivesClientDisconnect(t *testing.T) {
 	}
 	if fixture.sends.Load() != 1 {
 		t.Fatal("disconnect resent prompt")
+	}
+}
+
+func TestRunTurnRPCAuthenticatesEveryOperationAndStrictlyDecodes(t *testing.T) {
+	fixture := newRunFixture(t)
+	listener := bufconn.Listen(1 << 20)
+	handler := &Server{token: "private-fixture-token", runTurns: fixture.runtime}
+	server := grpc.NewServer(grpc.UnaryInterceptor(handler.authUnary))
+	RegisterRunTurnRPC(server, handler)
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+	conn, err := grpc.NewClient("passthrough:///fixture", grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return listener.Dial() }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	client := &Client{conn: conn, token: "wrong"}
+	for _, method := range []string{"Submit", "Status", "Wait", "Result", "Stop"} {
+		if _, err := client.runTurn(context.Background(), method, fixture.request); status.Code(err) != codes.Unauthenticated {
+			t.Fatalf("%s unauthenticated: %v", method, err)
+		}
+	}
+	client.token = handler.token
+	message, _ := structpb.NewStruct(map[string]any{"run_id": "run-1", "unexpected": "field"})
+	if err := conn.Invoke(client.authCtx(context.Background()), "/egg.RunTurns/Submit", message, new(structpb.Struct)); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("unknown field accepted: %v", err)
+	}
+	if _, err := client.SubmitRunTurn(context.Background(), fixture.request); err != nil {
+		t.Fatal(err)
+	}
+	<-fixture.sent
+	if result, err := client.RunTurnStatus(context.Background(), fixture.request.RunID); err != nil || result.Terminal() || result.Text != "" {
+		t.Fatalf("running status: %s %v", result.Status, err)
+	}
+	if result, err := client.StopRunTurn(context.Background(), fixture.request.RunID); err != nil || result.Status != "stopped" {
+		t.Fatalf("stop RPC: %s %v", result.Status, err)
+	}
+	if result, err := client.ReadRunTurnResult(context.Background(), fixture.request.RunID); err != nil || result.FailureKind != agent.Stopped {
+		t.Fatalf("result RPC: %s %v", result.FailureKind, err)
 	}
 }
 

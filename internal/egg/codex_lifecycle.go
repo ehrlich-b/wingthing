@@ -19,8 +19,8 @@ import (
 // These are the main-thread events in Codex 0.159.3. Subagent events use the
 // parent's session ID and must not end its turn. There is no Notification or
 // MCP elicitation event; unsupported transitions cannot be inferred from a PTY.
-// notify only reports agent-turn-complete, so preserve the user's notify config
-// and use the richer native hooks instead.
+// These hooks report readiness and prompt admission. CodexRunArgs separately
+// installs notify to provide authoritative turn completion and final text.
 var codexLifecycleEvents = []struct{ name, key string }{
 	{"SessionStart", "session_start"},
 	{"UserPromptSubmit", "user_prompt_submit"},

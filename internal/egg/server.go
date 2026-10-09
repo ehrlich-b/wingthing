@@ -66,6 +66,7 @@ type Session struct {
 	ID             string
 	PID            int
 	processGroupID int
+	codexRun       bool
 	Agent          string
 	Kind           string
 	Command        []string
@@ -666,8 +667,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			_ = os.Remove(lifecycleSettingsPath)
 		}
 	}()
+	codexRun := false
 	if rc.Agent == "codex" && len(rc.Command) == 0 && codexLifecycleSupported(binPath) {
-		args, err = CodexLifecycleArgs(args, home, filepath.Base(s.dir))
+		args, codexRun, err = CodexRunArgs(args, home, filepath.Base(s.dir))
 		if err != nil {
 			return fmt.Errorf("prepare Codex lifecycle hooks: %w", err)
 		}
@@ -995,6 +997,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		ID:             sessionID,
 		PID:            cmd.Process.Pid,
 		processGroupID: cmd.Process.Pid,
+		codexRun:       codexRun,
 		Agent:          rc.Agent,
 		Kind:           rc.Kind,
 		Command:        append([]string(nil), rc.Command...),
@@ -1086,8 +1089,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	if hasSandbox {
 		isolationMode = "wingthing-sandbox"
 	}
-	metaContent := fmt.Sprintf("agent=%s\nkind=%s\ncommand=%s\ncwd=%s\nnetwork=%s\nisolation=%s\ncols=%d\nrows=%d\nstarted_at=%d\nprovider_session_id=%s\nprovider_home=%s\n",
-		rc.Agent, rc.Kind, formatCommand(rc.Command), rc.CWD, networkSummary, isolationMode, rc.Cols, rc.Rows, sess.StartedAt.Unix(), rc.ProviderSessionID, captureHome)
+	nativeRun := len(rc.Command) == 0 && (codexRun || (rc.Agent == "claude" && rc.ProviderSessionID != ""))
+	metaContent := fmt.Sprintf("agent=%s\nkind=%s\ncommand=%s\ncwd=%s\nnetwork=%s\nisolation=%s\ncols=%d\nrows=%d\nstarted_at=%d\nprovider_session_id=%s\nprovider_home=%s\nnative_run=%t\n",
+		rc.Agent, rc.Kind, formatCommand(rc.Command), rc.CWD, networkSummary, isolationMode, rc.Cols, rc.Rows, sess.StartedAt.Unix(), rc.ProviderSessionID, captureHome, nativeRun)
 	if err := atomicWritePrivate(metaPath, []byte(metaContent)); err != nil {
 		log.Printf("egg: warning: write meta: %v", err)
 	}

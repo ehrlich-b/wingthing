@@ -23,8 +23,17 @@ func (s *Server) sessionRunTurns(sess *Session, home, providerID string) *runTur
 		return ReadSessionLifecycle(s.dir, sess.Agent, sess.CWD, home, providerID, alive, after, limit)
 	}
 	backend := runTurnBackend{Agent: sess.Agent, Read: read, Done: sess.done, Kill: func() ([]RunDescendant, error) { return tree.kill(sess) }}
+	if sess.Kind != "agent" || len(sess.Command) != 0 || (sess.Agent == "codex" && !sess.codexRun) {
+		backend.Agent = ""
+	}
 	backend.Prepare = func(prompt, exactID string) (func() (turnEvidence, error), error) {
-		scan, err := claudeRunScanner(home, sess.CWD, exactID, prompt, read)
+		var scan func() (turnEvidence, error)
+		var err error
+		if sess.Agent == "codex" {
+			scan, err = codexRunScanner(home, sess.ID, exactID, prompt, read)
+		} else {
+			scan, err = claudeRunScanner(home, sess.CWD, exactID, prompt, read)
+		}
 		if err != nil {
 			return nil, err
 		}

@@ -69,7 +69,9 @@ func (tree *runProcessTree) observe(snapshot map[int]observedProcess) {
 			if pid == tree.root {
 				continue
 			}
-			_, parentSeen := tree.seen[process.ParentPID]
+			oldParent, parentSeen := tree.seen[process.ParentPID]
+			parent, present := snapshot[process.ParentPID]
+			parentSeen = parentSeen && present && parent.start == oldParent.start
 			if process.ParentPID != tree.root && !parentSeen {
 				continue
 			}
@@ -91,6 +93,36 @@ func (tree *runProcessTree) kill(sess *Session) ([]RunDescendant, error) {
 	defer cancel()
 	err := terminateSession(ctx, sess, 3*time.Second)
 	after, afterErr := processSnapshot()
+	// SIGKILL delivery is asynchronous. Await disappearance of the signalled
+	// group before distinguishing escaped descendants from a process exiting.
+	if sess.processGroupID == sess.PID && afterErr == nil {
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			alive := false
+			for _, process := range after {
+				if process.ProcessGroupID == sess.PID {
+					alive = true
+					break
+				}
+			}
+			if !alive {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				err = errors.Join(err, ctx.Err())
+			case <-ticker.C:
+			}
+			if ctx.Err() != nil {
+				break
+			}
+			after, afterErr = processSnapshot()
+			if afterErr != nil {
+				break
+			}
+		}
+	}
 	if afterErr != nil {
 		return nil, errors.Join(err, inventoryErr, afterErr)
 	}
