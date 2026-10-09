@@ -1987,9 +1987,6 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 			writeInput := func(ctx context.Context) error {
 				s.inputMu.Lock()
 				defer s.inputMu.Unlock()
-				if len(p.Input) > 0 && s.runTurns != nil {
-					s.runTurns.inputConflict()
-				}
 				sess.mu.Lock()
 				sess.lastInput = time.Now()
 				sess.mu.Unlock()
