@@ -89,7 +89,7 @@ func contextInputToolCall(t *testing.T, path string) egg.ToolResponse {
 func contextInputFixture(t *testing.T) (*config.Config, *contextInputEgg, string) {
 	t.Helper()
 	// Keep Unix socket names short and fixture state inside this checkout.
-	root, err := os.MkdirTemp("../..", ".ctx-")
+	root, err := os.MkdirTemp("", ".ctx-")
 	if err != nil {
 		t.Fatal(err)
 	}

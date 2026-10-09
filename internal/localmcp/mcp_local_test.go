@@ -826,6 +826,73 @@ func TestLocalMCPAgentRunLifecycleIsSemanticAndOwnerScoped(t *testing.T) {
 	}
 }
 
+func TestAgentRunAcceptsHumanReadableLabel(t *testing.T) {
+	cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "codex"}
+	server := &Server{Version: "dev", Cfg: cfg, Principal: "owner", runAgentTask: func(_ context.Context, _ *config.Config, db *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
+		return db.UpdateTaskStatus(task.ID, "done")
+	}}
+	label := "Review branch: security & tests ✓"
+	args, _ := json.Marshal(agentRunArgs{Prompt: "review", Agent: "codex", CWD: t.TempDir(), Label: label})
+	created, err := server.toolAgentRun(args)
+	if err != nil || created["label"] != label {
+		t.Fatalf("human-readable label: %#v, %v", created, err)
+	}
+	id := created["run_id"].(string)
+	if _, err := server.toolAgentWait(context.Background(), json.RawMessage(`{"run_id":`+strconv.Quote(id)+`,"timeout_seconds":2}`)); err != nil {
+		t.Fatal(err)
+	}
+	events, err := server.toolAgentEvents(json.RawMessage(`{"run_id":` + strconv.Quote(id) + `}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events["events"].([]map[string]any) {
+		if event["event"] == "label" && event["detail"] == label {
+			return
+		}
+	}
+	t.Fatalf("label missing from events: %#v", events)
+}
+
+func TestAgentRunReportsResolvedIsolationAtCreation(t *testing.T) {
+	for _, tc := range []struct {
+		name, agentIsolation, want string
+		unsandboxed                bool
+	}{
+		{"default", "", "standard", false},
+		{"legacy-unresolved", "none", "standard", false},
+		{"strict", "strict", "strict", false},
+		{"network", "network", "network", false},
+		{"outer", "strict", "privileged", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "codex"}
+			db, err := store.Open(cfg.DBPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if tc.agentIsolation != "" {
+				if err := db.UpsertAgent(&store.Agent{Name: "codex", DefaultIsolation: tc.agentIsolation}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			server := &Server{Version: "dev", Cfg: cfg, Principal: "owner", Unsandboxed: tc.unsandboxed, runAgentTask: func(_ context.Context, _ *config.Config, db *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
+				return db.UpdateTaskStatus(task.ID, "done")
+			}}
+			args, _ := json.Marshal(agentRunArgs{Prompt: "review", Agent: "codex", CWD: t.TempDir()})
+			created, err := server.toolAgentRun(args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			statusArgs := json.RawMessage(`{"run_id":` + strconv.Quote(created["run_id"].(string)) + `,"timeout_seconds":2}`)
+			later, err := server.toolAgentWait(context.Background(), statusArgs)
+			if err != nil || created["isolation"] != tc.want || later["isolation"] != tc.want {
+				t.Fatalf("create isolation=%v, later=%#v, want %s (%v)", created["isolation"], later, tc.want, err)
+			}
+		})
+	}
+}
+
 func TestAgentStopWinsCompletionRace(t *testing.T) {
 	dir := t.TempDir()
 	cwd := t.TempDir()
@@ -893,7 +960,7 @@ func TestUnsandboxedAgentRunPersistsPrivilegedIsolation(t *testing.T) {
 	}
 }
 
-func TestAgentStatusMarksOrphanedRunnerFailed(t *testing.T) {
+func TestAgentStatusMarksOrphanedRunner(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{Dir: dir, DefaultAgent: "claude"}
 	taskStore, err := store.Open(cfg.DBPath())
@@ -916,11 +983,11 @@ func TestAgentStatusMarksOrphanedRunnerFailed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status["status"] != "failed" {
+	if status["status"] != "orphaned" {
 		t.Fatalf("orphan status = %#v", status)
 	}
 	result, err := server.toolAgentResult(json.RawMessage(`{"run_id":"orphaned-run"}`))
-	if err != nil || !strings.Contains(result["error"].(string), "supervising Wingthing process") {
+	if err != nil || !strings.Contains(result["error"].(string), "provider exit unknown") {
 		t.Fatalf("orphan result = %#v err=%v", result, err)
 	}
 }
@@ -931,12 +998,14 @@ func TestAgentSteerContinuesTerminalRunsWithPartialResultAndError(t *testing.T) 
 		status string
 		output string
 		error  string
+		kind   string
 	}{
-		{"failed-after-timeout", "failed", "partial review ✓", "agent error: context deadline exceeded"},
-		{"failed-without-result", "failed", "", "review failed"},
-		{"timeout", "timeout", "partial review ✓", "context deadline exceeded"},
-		{"stopped", "stopped", "partial review ✓", "stopped by MCP principal owner"},
-		{"done-without-result", "done", "", ""},
+		{"failed-after-timeout", "failed", "partial review ✓", "agent error: context deadline exceeded", "provider_error"},
+		{"failed-without-result", "failed", "", "review failed", "provider_error"},
+		{"timeout", "timeout", "partial review ✓", "context deadline exceeded", "provider_error"},
+		{"stopped", "stopped", "partial review ✓", "stopped by MCP principal owner", "provider_error"},
+		{"done-without-result", "done", "", "", ""},
+		{"legacy-provider-error", "failed", "partial review ✓", "raw-provider-stderr-canary", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cwd, err := filepath.EvalSymlinks(t.TempDir())
@@ -954,7 +1023,7 @@ func TestAgentSteerContinuesTerminalRunsWithPartialResultAndError(t *testing.T) 
 				}
 			}
 			if tc.error != "" {
-				if err := taskStore.SetTaskError(parent.ID, tc.error); err != nil {
+				if err := taskStore.SetTaskFailure(parent.ID, tc.error, tc.kind); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -962,7 +1031,9 @@ func TestAgentSteerContinuesTerminalRunsWithPartialResultAndError(t *testing.T) 
 				t.Fatal(err)
 			}
 			wantPrompt := "Prior request:\noriginal review\n\nPrior result:\n" + tc.output
-			if tc.error != "" {
+			if tc.kind == "" {
+				wantPrompt += "\n\nPrior status:\n" + tc.status
+			} else if tc.error != "" {
 				wantPrompt += "\n\nPrior error:\n" + tc.error
 			}
 			wantPrompt += "\n\nNew direction:\nfocus on auth"
@@ -1002,6 +1073,10 @@ func TestAgentSteerContinuesTerminalRunsWithPartialResultAndError(t *testing.T) 
 			if child.What != wantPrompt || child.ParentID == nil || *child.ParentID != parent.ID ||
 				child.Agent != parent.Agent || child.Model != parent.Model || child.CWD != parent.CWD || child.TimeoutSeconds != parent.TimeoutSeconds {
 				t.Fatalf("steered child = %#v, want prior context and inherited settings", child)
+			}
+			result, err := server.toolAgentResult(json.RawMessage(`{"run_id":"parent"}`))
+			if err != nil || (tc.error != "" && result["error"] != tc.error) {
+				t.Fatalf("parent result error changed: %#v, %v", result, err)
 			}
 		})
 	}
@@ -1073,7 +1148,7 @@ func TestAgentSteerPassesAndPersistsPriorResult(t *testing.T) {
 	}
 	closeForTest(t, "task store", taskStore)
 
-	wantPrompt := agentSteerPrompt(parent.What, "the auth boundary is sound", "", "now review the UI")
+	wantPrompt := agentSteerPrompt(parent.What, "the auth boundary is sound", "", "done", "now review the UI")
 	seenPrompt := make(chan string, 1)
 	server := &Server{Version: "dev",
 		Cfg: cfg, Logs: &bytes.Buffer{}, Principal: "alpha",
@@ -1111,7 +1186,7 @@ func TestAgentSteerPassesAndPersistsPriorResult(t *testing.T) {
 
 func TestAgentSteerBoundsPriorResultWithoutSplittingUnicode(t *testing.T) {
 	prior := strings.Repeat("✓", maxAgentSteerPriorResultChars+1)
-	prompt := agentSteerPrompt("review", prior, "", "continue")
+	prompt := agentSteerPrompt("review", prior, "", "", "continue")
 	if strings.Contains(prompt, strings.Repeat("✓", maxAgentSteerPriorResultChars+1)) {
 		t.Fatal("follow-up retained the unbounded prior result")
 	}

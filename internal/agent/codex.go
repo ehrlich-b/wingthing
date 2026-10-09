@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 type Codex struct {
@@ -79,29 +82,60 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 	if err != nil {
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
+	startedAt := time.Now()
 	diagnostics, err := startAgentCommand(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("start codex: %w", err)
 	}
 
+	providerHome := codexHome(cmd)
 	stream := newStream(ctx)
 	go func() {
+		var threadID string
 		readErr := readProviderLines(stdout, "codex", func(line string) {
+			var session struct {
+				Type     string `json:"type"`
+				ThreadID string `json:"thread_id"`
+			}
+			if json.Unmarshal([]byte(line), &session) == nil && session.Type == "thread.started" {
+				threadID = ""
+				if validCodexThreadID(session.ThreadID) {
+					threadID = session.ThreadID
+				}
+				stream.setProviderSession(threadID, "")
+				if threadID != "" {
+					stream.send(Chunk{ThreadID: threadID})
+				}
+			}
 			if text, ok := parseCodexEvent(line); ok {
 				stream.send(Chunk{Text: text})
 			}
 			if input, output, ok := parseCodexUsage(line); ok {
 				stream.SetTokens(input, output)
+				// A completed turn supersedes earlier retry diagnostics.
+				diagnostics.failure = ""
+			}
+			if kind, ok := parseCodexFailure(line); ok {
+				diagnostics.failure = preferFailureKind(diagnostics.failure, kind)
 			}
 		})
-		err := waitAgentCommand(cmd, diagnostics)
+		err := waitAgentCommand(cmd, diagnostics, "codex")
 		if readErr != nil {
-			err = errors.Join(err, readErr)
+			err = errors.Join(err, &Failure{Kind: ProviderError, Provider: "codex"}, readErr)
 		}
+		stream.setProviderSession(threadID, codexRolloutPath(providerHome, threadID, startedAt))
 		stream.close(err)
 	}()
 
 	return stream, nil
+}
+
+func validCodexThreadID(id string) bool {
+	if len(id) != 36 {
+		return false
+	}
+	_, err := uuid.Parse(id)
+	return err == nil
 }
 
 // codexEvent represents a Codex CLI NDJSON event.
@@ -114,6 +148,32 @@ type codexEvent struct {
 type codexItem struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
+}
+
+func parseCodexFailure(line string) (ErrorKind, bool) {
+	var ev struct {
+		Type    string          `json:"type"`
+		Message json.RawMessage `json:"message"`
+		Error   json.RawMessage `json:"error"`
+		Item    *struct {
+			Type    string          `json:"type"`
+			Message json.RawMessage `json:"message"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal([]byte(line), &ev); err != nil {
+		return "", false
+	}
+	message := providerErrorText(ev.Message) + "\n" + providerErrorText(ev.Error)
+	if ev.Item != nil {
+		message += "\n" + providerErrorText(ev.Item.Message)
+	}
+	switch {
+	case ev.Type == "turn.failed", ev.Type == "error":
+		return eventFailureKind(message), true
+	case ev.Type == "item.completed" && ev.Item != nil && ev.Item.Type == "error":
+		return eventFailureKind(message), true
+	}
+	return "", false
 }
 
 type codexUsage struct {

@@ -53,6 +53,29 @@ func setupMemory(t *testing.T) string {
 	return dir
 }
 
+func TestAgentRunPromptIsExactCallerInput(t *testing.T) {
+	b, s := setupBuilder(t, setupMemory(t), setupSkills(t), "unrelated daily thread")
+	for _, kind := range []string{"agent_run", "prompt"} {
+		t.Run(kind, func(t *testing.T) {
+			input := "Review this branch.\nKeep the caller's formatting."
+			if err := s.CreateTask(&store.Task{ID: kind, Type: kind, What: input, Agent: "claude", RunAt: time.Now()}); err != nil {
+				t.Fatal(err)
+			}
+			got, err := b.Build(context.Background(), kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kind == "agent_run" {
+				if got.Prompt != input {
+					t.Fatalf("agent_run prompt = %q, want exact caller input %q", got.Prompt, input)
+				}
+			} else if !strings.Contains(got.Prompt, "# Memory Index") || !strings.Contains(got.Prompt, FormatDocs) {
+				t.Fatalf("ordinary prompt lost consumed memory/output instructions: %q", got.Prompt)
+			}
+		})
+	}
+}
+
 func setupSkills(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

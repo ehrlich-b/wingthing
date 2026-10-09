@@ -8,18 +8,18 @@ import (
 	"time"
 )
 
-func TestAgentCommandErrorIncludesStderr(t *testing.T) {
+func TestAgentCommandClassifiesAndDiscardsStderr(t *testing.T) {
 	cmd := exec.CommandContext(context.Background(), "sh", "-c", "printf 'authentication failed: test credential missing' >&2; exit 7")
 	diagnostics, err := startAgentCommand(cmd)
 	if err != nil {
 		t.Fatalf("startAgentCommand: %v", err)
 	}
-	err = waitAgentCommand(cmd, diagnostics)
+	err = waitAgentCommand(cmd, diagnostics, "fixture")
 	if err == nil {
 		t.Fatal("waitAgentCommand succeeded, want exit error")
 	}
-	if !strings.Contains(err.Error(), "authentication failed: test credential missing") {
-		t.Fatalf("error %q does not include stderr", err)
+	if FailureKind(err) != AuthFailed || strings.Contains(err.Error(), "test credential missing") || diagnostics.stderr.String() != "" {
+		t.Fatalf("stderr escaped classification: %v", err)
 	}
 }
 
@@ -44,7 +44,7 @@ func TestAgentCommandCancellationStopsProcessGroup(t *testing.T) {
 
 	started := time.Now()
 	cancel()
-	if err := waitAgentCommand(cmd, diagnostics); err == nil {
+	if err := waitAgentCommand(cmd, diagnostics, "fixture"); err == nil {
 		t.Fatal("waitAgentCommand succeeded after cancellation")
 	}
 	if elapsed := time.Since(started); elapsed > 2*time.Second {

@@ -70,7 +70,7 @@ func nativePromptTransport(t *testing.T, busy bool) (*config.Config, *nativeProm
 	if config.Channel() == "preview" {
 		t.Skip("preview process identity is verified by the actual egg fixture in make test-integ")
 	}
-	root, err := os.MkdirTemp("/tmp", "wt-prompt-wire-")
+	root, err := os.MkdirTemp("", "wpw-")
 	if err != nil {
 		t.Fatal(err)
 	}

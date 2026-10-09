@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"modernc.org/sqlite"
 )
@@ -30,6 +31,13 @@ func fakeAgentWaitRuns(t *testing.T, tasks ...*store.Task) (*Server, *store.Stor
 	}
 	t.Cleanup(func() { closeForTest(t, "fake run store", db) })
 	for _, task := range tasks {
+		// A fixture using this live process must also bind its start identity.
+		if task.RunnerPID == os.Getpid() && task.RunnerIdentity == "" {
+			task.RunnerIdentity, err = procinfo.ProcessIdentity(task.RunnerPID)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 		if err := db.CreateTask(task); err != nil {
 			t.Fatal(err)
 		}
@@ -289,7 +297,7 @@ func TestAgentWaitAnyBatchesStatusReads(t *testing.T) {
 		}
 		for _, task := range tasks {
 			got := loaded[task.ID]
-			if got == nil || got.Status != task.Status || got.RunnerPID != task.RunnerPID {
+			if got == nil || got.Status != task.Status || got.RunnerPID != task.RunnerPID || got.CreatedAt.IsZero() {
 				t.Fatalf("status for %s = %#v", task.ID, got)
 			}
 		}
@@ -382,11 +390,11 @@ func TestAgentWaitAnyPreservesDefaultOwnershipAndOrphanCleanup(t *testing.T) {
 	)
 	server.Principal = ""
 	data, err := server.toolAgentWaitAny(context.Background(), json.RawMessage(`{"run_ids":["orphan","live","foreign"]}`))
-	if err != nil || !reflect.DeepEqual(data["finished"], []map[string]any{{"run_id": "orphan", "status": "failed"}}) || !reflect.DeepEqual(data["pending"], []string{"live"}) {
+	if err != nil || !reflect.DeepEqual(data["finished"], []map[string]any{{"run_id": "orphan", "status": "orphaned"}}) || !reflect.DeepEqual(data["pending"], []string{"live"}) {
 		t.Fatalf("orphan wait = %#v, %v", data, err)
 	}
 	task, err := db.GetTask("orphan")
-	if err != nil || task == nil || task.Status != "failed" || task.Error == nil || !strings.Contains(*task.Error, "supervising Wingthing process") {
+	if err != nil || task == nil || task.Status != "orphaned" || task.Error == nil || !strings.Contains(*task.Error, "provider exit unknown") {
 		t.Fatalf("persisted orphan = %#v, %v", task, err)
 	}
 	task, err = db.GetTask("foreign")

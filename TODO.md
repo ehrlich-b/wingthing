@@ -103,6 +103,7 @@ The bar: someone new can use a wing without confusion or broken UX.
 - [ ] WebSocket direct to Fly — bypass Cloudflare for ws:// traffic (ws.wingthing.ai)
 
 ### Security
+- [ ] Interactive egg surfaces (agent_start, session reads, lifecycle.jsonl, chat archive, terminal reads) carry raw provider text; keep secrets out of the provider-visible environment as the long-term fix, rather than redaction.
 - [ ] Stop storing JWTs in device_tokens — new ES256 tokens should be stateless (verify
   by signature only). Remove `CreateDeviceToken` call from JWT issuance, remove
   `ValidateToken` fallback from wing/PTY auth paths. Keep device_tokens for local mode
@@ -128,6 +129,33 @@ The bar: someone new can use a wing without confusion or broken UX.
 ---
 
 ## Shipped foundations that still need cleanup
+
+### Agent-run dogfood reliability (2026-10-07)
+
+- [x] Pass the exact worker prompt without Wingthing memory/index or
+  schedule/memory-output boilerplate; retain it for prompt and skill workflows.
+- [x] Accept human-readable run labels and retain their exact text in creation
+  metadata and label events; run directories use generated IDs.
+- [x] Resolve and freeze run isolation before creation so status and execution
+  use the same mode, including explicit outer-boundary runs.
+- [x] Diagnose explicit filesystem rules that deny the headless agent binary,
+  naming the effective egg.yaml policy, cwd, binary, rule and `sandbox_explain`.
+  Linux's root allowlist remains distinct from Seatbelt's root denial.
+- [x] Canonicalize the direct-MCP roost-path fixture and give the Claude settings
+  lifecycle fixture a short socket directory, preserving all policy checks.
+- [x] Detach headless supervision from the stdio MCP host; persist its PID
+  before accepting the run and reconnect by owner-scoped run ID.
+- [x] Keep partial output/events when a supervisor is lost, report terminal
+  `orphaned` with provider exit unknown, and preserve known provider failures.
+- [x] Stop detached runs from a later owner client after verifying supervisor
+  argv; retain frozen sandbox policy, shared-host home and allowed paths.
+- [x] Verify egg secret argv protection through a live process canary. The
+  0600 one-shot environment transport already existed at `0573c90`.
+- [x] Preserve Codex's final provider error and received agent messages in
+  `agent_result`, including refusals with a zero CLI exit.
+- [ ] Run the native host-exit fixture outside an inherited sandbox and real
+  Codex/Claude long-run canaries. The fake-provider process gate is deterministic
+  evidence; it does not establish live provider or native sandbox acceptance.
 
 ### VTE: Server-Side Virtual Terminal Emulator
 The VTE snapshot reconnect path is shipped. The 2MB raw replay path and

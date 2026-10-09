@@ -83,6 +83,14 @@ func (b *Builder) Build(ctx context.Context, taskID string) (*PromptResult, erro
 	if a, ok := b.Agents[rc.Agent]; ok {
 		contextWindow = a.ContextWindow()
 	}
+	// A supervised headless run consumes the caller's task directly. Unlike
+	// prompt/skill tasks, it has no consumer for memory or schedule markers.
+	if task.Type == "agent_run" {
+		return &PromptResult{
+			Prompt: task.What, Agent: rc.Agent, Isolation: rc.Isolation,
+			Timeout: rc.Timeout, BudgetUsed: len(task.What), BudgetTotal: contextWindow,
+		}, nil
+	}
 
 	// 5. Compute budget
 	taskLen := len(task.What)

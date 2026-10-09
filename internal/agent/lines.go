@@ -61,6 +61,10 @@ func readProviderLines(r io.Reader, provider string, handle func(string)) error 
 		}
 		if size > maxProviderLine {
 			slog.Warn("agent event skipped", "provider", provider, "byte_length", size, "limit", maxProviderLine)
+			// Preserve failure detection without retaining any diagnostic text.
+			if event, failed := metadata.failure(provider); failed {
+				handle(event)
+			}
 			for kind, required := range metadata.required(provider, true) {
 				if required {
 					missing[kind] = fmt.Errorf("%s final %s event skipped: %d bytes exceeds %d-byte limit", provider, [...]string{"response", "result"}[kind], size, maxProviderLine)
@@ -125,6 +129,9 @@ type eventMetadata struct {
 	eventType    string
 	itemType     string
 	hasText      bool
+	literal      string
+	isError      bool
+	hasError     bool
 }
 
 func (m *eventMetadata) read(part []byte) {
@@ -150,12 +157,18 @@ func (m *eventMetadata) read(part []byte) {
 		}
 		switch c {
 		case '"':
+			if m.depth == 1 && m.field == "error" {
+				m.hasError = true
+			}
 			m.inString = true
 			m.stringSize = 0
 		case ':':
 			m.field = m.lastString
 			m.lastString = ""
 		case '{', '[':
+			if m.depth == 1 && m.field == "error" {
+				m.hasError = true
+			}
 			if c == '{' && m.depth == 1 {
 				switch m.field {
 				case "item":
@@ -173,6 +186,7 @@ func (m *eventMetadata) read(part []byte) {
 			m.depth++
 			m.field, m.lastString = "", ""
 		case '}', ']':
+			m.finishLiteral()
 			for _, depth := range []*int{&m.itemDepth, &m.messageDepth, &m.contentDepth, &m.blockDepth, &m.deltaDepth} {
 				if *depth == m.depth {
 					*depth = 0
@@ -181,9 +195,30 @@ func (m *eventMetadata) read(part []byte) {
 			m.depth--
 			m.field, m.lastString = "", ""
 		case ',':
+			m.finishLiteral()
 			m.field, m.lastString = "", ""
+		case ' ', '\t', '\r', '\n':
+			m.finishLiteral()
+		default:
+			if len(m.literal) < 5 {
+				m.literal += string(c)
+			}
 		}
 	}
+}
+
+func (m *eventMetadata) finishLiteral() {
+	if m.literal == "" {
+		return
+	}
+	if m.depth == 1 && m.field == "is_error" {
+		m.isError = m.literal == "true"
+	}
+	if m.depth == 1 && m.field == "error" {
+		m.hasError = m.literal != "null"
+	}
+	m.literal = ""
+	m.field, m.lastString = "", ""
 }
 
 func (m *eventMetadata) finishString() {
@@ -208,6 +243,31 @@ func (m *eventMetadata) finishString() {
 	}
 	m.lastString = value
 	m.field = ""
+}
+
+func (m *eventMetadata) failure(provider string) (string, bool) {
+	switch provider {
+	case "codex":
+		switch {
+		case m.eventType == "turn.failed":
+			return `{"type":"turn.failed"}`, true
+		case m.eventType == "error":
+			return `{"type":"error"}`, true
+		case m.eventType == "item.completed" && m.itemType == "error":
+			return `{"type":"item.completed","item":{"type":"error"}}`, true
+		}
+	case "claude", "cursor":
+		if m.eventType == "error" {
+			return `{"type":"error"}`, true
+		}
+		if m.eventType == "result" && m.isError {
+			return `{"type":"result","is_error":true}`, true
+		}
+		if m.eventType == "assistant" && m.hasError {
+			return `{"type":"assistant","error":true}`, true
+		}
+	}
+	return "", false
 }
 
 func (m *eventMetadata) required(provider string, nonempty bool) (required [2]bool) {

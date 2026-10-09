@@ -12,11 +12,12 @@ disagree about which sessions exist.
 | `make check` | All untagged Go tests, including Android wire contract and every former focused unit selection; web syntax/Node unit tests, Vite and host binary build. Go and Node/npm; no provider or Docker requirement. |
 | `make gate` | Default `integration compat static` profiles below. Built stable/preview binaries use temporary fixture state. |
 | `make gate GATE=integration` | Tagged `e2e` protocol, Codex-native and lifecycle-order fixtures; packaged preview channel isolation, fake-provider onboarding and reader-drain proof; on Linux, fake-SSH remote isolation with sandboxed host eggs. No vendor/model login. |
+| `make gate GATE=agent-run` | Headless provider, task store, local MCP and egg-client unit tests; real stdio MCP host EOF/SIGKILL, owner reconnect, wait/result/events, detached cancellation, supervisor loss, Codex refusal and egg secret argv canaries using a fake Codex. No provider, relay, Docker or network requirement. |
 | `make gate GATE=compat` | Real configured-baseline and candidate binaries: migrations, CLI/flag surface, task-state round trip, both gateway/wing upgrade orders, PTY startup and rollback reopen. Defaults to `v0.144.1` and `v0.147.0`; `WT_COMPAT_BASELINE_REF` selects one override. Tags must exist locally; pins are not automatically the previous release. |
 | `make gate GATE=static` | Vet, race on touched Go packages, pinned `govulncheck`, npm advisory audit and release CLI contract. Network/advisory databases required. |
 | `make e2e-linux` | Debian and Ubuntu privileged Docker sandbox/CLI/namespace batteries. `LINUX_DISTROS=debian` or `ubuntu` selects one; binaries must match the Docker daemon's native architecture. |
 | `make e2e-web` | Seeded org-mode, legacy enrollment and hosted direct-free/relay-entitlement Playwright canaries in Docker; needs Node/npm, Docker and browser image. |
-| `make e2e-mac` | Native tagged sandbox/CLI tests (including jail and real-egg input lease), fake-provider context, nested-proxy and host-mailbox parent/child proofs. macOS required; no real model login. |
+| `make e2e-mac` | Native tagged sandbox/CLI tests (including jail and real-egg input lease), sandboxed MCP run surviving host exit, fake-provider context, nested-proxy and host-mailbox parent/child proofs. macOS required; no real model login. |
 | `make gate GATE=claude` | Installed real Claude CLI against a loopback fake API; missing vendor binary fails. CI pins Claude Code 2.1.260. |
 | `make gate GATE=provider-swap` | Opt-in real CLIs with local Ollama/LiteLLM models and direct controls; prerequisites and assertions below. |
 | `make gate GATE=input` | Standalone real-egg preview browser-lease fixture on a supported native Unix host. |
@@ -32,6 +33,25 @@ run tagged integration, compatibility, native sandbox, browser or provider tests
 No single E2E target is the complete promotion matrix. `android-build` and
 `android-check` were retired because this checkout has no Android Makefile;
 the Android wire contract stays in `check`.
+
+The `agent-run` process gate uses an explicit outer-boundary fixture. Its
+native counterpart, `TestSandboxedMCPAgentRunSurvivesHostExit`, runs in
+`e2e-mac` and the full integration profile. An inherited macOS sandbox that
+rejects `sandbox_apply` cannot supply that native evidence; do not treat the
+outer-boundary pass as an enforcement pass.
+
+For a checkout restricted to its own directory, set `TMPDIR`, `GOCACHE`, npm's
+cache and any command HOME to directories under `.scratch/`. Generic socket
+fixtures honor `TMPDIR` and keep short names. The two tests
+`TestConfigSnapshotTrustedSystemHomeAliases` and
+`TestPreviewClaudeMacTmpAliasSelectsOneCredentialService` deliberately create
+fixtures under the actual OS `/tmp` or `/var/tmp` aliases. If those paths are
+outside the authorized scope, explicitly report their omission with
+`make check CHECK_TEST_SKIP='^Test(ConfigSnapshotTrustedSystemHomeAliases|PreviewClaudeMacTmpAliasSelectsOneCredentialService)$'`.
+Default `make check` still runs both. Full integration and native preview
+proofs also have fixtures outside the checkout; a restricted check is not a
+complete promotion gate. `AGENT_RUN_UNIT_RUN` selects a unit-test regex while
+reproducing a failure; the final `agent-run` gate defaults to all its unit tests.
 
 Static race selection uses buildable untagged packages with Go files changed
 from `RACE_BASE` (default `HEAD~1`), including uncommitted/untracked files.

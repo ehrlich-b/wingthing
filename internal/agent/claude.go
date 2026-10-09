@@ -77,6 +77,10 @@ func (c *Claude) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 	stream := newStream(ctx)
 	go func() {
 		readErr := readProviderLines(stdout, "claude", func(line string) {
+			if kind, failed := parseClaudeFailure(line); failed {
+				diagnostics.failure = preferFailureKind(diagnostics.failure, kind)
+				return
+			}
 			if text, ok := parseStreamEvent(line); ok {
 				stream.send(Chunk{Text: text})
 			}
@@ -84,9 +88,9 @@ func (c *Claude) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 				stream.SetTokens(input, output)
 			}
 		})
-		err := waitAgentCommand(cmd, diagnostics)
+		err := waitAgentCommand(cmd, diagnostics, "claude")
 		if readErr != nil {
-			err = errors.Join(err, readErr)
+			err = errors.Join(err, &Failure{Kind: ProviderError, Provider: "claude"}, readErr)
 		}
 		stream.close(err)
 	}()

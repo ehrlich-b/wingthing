@@ -40,7 +40,7 @@ func (f *browserToolsSessionFixture) Session(stream grpc.BidiStreamingServer[pb.
 }
 
 func TestBrowserForkToolsLiveUntilSessionExit(t *testing.T) {
-	root, err := os.MkdirTemp("/tmp", "wt-tool-life-")
+	root, err := os.MkdirTemp("", "wtl-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func (f *controllerToolsFixture) Session(stream grpc.BidiStreamingServer[pb.Sess
 }
 
 func TestBrowserControllerClaimsTaintToolsOnlyForOtherUsers(t *testing.T) {
-	root, err := os.MkdirTemp("/tmp", "wt-control-")
+	root, err := os.MkdirTemp("", "wc-")
 	if err != nil {
 		t.Fatal(err)
 	}

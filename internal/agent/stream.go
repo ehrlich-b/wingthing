@@ -15,6 +15,8 @@ type Stream struct {
 	done         bool
 	inputTokens  int
 	outputTokens int
+	threadID     string
+	rolloutPath  string
 }
 
 func newStream(ctx context.Context) *Stream {
@@ -76,4 +78,16 @@ func (s *Stream) Tokens() (input, output int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.inputTokens, s.outputTokens
+}
+
+func (s *Stream) setProviderSession(threadID, rolloutPath string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.threadID, s.rolloutPath = threadID, rolloutPath
+}
+
+func (s *Stream) ProviderSession() (threadID, rolloutPath string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.threadID, s.rolloutPath
 }

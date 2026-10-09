@@ -234,8 +234,8 @@ func TestProviderOversizedFinalPreservesCommandError(t *testing.T) {
 		}
 	}
 	err = stream.Err()
-	if err == nil || !strings.Contains(err.Error(), "provider failed") || !strings.Contains(err.Error(), "exit status 7") || !strings.Contains(err.Error(), fmt.Sprint(oversizedTestLine)) {
-		t.Fatalf("error = %v, want exit diagnostics and oversized final size", err)
+	if err == nil || FailureKind(err) != ProviderExit || strings.Contains(err.Error(), "provider failed") || !strings.Contains(err.Error(), "status 7") || !strings.Contains(err.Error(), fmt.Sprint(oversizedTestLine)) {
+		t.Fatalf("error = %v, want structured exit and oversized final size", err)
 	}
 	checkAgentWarning(t, warnings, "codex", oversizedTestLine)
 }
@@ -270,6 +270,53 @@ func TestEventMetadataIgnoresPayloadTypes(t *testing.T) {
 	}
 	if metadata.required("codex", true) != [2]bool{} {
 		t.Fatal("tool output was classified as a final response")
+	}
+}
+
+func TestClaudeOversizedFailureKeepsNoProviderText(t *testing.T) {
+	const canary = "provider-error-canary"
+	for _, tc := range []struct {
+		name, prefix, suffix string
+	}{
+		{"error", `{"type":"error","message":"` + canary, `"}`},
+		{"late-error-type", `{"message":"` + canary, `","type":"error"}`},
+		{"result", `{"type":"result","is_error":true,"result":"` + canary, `"}`},
+		{"late-result-fields", `{"result":"` + canary, `","type":"result","is_error":true}`},
+		{"assistant-string", `{"type":"assistant","error":"` + canary, `"}`},
+		{"assistant-object", `{"type":"assistant","error":{"message":"` + canary, `"}}`},
+		{"assistant-array", `{"type":"assistant","error":["` + canary, `"]}`},
+		{"assistant-boolean", `{"padding":"` + canary, `","type":"assistant","error":false}`},
+		{"assistant-number", `{"padding":"` + canary, `","error":0,"type":"assistant"}`},
+		{"late-assistant-fields", `{"message":{"content":[{"type":"text","text":"` + canary, `"}]},"error":"authentication_failed","type":"assistant"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			warnings := captureAgentWarnings(t)
+			line := sizedEvent(tc.prefix, tc.suffix, oversizedTestLine)
+			// A later small result can replace the missing-result diagnostic,
+			// but must not erase the failure in the skipped envelope.
+			stream := runFakeProvider(t, NewClaude(0), line+"\n"+`{"type":"result","input_tokens":1,"output_tokens":2}`)
+			if err := stream.Err(); err == nil || FailureKind(err) != ProviderError || strings.Contains(err.Error(), canary) || stream.Text() != "" {
+				t.Fatalf("oversized failure = %v, output = %q", err, stream.Text())
+			}
+			if strings.Contains(warnings.String(), canary) {
+				t.Fatal("provider text reached warning log")
+			}
+			checkAgentWarning(t, warnings, "claude", oversizedTestLine)
+		})
+	}
+}
+
+func TestClaudeOversizedAssistantWithoutErrorIsNotFailure(t *testing.T) {
+	for _, suffix := range []string{
+		`","error":null,"type":"assistant"}`,
+		`","message":{"error":"nested"},"type":"assistant"}`,
+	} {
+		warnings := captureAgentWarnings(t)
+		line := sizedEvent(`{"padding":"`, suffix, oversizedTestLine)
+		if err := readProviderLines(strings.NewReader(line), "claude", func(string) { t.Fatal("oversized assistant classified as a failure") }); err != nil {
+			t.Fatal(err)
+		}
+		checkAgentWarning(t, warnings, "claude", oversizedTestLine)
 	}
 }
 
