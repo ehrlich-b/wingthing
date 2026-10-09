@@ -1856,6 +1856,9 @@ func agentRunStatusData(task *store.Task) map[string]any {
 		"timeout_seconds": task.TimeoutSeconds,
 		"created_at":      task.CreatedAt.UTC().Format(time.RFC3339),
 	}
+	if task.ParentID != nil {
+		data["parent_id"] = *task.ParentID
+	}
 	if task.ErrorKind != "" {
 		data["error_kind"] = task.ErrorKind
 	}
@@ -1886,7 +1889,17 @@ func (s *Server) toolAgentStatus(arguments json.RawMessage) (map[string]any, err
 		return nil, err
 	}
 	defer cmdutil.CloseWithLog("task store", taskStore)
-	return agentRunStatusData(task), nil
+	data := agentRunStatusData(task)
+	if task.Error != nil {
+		const maxErrorChars = 2000
+		errorRunes := []rune(*task.Error)
+		if len(errorRunes) > maxErrorChars {
+			errorRunes = errorRunes[:maxErrorChars]
+			data["error_truncated"] = true
+		}
+		data["error"] = string(errorRunes)
+	}
+	return data, nil
 }
 
 func (s *Server) toolAgentWait(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {
@@ -2243,7 +2256,7 @@ func (s *Server) toolAgentStop(arguments json.RawMessage) (map[string]any, error
 	}
 	defer cmdutil.CloseWithLog("task store", taskStore)
 	if agentRunTerminal(task.Status) {
-		return agentRunStatusData(task), nil
+		return s.agentStopResult(taskStore, task)
 	}
 	activeValue, ok := activeMCPAgentRuns.Load(s.agentRunKey(args.RunID))
 	active, valid := activeValue.(activeMCPAgentRun)
@@ -2256,7 +2269,7 @@ func (s *Server) toolAgentStop(arguments json.RawMessage) (map[string]any, error
 			return nil, reloadErr
 		}
 		if latest != nil && agentRunTerminal(latest.Status) {
-			return agentRunStatusData(latest), nil
+			return s.agentStopResult(taskStore, latest)
 		}
 		if latest == nil {
 			return nil, errors.New("agent run disappeared")
@@ -2283,8 +2296,42 @@ func (s *Server) toolAgentStop(arguments json.RawMessage) (map[string]any, error
 	}
 	latest.Status = "failed"
 	latest.Error = &message
-	data := agentRunStatusData(latest)
+	data, err := s.agentStopResult(taskStore, latest)
+	if err != nil {
+		return nil, err
+	}
 	data["stopped"] = true
+	return data, nil
+}
+
+// Stop targets exactly one run. Follow-ups have independent supervisors and
+// wait for any terminal parent status, including a stop; report their current
+// outcomes even on an idempotent stop so callers can track the new direction.
+func (s *Server) agentStopResult(taskStore *store.Store, task *store.Task) (map[string]any, error) {
+	data := agentRunStatusData(task)
+	rows, err := taskStore.DB().Query(`SELECT id, status FROM tasks
+		WHERE parent_id = ? AND type = 'agent_run'
+		AND (principal = ? OR (? = 'default' AND principal = ''))
+		ORDER BY id`, task.ID, s.clientPrincipal(), s.clientPrincipal())
+	if err != nil {
+		return nil, fmt.Errorf("read agent follow-ups: %w", err)
+	}
+	defer rows.Close()
+	var followups []map[string]any
+	for rows.Next() {
+		var id, status string
+		if err := rows.Scan(&id, &status); err != nil {
+			return nil, fmt.Errorf("read agent follow-up: %w", err)
+		}
+		followups = append(followups, map[string]any{"run_id": id, "status": status})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(followups) > 0 {
+		data["followup_policy"] = "continue"
+		data["followups"] = followups
+	}
 	return data, nil
 }
 

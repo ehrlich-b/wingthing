@@ -459,7 +459,7 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "agent_status", Title: "Get agent run status",
-			Description: "Read bounded lifecycle metadata for one run owned by this MCP principal. Terminal orphaned means its supervisor was lost and the provider exit is unknown.",
+			Description: "Read bounded lifecycle metadata for one run owned by this MCP principal, including parent_id for a follow-up and an error reason (at most 2000 characters; error_truncated signals truncation). Terminal orphaned means its supervisor was lost and the provider exit is unknown.",
 			InputSchema: objectSchema(map[string]any{
 				"run_id": stringProperty("Wingthing agent run ID"),
 			}, "run_id"), Annotations: readOnly,
@@ -488,7 +488,7 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "agent_result", Title: "Read agent result",
-			Description: "Read final or retained partial semantic output and provider errors for one owned run, with an explicit response bound.",
+			Description: "Read final or retained partial semantic output and errors for one owned run, with an explicit response bound. Follow-ups include parent_id and their own status and error; stopping the parent does not cancel them.",
 			InputSchema: objectSchema(map[string]any{
 				"run_id":    stringProperty("Wingthing agent run ID"),
 				"max_chars": map[string]any{"type": "integer", "minimum": 1, "maximum": 200000, "default": 50000},
@@ -506,7 +506,7 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "agent_steer", Title: "Steer agent run",
-			Description: "Queue an owner-scoped follow-up run that receives the prior request and result plus new direction.",
+			Description: "Create an owner-scoped follow-up to a terminal run that receives the prior request and result plus new direction. Active runs are rejected; wait for the parent to finish or stop it first. Follow-ups are independent runs; agent_stop on the parent does not cancel them.",
 			InputSchema: objectSchema(map[string]any{
 				"run_id": stringProperty("Run to follow up"),
 				"prompt": stringProperty("New direction for the agent"),
@@ -516,7 +516,7 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "agent_stop", Title: "Stop agent run",
-			Description: "Cancel an active owner-scoped run and its provider process tree.",
+			Description: "Cancel only the named active owner-scoped run and its provider process tree. Queued follow-ups continue once the parent becomes terminal; stopping a terminal parent preserves its result. When follow-ups exist, return followup_policy=continue and their run IDs and current statuses. Stop a follow-up by its own run_id to cancel that direction.",
 			InputSchema: objectSchema(map[string]any{
 				"run_id": stringProperty("Wingthing agent run ID"),
 			}, "run_id"), Annotations: destructive,
