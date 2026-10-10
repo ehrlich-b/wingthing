@@ -1,7 +1,6 @@
 package daemonctl
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -92,12 +91,12 @@ func RestartWingDaemonIfRunning() error {
 	case "connected":
 		fmt.Printf("wing daemon restarted (pid %d)\n", child.Process.Pid)
 		fmt.Printf("  relay: connected\n")
+	case "local":
+		fmt.Printf("wing daemon restarted (pid %d)\n", child.Process.Pid)
+		fmt.Println("  local control: ready")
 	case "auth_failed":
-		AbandonStartedDaemon(child)
-		if err := cmdutil.RemoveFiles(WingPidPath(), WingArgsPath(), WingStatusPath()); err != nil {
-			return errors.Join(fmt.Errorf("wing daemon restarted but auth failed — run: wt logout && wt login"), fmt.Errorf("remove failed daemon metadata: %w", err))
-		}
-		return fmt.Errorf("wing daemon restarted but auth failed — run: wt logout && wt login")
+		fmt.Printf("wing daemon restarted (pid %d)\n", child.Process.Pid)
+		fmt.Println("  relay: authentication rejected; local control remains available")
 	default:
 		fmt.Printf("wing daemon restarted (pid %d)\n", child.Process.Pid)
 		fmt.Printf("  relay: connecting...\n")

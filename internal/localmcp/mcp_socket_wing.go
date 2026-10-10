@@ -17,14 +17,14 @@ import (
 )
 
 // ListenLocalWingControl is called only by the personal wing, independently of
-// its relay connection. The owner comes from the wing credential, never IPC.
+// its relay connection. The owner comes from durable local state, never IPC.
 func ListenLocalWingControl(ctx context.Context, version string, sessions *wingsession.Service, ownerUserID string, admission *AdmissionState) (*controlsocket.Server, error) {
 	policy := sessions.Policy()
 	if sessions.SharedHost || policy.Wing == nil || policy.Wing.Org != "" {
 		return nil, nil
 	}
 	if ownerUserID == "" {
-		return nil, errors.New("local wing control requires the wing owner's user identity; log in again")
+		return nil, errors.New("local wing control requires the wing's local owner identity")
 	}
 	wingID := policy.Wing.WingID
 	if wingID == "" {
@@ -46,6 +46,24 @@ func ListenLocalWingControl(ctx context.Context, version string, sessions *wings
 			return current.handleDirectRequest(callCtx, request)
 		}, nil
 	})
+}
+
+func (s *Server) toolLocalWingList(arguments []byte) (map[string]any, error) {
+	var empty struct{}
+	if err := decodeStrict(arguments, &empty); err != nil {
+		return nil, fmt.Errorf("wing_list arguments: %w", err)
+	}
+	if s.controlSurface() != control.SurfaceLocalMCP || s.Sessions == nil {
+		return nil, errors.New("wing directory is supplied by the MCP transport adapter")
+	}
+	wingID := s.Sessions.Policy().Wing.WingID
+	if wingID == "" {
+		wingID = s.Cfg.WingID
+	}
+	return map[string]any{"wings": []map[string]any{{
+		"wing_id": wingID, "hostname": s.Cfg.Hostname, "online": true,
+		"mcp_control": true, "mcp_transport": "local-socket", "paths": s.allowedPaths,
+	}}, "count": 1, "control_scope": "local"}, nil
 }
 
 func resolveLocalWingClient(version string, sessions *wingsession.Service, ownerUserID string, admission *AdmissionState, hello controlsocket.Hello) (*Server, error) {

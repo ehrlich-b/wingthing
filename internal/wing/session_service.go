@@ -15,8 +15,11 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
-func configureSessionRegistration(sessions *wingsession.Service, ctx context.Context, client *ws.Client, passkeyPolicy func() auth.PasskeyPolicy, tools func() []*config.ToolConfig) func() {
+func configureSessionRegistration(sessions *wingsession.Service, ctx context.Context, routing *ws.PTYRegistry, write ws.PTYWriteFunc, passkeyPolicy func() auth.PasskeyPolicy, tools func() []*config.ToolConfig) func() {
 	ctx, cancel := context.WithCancel(ctx)
+	if write == nil {
+		write = func(any) error { return nil }
+	}
 	var mu sync.Mutex
 	var bridges sync.WaitGroup
 	sessions.Register = func(id string) error {
@@ -27,7 +30,7 @@ func configureSessionRegistration(sessions *wingsession.Service, ctx context.Con
 		}
 		// Web starts already have routing installed by the WebSocket client.
 		// Every other start installs exactly the same bridge before acknowledgement.
-		if client.HasPTYSession(id) {
+		if routing.HasPTYSession(id) {
 			return nil
 		}
 		dir := filepath.Join(sessions.Config.Dir, "eggs", id)
@@ -35,7 +38,7 @@ func configureSessionRegistration(sessions *wingsession.Service, ctx context.Con
 		if err != nil {
 			return err
 		}
-		write, input, cleanup, registered := client.RegisterPTYSession(ctx, id)
+		input, cleanup, registered := routing.Register(id)
 		if !registered {
 			cmdutil.CloseWithLog("already registered session client", ec)
 			return nil
@@ -58,6 +61,22 @@ func configureSessionRegistration(sessions *wingsession.Service, ctx context.Con
 		mu.Unlock()
 		bridges.Wait()
 	}
+}
+
+// Reconcile before serving local control, rather than waiting for a relay
+// registration. Register is idempotent and also reinstalls wing observers and
+// privileged tool listeners for surviving eggs.
+func reconcileEggSessions(ctx context.Context, sessions *wingsession.Service) error {
+	active, err := sessions.Inventory(sessions.Config), ctx.Err()
+	if err != nil {
+		return err
+	}
+	for _, session := range active {
+		if err := sessions.Register(session.SessionID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func attachmentAuthority(wc *config.WingConfig, attach ws.PTYAttach) wingsession.Authority {

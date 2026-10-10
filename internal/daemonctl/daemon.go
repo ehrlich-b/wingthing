@@ -119,7 +119,7 @@ func WingStatusPath() string {
 
 // wingStatus is the JSON schema for wing.status.
 type WingStatus struct {
-	State    string `json:"state"` // connecting, connected, auth_failed, disconnected
+	State    string `json:"state"` // local, connecting, connected, auth_failed, disconnected
 	Error    string `json:"error,omitempty"`
 	TS       string `json:"ts"`
 	RoostURL string `json:"roost_url,omitempty"`
@@ -175,7 +175,7 @@ func WaitForWingStatus(pid int, timeout time.Duration) string {
 		}
 		if s, err := ReadWingStatus(); err == nil {
 			switch s.State {
-			case "connected", "auth_failed":
+			case "local", "connected", "auth_failed":
 				return s.State
 			}
 		}

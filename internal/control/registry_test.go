@@ -17,6 +17,7 @@ func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 		"agent_events", "agent_steer", "agent_stop",
 		"terminal_rename", "terminal_stop",
 		"conversation_bootstrap", "conversation_list", "conversation_read", "conversation_checkpoint", "conversation_wake",
+		"wing_list",
 	}
 	http := []string{
 		"wingthing_capabilities",

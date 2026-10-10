@@ -495,10 +495,10 @@ func buildTools() []Tool {
 			Grant: "terminal.stop", Surfaces: both, AuditTargetKeys: []string{"session"},
 		},
 		{
-			Name: "wing_list", Title: "List portal wings",
-			Description: "List every connected wing the authenticated portal user may access, including whether the current MCP adapter can control it.",
+			Name: "wing_list", Title: "List available wings",
+			Description: "List wings available through this MCP adapter, including their stable wing IDs and control transport. Local stdio lists its personal wing.",
 			InputSchema: objectSchema(map[string]any{}), Annotations: readOnly,
-			Grant: "wing.read", Surfaces: []Surface{SurfaceHTTPMCP, SurfaceDirectMCP}, Authority: AuthorityPortal,
+			Grant: "wing.read", Surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}, Authority: AuthorityPortal,
 		},
 	}
 	for index, tool := range tools {
