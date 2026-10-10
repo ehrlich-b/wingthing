@@ -17,6 +17,11 @@ var errExistingAgentRun = errors.New("run already admitted")
 
 func wingRunStatus(r *wingsession.Run) map[string]any {
 	data := map[string]any{"run_id": r.ID, "status": r.Result.Status, "agent": r.Agent, "model": r.Model, "cwd": r.CWD, "isolation": r.Isolation, "timeout_seconds": r.TimeoutSeconds, "created_at": r.CreatedAt.UTC().Format(time.RFC3339), "session_id": r.SessionID}
+	if r.TimeoutSeconds == 0 {
+		data["deadline"] = "no deadline"
+	} else if !r.Result.Deadline.IsZero() {
+		data["deadline"] = r.Result.Deadline.UTC().Format(time.RFC3339)
+	}
 	if !r.Result.StartedAt.IsZero() {
 		data["started_at"] = r.Result.StartedAt.UTC().Format(time.RFC3339)
 	}
@@ -70,9 +75,6 @@ func (s *Server) wingSubmitRun(request wingsession.RunRequest) (map[string]any, 
 	}
 	if request.Agent == "" {
 		request.Agent = s.Cfg.DefaultAgent
-	}
-	if request.TimeoutSeconds == 0 {
-		request.TimeoutSeconds = 900
 	}
 	if err := eggclient.ValidateSessionName(request.Label); err != nil {
 		return nil, err

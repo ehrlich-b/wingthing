@@ -59,8 +59,8 @@ Paste this into Claude:
 
 ```text
 Use Wingthing MCP. Call wing_list and wingthing_capabilities; resolve local and
-forge to wing IDs. On EACH wing, call agent_run with agent=claude and
-timeout_seconds=3600. Use label=weekend-mac locally and label=weekend-forge
+forge to wing IDs. On EACH wing, call agent_run with agent=claude and omit
+timeout_seconds for no deadline. Use label=weekend-mac locally and label=weekend-forge
 on forge, with this prompt:
 "In your existing workspace, read the project instructions and inventory the
 repositories read-only. Give me a short architecture map; do not modify files."

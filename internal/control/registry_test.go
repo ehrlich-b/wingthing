@@ -129,6 +129,28 @@ func TestRegistryInputSchemasHaveNoTopLevelCombinators(t *testing.T) {
 	}
 }
 
+func TestAgentRunTimeoutSchema(t *testing.T) {
+	for _, surface := range []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP} {
+		for _, tool := range Tools(surface) {
+			if tool.Name != "agent_run" {
+				continue
+			}
+			properties := tool.InputSchema["properties"].(map[string]any)
+			timeout := properties["timeout_seconds"].(map[string]any)
+			if timeout["type"] != "integer" || timeout["default"] != 0 || timeout["maximum"] != nil {
+				t.Fatalf("%s timeout schema = %#v", surface, timeout)
+			}
+			choices := timeout["anyOf"].([]any)
+			if len(choices) != 2 || choices[0].(map[string]any)["const"] != 0 || choices[1].(map[string]any)["minimum"] != 10 {
+				t.Fatalf("%s timeout must allow only zero or at least 10: %#v", surface, timeout)
+			}
+			if !strings.Contains(timeout["description"].(string), "no deadline") {
+				t.Fatalf("%s missing unbounded default description", surface)
+			}
+		}
+	}
+}
+
 func TestAgentWaitAnySchemaAndPolicy(t *testing.T) {
 	tool, ok := Lookup("agent_wait_any")
 	if !ok {

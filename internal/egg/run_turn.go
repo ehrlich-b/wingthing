@@ -14,7 +14,8 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/agent"
 )
 
-// RunTurnRequest binds one prompt to an egg-owned absolute execution deadline.
+// RunTurnRequest binds one prompt to an optional egg-owned absolute execution
+// deadline. A zero deadline runs until completion, stop, or provider/egg exit.
 type RunTurnRequest struct {
 	RunID    string    `json:"run_id"`
 	Prompt   string    `json:"prompt"`
@@ -150,9 +151,6 @@ func (rt *runTurnRuntime) admit(request RunTurnRequest, execute bool) (RunTurnRe
 	if err := validateSessionPromptOptions(options); err != nil {
 		return RunTurnResult{}, err
 	}
-	if request.Deadline.IsZero() {
-		return RunTurnResult{}, errors.New("absolute deadline is required")
-	}
 	request.Deadline = request.Deadline.UTC()
 	spec, _ := json.Marshal(request)
 	hash := fmt.Sprintf("%x", sha256.Sum256(spec))
@@ -203,13 +201,15 @@ func (rt *runTurnRuntime) admit(request RunTurnRequest, execute bool) (RunTurnRe
 	if err := persistRunTurn(rt.dir, run.record); err != nil {
 		return RunTurnResult{}, err
 	}
-	_, cancel := context.WithDeadline(context.Background(), request.Deadline)
+	_, cancel := runTurnContext(request.Deadline)
 	run.cancel = cancel
 	rt.runs[request.RunID] = run
 	// Admission is durable before arming execution, and the timer is armed before
 	// the first byte can reach the PTY. It is independent of the RPC context.
 	run.mu.Lock()
-	run.timer = time.AfterFunc(time.Until(request.Deadline), func() { rt.expire(run, false) })
+	if !request.Deadline.IsZero() {
+		run.timer = time.AfterFunc(time.Until(request.Deadline), func() { rt.expire(run, false) })
+	}
 	if rt.backend.Agent == "codex" {
 		run.readyTimer = time.AfterFunc(30*time.Second, func() { rt.expire(run, true) })
 	}
@@ -227,7 +227,14 @@ func (rt *runTurnRuntime) admit(request RunTurnRequest, execute bool) (RunTurnRe
 	return result, nil
 }
 
-// begin is called with the runtime and run locks held. Reserving arms the
+func runTurnContext(deadline time.Time) (context.Context, context.CancelFunc) {
+	if deadline.IsZero() {
+		return context.WithCancel(context.Background())
+	}
+	return context.WithDeadline(context.Background(), deadline)
+}
+
+// begin is called with the runtime and run locks held. Reserving arms any
 // deadline independently of readiness; only Submit authorizes prompt input.
 func (rt *runTurnRuntime) begin(run *ownedRunTurn, request RunTurnRequest, options SessionPromptOptions) error {
 	if run.finishing {
@@ -257,13 +264,13 @@ func (rt *runTurnRuntime) begin(run *ownedRunTurn, request RunTurnRequest, optio
 	run.started = true
 	run.workerDone = make(chan struct{})
 	run.cancel()
-	ctx, cancel := context.WithDeadline(context.Background(), request.Deadline)
+	ctx, cancel := runTurnContext(request.Deadline)
 	run.cancel = cancel
 	go rt.execute(ctx, run, options, scan)
 	return nil
 }
 
-// startInitialCodex reserves and arms the deadline before the provider starts.
+// startInitialCodex reserves and arms any deadline before the provider starts.
 // Codex owns submission of its initial argv prompt; Wingthing never types it.
 func (rt *runTurnRuntime) startInitialCodex(request RunTurnRequest) error {
 	if rt.backend.Agent != "codex" {
@@ -290,7 +297,7 @@ func (rt *runTurnRuntime) startInitialCodex(request RunTurnRequest) error {
 	run.initial, run.started = true, true
 	run.workerDone = make(chan struct{})
 	run.cancel()
-	ctx, cancel := context.WithDeadline(context.Background(), request.Deadline)
+	ctx, cancel := runTurnContext(request.Deadline)
 	run.cancel = cancel
 	go rt.execute(ctx, run, SessionPromptOptions{}, scan)
 	return nil
@@ -410,7 +417,7 @@ func (rt *runTurnRuntime) finish(run *ownedRunTurn, status string, kind agent.Er
 	if kind == agent.Timeout && rt.backend.Agent == "codex" && run.record.Result.Status == "pending" {
 		status, kind = "failed", agent.ProviderNotReady
 	}
-	if status == "done" && !time.Now().Before(run.record.Result.Deadline) {
+	if status == "done" && !run.record.Result.Deadline.IsZero() && !time.Now().Before(run.record.Result.Deadline) {
 		status, kind, evidence, kill = "timeout", agent.Timeout, turnEvidence{}, true
 	}
 	run.finishing = true

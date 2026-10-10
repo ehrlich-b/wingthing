@@ -650,7 +650,7 @@ func TestAgentSteerContinuesTerminalRunsWithPartialResultAndError(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(r.Prompt, "Prior result:\npartial review ✓") || !strings.HasSuffix(r.Prompt, "New direction:\nfocus on auth") || r.ParentID != parent || r.Agent != "claude" || r.Model != "opus" || r.TimeoutSeconds != 900 {
+			if !strings.Contains(r.Prompt, "Prior result:\npartial review ✓") || !strings.HasSuffix(r.Prompt, "New direction:\nfocus on auth") || r.ParentID != parent || r.Agent != "claude" || r.Model != "opus" || r.TimeoutSeconds != 0 || !r.Result.Deadline.IsZero() {
 				t.Fatalf("followup inheritance: %+v", r)
 			}
 			if kind != "" && !strings.Contains(r.Prompt, "Prior error:\nEgg run turn ended: "+string(kind)+".") {

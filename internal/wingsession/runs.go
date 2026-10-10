@@ -242,8 +242,8 @@ func (m *Runs) Admit(launch *Launch, request RunRequest, options StartOptions, a
 	if strings.TrimSpace(request.Prompt) == "" {
 		return nil, false, errors.New("prompt is required")
 	}
-	if request.TimeoutSeconds < 10 || request.TimeoutSeconds > 7200 {
-		return nil, false, errors.New("timeout_seconds must be between 10 and 7200")
+	if request.TimeoutSeconds != 0 && request.TimeoutSeconds < 10 {
+		return nil, false, errors.New("timeout_seconds must be 0 (no deadline) or at least 10")
 	}
 	if len(request.RequestKey) > 200 {
 		return nil, false, errors.New("idempotency_key must have at most 200 bytes")
@@ -354,6 +354,19 @@ func (m *Runs) snapshot(id string) *Run {
 	return cloneRun(m.records[id])
 }
 
+func runDeadline(start time.Time, seconds int) time.Time {
+	if seconds == 0 {
+		return time.Time{}
+	}
+	// Add whole seconds without overflowing time.Duration. Saturate only at
+	// time.Time's JSON representation limit so even the largest int is accepted.
+	latest := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+	if int64(seconds) > latest.Unix()-start.Unix() {
+		return latest
+	}
+	return time.Unix(start.Unix()+int64(seconds), int64(start.Nanosecond())).UTC()
+}
+
 func (m *Runs) reconcile(id string) {
 	r := m.snapshot(id)
 	if r.Result.Terminal() {
@@ -392,7 +405,7 @@ func (m *Runs) reconcile(id string) {
 	if r.Phase == "admitted" {
 		if err := m.update(id, "launching", func(r *Run) {
 			r.Phase = "spawning"
-			r.Result.Deadline = time.Now().UTC().Add(time.Duration(r.TimeoutSeconds) * time.Second)
+			r.Result.Deadline = runDeadline(time.Now(), r.TimeoutSeconds)
 		}); err != nil {
 			return
 		}
@@ -423,13 +436,14 @@ func (m *Runs) reconcile(id string) {
 		if err = m.update(id, "spawned", func(r *Run) {
 			r.Phase = "spawned"
 			meta := eggclient.ReadEggMetaValues(filepath.Join(m.service.Config.Dir, "eggs", r.SessionID))
-			if meta["initial_run_id"] == r.ID {
-				return // The egg reserved the supplied absolute deadline before launch.
+			// Preserve both no deadline and an egg-reserved initial deadline.
+			if r.TimeoutSeconds == 0 || meta["initial_run_id"] == r.ID {
+				return
 			}
 			if nanos, err := strconv.ParseInt(meta["started_at_nanos"], 10, 64); err == nil {
-				r.Result.Deadline = time.Unix(0, nanos).UTC().Add(time.Duration(r.TimeoutSeconds) * time.Second)
+				r.Result.Deadline = runDeadline(time.Unix(0, nanos), r.TimeoutSeconds)
 			} else if sec, err := strconv.ParseInt(meta["started_at"], 10, 64); err == nil {
-				r.Result.Deadline = time.Unix(sec, 0).UTC().Add(time.Duration(r.TimeoutSeconds) * time.Second)
+				r.Result.Deadline = runDeadline(time.Unix(sec, 0), r.TimeoutSeconds)
 			}
 		}); err != nil {
 			return
@@ -476,7 +490,11 @@ func (m *Runs) reconcile(id string) {
 				return
 			}
 		}
-		ctx, cancel := context.WithDeadline(m.ctx, r.Result.Deadline)
+		ctx, cancel := context.WithCancel(m.ctx)
+		if !r.Result.Deadline.IsZero() {
+			cancel()
+			ctx, cancel = context.WithDeadline(m.ctx, r.Result.Deadline)
+		}
 		err := m.backend.Ready(ctx, m.service.Config, session)
 		cancel()
 		if err != nil {

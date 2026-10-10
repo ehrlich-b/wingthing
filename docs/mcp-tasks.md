@@ -40,13 +40,19 @@ Send task options at the `tools/call` envelope level, outside `arguments`:
       "agent": "codex",
       "prompt": "Inspect the tests and report the result",
       "cwd": "/path/to/project",
-      "timeout_seconds": 900,
       "idempotency_key": "test-inspection-1"
     },
     "task": { "ttl": 60000 }
   }
 }
 ```
+
+Omitting `timeout_seconds`, as above, or setting it to `0` means no deadline.
+The agent runs until completion, explicit `agent_stop`/`tasks/cancel`, or provider
+or egg host exit. Positive timeouts must be at least 10 seconds, with no upper
+cap (for example, `86400` for one day). Ordinary run status reports
+`deadline: "no deadline"` for unbounded execution. Wait timeouts and task TTL do
+not impose an execution deadline.
 
 The immediate result contains a `task` with a stable `taskId`, `status:
 "working"`, ISO timestamps, `ttl`, and a suggested 5000 ms `pollInterval`.

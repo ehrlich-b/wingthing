@@ -187,6 +187,106 @@ func (f *runWingFixture) wait(t *testing.T, id string) {
 	}
 }
 
+func TestAgentRunTimeoutContract(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		timeout *int
+		wantErr bool
+	}{
+		{name: "absent"},
+		{name: "zero", timeout: new(0)},
+		{name: "one day", timeout: new(86400)},
+		{name: "minimum", timeout: new(10)},
+		{name: "largest integer", timeout: new(int(^uint(0) >> 1))},
+		{name: "too short", timeout: new(5), wantErr: true},
+		{name: "negative", timeout: new(-1), wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newRunWingFixture(t, nil)
+			ready := make(chan bool, 1)
+			f.service.RunBackend.Ready = func(ctx context.Context, _ *config.Config, _ eggclient.LocalSession) error {
+				_, bounded := ctx.Deadline()
+				ready <- bounded
+				return ctx.Err()
+			}
+			spawn := f.service.Spawn
+			f.service.Spawn = func(l *wingsession.Launch, o wingsession.StartOptions) (*egg.Client, error) {
+				client, err := spawn(l, o)
+				if err != nil {
+					return client, err
+				}
+				path := filepath.Join(f.server.Cfg.Dir, "eggs", o.SessionID, "egg.meta")
+				meta, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+				if err != nil {
+					return client, err
+				}
+				defer meta.Close()
+				_, err = fmt.Fprintf(meta, "started_at_nanos=%d\n", time.Now().UnixNano())
+				return client, err
+			}
+			f.restart(t)
+			args := map[string]any{"prompt": "timeout contract", "agent": "claude", "cwd": f.server.Cfg.Dir}
+			if tt.timeout != nil {
+				args["timeout_seconds"] = *tt.timeout
+			}
+			wire, err := json.Marshal(args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := f.server.toolAgentRun(wire)
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "timeout_seconds") {
+					t.Fatalf("invalid timeout: %v %v", data, err)
+				}
+				select {
+				case <-f.spawned:
+					t.Fatal("invalid timeout spawned an egg")
+				default:
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := data["run_id"].(string)
+			if got := <-f.submitted; got != id {
+				t.Fatalf("submitted %q, want %q", got, id)
+			}
+			unbounded := tt.timeout == nil || *tt.timeout == 0
+			if bounded := <-ready; bounded == unbounded {
+				t.Fatalf("readiness context bounded=%t, unbounded run=%t", bounded, unbounded)
+			}
+			run, err := f.service.RunManager.Get(f.server.sessionAuthority(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantTimeout := 0
+			if tt.timeout != nil {
+				wantTimeout = *tt.timeout
+			}
+			if run.TimeoutSeconds != wantTimeout || run.Result.Deadline.IsZero() != unbounded {
+				t.Fatalf("timeout=%d deadline=%v, want timeout=%d", run.TimeoutSeconds, run.Result.Deadline, wantTimeout)
+			}
+			if !unbounded && !run.Result.Deadline.After(time.Now()) {
+				t.Fatalf("positive timeout wrapped into the past: %v", run.Result.Deadline)
+			}
+			if wantTimeout == 86400 && time.Until(run.Result.Deadline) < 23*time.Hour {
+				t.Fatalf("one-day deadline was capped: %v", run.Result.Deadline)
+			}
+			status, err := f.server.toolAgentStatus(runArgs(id))
+			if err != nil || unbounded && status["deadline"] != "no deadline" || !unbounded && status["deadline"] != run.Result.Deadline.UTC().Format(time.RFC3339) {
+				t.Fatalf("deadline status: %v %v", status, err)
+			}
+			// The persisted zero deadline survives a wing restart and remains stoppable.
+			f.restart(t)
+			stopped, err := f.server.toolAgentStop(runArgs(id))
+			if err != nil || stopped["status"] != "stopped" || stopped["failure_kind"] != agent.Stopped {
+				t.Fatalf("stop: %v %v", stopped, err)
+			}
+		})
+	}
+}
+
 func TestAgentRunResultShapeParity(t *testing.T) {
 	for _, kind := range []agent.ErrorKind{"", agent.AuthFailed, agent.RateLimited, agent.UnknownOutcome, agent.Timeout, agent.Stopped} {
 		t.Run(string(kind), func(t *testing.T) {
