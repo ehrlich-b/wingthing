@@ -256,16 +256,12 @@ func (s *Service) ListWeb(ctx context.Context, a Authority) ([]ws.SessionInfo, e
 }
 
 func (s *Service) Stop(ctx context.Context, a Authority, ref string) (eggclient.LocalSession, error) {
-	session, err := s.Resolve(ctx, a, ref, false)
+	// Stale entries still require the same owner and path checks before cleanup.
+	session, err := s.Resolve(ctx, a, ref, true)
 	if err != nil {
 		return eggclient.LocalSession{}, err
 	}
-	_, client, err := eggclient.OpenLocalEgg(ctx, s.Config, session.ID)
-	if err != nil {
-		return eggclient.LocalSession{}, err
-	}
-	defer client.Close()
-	return session, s.StopAttached(ctx, client, session.ID)
+	return session, eggclient.KillOrphanEggContext(ctx, s.Config, session.ID)
 }
 
 // AuthorityForWeb preserves authenticated roles and the wing's path ACLs.

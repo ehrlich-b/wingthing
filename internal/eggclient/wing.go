@@ -27,6 +27,8 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // readEggOwner reads the creator user ID from an egg's owner file.
@@ -152,51 +154,64 @@ func EggPidMatchesSession(pid int, sessionID string) bool {
 	return strings.Contains(string(out), "--session-id "+sessionID)
 }
 
-// killOrphanEgg kills an egg session that has no active goroutine managing it.
+// KillOrphanEgg kills an egg session that has no active goroutine managing it.
 // This handles the case where a pty.kill arrives but the session was never reclaimed.
 func KillOrphanEgg(cfg *config.Config, sessionID string) {
+	if err := KillOrphanEggContext(context.Background(), cfg, sessionID); err != nil {
+		log.Printf("pty session %s: terminate orphan egg: %v", sessionID, err)
+	}
+}
+
+// KillOrphanEggContext stops a session over gRPC, falling back to a verified PID
+// or stale metadata cleanup when its control socket is unavailable. The caller
+// must authorize the session before invoking this runtime operation.
+func KillOrphanEggContext(ctx context.Context, cfg *config.Config, sessionID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := ValidateSessionID(sessionID); err != nil {
-		log.Printf("refuse to kill invalid egg session: %v", err)
-		return
+		return err
 	}
 	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
 	sockPath := filepath.Join(dir, "egg.sock")
 	tokenPath := filepath.Join(dir, "egg.token")
 
 	ec, err := egg.Dial(sockPath, tokenPath)
-	if err != nil {
-		// Can't reach egg — try to kill by PID, but only after confirming the
-		// PID still belongs to this session's egg runner.
-		pidPath := filepath.Join(dir, "egg.pid")
-		terminationRequested := false
-		data, readErr := os.ReadFile(pidPath)
-		if readErr == nil {
-			if pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil && EggPidMatchesSession(pid, sessionID) {
-				if proc, findErr := os.FindProcess(pid); findErr != nil {
-					log.Printf("pty session %s: find orphan egg process %d: %v", sessionID, pid, findErr)
-				} else if signalErr := proc.Signal(syscall.SIGTERM); signalErr != nil {
-					log.Printf("pty session %s: terminate orphan egg process %d: %v", sessionID, pid, signalErr)
-				} else {
-					terminationRequested = true
-				}
+	if err == nil {
+		// Dial creates a lazy gRPC client; a missing socket can first surface
+		// here even when the token file is still present.
+		killErr := ec.Kill(ctx, sessionID)
+		cmdutil.CloseWithLog("orphan egg client", ec)
+		if killErr == nil {
+			log.Printf("pty session %s: orphan termination requested (gRPC)", sessionID)
+			return nil
+		}
+		if status.Code(killErr) != codes.Unavailable {
+			return killErr
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Can't reach egg — only signal a PID confirmed to belong to this session.
+	data, readErr := os.ReadFile(filepath.Join(dir, "egg.pid"))
+	if readErr == nil {
+		if pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil && EggPidMatchesSession(pid, sessionID) {
+			proc, findErr := os.FindProcess(pid)
+			if findErr != nil {
+				return fmt.Errorf("find orphan egg process %d: %w", pid, findErr)
 			}
-		}
-		if terminationRequested {
-			// Leave runtime files in place until the egg exits and performs its
-			// own cleanup. Reaping them now can break an in-flight shutdown.
+			if signalErr := proc.Signal(syscall.SIGTERM); signalErr != nil {
+				return fmt.Errorf("terminate orphan egg process %d: %w", pid, signalErr)
+			}
+			// Leave runtime files until the egg exits and cleans up itself.
 			log.Printf("pty session %s: orphan termination requested (pid)", sessionID)
-		} else {
-			CleanEggDir(dir)
-			log.Printf("pty session %s: stale orphan metadata cleaned", sessionID)
+			return nil
 		}
-		return
 	}
-	if killErr := ec.Kill(context.Background(), sessionID); killErr != nil {
-		log.Printf("pty session %s: terminate orphan over gRPC: %v", sessionID, killErr)
-	} else {
-		log.Printf("pty session %s: orphan termination requested (gRPC)", sessionID)
-	}
-	cmdutil.CloseWithLog("orphan egg client", ec)
+	CleanEggDir(dir)
+	log.Printf("pty session %s: stale orphan metadata cleaned", sessionID)
+	return nil
 }
 
 func ResizeEgg(cfg *config.Config, sessionID string, rows, cols uint32) (result error) {

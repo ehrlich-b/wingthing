@@ -2334,17 +2334,18 @@ func (s *Server) toolTerminalStop(ctx context.Context, arguments json.RawMessage
 	if args.Session == "" {
 		return nil, errors.New("session is required")
 	}
-	owned, err := s.resolveOwnedSession(ctx, args.Session)
-	if err != nil {
-		return nil, err
-	}
 	var session eggclient.LocalSession
+	var err error
 	if s.Sessions != nil {
-		session, err = s.Sessions.Stop(ctx, s.sessionAuthority(), owned.ID)
+		session, err = s.Sessions.Stop(ctx, s.sessionAuthority(), args.Session)
 		if err != nil {
 			return nil, err
 		}
 	} else {
+		owned, err := s.resolveOwnedSession(ctx, args.Session)
+		if err != nil {
+			return nil, err
+		}
 		var ec *egg.Client
 		session, ec, err = eggclient.OpenLocalEgg(ctx, s.Cfg, owned.ID)
 		if err != nil {
