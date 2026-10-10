@@ -68,6 +68,18 @@ test('a pending save cannot cross a session switch or replacement serializer', a
     }
 });
 
+test('delayed cache work cannot cross an account change or equal-ID reconnect', async () => {
+    for (const replacement of ['account', 'socket']) {
+        const h = harness(); h.S.currentUser = { id: 'owner' }; h.S.ptyWs = {};
+        h.context.saveTermBuffer();
+        const pending = h.timers.get(h.S.saveBufferTimer);
+        if (replacement === 'account') h.S.currentUser = { id: 'other' };
+        else h.S.ptyWs = {};
+        await pending();
+        assert.equal(h.read('current'), null);
+    }
+});
+
 test('storage denial and quota failure do not escape save, restore or deletion', async () => {
     const storage = { get length() { throw Error('unavailable'); }, getItem() { throw Error('unavailable'); },
         setItem() { throw Error('unavailable'); }, removeItem() { throw Error('unavailable'); } };

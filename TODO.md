@@ -229,9 +229,9 @@ account management, org settings, audit display.
 - [x] `probeWing()` immediate fulfillment/rejection/retry already deduplicates;
   guard stale results across disconnect, replacement identity and account changes,
   and invalidate old probes on wing lifecycle events before probing again.
-- [ ] `bytesToB64()` in `helpers.js` uses O(n²) string concatenation in a loop
-  on every encrypt/decrypt — use `String.fromCharCode.apply(null, bytes)` or
-  typed array approach
+- [x] Check `bytesToB64()` against exact byte fixtures through 262,144-byte
+  terminal chunks. No demonstrated helper defect; keep the implementation and
+  strengthen delayed cache saves/restores across account changes and reconnects.
 - [x] Bound terminal buffers and thumbnails to 2 MB total, including keys and
   timestamp metadata, with 200 KB entries, deterministic oldest-session eviction,
   and a 24-hour expiration. Byte accounting bounds UTF-8 and UTF-16 storage;

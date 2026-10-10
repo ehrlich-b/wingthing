@@ -402,6 +402,7 @@ export function initTerminal() {
 export function saveTermBuffer() {
     if (!S.ptySessionId || !S.serializeAddon) return;
     var sessionId = S.ptySessionId, wingId = S.ptyWingId, serializer = S.serializeAddon;
+    var socket = S.ptyWs, user = S.currentUser;
     if (pendingTermSave) pendingTermSave.cancelled = true;
     var pending = { sessionId: sessionId, wingId: wingId, cancelled: false };
     pendingTermSave = pending;
@@ -409,7 +410,8 @@ export function saveTermBuffer() {
     S.saveBufferTimer = setTimeout(function () {
         return withTerminalCacheLock(function() {
         try {
-            if (pending.cancelled || S.ptySessionId !== sessionId || S.ptyWingId !== wingId || S.serializeAddon !== serializer) return;
+            if (pending.cancelled || S.ptySessionId !== sessionId || S.ptyWingId !== wingId || S.serializeAddon !== serializer ||
+                    S.ptyWs !== socket || S.currentUser !== user) return;
             var data = serializer.serialize();
             if (writeTerminalCache(localStorage, TERM_BUF_PREFIX, wingId, sessionId, data)) saveTermThumb(wingId, sessionId);
         } catch (e) {}
@@ -489,13 +491,15 @@ export function saveTermThumb(wingId, sessionId) {
 
 export function restoreTermBuffer(sessionId, wingId) {
     var term = S.term, selectedId = S.ptySessionId, selectedWing = S.ptyWingId;
+    var socket = S.ptyWs, user = S.currentUser;
     return withTerminalCacheLock(function() {
     try {
         var key = sessionContentKey(TERM_BUF_PREFIX, wingId, sessionId);
         if (!key) return;
         sweepTerminalCache(localStorage, Date.now(), key.slice(TERM_BUF_PREFIX.length));
         var data = readSessionContent(localStorage, TERM_BUF_PREFIX, wingId, sessionId);
-        if (data && term && S.term === term && S.ptySessionId === selectedId && S.ptyWingId === selectedWing) term.write(data);
+        if (data && term && S.term === term && S.ptySessionId === selectedId && S.ptyWingId === selectedWing &&
+                S.ptyWs === socket && S.currentUser === user) term.write(data);
     } catch (e) {}
     });
 }
