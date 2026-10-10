@@ -203,9 +203,12 @@ func (s *Service) Start(ctx context.Context, launch *Launch, opts StartOptions) 
 		return nil, err
 	}
 	if err = s.Register(opts.SessionID); err != nil {
-		stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_ = s.StopAttached(stopCtx, client, opts.SessionID)
-		cancel()
+		// A wing shutting down leaves the running egg for the next wing to reclaim.
+		if ctx.Err() == nil && !errors.Is(err, context.Canceled) {
+			stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = s.StopAttached(stopCtx, client, opts.SessionID)
+			cancel()
+		}
 		_ = client.Close()
 		return nil, err
 	}

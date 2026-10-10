@@ -409,7 +409,7 @@ func (m *Runs) reconcile(id string) {
 			client.Close()
 		}
 		if err != nil {
-			if m.ctx.Err() == nil {
+			if m.ctx.Err() == nil && !errors.Is(err, context.Canceled) {
 				m.fail(id, agent.ProviderError)
 			}
 			return
