@@ -109,6 +109,7 @@ def run_once(repo=REPO, arguments=None, timeout_seconds=12 * 60, cleanup_seconds
         reason = None
         cleanup = "unknown"
         binary_hashes = set()
+        interrupted_signal = None
         proc = None
         count = size = 0
 
@@ -132,6 +133,8 @@ def run_once(repo=REPO, arguments=None, timeout_seconds=12 * 60, cleanup_seconds
                         pass
 
             def interrupted(signum, frame):
+                nonlocal interrupted_signal
+                interrupted_signal = signum
                 terminate()
                 try:
                     events.put_nowait(("interrupted", signum))
@@ -147,21 +150,29 @@ def run_once(repo=REPO, arguments=None, timeout_seconds=12 * 60, cleanup_seconds
                                         start_new_session=True, bufsize=0)
 
                 def drain_errors():
-                    while not done.is_set():
-                        chunk = proc.stderr.read(1024)
-                        if not chunk:
-                            return
-                        stderr.append(chunk)
+                    try:
+                        while not done.is_set():
+                            chunk = proc.stderr.read(1024)
+                            if not chunk:
+                                return
+                            stderr.append(chunk)
+                    except (OSError, ValueError):
+                        return
 
                 def drain_records():
-                    while not done.is_set():
-                        line = proc.stdout.readline(16385)
-                        try:
-                            events.put(("line", line), timeout=1)
-                        except queue.Full:
-                            continue
-                        if not line or len(line) > 16384:
-                            return
+                    try:
+                        while not done.is_set():
+                            line = proc.stdout.readline(16385)
+                            while not done.is_set():
+                                try:
+                                    events.put(("line", line), timeout=1)
+                                    break
+                                except queue.Full:
+                                    continue
+                            if not line or len(line) > 16384:
+                                return
+                    except (OSError, ValueError):
+                        return
 
                 for action in (drain_errors, drain_records):
                     thread = threading.Thread(target=action, daemon=True)
@@ -183,6 +194,7 @@ def run_once(repo=REPO, arguments=None, timeout_seconds=12 * 60, cleanup_seconds
                         continue
                     if kind == "interrupted":
                         failed = True
+                        terminate()
                         reason = "runner interrupted by signal " + str(line)
                         if not stopping:
                             stopping = True
@@ -233,7 +245,10 @@ def run_once(repo=REPO, arguments=None, timeout_seconds=12 * 60, cleanup_seconds
                 if proc is not None:
                     proc.stdout.close()
                     proc.stderr.close()
-            failed |= code != 0 or seen != set(CHECKS) or cleanup != "pass" or len(binary_hashes) > 1
+            failed |= (code != 0 or seen != set(CHECKS) or cleanup != "pass" or
+                       len(binary_hashes) > 1 or interrupted_signal is not None)
+            if interrupted_signal is not None:
+                reason = reason or "runner interrupted by signal " + str(interrupted_signal)
             finished = timestamp()
             runner = {"check": "runner", "status": "fail" if failed else "pass",
                       "latency_ms": round((time.monotonic() - started) * 1000, 2),

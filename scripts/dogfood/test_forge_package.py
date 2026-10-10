@@ -4,9 +4,12 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 from contracts import CHECKS
@@ -19,13 +22,15 @@ import json, pathlib, signal, sys
 from contracts import CHECKS
 root = pathlib.Path(__file__).resolve().parents[2]
 mode = sys.argv[1] if len(sys.argv) > 1 else "success"
+with (root / "invocations").open("a") as stream:
+    stream.write(mode + "\\n")
 def emit(check, status="pass", **extra):
     print(json.dumps(dict(check=check, status=status, latency_ms=0,
                          error="fixture cleanup failure" if status == "fail" else None,
                          **extra)), flush=True)
 def records():
     for n, check in enumerate(CHECKS[:-1]):
-        emit(check, "skip" if n == 11 else "pass")
+        emit(check, "skip" if n == 11 else "pass", resource_env={key: __import__('os').environ.get(key) for key in ('GOMAXPROCS', 'GOFLAGS', 'TMPDIR')})
     emit("cleanup", "fail" if mode == "cleanup-fail" else "pass")
 if mode == "timeout":
     signal.signal(signal.SIGTERM, lambda *_: (records(), sys.exit(0)))
@@ -175,7 +180,7 @@ class WrapperTests(ForgeFixture):
         self.assertEqual(receipts[-1].stat().st_mode & 0o777, 0o600)
 
 
-class PreparationTests(ForgeFixture):
+class PackageFixture(ForgeFixture):
     def setUp(self):
         super().setUp()
         shutil.copyfile(HERE / "run.sh", self.scripts / "run.sh")
@@ -189,6 +194,8 @@ class PreparationTests(ForgeFixture):
                                "--repo", str(self.repo), "--out", str(self.package),
                                "--until", until], capture_output=True, text=True, timeout=5)
 
+
+class PreparationTests(PackageFixture):
     def test_generate_private_package_with_spaces_without_execution(self):
         result = self.prepare()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -350,6 +357,119 @@ class StatusTests(ForgeFixture):
         self.assertEqual(self.status()[0].returncode, 2)
         file.write_text("not JSON\n")
         self.assertEqual(self.status()[0].returncode, 2)
+
+
+class GeneratedUnitTests(PackageFixture):
+    def setUp(self):
+        super().setUp()
+        self.unit_dir = self.root / "private user units"
+        self.bin_dir = self.root / "fake commands"
+        self.bin_dir.mkdir()
+        self.capture = self.root / "systemctl.jsonl"
+        command = self.bin_dir / "systemctl"
+        command.write_text("#!" + sys.executable + '''
+import json, os, sys
+with open(os.environ['FIXTURE_SYSTEMCTL_CAPTURE'], 'a') as stream:
+    stream.write(json.dumps(sys.argv[1:]) + '\\n')
+''')
+        command.chmod(0o700)
+        self.env = dict(os.environ, PATH=str(self.bin_dir) + os.pathsep + os.environ.get("PATH", ""),
+                        FIXTURE_SYSTEMCTL_CAPTURE=str(self.capture))
+
+    def calls(self):
+        return [json.loads(line) for line in self.capture.read_text().splitlines()] if self.capture.exists() else []
+
+    def package_script(self, action):
+        return subprocess.run(["bash", str(self.package / (action + ".sh")), str(self.unit_dir)],
+                              env=self.env, capture_output=True, text=True, timeout=5)
+
+    def test_install_reload_only_then_remove_exact_owned_files(self):
+        self.assertEqual(self.prepare().returncode, 0)
+        installed = self.package_script("install")
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        self.assertEqual(self.calls(), [["--user", "daemon-reload"]])
+        self.assertTrue((self.unit_dir / "wingthing-dogfood.service.d/10-forge.conf").is_file())
+        self.assertEqual((self.unit_dir / "wingthing-dogfood.service").stat().st_mode & 0o777, 0o600)
+        unrelated = self.unit_dir / "operator.service"
+        unrelated.write_text("preserve")
+        removed = self.package_script("remove")
+        self.assertEqual(removed.returncode, 0, removed.stderr)
+        self.assertEqual(self.calls()[1:], [["--user", "disable", "--now", "wingthing-dogfood.timer"],
+                                           ["--user", "stop", "wingthing-dogfood.service"],
+                                           ["--user", "daemon-reload"]])
+        self.assertEqual(unrelated.read_text(), "preserve")
+        self.assertFalse((self.unit_dir / "wingthing-dogfood.service").exists())
+
+    def test_installed_operator_edit_refuses_before_any_call_or_write(self):
+        self.assertEqual(self.prepare().returncode, 0)
+        self.assertEqual(self.package_script("install").returncode, 0)
+        target = self.unit_dir / "wingthing-dogfood.service.d/10-forge.conf"
+        target.write_text("# deliberate operator override\n")
+        before = self.calls()
+        for action in ("install", "remove"):
+            result = self.package_script(action)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("Operator edits preserved", result.stderr)
+            self.assertEqual(self.calls(), before)
+            self.assertEqual(target.read_text(), "# deliberate operator override\n")
+
+    def test_package_edit_refuses_without_systemctl(self):
+        self.assertEqual(self.prepare().returncode, 0)
+        (self.package / "wingthing-dogfood.timer").write_text("operator timer edit\n")
+        result = self.package_script("install")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Edited package file", result.stderr)
+        self.assertEqual(self.calls(), [])
+        self.assertFalse(self.unit_dir.exists())
+
+    def test_service_environment_and_expiry_with_bounded_systemd_parser_fixture(self):
+        self.assertEqual(self.prepare().returncode, 0)
+        environment = dict(self.env)
+        for line in (self.package / "10-forge.conf").read_text().splitlines():
+            if line.startswith("Environment="):
+                key, value = shlex.split(line.split("=", 1)[1])[0].replace("%%", "%").split("=", 1)
+                environment[key] = value
+        service = (self.package / "wingthing-dogfood.service").read_text()
+        # Emulate only the generated subset. This is NOT Linux/systemd acceptance.
+        command = next(line.split("=", 1)[1] for line in service.splitlines() if line.startswith("ExecStart="))
+        argv = shlex.split(command.replace("$$", "$"))
+        self.assertEqual(argv[:2], ["/bin/sh", "-c"])
+        result = subprocess.run(argv, env=environment, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.receipt()[0]["resource_env"]["GOMAXPROCS"], "2")
+        self.assertEqual(self.receipt()[0]["resource_env"]["GOFLAGS"], "-p=2")
+        self.assertEqual(self.receipt()[0]["resource_env"]["TMPDIR"], str(self.repo / ".scratch/tmp"))
+        for directive in ("Nice=15", "UMask=0077", "TimeoutStartSec=15min", "TimeoutStopSec=60s",
+                          "KillMode=control-group", "SuccessExitStatus=3"):
+            self.assertIn(directive, service)
+        timer = (self.package / "wingthing-dogfood.timer").read_text()
+        self.assertIn("OnUnitActiveSec=45min", timer)
+        self.assertIn("AccuracySec=1min", timer)
+        self.assertIn("Persistent=false", timer)
+        environment.update(WT_DOGFOOD_EPOCH="2000-01-01T00:00:00Z", WT_DOGFOOD_UNTIL="2000-01-02T00:00:00Z")
+        result = subprocess.run(argv, env=environment, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual((self.repo / "invocations").read_text().splitlines(), ["success"])
+
+    def test_actual_concurrent_wrapper_never_starts_second_canary(self):
+        command = [sys.executable, "-B", str(self.scripts / "run.py"), "timeout"]
+        first = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            deadline = time.monotonic() + 3
+            while not (self.repo / "ready").exists() and first.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue((self.repo / "ready").exists())
+            result = self.run_wrapper()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)["status"], "skip")
+            self.assertEqual((self.repo / "invocations").read_text().splitlines(), ["timeout"])
+        finally:
+            first.send_signal(signal.SIGTERM)
+            stdout, stderr = first.communicate(timeout=5)
+        self.assertEqual(first.returncode, 1, stderr)
+        self.assertEqual(self.receipt()[-2]["check"], "cleanup")
+        self.assertEqual(self.receipt()[-2]["status"], "pass")
+        self.assertEqual(self.receipt()[-1]["status"], "fail")
 
 
 if __name__ == "__main__":
