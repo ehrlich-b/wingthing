@@ -1075,10 +1075,6 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	}
 
 	sess.ptmx, sess.nonblockInput = ptmx, cancellableInput
-	if err := releaseProvider(); err != nil {
-		abortProvider()
-		return fmt.Errorf("release contained provider: %w", err)
-	}
 
 	// Set up input auditor if audit is enabled
 	if rc.Audit {
@@ -1095,6 +1091,10 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	s.mu.Lock()
 	s.session = sess
 	s.mu.Unlock()
+	if err := releaseProvider(); err != nil {
+		abortProvider()
+		return fmt.Errorf("release contained provider: %w", err)
+	}
 
 	log.Printf("egg: session %s kind=%s agent=%s command=%q pid=%d network=%s fs=%d", sessionID, rc.Kind, rc.Agent, rc.Command, cmd.Process.Pid, networkSummary, len(rc.FS))
 

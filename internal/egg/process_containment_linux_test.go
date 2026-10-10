@@ -15,13 +15,22 @@ import (
 func newTestCgroup() (processBoundary, error) { return newEggCgroup(nil) }
 
 func TestProcStatIdentityWithComplexName(t *testing.T) {
-	p, err := parseProcStat("42 (name with ) and\nspaces) S 7 42 42 0 0 0 0 0 0 0 0 0 0 0 0 0 0 12345 0")
+	fields := make([]string, 20)
+	for i := range fields {
+		fields[i] = "0"
+	}
+	fields[0], fields[1], fields[2], fields[3], fields[19] = "S", "7", "42", "42", "12345"
+	p, err := parseProcStat("42 (name with ) and\nspaces) " + strings.Join(fields, " "))
 	if err != nil || p.PID != 42 || p.ParentPID != 7 || p.ProcessGroupID != 42 || p.session != 42 || p.start != "12345" {
 		t.Fatalf("stat identity: %+v %v", p, err)
 	}
 }
 
 func TestSubreaperContainsImmediateOrphans(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("missing fixture: Python 3 multiprocessing runtime")
+	}
 	// Keep the process-wide subreaper setting and adoption sweep in a dedicated
 	// helper, exactly as in the egg executable, never the shared test runner.
 	if os.Getenv("WT_SUBREAPER_FIXTURE") != "1" {
@@ -31,10 +40,6 @@ func TestSubreaperContainsImmediateOrphans(t *testing.T) {
 			t.Fatalf("subreaper fixture: %v\n%s", err, out)
 		}
 		return
-	}
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("missing fixture: Python 3 multiprocessing runtime")
 	}
 	dir := t.TempDir()
 	script, ready := filepath.Join(dir, "provider.py"), filepath.Join(dir, "ready.json")

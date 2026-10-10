@@ -34,7 +34,7 @@ func containmentLaunch(cmd *exec.Cmd) (release func() error, closeGate func(), e
 }
 
 func init() {
-	if len(os.Args) < 5 || os.Args[1] != containmentLaunchArg {
+	if len(os.Args) < 4 || os.Args[1] != containmentLaunchArg {
 		return
 	}
 	fd, err := strconv.Atoi(os.Args[2])

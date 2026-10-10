@@ -5,6 +5,7 @@ package egg
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -207,8 +208,24 @@ func (cg *eggCgroup) kill() error {
 }
 
 func (cg *eggCgroup) close() error {
-	if cg.owned {
-		return os.Remove(cg.path)
+	// A provider can create nested cgroups under a delegated subtree. Remove
+	// empty children from the leaves upward; never remove cgroup control files.
+	var dirs []string
+	if err := filepath.WalkDir(cg.path, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() && (path != cg.path || cg.owned) {
+			dirs = append(dirs, path)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if err := os.Remove(dirs[i]); err != nil {
+			return err
+		}
 	}
 	return nil // resource cgroups are removed by sandbox.Destroy after cleanup
 }
@@ -231,6 +248,8 @@ func prepareProcessTree(_ *exec.Cmd, sb sandbox.Sandbox) (*runProcessTree, error
 	}
 	if cg, err := newEggCgroup(sb); err == nil {
 		tree.boundary = cg
+	} else {
+		log.Printf("egg: cgroup containment unavailable (%v); using child subreaper and process sweep", err)
 	}
 	return tree, nil
 }

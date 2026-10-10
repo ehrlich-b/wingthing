@@ -223,3 +223,21 @@ func TestIdentifiedSignalDoesNotKillReusedPID(t *testing.T) {
 		t.Fatalf("mismatched identity was killed: %v", err)
 	}
 }
+
+func TestRunTurnSurvivorAlwaysReportsContainmentFailure(t *testing.T) {
+	fixture := newRunFixture(t)
+	fixture.runtime.backend.Kill = func() ([]RunDescendant, error) {
+		return []RunDescendant{{PID: 42, ParentPID: 1, ProcessGroupID: 42}}, nil
+	}
+	if _, err := fixture.runtime.reserve(fixture.request); err != nil {
+		t.Fatal(err)
+	}
+	result, err := fixture.runtime.stop(fixture.request.RunID)
+	if err != nil || result.Status != "stopped" || len(result.SurvivingDescendants) != 1 || result.ContainmentError == "" {
+		t.Fatalf("survivor was reported as clean containment: %+v %v", result, err)
+	}
+	persisted, err := ReadRunTurnResult(fixture.runtime.dir, fixture.request.RunID)
+	if err != nil || persisted.ContainmentError != result.ContainmentError || len(persisted.SurvivingDescendants) != 1 {
+		t.Fatalf("containment failure was not durable: %+v %v", persisted, err)
+	}
+}
