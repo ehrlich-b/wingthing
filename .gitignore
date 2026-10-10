@@ -2,6 +2,7 @@
 /wt-linux
 /dist
 /.local-state/
+/.scratch/
 *.db
 *.db-journal
 *.db-wal
