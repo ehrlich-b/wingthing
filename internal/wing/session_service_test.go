@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -45,6 +46,7 @@ type sessionEggFixture struct {
 	mu         sync.Mutex
 	snapshot   []byte
 	input      chan []byte
+	attached   chan *pb.AttachOptions
 	killed     chan struct{}
 	killErr    error
 	stop       sync.Once
@@ -80,6 +82,7 @@ func (f *sessionEggFixture) Session(stream grpc.BidiStreamingServer[pb.SessionMs
 	if err = stream.Send(&pb.SessionMsg{SessionId: first.SessionId, Payload: &pb.SessionMsg_Output{Output: snapshot}}); err != nil {
 		return err
 	}
+	f.attached <- first.AttachOptions
 	incoming := make(chan *pb.SessionMsg)
 	failure := make(chan error, 1)
 	go func() {
@@ -143,6 +146,7 @@ type sessionTransportFixture struct {
 	wc                *config.WingConfig
 	home, work        string
 	sessions          *wingsession.Service
+	stopRegistration  func()
 	client            *ws.Client
 	relay             *websocket.Conn
 	replies           chan json.RawMessage
@@ -241,13 +245,13 @@ func newSessionTransportFixture(t *testing.T) *sessionTransportFixture {
 	}))
 	client := &ws.Client{RoostURL: strings.Replace(relayServer.URL, "http://", "ws://", 1), WingID: cfg.WingID, Token: "fixture-token", OnRegistered: func(ws.RegisteredMsg) { close(connected) }}
 	f.client = client
-	configureSessionRegistration(f.sessions, ctx, client, func() auth.PasskeyPolicy { return auth.PasskeyPolicy{} }, func() []*config.ToolConfig { return nil })
+	f.stopRegistration = configureSessionRegistration(f.sessions, ctx, client, func() auth.PasskeyPolicy { return auth.PasskeyPolicy{} }, func() []*config.ToolConfig { return nil })
 	client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
 		keys := []config.AllowKey{}
 		handlePTYSession("test", ctx, cfg, f.wc.Clone(), start, write, input, policy, false, false, &keys, cache, auth.PasskeyPolicy{}, 0, 0, nil, nil, nil, false, f.sessions)
 	}
 	go func() { _ = client.Run(ctx); close(clientDone) }()
-	t.Cleanup(func() { cancel(); <-clientDone; relayServer.Close() })
+	t.Cleanup(func() { cancel(); f.stopRegistration(); <-clientDone; relayServer.Close() })
 	f.relay = <-relayReady
 	<-connected
 	return f
@@ -269,7 +273,7 @@ func (f *sessionTransportFixture) spawn(launch *wingsession.Launch, opts wingses
 	if err := eggclient.WriteSessionPrincipal(dir, opts.Egg.Principal); err != nil {
 		return nil, err
 	}
-	ef := &sessionEggFixture{snapshot: []byte("fixture ready\n"), input: make(chan []byte, 16), killed: make(chan struct{}), dir: dir, agent: opts.Agent}
+	ef := &sessionEggFixture{snapshot: []byte("fixture ready\n"), input: make(chan []byte, 16), attached: make(chan *pb.AttachOptions, 16), killed: make(chan struct{}), dir: dir, agent: opts.Agent}
 	if opts.Agent == "claude" {
 		ef.transcript = filepath.Join(f.home, ".claude", "projects", strings.ReplaceAll(launch.CWD, "/", "-"), "ours.jsonl")
 		if err := os.MkdirAll(filepath.Dir(ef.transcript), 0700); err != nil {
@@ -784,5 +788,46 @@ func TestRegisteredSessionKeepsWingToolsAfterStartReturns(t *testing.T) {
 	_ = conn.Close()
 	if _, err = f.sessions.Stop(f.ctx, authority, "tools"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSessionRegistrationCancelsAndJoinsBridgesOnShutdown(t *testing.T) {
+	f := newSessionTransportFixture(t)
+	authority := wingsession.Authority{UserID: "alice", Role: "owner", Principal: wingsession.UserPrincipal("alice")}
+	for _, id := range []string{"first", "second"} {
+		launch, err := f.sessions.PrepareLaunch(authority, f.work)
+		if err != nil {
+			t.Fatal(err)
+		}
+		client, err := f.sessions.Start(f.ctx, launch, wingsession.StartOptions{SessionID: id, Tools: []*config.ToolConfig{{Name: "fixture", Run: "fixture-command"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = client.Close(); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case options := <-f.egg(id).attached:
+			if options == nil || !options.ReadOnly || options.Claim {
+				t.Fatalf("wing bridge claimed input: %+v", options)
+			}
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		}
+	}
+	f.stopRegistration()
+	for _, id := range []string{"first", "second"} {
+		if f.client.HasPTYSession(id) || f.sessions.ToolListener(id) != nil {
+			t.Fatalf("shutdown left bridge routing or tools for %s", id)
+		}
+		if _, ok := sessionStates.Load(id); ok {
+			t.Fatalf("shutdown left bridge idle state for %s", id)
+		}
+		if err := f.sessions.Register(id); !errors.Is(err, context.Canceled) {
+			t.Fatalf("registration after shutdown = %v, want cancellation", err)
+		}
+	}
+	if got := len(ListAliveEggSessions(f.cfg)); got != 2 {
+		t.Fatalf("bridge shutdown terminated surviving eggs: %d remain", got)
 	}
 }
