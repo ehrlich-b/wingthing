@@ -11,7 +11,7 @@ import (
 
 func codexCaptureServer(t *testing.T) (*Server, string, string) {
 	t.Helper()
-	root, err := os.MkdirTemp("", "wt-codex-capture-")
+	root, err := os.MkdirTemp("", "wt-cc-")
 	if err != nil {
 		t.Fatal(err)
 	}

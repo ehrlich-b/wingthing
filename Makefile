@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := check
-.PHONY: check gate test-run-recovery test-run-load test-run-load-full test-run-canary e2e-linux e2e-web e2e-mac release deploy ops proto web serve clean
+.PHONY: check gate test-run-recovery test-run-recovery-race test-run-load test-run-load-full test-run-canary e2e-linux e2e-web e2e-mac release deploy ops proto web serve clean
 
 GO ?= nice -n 15 go
 NODE ?= nice -n 15 node
@@ -18,7 +18,7 @@ RACE_BASE ?= HEAD~1
 # Buildable untagged Go packages touched since RACE_BASE, including local files.
 RACE_PACKAGES ?=
 RUN_RECOVERY_PACKAGES ?= ./internal/wingsession ./internal/localmcp ./internal/wingconnect ./internal/egg
-RUN_RECOVERY_TESTS ?= ^(TestRunRecovery.*|TestStopIntentAndQueuedCancellationSurviveWingRestart|TestLostRunSubmissionAcknowledgementDoesNotResendAfterRestart|TestRememberedPool(LostAdmissionReconcilesOriginalKey|UnreconciledAdmissionReportsOriginalKey)|TestProviderFailureContentAbsentFromLifecycleAndArchive)$$
+RUN_RECOVERY_TESTS ?= ^(TestRunRecovery.*|TestMCPTaskCancellationRecoversStopIntentAfterWingRestart|TestStopIntentAndQueuedCancellationSurviveWingRestart|TestLostRunSubmissionAcknowledgementDoesNotResendAfterRestart|TestRememberedPool(LostAdmissionReconcilesOriginalKey|UnreconciledAdmissionReportsOriginalKey)|TestProviderFailureContentAbsentFromLifecycleAndArchive)$$
 
 HOST_ARCH := $(shell uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
 HOST_OS := $(shell uname -s | tr '[:upper:]' '[:lower:]')
@@ -77,6 +77,9 @@ web:
 # Finite, offline native-provider fixtures; no live provider or remote launches.
 test-run-recovery: | web/dist
 	$(GO) test -p 2 $(RUN_RECOVERY_PACKAGES) -run '$(RUN_RECOVERY_TESTS)' -count=$(COUNT) -timeout=5m
+
+test-run-recovery-race: | web/dist
+	$(GO) test -p 2 -race $(RUN_RECOVERY_PACKAGES) -run '$(RUN_RECOVERY_TESTS)' -count=$(COUNT) -timeout=5m
 
 test-run-load: | web/dist
 	$(stable-build)

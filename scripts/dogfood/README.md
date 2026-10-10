@@ -46,6 +46,8 @@ the CLI `agent wait-any` JSON with MCP terminal statuses. Auth, rate-limit and
 refusal notifications also survive restart with typed reasons and no diagnostic
 sentinel in results. The deterministic `make test-run-recovery` fixtures cover
 all ten selected persisted boundaries and Claude's safe partial failure output.
+`make test-run-recovery-race` runs the same bounded fixtures under the race detector;
+the full-package race gate remains part of `make gate GATE=static`.
 `make test-run-load` runs the two named focused checks ten times each, then both
 full packages against the checkout-built binary. `make test-run-canary` builds
 and runs this default fixture-only mode; no live-provider or SSH flags are set.

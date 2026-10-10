@@ -27,6 +27,10 @@ func TestLocalMarkdownLinksResolve(t *testing.T) {
 			return err
 		}
 		if entry.IsDir() {
+			// Checkout-local caches and live fixture state are not repository docs.
+			if path == filepath.Join(root, ".scratch") {
+				return filepath.SkipDir
+			}
 			if entry.Name() == ".git" || entry.Name() == "node_modules" || entry.Name() == "dist" || entry.Name() == "out" {
 				return filepath.SkipDir
 			}

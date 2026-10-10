@@ -1,7 +1,7 @@
 # What keeps Wingthing from perfect
 
-Snapshot: 2026-10-10, weekend stack at `92b1183`, branch
-`codex/dogfood-weekend-20261010`. P1 = security, lost work or a blocked primary
+Snapshot: 2026-10-10, wave3 run-recovery stack based on `ac90fdc`, branch
+`codex/wave3-wingthing-runs-20261010`. P1 = security, lost work or a blocked primary
 workflow; P2 = broken contract or missing acceptance; P3 = polish/operability.
 “Fixture verified” means an isolated built-binary check, not real-provider,
 production, mobile, sandbox-confinement or weekend-long acceptance.
@@ -10,6 +10,7 @@ The historical reports below were read in full from
 `~/repos/claude/state/wingthing-dogfood-bugs.md` (#1–#21). Some defects were fixed
 in superseded branches; that does not imply the fix exists in this stack or the
 installed binary. Every row preserves a concrete remaining check.
+Earlier dogfood observations are retained below with their original scope.
 
 ## Historical dogfood reports
 
@@ -20,12 +21,12 @@ installed binary. Every row preserves a concrete remaining check.
 | #3 injected memory/schedule boilerplate | P2 | `internal/wingsession/runs.go:256` retains the original prompt; exact fake native output passes without injected suffixes. Inspect one real provider's received prompt and confirm unchanged UTF-8 text. |
 | #4 human-readable label rejected as slug | P2 | **Still present:** `internal/localmcp/agent_runs.go:77` invokes `ValidateSessionName`, which rejects spaces at `internal/eggclient/local_sessions.go:251`. Submit `label: "weekend canary"`; it should either succeed or the tool schema must explicitly document a slug. |
 | #5 isolation changes between admission/status | P2 | Current runs persist `sandbox` or `privileged` in one durable record (`internal/wingsession/runs.go:256`), replacing the old `none`/`standard` path. Compare admission/status/result with the actual platform enforcement and `egg explain`, including an inherited egg.yaml and outer-boundary mode. This canary requests outer-boundary fixtures and does not prove confinement. |
-| #6 steering after a timed-out parent refused | P2 | The report says fixed in old main via #18. Current `toolAgentSteer` creates a child linked to the saved parent. Recheck a timeout → `agent_steer` → new completed native result and preserved parent link against eggs. |
-| #7 refusal hidden behind generic stdin error | P2 | Egg results carry structured `failure_kind` (`internal/egg/run_turn.go:34`); raw provider-error text must not be used as the fix. Exercise refusal/auth/rate-limit fixtures and a real provider failure; require a useful structured kind plus safe partial results, without credential text. |
-| #8 cwd egg.yaml silently blocks launch | P2 | The launch policy still applies inherited egg.yaml. Reproduce a denied provider executable and require the diagnostic to identify the policy path/rule and point to `egg explain`; old-branch fix claims are not closure evidence for the current adapter. |
+| #6 steering after a timed-out parent refused | P2 | **Local fixtures PASS:** a real egg deadline followed by steering completes the child with preserved parent/context/native result across three wing replacements. Deterministic fixtures cover ten persisted boundaries twice each. Remembered steering now retains and retries its original admission key; CLI/MCP expose the saved phase, parent and key. Real-provider and other-host acceptance remain open. |
+| #7 refusal hidden behind generic stdin error | P2 | **Local fixtures PASS:** Codex native refusal/auth/rate-limit failures retain typed kinds across three wing replacements, with CLI/MCP parity and credential-sentinel exclusion. Three Claude failure fixtures preserve prior ordinary assistant output while discarding the diagnostic record. Exercise a real provider failure before promotion. |
+| #8 cwd egg.yaml silently blocks launch | P2 | **REQUIRED-UNRUN:** nested `sandbox-exec` fails with `sandbox_apply: Operation not permitted`; no policy was relaxed. The minimal checkout-local reproduction requires `sandbox_denied`, the exact inherited policy path and `egg explain` guidance. Run `taskpolicy -b nice -n 15 python3 -B .scratch/notes/reproduce-policy-denial.py` from this clone in an ordinary Mac shell; this acceptance gate remains open. |
 | #9 interactive provider text leaks secrets | P1 | **Open design item:** chat captures explicitly may contain secrets (`internal/egg/chat_capture.go:77`); raw PTY/transcript/lifecycle surfaces are not universally redacted. Send a fake credential through `agent_start`, `session_read`, terminal reads and stored archives. Decide whether to exclude secrets at source or change the exposure contract; deny-list filtering cannot prove complete redaction. |
 | #10 Codex completion waits forever for stdout EOF | P1 | Egg semantic results follow native notify/hooks, independently of the persistent TUI; gated fake completion passes. PR #33 and the superseded reaper branch use another architecture. Verify a real completion while the provider/descendant holds output open; `agent_wait` must return the native outcome. A live interactive egg after turn completion is expected and must be stopped explicitly. |
-| #11 stop silently loses queued steer follow-up | P2 | Current stop code preserves/reports follow-up state (`internal/wingsession/runs.go:691`). Recheck steer + stop in both parent-terminal and parent-active cases, including restart; every accepted child needs a durable status or an explicit cancellation reason. Do not assume a superseded branch's active-steer contract. |
+| #11 stop silently loses queued steer follow-up | P2 | **Local fixtures PASS:** stop of an active parent durably cancels its queued child with an explicit reason across two replacements; stop of a terminal parent preserves its started child, which completes after replacement. Unit fixtures additionally cover admitted-child cancellation and timeout-terminal parents. MCP's frozen cancellation result reports terminal phase before and after replacement while the wing retains its unacknowledged stop intent. Accepted keys/parent IDs survive restart and lost-ack retry; no extra spawn/submission occurs. Real-provider and two-host acceptance remain open. |
 | #12 detached descendants survive timeout | P1 | **Partial mitigation:** `internal/egg/run_processes.go` inventories identities and reports surviving descendants; it does not guarantee killing children that create new sessions or escape observation. Reproduce a setsid child and require survivor/containment metadata. Strong containment needs an explicit platform design, e.g. cgroups on Linux. |
 | #13 Python resource_tracker survives stop | P1 | Same unresolved containment class as #12. Start multiprocessing, stop the native run and check every child identity; require termination or an explicit survivor report. This host denies `/bin/ps`, so descendant inventory is unavailable here. |
 | #14 >128 KiB prompt triggers Linux E2BIG; prompts in argv | P1 | **Still exposed:** initial Codex TUI submission is deliberately an argv prompt (`docs/codex-run-readiness.md`, `internal/egg/run_turn.go:267`). Test a 140 KiB prompt on Forge; require either a private non-argv transport or admission-time size validation and a terminal failure event. Also audit same-UID prompt visibility. |
@@ -35,30 +36,74 @@ installed binary. Every row preserves a concrete remaining check.
 | #18 nested Codex bwrap fails inside Linux egg | P1 | The supported runtime must choose one sandbox layer. The fixture canary requests the trusted outer boundary, so it does not prove sandboxed provider tool use. In a real Linux egg, run a harmless shell tool and inspect argv/policy; require working execution without relaxing Wingthing's intended boundary. |
 | #19 launch rejected below allowed workspace root | P1 | `internal/eggclient/browser_launch.go` now chooses a covering configured root; the canary launches in unique child directories and validates the returned cwd. Repeat with real local and remote workspaces, canonical symlink paths, and outside-root negative controls. |
 | #20 real Codex never reaches native readiness | P1 | Startup now supplies the initial prompt and suppresses known modals (`docs/codex-run-readiness.md`). Fake empty-composer/native-turn behavior passes, but Codex 0.159.3 Mac/0.162.1 Linux and subscribed completion still need live confirmation. Run `run.sh --real-codex` outside this agent sandbox on both hosts. |
-| #21 daemon handshake flakes under cmd/wt load | P2 | Standalone default daemon startup now has a canary check, including control calls and no relay token creation. The report's full-suite broken-pipe failure remains a load gate; passing alone is insufficient. Reproduce under full `cmd/wt` load and make the handshake barrier independent of timing. |
+| #21 daemon handshake flakes under cmd/wt load | P2 | **Local load PASS:** 20 focused repetitions against checkout-built `wt`, the complete `cmd/wt`/`wingconnect` workload, and the finite daemon canary. The original daemon flake did not reproduce; its existing readiness contract was retained. CI/other-host acceptance remains open. |
 
 ## CI flakes and load acceptance
 
-- **P2 — `TestRememberedPoolCanceledCallIsBounded`:** the brief reports a weekend
-  CI flake. The current test waits on a receiving-handler barrier and then
-  cancels (`internal/wingconnect/pool_test.go:404`). No live CI metadata was
-  queried. Repeated focused and full-package runs on both hosts must terminate
-  within their test bound; capture the blocked goroutine if it recurs.
-- **P2 — `TestBuiltWTLocalOnlyDaemonBootsWithoutTokens`:** #21 above. Run with a
-  checkout-built `WT_TEST_BINARY`, then run the full `cmd/wt` package under the
-  same concurrent package load as CI. A successful single canary is a smoke
-  gate, not proof that the flake is gone.
+- **P2 — `TestRememberedPoolCanceledCallIsBounded`:** 20 focused repetitions
+  and the complete two-package load pass locally. The existing receiving-handler
+  cancellation barrier was already present at the pinned base. No timeout was
+  raised. Repeat on the CI/other host before declaring the historical flake closed.
+- **P2 — `TestBuiltWTLocalOnlyDaemonBootsWithoutTokens`:** #21 above; 20 focused
+  repetitions and the complete two-package workload pass against checkout-built
+  `wt`. No startup implementation change was justified by these runs.
+- **Confirmed reconnect defect:** lost-ack load exposed reuse of a failed
+  connection before its delayed `Done` notification. Retry now atomically
+  discards that exact connection before reconnecting, without evicting a newer
+  replacement. A deterministic delayed-notification fixture and generated/supplied
+  run/steer-key cases pass ten repetitions. The lost-ack fixture now waits for
+  cancellation, so its acknowledgement cannot accidentally win a scheduling race.
 
-Coordinator commands, after building this checkout:
+Bounded Make workload, including both focused checks and complete package load:
 
 ```sh
-WT_TEST_BINARY="$PWD/wt" nice -n 15 go test -p 2 ./cmd/wt -run '^TestBuiltWTLocalOnlyDaemonBootsWithoutTokens$' -count=10 -timeout=5m
-nice -n 15 go test -p 2 ./internal/wingconnect -run '^TestRememberedPoolCanceledCallIsBounded$' -count=10 -timeout=5m
-WT_TEST_BINARY="$PWD/wt" nice -n 15 go test -p 2 ./cmd/wt ./internal/wingconnect -count=1 -timeout=15m
+taskpolicy -b nice -n 15 make -j1 test-run-load
 ```
 
-This task ran each focused test with `-count=3`: both passed. Full-package/CI
-load reproduction was not run, so neither flake is marked closed.
+`test-run-load-full` passes after the reconnect repair. These are local fake
+transport/checkout-binary measurements; no live CI or remote host was queried.
+
+## Wave3 required gate acceptance
+
+- `make -j1 test-run-recovery` and `make -j1 test-run-recovery-race`:
+  **PASS in all four transition packages.** The race selection also includes the
+  frozen MCP cancellation-restart regression; it supplements the full race gate.
+- `make -j1 check`: **FAIL in this shell; ordinary-host rerun REQUIRED-UNRUN.**
+  All 161 web tests and the full MCP/documentation packages pass after correcting
+  cancellation result phase and excluding gitignored caches from the docs walk.
+  Shorter private capture-fixture paths satisfy Darwin's socket length guard.
+  The remaining failures are `TestDeadlineKillsProcessGroupAndReportsSurvivors`
+  and `TestStopUnreachableOwnedSessionTerminatesVerifiedPID`, whose descendant
+  identity checks require the denied `ps` operation. Their assertions and
+  process-containment implementation were retained.
+- `make -j1 gate GATE='integration static'`: **FAIL in integration; native-host
+  rerun REQUIRED-UNRUN.** The preview input-lease and stable/preview persistent
+  remote-session fixtures start providers that exit 71 under the native sandbox;
+  the input lease then reaches its existing 20-second bound. The independent
+  `sandbox-exec` preflight confirms `sandbox_apply: Operation not permitted`.
+  Later preview proofs and static checks were not reached in this invocation.
+- `make -j1 gate GATE=static` with `RACE_PACKAGES='./internal/wingsession
+  ./internal/localmcp ./internal/wingconnect ./internal/egg ./internal/docscheck'`:
+  **vet PASS; full race FAIL.** Wingconnect and docscheck pass under race;
+  wingsession/egg hit the same process-inspection restrictions, and MCP reaches
+  its unchanged ten-minute package bound after 600.607 seconds. No race diagnostic
+  was emitted. Full race acceptance still requires an ordinary host.
+- Vulnerability checks and the release-contract check are **REQUIRED-UNRUN**:
+  the full race failure stops static before those steps. A populated offline
+  Go advisory database and valid npm audit evidence are still required; an
+  offline npm audit skip would not establish vulnerability coverage.
+
+From this clone in an ordinary Mac shell, with the required offline inputs staged:
+
+```sh
+source .scratch/offline-env.sh
+taskpolicy -b nice -n 15 make -j1 check
+taskpolicy -b nice -n 15 make -j1 gate GATE='integration static' RACE_BASE=ac90fdcb0a06edb7016ebf3cb14e359162b69058
+taskpolicy -b nice -n 15 python3 -B .scratch/notes/reproduce-policy-denial.py
+```
+
+These remain promotion gates. Real providers, Linux protected state, two-host
+execution and the installed runtime have no new acceptance evidence.
 
 ## Parked draft PRs read through Git
 
@@ -132,6 +177,19 @@ that violated the brief's no-SSH rule. No additional network operation followed.
 
 ## Canary observations and operating limits
 
+- **Wave3 run-recovery receipt:**
+  `.scratch/dogfood-logs/20261010T204519.036036Z.jsonl` contains 17 checks:
+  14 pass and 3 explicit skips, in 56,140.60 ms. The four added checks cover
+  timeout/steer, queued-child stop, terminal-parent stop and typed provider
+  failures, including nine wing replacements and three accepted follow-ups.
+  The timeout check takes 14,413.93 ms against an actual ten-second egg deadline.
+  Fake remembered SSH also recovers a steered child using its generated key.
+  The binary SHA-256 is
+  `298c30830a46145e7b7a7e4e302a540bc8c073ba4926902bf3d35b8cbb0c906d`.
+  Scoped native Mac policy, real SSH and real Codex are the three skips.
+  Private PID/endpoint/direct-child cleanup passes; descendant inventory remains
+  unavailable because this host denies `ps`. Run `make -j1 test-run-canary`
+  with the Mac wrapper and staged offline environment to reproduce fixture mode.
 - **Fixture pass on this Mac sandbox:** local foreground and daemon startup,
   terminal I/O/stop, exact native fake result, abrupt MCP disconnect, full wing
   SIGKILL/restart, Tasks lifecycle/restart/cancel (including cancellation surviving

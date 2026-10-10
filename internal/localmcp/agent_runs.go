@@ -165,6 +165,9 @@ func (s *Server) toolAgentResult(arguments json.RawMessage) (map[string]any, err
 	}
 	if r.MCPTask != nil && r.MCPTask.CancelledResult != nil {
 		r.Result = *r.MCPTask.CancelledResult
+		// The frozen task result is terminal while the wing may still be
+		// reconciling its separately persisted stop intent with the egg.
+		r.Phase = "terminal"
 	}
 	data := wingRunStatus(r)
 	data["ready"] = r.Result.Terminal()
