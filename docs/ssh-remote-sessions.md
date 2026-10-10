@@ -5,6 +5,11 @@ The host must already have a compatible Wingthing binary and an authenticated
 provider CLI. Wingthing uses the remote owner's configuration and credentials;
 it does not copy a workspace or install a binary.
 
+`wt attach`, including `forge:SESSION_ID` and `--remote HOST`, streams through
+the receiving wing and checks current client grants and session ownership.
+Start that wing beforehand. `--read-only` receives output without claiming input,
+resizing the terminal, or changing a native worker's turn ownership.
+
 For an aggregate MCP client, start an independent local-only wing on each
 machine beforehand. Remember an already running remote once, as in herdr:
 
@@ -73,6 +78,14 @@ the original idempotency key and request. An unreconciled admission reports an
 unknown outcome with that key; never submit a replacement key to recover it.
 Accepted eggs continue across SSH/MCP disconnects. Explicit `--roost URL`
 selects the existing hosted connector instead of the local/SSH directory.
+
+For a Claude parent with this transport injected automatically, use
+[`wt claude`](wt-claude.md). Its mailbox captures permitted wings, workspaces,
+tools, and bounds at launch, intersects current grants on each call, and records
+each child's actual owning wing. Adding a remote later does not widen an
+existing parent. Remote children use `agent_run`; remote conversation launches
+through `agent_start` are unavailable on this scoped mailbox. Legacy
+conversation-bound MCP connections retain their existing local-only ceiling.
 
 Register machines once to list their sessions together:
 
