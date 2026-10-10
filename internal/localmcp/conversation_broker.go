@@ -1018,8 +1018,12 @@ func (b *conversationBroker) dispatch(ctx context.Context, call conversationMail
 		return nil, brokerOutcomeNotDispatched, "host mailbox wing unavailable: " + err.Error() + "; the request was not dispatched"
 	}
 	defer client.Close()
-	proxy := &localWingProxy{version: b.version, client: client}
+	var forwardErr error
+	proxy := &localWingProxy{version: b.version, client: client, onForwardError: func(err error) { forwardErr = err }}
 	response, _ := proxy.handle(ctx, localMCPRequest{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: call.Method, Params: call.Params})
+	if forwardErr != nil && conversationBrokerMutations[tool] {
+		return nil, brokerOutcomeUnconfirmed, "host mailbox wing call was interrupted; its outcome is unconfirmed: " + forwardErr.Error()
+	}
 	response.ID = nil
 	data, err := json.Marshal(response)
 	if err != nil {

@@ -68,11 +68,10 @@ which is the entire stated worry.
 `wt mcp stdio --client <name>`, or `WT_MCP_CLIENT=<name>`.
 
 - **Named client** → its own namespace, and its own grants if configured.
-- **Named clients with one configured `owner`** → shared sessions, tasks, and
-  messages with distinct audit actors. This is the local Codex/Claude pair
+- **Named clients with one configured `owner`** → shared sessions and tasks with distinct audit actors. This is the local Codex/Claude pair
   pattern.
-- **Unnamed client** → the shared `default` principal, which is exactly today's behavior.
-  Backward compatible: nothing that works now breaks.
+- **Unnamed/default client** → the wing owner's web and remote MCP principal.
+  Older sessions with principal `""` or `"default"` remain visible to this client.
 - `require_client: true` in `~/.wingthing/clients.yaml` rejects unnamed and
   unconfigured clients outright. That is the lockdown switch, opt-in. When a
   clients file already names clients, an explicit unknown name is also rejected

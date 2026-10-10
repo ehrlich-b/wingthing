@@ -29,6 +29,7 @@ type Authority struct {
 	AllowedPaths         []string
 	EnforcePaths         bool
 	LegacyLocalDefault   bool
+	Unsandboxed          bool
 	SealedFS             bool
 }
 
@@ -82,6 +83,9 @@ func (s *Service) prepareLaunch(p Policy, a Authority, cwd string) (*Launch, err
 	if a.UserID == "" {
 		return nil, errors.New("authenticated user identity is required")
 	}
+	if a.Unsandboxed && (!p.Wing.AllowUnsandboxed || s.SharedHost || p.Wing.Org != "" || a.SealedFS) {
+		return nil, errors.New("unsandboxed launch requires allow_unsandboxed: true in a personal wing.yaml")
+	}
 	protected := len(wingpolicy.PasskeysForSubject(p.Keys, a.UserID)) > 0
 	if !a.Browser && (p.Wing.Locked || protected) {
 		return nil, errors.New("passkey authentication is required; MCP passkey ceremony is unavailable")
@@ -109,6 +113,9 @@ func (s *Service) prepareLaunch(p Policy, a Authority, cwd string) (*Launch, err
 	}
 	if !a.Browser && cwd != "" && wingpolicy.CanonicalSessionPath(start.CWD) != wingpolicy.CanonicalSessionPath(cwd) {
 		return nil, errors.New("working directory is outside current launch paths")
+	}
+	if a.Unsandboxed {
+		cfg = egg.UnsandboxedEggConfig()
 	}
 	copyCfg := *cfg
 	copyCfg.Audit = copyCfg.Audit || p.Audit

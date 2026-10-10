@@ -43,8 +43,7 @@ The current product has four partial views:
 | Connected wing roster | gateway memory/database | `wt wings` | no | yes | yes |
 | Live egg/PTY sessions | wing `eggs/` directory and egg sockets | yes | yes | embedded wing only | every accessible registered wing |
 | Headless agent runs | wing `wt.db` task tables | limited | yes | embedded wing only | no |
-| Prompt assets, loops, and swarms | wing `wt.db` and prompt store | yes | yes | no | no |
-| Owner-scoped agent messages | wing `wt.db` | no | yes | embedded wing only | no |
+| Prompt assets (CLI) | wing prompt store | yes | no | no | no |
 | Sandbox explanation | wing policy resolver | CLI | yes | embedded wing only | partial editor |
 | Session history and recordings | wing egg files | partial | no | no | yes |
 

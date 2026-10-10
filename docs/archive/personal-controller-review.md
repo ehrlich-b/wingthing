@@ -20,7 +20,7 @@ Mac binary and not an assumed deployment of mainline. Mainline is `26f2400`.
 | Area | Already present in the reviewed snapshot | New local draft / remaining boundary |
 | --- | --- | --- |
 | Session runtime | Per-session egg process, PTY, sandbox and Unix control socket; detach and attach; native conversation continuation metadata | Durable native Claude journal, exact lifecycle/read/wait, receipt reservation, single-writer preview lease, typed unavailable states |
-| MCP | Local stdio, self-hosted HTTP and explicit wing-targeted native direct tools; terminal start/read/send/wait/stop; supervised runs, messages, loops and swarms | Logical conversation operations, linked launch reservations, bound root/parent identity and configured parent MCP |
+| MCP | Local stdio, self-hosted HTTP and explicit wing-targeted native direct tools; terminal start/read/send/wait/stop; supervised runs, conversation trees and sandbox controls | Logical conversation operations, linked launch reservations, bound root/parent identity and configured parent MCP |
 | Persistence | Egg state, native provider identity and headless task/event store | Separate logical conversation, retained executions, transactional event imports, delivery/checkpoint cursors and pending input IDs |
 | Browser | Wing/session inventory, terminal attachment, chat view, continuation and session files | Search/filter/accessibility, wing-qualified actions/caches, native linked task tree and transcript/tool reader |
 | Remote | SSH receiver and remote CLI path in the reviewed unpublished snapshot | Preview channel preflight, truthful EOF/disconnect, writer arbitration and real transport/host capability receipts |

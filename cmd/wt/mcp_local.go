@@ -52,7 +52,7 @@ func mcpCmd() *cobra.Command {
 	stdioCmd.Flags().StringVar(&conversationID, "conversation", "", "bind child launches to an existing owner conversation")
 	stdioCmd.Flags().StringVar(&executionID, "execution", "", "exact parent execution session served by --host-mailbox")
 	stdioCmd.Flags().StringVar(&hostMailbox, "host-mailbox", "", "forward to the host broker registered for this parent execution")
-	stdioCmd.Flags().BoolVar(&unsandboxed, "unsandboxed", false, "trust an outer VM/container boundary for all sessions and prompt runs")
+	stdioCmd.Flags().BoolVar(&unsandboxed, "unsandboxed", false, "request the outer VM/container boundary (requires allow_unsandboxed in wing.yaml)")
 	cmd.AddCommand(stdioCmd)
 	cmd.AddCommand(connectMCPCmd())
 	return cmd

@@ -208,8 +208,17 @@ Each egg socket and token is readable only by the local OS user. Processes runni
 as that user can bypass MCP and invoke `wt` directly, so local MCP principals are
 an accident-prevention and attribution boundary, not hostile same-UID isolation.
 
-`wt mcp stdio --client NAME` records NAME on sessions it creates. Named MCP clients
-see and control only their sessions; the human CLI still sees all sessions. Every
+`wt mcp stdio` forwards to the already-running personal wing's `control.sock` in
+its `WINGTHING_DIR`. The state directory is mode 0700 and the socket mode 0600;
+the wing checks the peer UID with `getpeereid` on macOS and `SO_PEERCRED` on Linux.
+The handshake negotiates the control protocol and wing ID. Shared and organization
+wings do not serve this socket. Stdio never starts a wing or opens the session store.
+
+The wing resolves `--client NAME` using its `clients.yaml`. Sessions are owned by
+the wing's owner user; the unnamed/default client shares that user's web and remote
+MCP principal, including older sessions with an empty or `default` principal.
+Named MCP clients see and control their separate logical principals unless mapped
+to a common owner. The human CLI still sees all sessions. Every
 MCP tool call appends a timestamp, principal, tool, target, decision, and argument
 digest to `~/.wingthing/mcp-audit.log`. `~/.wingthing/clients.yaml` can require an
 explicit client, restrict grants, and bound sessions/spawns. Real isolation between
@@ -319,6 +328,9 @@ the denial locally, although the old gateway can observe the attempted connectio
 
 On a dedicated sandbox VM, `wt egg ... --unsandboxed` and
 `wt mcp stdio --unsandboxed` explicitly make the outer VM the agent boundary.
+Local MCP requires `allow_unsandboxed: true` in the personal wing's `wing.yaml`;
+the flag requests a profile and cannot override wing paths, grants, bounds, locks,
+or ownership. The setting is off by default and is rechecked for every call.
 Wingthing keeps terminal persistence and the control/audit plane but applies no
 nested filesystem, network, syscall, or resource restrictions. The MCP server
 announces `outer-boundary` mode and records it on every audit entry. Because the
@@ -611,7 +623,8 @@ writable agent configuration remain endpoint risks, even with filtered egress.
 ### Trusted outer VM
 
 `wt egg ... --unsandboxed` and `wt mcp stdio --unsandboxed` are explicit startup
-choices for a dedicated VM boundary. They keep durable sessions, ownership
+choices for a dedicated VM boundary. Local MCP requires an independently running
+personal wing with `allow_unsandboxed: true` in its `wing.yaml`. They keep durable sessions, ownership
 checks and audit, but apply no nested filesystem, network, syscall or resource
 restriction. Capabilities/session JSON and audit report `outer-boundary`; a model
 cannot toggle it per tool call. Host and hypervisor administrators remain trusted.

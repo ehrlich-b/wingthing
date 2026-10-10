@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -286,5 +287,132 @@ func TestAgentRunSurvivesStdioClientExit(t *testing.T) {
 	server := testWingServer(t, &Server{Version: "test", Cfg: service.Config, Principal: "foreign", Logs: &audit})
 	if _, _, err := server.ownedAgentRun(task.ID); err == nil {
 		t.Fatal("foreign owner observed run")
+	}
+}
+
+// The outer boundary selects a launch profile; all admission still belongs to
+// the wing, including revocation on an already-open connection.
+func TestOuterBoundaryCannotOverridePolicy(t *testing.T) {
+	service, wc := localSocketPolicyFixture(t)
+	home, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home = config.CanonicalProviderPath(home)
+	work := filepath.Join(home, "workspace")
+	outside := filepath.Join(home, "outside")
+	for _, dir := range []string{work, outside} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service.Home = home
+	wc.Paths = config.PathList{{Path: work}}
+	admission := NewMCPAdmissionState()
+	listener, err := ListenLocalWingControl(t.Context(), "test", service, "owner", admission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if _, err := controlsocket.Dial(t.Context(), "state", controlsocket.Hello{Unsandboxed: true}); err == nil || !strings.Contains(err.Error(), "allow_unsandboxed: true") {
+		t.Fatalf("missing opt-in: %v", err)
+	}
+	wc.AllowUnsandboxed = true
+	if err := os.WriteFile("state/clients.yaml", []byte("clients:\n  default:\n    grants: [terminal.start, capabilities.read]\n    bounds: {max_spawns_per_hour: 1}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := controlsocket.Dial(t.Context(), "state", controlsocket.Hello{Unsandboxed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if client.Welcome.Isolation != "outer-boundary" {
+		t.Fatal("wing did not declare launch profile")
+	}
+	spawned := make(chan *wingsession.Launch, 1)
+	registered := make(chan string, 1)
+	service.Register = func(id string) error { registered <- id; return nil }
+	token := filepath.Join(home, "fixture.token")
+	if err := os.WriteFile(token, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	service.Spawn = func(launch *wingsession.Launch, opts wingsession.StartOptions) (*egg.Client, error) {
+		if launch.Identity.UserID != "owner" || opts.Egg.Principal != wingsession.UserPrincipal("owner") {
+			return nil, fmt.Errorf("caller replaced wing authority")
+		}
+		spawned <- launch
+		return egg.Dial(filepath.Join(home, "fixture.sock"), token)
+	}
+	request := func(cwd string) json.RawMessage {
+		b, _ := json.Marshal(map[string]any{"cwd": cwd, "command": []string{"fixture-command"}})
+		return b
+	}
+	result, denied, err := client.Call(t.Context(), "terminal_start", request(work))
+	if err != nil || denied || result["isolation"] != "outer-boundary" {
+		t.Fatalf("opted-in launch: %v %v %v", result, denied, err)
+	}
+	launch := <-spawned
+	if egg.RequiresSandbox(launch.Config, "") || launch.CWD != work {
+		t.Fatal("wing did not select the requested launch profile")
+	}
+	if id := <-registered; id != result["session"] {
+		t.Fatal("acknowledged before wing registration")
+	}
+	for _, args := range []json.RawMessage{request(outside), json.RawMessage(`{"cwd":"` + work + `","principal":"other","allow_unsandboxed":true}`)} {
+		if _, denied, err := client.Call(t.Context(), "terminal_start", args); err == nil && !denied {
+			t.Fatal("outer boundary bypassed paths or accepted client policy")
+		}
+	}
+	select {
+	case <-spawned:
+		t.Fatal("denied call spawned")
+	default:
+	}
+	if err := os.WriteFile("state/clients.yaml", []byte("clients:\n  default:\n    grants: [terminal.read]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, denied, err := client.Call(t.Context(), "terminal_start", request(work)); err != nil || !denied {
+		t.Fatalf("outer boundary bypassed grants: %v %v", denied, err)
+	}
+	if err := os.WriteFile("state/clients.yaml", []byte("clients:\n  default:\n    grants: [terminal.start]\n    bounds: {max_spawns_per_hour: 1}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if result, denied, err := client.Call(t.Context(), "terminal_start", request(work)); err != nil || !denied || !strings.Contains(fmt.Sprint(result["error"]), "max_spawns_per_hour") {
+		t.Fatalf("outer boundary bypassed bounds: %v %v %v", result, denied, err)
+	}
+	active := filepath.Join("state", "eggs", "active")
+	if err := os.MkdirAll(active, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]string{"egg.pid": fmt.Sprint(os.Getpid()), "egg.meta": "kind=command\ncwd=" + work + "\n"} {
+		if err := os.WriteFile(filepath.Join(active, name), []byte(value), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := eggclient.WriteEggOwner(active, "owner", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := eggclient.WriteSessionPrincipal(active, wingsession.UserPrincipal("owner")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("state/clients.yaml", []byte("clients:\n  default:\n    grants: [terminal.start]\n    bounds: {max_sessions: 1}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if result, denied, err := client.Call(t.Context(), "terminal_start", request(work)); err != nil || !denied || !strings.Contains(fmt.Sprint(result["error"]), "max_sessions") {
+		t.Fatalf("outer boundary bypassed session bounds: %v %v %v", result, denied, err)
+	}
+	wc.Locked = true
+	if _, _, err := client.Call(t.Context(), "terminal_start", request(work)); err == nil {
+		t.Fatal("outer boundary bypassed wing lock")
+	}
+	wc.Locked = false
+	wc.AllowUnsandboxed = false
+	if _, _, err := client.Call(t.Context(), "terminal_start", request(work)); err == nil || !strings.Contains(err.Error(), "allow_unsandboxed") {
+		t.Fatalf("stale unsandboxed lease: %v", err)
+	}
+	select {
+	case <-spawned:
+		t.Fatal("revoked call spawned")
+	default:
 	}
 }

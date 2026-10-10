@@ -263,6 +263,7 @@ func TestSessionForkIdentityMatchesFreshLaunchOnEverySurface(t *testing.T) {
 			switch surface {
 			case "local MCP unsandboxed":
 				s.Unsandboxed = true
+				s.Sessions.Policy().Wing.AllowUnsandboxed = true
 			case "direct org member":
 				policy, policyErr := resolveDirectMCPPolicy(wc, cwd, false, webrtcpkg.PeerIdentity{UserID: req.SenderUserID, Email: req.SenderEmail, OrgRole: req.SenderOrgRole})
 				if policyErr != nil {

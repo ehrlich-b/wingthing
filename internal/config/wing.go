@@ -20,27 +20,28 @@ const (
 
 // WingConfig holds wing-specific settings persisted in ~/.wingthing/wing.yaml.
 type WingConfig struct {
-	WingID         string         `yaml:"wing_id"`
-	Label          string         `yaml:"label,omitempty"` // display name shown in the web UI
-	Roost          string         `yaml:"roost,omitempty"`
-	Org            string         `yaml:"org,omitempty"`
-	Paths          PathList       `yaml:"paths,omitempty"`
-	Root           string         `yaml:"root,omitempty"` // compat: folded into Paths on load
-	Labels         []string       `yaml:"labels,omitempty"`
-	EggConfig      string         `yaml:"egg_config,omitempty"`
-	Conv           string         `yaml:"conv,omitempty"`
-	Audit          bool           `yaml:"audit,omitempty"`
-	Debug          bool           `yaml:"debug,omitempty"`
-	Locked         bool           `yaml:"locked,omitempty"`   // explicit lock mode toggle
-	Spectate       bool           `yaml:"spectate,omitempty"` // allow spectator (read-only) session viewing
-	AuthTTL        string         `yaml:"auth_ttl,omitempty"` // passkey auth token duration (default "1h")
-	AllowKeys      []AllowKey     `yaml:"allow_keys,omitempty"`
-	Admins         []string       `yaml:"admins,omitempty"`          // emails with admin role (see all sessions, all paths)
-	Exports        []ExportTarget `yaml:"exports,omitempty"`         // explicitly allowed browser export destinations
-	IdleTimeout    string         `yaml:"idle_timeout,omitempty"`    // kill sessions idle for this long (e.g. "4h")
-	ConnectionMode string         `yaml:"connection_mode,omitempty"` // "relay" (default), "p2p", "p2p_only", "direct"
-	HostedRelay    string         `yaml:"hosted_relay,omitempty"`    // "allow" (default) or "deny"
-	Conversations  string         `yaml:"conversations,omitempty"`   // opt-in stable host mailbox: "enabled" or "disabled" (default)
+	WingID           string         `yaml:"wing_id"`
+	Label            string         `yaml:"label,omitempty"` // display name shown in the web UI
+	Roost            string         `yaml:"roost,omitempty"`
+	Org              string         `yaml:"org,omitempty"`
+	Paths            PathList       `yaml:"paths,omitempty"`
+	Root             string         `yaml:"root,omitempty"` // compat: folded into Paths on load
+	Labels           []string       `yaml:"labels,omitempty"`
+	EggConfig        string         `yaml:"egg_config,omitempty"`
+	Conv             string         `yaml:"conv,omitempty"`
+	Audit            bool           `yaml:"audit,omitempty"`
+	Debug            bool           `yaml:"debug,omitempty"`
+	AllowUnsandboxed bool           `yaml:"allow_unsandboxed,omitempty"` // personal local MCP may request the outer host boundary
+	Locked           bool           `yaml:"locked,omitempty"`            // explicit lock mode toggle
+	Spectate         bool           `yaml:"spectate,omitempty"`          // allow spectator (read-only) session viewing
+	AuthTTL          string         `yaml:"auth_ttl,omitempty"`          // passkey auth token duration (default "1h")
+	AllowKeys        []AllowKey     `yaml:"allow_keys,omitempty"`
+	Admins           []string       `yaml:"admins,omitempty"`          // emails with admin role (see all sessions, all paths)
+	Exports          []ExportTarget `yaml:"exports,omitempty"`         // explicitly allowed browser export destinations
+	IdleTimeout      string         `yaml:"idle_timeout,omitempty"`    // kill sessions idle for this long (e.g. "4h")
+	ConnectionMode   string         `yaml:"connection_mode,omitempty"` // "relay" (default), "p2p", "p2p_only", "direct"
+	HostedRelay      string         `yaml:"hosted_relay,omitempty"`    // "allow" (default) or "deny"
+	Conversations    string         `yaml:"conversations,omitempty"`   // opt-in stable host mailbox: "enabled" or "disabled" (default)
 
 	// P2P / Direct mode settings
 	ICEServers []ICEServer `yaml:"ice_servers,omitempty"` // STUN/TURN servers for WebRTC

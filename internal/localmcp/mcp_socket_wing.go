@@ -35,7 +35,7 @@ func ListenLocalWingControl(ctx context.Context, version string, sessions *wings
 		if err != nil {
 			return controlsocket.Welcome{}, nil, err
 		}
-		welcome := controlsocket.Welcome{Principal: server.clientPrincipal(), Actor: server.clientActor(), Grants: server.Grants, Tools: server.tools}
+		welcome := controlsocket.Welcome{Principal: server.clientPrincipal(), Actor: server.clientActor(), Grants: server.Grants, Tools: server.tools, Isolation: server.sessionIsolationMode()}
 		return welcome, func(callCtx context.Context, request control.DirectRequest) control.DirectResponse {
 			// Resolve each call against live wing policy and clients.yaml. A connection
 			// is not a lease on permissions revoked after its handshake.
@@ -53,7 +53,7 @@ func resolveLocalWingClient(version string, sessions *wingsession.Service, owner
 	if sessions.SharedHost || policy.Wing == nil || policy.Wing.Org != "" {
 		return nil, errors.New("local wing control is available only on personal wings")
 	}
-	if hello.Unsandboxed {
+	if hello.Unsandboxed && !policy.Wing.AllowUnsandboxed {
 		return nil, errors.New("unsandboxed launch requires allow_unsandboxed: true in wing.yaml")
 	}
 	if hello.Execution != "" {
@@ -110,7 +110,7 @@ func resolveLocalWingClient(version string, sessions *wingsession.Service, owner
 	server := &Server{Version: version, Cfg: sessions.Config, Logs: os.Stderr, Sessions: sessions,
 		Principal: owner, Actor: principal, MCPClient: principal, Surface: control.SurfaceLocalMCP, sessionRole: "owner",
 		identity: eggclient.EggIdentity{UserID: ownerUserID, AllowedPaths: paths}, allowedPaths: paths, enforcePathBounds: len(policy.Wing.Paths) > 0,
-		BoundConversation: hello.Conversation, admission: admission,
+		BoundConversation: hello.Conversation, admission: admission, Unsandboxed: hello.Unsandboxed,
 		legacyLocalDefault: owner == wingsession.UserPrincipal(ownerUserID),
 	}
 	if configured {

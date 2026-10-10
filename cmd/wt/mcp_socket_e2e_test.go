@@ -130,6 +130,10 @@ func TestStdioStartedSessionSurvivesClientExitAndIsWebVisible(t *testing.T) {
 	}
 	process := exec.Command(exe, "-test.run=^TestWTStdioProcessFixture$")
 	process.Env = append(os.Environ(), "WT_STDIO_FIXTURE=1")
+	if binary := os.Getenv("WT_TEST_BINARY"); binary != "" {
+		process = exec.Command(binary, "mcp", "stdio")
+		process.Env = os.Environ()
+	}
 	process.Stderr = os.Stderr
 	input, err := process.StdinPipe()
 	if err != nil {

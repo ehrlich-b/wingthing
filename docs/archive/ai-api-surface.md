@@ -11,16 +11,16 @@ why they do not add up to that goal, and what the target shape is.
 
 There are five surfaces. Local stdio MCP, native direct MCP, and authenticated shared-roost HTTP MCP
 now share a versioned operation registry for typed terminal, agent-run,
-sandbox, message, and wing-inventory vocabulary. The REST and encrypted
+sandbox, conversation, and wing-inventory vocabulary. The REST and encrypted
 browser-tunnel surfaces still use separate runtime contracts.
 
 | # | Surface | Transport | Auth | What it can do |
 |---|---------|-----------|------|----------------|
-| 1 | `wt mcp stdio` (`cmd/wt/mcp_local.go`) | stdio, local only | OS user plus optional owner, actor, grants, and bounds | Agent orchestration, terminals, messages, prompts, loops, swarms |
-| 2 | `POST /mcp` (`internal/relay/mcp.go`) | HTTP | OAuth 2.0, dynamic client registration, owner-scoped native controls, role-scoped executable tools, audit observer | Authorized wing roster, shared-roost terminals, agent runs, messages, sandbox explanation, and configured privileged tools |
+| 1 | `wt mcp stdio` (`cmd/wt/mcp_local.go`) | stdio to local wing socket | Same-UID peer; wing-resolved owner, actor, grants, and bounds | Agent runs, terminals, conversations, sandbox explanation |
+| 2 | `POST /mcp` (`internal/relay/mcp.go`) | HTTP | OAuth 2.0, dynamic client registration, owner-scoped native controls, role-scoped executable tools, audit observer | Authorized wing roster, shared-roost terminals, agent runs, conversations, sandbox explanation, and configured privileged tools |
 | 3 | REST `/api/...` (`internal/relay/`) | HTTP | session cookie / bearer | Account, usage, passkeys, ntfy, orgs, and an authorized online-wing roster |
 | 4 | Encrypted tunnel (`internal/ws/`) | WebSocket, application-encrypted through relay | passkey + device token | `dir.list`, `sessions.list`, `sessions.history`, `pty.*`, `egg.config_update`, … |
-| 5 | `wt mcp connect` (`cmd/wt/mcp_connect.go`) | stdio to the parent agent, authenticated WebRTC/DTLS to selected wings | device login, coordinator-filtered roster, wing-derived owner/role/grants/bounds | Qualified multi-wing terminal, run, message, and sandbox controls on unlocked wings |
+| 5 | `wt mcp connect` (`cmd/wt/mcp_connect.go`) | stdio to the parent agent, authenticated WebRTC/DTLS to selected wings | device login, coordinator-filtered roster, wing-derived owner/role/grants/bounds | Qualified multi-wing terminal, run, conversation, and sandbox controls on unlocked wings |
 
 For pre-isolated VMs, the CLI and local MCP adapters share an explicit trusted
 outer-boundary mode. It is selected at CLI/MCP-server startup, reported through
@@ -37,12 +37,11 @@ cannot toggle it per call.
 
 ### The problems
 
-1. **Control handlers still live in the stdio adapter.** `internal/control`
-   now owns names, schemas, grants, annotations, transport availability,
-   authority, and audit targeting. Surface 2 wraps the wing-owned handlers
-   in-process and supplies authenticated owner/actor identity. Moving those
-   handlers behind a transport-independent service remains the maintainability
-   step that gives CLI, stdio, HTTP, and future REST one implementation.
+1. **MCP execution is wing-owned.** `internal/control` owns names, schemas,
+   grants, annotations, transport availability, authority, and audit targeting.
+   Local stdio forwards to the wing socket; the socket and direct transport use
+   one dispatcher. Browser and MCP session handlers share `wingsession.Service`.
+   The REST resource inventory still needs the same runtime contract.
 2. **There is no REST API for agent orchestration at all.** Surface 3 is account
    plumbing. `GET /api/app/wings` deliberately returns routing identity rather
    than host/project details, because the relay is a dumb pipe and knows nothing
@@ -74,7 +73,7 @@ One control plane, three adapters, one vocabulary.
 
 ```text
 CLI --json --------\
-MCP stdio or HTTP --+--> wing control plane --> sessions / runs / prompts
+MCP stdio or HTTP --+--> wing control plane --> sessions / runs / conversations
 REST /api/v1 ------/       principal + grant + bound + audit
 ```
 
@@ -141,11 +140,12 @@ iterations, concurrency), and a log line. Local stdio keeps its
 
 ## Sequencing
 
-1. **In progress:** continue extracting the control handlers themselves from
-   `cmd/wt/mcp_local.go`; operation names, schemas, grants, annotations, authority,
-   transport availability, and audit targeting already live in `internal/control`.
-2. Put the contract behind the wing-owned local socket (P1 in
-   `local-first-architecture.md`), so clients stop doing per-egg filesystem discovery.
+1. **Done for session execution:** wing-owned `wingsession.Service` implements
+   the launch and lifecycle policy used by browser and MCP handlers. Operation
+   definitions and audit targeting live in `internal/control`.
+2. **Done for local stdio:** the owner-only wing socket dispatches the same direct
+   control contract. Stdio shapes arguments and forwards; it does not inspect eggs,
+   open the store, or start a wing.
 3. **Done for the current MCP adapters:** define the operation registry once and
    derive local, HTTP, and direct schemas from it.
 4. **Done for the native remote subset:** carry the registry operations through an
