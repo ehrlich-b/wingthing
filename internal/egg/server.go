@@ -66,6 +66,7 @@ type Session struct {
 	ID             string
 	PID            int
 	processGroupID int
+	processTree    *runProcessTree
 	codexRun       bool
 	nonblockInput  bool
 	Agent          string
@@ -979,6 +980,18 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		vtermCh: make(chan vtermMsg, 256), useVTE: rc.VTE, sb: sb, cmd: cmd,
 		done: make(chan struct{}), debug: rc.Debug, audit: rc.Audit,
 	}
+	sess.processTree, err = prepareProcessTree(cmd, sb)
+	if err != nil {
+		if sb != nil {
+			_ = sb.Destroy()
+		}
+		return fmt.Errorf("prepare process containment: %w", err)
+	}
+	defer func() {
+		if sess.PID == 0 && sess.processTree.boundary != nil {
+			_ = sess.processTree.boundary.close()
+		}
+	}()
 	captureHome := home
 	processStarted := make(chan struct{})
 	startupComplete := false
@@ -1006,6 +1019,14 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	}
 
 	size := &pty.Winsize{Cols: uint16(rc.Cols), Rows: uint16(rc.Rows)}
+	releaseProvider, closeGate, err := containmentLaunch(cmd)
+	if err != nil {
+		if sb != nil {
+			_ = sb.Destroy()
+		}
+		return fmt.Errorf("prepare containment launch barrier: %w", err)
+	}
+	defer closeGate()
 	ptmx, err := pty.StartWithSize(cmd, size)
 	if err != nil {
 		if sb != nil {
@@ -1022,14 +1043,27 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		}
 		return fmt.Errorf("start pty: %v", err)
 	}
-	cancellableInput, err := s.prepareSessionPTYInput(ptmx, rc, codexRun)
-	if err != nil {
+	sess.PID, sess.processGroupID = cmd.Process.Pid, cmd.Process.Pid
+	abortProvider := func() {
+		closeGate()
 		_ = ptmx.Close()
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
+		close(sess.done)
+		if _, err := sess.processTree.kill(sess); err != nil {
+			log.Printf("egg: containment after startup failure: %v", err)
+		}
 		if sb != nil {
 			_ = sb.Destroy()
 		}
+	}
+	if err := sess.processTree.start(sess.PID); err != nil {
+		abortProvider()
+		return fmt.Errorf("attach provider containment: %w", err)
+	}
+	cancellableInput, err := s.prepareSessionPTYInput(ptmx, rc, codexRun)
+	if err != nil {
+		abortProvider()
 		return fmt.Errorf("prepare cancellable PTY input: %w", err)
 	}
 
@@ -1040,8 +1074,11 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		}
 	}
 
-	sess.PID, sess.processGroupID = cmd.Process.Pid, cmd.Process.Pid
 	sess.ptmx, sess.nonblockInput = ptmx, cancellableInput
+	if err := releaseProvider(); err != nil {
+		abortProvider()
+		return fmt.Errorf("release contained provider: %w", err)
+	}
 
 	// Set up input auditor if audit is enabled
 	if rc.Audit {
@@ -1144,6 +1181,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		sess.exitCode = exitCode
 		sess.mu.Unlock()
 		close(sess.done)
+		if survivors, err := sess.processTree.kill(sess); err != nil || len(survivors) != 0 {
+			log.Printf("egg: provider descendant cleanup: survivors=%v error=%v", survivors, err)
+		}
 		log.Printf("egg: session %s exited with code %d", sessionID, exitCode)
 
 		if err := ptmx.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
@@ -1398,19 +1438,10 @@ func (s *Server) shutdown() {
 		sess.mu.Lock()
 		sess.cancelled = true
 		sess.mu.Unlock()
-		if err := sess.cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			log.Printf("egg: signal session during shutdown: %v", err)
-		}
-		time.Sleep(3 * time.Second)
-		if err := sess.cmd.Process.Signal(syscall.Signal(0)); err == nil {
-			if err := sess.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-				log.Printf("egg: kill session during shutdown: %v", err)
-			}
-		}
-		if sess.sb != nil {
-			if err := sess.sb.Destroy(); err != nil {
-				log.Printf("egg: destroy sandbox during shutdown: %v", err)
-			}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := stopSessionProcesses(ctx, sess, 3*time.Second); err != nil {
+			log.Printf("egg: terminate session during shutdown: %v", err)
 		}
 	}
 	if s.grpcServer != nil {
@@ -1710,7 +1741,7 @@ func (s *Server) Kill(ctx context.Context, req *pb.KillRequest) (*pb.KillRespons
 	if s.runTurns != nil {
 		s.runTurns.stopActive()
 	}
-	if err := terminateSession(ctx, sess, 3*time.Second); err != nil {
+	if err := stopSessionProcesses(ctx, sess, 3*time.Second); err != nil {
 		return nil, status.Errorf(codes.Internal, "terminate session: %v", err)
 	}
 	return &pb.KillResponse{}, nil
@@ -2277,19 +2308,11 @@ func (s *Server) idleWatchdog(sess *Session) {
 		idle := sess.idleDuration()
 		if idle > sess.idleTimeout {
 			log.Printf("egg: idle timeout (%s idle, limit %s) — terminating", idle.Round(time.Second), sess.idleTimeout)
-			if sess.cmd != nil && sess.cmd.Process != nil {
-				if err := sess.cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
-					log.Printf("egg: signal idle session: %v", err)
-				}
-				select {
-				case <-sess.done:
-					return
-				case <-time.After(5 * time.Second):
-					if err := sess.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-						log.Printf("egg: kill idle session: %v", err)
-					}
-				}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := stopSessionProcesses(ctx, sess, 5*time.Second); err != nil {
+				log.Printf("egg: terminate idle session: %v", err)
 			}
+			cancel()
 			// Wait for normal cleanup path (cmd.Wait -> close(done) -> gRPC stop)
 			<-sess.done
 			return

@@ -426,8 +426,8 @@ func (rt *runTurnRuntime) finish(run *ownedRunTurn, status string, kind agent.Er
 	if kill && rt.backend.Kill != nil {
 		var err error
 		result.SurvivingDescendants, err = rt.backend.Kill()
-		if err != nil {
-			result.ContainmentError = "Process-group cleanup or descendant inventory could not be verified."
+		if err != nil || len(result.SurvivingDescendants) != 0 {
+			result.ContainmentError = "Provider descendant cleanup or inventory could not be verified."
 		}
 	}
 	result.Status, result.FailureKind, result.EndedAt = status, kind, time.Now().UTC()

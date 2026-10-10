@@ -499,7 +499,7 @@ func TestRunProcessHelper(t *testing.T) {
 	os.Exit(0)
 }
 
-func TestDeadlineKillsProcessGroupAndReportsSurvivors(t *testing.T) {
+func TestDeadlineKillsProcessGroupAndDetachedDescendants(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=^TestRunProcessHelper$")
 	cmd.Env = append(os.Environ(), "WT_RUN_PROCESS_FIXTURE=root")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -541,22 +541,18 @@ func TestDeadlineKillsProcessGroupAndReportsSurvivors(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := waitRunFixture(t, fixture)
-	if result.Status != "timeout" || len(result.SurvivingDescendants) != 1 || result.SurvivingDescendants[0].PID != pids["escape"] {
+	if result.Status != "timeout" || len(result.SurvivingDescendants) != 0 || result.ContainmentError != "" {
 		t.Fatalf("containment result: %+v", result)
 	}
 	<-done
-	if err := syscall.Kill(pids["escape"], 0); err != nil {
-		t.Fatalf("setsid survivor not alive: %v", err)
-	}
 	snapshot, err := processSnapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, alive := snapshot[pids["root"]]; alive {
-		t.Fatal("root survived process-group kill")
-	}
-	if _, alive := snapshot[pids["child"]]; alive {
-		t.Fatal("child survived process-group kill")
+	for stage, pid := range pids {
+		if process, alive := snapshot[pid]; alive && !process.zombie {
+			t.Fatalf("%s survived containment: %+v", stage, process)
+		}
 	}
 }
 

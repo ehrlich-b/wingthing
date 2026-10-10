@@ -13,7 +13,11 @@ func nativeRunSupported(kind, agent string, command []string, codexRun bool) boo
 }
 
 func (s *Server) sessionRunTurns(sess *Session, home, providerID string) *runTurnRuntime {
-	tree := &runProcessTree{root: sess.PID}
+	tree := sess.processTree
+	if tree == nil {
+		tree = &runProcessTree{root: sess.PID}
+		sess.processTree = tree
+	}
 	setRoot := func() {
 		tree.mu.Lock()
 		tree.root = sess.PID

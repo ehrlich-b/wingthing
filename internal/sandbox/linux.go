@@ -618,3 +618,12 @@ const (
 	seccompRetAllow = 0x7fff0000
 	seccompRetErrno = 0x00050000
 )
+
+// CgroupPath lets the egg reuse the resource cgroup for lifecycle containment.
+// The launch barrier prevents forks before both attachment and PostStart finish.
+func (s *linuxSandbox) CgroupPath() string {
+	if s.cgroup != nil {
+		return s.cgroup.path
+	}
+	return ""
+}
