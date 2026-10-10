@@ -5,8 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestRemotesValidation(t *testing.T) {
@@ -63,7 +66,7 @@ func TestRemotesRoundTripAtomicOwnerOnly(t *testing.T) {
 		t.Fatal("loading missing registry wrote files")
 	}
 	want := map[string]Remote{
-		"work": {SSHTarget: "me@host", WingthingDir: "/home/me/wt state/it's isolated"},
+		"work": {SSHTarget: "me@host", WingthingDir: "/home/me/wt state/it's isolated", WTBinary: "/home/me/wt builds/wt-dev"},
 		"lab":  {SSHTarget: "lab-alias"},
 	}
 	path := filepath.Join(dir, "remotes.yaml")
@@ -96,6 +99,65 @@ func TestRemotesRoundTripAtomicOwnerOnly(t *testing.T) {
 	got, err = LoadRemotes(dir)
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatal("invalid save changed the previous registry")
+	}
+}
+
+func TestWTBinaryValidation(t *testing.T) {
+	for _, binary := range []string{"wt", "wt-dev", "wt-preview", "wt_2.0+dev", "/home/me/bin/wt-dev", "/opt/wt builds/wt"} {
+		if err := ValidateWTBinary(binary); err != nil {
+			t.Errorf("valid binary %q: %v", binary, err)
+		}
+	}
+	invalid := []string{"", ".", "..", "/", "/bin/", "~/bin/wt", "./wt", "bin/wt", "wt --client", "-wt", "/bin/wt\n", "/bin/wt\r", "/bin/wt\x00", "/bin/wt\t", "/bin/wt\x1b", "/bin/wt\u00a0"}
+	for _, meta := range "'\"`$;&|<>(){}[]*?\\~!#" {
+		invalid = append(invalid, "/bin/wt"+string(meta))
+	}
+	for _, binary := range invalid {
+		if err := ValidateWTBinary(binary); err == nil {
+			t.Errorf("accepted invalid binary %q", binary)
+		}
+		if binary == "" { // Omitted optional fields remain valid.
+			continue
+		}
+		dir := t.TempDir()
+		if err := SaveRemotes(dir, map[string]Remote{"work": {SSHTarget: "host", WTBinary: binary}}); err == nil {
+			t.Errorf("saved invalid binary %q", binary)
+		}
+		data, err := yaml.Marshal(remotesFile{Remotes: map[string]Remote{"work": {SSHTarget: "host", WTBinary: binary}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "remotes.yaml"), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadRemotes(dir); err == nil {
+			t.Errorf("loaded invalid binary %q", binary)
+		}
+	}
+}
+
+func TestRemotesLoadWithoutWTBinary(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "remotes.yaml")
+	data := "remotes:\n  legacy:\n    ssh_target: old-host\n  verified:\n    ssh_target: host\n    wingthing_dir: /state\n    wing_id: remote-wing\n    control_socket: /state/control.sock\n    control_version: v1\n"
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	remotes, err := LoadRemotes(dir)
+	if err != nil || len(remotes) != 2 {
+		t.Fatalf("old registry: %v %v", remotes, err)
+	}
+	for name, remote := range remotes {
+		if remote.WTBinary != "" || remote.Binary() != BinaryName() {
+			t.Errorf("old entry %s lost PATH default: %+v", name, remote)
+		}
+	}
+	if err := SaveRemotes(dir, remotes); err != nil {
+		t.Fatal(err)
+	}
+	wire, err := os.ReadFile(path)
+	if err != nil || strings.Contains(string(wire), "wt_binary") {
+		t.Fatalf("optional field not omitted: %s %v", wire, err)
 	}
 }
 

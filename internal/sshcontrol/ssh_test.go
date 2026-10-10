@@ -3,6 +3,7 @@ package sshcontrol_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,16 +44,23 @@ func TestSSHInspectAndPinnedForward(t *testing.T) {
 	transport := sshcontrol.Transport{SSHPath: h.SSHPath, SocketDir: h.Root}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	remote, err := transport.Inspect(ctx, "host", "~/state with space/it's isolated", "client")
+	remote, err := transport.Inspect(ctx, "host", "~/state with space/it's isolated", "/opt/wt builds/wt-dev", "client")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if remote.WingID != "remote-wing" || remote.WingthingDir != meta.WingthingDir {
+	if remote.WingID != "remote-wing" || remote.WingthingDir != meta.WingthingDir || remote.WTBinary != "/opt/wt builds/wt-dev" {
 		t.Fatalf("metadata: %+v", remote)
 	}
 	wire, err := os.ReadFile(filepath.Join(h.Root, "host.inspect"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	var inspectArgs []string
+	if err := json.Unmarshal(wire, &inspectArgs); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(inspectArgs[len(inspectArgs)-1], "'/opt/wt builds/wt-dev' mcp inspect --client 'client'") {
+		t.Fatalf("remote executable was not quoted: %v", inspectArgs)
 	}
 	for _, want := range []string{"BatchMode=yes", "StrictHostKeyChecking=yes", "UpdateHostKeys=no", "~/state with space/it"} {
 		if !strings.Contains(string(wire), want) {
@@ -93,12 +101,53 @@ func TestSSHInspectAndPinnedForward(t *testing.T) {
 		t.Fatal("changed wing accepted")
 	}
 }
+
+func TestSSHInspectUsageErrorsSuggestWTBinary(t *testing.T) {
+	for _, test := range []struct {
+		diagnostic string
+		code       int
+		tooOld     bool
+	}{
+		{"Error: unknown flag: --client", 1, true},
+		{"Error: unknown command inspect for wt mcp", 1, true},
+		{"flag provided but not defined: -client", 2, true},
+		{"Permission denied (publickey)", 255, false},
+		{"SSH configuration: unknown command", 255, false},
+		{"wt: command not found", 127, false},
+		{"wing control socket does not exist", 1, false},
+	} {
+		t.Run(test.diagnostic, func(t *testing.T) {
+			dir := t.TempDir()
+			ssh := filepath.Join(dir, "ssh")
+			script := fmt.Sprintf("#!/bin/sh\ncat >&2 <<'DIAGNOSTIC'\n%s\nDIAGNOSTIC\nexit %d\n", test.diagnostic, test.code)
+			if err := os.WriteFile(ssh, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			_, err := (sshcontrol.Transport{SSHPath: ssh}).Inspect(t.Context(), "host", "", "", "")
+			if err == nil || !strings.Contains(err.Error(), test.diagnostic) {
+				t.Fatalf("lost inspect diagnostic: %v", err)
+			}
+			if got := strings.Contains(err.Error(), "remote wt is too old for this build") && strings.Contains(err.Error(), "--wt-binary PATH"); got != test.tooOld {
+				t.Fatalf("too-old hint = %v, want %v: %v", got, test.tooOld, err)
+			}
+		})
+	}
+}
+
+func TestSSHInspectRejectsInvalidBinaryBeforeSSH(t *testing.T) {
+	for _, binary := range []string{"~/bin/wt", "bin/wt", "wt;true", "/bin/wt\n", "/bin/wt\x00"} {
+		_, err := (sshcontrol.Transport{SSHPath: filepath.Join(t.TempDir(), "must-not-run-ssh")}).Inspect(t.Context(), "host", "", binary, "")
+		if err == nil || !strings.Contains(err.Error(), "wt-binary") {
+			t.Errorf("invalid binary %q: %v", binary, err)
+		}
+	}
+}
 func TestSSHInspectRejectsUnverifiedMetadata(t *testing.T) {
 	h := testssh.New(t)
 	transport := sshcontrol.Transport{SSHPath: h.SSHPath}
 	for _, m := range []sshcontrol.Metadata{{WingID: "wing", Version: "old", WingthingDir: "/state", ControlSocket: "/s"}, {WingID: "wing", Version: control.ContractVersion, WingthingDir: "/state", ControlSocket: "/s:bad"}, {Version: control.ContractVersion, WingthingDir: "/state", ControlSocket: "/s"}} {
 		h.Host(t, "host", m)
-		if _, err := transport.Inspect(t.Context(), "host", "", ""); err == nil {
+		if _, err := transport.Inspect(t.Context(), "host", "", "", ""); err == nil {
 			t.Fatal("invalid metadata accepted")
 		}
 	}

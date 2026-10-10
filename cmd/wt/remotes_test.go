@@ -174,6 +174,41 @@ func TestConfiguredRemoteAttachUsesRunner(t *testing.T) {
 	}
 }
 
+func TestConfiguredRemoteCommandsUseRememberedWTBinary(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WINGTHING_DIR", dir)
+	binary := "/opt/wt builds/wt-dev"
+	if err := config.SaveRemotes(dir, map[string]config.Remote{"work": {SSHTarget: "host", WTBinary: binary}}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(eggclient.RemoteSessionInventory{Version: "remote-test", ContractVersion: eggclient.RemoteSessionContractVersion, Sessions: []eggclient.LocalSession{{ID: "remote-session"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both the version probe and inventory must select the saved binary. The
+	// attach branch reports its command so the same check covers that route.
+	ssh := writeFakeRemoteSSH(t, "case \"$3\" in\n"+
+		remotepkg.ShellQuote(remotepkg.ShellQuote(binary))+"*) ;;\n*) echo 'wrong executable' >&2; exit 9 ;;\nesac\n"+
+		"case \"$3\" in\n*\"'--version'\"*) echo 'wt version remote-test' ;;\n"+
+		"*\"'session' 'ps' '--json' '--remote-inventory'\"*) printf '%s\\n' "+remotepkg.ShellQuote(string(data))+" ;;\n"+
+		"*\"'attach'\"*) printf '%s\\n' \"$3\" ;;\n*) exit 9 ;;\nesac\n")
+	var out bytes.Buffer
+	if err := executeCLI(context.Background(), []string{"session", "ps", "--json"}, remotepkg.IO{Out: &out, ErrOut: io.Discard, SSHPath: ssh}); err != nil {
+		t.Fatal(err)
+	}
+	var rows []eggclient.MachineSession
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil || len(rows) != 1 || rows[0].ID != "remote-session" || rows[0].Error != "" {
+		t.Fatalf("saved binary inventory: %s %v", &out, err)
+	}
+	out.Reset()
+	if err := executeCLI(context.Background(), []string{"attach", "work:review"}, remotepkg.IO{Out: &out, ErrOut: io.Discard, SSHPath: ssh}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out.String(), remotepkg.ShellQuote(binary)+" 'attach'") {
+		t.Fatalf("saved binary attach: %s", &out)
+	}
+}
+
 func TestSessionPSAggregatesHealthyAndFailingFakeRemotesInParallel(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("WINGTHING_DIR", dir)

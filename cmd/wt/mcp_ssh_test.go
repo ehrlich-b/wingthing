@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -21,18 +24,19 @@ func TestMCPConnectRegistryAddListRemove(t *testing.T) {
 	var out bytes.Buffer
 	streams := remotepkg.IO{SSHPath: h.SSHPath, Out: &out, ErrOut: &out}
 	run := func(args ...string) error { return executeCLI(context.Background(), args, streams) }
-	if err := run("mcp", "connect", "add", "forge", "--ssh", "host", "--wingthing-dir", "~/state"); err != nil {
+	if err := run("mcp", "connect", "add", "forge", "--ssh", "host", "--wingthing-dir", "~/state", "--wt-binary", "/opt/wt builds/wt-dev"); err != nil {
 		t.Fatal(err)
 	}
 	remotes, err := config.LoadRemotes(state)
-	if err != nil || remotes["forge"].WingID != "pinned-wing" || remotes["forge"].WingthingDir != "/remote/canonical" {
+	if err != nil || remotes["forge"].WingID != "pinned-wing" || remotes["forge"].WingthingDir != "/remote/canonical" || remotes["forge"].WTBinary != "/opt/wt builds/wt-dev" {
 		t.Fatalf("pin not persisted: %+v %v", remotes, err)
 	}
 	if err := run("remote", "ls"); err != nil || !strings.Contains(out.String(), "/remote/canonical") {
 		t.Fatalf("shared registry: %v %s", err, &out)
 	}
-	if err := run("mcp", "connect", "ls"); err != nil {
-		t.Fatal(err)
+	out.Reset()
+	if err := run("mcp", "connect", "ls"); err != nil || !strings.Contains(out.String(), "WT_BINARY") || !strings.Contains(out.String(), "/opt/wt builds/wt-dev") {
+		t.Fatalf("binary not listed: %v %s", err, &out)
 	}
 	if err := run("mcp", "connect", "add", "forge", "--ssh", "host"); err == nil {
 		t.Fatal("overwrote existing pin")
@@ -46,5 +50,21 @@ func TestMCPConnectRegistryAddListRemove(t *testing.T) {
 	}
 	if err := run("mcp", "connect", "add", "bad.name", "--ssh", "host"); err == nil {
 		t.Fatal("invalid name accepted")
+	}
+}
+
+func TestMCPConnectAddRejectsInvalidBinaryBeforeSSHOrWrites(t *testing.T) {
+	for _, binary := range []string{"", "~/bin/wt", "bin/wt", "./wt", "wt --client", "-wt", "/bin/wt;true", "/bin/$(wt)", "/bin/wt\n", "/bin/wt\x00"} {
+		t.Run(binary, func(t *testing.T) {
+			state := t.TempDir()
+			t.Setenv("WINGTHING_DIR", state)
+			err := executeCLI(context.Background(), []string{"mcp", "connect", "add", "forge", "--ssh", "host", "--wt-binary=" + binary}, remotepkg.IO{Out: io.Discard, ErrOut: io.Discard, SSHPath: filepath.Join(state, "must-not-run-ssh")})
+			if err == nil || !strings.Contains(err.Error(), "wt-binary") {
+				t.Fatalf("invalid binary %q: %v", binary, err)
+			}
+			if entries, err := os.ReadDir(state); err != nil || len(entries) != 0 {
+				t.Fatalf("invalid binary wrote state: %v %v", entries, err)
+			}
+		})
 	}
 }

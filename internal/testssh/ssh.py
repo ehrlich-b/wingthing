@@ -12,13 +12,14 @@ if os.path.exists(os.path.join(root, host+'.changed-key')):
     print('REMOTE HOST IDENTIFICATION HAS CHANGED!', file=sys.stderr); sys.exit(255)
 if '-N' not in args:
     command = shlex.split(args[i+2])
-    assert command[:3] == ['wt','mcp','inspect'], command
+    assert command[1:3] == ['mcp','inspect'], command
     with open(os.path.join(root, host+'.inspect'), 'w') as f: json.dump(args,f)
-    binary = os.environ.get('WT_FAKE_SSH_WT')
-    if binary:
+    if os.environ.get('WT_FAKE_SSH_EXECUTE'):
         env = os.environ.copy()
         env['WINGTHING_DIR'] = metadata['wingthing_dir']
-        sys.exit(subprocess.run([binary]+command[1:],env=env).returncode)
+        # Resolve the selected executable as the remote shell would: command
+        # names use this fixture's PATH, absolute paths stay absolute.
+        sys.exit(subprocess.run(command,env=env).returncode)
     print(json.dumps(metadata)); sys.exit(0)
 local, remote = args[args.index('-L')+1].split(':',1)
 assert remote == metadata['control_socket']

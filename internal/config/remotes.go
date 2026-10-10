@@ -17,10 +17,50 @@ import (
 
 type Remote struct {
 	SSHTarget      string `yaml:"ssh_target" json:"ssh_target"`
+	WTBinary       string `yaml:"wt_binary,omitempty" json:"wt_binary,omitempty"`
 	WingthingDir   string `yaml:"wingthing_dir,omitempty" json:"wingthing_dir,omitempty"`
 	WingID         string `yaml:"wing_id,omitempty" json:"wing_id,omitempty"`
 	ControlSocket  string `yaml:"control_socket,omitempty" json:"control_socket,omitempty"`
 	ControlVersion string `yaml:"control_version,omitempty" json:"control_version,omitempty"`
+}
+
+// Binary is the remote executable, with the historical PATH default for entries
+// that predate wt_binary. Never resolve a remote path on the local machine.
+func (r Remote) Binary() string {
+	if r.WTBinary != "" {
+		return r.WTBinary
+	}
+	return BinaryName()
+}
+
+// ValidateWTBinary accepts a POSIX absolute executable path or a bare command
+// name. Shell syntax and control characters are forbidden even though callers
+// must also quote the executable when building an SSH command.
+func ValidateWTBinary(binary string) error {
+	if binary == "" || strings.ContainsAny(binary, "'\"`$;&|<>(){}[]*?\\~!#") {
+		return errors.New("wt-binary must be an absolute path or command name without shell metacharacters")
+	}
+	for _, r := range binary {
+		if unicode.IsControl(r) || (unicode.IsSpace(r) && r != ' ') {
+			return errors.New("wt-binary must not contain control characters or whitespace other than spaces in an absolute path")
+		}
+	}
+	if strings.HasPrefix(binary, "/") {
+		if strings.HasSuffix(binary, "/") {
+			return errors.New("wt-binary must name an executable, not a directory")
+		}
+		return nil
+	}
+	if strings.HasPrefix(binary, "-") || binary == "." || binary == ".." {
+		return errors.New("wt-binary must be an absolute path or command name")
+	}
+	for _, r := range binary {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' || r == '+') {
+			return errors.New("wt-binary must be an absolute path or command name")
+		}
+	}
+	return nil
 }
 
 type remotesFile struct {
@@ -65,6 +105,11 @@ func validateRemotes(remotes map[string]Remote) error {
 		}
 		if err := ValidateSSHTarget(remote.SSHTarget); err != nil {
 			return fmt.Errorf("remote %q: %w", name, err)
+		}
+		if remote.WTBinary != "" {
+			if err := ValidateWTBinary(remote.WTBinary); err != nil {
+				return fmt.Errorf("remote %q: %w", name, err)
+			}
 		}
 		if remote.WingthingDir != "" && (!strings.HasPrefix(remote.WingthingDir, "/") || strings.ContainsAny(remote.WingthingDir, "\x00\r\n")) {
 			return fmt.Errorf("remote %q: wingthing_dir must be an absolute remote path without NUL, CR or LF", name)
