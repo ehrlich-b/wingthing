@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/creack/pty"
+	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/egg"
@@ -45,23 +47,68 @@ def hook(event, **extra):
  data={'hook_event_name':event,'session_id':thread};data.update(extra)
  subprocess.run(['/bin/sh','-c',hooks[event]],input=json.dumps(data).encode(),check=True)
 tty.setraw(0)
-hook('SessionStart')
+model=args[args.index('-m')+1]
+if model=='fixture-modal':
+ os.write(1,b'Update available: private-startup-canary-token\r\n1. Update now 2. Skip\r\n')
+ if os.read(0,1): raise RuntimeError('Wingthing typed into a startup modal')
+ sys.exit(0)
+initial=args[args.index('--')+1] if '--' in args else None
+os.write(1,b'OpenAI Codex\r\nAsk Codex to do anything\r\n')
 buffer=b''
 while True:
- chunk=os.read(0,1)
- if not chunk: break
- if chunk!=b'\r': buffer+=chunk;continue
- prompt=buffer.decode().removeprefix('\x1b[200~').removesuffix('\x1b[201~');buffer=b''
+ if initial is not None:
+  prompt=initial; initial=None
+ else:
+  chunk=os.read(0,1)
+  if not chunk: break
+  if chunk!=b'\r': buffer+=chunk;continue
+  prompt=buffer.decode().removeprefix('\x1b[200~').removesuffix('\x1b[201~');buffer=b''
+ hook('SessionStart',source='startup')
  turn='fake-turn'
  hook('UserPromptSubmit',turn_id=turn,prompt=prompt)
  with open(os.path.join(os.environ['HOME'],'..','completion-gate'),'rb') as gate: gate.read(1)
- model=args[args.index('-m')+1]
  payload={'type':'agent-turn-complete','thread-id':thread,'turn-id':turn,'input-messages':[prompt],'last-assistant-message':'Fake Codex '+model+': Ω🙂 '+prompt}
  subprocess.run(notify+[json.dumps(payload)],check=True)
  hook('Stop',turn_id=turn)
 `
 
+func TestFakeCodexDoesNotAnnounceReadinessAtEmptyStartup(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	args, enabled, err := egg.CodexRunArgs([]string{"-m", "fixture-model"}, home, "empty-startup")
+	if err != nil || !enabled {
+		t.Fatalf("native fake setup: %v", err)
+	}
+	cmd := exec.Command("nice", append([]string{"-n", "15", python, "-c", fakeRunCodex}, args...)...)
+	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}
+	terminal, err := pty.Start(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait(); _ = terminal.Close() }()
+	scan := bufio.NewScanner(terminal)
+	for scan.Scan() {
+		if strings.Contains(scan.Text(), "Ask Codex") {
+			entries, err := os.ReadDir(filepath.Join(home, ".codex", "wingthing-events", "empty-startup"))
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("fake emitted a pre-prompt hook: %v %v", entries, err)
+			}
+			return
+		}
+	}
+	t.Fatalf("fake did not reach empty composer: %v", scan.Err())
+}
+
 func TestBuiltWTStdioWingEggFakeCodexResult(t *testing.T) {
+	for _, modal := range []bool{false, true} {
+		t.Run(fmt.Sprintf("startup_modal=%t", modal), func(t *testing.T) { testBuiltWTStdioWingEggFakeCodex(t, modal) })
+	}
+}
+
+func testBuiltWTStdioWingEggFakeCodex(t *testing.T, modal bool) {
 	repo, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -150,6 +197,13 @@ func TestBuiltWTStdioWingEggFakeCodexResult(t *testing.T) {
 		for _, arg := range opts.Egg.AgentArgs {
 			args = append(args, "--agent-arg="+arg)
 		}
+		if opts.Egg.InitialRun != nil {
+			wire, err := json.Marshal(opts.Egg.InitialRun)
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, "--initial-run="+string(wire))
+		}
 		child := exec.Command(binary, args...)
 		child.Env = []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH")}
 		child.Stdout = io.Discard
@@ -233,7 +287,11 @@ func TestBuiltWTStdioWingEggFakeCodexResult(t *testing.T) {
 			process.Wait()
 		}
 	}()
-	args, _ := json.Marshal(map[string]any{"prompt": "fixture request", "agent": "codex", "model": "fixture-model", "cwd": fixture, "timeout_seconds": 30})
+	model, timeout := "fixture-model", 30
+	if modal {
+		model, timeout = "fixture-modal", 10
+	}
+	args, _ := json.Marshal(map[string]any{"prompt": "fixture request", "agent": "codex", "model": model, "cwd": fixture, "timeout_seconds": timeout})
 	request, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "agent_run", "arguments": json.RawMessage(args)}})
 	if _, err := input.Write(append(request, '\n')); err != nil {
 		t.Fatal(err)
@@ -267,6 +325,25 @@ func TestBuiltWTStdioWingEggFakeCodexResult(t *testing.T) {
 	case <-t.Context().Done():
 		t.Fatal(t.Context().Err())
 	}
+	if modal {
+		client, err := controlsocket.Dial(t.Context(), state, controlsocket.Hello{Unsandboxed: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer client.Close()
+		wire, _ := json.Marshal(map[string]any{"run_id": id, "timeout_seconds": 30})
+		data, denied, err := client.Call(t.Context(), "agent_wait", wire)
+		if err != nil || denied || data["status"] != "failed" || data["failure_kind"] != string(agent.ProviderNotReady) {
+			t.Fatalf("startup modal result: %v %v", data, err)
+		}
+		wire, _ = json.Marshal(map[string]any{"run_id": id})
+		data, denied, err = client.Call(t.Context(), "agent_result", wire)
+		encoded, _ := json.Marshal(data)
+		if err != nil || denied || !strings.Contains(string(encoded), "update prompt") || strings.Contains(string(encoded), "private-startup-canary-token") {
+			t.Fatalf("startup diagnostic was lost or not redacted: %v %v", data, err)
+		}
+		return
+	}
 	// The provider receipt is authoritative; hold its completion while the
 	// wing loses every in-memory observer and reloads the durable run map.
 	if _, _, err := eggclient.WaitSessionLifecycle(t.Context(), cfg, eggclient.LocalSession{ID: session, Agent: "codex", CWD: fixture}, 0, "working"); err != nil {
@@ -278,7 +355,8 @@ func TestBuiltWTStdioWingEggFakeCodexResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	reserved, err := eggclient.RunTurnStatus(t.Context(), cfg, eggclient.LocalSession{ID: session, Agent: "codex"}, id)
-	if err != nil || !reserved.Deadline.Equal(time.Unix(0, started).Add(30*time.Second)) {
+	admitted, err := service.RunManager.Get(wingsession.Authority{UserID: "fixture-owner", Principal: wingsession.UserPrincipal("fixture-owner")}, id)
+	if err != nil || !reserved.Deadline.Equal(admitted.Result.Deadline) || reserved.Deadline.Before(time.Unix(0, started)) {
 		t.Fatalf("egg deadline did not start at provider launch: %+v, %v", reserved, err)
 	}
 	if err := listener.Close(); err != nil {

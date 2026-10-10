@@ -111,6 +111,7 @@ type RunConfig struct {
 	// invocation and keeps the session an agent session. They are alternatives.
 	Command      []string
 	AgentArgs    []string
+	InitialRun   *RunTurnRequest // host-admitted Codex prompt, reserved before launch
 	CWD          string
 	Shell        string
 	FS           []string // "rw:./", "deny:~/.ssh"
@@ -675,6 +676,15 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			return fmt.Errorf("prepare Codex lifecycle hooks: %w", err)
 		}
 	}
+	if rc.Agent == "codex" && len(rc.Command) == 0 {
+		args = codexStartupArgs(args, rc.CWD)
+	}
+	if rc.InitialRun != nil {
+		if !nativeRunSupported(rc.Kind, rc.Agent, rc.Command, codexRun) || rc.Agent != "codex" || rc.ResumeSessionID != "" || providerOptionsEnd(args) != len(args) {
+			return errors.New("initial run requires a fresh native Codex TUI without a positional prompt")
+		}
+		args = append(args, "--", rc.InitialRun.Prompt)
+	}
 	if home != "" {
 		localBin := filepath.Join(home, ".local", "bin")
 		if p, ok := envMap["PATH"]; ok {
@@ -959,6 +969,42 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		}
 	}()
 
+	networkSummary := networkSummaryFromDomains(mergedDomains)
+	sess := &Session{
+		ID: sessionID, codexRun: codexRun, Agent: rc.Agent, Kind: rc.Kind,
+		Command: append([]string(nil), rc.Command...), CWD: rc.CWD,
+		Network: networkSummary, RenderedConfig: rc.RenderedConfig,
+		StartedAt: time.Now(), idleTimeout: rc.IdleTimeout, Cols: rc.Cols, Rows: rc.Rows,
+		replay: newReplayBuffer(rc.Agent), vterm: NewVTerm(int(rc.Cols), int(rc.Rows)),
+		vtermCh: make(chan vtermMsg, 256), useVTE: rc.VTE, sb: sb, cmd: cmd,
+		done: make(chan struct{}), debug: rc.Debug, audit: rc.Audit,
+	}
+	captureHome := home
+	processStarted := make(chan struct{})
+	startupComplete := false
+	s.runTurns = s.sessionRunTurns(sess, captureHome, rc.ProviderSessionID)
+	s.runTurns.backend.Started = processStarted
+	kill := s.runTurns.backend.Kill
+	s.runTurns.backend.Kill = func() ([]RunDescendant, error) {
+		<-processStarted
+		if sess.PID == 0 {
+			return nil, nil
+		}
+		return kill()
+	}
+	defer func() {
+		if !startupComplete {
+			close(processStarted)
+			s.runTurns.stopActive()
+			_ = sess.vterm.Close()
+		}
+	}()
+	if rc.InitialRun != nil {
+		if err := s.runTurns.startInitialCodex(*rc.InitialRun); err != nil {
+			return fmt.Errorf("reserve initial native turn: %w", err)
+		}
+	}
+
 	size := &pty.Winsize{Cols: uint16(rc.Cols), Rows: uint16(rc.Rows)}
 	ptmx, err := pty.StartWithSize(cmd, size)
 	if err != nil {
@@ -994,34 +1040,8 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		}
 	}
 
-	networkSummary := networkSummaryFromDomains(mergedDomains)
-	sess := &Session{
-		ID:             sessionID,
-		PID:            cmd.Process.Pid,
-		processGroupID: cmd.Process.Pid,
-		codexRun:       codexRun,
-		nonblockInput:  cancellableInput,
-		Agent:          rc.Agent,
-		Kind:           rc.Kind,
-		Command:        append([]string(nil), rc.Command...),
-		CWD:            rc.CWD,
-		Network:        networkSummary,
-		RenderedConfig: rc.RenderedConfig,
-		StartedAt:      time.Now(),
-		idleTimeout:    rc.IdleTimeout,
-		Cols:           rc.Cols,
-		Rows:           rc.Rows,
-		ptmx:           ptmx,
-		replay:         newReplayBuffer(rc.Agent),
-		vterm:          NewVTerm(int(rc.Cols), int(rc.Rows)),
-		vtermCh:        make(chan vtermMsg, 256),
-		useVTE:         rc.VTE,
-		sb:             sb,
-		cmd:            cmd,
-		done:           make(chan struct{}),
-		debug:          rc.Debug,
-		audit:          rc.Audit,
-	}
+	sess.PID, sess.processGroupID = cmd.Process.Pid, cmd.Process.Pid
+	sess.ptmx, sess.nonblockInput = ptmx, cancellableInput
 
 	// Set up input auditor if audit is enabled
 	if rc.Audit {
@@ -1063,12 +1083,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	}
 
 	// Periodic chat history capture (runs outside sandbox, on host filesystem)
-	captureHome := rc.UserHome
-	if captureHome == "" {
-		captureHome, _ = os.UserHomeDir()
-	}
 	providerIdentityVerified := rc.Agent != "claude" || rc.ProviderSessionID != ""
-	s.runTurns = s.sessionRunTurns(sess, captureHome, rc.ProviderSessionID)
 	if profile := Profile(rc.Agent); profile.SessionDir != "" && captureHome != "" && providerIdentityVerified {
 		go func() {
 			ticker := time.NewTicker(30 * time.Second)
@@ -1095,6 +1110,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	nativeRun := len(rc.Command) == 0 && (codexRun || (rc.Agent == "claude" && rc.ProviderSessionID != ""))
 	metaContent := fmt.Sprintf("agent=%s\nkind=%s\ncommand=%s\ncwd=%s\nnetwork=%s\nisolation=%s\ncols=%d\nrows=%d\nstarted_at=%d\nstarted_at_nanos=%d\nprovider_session_id=%s\nprovider_home=%s\nnative_run=%t\n",
 		rc.Agent, rc.Kind, formatCommand(rc.Command), rc.CWD, networkSummary, isolationMode, rc.Cols, rc.Rows, sess.StartedAt.Unix(), sess.StartedAt.UnixNano(), rc.ProviderSessionID, captureHome, nativeRun)
+	if rc.InitialRun != nil {
+		metaContent += "initial_run_id=" + rc.InitialRun.RunID + "\n"
+	}
 	if err := atomicWritePrivate(metaPath, []byte(metaContent)); err != nil {
 		log.Printf("egg: warning: write meta: %v", err)
 	}
@@ -1194,6 +1212,8 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		s.grpcServer.GracefulStop()
 	}()
 
+	startupComplete = true
+	close(processStarted)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- s.grpcServer.Serve(lis)

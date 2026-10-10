@@ -48,21 +48,25 @@ type runTurnRecord struct {
 }
 
 type runTurnBackend struct {
-	Agent   string
-	Read    func(context.Context, int64, int) (SessionView, error)
-	Send    func(context.Context, string) (PromptDelivery, error)
-	Prepare func(string, string) (func() (turnEvidence, error), error)
-	Kill    func() ([]RunDescendant, error)
-	Done    <-chan struct{}
+	Agent             string
+	Read              func(context.Context, int64, int) (SessionView, error)
+	Send              func(context.Context, string) (PromptDelivery, error)
+	Prepare           func(string, string) (func() (turnEvidence, error), error)
+	Kill              func() ([]RunDescendant, error)
+	Done              <-chan struct{}
+	Started           <-chan struct{}
+	StartupDiagnostic func() string
 }
 
 type turnEvidence struct {
-	Receipt  bool
-	Complete bool
-	Conflict bool
-	Text     string
-	TurnID   string
-	Failure  agent.ErrorKind
+	Receipt           bool
+	Complete          bool
+	Conflict          bool
+	Text              string
+	TurnID            string
+	Failure           agent.ErrorKind
+	ProviderSessionID string
+	Diagnostic        string
 }
 
 type ownedRunTurn struct {
@@ -75,6 +79,8 @@ type ownedRunTurn struct {
 	cancel     context.CancelFunc
 	timer      *time.Timer
 	started    bool
+	initial    bool
+	readyTimer *time.Timer
 }
 
 // runTurnRuntime lives only in the existing egg. Client contexts cancel RPC
@@ -203,7 +209,10 @@ func (rt *runTurnRuntime) admit(request RunTurnRequest, execute bool) (RunTurnRe
 	// Admission is durable before arming execution, and the timer is armed before
 	// the first byte can reach the PTY. It is independent of the RPC context.
 	run.mu.Lock()
-	run.timer = time.AfterFunc(time.Until(request.Deadline), func() { rt.finish(run, "timeout", agent.Timeout, turnEvidence{}, true) })
+	run.timer = time.AfterFunc(time.Until(request.Deadline), func() { rt.expire(run, false) })
+	if rt.backend.Agent == "codex" {
+		run.readyTimer = time.AfterFunc(30*time.Second, func() { rt.expire(run, true) })
+	}
 	run.mu.Unlock()
 	close(run.workerDone)
 	if execute {
@@ -242,6 +251,9 @@ func (rt *runTurnRuntime) begin(run *ownedRunTurn, request RunTurnRequest, optio
 		return err
 	}
 	run.record = record
+	if run.readyTimer != nil {
+		run.readyTimer.Stop()
+	}
 	run.started = true
 	run.workerDone = make(chan struct{})
 	run.cancel()
@@ -251,8 +263,60 @@ func (rt *runTurnRuntime) begin(run *ownedRunTurn, request RunTurnRequest, optio
 	return nil
 }
 
+// startInitialCodex reserves and arms the deadline before the provider starts.
+// Codex owns submission of its initial argv prompt; Wingthing never types it.
+func (rt *runTurnRuntime) startInitialCodex(request RunTurnRequest) error {
+	if rt.backend.Agent != "codex" {
+		return errors.New("initial native turn requires Codex")
+	}
+	if _, err := rt.reserve(request); err != nil {
+		return err
+	}
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	run := rt.runs[request.RunID]
+	if run == nil {
+		return errors.New("initial turn cannot reuse a persisted run")
+	}
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	if run.finishing || run.started {
+		return errors.New("initial turn was already started or expired")
+	}
+	scan, err := rt.backend.Prepare(request.Prompt, "")
+	if err != nil {
+		return err
+	}
+	run.initial, run.started = true, true
+	run.workerDone = make(chan struct{})
+	run.cancel()
+	ctx, cancel := context.WithDeadline(context.Background(), request.Deadline)
+	run.cancel = cancel
+	go rt.execute(ctx, run, SessionPromptOptions{}, scan)
+	return nil
+}
+
+func (rt *runTurnRuntime) expire(run *ownedRunTurn, readinessOnly bool) {
+	diagnostic := "Startup screen unavailable."
+	if rt.backend.StartupDiagnostic != nil {
+		diagnostic = rt.backend.StartupDiagnostic()
+	}
+	if readinessOnly {
+		rt.finish(run, "failed", agent.ProviderNotReady, turnEvidence{Diagnostic: diagnostic}, true)
+	} else {
+		rt.finish(run, "timeout", agent.Timeout, turnEvidence{Diagnostic: diagnostic}, true)
+	}
+}
+
 func (rt *runTurnRuntime) execute(ctx context.Context, run *ownedRunTurn, options SessionPromptOptions, scan func() (turnEvidence, error)) {
 	defer close(run.workerDone)
+	if rt.backend.Started != nil {
+		select {
+		case <-rt.backend.Started:
+		case <-ctx.Done():
+			return
+		}
+	}
 	run.mu.Lock()
 	if run.finishing {
 		run.mu.Unlock()
@@ -265,8 +329,11 @@ func (rt *runTurnRuntime) execute(ctx context.Context, run *ownedRunTurn, option
 		return
 	}
 	// The existing reservation makes retries safe even across a lost receipt.
-	promptDone := make(chan error, 1)
-	go func() { _, err := SubmitSessionPrompt(ctx, rt.dir, options); promptDone <- err }()
+	var promptDone chan error
+	if !run.initial {
+		promptDone = make(chan error, 1)
+		go func() { _, err := SubmitSessionPrompt(ctx, rt.dir, options); promptDone <- err }()
+	}
 	defer func() {
 		if promptDone != nil {
 			<-promptDone
@@ -285,6 +352,11 @@ func (rt *runTurnRuntime) execute(ctx context.Context, run *ownedRunTurn, option
 			run.mu.Lock()
 			if !run.finishing && run.record.Result.TurnID != evidence.TurnID {
 				run.record.Result.TurnID = evidence.TurnID
+				if run.initial {
+					run.record.Result.ProviderSessionID = evidence.ProviderSessionID
+					run.record.Result.Status, run.record.Result.StartedAt = "running", time.Now().UTC()
+					run.readyTimer.Stop()
+				}
 				err = persistRunTurn(rt.dir, run.record)
 			}
 			run.mu.Unlock()
@@ -331,6 +403,13 @@ func (rt *runTurnRuntime) finish(run *ownedRunTurn, status string, kind agent.Er
 		run.mu.Unlock()
 		return
 	}
+	if kind == agent.ProviderNotReady && run.record.Result.Status != "pending" {
+		run.mu.Unlock()
+		return
+	}
+	if kind == agent.Timeout && rt.backend.Agent == "codex" && run.record.Result.Status == "pending" {
+		status, kind = "failed", agent.ProviderNotReady
+	}
 	if status == "done" && !time.Now().Before(run.record.Result.Deadline) {
 		status, kind, evidence, kill = "timeout", agent.Timeout, turnEvidence{}, true
 	}
@@ -338,6 +417,9 @@ func (rt *runTurnRuntime) finish(run *ownedRunTurn, status string, kind agent.Er
 	run.cancel()
 	if run.timer != nil {
 		run.timer.Stop()
+	}
+	if run.readyTimer != nil {
+		run.readyTimer.Stop()
 	}
 	result := run.record.Result
 	run.mu.Unlock()
@@ -355,6 +437,9 @@ func (rt *runTurnRuntime) finish(run *ownedRunTurn, status string, kind agent.Er
 	}
 	if kind != "" {
 		result.Error = "Egg run turn ended: " + string(kind) + "."
+		if kind == agent.ProviderNotReady {
+			result.Error += " " + evidence.Diagnostic
+		}
 	}
 	run.mu.Lock()
 	defer run.mu.Unlock()

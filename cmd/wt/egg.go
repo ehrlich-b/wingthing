@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"syscall"
 
@@ -116,6 +118,7 @@ func eggRunCmd() *cobra.Command {
 		kindFlag                   string
 		commandFlag                []string
 		agentArgFlag               []string
+		initialRunFlag             string
 		outerBoundaryFlag          bool
 		protectedWriteTargetFlag   []string
 		omitBrowserBridgeFlag      bool
@@ -200,6 +203,14 @@ func eggRunCmd() *cobra.Command {
 				ProtectedWriteTargets:      protectedWriteTargetFlag,
 				OmitBrowserBridge:          omitBrowserBridgeFlag,
 			}
+			if initialRunFlag != "" {
+				rc.InitialRun = new(egg.RunTurnRequest)
+				decoder := json.NewDecoder(strings.NewReader(initialRunFlag))
+				decoder.DisallowUnknownFields()
+				if err := decoder.Decode(rc.InitialRun); err != nil {
+					return errors.New("invalid initial native run request")
+				}
+			}
 
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
@@ -271,6 +282,10 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&kindFlag, "kind", "agent", "session kind (internal)")
 	cmd.Flags().StringArrayVar(&commandFlag, "command-arg", nil, "command argument (internal)")
 	cmd.Flags().StringArrayVar(&agentArgFlag, "agent-arg", nil, "extra agent argument (internal)")
+	cmd.Flags().StringVar(&initialRunFlag, "initial-run", "", "host-admitted initial native turn (internal)")
+	if err := cmd.Flags().MarkHidden("initial-run"); err != nil {
+		panic(err)
+	}
 	cmd.Flags().BoolVar(&outerBoundaryFlag, "outer-boundary", false, "trust the parent host boundary (internal)")
 	if err := cmd.Flags().MarkHidden("outer-boundary"); err != nil {
 		panic(err)

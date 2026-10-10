@@ -400,7 +400,11 @@ func (m *Runs) reconcile(id string) {
 			return
 		}
 		launch := &Launch{Config: cfg, CWD: r.CWD, Identity: r.Launch.Identity, authority: r.Launch.Authority, service: m.service}
-		client, err := m.service.Start(m.ctx, launch, r.Launch.Options)
+		options := r.Launch.Options
+		if r.Agent == "codex" {
+			options.Egg.InitialRun = &egg.RunTurnRequest{RunID: id, Prompt: r.Prompt, Deadline: r.Result.Deadline}
+		}
+		client, err := m.service.Start(m.ctx, launch, options)
 		if client != nil {
 			client.Close()
 		}
@@ -413,6 +417,9 @@ func (m *Runs) reconcile(id string) {
 		if err = m.update(id, "spawned", func(r *Run) {
 			r.Phase = "spawned"
 			meta := eggclient.ReadEggMetaValues(filepath.Join(m.service.Config.Dir, "eggs", r.SessionID))
+			if meta["initial_run_id"] == r.ID {
+				return // The egg reserved the supplied absolute deadline before launch.
+			}
 			if nanos, err := strconv.ParseInt(meta["started_at_nanos"], 10, 64); err == nil {
 				r.Result.Deadline = time.Unix(0, nanos).UTC().Add(time.Duration(r.TimeoutSeconds) * time.Second)
 			} else if sec, err := strconv.ParseInt(meta["started_at"], 10, 64); err == nil {
@@ -442,6 +449,17 @@ func (m *Runs) reconcile(id string) {
 	if r.Cancelled {
 		m.cancelEgg(r)
 		return
+	}
+	if r.Phase == "spawned" {
+		meta := eggclient.ReadEggMetaValues(filepath.Join(m.service.Config.Dir, "eggs", r.SessionID))
+		if meta["initial_run_id"] == id {
+			// The durable egg reservation owns Codex's initial argv turn. Observe
+			// it directly, including after a wing crash during spawn; never resend.
+			if err := m.update(id, "observing_initial_turn", func(r *Run) { r.Phase = "observing" }); err != nil {
+				return
+			}
+			r = m.snapshot(id)
+		}
 	}
 	if r.Phase == "spawned" {
 		if m.backend.Reserve != nil {

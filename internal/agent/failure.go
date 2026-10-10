@@ -18,6 +18,7 @@ const (
 	SandboxDenied    ErrorKind = "sandbox_denied"
 	ProviderError    ErrorKind = "provider_error"
 	ProviderExit     ErrorKind = "provider_exit"
+	ProviderNotReady ErrorKind = "provider_not_ready"
 	Timeout          ErrorKind = "timeout"
 	Stopped          ErrorKind = "stopped"
 	UnknownOutcome   ErrorKind = "unknown_outcome"

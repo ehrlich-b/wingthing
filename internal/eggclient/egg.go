@@ -601,6 +601,7 @@ type SpawnEggOpts struct {
 	Kind                   string
 	Command                []string
 	AgentArgs              []string
+	InitialRun             *egg.RunTurnRequest
 	Principal              string
 	PreserveEmptyAgentArgs bool
 	// ProtectedWriteTargets are host-owned paths the child's final sandbox
@@ -884,6 +885,13 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	for _, arg := range append(policyArgs, effectiveAgentArgs...) {
 		args = append(args, "--agent-arg="+arg)
 	}
+	if o.InitialRun != nil {
+		wire, err := json.Marshal(o.InitialRun)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, "--initial-run="+string(wire))
+	}
 	if eggCfg.Shell != "" {
 		args = append(args, "--shell", eggCfg.Shell)
 	}
@@ -897,6 +905,9 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// Keep the exact execution/provider reference inspectable even when startup
 	// fails before the provider process or its endpoint becomes available.
 	meta := fmt.Sprintf("agent=%s\nkind=%s\ncwd=%s\nprovider_session_id=%s\nprovider_home=%s\n", agentName, o.Kind, cwd, providerSessionID, effectiveHome)
+	if o.InitialRun != nil {
+		meta += "initial_run_id=" + o.InitialRun.RunID + "\n"
+	}
 	if err := daemonctl.WriteAtomicMetadataFile(filepath.Join(dir, "egg.meta"), []byte(meta), 0600); err != nil {
 		return nil, fmt.Errorf("persist startup identity: %w", err)
 	}
