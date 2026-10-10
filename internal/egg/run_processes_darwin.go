@@ -42,6 +42,16 @@ func signalIdentifiedProcess(process observedProcess, signal syscall.Signal) err
 		return nil
 	}
 	if err != nil {
+		// Darwin returns a zero-sized KERN_PROC_PID record for an exited
+		// process; x/sys maps that to EIO rather than ESRCH. Confirm absence
+		// (or a changed identity) in a fresh inventory before treating it as
+		// gone. Permission and inventory failures still remain errors.
+		if snapshot, scanErr := processSnapshot(); scanErr == nil {
+			current, present := snapshot[process.PID]
+			if !present || current.start != process.start || current.zombie {
+				return nil
+			}
+		}
 		return errors.New("process identity unavailable")
 	}
 	if darwinProcess(*info).start != process.start || process.zombie {
