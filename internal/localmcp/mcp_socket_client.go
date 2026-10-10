@@ -3,9 +3,11 @@ package localmcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
+	"syscall"
 
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
@@ -16,6 +18,9 @@ import (
 func ServeLocalWingClient(ctx context.Context, version, dir, clientName, conversation string, unsandboxed bool, in io.Reader, out io.Writer) error {
 	client, err := controlsocket.Dial(ctx, dir, controlsocket.Hello{Client: clientName, Conversation: conversation, Unsandboxed: unsandboxed})
 	if err != nil {
+		if conversation != "" && (errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES)) {
+			return fmt.Errorf("bound stdio cannot reach the wing control socket under this sandbox policy; use the host mailbox with protected state outside the writable workspace: %w", err)
+		}
 		return err
 	}
 	defer client.Close()

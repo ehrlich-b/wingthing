@@ -16,7 +16,7 @@ disagree about which sessions exist.
 | `make gate GATE=static` | Vet, race on touched Go packages, pinned `govulncheck`, npm advisory audit and release CLI contract. Network/advisory databases required. |
 | `make e2e-linux` | Debian and Ubuntu privileged Docker sandbox/CLI/namespace batteries. `LINUX_DISTROS=debian` or `ubuntu` selects one; binaries must match the Docker daemon's native architecture. |
 | `make e2e-web` | Seeded org-mode, legacy enrollment and hosted direct-free/relay-entitlement Playwright canaries in Docker; needs Node/npm, Docker and browser image. |
-| `make e2e-mac` | Native tagged sandbox/CLI tests (including jail and real-egg input lease), fake-provider context, nested-proxy and host-mailbox parent/child proofs. macOS required; no real model login. |
+| `make e2e-mac` | Native tagged sandbox/CLI tests (including jail and real-egg input lease), fake-provider context, bound-stdio socket refusal and host-mailbox parent/child proofs. macOS required; no real model login. |
 | `make gate GATE=claude` | Installed real Claude CLI against a loopback fake API; missing vendor binary fails. CI pins Claude Code 2.1.260. |
 | `make gate GATE=provider-swap` | Opt-in real CLIs with local Ollama/LiteLLM models and direct controls; prerequisites and assertions below. |
 | `make gate GATE=input` | Standalone real-egg preview browser-lease fixture on a supported native Unix host. |

@@ -20,6 +20,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
+	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
 // The test binary is not wt: a real broker launch would re-run the test suite
@@ -406,6 +407,37 @@ func TestHostMailboxStillScoped(t *testing.T) {
 	_, structured := f.call(t, "conversation_read", map[string]any{"conversation_id": f.other.ID})
 	if !strings.Contains(structured["error"].(string), "bound task tree") {
 		t.Fatalf("other conversation readable: %v", structured)
+	}
+}
+
+func TestHostMailboxWingReservesLinkedChildBeforeSpawn(t *testing.T) {
+	f := newBrokerFixture(t, control.SurfaceHTTPMCP, "browser")
+	conversationBrokerProtection = func(*config.Config, *egg.EggConfig, string, string, string, eggclient.EggIdentity, []string) error {
+		return nil
+	}
+	t.Cleanup(func() { conversationBrokerProtection = defaultConversationBrokerProtection })
+	spawnFailure := errors.New("fixture child spawn refused")
+	var reserved *store.Conversation
+	f.b.admission.Sessions.Spawn = func(launch *wingsession.Launch, opts wingsession.StartOptions) (*egg.Client, error) {
+		var err error
+		reserved, err = f.db.ConversationForSession(opts.SessionID)
+		if err != nil || reserved.ParentID != f.root.ID || reserved.OwnerID != f.root.OwnerID {
+			t.Errorf("child was not linked before wing spawn: %+v %v", reserved, err)
+		}
+		return nil, spawnFailure
+	}
+	args := map[string]any{"agent": "claude", "cwd": f.b.reg.Workspace, "label": "linked-child", "request_id": "mailbox-child"}
+	_, result := f.call(t, "agent_start", args)
+	if reserved == nil {
+		t.Fatalf("bound MCP never reserved a linked child: %v", result)
+	}
+	child, err := f.db.GetConversation(f.root.OwnerID, reserved.ID)
+	if err != nil || child.LaunchState != "failed" || child.LaunchError != spawnFailure.Error() {
+		t.Fatalf("child spawn failure was not durable: %+v %v", child, err)
+	}
+	_, replay := f.call(t, "agent_start", args)
+	if replay["session"] != child.SessionID || replay["reused"] != true {
+		t.Fatalf("child reservation lost on reconnect: %v", replay)
 	}
 }
 

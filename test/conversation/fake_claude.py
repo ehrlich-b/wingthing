@@ -98,17 +98,26 @@ class MCPClient:
     def __init__(self, configuration):
         env = dict(os.environ)
         env.update(configuration.get('env', {}))
-        self.process = subprocess.Popen([configuration['command'], *configuration['args']], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr, text=True, env=env)
+        self.process = subprocess.Popen([configuration['command'], *configuration['args']], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
         self.sequence = 0
 
-    def request(self, method, params):
+    def send(self, method, params):
         self.sequence += 1
-        self.process.stdin.write(json.dumps({'jsonrpc': '2.0', 'id': self.sequence, 'method': method, 'params': params}) + '\n')
-        self.process.stdin.flush()
+        try:
+            self.process.stdin.write(json.dumps({'jsonrpc': '2.0', 'id': self.sequence, 'method': method, 'params': params}) + '\n')
+            self.process.stdin.flush()
+        except BrokenPipeError:
+            self.exited()
+
+    def exited(self):
+        raise RuntimeError('bound MCP exited before response: ' + self.process.stderr.read().strip())
+
+    def request(self, method, params):
+        self.send(method, params)
         while True:
             line = self.process.stdout.readline()
             if not line:
-                raise RuntimeError('bound MCP exited before response')
+                self.exited()
             response = json.loads(line)
             if response.get('id') != self.sequence:
                 continue
@@ -118,13 +127,11 @@ class MCPClient:
 
     def request_error(self, method, params):
         """A call expected to fail at the protocol layer; returns the error."""
-        self.sequence += 1
-        self.process.stdin.write(json.dumps({'jsonrpc': '2.0', 'id': self.sequence, 'method': method, 'params': params}) + '\n')
-        self.process.stdin.flush()
+        self.send(method, params)
         while True:
             line = self.process.stdout.readline()
             if not line:
-                raise RuntimeError('bound MCP exited before response')
+                self.exited()
             response = json.loads(line)
             if response.get('id') == self.sequence:
                 if not response.get('error'):
