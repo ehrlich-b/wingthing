@@ -56,14 +56,13 @@ export function sidebarHarness() {
     const tabs = element({}, null, 'container');
     Object.defineProperty(tabs, 'innerHTML', { set(html) {
         tabs.children.forEach(child => { child.parentNode = null; });
-        tabs.children = [...html.matchAll(/data-sid="([^"]*)" data-wing-id="([^"]*)"/g)].map(match => {
+        tabs.children = [...html.matchAll(/data-sid="([^"]*)" data-wing-id="([^"]*)">([\s\S]*?)<\/div>/g)].map(match => {
             const tab = element({ sid: match[1], wingId: match[2] }, tabs);
-            // Fixtures use owner sessions with the rename capability.
-            tab.children = [element({}, tab, 'button')];
+            if (match[3].includes('session-rename-btn')) tab.children = [element({}, tab, 'button')];
             return tab;
         });
     } });
-    const S = { sessionsData: [], wingsData: [{ wing_id: 'mac', online: true, capabilities: ['session.rename'] }],
+    const S = { sessionsData: [], wingsData: [{ wing_id: 'mac', online: true, capabilities: ['session.rename.v1'] }],
         currentUser: { id: 'owner' }, sessionNotifications: {}, activeView: 'home', ptySessionId: null, ptyWingId: null };
     const context = moduleContext('render', {
         S, DOM: { sessionTabs: tabs }, document: doc, refreshParentDot() {},

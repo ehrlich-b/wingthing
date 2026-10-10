@@ -75,6 +75,19 @@ test('replacement wing identities receive a new probe and earlier results never 
     assert.equal(h.calls.length, 2);
 });
 
+test('a replacement roster object cannot borrow the removed object\'s in-flight promise', async () => {
+    const older = deferred(), newer = deferred();
+    const h = harness(() => h.calls.length === 1 ? older.promise : newer.promise);
+    const first = h.probe(), replacement = { ...h.wing };
+    h.S.wingsData = [replacement];
+    const second = h.probe(replacement);
+    assert.notEqual(first, second);
+    newer.resolve({ hostname: 'new object' }); await second;
+    older.resolve({ hostname: 'old object' }); await first;
+    assert.equal(replacement.hostname, 'new object');
+    assert.equal(h.wing.hostname, 'original');
+});
+
 test('explicit cancellation prevents older cleanup from erasing a pending newer probe', async () => {
     const older = deferred(), newer = deferred();
     const h = harness(() => h.calls.length === 1 ? older.promise : newer.promise);

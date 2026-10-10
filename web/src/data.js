@@ -146,7 +146,7 @@ export function cancelWingProbe(wingId) {
 }
 
 function currentWingProbe(w, probe) {
-    return _probeInflight.get(w.wing_id) === probe && w.online !== false &&
+    return _probeInflight.get(w.wing_id) === probe && probe.wing === w && w.online !== false &&
         S.wingsData.find(function(wing) { return wing.wing_id === w.wing_id; }) === w &&
         w.public_key === probe.publicKey && S.currentUser === probe.user;
 }
@@ -157,7 +157,7 @@ export function probeWing(w) {
     }
     var existing = _probeInflight.get(w.wing_id);
     if (existing && currentWingProbe(w, existing)) return existing.promise;
-    var probe = { publicKey: w.public_key, user: S.currentUser, promise: null };
+    var probe = { wing: w, publicKey: w.public_key, user: S.currentUser, promise: null };
     _probeInflight.set(w.wing_id, probe);
     probe.promise = _probeWingInner(w, probe).finally(function() {
         if (_probeInflight.get(w.wing_id) === probe) _probeInflight.delete(w.wing_id);
