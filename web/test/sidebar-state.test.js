@@ -14,7 +14,9 @@ test('100 sidebar render/remove cycles replace tabs and keep one click action', 
         tab.dispatch('click');
         assert.equal(h.actions.length, cycle + 1);
         assert.deepEqual(h.actions.at(-1), ['mac', 'same-id']);
-        assert.equal(tab.listeners.click.length, 1);
+        assert.equal(h.tabs.listeners.click.length, 1);
+        assert.equal(h.tabs.listeners.keydown.length, 1);
+        assert.equal(tab.listeners.click, undefined);
         previous = tab;
         h.S.sessionsData = [];
         h.render();
@@ -51,15 +53,31 @@ test('sidebar keyboard navigation and activation retain focus across rendering',
     assert.equal(h.actions.length, 1);
 });
 
-test('base reproduction: a removed tab can still dispatch a deleted session', () => {
+test('removed and reattached tabs cannot dispatch deleted sessions', () => {
     const h = sidebarHarness();
     h.S.sessionsData = [session()]; h.render();
     const stale = h.tabs.children[0];
     h.S.sessionsData = []; h.render();
     stale.dispatch('click');
-    assert.deepEqual(h.actions, [['mac', 'same-id']]);
-    // Reattaching the retained node also revives its per-tab callback.
+    assert.deepEqual(h.actions, []);
     stale.parentNode = h.tabs; h.tabs.children.push(stale);
     stale.dispatch('click');
-    assert.equal(h.actions.length, 2);
+    stale.dispatch('keydown', ' ');
+    stale.children[0].dispatch('click');
+    assert.equal(h.actions.length, 0);
+    assert.equal(h.renames.length, 0);
+});
+
+test('delegation resolves current tab identity after reattachment and dataset changes', () => {
+    const h = sidebarHarness();
+    h.S.sessionsData = [session('a'), session('b', 'linux')];
+    h.S.wingsData.push({ wing_id: 'linux', online: true }); h.render();
+    const tab = h.tabs.children[0];
+    h.render();
+    tab.dispatch('click');
+    assert.equal(h.actions.length, 0);
+    tab.dataset.sid = 'b'; tab.dataset.wingId = 'linux';
+    tab.parentNode = h.tabs; h.tabs.children.push(tab);
+    tab.dispatch('click');
+    assert.deepEqual(h.actions, [['linux', 'b']]);
 });
