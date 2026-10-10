@@ -9,18 +9,9 @@ from pathlib import Path
 import shlex
 import sys
 
+from contracts import timestamp, utc
+
 HERE = Path(__file__).resolve().parent
-
-
-def utc(value):
-    result = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if result.tzinfo is None or result.utcoffset() != datetime.timedelta(0):
-        raise ValueError("timestamp must be explicit UTC (Z or +00:00)")
-    return result.astimezone(datetime.timezone.utc)
-
-
-def timestamp(value):
-    return value.isoformat().replace("+00:00", "Z")
 
 
 def systemd_quote(value):
@@ -92,11 +83,21 @@ def prepare(repo, out, until):
     if not (repo / "scripts/dogfood/run.py").is_file():
         raise ValueError("missing runner source")
     end = utc(until)
-    epoch = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
-    if end <= epoch:
+    now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+    epoch = now
+    if end <= now:
         raise ValueError("--until must be in the future")
+    old_manifest = None
+    if out.is_symlink():
+        raise ValueError("symlinked output refused")
     if out.exists():
-        raise ValueError("output already exists; operator files preserved: " + str(out))
+        try:
+            old_manifest = json.loads((out / "manifest.json").read_text())
+            if old_manifest["repo"] != str(repo) or old_manifest["until"] != timestamp(end):
+                raise ValueError("different repo or deadline; choose a new output directory")
+            epoch = utc(old_manifest["epoch"])
+        except (OSError, KeyError, ValueError) as error:
+            raise ValueError("existing output preserved; refusing: " + str(error)) from error
     environment = {"WT_DOGFOOD_REPO": str(repo), "WT_DOGFOOD_EPOCH": timestamp(epoch),
                    "WT_DOGFOOD_UNTIL": timestamp(end), "TMPDIR": str(repo / ".scratch/tmp"),
                    "GOTMPDIR": str(repo / ".scratch/tmp"), "GOMAXPROCS": "2",
@@ -111,6 +112,14 @@ def prepare(repo, out, until):
              "install.sh": script("install", repo), "remove.sh": script("remove", repo)}
     manifest = {"schema": 1, "repo": str(repo), "epoch": timestamp(epoch), "until": timestamp(end),
                 "files": {name: hashlib.sha256(data.encode()).hexdigest() for name, data in files.items()}}
+    if old_manifest is not None:
+        if old_manifest != manifest:
+            raise ValueError("package inputs changed; operator files preserved; choose a new output directory")
+        for name, data in files.items():
+            target = out / name
+            if target.is_symlink() or not target.is_file() or target.read_text() != data:
+                raise ValueError("operator edits preserved; refusing: " + str(target))
+        return manifest
     os.umask(0o077)
     out.mkdir(mode=0o700, parents=True)
     for name, data in files.items():

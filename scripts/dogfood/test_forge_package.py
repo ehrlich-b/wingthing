@@ -9,11 +9,14 @@ import sys
 import tempfile
 import unittest
 
+from contracts import CHECKS
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 
 FAKE_CANARY = '''#!/usr/bin/env python3
 import json, pathlib, signal, sys
+from contracts import CHECKS
 root = pathlib.Path(__file__).resolve().parents[2]
 mode = sys.argv[1] if len(sys.argv) > 1 else "success"
 def emit(check, status="pass", **extra):
@@ -21,8 +24,8 @@ def emit(check, status="pass", **extra):
                          error="fixture cleanup failure" if status == "fail" else None,
                          **extra)), flush=True)
 def records():
-    for n in range(12):
-        emit("fixture_" + str(n), "skip" if n == 11 else "pass")
+    for n, check in enumerate(CHECKS[:-1]):
+        emit(check, "skip" if n == 11 else "pass")
     emit("cleanup", "fail" if mode == "cleanup-fail" else "pass")
 if mode == "timeout":
     signal.signal(signal.SIGTERM, lambda *_: (records(), sys.exit(0)))
@@ -45,6 +48,7 @@ class ForgeFixture(unittest.TestCase):
         self.scripts = self.repo / "scripts/dogfood"
         self.scripts.mkdir(parents=True)
         shutil.copyfile(HERE / "run.py", self.scripts / "run.py")
+        shutil.copyfile(HERE / "contracts.py", self.scripts / "contracts.py")
         fake = self.scripts / "canary.sh"
         fake.write_text(FAKE_CANARY.replace("#!/usr/bin/env python3", "#!" + sys.executable))
         fake.chmod(0o700)
@@ -59,16 +63,19 @@ class ForgeFixture(unittest.TestCase):
         else:
             shutil.rmtree(self.root)
 
-    def run_wrapper(self, mode="success", timeout=720):
+    def run_wrapper(self, mode="success", timeout=720, environment=None):
         # Only the fixture API overrides the clock bound; CLI always uses 12 minutes.
         code = ("import importlib.util, pathlib, sys; "
+                "sys.path.insert(0, str(pathlib.Path(sys.argv[1]).parent)); "
                 "spec=importlib.util.spec_from_file_location('runner', sys.argv[1]); "
                 "m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m); "
                 "sys.exit(m.run_once(pathlib.Path(sys.argv[2]), [sys.argv[3]], "
                 "timeout_seconds=float(sys.argv[4]), cleanup_seconds=2))")
+        env = {key: value for key, value in os.environ.items() if not key.startswith("WT_DOGFOOD_")}
+        env.update(environment or {})
         return subprocess.run([sys.executable, "-B", "-c", code,
                                str(self.scripts / "run.py"), str(self.repo), mode, str(timeout)],
-                              capture_output=True, text=True, timeout=10)
+                              capture_output=True, text=True, timeout=10, env=env)
 
     def receipt(self):
         receipts = sorted(self.logs.glob("*.jsonl"))
@@ -120,10 +127,47 @@ class WrapperTests(ForgeFixture):
         self.assertTrue((self.repo / "retained-state").is_dir())
         self.assertEqual(self.receipt()[-2]["status"], "fail")
         self.assertEqual(self.receipt()[-1]["status"], "fail")
+        previous_files = list(self.logs.glob("*.jsonl"))
+        repeat = self.run_wrapper()
+        self.assertEqual(repeat.returncode, 1)
+        self.assertIn("unresolved previous cleanup", repeat.stdout)
+        self.assertEqual(list(self.logs.glob("*.jsonl")), previous_files)
+
+    def test_overlap_preserves_an_earlier_failure(self):
+        self.assertEqual(self.run_wrapper("nonzero").returncode, 1)
+        with (self.logs / "run.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result = self.run_wrapper()
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(json.loads(result.stdout)["previous_failure"])
+
+    def test_interrupted_stale_state_refuses_and_is_preserved(self):
+        state = {"schema": 1, "phase": "running", "cleanup_status": "unknown"}
+        (self.logs / "runner-state.json").write_text(json.dumps(state))
+        result = self.run_wrapper()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(json.loads((self.logs / "runner-state.json").read_text()), state)
+        self.assertEqual(list(self.logs.glob("*.jsonl")), [])
+
+    def test_expiry_refuses_without_starting_and_preserves_failure(self):
+        environment = {"WT_DOGFOOD_EPOCH": "2000-01-01T00:00:00Z", "WT_DOGFOOD_UNTIL": "2000-01-02T00:00:00Z"}
+        self.assertEqual(self.run_wrapper(environment=environment).returncode, 3)
+        self.assertEqual(list(self.logs.glob("*.jsonl")), [])
+        self.assertEqual(self.run_wrapper("nonzero").returncode, 1)
+        self.assertEqual(self.run_wrapper(environment=environment).returncode, 1)
+        self.assertEqual(len(list(self.logs.glob("*.jsonl"))), 1)
+
+    def test_partial_finite_environment_refuses(self):
+        result = self.run_wrapper(environment={"WT_DOGFOOD_UNTIL": "2099-01-01T00:00:00Z"})
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(list(self.logs.glob("*.jsonl")), [])
 
     def test_receipts_rotate_to_24_and_are_private(self):
+        legacy = [{"check": check, "status": "pass", "latency_ms": 0, "error": None} for check in CHECKS]
+        legacy.append({"check": "runner", "status": "pass", "latency_ms": 0, "error": None})
         for n in range(25):
-            (self.logs / ("20000101T000000.%06dZ.jsonl" % n)).write_text("{}\n")
+            (self.logs / ("20000101T000000.%06dZ.jsonl" % n)).write_text(
+                "".join(json.dumps(record) + "\n" for record in legacy))
         self.assertEqual(self.run_wrapper().returncode, 0)
         receipts = sorted(self.logs.glob("*.jsonl"))
         self.assertEqual(len(receipts), 24)
@@ -187,6 +231,24 @@ class PreparationTests(ForgeFixture):
         self.assertEqual(result.returncode, 2)
         self.assertIn("preserved", result.stderr)
         self.assertEqual(edit.read_text(), "keep this")
+
+    def test_repeated_preparation_keeps_epoch_and_mtimes(self):
+        self.assertEqual(self.prepare().returncode, 0)
+        before = {file.name: (file.read_bytes(), file.stat().st_mtime_ns) for file in self.package.iterdir()}
+        result = self.prepare()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        after = {file.name: (file.read_bytes(), file.stat().st_mtime_ns) for file in self.package.iterdir()}
+        self.assertEqual(before, after)
+
+    def test_operator_edits_and_deadline_changes_refuse(self):
+        self.assertEqual(self.prepare().returncode, 0)
+        self.assertEqual(self.prepare("2099-01-02T00:00:00Z").returncode, 2)
+        edit = self.package / "10-forge.conf"
+        edit.write_text(edit.read_text() + "# operator edit\n")
+        result = self.prepare()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("operator edits preserved", result.stderr)
+        self.assertTrue(edit.read_text().endswith("# operator edit\n"))
 
 
 if __name__ == "__main__":
