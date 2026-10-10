@@ -9,11 +9,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/sshcontrol"
 	"github.com/ehrlich-b/wingthing/internal/testssh"
@@ -21,6 +23,14 @@ import (
 )
 
 func TestBuiltWTConnectRememberedSSHRunSurvivesDrop(t *testing.T) {
+	testBuiltWTConnectRememberedSSHRun(t, false)
+}
+
+func TestBuiltWTConnectRememberedSSHNativeTaskSurvivesDrop(t *testing.T) {
+	testBuiltWTConnectRememberedSSHRun(t, true)
+}
+
+func testBuiltWTConnectRememberedSSHRun(t *testing.T, nativeTask bool) {
 	repo, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -197,6 +207,21 @@ func TestBuiltWTConnectRememberedSSHRunSurvivesDrop(t *testing.T) {
 		}
 		return response.Result.Data
 	}
+	rpc := func(method string, params map[string]any) map[string]any {
+		t.Helper()
+		requestID++
+		if err := json.NewEncoder(input).Encode(map[string]any{"jsonrpc": "2.0", "id": requestID, "method": method, "params": params}); err != nil {
+			t.Fatal(err)
+		}
+		var response struct {
+			Result map[string]any `json:"result"`
+			Error  any            `json:"error"`
+		}
+		if err := decoder.Decode(&response); err != nil || response.Error != nil {
+			t.Fatalf("native %s: %+v %v", method, response, err)
+		}
+		return response.Result
+	}
 	directory := call("wing_list", map[string]any{})
 	if directory["count"] != float64(2) {
 		t.Fatalf("built directory: %v", directory)
@@ -206,7 +231,24 @@ func TestBuiltWTConnectRememberedSSHRunSurvivesDrop(t *testing.T) {
 		t.Fatal("independent wings share an ID")
 	}
 	args := map[string]any{"wing_id": meta.WingID, "prompt": "remote request", "agent": "codex", "model": "fixture-model", "cwd": work, "timeout_seconds": 90, "idempotency_key": "built-original"}
-	run := call("agent_run", args)
+	var run map[string]any
+	taskID := ""
+	if nativeTask {
+		created := rpc("tools/call", map[string]any{"name": "agent_run", "arguments": args, "task": map[string]any{"ttl": 60000}})
+		task := created["task"].(map[string]any)
+		if task["status"] != "working" || created["structuredContent"] != nil {
+			t.Fatalf("not a CreateTaskResult: %v", created)
+		}
+		taskID = task["taskId"].(string)
+		wingID, runID, err := control.SplitTaskID(taskID)
+		if err != nil || wingID != meta.WingID {
+			t.Fatalf("wrong owning wing: %s %v", taskID, err)
+		}
+		run = call("agent_status", map[string]any{"wing_id": meta.WingID, "run_id": runID})
+		run["idempotency_key"] = "built-original"
+	} else {
+		run = call("agent_run", args)
+	}
 	id, session := run["run_id"].(string), run["session_id"].(string)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -245,7 +287,25 @@ func TestBuiltWTConnectRememberedSSHRunSurvivesDrop(t *testing.T) {
 	if status["session_id"] != session || status["wing_id"] != meta.WingID {
 		t.Fatalf("reconnect changed receipt: %v", status)
 	}
-	retry := call("agent_run", args)
+	var retry map[string]any
+	if nativeTask {
+		created := rpc("tools/call", map[string]any{"name": "agent_run", "arguments": args, "task": map[string]any{"ttl": 60000}})
+		if created["task"].(map[string]any)["taskId"] != taskID {
+			t.Fatal("retry changed native task ID")
+		}
+		get := rpc("tasks/get", map[string]any{"taskId": taskID})
+		if get["status"] != "working" || get["taskId"] != taskID {
+			t.Fatalf("remote task routing lost: %v", get)
+		}
+		list := rpc("tasks/list", map[string]any{})
+		tasks := list["tasks"].([]any)
+		if len(tasks) != 1 || tasks[0].(map[string]any)["taskId"] != taskID {
+			t.Fatalf("aggregate list: %v", list)
+		}
+		retry = call("agent_status", map[string]any{"wing_id": meta.WingID, "run_id": id})
+	} else {
+		retry = call("agent_run", args)
+	}
 	if retry["run_id"] != id || retry["session_id"] != session {
 		t.Fatalf("retry launched twice: %v", retry)
 	}
@@ -260,6 +320,16 @@ func TestBuiltWTConnectRememberedSSHRunSurvivesDrop(t *testing.T) {
 	result := call("agent_result", map[string]any{"wing_id": meta.WingID, "run_id": id})
 	if result["output"] != "Fake Codex fixture-model: Ω🙂 remote request" || result["wing_id"] != meta.WingID || result["run_id"] != id {
 		t.Fatalf("remote semantic result: %v", result)
+	}
+	if nativeTask {
+		native := rpc("tasks/result", map[string]any{"taskId": taskID})
+		if !reflect.DeepEqual(native["structuredContent"], result) || native["_meta"].(map[string]any)[control.MCPRelatedTask].(map[string]any)["taskId"] != taskID {
+			t.Fatalf("aggregate task result differs: %v vs %v", native, result)
+		}
+		get := rpc("tasks/get", map[string]any{"taskId": taskID})
+		if get["status"] != "completed" {
+			t.Fatalf("remote task did not complete: %v", get)
+		}
 	}
 	sessions := call("terminal_list", map[string]any{"wing_id": meta.WingID})["sessions"].([]any)
 	if len(sessions) != 1 || sessions[0].(map[string]any)["id"] != session {

@@ -29,6 +29,7 @@ func ServeLocalWingClient(ctx context.Context, version, dir, clientName, convers
 }
 
 type localWingProxy struct {
+	protocol       mcpProtocolState
 	aggregate      bool
 	version        string
 	client         *controlsocket.Client
@@ -43,6 +44,7 @@ func (s *localWingProxy) handle(ctx context.Context, request localMCPRequest) (l
 	}
 	switch request.Method {
 	case "initialize":
+		version := s.protocol.negotiate(request.Params)
 		instructions := "Wingthing manages persistent sessions and bounded agent runs in your local wing. Use terminal tools for PTYs and agent_run for supervised semantic work. Accepted work survives this MCP client exiting."
 		if s.aggregate {
 			instructions = "Wingthing manages durable agents across your local wing and remembered SSH wings. Call wing_list, then pass wing_id to wing-owned tools. Offline entries stay visible; accepted runs survive SSH and MCP disconnects. Reconcile unknown admissions with the original idempotency_key."
@@ -51,8 +53,8 @@ func (s *localWingProxy) handle(ctx context.Context, request localMCPRequest) (l
 			instructions += " This wing trusts the outer VM/container boundary; spawned processes have the full authority of its OS user."
 		}
 		response.Result = map[string]any{
-			"protocolVersion": localMCPProtocolVersion,
-			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"protocolVersion": version,
+			"capabilities":    mcpCapabilities(version),
 			"serverInfo":      map[string]any{"name": "wingthing-local", "version": s.version, "principal": s.client.Welcome.Principal, "actor": s.client.Welcome.Actor},
 			"instructions":    instructions,
 		}
@@ -75,7 +77,7 @@ func (s *localWingProxy) handle(ctx context.Context, request localMCPRequest) (l
 			}
 			tools = filtered
 		}
-		response.Result = map[string]any{"tools": tools}
+		response.Result = map[string]any{"tools": mcpVersionTools(tools, s.protocol.tasksEnabled())}
 	case "tools/call":
 		var call localMCPToolCallParams
 		if err := decodeStrict(request.Params, &call); err != nil || call.Name == "" {
@@ -99,6 +101,15 @@ func (s *localWingProxy) handle(ctx context.Context, request localMCPRequest) (l
 		if !s.aggregate {
 			arguments, err = shapeLocalArguments(tool, arguments)
 		}
+		if call.Task != nil && s.protocol.tasksEnabled() {
+			if err != nil {
+				response.Error = &localMCPError{Code: -32602, Message: err.Error()}
+				break
+			}
+			call.Arguments = arguments
+			request.Params, _ = json.Marshal(call)
+			return handleMCPTaskRequest(ctx, request, s.client.Call, s.aggregate), len(request.ID) > 0
+		}
 		var data map[string]any
 		isError := false
 		if err == nil {
@@ -112,6 +123,11 @@ func (s *localWingProxy) handle(ctx context.Context, request localMCPRequest) (l
 			isError = true
 		}
 		response.Result = localMCPToolResult(data, isError)
+	case "tasks/get", "tasks/result", "tasks/list", "tasks/cancel":
+		if s.protocol.tasksEnabled() {
+			return handleMCPTaskRequest(ctx, request, s.client.Call, s.aggregate), len(request.ID) > 0
+		}
+		response.Error = &localMCPError{Code: -32601, Message: "tasks require MCP 2025-11-25"}
 	default:
 		if len(request.ID) == 0 {
 			return localMCPResponse{}, false

@@ -6,13 +6,15 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/control"
+	"github.com/ehrlich-b/wingthing/internal/egg"
 )
 
 // MCPTaskRecord is committed in the same admission transaction as the run.
 // Retention starts at completion; active runs never expire or lose their timeout.
 type MCPTaskRecord struct {
-	RetentionMillis *int64    `json:"retention_millis"`
-	CancelledAt     time.Time `json:"cancelled_at,omitempty"`
+	RetentionMillis *int64             `json:"retention_millis"`
+	CancelledAt     time.Time          `json:"cancelled_at,omitempty"`
+	CancelledResult *egg.RunTurnResult `json:"cancelled_result,omitempty"`
 }
 
 func (r *Run) mcpTask(now time.Time) (control.MCPTask, bool) {
@@ -127,16 +129,23 @@ func (m *Runs) CancelTask(a Authority, id string) (control.MCPTask, error) {
 		return control.MCPTask{}, errors.New("task is missing or already terminal")
 	}
 	r = cloneRun(r)
-	previous := cloneRun(r)
-	markRunStopped(r)
+	// Keep the underlying run nonterminal until the egg acknowledges stopping,
+	// so a wing restart will reconcile this durable stop intent. Freeze the
+	// client-visible cancelled result before replying, as required by MCP.
+	r.Cancelled = true
 	r.MCPTask.CancelledAt = time.Now().UTC()
+	cancelled := cloneRun(r)
+	markRunStopped(cancelled)
+	cancelled.Result.EndedAt = r.MCPTask.CancelledAt
+	r.MCPTask.CancelledResult = &cancelled.Result
 	if err := m.save(r, "mcp_task_cancelled"); err != nil {
 		m.mu.Unlock()
 		return control.MCPTask{}, err
 	}
-	task, _ = r.mcpTask(r.MCPTask.CancelledAt)
+	// Even a zero-retention cancellation must return its terminal snapshot.
+	task, _ = r.mcpTask(r.MCPTask.CancelledAt.Add(-time.Nanosecond))
 	m.workers.Add(1)
 	m.mu.Unlock()
-	go func() { defer m.workers.Done(); m.cancelEgg(previous); _, _ = m.Stop(a, id) }()
+	go func() { defer m.workers.Done(); _, _ = m.Stop(a, id) }()
 	return task, nil
 }

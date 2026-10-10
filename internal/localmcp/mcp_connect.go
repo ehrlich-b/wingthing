@@ -1,7 +1,6 @@
 package localmcp
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,6 +17,7 @@ import (
 )
 
 type ConnectMCPServer struct {
+	protocol   mcpProtocolState
 	Version    string
 	In         io.Reader
 	Out        io.Writer
@@ -44,72 +44,7 @@ type connectMCPTunnel interface {
 }
 
 func (s *ConnectMCPServer) Serve(ctx context.Context) error {
-	callCtx, cancelCalls := context.WithCancel(ctx)
-	defer cancelCalls()
-	scanner := bufio.NewScanner(s.In)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-	encoder := json.NewEncoder(s.Out)
-	var calls sync.WaitGroup
-	requestSlots := make(chan struct{}, maxConcurrentConnectMCPCalls)
-	var encodeMu sync.Mutex
-	var encodeErr error
-	write := func(response localMCPResponse) {
-		encodeMu.Lock()
-		defer encodeMu.Unlock()
-		if encodeErr == nil {
-			encodeErr = encoder.Encode(response)
-		}
-	}
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			cancelCalls()
-			calls.Wait()
-			return ctx.Err()
-		default:
-		}
-		var request localMCPRequest
-		if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
-			write(localMCPResponse{JSONRPC: "2.0", Error: &localMCPError{Code: -32700, Message: "parse error"}})
-			continue
-		}
-		dispatch := func() {
-			response, respond := s.handle(callCtx, request)
-			if respond {
-				write(response)
-			}
-		}
-		if request.Method == "tools/call" {
-			select {
-			case requestSlots <- struct{}{}:
-			default:
-				if len(request.ID) > 0 {
-					write(localMCPResponse{
-						JSONRPC: "2.0", ID: request.ID,
-						Error: &localMCPError{Code: -32000, Message: "too many concurrent tool calls"},
-					})
-				}
-				continue
-			}
-			calls.Add(1)
-			go func() {
-				defer calls.Done()
-				defer func() { <-requestSlots }()
-				dispatch()
-			}()
-		} else {
-			dispatch()
-		}
-	}
-	scanErr := scanner.Err()
-	// The parent MCP process closing stdin is a transport disconnect. Cancel
-	// outstanding waits/connection attempts without stopping durable wing work.
-	cancelCalls()
-	calls.Wait()
-	if scanErr != nil {
-		return fmt.Errorf("read MCP request: %w", scanErr)
-	}
-	return encodeErr
+	return serveStdio(ctx, s.In, s.Out, s.handle)
 }
 
 func (s *ConnectMCPServer) handle(ctx context.Context, request localMCPRequest) (localMCPResponse, bool) {
@@ -120,9 +55,10 @@ func (s *ConnectMCPServer) handle(ctx context.Context, request localMCPRequest) 
 	}
 	switch request.Method {
 	case "initialize":
+		version := s.protocol.negotiate(request.Params)
 		response.Result = map[string]any{
-			"protocolVersion": localMCPProtocolVersion,
-			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"protocolVersion": version,
+			"capabilities":    mcpCapabilities(version),
 			"serverInfo":      map[string]any{"name": "wingthing-agent-manager", "version": s.Version, "actor": s.Actor},
 			"instructions":    "Wingthing manages durable agents across machines. Call wing_list, then pass an explicit wing_id to every wing-owned tool. Remote control travels directly to that wing; the roost is used for identity, directory, and signaling.",
 		}
@@ -131,7 +67,7 @@ func (s *ConnectMCPServer) handle(ctx context.Context, request localMCPRequest) 
 	case "ping":
 		response.Result = map[string]any{}
 	case "tools/list":
-		response.Result = map[string]any{"tools": control.Tools(control.SurfaceDirectMCP)}
+		response.Result = map[string]any{"tools": mcpVersionTools(control.Tools(control.SurfaceDirectMCP), s.protocol.tasksEnabled())}
 	case "tools/call":
 		var call localMCPToolCallParams
 		if err := decodeStrict(request.Params, &call); err != nil || call.Name == "" {
@@ -145,12 +81,20 @@ func (s *ConnectMCPServer) handle(ctx context.Context, request localMCPRequest) 
 		if len(call.Arguments) == 0 {
 			call.Arguments = json.RawMessage(`{}`)
 		}
+		if call.Task != nil && s.protocol.tasksEnabled() {
+			return handleMCPTaskRequest(ctx, request, s.callTaskControl, true), len(request.ID) > 0
+		}
 		result, isError, err := s.callTool(ctx, call.Name, call.Arguments)
 		if err != nil {
 			result = control.ErrorResult(err)
 			isError = true
 		}
 		response.Result = localMCPToolResult(result, isError)
+	case "tasks/get", "tasks/result", "tasks/list", "tasks/cancel":
+		if s.protocol.tasksEnabled() {
+			return handleMCPTaskRequest(ctx, request, s.callTaskControl, true), len(request.ID) > 0
+		}
+		response.Error = &localMCPError{Code: -32601, Message: "tasks require MCP 2025-11-25"}
 	default:
 		if len(request.ID) == 0 {
 			return localMCPResponse{}, false

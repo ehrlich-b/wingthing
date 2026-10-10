@@ -170,6 +170,7 @@ func serveDirectMCPChannelWithPolicySourceAndLease(version string, cfg *config.C
 	ctx, cancel := context.WithTimeout(context.Background(), identityLease)
 	var sendMu sync.Mutex
 	requestSlots := make(chan struct{}, maxConcurrentDirectMCPRequests)
+	var lifetimes control.RequestLifetimes
 	send := func(response control.DirectResponse) {
 		payload := marshalDirectMCPResponse(response)
 		sendMu.Lock()
@@ -202,11 +203,22 @@ func serveDirectMCPChannelWithPolicySourceAndLease(version string, cfg *config.C
 			send(control.DirectResponse{Version: control.ContractVersion, Error: "invalid control request"})
 			return
 		}
+		if id, notification := control.CancellationID(request); notification {
+			lifetimes.Cancel(id)
+			return
+		}
 		if !acquireDirectMCPRequestSlot(requestSlots) {
 			send(control.DirectResponse{Version: control.ContractVersion, ID: request.ID, Error: "too many concurrent direct control requests"})
 			return
 		}
+		requestCtx, finish, ok := lifetimes.Start(ctx, request.ID)
+		if !ok {
+			<-requestSlots
+			send(control.DirectResponse{Version: control.ContractVersion, ID: request.ID, Error: "duplicate active request ID"})
+			return
+		}
 		go func() {
+			defer finish()
 			defer func() { <-requestSlots }()
 			if ctx.Err() != nil {
 				return
@@ -248,7 +260,7 @@ func serveDirectMCPChannelWithPolicySourceAndLease(version string, cfg *config.C
 				server.Sessions = admission.Sessions
 			}
 
-			response = server.handleDirectRequest(ctx, request)
+			response = server.handleDirectRequest(requestCtx, request)
 			send(response)
 		}()
 	})
@@ -303,6 +315,17 @@ func directMCPAuthorizationError(wingCfg *config.WingConfig, allowedKeys []confi
 // handleDirectRequest is shared by the direct channel and the local wing socket.
 func (s *Server) handleDirectRequest(ctx context.Context, request control.DirectRequest) control.DirectResponse {
 	response := control.DirectResponse{Version: control.ContractVersion, ID: request.ID}
+	if _, taskOperation := control.MCPTaskTool(request.Tool); taskOperation && request.Version == control.ContractVersion && request.ID != "" {
+		data, isError, err := s.callTaskControl(ctx, request.Tool, request.Arguments)
+		response.Result = data
+		response.IsError = isError
+		if err != nil {
+			rpcErr := taskProtocolError(err)
+			response.Error = rpcErr.Message
+			response.RPCErrorCode = rpcErr.Code
+		}
+		return response
+	}
 	tool, known := control.Lookup(request.Tool)
 	localDirectory := request.Tool == "wing_list" && s.controlSurface() == control.SurfaceLocalMCP
 	if request.Version != control.ContractVersion || request.ID == "" || !known || tool.Authority != control.AuthorityWing && !localDirectory || !tool.Supports(s.controlSurface()) {

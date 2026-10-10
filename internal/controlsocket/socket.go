@@ -185,6 +185,7 @@ func serve(ctx context.Context, conn *net.UnixConn, wingID string, bind Bind) {
 	defer calls.Wait()
 	defer cancel()
 	slots := make(chan struct{}, 32)
+	var lifetimes control.RequestLifetimes
 	send := func(response control.DirectResponse) {
 		payload, err := json.Marshal(response)
 		if err != nil || len(payload) > maxEnvelope {
@@ -200,10 +201,26 @@ func serve(ctx context.Context, conn *net.UnixConn, wingID string, bind Bind) {
 			send(control.DirectResponse{Version: control.ContractVersion, Error: "invalid control request"})
 			continue
 		}
+		if id, notification := control.CancellationID(request); notification {
+			lifetimes.Cancel(id)
+			continue
+		}
 		select {
 		case slots <- struct{}{}:
+			requestCtx, finish, ok := lifetimes.Start(ctx, request.ID)
+			if !ok {
+				<-slots
+				send(control.DirectResponse{Version: control.ContractVersion, ID: request.ID, Error: "duplicate active request ID"})
+				continue
+			}
 			calls.Add(1)
-			go func() { defer calls.Done(); defer func() { <-slots }(); send(handler(ctx, request)) }()
+			go func() {
+				defer calls.Done()
+				defer func() { <-slots }()
+				response := handler(requestCtx, request)
+				finish()
+				send(response)
+			}()
 		default:
 			send(control.DirectResponse{Version: control.ContractVersion, ID: request.ID, Error: "too many concurrent control requests"})
 		}
@@ -360,10 +377,25 @@ func (c *Client) Call(ctx context.Context, tool string, arguments json.RawMessag
 		}
 		return r.Result, r.IsError, nil
 	case <-ctx.Done():
+		c.cancelRequest(id)
 		return nil, true, ctx.Err()
 	case <-c.done:
 		return nil, true, &TransportError{Err: errors.New("wing control disconnected")}
 	}
+}
+
+func (c *Client) cancelRequest(id string) {
+	// The write slot is normally free while awaiting a result. Cancellation is
+	// best effort if another request is currently writing or the peer is gone.
+	select {
+	case c.writeSlot <- struct{}{}:
+	default:
+		return
+	}
+	defer func() { <-c.writeSlot }()
+	payload, _ := json.Marshal(control.CancellationRequest(id))
+	_ = c.conn.SetWriteDeadline(time.Now().Add(time.Second))
+	_, _ = c.conn.Write(append(payload, '\n'))
 }
 func (c *Client) Close() error { return c.conn.Close() }
 
