@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -227,7 +228,8 @@ func (t Transport) Dial(ctx context.Context, remote config.Remote, hello control
 			_ = c.Close()
 		}
 	}()
-	// Watch before spawn; creation is the barrier, never a timing guess.
+	// Watch before spawn so socket creation cannot be missed. bind creates the
+	// filesystem entry before listen makes it ready to accept connections.
 	for {
 		if info, statErr := os.Lstat(local); statErr == nil {
 			if info.Mode()&os.ModeSocket == 0 {
@@ -254,9 +256,24 @@ func (t Transport) Dial(ctx context.Context, remote config.Remote, hello control
 		}
 	}
 	hello.WingID = remote.WingID
-	client, err := controlsocket.DialPath(ctx, local, hello)
-	if err != nil {
-		return nil, fmt.Errorf("verify forwarded wing %s: %w", remote.WingID, err)
+	var client *controlsocket.Client
+	for {
+		client, err = controlsocket.DialPath(ctx, local, hello)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.ECONNREFUSED) {
+			return nil, fmt.Errorf("verify forwarded wing %s: %w", remote.WingID, err)
+		}
+		// listen has no filesystem event of its own. Retry only this startup
+		// condition, bounded by the attempt context and the SSH process lifetime.
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-c.exited:
+			return nil, fmt.Errorf("SSH forward closed: %s", c.stderr.String())
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 	c.Client = client
 	go func() {

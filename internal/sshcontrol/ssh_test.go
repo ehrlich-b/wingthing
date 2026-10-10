@@ -3,10 +3,13 @@ package sshcontrol_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -16,6 +19,82 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/sshcontrol"
 	"github.com/ehrlich-b/wingthing/internal/testssh"
 )
+
+func TestSSHForwardBoundSocketWaitsForListen(t *testing.T) {
+	for _, listen := range []bool{false, true} {
+		t.Run(fmt.Sprintf("listen=%t", listen), func(t *testing.T) {
+			h := testssh.New(t)
+			t.Setenv("WT_FAKE_SSH_BIND_BARRIER", "1")
+			state := filepath.Join(h.Root, "state")
+			if err := os.Mkdir(state, 0700); err != nil {
+				t.Fatal(err)
+			}
+			s, err := controlsocket.Listen(t.Context(), state, "remote-wing", func(controlsocket.Hello) (controlsocket.Welcome, controlsocket.Handler, error) {
+				return controlsocket.Welcome{}, func(_ context.Context, r control.DirectRequest) control.DirectResponse {
+					return control.DirectResponse{Version: control.ContractVersion, ID: r.ID, Result: map[string]any{"ready": true}}
+				}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			meta, err := sshcontrol.InspectLocal(t.Context(), state, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.Host(t, "host", meta)
+			remote := config.Remote{SSHTarget: "host", WingID: meta.WingID, WingthingDir: state, ControlSocket: meta.ControlSocket, ControlVersion: meta.Version}
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			type result struct {
+				conn *sshcontrol.Connection
+				err  error
+			}
+			done := make(chan result, 1)
+			go func() {
+				conn, err := (sshcontrol.Transport{SSHPath: h.SSHPath, SocketDir: h.Root}).Dial(ctx, remote, controlsocket.Hello{})
+				done <- result{conn, err}
+			}()
+			var forward *testssh.Forward
+			select {
+			case forward = <-h.Started:
+			case <-ctx.Done():
+				t.Fatal("forward did not reach its bind barrier")
+			}
+			// Prove the exact state that filesystem creation alone cannot resolve.
+			probe, err := net.Dial("unix", forward.Socket)
+			if probe != nil {
+				_ = probe.Close()
+			}
+			if !errors.Is(err, syscall.ECONNREFUSED) {
+				t.Fatalf("bound socket was already listening: %v", err)
+			}
+			if listen {
+				if err := forward.StartListening(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := <-done
+			if !listen {
+				if got.conn != nil {
+					_ = got.conn.Close()
+				}
+				if !errors.Is(got.err, context.DeadlineExceeded) {
+					t.Fatalf("bound socket must wait for readiness until canceled: %v", got.err)
+				}
+				return
+			}
+			if got.err != nil {
+				t.Fatal(got.err)
+			}
+			defer got.conn.Close()
+			data, denied, err := got.conn.Client.Call(ctx, "ping", json.RawMessage(`{}`))
+			if err != nil || denied || data["ready"] != true {
+				t.Fatalf("ready forward: %v %t %v", data, denied, err)
+			}
+		})
+	}
+}
 
 func TestSSHInspectAndPinnedForward(t *testing.T) {
 	h := testssh.New(t)
