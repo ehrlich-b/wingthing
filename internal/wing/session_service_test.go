@@ -243,9 +243,9 @@ func newSessionTransportFixture(t *testing.T) *sessionTransportFixture {
 			}
 		}
 	}))
-	client := &ws.Client{RoostURL: strings.Replace(relayServer.URL, "http://", "ws://", 1), WingID: cfg.WingID, Token: "fixture-token", OnRegistered: func(ws.RegisteredMsg) { close(connected) }}
+	client := &ws.Client{PTYRoutes: &ws.PTYRegistry{}, RoostURL: strings.Replace(relayServer.URL, "http://", "ws://", 1), WingID: cfg.WingID, Token: "fixture-token", OnRegistered: func(ws.RegisteredMsg) { close(connected) }}
 	f.client = client
-	f.stopRegistration = configureSessionRegistration(f.sessions, ctx, client, func() auth.PasskeyPolicy { return auth.PasskeyPolicy{} }, func() []*config.ToolConfig { return nil })
+	f.stopRegistration = configureSessionRegistration(f.sessions, ctx, client.PTYRoutes, client.PTYWriter(ctx), func() auth.PasskeyPolicy { return auth.PasskeyPolicy{} }, func() []*config.ToolConfig { return nil })
 	client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
 		keys := []config.AllowKey{}
 		handlePTYSession("test", ctx, cfg, f.wc.Clone(), start, write, input, policy, false, false, &keys, cache, auth.PasskeyPolicy{}, 0, 0, nil, nil, nil, false, f.sessions)

@@ -70,10 +70,11 @@ type Client struct {
 	OnRegistered        func(msg RegisteredMsg)                     // additive coordinator runtime policy
 	OnHostedRelayDenied func(operation string)                      // content-free local policy audit hook
 	OnStateChange       func(state string, err error)               // called on connection state transitions
+	OwnerForRelay       func(string) string                         // wing-administered owner binding for authenticated relay users
 
-	// ptySessions tracks active PTY sessions for routing input/resize
-	ptySessions   map[string]chan []byte // session_id → input channel
-	ptySessionsMu sync.Mutex
+	// PTYRoutes is supplied by the wing, independently of relay connectivity.
+	PTYRoutes     *PTYRegistry
+	ptyRoutesOnce sync.Once
 
 	conn *websocket.Conn
 	mu   sync.Mutex
@@ -206,14 +207,6 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 	defer func() { _ = conn.CloseNow() }()
 	connected = true
 
-	// Preserve PTY sessions across reconnects — running processes survive relay outages.
-	// Only initialize the map on first connect.
-	c.ptySessionsMu.Lock()
-	if c.ptySessions == nil {
-		c.ptySessions = make(map[string]chan []byte)
-	}
-	c.ptySessionsMu.Unlock()
-
 	// Send registration — projects flow through E2E tunnel only, never through relay
 	runtimeConfig := c.runtimeConfig()
 	reg := WingRegister{
@@ -320,6 +313,18 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 			}
 
 		case TypePTYAttach:
+			if c.OwnerForRelay != nil {
+				var attach PTYAttach
+				if err := json.Unmarshal(data, &attach); err != nil {
+					continue
+				}
+				attach.UserID = c.OwnerForRelay(attach.UserID)
+				var err error
+				data, err = json.Marshal(attach)
+				if err != nil {
+					continue
+				}
+			}
 			// Forward attach to the existing session for re-key and local auth.
 			var partial struct {
 				SessionID string `json:"session_id"`
@@ -330,9 +335,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 			if !ValidSessionID(partial.SessionID) {
 				continue
 			}
-			c.ptySessionsMu.Lock()
-			ch := c.ptySessions[partial.SessionID]
-			c.ptySessionsMu.Unlock()
+			ch := c.ptyRoutes().lookup(partial.SessionID)
 			if ch != nil {
 				select {
 				case ch <- data:
@@ -350,9 +353,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 			if !ValidSessionID(partial.SessionID) {
 				continue
 			}
-			c.ptySessionsMu.Lock()
-			ch := c.ptySessions[partial.SessionID]
-			c.ptySessionsMu.Unlock()
+			ch := c.ptyRoutes().lookup(partial.SessionID)
 			if ch != nil {
 				select {
 				case ch <- data:
@@ -485,11 +486,22 @@ func (c *Client) SendAttention(ctx context.Context, sessionID string) error {
 }
 
 // HasPTYSession returns true if a goroutine is already handling this session.
+func (c *Client) ptyRoutes() *PTYRegistry {
+	c.ptyRoutesOnce.Do(func() {
+		if c.PTYRoutes == nil {
+			c.PTYRoutes = &PTYRegistry{}
+		}
+	})
+	return c.PTYRoutes
+}
+
 func (c *Client) HasPTYSession(sessionID string) bool {
-	c.ptySessionsMu.Lock()
-	defer c.ptySessionsMu.Unlock()
-	_, ok := c.ptySessions[sessionID]
-	return ok
+	return c.ptyRoutes().HasPTYSession(sessionID)
+}
+
+// PTYWriter is the optional relay output subscriber for local routing.
+func (c *Client) PTYWriter(ctx context.Context) PTYWriteFunc {
+	return func(v any) error { return c.writeJSON(ctx, v) }
 }
 
 // RegisterPTYSession creates an input channel for a reclaimed session so allowed
@@ -521,24 +533,11 @@ func (c *Client) RegisterPTYSession(ctx context.Context, sessionID string) (writ
 }
 
 func (c *Client) registerPTYSession(sessionID string, inputCh chan []byte) bool {
-	c.ptySessionsMu.Lock()
-	defer c.ptySessionsMu.Unlock()
-	if c.ptySessions == nil {
-		c.ptySessions = make(map[string]chan []byte)
-	}
-	if c.ptySessions[sessionID] != nil {
-		return false
-	}
-	c.ptySessions[sessionID] = inputCh
-	return true
+	return c.ptyRoutes().register(sessionID, inputCh)
 }
 
 func (c *Client) unregisterPTYSession(sessionID string, inputCh chan []byte) {
-	c.ptySessionsMu.Lock()
-	defer c.ptySessionsMu.Unlock()
-	if c.ptySessions[sessionID] == inputCh {
-		delete(c.ptySessions, sessionID)
-	}
+	c.ptyRoutes().unregister(sessionID, inputCh)
 }
 
 // PushPTYInput pushes raw data into a session's input channel from outside the WebSocket read loop.
@@ -549,9 +548,7 @@ func (c *Client) PushPTYInput(sessionID string, data []byte) bool {
 		log.Printf("[P2P] PushPTYInput: invalid session ID %q", sessionID)
 		return false
 	}
-	c.ptySessionsMu.Lock()
-	ch := c.ptySessions[sessionID]
-	c.ptySessionsMu.Unlock()
+	ch := c.ptyRoutes().lookup(sessionID)
 	if ch == nil {
 		log.Printf("[P2P] PushPTYInput: no session %s", sessionID)
 		return false

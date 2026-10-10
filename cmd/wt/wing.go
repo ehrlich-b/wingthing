@@ -28,8 +28,8 @@ func wingCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "daemon",
 		Aliases: []string{"wing"},
-		Short:   "Connect this machine to a relay, accessible from anywhere",
-		Long:    "Makes this machine reachable from anywhere via the relay.\nUse 'wt daemon start' to go online, 'wt daemon status' to check.",
+		Short:   "Run this machine’s wing, locally or through a relay",
+		Long:    "Runs this machine’s wing and local control socket.\nUse 'wt wing start --local-only' without an account or relay.",
 	}
 
 	cmd.AddCommand(wingStartCmd())
@@ -56,16 +56,20 @@ func wingStartCmd() *cobra.Command {
 	var pathsFlag string
 	var auditFlag bool
 	var localFlag bool
+	var localOnlyFlag bool
 	var rawReplayFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "start",
-		Short: "Start wing daemon and go online",
-		Long:  "Start a wing — your machine becomes reachable from anywhere via the roost. Runs as a background daemon by default. Use --foreground for debugging.",
+		Short: "Start the wing runtime and local control socket",
+		Long:  "Start a wing and its local MCP control socket. Use --local-only to run without login, a roost or any relay connection. Runs as a background daemon by default. Use --foreground for debugging.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if localOnlyFlag && (localFlag || roostFlag != "" || orgFlag != "") {
+				return fmt.Errorf("--local-only cannot be combined with --local, --roost or --org")
+			}
 			// Foreground mode: run directly
 			if foregroundFlag {
-				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debugFlag, auditFlag, localFlag, !rawReplayFlag)
+				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debugFlag, auditFlag, localFlag, !rawReplayFlag, localOnlyFlag)
 			}
 			lifecycleLock, err := daemonctl.AcquireDaemonLifecycleLock()
 			if err != nil {
@@ -78,27 +82,6 @@ func wingStartCmd() *cobra.Command {
 				return fmt.Errorf("wing daemon already running (pid %d)", pid)
 			} else if !errors.Is(err, daemonctl.ErrNoDaemonRunning) {
 				return fmt.Errorf("inspect daemon state: %w", err)
-			}
-
-			// Pre-flight auth probe: catch expired tokens before spawning daemon
-			if !localFlag || roostFlag != "" {
-				cfg, cfgErr := config.Load()
-				if cfgErr == nil {
-					ts := auth.NewTokenStore(cfg.Dir)
-					tok, tokErr := ts.Load()
-					if tokErr != nil || !ts.IsValid(tok) {
-						return fmt.Errorf("not logged in — run: wt login")
-					}
-					// Use the same precedence and normalization as the child daemon.
-					relayURL := wingpolicy.ResolveWingRelayHTTPURL(cfg, roostFlag, localFlag)
-					if err := auth.ValidateTokenRemote(relayURL, tok.Token); err != nil {
-						if errors.Is(err, auth.ErrAuthFailed) {
-							return fmt.Errorf("login expired — run: wt login")
-						}
-						// Network error: warn but proceed (daemon will retry)
-						fmt.Printf("warning: relay unreachable (%v) — starting daemon anyway\n", err)
-					}
-				}
 			}
 
 			exe, err := os.Executable()
@@ -138,6 +121,9 @@ func wingStartCmd() *cobra.Command {
 			}
 			if localFlag {
 				childArgs = append(childArgs, "--local")
+			}
+			if localOnlyFlag {
+				childArgs = append(childArgs, "--local-only")
 			}
 			if rawReplayFlag {
 				childArgs = append(childArgs, "--raw-replay")
@@ -185,13 +171,12 @@ func wingStartCmd() *cobra.Command {
 			// Wait for daemon to report initial connection state
 			startupResult := daemonctl.WaitForWingStatus(child.Process.Pid, 5*time.Second)
 			switch startupResult {
+			case "local":
+				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
+				fmt.Println("  local control: ready")
 			case "auth_failed":
-				// Kill daemon, clean up
-				daemonctl.AbandonStartedDaemon(child)
-				if err := cmdutil.RemoveFiles(daemonctl.WingPidPath(), daemonctl.WingArgsPath(), daemonctl.WingStatusPath()); err != nil {
-					return errors.Join(fmt.Errorf("login expired — run: wt login"), fmt.Errorf("remove failed daemon metadata: %w", err))
-				}
-				return fmt.Errorf("login expired — run: wt login")
+				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
+				fmt.Println("  relay: authentication rejected; local control remains available")
 			case "connected":
 				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
 				fmt.Printf("  relay: connected\n")
@@ -203,18 +188,22 @@ func wingStartCmd() *cobra.Command {
 			if err := child.Process.Release(); err != nil {
 				log.Printf("warning: failed to release daemon process handle: %v", err)
 			}
-			// Show account identity
-			if cfgLoaded, cfgErr := config.Load(); cfgErr == nil {
-				relayURL := wingpolicy.ResolveWingRelayHTTPURL(cfgLoaded, roostFlag, localFlag)
-				if tok, tokErr := auth.NewTokenStore(cfgLoaded.Dir).Load(); tokErr == nil && tok != nil {
-					if info, infoErr := auth.FetchUserInfo(relayURL, tok.Token); infoErr == nil {
-						fmt.Printf("  account: %s\n", formatUserIdentity(info))
+			// Show account identity only when relay access was requested.
+			if !localOnlyFlag {
+				if cfgLoaded, cfgErr := config.Load(); cfgErr == nil {
+					relayURL := wingpolicy.ResolveWingRelayHTTPURL(cfgLoaded, roostFlag, localFlag)
+					if tok, tokErr := auth.NewTokenStore(cfgLoaded.Dir).Load(); tokErr == nil && tok != nil {
+						if info, infoErr := auth.FetchUserInfo(relayURL, tok.Token); infoErr == nil {
+							fmt.Printf("  account: %s\n", formatUserIdentity(info))
+						}
 					}
 				}
 			}
 			fmt.Printf("  log: %s\n", daemonctl.WingLogPath())
 			fmt.Println()
-			if cfgLoaded, cfgErr := config.Load(); cfgErr == nil {
+			if localOnlyFlag {
+				fmt.Println("use wt mcp stdio with this WINGTHING_DIR to control the wing")
+			} else if cfgLoaded, cfgErr := config.Load(); cfgErr == nil {
 				browserURL := wingpolicy.RoostBrowserURL(wingpolicy.ResolveWingRelayHTTPURL(cfgLoaded, roostFlag, localFlag))
 				fmt.Printf("open %s for wing status and direct-agent setup\n", browserURL)
 			} else if localFlag {
@@ -222,7 +211,7 @@ func wingStartCmd() *cobra.Command {
 			} else {
 				fmt.Println("open https://app.wingthing.ai/ for wing status and direct-agent setup")
 			}
-			if !localFlag {
+			if !localFlag && !localOnlyFlag {
 				fmt.Println("hosted browser terminals require relay access")
 			}
 			return nil
@@ -239,13 +228,14 @@ func wingStartCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&allowFlags, "allow", nil, "ephemeral passkey public key(s) for this session")
 	cmd.Flags().StringVar(&pathsFlag, "paths", "", "comma-separated directories the wing can browse (default: ~/)")
 	cmd.Flags().BoolVar(&auditFlag, "audit", false, "enable audit logging for all egg sessions")
+	cmd.Flags().BoolVar(&localOnlyFlag, "local-only", false, "serve local MCP without an account, token, roost or relay connection")
 	cmd.Flags().BoolVar(&localFlag, "local", false, "connect to localhost:8080 (for self-hosted wt serve)")
 	cmd.Flags().BoolVar(&rawReplayFlag, "raw-replay", false, "use raw replay buffer for reconnect instead of VTerm snapshot")
 
 	return cmd
 }
 
-func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local, vte bool) error {
+func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local, vte, localOnly bool) error {
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	defer cmdutil.RemoveWithLog(daemonctl.WingStatusPath())
@@ -254,7 +244,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	signal.Notify(sighupCh, syscall.SIGHUP)
 	defer signal.Stop(sighupCh)
 
-	return wing.RunWingWithContext(wing.EntryOptions{Version: version}, ctx, sighupCh, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debug, audit, local, vte, false, nil)
+	return wing.RunWingWithContext(wing.EntryOptions{Version: version, LocalOnly: localOnly}, ctx, sighupCh, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debug, audit, local, vte, false, nil)
 }
 
 func wingStopCmd() *cobra.Command {
@@ -303,7 +293,7 @@ func wingStatusCmd() *cobra.Command {
 
 			// Show account identity and relay verification
 			var relayVerified bool
-			if cfg != nil {
+			if cfg != nil && (status == nil || status.State != "local") {
 				relayURL := daemonctl.ActiveWingRelayHTTPURL(cfg, status)
 				if tok, tokErr := auth.NewTokenStore(cfg.Dir).Load(); tokErr == nil && tok != nil {
 					if info, infoErr := auth.FetchUserInfo(relayURL, tok.Token); infoErr == nil {
@@ -320,6 +310,8 @@ func wingStatusCmd() *cobra.Command {
 			// Show relay connection state
 			if status != nil {
 				switch status.State {
+				case "local":
+					fmt.Println("  local control: ready")
 				case "connected":
 					if relayVerified {
 						fmt.Println("  relay: connected (verified)")

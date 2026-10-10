@@ -539,6 +539,8 @@ func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMe
 	switch name {
 	case "wingthing_capabilities":
 		data, err = s.toolCapabilities(arguments)
+	case "wing_list":
+		data, err = s.toolLocalWingList(arguments)
 	case "sandbox_explain":
 		data, err = s.toolSandboxExplain(arguments)
 	case "terminal_list":

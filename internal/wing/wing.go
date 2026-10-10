@@ -693,6 +693,8 @@ func sendReplayChunked(sessionID string, raw []byte, gcm cipher.AEAD, write ws.P
 }
 
 func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-chan os.Signal, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local, vte, sharedHost bool, tokenOverride *auth.DeviceToken) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	version := options.Version
 	cfg, err := config.Load()
 	if err != nil {
@@ -718,6 +720,10 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	} else if orgFlag != "" && wingCfg.Org != "" && orgFlag != wingCfg.Org {
 		return fmt.Errorf("org conflict: --org %q vs wing.yaml %q", orgFlag, wingCfg.Org)
 	}
+	if options.LocalOnly && (sharedHost || orgFlag != "" || local || tokenOverride != nil) {
+		return errors.New("local-only mode requires a personal wing without --local or organization enrollment")
+	}
+	wingCfg.Org = orgFlag
 	// Merge paths: CLI extends yaml (same pattern as labels)
 	var cliPaths []string
 	if pathsFlag != "" {
@@ -725,10 +731,11 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 			p = strings.TrimSpace(p)
 			if p != "" {
 				cliPaths = append(cliPaths, p)
+				wingCfg.Paths = append(wingCfg.Paths, config.PathEntry{Path: p})
 			}
 		}
 	}
-	if len(cliPaths) == 0 && len(wingCfg.Paths) > 0 {
+	if len(wingCfg.Paths) > 0 {
 		cliPaths = wingCfg.Paths.Strings()
 	}
 	if eggConfigFlag == "" && wingCfg.EggConfig != "" {
@@ -810,15 +817,9 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	var wingToolsMu sync.Mutex
 
 	// Resolve roost URL
-	roostURL := roostFlag
-	if local && roostURL == "" {
-		roostURL = config.DefaultLocalRelayURL()
-	}
-	if roostURL == "" {
-		roostURL = cfg.RoostURL
-	}
-	if roostURL == "" {
-		roostURL = config.DefaultRelayURL()
+	roostURL := ""
+	if !options.LocalOnly {
+		roostURL = wingpolicy.ResolveWingRelayHTTPURL(cfg, roostFlag, local)
 	}
 	var passkeyPolicyLive atomic.Value
 	passkeyPolicyLive.Store(wingpolicy.PasskeyPolicyForRoost(wingpolicy.PasskeyRPURL(roostURL, os.Getenv("WT_BASE_URL"))))
@@ -828,17 +829,30 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	// Convert HTTP URL to WebSocket URL
 	wsURL := strings.Replace(roostURL, "https://", "wss://", 1)
 	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
-	wsURL = strings.TrimRight(wsURL, "/") + "/ws/wing"
+	if roostURL != "" {
+		wsURL = strings.TrimRight(wsURL, "/") + "/ws/wing"
+	}
 
 	// An all-in-one roost passes its embedded service credential in memory. It
 	// must not overwrite device_token.yaml: that file may hold the operator's
 	// independent wingthing.ai identity for standalone wings on this machine.
-	tok, err := wingConnectionToken(cfg.Dir, local, tokenOverride)
-	if err != nil {
-		if local {
-			return fmt.Errorf("no device token — run: wt serve --local")
+	var tok *auth.DeviceToken
+	if !options.LocalOnly {
+		tok, err = wingConnectionToken(cfg.Dir, local, tokenOverride)
+		if err != nil {
+			log.Printf("relay credential unavailable: %v; local runtime will remain available", err)
 		}
-		return fmt.Errorf("not logged in — run: wt login")
+	}
+	var localOwner *config.LocalOwner
+	if !sharedHost && orgFlag == "" {
+		legacyOwner := ""
+		if tok != nil {
+			legacyOwner = tok.UserID
+		}
+		localOwner, err = config.EnsureLocalOwner(cfg.Dir, legacyOwner)
+		if err != nil {
+			return fmt.Errorf("local owner: %w", err)
+		}
 	}
 
 	// Detect available agents
@@ -879,7 +893,11 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	cwd, _ := os.Getwd()
 	projects := wingpolicy.DiscoverWingProjects(resolvedPaths, cwd)
 
-	fmt.Printf("connecting to %s\n", wsURL)
+	if options.LocalOnly {
+		fmt.Println("starting local-only wing")
+	} else {
+		fmt.Printf("relay configured: %s\n", wsURL)
+	}
 	fmt.Printf("  agents: %v\n", agents)
 	fmt.Printf("  skills: %v\n", skills)
 	if len(labels) > 0 {
@@ -895,7 +913,9 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		fmt.Printf("  access control enabled: %d pinned + %d ephemeral keys\n", pinnedCount, ephemeralCount)
 	}
 	fmt.Println()
-	fmt.Printf("open %s to start a terminal\n", wingpolicy.RoostBrowserURL(roostURL))
+	if !options.LocalOnly {
+		fmt.Printf("open %s to start a terminal\n", wingpolicy.RoostBrowserURL(roostURL))
+	}
 
 	// Reap dead egg directories on startup
 	eggclient.ReapDeadEggs(cfg)
@@ -914,7 +934,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	// Keep the manager available in ordinary relay mode for native control, but
 	// advertise browser P2P only for its existing p2p/p2p_only modes below.
 	var peerMgr *webrtcpkg.PeerManager
-	peerManagerEnabled := wingCfg.ConnectionMode != "direct"
+	peerManagerEnabled := !options.LocalOnly && wingCfg.ConnectionMode != "direct"
 	if peerManagerEnabled {
 		var iceServers []pionwebrtc.ICEServer
 		for _, s := range wingCfg.ICEServers {
@@ -940,6 +960,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	// P2P: wire up DataChannel message routing when DCs open
 	if peerMgr != nil {
 		peerMgr.OnDC(func(senderPub, sessionID string, ident webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel) {
+			ident.UserID = localOwner.OwnerForRelay(roostURL, ident.UserID)
 			if strings.HasPrefix(dc.Label(), control.DirectChannelPrefix) {
 				if ident.UserID == "" {
 					log.Printf("[P2P] rejected direct MCP channel from %s: missing authenticated identity", cmdutil.ShortLogValue(senderPub))
@@ -1008,24 +1029,29 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		})
 	}
 
+	routing := &ws.PTYRegistry{}
 	client = &ws.Client{
-		RoostURL:     wsURL,
-		Token:        tok.Token,
-		WingID:       cfg.WingID,
-		Hostname:     cfg.Hostname,
-		Platform:     runtime.GOOS,
-		Version:      version,
-		PublicKey:    base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes()),
-		Agents:       agents,
-		Skills:       skills,
-		Labels:       labels,
-		Projects:     projects,
-		OrgSlug:      orgFlag,
-		RootDir:      rootDir,
-		Locked:       wingCfg.Locked,
-		AllowedCount: len(wingCfg.AllowKeys),
-		DirectMCP:    directMCPEnabled(peerMgr != nil, wingCfg),
-		HostedRelay:  wingCfg.EffectiveHostedRelay(),
+		OwnerForRelay: func(userID string) string { return localOwner.OwnerForRelay(roostURL, userID) },
+		PTYRoutes:     routing,
+		RoostURL:      wsURL,
+		WingID:        cfg.WingID,
+		Hostname:      cfg.Hostname,
+		Platform:      runtime.GOOS,
+		Version:       version,
+		PublicKey:     base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes()),
+		Agents:        agents,
+		Skills:        skills,
+		Labels:        labels,
+		Projects:      projects,
+		OrgSlug:       orgFlag,
+		RootDir:       rootDir,
+		Locked:        wingCfg.Locked,
+		AllowedCount:  len(wingCfg.AllowKeys),
+		DirectMCP:     directMCPEnabled(peerMgr != nil, wingCfg),
+		HostedRelay:   wingCfg.EffectiveHostedRelay(),
+	}
+	if tok != nil {
+		client.Token = tok.Token
 	}
 	client.OnRegistered = func(msg ws.RegisteredMsg) {
 		if policy, ok := wingpolicy.PasskeyPolicyFromRegistration(msg); ok {
@@ -1056,7 +1082,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		daemonctl.WriteWingStatusForRoost(state, errMsg, roostURL)
 		switch state {
 		case "auth_failed":
-			log.Printf("FATAL: relay rejected authentication — run: wt logout && wt login && wt start")
+			log.Printf("relay rejected authentication; local runtime remains available — run: wt login")
 		case "disconnected":
 			if stateErr != nil {
 				log.Printf("relay disconnected: %v", stateErr)
@@ -1065,6 +1091,9 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 			}
 		case "connected":
 			log.Printf("relay connected")
+		}
+		if options.RelayState != nil {
+			options.RelayState(state, stateErr)
 		}
 	}
 
@@ -1078,7 +1107,11 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		wingEggMu.Unlock()
 		return wingsession.Policy{Wing: wc, Egg: ec, Keys: keys, Audit: auditLive.Load()}
 	}}
-	stopSessionRegistration := configureSessionRegistration(sessions, ctx, client, currentPasskeyPolicy, func() []*config.ToolConfig {
+	var relayWrite ws.PTYWriteFunc
+	if !options.LocalOnly {
+		relayWrite = client.PTYWriter(ctx)
+	}
+	stopSessionRegistration := configureSessionRegistration(sessions, ctx, routing, relayWrite, currentPasskeyPolicy, func() []*config.ToolConfig {
 		wingToolsMu.Lock()
 		defer wingToolsMu.Unlock()
 		return append([]*config.ToolConfig(nil), wingTools...)
@@ -1089,12 +1122,12 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	}
 	defer sessions.RunManager.Close()
 	directMCPAdmission.Sessions = sessions
-	ownerUserID := tok.UserID
-	if !sharedHost && orgFlag == "" && ownerUserID == "" {
-		ownerUserID, err = bindLocalWingOwner(cfg.Dir, roostURL, tok, local)
-		if err != nil {
-			return fmt.Errorf("bind local wing owner: %w", err)
-		}
+	if err := reconcileEggSessions(ctx, sessions); err != nil {
+		return fmt.Errorf("reconcile local eggs: %w", err)
+	}
+	ownerUserID := ""
+	if localOwner != nil {
+		ownerUserID = localOwner.ID
 	}
 	localControl, err := localmcp.ListenLocalWingControl(ctx, version, sessions, ownerUserID, directMCPAdmission)
 	if err != nil {
@@ -1102,11 +1135,14 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	}
 	if localControl != nil {
 		defer localControl.Close()
+		log.Printf("wing: local control ready (wing_id=%s)", cfg.WingID)
+		daemonctl.WriteWingStatusForRoost("local", "", roostURL)
 	}
 	if options.SetSessionService != nil {
 		options.SetSessionService(sessions)
 	}
 	client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
+		start.UserID = localOwner.OwnerForRelay(roostURL, start.UserID)
 		wingCfgMu.Lock()
 		sessionWingCfg := wingCfg.Clone()
 		sessionAllowedKeys := append([]config.AllowKey(nil), allowedKeys...)
@@ -1145,6 +1181,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	}
 
 	client.OnTunnel = func(ctx context.Context, req ws.TunnelRequest, write ws.PTYWriteFunc) {
+		req.SenderUserID = localOwner.OwnerForRelay(roostURL, req.SenderUserID)
 		tunnel.HandleTunnelRequest(tunnel.References{Version: version, WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowedKeys, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs, Sessions: sessions, BrowserTools: func() []*config.ToolConfig {
 			wingToolsMu.Lock()
 			defer wingToolsMu.Unlock()
@@ -1156,26 +1193,11 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		eggclient.KillOrphanEgg(cfg, sessionID)
 	}
 
-	// Reclaim surviving egg sessions on every (re)connect
+	// Reconciliation is local; reconnect only checks for newly surviving eggs.
 	client.OnReconnect = func(rctx context.Context) {
-		wingCfgMu.Lock()
-		reconnectWingCfg := wingCfg.Clone()
-		reconnectAllowedKeys := append([]config.AllowKey(nil), allowedKeys...)
-		wingCfgMu.Unlock()
-		if !reconnectWingCfg.HostedRelayAllowed() {
-			log.Printf("hosted relay payload transport disabled; skipping relay session reclaim")
-			return
+		if err := reconcileEggSessions(rctx, sessions); err != nil {
+			log.Printf("reconcile eggs: %v", err)
 		}
-		var authTTL time.Duration // default 0 = boot-scoped, no expiry
-		if reconnectWingCfg.AuthTTL != "" {
-			if d, err := time.ParseDuration(reconnectWingCfg.AuthTTL); err == nil {
-				authTTL = d
-			}
-		}
-		wingToolsMu.Lock()
-		reclaimTools := append([]*config.ToolConfig{}, wingTools...)
-		wingToolsMu.Unlock()
-		reclaimEggSessions(rctx, cfg, client, reconnectWingCfg, reconnectAllowedKeys, passkeyCache, currentPasskeyPolicy(), authTTL, reclaimTools, sessions)
 	}
 
 	// SIGHUP reload goroutine — caller owns SIGTERM/SIGINT via ctx cancellation
@@ -1357,7 +1379,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	}
 
 	// Direct mode: start a local WebSocket server for direct browser connections
-	if wingCfg.ConnectionMode == "direct" && wingCfg.DirectPort > 0 {
+	if !options.LocalOnly && wingCfg.ConnectionMode == "direct" && wingCfg.DirectPort > 0 {
 		directSrv = &directpkg.Server{
 			OnPTY: client.OnPTY,
 		}
@@ -1368,13 +1390,24 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		defer cmdutil.CloseWithLog("direct server", directSrv)
 	}
 
-	err = client.Run(ctx)
-	if err != nil {
-		log.Printf("wing daemon exiting: %v", err)
+	var relayDone chan struct{}
+	if !options.LocalOnly && tok != nil {
+		relayDone = make(chan struct{})
+		go func() {
+			defer close(relayDone)
+			if err := client.Run(ctx); err != nil && ctx.Err() == nil {
+				log.Printf("relay adapter stopped: %v; local runtime remains available", err)
+			}
+		}()
 	} else {
-		log.Printf("wing daemon exiting cleanly")
+		daemonctl.WriteWingStatusForRoost("local", "", roostURL)
 	}
-	return err
+	<-ctx.Done()
+	if relayDone != nil {
+		<-relayDone
+	}
+	log.Printf("wing daemon exiting cleanly")
+	return ctx.Err()
 }
 
 func currentDataChannel(sessions *sync.Map, sessionID string, candidate *pionwebrtc.DataChannel) bool {
@@ -1625,75 +1658,6 @@ func (p *pendingReattachAuths) resetTimer() {
 		p.timer.Reset(wait)
 	}
 	p.timerC = p.timer.C
-}
-
-// reclaimEggSessions discovers surviving egg sessions and re-registers their
-// input routing goroutines. The relay no longer tracks sessions — browser
-// discovers them via E2E tunnel and reattaches directly via wing_id.
-func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Client, wingCfg *config.WingConfig, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, passkeyPolicy auth.PasskeyPolicy, authTTL time.Duration, tools []*config.ToolConfig, services ...*wingsession.Service) {
-	// Small delay to let registration complete
-	time.Sleep(500 * time.Millisecond)
-
-	eggsDir := filepath.Join(cfg.Dir, "eggs")
-	entries, err := os.ReadDir(eggsDir)
-	if err != nil {
-		return
-	}
-
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		sessionID := e.Name()
-		dir := filepath.Join(eggsDir, sessionID)
-		pidPath := filepath.Join(dir, "egg.pid")
-		data, err := os.ReadFile(pidPath)
-		if err != nil {
-			continue
-		}
-		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-		if err != nil {
-			continue
-		}
-		if !procinfo.OwnedProcessIsAlive(pid) {
-			eggclient.CleanEggDir(dir)
-			continue
-		}
-
-		// If a goroutine is already handling this session (survived the
-		// reconnect), skip — don't create a duplicate subscriber or
-		// goroutine, which would cause decrypt errors.
-		if wsClient.HasPTYSession(sessionID) {
-			log.Printf("egg: session %s already tracked, skipping", sessionID)
-			continue
-		}
-
-		agent, _ := eggclient.ReadEggMeta(dir)
-
-		// Alive — dial and set up input routing
-		sockPath := filepath.Join(dir, "egg.sock")
-		tokenPath := filepath.Join(dir, "egg.token")
-		ec, dialErr := egg.Dial(sockPath, tokenPath)
-		if dialErr != nil {
-			log.Printf("egg: reclaim %s: dial failed: %v", sessionID, dialErr)
-			continue
-		}
-
-		log.Printf("egg: reclaiming session %s (pid %d agent=%s)", sessionID, pid, agent)
-
-		// Set up input routing for this session
-		write, input, cleanup, registered := wsClient.RegisterPTYSession(ctx, sessionID)
-		if !registered {
-			cmdutil.CloseWithLog("duplicate reclaimed egg client", ec)
-			log.Printf("egg: session %s became active during reclaim, skipping", sessionID)
-			continue
-		}
-		go func(sid string, ec *egg.Client, dir string) {
-			defer cleanup()
-			defer cmdutil.CloseWithLog("reclaimed egg client", ec)
-			handleReclaimedPTY(ctx, cfg, ec, sid, dir, write, input, wingCfg, allowedKeys, passkeyCache, passkeyPolicy, authTTL, tools, services...)
-		}(sessionID, ec, dir)
-	}
 }
 
 // handleReclaimedPTY sets up I/O routing for a reclaimed (surviving) egg session.
