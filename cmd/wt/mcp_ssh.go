@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/ehrlich-b/wingthing/internal/sshcontrol"
 	"github.com/spf13/cobra"
@@ -54,10 +57,20 @@ func addConnectMCPCmd(client *string, timeout *time.Duration) *cobra.Command {
 		if _, ok := remotes[args[0]]; ok {
 			return fmt.Errorf("remote %q already exists; remove it before adding it again", args[0])
 		}
+		if *timeout <= 0 {
+			return fmt.Errorf("connect-timeout must be positive")
+		}
+		actor := strings.TrimSpace(*client)
+		if actor == "" {
+			actor = strings.TrimSpace(os.Getenv("WT_MCP_CLIENT"))
+		}
+		if err := eggclient.ValidateSessionName(actor); err != nil {
+			return err
+		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), *timeout)
 		defer cancel()
 		transport := sshcontrol.Transport{SSHPath: remotepkg.Streams(ctx).SSHPath, Timeout: *timeout}
-		r, err := transport.Inspect(ctx, host, dir, *client)
+		r, err := transport.Inspect(ctx, host, dir, actor)
 		if err != nil {
 			return err
 		}

@@ -42,7 +42,7 @@ func TestMCPTerminalListRemoteArgument(t *testing.T) {
 	remoteCfg := &config.Config{Dir: t.TempDir(), WingID: "remote-wing"}
 	seedRemoteListSession(t, remoteCfg, "remote-owned", "alpha")
 	seedRemoteListSession(t, remoteCfg, "remote-other", "beta")
-	remoteServer := testWingServer(t, &Server{Cfg: remoteCfg, Principal: "alpha", Logs: io.Discard})
+	remoteServer := testWingServer(t, &Server{Version: "test", Cfg: remoteCfg, Principal: "alpha", Logs: io.Discard})
 	listener, err := ListenLocalWingControl(t.Context(), "test", remoteServer.Sessions, "fixture-user", NewMCPAdmissionState())
 	if err != nil {
 		t.Fatal(err)

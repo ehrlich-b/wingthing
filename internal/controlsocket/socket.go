@@ -248,10 +248,10 @@ func Path(dir string) (string, error) {
 }
 func Dial(ctx context.Context, dir string, hello Hello) (*Client, error) {
 	path, err := Path(dir)
-	if err != nil {
-		return nil, err
+	var client *Client
+	if err == nil {
+		client, err = DialPath(ctx, path, hello)
 	}
-	client, err := DialPath(ctx, path, hello)
 	if err != nil {
 		return nil, fmt.Errorf("no local wing for WINGTHING_DIR=%s: %w; start one with wt wing start --local-only or wt roost start", dir, err)
 	}

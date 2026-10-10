@@ -2,6 +2,7 @@
 package testssh
 
 import (
+	_ "embed"
 	"encoding/json"
 	"net"
 	"os"
@@ -13,6 +14,9 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/sshcontrol"
 )
+
+//go:embed ssh.py
+var fixtureScript []byte
 
 type Forward struct {
 	Host   string   `json:"host"`
@@ -36,6 +40,12 @@ func New(t *testing.T) *Harness {
 	t.Helper()
 	_, file, _, _ := runtime.Caller(0)
 	repo := filepath.Clean(filepath.Join(filepath.Dir(file), "../.."))
+	if _, err := os.Stat(filepath.Join(repo, "go.mod")); err != nil {
+		repo, err = os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	scratch := filepath.Join(repo, ".scratch")
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
@@ -49,7 +59,11 @@ func New(t *testing.T) *Harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\nexec '" + python + "' '" + filepath.Join(filepath.Dir(file), "ssh.py") + "' \"$@\"\n"
+	fixturePath := filepath.Join(root, "ssh.py")
+	if err := os.WriteFile(fixturePath, fixtureScript, 0600); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nexec '" + python + "' '" + fixturePath + "' \"$@\"\n"
 	if err := os.WriteFile(h.SSHPath, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -278,4 +279,106 @@ func TestRememberedPoolBackoffBoundsAndDemandRetry(t *testing.T) {
 		t.Fatalf("demand retry: %v", err)
 	}
 	<-attempts
+}
+
+func TestRememberedPoolUnreconciledAdmissionReportsOriginalKey(t *testing.T) {
+	h := testssh.New(t)
+	admitted := make(chan struct{})
+	one, s := fakeWing(t, h, "one", "wing-one", func(ctx context.Context, r control.DirectRequest) control.DirectResponse {
+		close(admitted)
+		<-ctx.Done()
+		return control.DirectResponse{Version: control.ContractVersion, ID: r.ID, Result: map[string]any{"session_id": "one-egg"}}
+	})
+	defer s.Close()
+	state := filepath.Join(h.Root, "registry")
+	if err := config.SaveRemotes(state, map[string]config.Remote{"one": one}); err != nil {
+		t.Fatal(err)
+	}
+	p, changes, _ := newTestPool(t, h, state)
+	waitEntries(t, p, changes, func(rows []map[string]any) bool { return rows[0]["online"] == true })
+	f := <-h.Started
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := p.Call(t.Context(), one.WingID, "agent_run", json.RawMessage(`{"prompt":"request","idempotency_key":"original-key"}`))
+		result <- err
+	}()
+	<-admitted
+	h.Offline(t, "one", true)
+	f.Drop()
+	var unknown *UnknownOutcome
+	if err := <-result; !errors.As(err, &unknown) || unknown.Key != "original-key" || unknown.WingID != one.WingID {
+		t.Fatalf("unknown admission lost its key: %v", err)
+	}
+}
+func TestRememberedPoolReadRetryPreservesCursor(t *testing.T) {
+	h := testssh.New(t)
+	first := make(chan struct{})
+	var once sync.Once
+	var mu sync.Mutex
+	var arguments []string
+	one, s := fakeWing(t, h, "one", "wing-one", func(ctx context.Context, r control.DirectRequest) control.DirectResponse {
+		mu.Lock()
+		arguments = append(arguments, string(r.Arguments))
+		isFirst := len(arguments) == 1
+		mu.Unlock()
+		if isFirst {
+			once.Do(func() { close(first) })
+			<-ctx.Done()
+		}
+		return control.DirectResponse{Version: control.ContractVersion, ID: r.ID, Result: map[string]any{"cursor": 42}}
+	})
+	defer s.Close()
+	state := filepath.Join(h.Root, "registry")
+	if err := config.SaveRemotes(state, map[string]config.Remote{"one": one}); err != nil {
+		t.Fatal(err)
+	}
+	p, changes, _ := newTestPool(t, h, state)
+	waitEntries(t, p, changes, func(rows []map[string]any) bool { return rows[0]["online"] == true })
+	f := <-h.Started
+	done := make(chan error, 1)
+	wire := json.RawMessage(`{"run_id":"run","after_seq":41}`)
+	go func() {
+		data, denied, err := p.Call(t.Context(), one.WingID, "agent_events", wire)
+		if err == nil && (denied || data["cursor"] != float64(42)) {
+			err = fmt.Errorf("bad read: %v", data)
+		}
+		done <- err
+	}()
+	<-first
+	f.Drop()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(arguments) != 2 || arguments[0] != string(wire) || arguments[1] != string(wire) {
+		t.Fatalf("replay changed cursor: %v", arguments)
+	}
+}
+func TestRememberedPoolCanceledCallIsBounded(t *testing.T) {
+	h := testssh.New(t)
+	entered := make(chan struct{})
+	one, s := fakeWing(t, h, "one", "wing-one", func(ctx context.Context, r control.DirectRequest) control.DirectResponse {
+		close(entered)
+		<-ctx.Done()
+		return control.DirectResponse{Version: control.ContractVersion, ID: r.ID}
+	})
+	defer s.Close()
+	state := filepath.Join(h.Root, "registry")
+	if err := config.SaveRemotes(state, map[string]config.Remote{"one": one}); err != nil {
+		t.Fatal(err)
+	}
+	p, changes, _ := newTestPool(t, h, state)
+	waitEntries(t, p, changes, func(rows []map[string]any) bool { return rows[0]["online"] == true })
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := p.Call(ctx, one.WingID, "agent_wait", json.RawMessage(`{"run_id":"held"}`))
+		result <- err
+	}()
+	<-entered
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation did not bound a held call: %v", err)
+	}
 }

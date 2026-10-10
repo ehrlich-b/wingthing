@@ -199,6 +199,7 @@ func (t Transport) Dial(ctx context.Context, remote config.Remote, hello control
 	args := append(t.options(), "-o", "StreamLocalBindUnlink=no", "-N", "-L", local+":"+remote.ControlSocket, "--", remote.SSHTarget)
 	// The caller's connection-attempt context does not own an accepted transport.
 	cmd := exec.Command(t.sshPath(), args...)
+	cmd.WaitDelay = time.Second
 	c := &Connection{cmd: cmd, exited: make(chan struct{}), done: make(chan struct{}), stderr: &cappedBuffer{}, dir: dir}
 	cmd.Stderr = c.stderr
 	if err = cmd.Start(); err != nil {

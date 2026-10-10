@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"os"
 	"strings"
 	"testing"
 
@@ -47,8 +46,5 @@ func TestMCPConnectRegistryAddListRemove(t *testing.T) {
 	}
 	if err := run("mcp", "connect", "add", "bad.name", "--ssh", "host"); err == nil {
 		t.Fatal("invalid name accepted")
-	}
-	if _, err := os.Stat(state + "/config.yaml"); err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
 	}
 }

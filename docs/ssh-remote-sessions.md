@@ -5,6 +5,50 @@ The host must already have a compatible Wingthing binary and an authenticated
 provider CLI. Wingthing uses the remote owner's configuration and credentials;
 it does not copy a workspace or install a binary.
 
+For an aggregate MCP client, start an independent local-only wing on each
+machine beforehand. Remember an already running remote once, as in herdr:
+
+```sh
+wt mcp connect add forge --ssh forge --wingthing-dir '~/my-wing-state'
+wt mcp connect ls
+wt mcp connect
+# Later: wt mcp connect rm forge
+```
+
+Configure your MCP client to run `wt mcp connect`. It exposes the common tool
+catalog for the local wing and remembered wings without a Wingthing account.
+Call `wing_list`, then pass the selected stable `wing_id` to each tool, including
+`agent_run`, `agent_status`, and `agent_result`. Working directories belong to
+the selected machine; they are not resolved on the client or synchronized.
+Use an explicit `idempotency_key` when submitting a run so it can be reconciled
+even if the MCP client itself loses the reply.
+
+`connect add` performs a read-only handshake, resolves `~/` on the remote once,
+and stores the canonical state directory, control socket, protocol version and
+wing ID in the existing `remotes.yaml` registry. It does not install software,
+log in, or start a wing. Previously added CLI-only remotes need to be removed
+and added through `mcp connect add` to obtain verified MCP metadata.
+
+The local wing owns an OpenSSH stream-local forward per remote and MCP client
+identity. The forward uses a private 0700 directory and 0600 socket, BatchMode,
+strict host-key checks, keepalives, and `ExitOnForwardFailure`. Authorize the SSH
+host/key before adding it. The receiving wing sees the SSH account's OS UID.
+Different scoped SSH identities require separate remote accounts or a
+restricted helper; `--client` names a configured MCP client, not a new human.
+
+Registry edits reload live. Offline wings remain in `wing_list` with `online`
+and `last_error`; each reconnect uses jittered exponential backoff from one to
+60 seconds, and a call wakes an immediate attempt. Connection attempts have a
+10-second bound and forwarded calls a two-minute bound. A slow remote leaves
+local calls usable. Host-key or wing-ID changes fail closed; explicitly remove
+and verify the entry again after an intentional identity change.
+
+Reads and event waits retry across a lost connection. Admission retries keep
+the original idempotency key and request. An unreconciled admission reports an
+unknown outcome with that key; never submit a replacement key to recover it.
+Accepted eggs continue across SSH/MCP disconnects. Explicit `--roost URL`
+selects the existing hosted connector instead of the local/SSH directory.
+
 Register machines once to list their sessions together:
 
 ```sh
@@ -33,11 +77,13 @@ different contract reports the remote name and both versions. A plain
 `wt attach SESSION` stays local; `NAME:SESSION` resolves only a registered name.
 The existing `--remote SSH_TARGET` route remains available.
 
-MCP `terminal_list` accepts `{"remote":"work"}` to list one configured remote,
-with its existing principal filter. Omitting `remote` keeps the local-only
+MCP `terminal_list` accepts `{"remote":"work"}` to select that remembered
+wing's qualified `wing_id`, using its wing-side principal filter. Omitting `remote` keeps the local-only
 response. Connections bounded to local paths or conversations cannot select
-a remote. No other MCP tool accepts this argument. This uses the SSH login
-account's existing access and requires no Wingthing account or relay.
+a remote. The alias spelling requires verified connection metadata and cannot
+be combined with another remote `wing_id`. No other MCP tool accepts this
+argument. This uses the SSH login account's existing access and requires no
+Wingthing account or relay.
 
 ```sh
 # Discover before creating anything. This command never attaches or launches.
