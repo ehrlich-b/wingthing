@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"io"
 	"log"
 	"os"
@@ -38,6 +37,7 @@ const maxConcurrentLocalMCPCalls = 64
 const maxConcurrentAgentWaitAnyCalls = 4
 
 type Server struct {
+	remoteToolCall                     func(context.Context, string, string, []byte) (map[string]any, error)
 	legacyLocalDefault                 bool
 	Sessions                           *wingsession.Service
 	sessionLaunch                      *wingsession.Launch
@@ -938,21 +938,10 @@ func (s *Server) ToolTerminalList(ctx context.Context, arguments json.RawMessage
 		if s.enforcePathBounds || s.BoundConversation != "" {
 			return nil, errors.New("remote terminal_list is unavailable on a path- or conversation-bound MCP connection")
 		}
-		remote, err := remotepkg.ConfiguredRemote(s.Cfg.Dir, *args.Remote)
-		if err != nil {
-			return nil, err
+		if s.remoteToolCall == nil {
+			return nil, errors.New("remembered remote control requires the local wing socket; run wt mcp connect")
 		}
-		sessions, err := eggclient.QueryRemoteSessions(s.Version, ctx, *args.Remote, remote, remotepkg.Streams(ctx))
-		if err != nil {
-			return nil, err
-		}
-		owned := make([]eggclient.MachineSession, 0, len(sessions))
-		for _, session := range sessions {
-			if session.Principal == s.clientPrincipal() || s.legacyLocalDefault && (session.Principal == "" || session.Principal == "default") {
-				owned = append(owned, eggclient.MachineSession{LocalSession: session, Machine: *args.Remote})
-			}
-		}
-		return map[string]any{"sessions": owned}, nil
+		return s.remoteToolCall(ctx, *args.Remote, "terminal_list", []byte(`{}`))
 	}
 	var sessions []eggclient.LocalSession
 	var err error
