@@ -2,9 +2,11 @@ package localmcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ehrlich-b/wingthing/internal/control"
@@ -31,6 +33,11 @@ func ListenLocalWingControl(ctx context.Context, version string, sessions *wings
 		wingID = sessions.Config.WingID
 	}
 	remotes := newRememberedWings(ctx, sessions.Config.Dir, wingID)
+	if admission == nil {
+		admission = NewMCPAdmissionState()
+	}
+	admission.Sessions = sessions
+	mailboxes := newWingMailboxes(ctx, version, ownerUserID, sessions, admission, remotes)
 	listener, err := controlsocket.Listen(ctx, sessions.Config.Dir, wingID, func(hello controlsocket.Hello) (controlsocket.Welcome, controlsocket.Handler, error) {
 		server, err := resolveLocalWingClient(version, sessions, ownerUserID, admission, hello)
 		if err != nil {
@@ -39,6 +46,7 @@ func ListenLocalWingControl(ctx context.Context, version string, sessions *wings
 		if hello.Aggregate && (hello.Conversation != "" || hello.Execution != "") {
 			return controlsocket.Welcome{}, nil, errors.New("aggregate control is unavailable on a conversation-bound MCP connection")
 		}
+		mailboxes.configure(server)
 		welcome := controlsocket.Welcome{RemoteAllowed: !server.enforcePathBounds && server.BoundConversation == "", Principal: server.clientPrincipal(), Actor: server.clientActor(), Grants: server.Grants, Tools: server.tools, Isolation: server.sessionIsolationMode()}
 		return welcome, func(callCtx context.Context, request control.DirectRequest) control.DirectResponse {
 			// Resolve each call against live wing policy and clients.yaml. A connection
@@ -47,11 +55,14 @@ func ListenLocalWingControl(ctx context.Context, version string, sessions *wings
 			if err != nil {
 				return control.DirectResponse{Version: control.ContractVersion, ID: request.ID, Error: err.Error(), ErrorKind: control.ErrorKindOf(err)}
 			}
+			mailboxes.configure(current)
 			current.remoteToolCall = func(ctx context.Context, name, tool string, args []byte) (map[string]any, error) {
 				return remotes.remoteByName(ctx, hello, name, tool, args)
 			}
 			var response control.DirectResponse
-			if hello.Aggregate {
+			if current.broker != nil && current.broker.Scoped {
+				response = mailboxes.dispatch(callCtx, current, request)
+			} else if hello.Aggregate {
 				response = remotes.dispatch(callCtx, current, hello, request)
 			} else {
 				response = current.handleDirectRequest(callCtx, request)
@@ -63,12 +74,15 @@ func ListenLocalWingControl(ctx context.Context, version string, sessions *wings
 			}
 			return response
 		}, nil
-	})
+	}, bindWingAttachment(version, sessions, ownerUserID, admission))
 	if err != nil {
+		_ = mailboxes.Close()
 		_ = remotes.Close()
 		return nil, err
 	}
+	listener.AddCloser(mailboxes)
 	listener.AddCloser(remotes)
+	mailboxes.restore()
 	return listener, nil
 }
 
@@ -157,8 +171,39 @@ func resolveLocalWingClient(version string, sessions *wingsession.Service, owner
 	}
 	if configured {
 		server.Grants = GrantSet(client.Grants)
+		server.wingGrants = client.Wings
+		server.restrictWings = true
 		server.MaxSessions = client.Bounds.MaxSessions
 		server.MaxSpawnsPerHour = client.Bounds.MaxSpawnsPerHour
+	}
+	if hello.Scope != "" {
+		var scope wingCallScope
+		if err := decodeStrict(json.RawMessage(hello.Scope), &scope); err != nil {
+			return nil, err
+		}
+		if len(scope.Paths) == 0 || len(scope.Tools) == 0 || scope.MaxSessions <= 0 || scope.MaxSpawnsPerHour <= 0 {
+			return nil, errors.New("invalid receiving wing scope")
+		}
+		for _, path := range scope.Paths {
+			if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+				return nil, errors.New("scope paths must be clean and absolute on the execution wing")
+			}
+		}
+		server.allowedPaths, _ = intersectBrokerPaths(scope.Paths, true, server.allowedPaths)
+		server.enforcePathBounds = true
+		server.identity.AllowedPaths = server.allowedPaths
+		server.tools = map[string]bool{}
+		for _, name := range scope.Tools {
+			if server.Grants == nil || func() bool { tool, ok := control.Lookup(name); return ok && server.Grants[tool.Grant] }() {
+				server.tools[name] = true
+			}
+		}
+		if server.MaxSessions <= 0 || scope.MaxSessions < server.MaxSessions {
+			server.MaxSessions = scope.MaxSessions
+		}
+		if server.MaxSpawnsPerHour <= 0 || scope.MaxSpawnsPerHour < server.MaxSpawnsPerHour {
+			server.MaxSpawnsPerHour = scope.MaxSpawnsPerHour
+		}
 	}
 	server.launchConfig = func(cwd string) (*egg.EggConfig, error) { return server.loadSessionLaunchConfig(cwd) }
 	if err := ValidateBoundConversation(server); err != nil {

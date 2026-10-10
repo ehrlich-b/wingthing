@@ -35,6 +35,7 @@ type providerWriteRegion struct {
 // any provider runs. The native fixture separately observes the real denial.
 type providerWriteModel struct {
 	DenyRoot string                `json:"deny_root"`
+	Pinned   []string              `json:"pinned,omitempty"`
 	Regions  []providerWriteRegion `json:"regions"`
 }
 
@@ -69,6 +70,9 @@ func modelProviderWrites(cfg *config.Config, eggCfg *egg.EggConfig, agentName, c
 			path = cwd
 		} else if !filepath.IsAbs(path) && !strings.HasPrefix(path, "~") {
 			path = filepath.Join(cwd, path)
+		}
+		if mode == "deny-write" && filepath.IsAbs(path) {
+			model.Pinned = append(model.Pinned, wingpolicy.CanonicalPolicyPath(path))
 		}
 		resolved = append(resolved, mode+":"+path)
 	}
@@ -135,13 +139,17 @@ func (m providerWriteModel) verifyProtected(stateDir string, targets []string) e
 		}
 		return fmt.Errorf("provider-writable %s %s is inside protected state %s", region.Reason, region.Path, state)
 	}
-	return verifyAncestorsNotRenamable(m.DenyRoot)
+	return verifyPinnedAncestorsNotRenamable(m.DenyRoot, m.Pinned)
 }
 
 // Seatbelt allows writes outside the HOME deny root. Any ancestor above it that
 // the OS user can write would let the provider rename the protected tree and
 // substitute another, so require ordinary POSIX protection there.
 func verifyAncestorsNotRenamable(denyRoot string) error {
+	return verifyPinnedAncestorsNotRenamable(denyRoot, nil)
+}
+
+func verifyPinnedAncestorsNotRenamable(denyRoot string, pinned []string) error {
 	uid := os.Getuid()
 	if uid == 0 {
 		return errors.New("a root-owned egg process can rename any ancestor")
@@ -161,7 +169,14 @@ func verifyAncestorsNotRenamable(denyRoot string) error {
 		if err != nil {
 			return err
 		}
-		if renamableByUser(parentInfo, childInfo, uid, groups) {
+		isPinned := false
+		for _, path := range pinned {
+			if path == child {
+				isPinned = true
+				break
+			}
+		}
+		if !isPinned && renamableByUser(parentInfo, childInfo, uid, groups) {
 			return fmt.Errorf("ancestor %s of the sandbox HOME is writable by this OS user, so the provider could rename %s", parent, child)
 		}
 		child = parent

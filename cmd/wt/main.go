@@ -119,6 +119,7 @@ func newRootCommand() *cobra.Command {
 		wingCmd(),
 		roostCmd(),
 		eggCmd(),
+		claudeCmd(),
 		terminalCmd(),
 		attachCmd(),
 		sessionCmd(),

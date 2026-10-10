@@ -8,6 +8,7 @@ Available Commands:
   agent        Manage agent adapters
   attach       Attach this terminal to a running egg session
   channel      Show executable channel, isolated state, and update feed
+  claude       Start and attach to a wing-owned Claude parent with scoped MCP
   completion   Generate the autocompletion script for the specified shell
   conversation Inspect persistent parent and child conversations
   daemon       Run this machine’s wing, locally or through a relay

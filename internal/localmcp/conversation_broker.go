@@ -67,13 +67,13 @@ var conversationBrokerTools = []string{
 // Mutations pause while the wing is locked, as host wake delivery does. Only
 // these calls are journaled: initialize, list, read and wait polling never
 // consume the mutation journal and are never replayed after a restart.
-var conversationBrokerMutations = map[string]bool{"agent_start": true, "session_prompt": true, "conversation_checkpoint": true}
+var conversationBrokerMutations = map[string]bool{"agent_start": true, "agent_run": true, "agent_stop": true, "agent_steer": true, "session_prompt": true, "conversation_checkpoint": true}
 
 // A journaled mutation that was dispatched but not answered is replayed after a
 // broker restart only when its durable tool-level request_id makes the replay
 // a reconciliation rather than a second effect. A checkpoint reports an
 // unconfirmed outcome instead.
-var conversationBrokerReplaySafe = map[string]bool{"agent_start": true, "session_prompt": true}
+var conversationBrokerReplaySafe = map[string]bool{"agent_start": true, "agent_run": true, "agent_steer": true, "session_prompt": true}
 
 var (
 	conversationBrokerStartWait = 60 * time.Second
@@ -116,26 +116,28 @@ func defaultConversationBrokerProtection(cfg *config.Config, eggCfg *egg.EggConf
 // conversationBrokerRegistration is the immutable authority captured at an
 // already-authorized host launch. It lives only in protected host state.
 type conversationBrokerRegistration struct {
-	Version           int      `json:"version"`
-	StateDir          string   `json:"state_dir"`
-	ConversationID    string   `json:"conversation_id"`
-	RootID            string   `json:"root_conversation_id"`
-	SessionID         string   `json:"session_id"`
-	Principal         string   `json:"principal"`
-	LauncherActor     string   `json:"launcher_actor"`
-	LauncherSurface   string   `json:"launcher_surface"`
-	UserID            string   `json:"user_id,omitempty"`
-	Email             string   `json:"email,omitempty"`
-	Tools             []string `json:"tools"`
-	MaxSessions       int      `json:"max_sessions"`
-	MaxSpawnsPerHour  int      `json:"max_spawns_per_hour"`
-	AllowedPaths      []string `json:"allowed_paths"`
-	EnforcePathBounds bool     `json:"enforce_path_bounds"`
-	Workspace         string   `json:"workspace"`
-	Mailbox           string   `json:"mailbox"`
-	EggConfig         string   `json:"egg_config"`
-	Executable        string   `json:"executable"`
-	RegisteredAt      int64    `json:"registered_at"`
+	Version           int                 `json:"version"`
+	StateDir          string              `json:"state_dir"`
+	ConversationID    string              `json:"conversation_id"`
+	RootID            string              `json:"root_conversation_id"`
+	SessionID         string              `json:"session_id"`
+	Principal         string              `json:"principal"`
+	LauncherActor     string              `json:"launcher_actor"`
+	LauncherSurface   string              `json:"launcher_surface"`
+	UserID            string              `json:"user_id,omitempty"`
+	Email             string              `json:"email,omitempty"`
+	Tools             []string            `json:"tools"`
+	MaxSessions       int                 `json:"max_sessions"`
+	MaxSpawnsPerHour  int                 `json:"max_spawns_per_hour"`
+	AllowedPaths      []string            `json:"allowed_paths"`
+	EnforcePathBounds bool                `json:"enforce_path_bounds"`
+	Workspace         string              `json:"workspace"`
+	Mailbox           string              `json:"mailbox"`
+	EggConfig         string              `json:"egg_config"`
+	Executable        string              `json:"executable"`
+	Scoped            bool                `json:"scoped,omitempty"`
+	Wings             map[string][]string `json:"wings,omitempty"`
+	RegisteredAt      int64               `json:"registered_at"`
 }
 
 func conversationBrokerDir(cfg *config.Config, session string) string {
@@ -185,7 +187,11 @@ func brokerProviderHomeOutsideState(cfg *config.Config) error {
 // direct-MCP limits instead of being unlimited.
 func (s *Server) brokerToolCeiling() ([]string, int, int) {
 	tools := make([]string, 0, len(conversationBrokerTools))
-	for _, name := range conversationBrokerTools {
+	ceiling := conversationBrokerTools
+	if s.scopedParent {
+		ceiling = scopedParentTools
+	}
+	for _, name := range ceiling {
 		if s.toolAllowed(name) {
 			tools = append(tools, name)
 		}
@@ -233,8 +239,8 @@ func (s *Server) prepareBrokerParentMCP(c *store.Conversation, eggCfg *egg.EggCo
 	if err != nil {
 		return nil, nil, err
 	}
-	if !conversationBrokerEnabled(wc) {
-		return nil, nil, errors.New("the host mailbox is available only in the preview channel")
+	if !s.scopedParent && !conversationBrokerEnabled(wc) {
+		return nil, nil, errors.New("the host mailbox requires conversations: enabled")
 	}
 	if s.Unsandboxed {
 		return nil, nil, errors.New("outer-boundary sessions use direct MCP")
@@ -278,6 +284,16 @@ func (s *Server) prepareBrokerParentMCP(c *store.Conversation, eggCfg *egg.EggCo
 		Workspace: workspace, Mailbox: filepath.Join(relative, "mailbox"), EggConfig: snapshot,
 		Executable: executable, RegisteredAt: time.Now().Unix(),
 	}
+	if s.scopedParent {
+		if s.startMailbox == nil || s.captureWings == nil {
+			return nil, nil, errors.New("scoped parent requires wing-owned mailbox dispatch")
+		}
+		reg.Scoped = true
+		reg.Wings, err = s.captureWings(s)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	if reg.RootID == "" {
 		reg.RootID = c.ID
 	}
@@ -307,8 +323,15 @@ func (s *Server) prepareBrokerParentMCP(c *store.Conversation, eggCfg *egg.EggCo
 	if err := writeExclusiveOrSame(root, configPath, data); err != nil {
 		return nil, nil, err
 	}
-	if err := startConversationBroker(s.Cfg, reg); err != nil {
+	start := func() error { return startConversationBroker(s.Cfg, reg) }
+	if s.startMailbox != nil {
+		start = func() error { return s.startMailbox(reg) }
+	}
+	if err := start(); err != nil {
 		return nil, nil, fmt.Errorf("start host mailbox broker: %w", err)
+	}
+	if reg.Scoped {
+		args = append(args, "--strict-mcp-config")
 	}
 	return append(args, "--mcp-config", filepath.Join(workspace, configPath), "--append-system-prompt", publicCoordinatorPrompt(c)), &reg, nil
 }
@@ -427,7 +450,7 @@ func loadConversationBrokerRegistration(cfg *config.Config, session string) (con
 		return reg, errors.New("host mailbox registration lacks a finite authority ceiling")
 	}
 	allowed := map[string]bool{}
-	for _, name := range conversationBrokerTools {
+	for _, name := range scopedParentTools {
 		allowed[name] = true
 	}
 	for _, name := range reg.Tools {
@@ -448,7 +471,7 @@ func (r *conversationBrokerRegistration) server(version string, cfg *config.Conf
 	if err != nil {
 		return nil, nil, err
 	}
-	if !conversationBrokerEnabled(wc) {
+	if !r.Scoped && !conversationBrokerEnabled(wc) {
 		return nil, nil, errors.New("host mailbox requires conversations: enabled on a stable wing")
 	}
 	if wc.Org != "" {
@@ -701,15 +724,25 @@ type conversationBroker struct {
 	inflight  map[string]bool
 	slots     chan struct{}
 	calls     sync.WaitGroup
+	forward   func(context.Context, conversationMailboxCall) (localMCPResponse, error)
 }
 
 var ErrConversationBrokerRunning = errors.New("host mailbox broker already running for this execution")
 
 func RunConversationBroker(version string, ctx context.Context, cfg *config.Config, session string, logs io.Writer) error {
-	wc, configErr := config.LoadWingConfig(cfg.Dir)
+	wc, err := config.LoadWingConfig(cfg.Dir)
+	if err != nil {
+		return err
+	}
 	if !conversationBrokerEnabled(wc) {
 		return errors.New("the host mailbox broker is available only in the preview channel")
 	}
+	return runConversationBroker(version, ctx, cfg, session, logs, NewMCPAdmissionState(), nil)
+}
+
+func runConversationBroker(version string, ctx context.Context, cfg *config.Config, session string, logs io.Writer, admission *AdmissionState, forward func(context.Context, conversationMailboxCall) (localMCPResponse, error)) error {
+	wc, configErr := config.LoadWingConfig(cfg.Dir)
+
 	if configErr != nil {
 		return configErr
 	}
@@ -719,6 +752,12 @@ func RunConversationBroker(version string, ctx context.Context, cfg *config.Conf
 	reg, err := loadConversationBrokerRegistration(cfg, session)
 	if err != nil {
 		return err
+	}
+	if !reg.Scoped && !conversationBrokerEnabled(wc) {
+		return errors.New("host mailbox requires conversations: enabled")
+	}
+	if reg.Scoped && forward == nil {
+		return errors.New("scoped mailbox must run inside its wing")
 	}
 	dir := conversationBrokerDir(cfg, session)
 	lock, err := os.OpenFile(filepath.Join(dir, "broker.lock"), os.O_CREATE|os.O_RDWR|unix.O_NOFOLLOW, 0600)
@@ -757,7 +796,7 @@ func RunConversationBroker(version string, ctx context.Context, cfg *config.Conf
 	if err != nil {
 		return err
 	}
-	b := &conversationBroker{version: version, cfg: cfg, reg: reg, dir: dir, epoch: epoch, admission: NewMCPAdmissionState(), mailbox: mailbox, logs: logs, inflight: map[string]bool{}, slots: make(chan struct{}, conversationMailboxConcurrency)}
+	b := &conversationBroker{version: version, cfg: cfg, reg: reg, dir: dir, epoch: epoch, admission: admission, forward: forward, mailbox: mailbox, logs: logs, inflight: map[string]bool{}, slots: make(chan struct{}, conversationMailboxConcurrency)}
 	if err := b.waitForParent(ctx); err != nil {
 		b.publishReady(false, err.Error())
 		return err
@@ -968,6 +1007,29 @@ func (b *conversationBroker) accept(ctx context.Context, id string) {
 		reject("host mailbox mutation journal is full")
 		return
 	}
+	if b.reg.Scoped && (tool == "agent_run" || tool == "agent_steer") {
+		var params localMCPToolCallParams
+		if err := decodeStrict(call.Params, &params); err != nil {
+			reject(err.Error())
+			return
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(params.Arguments, &fields); err != nil || fields == nil {
+			reject("arguments must be an object")
+			return
+		}
+		var key string
+		if err := json.Unmarshal(fields["idempotency_key"], &key); err != nil && fields["idempotency_key"] != nil {
+			reject("idempotency_key must be a string")
+			return
+		}
+		if key == "" {
+			fields["idempotency_key"], _ = json.Marshal(id)
+		}
+		params.Arguments, _ = json.Marshal(fields)
+		call.Params, _ = json.Marshal(params)
+		request.Payload, _ = json.Marshal(call)
+	}
 	digest := sha256.Sum256(request.Payload)
 	entry := conversationBrokerJournal{Version: 1, ID: id, Method: call.Method, Tool: tool, Payload: request.Payload, Digest: hex.EncodeToString(digest[:]), AcceptedAt: time.Now().Unix(), Phase: "dispatching"}
 	if err := b.writeJournal(entry); err != nil {
@@ -1013,16 +1075,24 @@ func (b *conversationBroker) dispatch(ctx context.Context, call conversationMail
 	if ctx.Err() != nil && conversationBrokerMutations[tool] {
 		return nil, brokerOutcomeUnconfirmed, "host broker stopped during " + tool + "; its outcome is unconfirmed"
 	}
-	client, err := controlsocket.Dial(ctx, b.cfg.Dir, controlsocket.Hello{Conversation: b.reg.ConversationID, Execution: b.reg.SessionID})
-	if err != nil {
-		return nil, brokerOutcomeNotDispatched, "host mailbox wing unavailable: " + err.Error() + "; the request was not dispatched"
-	}
-	defer client.Close()
+	var response localMCPResponse
 	var forwardErr error
-	proxy := &localWingProxy{version: b.version, client: client, onForwardError: func(err error) { forwardErr = err }}
-	response, _ := proxy.handle(ctx, localMCPRequest{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: call.Method, Params: call.Params})
-	if forwardErr != nil && conversationBrokerMutations[tool] {
-		return nil, brokerOutcomeUnconfirmed, "host mailbox wing call was interrupted; its outcome is unconfirmed: " + forwardErr.Error()
+	if b.forward != nil {
+		response, forwardErr = b.forward(ctx, call)
+	} else {
+		client, err := controlsocket.Dial(ctx, b.cfg.Dir, controlsocket.Hello{Conversation: b.reg.ConversationID, Execution: b.reg.SessionID})
+		if err != nil {
+			return nil, brokerOutcomeNotDispatched, "host mailbox wing unavailable: " + err.Error() + "; the request was not dispatched"
+		}
+		defer client.Close()
+		proxy := &localWingProxy{version: b.version, client: client, onForwardError: func(err error) { forwardErr = err }}
+		response, _ = proxy.handle(ctx, localMCPRequest{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: call.Method, Params: call.Params})
+		if forwardErr != nil && conversationBrokerMutations[tool] {
+			return nil, brokerOutcomeUnconfirmed, "host mailbox wing call was interrupted; its outcome is unconfirmed: " + forwardErr.Error()
+		}
+	}
+	if forwardErr != nil {
+		return nil, brokerOutcomeUnconfirmed, forwardErr.Error()
 	}
 	response.ID = nil
 	data, err := json.Marshal(response)

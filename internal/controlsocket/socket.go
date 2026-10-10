@@ -22,13 +22,17 @@ const maxEnvelope = 1024 * 1024
 const SocketName = "control.sock"
 
 type Hello struct {
-	Version      string `json:"version"`
-	WingID       string `json:"wing_id,omitempty"`
-	Client       string `json:"client,omitempty"`
-	Unsandboxed  bool   `json:"unsandboxed,omitempty"`
-	Conversation string `json:"conversation,omitempty"`
-	Execution    string `json:"execution,omitempty"`
-	Aggregate    bool   `json:"aggregate,omitempty"`
+	Version      string      `json:"version"`
+	WingID       string      `json:"wing_id,omitempty"`
+	Client       string      `json:"client,omitempty"`
+	Unsandboxed  bool        `json:"unsandboxed,omitempty"`
+	Conversation string      `json:"conversation,omitempty"`
+	Execution    string      `json:"execution,omitempty"`
+	Aggregate    bool        `json:"aggregate,omitempty"`
+	Attach       *Attachment `json:"attach,omitempty"`
+	// Scope requests a narrower ceiling from an authenticated receiving wing.
+	// It never supplies identity or grants greater authority than the peer UID.
+	Scope string `json:"scope,omitempty"`
 }
 type Welcome struct {
 	Isolation     string          `json:"isolation,omitempty"`
@@ -53,7 +57,7 @@ type Server struct {
 }
 
 // Listen never starts a wing. Only the wing calls it, before connecting to its relay.
-func Listen(ctx context.Context, dir, wingID string, bind Bind) (*Server, error) {
+func Listen(ctx context.Context, dir, wingID string, bind Bind, attachments ...AttachBind) (*Server, error) {
 	info, err := os.Lstat(dir)
 	if err != nil {
 		return nil, err
@@ -118,7 +122,7 @@ func Listen(ctx context.Context, dir, wingID string, bind Bind) (*Server, error)
 				return
 			}
 			connections.Add(1)
-			go func() { defer connections.Done(); serve(ctx, conn, wingID, bind) }()
+			go func() { defer connections.Done(); serve(ctx, conn, wingID, bind, attachments) }()
 		}
 	}()
 	return s, nil
@@ -142,7 +146,7 @@ func scan(conn net.Conn) *bufio.Scanner {
 	scanner.Buffer(make([]byte, 64*1024), maxEnvelope)
 	return scanner
 }
-func serve(ctx context.Context, conn *net.UnixConn, wingID string, bind Bind) {
+func serve(ctx context.Context, conn *net.UnixConn, wingID string, bind Bind, attachments []AttachBind) {
 	defer conn.Close()
 	if err := checkPeer(conn); err != nil {
 		return
@@ -166,6 +170,10 @@ func serve(ctx context.Context, conn *net.UnixConn, wingID string, bind Bind) {
 	if hello.Version != control.ContractVersion || hello.WingID != "" && hello.WingID != wingID {
 		welcome.Error = "incompatible local wing control protocol or wing ID; upgrade wt and restart the wing"
 		_ = encoder.Encode(welcome)
+		return
+	}
+	if hello.Attach != nil {
+		serveAttachment(ctx, conn, scanner, encoder, wingID, hello, attachments)
 		return
 	}
 	resolved, handler, err := bind(hello)

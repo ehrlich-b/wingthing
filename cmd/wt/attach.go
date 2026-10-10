@@ -6,9 +6,11 @@ import (
 
 	"os"
 
+	"encoding/json"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/localmcp"
 
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 
@@ -70,16 +72,34 @@ func attachCmd() *cobra.Command {
 			}
 			if sessionID == "" {
 				if !selectFlag {
-					return printActiveSessions(cmd.Context(), cfg, jsonFlag)
+					result, err := localmcp.CallLocalWingTool(cmd.Context(), cfg.Dir, os.Getenv("WT_MCP_CLIENT"), "terminal_list", json.RawMessage(`{}`))
+					if err != nil {
+						return err
+					}
+					data, _ := json.Marshal(result["sessions"])
+					var sessions []eggclient.LocalSession
+					if err := json.Unmarshal(data, &sessions); err != nil {
+						return err
+					}
+					return writeLocalSessions(cmd.OutOrStdout(), sessions, jsonFlag)
 				}
-				selected, selectErr := selectActiveSession(cmd.Context(), cfg)
+				result, listErr := localmcp.CallLocalWingTool(cmd.Context(), cfg.Dir, os.Getenv("WT_MCP_CLIENT"), "terminal_list", json.RawMessage(`{}`))
+				if listErr != nil {
+					return listErr
+				}
+				data, _ := json.Marshal(result["sessions"])
+				var sessions []eggclient.LocalSession
+				if err := json.Unmarshal(data, &sessions); err != nil {
+					return err
+				}
+				selected, selectErr := selectSession(sessions)
 				if selectErr != nil {
 					return selectErr
 				}
 				sessionID = selected.ID
 			}
 
-			detached, err := eggclient.AttachLocalOptions(cmd.Context(), cfg, sessionID, egg.AttachOptions{ReadOnly: readOnlyFlag, Takeover: takeoverFlag, Claim: !readOnlyFlag, Owner: "cli"})
+			detached, err := localmcp.AttachWingIO(cmd.Context(), cfg.Dir, os.Getenv("WT_MCP_CLIENT"), sessionID, cmd.InOrStdin(), cmd.OutOrStdout(), egg.AttachOptions{ReadOnly: readOnlyFlag, Takeover: takeoverFlag})
 			if detached {
 				fmt.Fprintf(os.Stderr, "\r\n[detached from %s]\r\n", sessionID)
 			}

@@ -413,6 +413,12 @@ func (s *Server) prepareBoundParentLaunch(c *store.Conversation, cfg *egg.EggCon
 			return nil, nil, errors.New("linked parent supplies its own wingthing MCP configuration; caller --mcp-config/--strict-mcp-config conflicts with that binding")
 		}
 	}
+	if s.scopedParent {
+		if err := sealMailboxPolicy(s.Cfg, cfg); err != nil {
+			return nil, nil, err
+		}
+		return s.prepareBrokerParentMCP(c, cfg, args)
+	}
 	if !s.Unsandboxed {
 		rendered, err := cfg.YAML()
 		if err != nil {
