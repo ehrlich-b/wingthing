@@ -194,7 +194,8 @@ func resolveLocalWingClient(version string, sessions *wingsession.Service, owner
 		server.identity.AllowedPaths = server.allowedPaths
 		server.tools = map[string]bool{}
 		for _, name := range scope.Tools {
-			if server.Grants == nil || func() bool { tool, ok := control.Lookup(name); return ok && server.Grants[tool.Grant] }() {
+			tool, known := control.Lookup(name)
+			if known && (server.Grants == nil || server.Grants[tool.Grant]) {
 				server.tools[name] = true
 			}
 		}

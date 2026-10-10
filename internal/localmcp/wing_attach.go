@@ -19,6 +19,7 @@ func bindWingAttachment(version string, sessions *wingsession.Service, owner str
 		if a == nil || a.Session == "" || hello.Execution != "" || hello.Conversation != "" || hello.Aggregate || a.ReadOnly && (a.Takeover || a.Rows != 0 || a.Cols != 0) {
 			return controlsocket.Welcome{}, nil, errors.New("invalid wing attachment request")
 		}
+		target := a.Session
 		check := func(write, archived bool) (*Server, eggclient.LocalSession, error) {
 			s, err := resolveLocalWingClient(version, sessions, owner, admission, hello)
 			if err != nil {
@@ -27,13 +28,14 @@ func bindWingAttachment(version string, sessions *wingsession.Service, owner str
 			if !s.toolAllowed("terminal_read") || write && !s.toolAllowed("terminal_send") {
 				return nil, eggclient.LocalSession{}, errors.New("terminal attachment is not granted")
 			}
-			ref, err := sessions.Resolve(ctx, s.sessionAuthority(), a.Session, archived)
+			ref, err := sessions.Resolve(ctx, s.sessionAuthority(), target, archived)
 			return s, ref, err
 		}
 		s, ref, err := check(!a.ReadOnly, false)
 		if err != nil {
 			return controlsocket.Welcome{}, nil, err
 		}
+		target = ref.ID
 		handler := func(ctx context.Context, client *controlsocket.SessionStream) error {
 			ctx, cancel := context.WithCancel(ctx)
 			defer cancel()

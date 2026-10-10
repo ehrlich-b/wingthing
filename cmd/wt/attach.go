@@ -1,12 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
-
 	"os"
 
-	"encoding/json"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
@@ -25,7 +24,7 @@ func attachCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "attach [session]",
 		Short: "Attach this terminal to a running egg session",
-		Long: "Attach the current terminal directly to a persistent egg session. " +
+		Long: "Attach the current terminal through a running wing to a persistent egg session. " +
 			"Use NAME:SESSION for a configured SSH remote, or a plain SESSION for a local session. " +
 			"Use --remote with an SSH host from ~/.ssh/config to attach without opening the web app.\n\n" +
 			"Detach without stopping the session with Ctrl+B, then Q. Send a literal Ctrl+B with Ctrl+B twice.",
@@ -47,12 +46,12 @@ func attachCmd() *cobra.Command {
 				return err
 			}
 
-			cfg, err := config.Load()
+			dir, err := config.StateDir()
 			if err != nil {
 				return err
 			}
 			if remoteName != "" {
-				remote, err := remotepkg.ConfiguredRemote(cfg.Dir, remoteName)
+				remote, err := remotepkg.ConfiguredRemote(dir, remoteName)
 				if err != nil {
 					return err
 				}
@@ -72,7 +71,7 @@ func attachCmd() *cobra.Command {
 			}
 			if sessionID == "" {
 				if !selectFlag {
-					result, err := localmcp.CallLocalWingTool(cmd.Context(), cfg.Dir, os.Getenv("WT_MCP_CLIENT"), "terminal_list", json.RawMessage(`{}`))
+					result, err := localmcp.CallLocalWingTool(cmd.Context(), dir, os.Getenv("WT_MCP_CLIENT"), "terminal_list", json.RawMessage(`{}`))
 					if err != nil {
 						return err
 					}
@@ -83,7 +82,7 @@ func attachCmd() *cobra.Command {
 					}
 					return writeLocalSessions(cmd.OutOrStdout(), sessions, jsonFlag)
 				}
-				result, listErr := localmcp.CallLocalWingTool(cmd.Context(), cfg.Dir, os.Getenv("WT_MCP_CLIENT"), "terminal_list", json.RawMessage(`{}`))
+				result, listErr := localmcp.CallLocalWingTool(cmd.Context(), dir, os.Getenv("WT_MCP_CLIENT"), "terminal_list", json.RawMessage(`{}`))
 				if listErr != nil {
 					return listErr
 				}
@@ -99,7 +98,7 @@ func attachCmd() *cobra.Command {
 				sessionID = selected.ID
 			}
 
-			detached, err := localmcp.AttachWingIO(cmd.Context(), cfg.Dir, os.Getenv("WT_MCP_CLIENT"), sessionID, cmd.InOrStdin(), cmd.OutOrStdout(), egg.AttachOptions{ReadOnly: readOnlyFlag, Takeover: takeoverFlag})
+			detached, err := localmcp.AttachWingIO(cmd.Context(), dir, os.Getenv("WT_MCP_CLIENT"), sessionID, cmd.InOrStdin(), cmd.OutOrStdout(), egg.AttachOptions{ReadOnly: readOnlyFlag, Takeover: takeoverFlag})
 			if detached {
 				fmt.Fprintf(os.Stderr, "\r\n[detached from %s]\r\n", sessionID)
 			}

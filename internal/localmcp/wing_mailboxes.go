@@ -19,6 +19,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/wingconnect"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"golang.org/x/sys/unix"
@@ -40,6 +41,9 @@ func sealMailboxPolicy(cfg *config.Config, policy *egg.EggConfig) error {
 		return err
 	}
 	policy.FS = append(append([]string{}, policy.FS...), "deny:"+state, "deny:"+wingpolicy.CanonicalPolicyPath(socket), "deny:~/.ssh")
+	if !wingpolicy.SessionPolicyContains(state, wingpolicy.CanonicalPolicyPath(socket)) {
+		policy.FS = append(policy.FS, "deny:"+wingpolicy.CanonicalPolicyPath(filepath.Dir(socket)))
+	}
 	// Pin the HOME ancestry as literal directory entries. Descendant workspace
 	// writes remain available, while an agent cannot rename an ancestor to move
 	// protected state out of its sandbox boundary (including isolated profiles).
@@ -199,10 +203,11 @@ func (m *wingMailboxes) call(ctx context.Context, reg conversationBrokerRegistra
 }
 
 type mailboxChild struct {
-	WingID    string `json:"wing_id"`
-	RunID     string `json:"run_id,omitempty"`
-	SessionID string `json:"session_id"`
-	CWD       string `json:"cwd"`
+	WingID       string `json:"wing_id"`
+	RunID        string `json:"run_id,omitempty"`
+	SessionID    string `json:"session_id"`
+	CWD          string `json:"cwd"`
+	AdmissionKey string `json:"admission_key,omitempty"`
 }
 
 type wingCallScope struct {
@@ -256,13 +261,13 @@ func mailboxChildren(cfg *config.Config, reg *conversationBrokerRegistration, ad
 		return nil, err
 	}
 	if add != nil {
-		if len(children) >= 1024 {
-			return nil, errors.New("mailbox child ledger is full")
-		}
 		if add.RunID != "" {
 			children[childKey(add.WingID, add.RunID)] = *add
 		}
 		children[childKey(add.WingID, add.SessionID)] = *add
+		if len(children) > 1024 {
+			return nil, errors.New("mailbox child ledger is full")
+		}
 		data, err := json.Marshal(children)
 		if err != nil {
 			return nil, err
@@ -397,16 +402,26 @@ func (m *wingMailboxes) dispatch(ctx context.Context, s *Server, request control
 		}
 	}
 	if request.Tool == "agent_run" || request.Tool == "agent_start" {
+		if request.Tool == "agent_start" && id != m.remotes.wingID {
+			return fail(errors.New("remote children must use agent_run"))
+		}
 		var cwd string
 		_ = json.Unmarshal(fields["cwd"], &cwd)
 		if cwd == "" && id == m.remotes.wingID {
 			cwd = s.broker.Workspace
 			fields["cwd"], _ = json.Marshal(cwd)
 		}
-		if !filepath.IsAbs(cwd) || !wingpolicy.IsUnderPaths(wingpolicy.CanonicalPolicyPath(cwd), paths) {
+		resolved := filepath.Clean(cwd)
+		if id == m.remotes.wingID {
+			resolved = wingpolicy.CanonicalPolicyPath(cwd)
+		}
+		// Remote paths are host-local. Its wing resolves symlinks and checks
+		// canonical cwd against the transmitted ceiling before admission.
+		if !filepath.IsAbs(cwd) || !wingpolicy.IsUnderPaths(resolved, paths) {
 			return fail(errors.New("cwd is outside this parent's captured workspace grants"))
 		}
 	}
+	callerKey, admissionKey := "", ""
 	if request.Tool == "agent_run" || request.Tool == "agent_steer" || request.Tool == "agent_start" {
 		keyField := "idempotency_key"
 		if request.Tool == "agent_start" {
@@ -416,8 +431,25 @@ func (m *wingMailboxes) dispatch(ctx context.Context, s *Server, request control
 		if err := json.Unmarshal(fields[keyField], &key); err != nil || key == "" {
 			return fail(errors.New(keyField + " is required for scoped admission"))
 		}
+		if len(key) > 200 || request.Tool == "agent_start" && (len(key) > 128 || strings.TrimSpace(key) != key || strings.ContainsAny(key, "\x00\r\n")) {
+			return fail(errors.New(keyField + " exceeds the admission key bounds"))
+		}
+		callerKey = key
 		digest := sha256.Sum256([]byte(s.broker.SessionID + "\x00" + id + "\x00" + key))
-		fields[keyField], _ = json.Marshal("parent-" + hex.EncodeToString(digest[:]))
+		admissionKey = "parent-" + hex.EncodeToString(digest[:])
+		fields[keyField], _ = json.Marshal(admissionKey)
+		if len(children) > 1022 {
+			known := false
+			for _, child := range children {
+				if child.WingID == id && child.AdmissionKey == admissionKey {
+					known = true
+					break
+				}
+			}
+			if !known {
+				return fail(errors.New("mailbox child ledger is full"))
+			}
+		}
 	}
 	args, _ := json.Marshal(fields)
 	request.Arguments = args
@@ -437,15 +469,36 @@ func (m *wingMailboxes) dispatch(ctx context.Context, s *Server, request control
 		}
 		data, denied, err := p.Call(ctx, id, request.Tool, args)
 		if err != nil {
-			return fail(err)
+			response := fail(err)
+			var unknown *wingconnect.UnknownOutcome
+			if errors.As(err, &unknown) {
+				reported := *unknown
+				reported.Key = callerKey
+				response = fail(&reported)
+				response.Result["outcome"] = "unknown"
+				response.Result["wing_id"] = id
+				if callerKey != "" {
+					response.Result["idempotency_key"] = callerKey
+				}
+			}
+			return response
 		}
 		response = control.DirectResponse{Version: control.ContractVersion, ID: request.ID, Result: data, IsError: denied}
+	}
+	// The receiver sees a parent-specific namespace. The parent must retain its
+	// original key so retrying an echoed receipt reconciles the same admission.
+	if callerKey != "" && response.Result != nil {
+		keyField := "idempotency_key"
+		if request.Tool == "agent_start" {
+			keyField = "request_id"
+		}
+		response.Result[keyField] = callerKey
 	}
 	if response.Result != nil && request.Tool == "wingthing_capabilities" {
 		response.Result["paths"] = paths
 	}
 	if !response.IsError && response.Error == "" && (request.Tool == "agent_run" || request.Tool == "agent_steer" || request.Tool == "agent_start") {
-		child := mailboxChild{WingID: id}
+		child := mailboxChild{WingID: id, AdmissionKey: admissionKey}
 		child.RunID, _ = response.Result["run_id"].(string)
 		child.SessionID, _ = response.Result["session_id"].(string)
 		if child.SessionID == "" {
@@ -456,7 +509,9 @@ func (m *wingMailboxes) dispatch(ctx context.Context, s *Server, request control
 			return fail(errors.New("wing returned a child outside the admitted scope"))
 		}
 		if _, err := mailboxChildren(s.Cfg, s.broker, &child); err != nil {
-			return fail(fmt.Errorf("child was admitted but its receipt could not be recorded: %w", err))
+			response := fail(fmt.Errorf("child was admitted but its receipt could not be recorded; retry the original key: %w", err))
+			response.Result["outcome"], response.Result["wing_id"], response.Result["idempotency_key"] = "unknown", id, callerKey
+			return response
 		}
 	}
 	return response
