@@ -27,6 +27,7 @@ type Hello struct {
 	Client       string `json:"client,omitempty"`
 	Unsandboxed  bool   `json:"unsandboxed,omitempty"`
 	Conversation string `json:"conversation,omitempty"`
+	Execution    string `json:"execution,omitempty"`
 }
 type Welcome struct {
 	Version   string          `json:"version"`
@@ -34,6 +35,7 @@ type Welcome struct {
 	Principal string          `json:"principal,omitempty"`
 	Actor     string          `json:"actor,omitempty"`
 	Grants    map[string]bool `json:"grants"`
+	Tools     map[string]bool `json:"tools,omitempty"`
 	Error     string          `json:"error,omitempty"`
 }
 type Handler func(context.Context, control.DirectRequest) control.DirectResponse

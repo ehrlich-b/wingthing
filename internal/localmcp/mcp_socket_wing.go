@@ -35,7 +35,7 @@ func ListenLocalWingControl(ctx context.Context, version string, sessions *wings
 		if err != nil {
 			return controlsocket.Welcome{}, nil, err
 		}
-		welcome := controlsocket.Welcome{Principal: server.clientPrincipal(), Actor: server.clientActor(), Grants: server.Grants}
+		welcome := controlsocket.Welcome{Principal: server.clientPrincipal(), Actor: server.clientActor(), Grants: server.Grants, Tools: server.tools}
 		return welcome, func(callCtx context.Context, request control.DirectRequest) control.DirectResponse {
 			// Resolve each call against live wing policy and clients.yaml. A connection
 			// is not a lease on permissions revoked after its handshake.
@@ -53,11 +53,29 @@ func resolveLocalWingClient(version string, sessions *wingsession.Service, owner
 	if sessions.SharedHost || policy.Wing == nil || policy.Wing.Org != "" {
 		return nil, errors.New("local wing control is available only on personal wings")
 	}
-	if policy.Wing.Locked || len(wingpolicy.PasskeysForSubject(policy.Keys, ownerUserID)) > 0 {
-		return nil, errors.New("passkey authentication is required; MCP passkey ceremony is unavailable")
-	}
 	if hello.Unsandboxed {
 		return nil, errors.New("unsandboxed launch requires allow_unsandboxed: true in wing.yaml")
+	}
+	if hello.Execution != "" {
+		reg, err := loadConversationBrokerRegistration(sessions.Config, hello.Execution)
+		if err != nil {
+			return nil, err
+		}
+		if hello.Client != "" || hello.Conversation != reg.ConversationID || reg.UserID != "" && reg.UserID != ownerUserID {
+			return nil, errors.New("host mailbox binding does not match this personal wing")
+		}
+		captured, wc, err := reg.server(version, sessions.Config, admission)
+		if err != nil {
+			return nil, err
+		}
+		captured.mailboxLocked = wc.Locked
+		captured.Sessions = sessions
+		captured.identity.UserID = ownerUserID
+		captured.sessionRole = "owner"
+		return captured, nil
+	}
+	if policy.Wing.Locked || len(wingpolicy.PasskeysForSubject(policy.Keys, ownerUserID)) > 0 {
+		return nil, errors.New("passkey authentication is required; MCP passkey ceremony is unavailable")
 	}
 	principal := strings.TrimSpace(hello.Client)
 	explicitClient := principal != ""

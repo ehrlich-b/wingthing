@@ -136,7 +136,7 @@ func TestOpusProcessRecoveryHelperProcess(t *testing.T) {
 		_, _ = io.Copy(io.Discard, os.Stdin)
 	case "controller-loop":
 		// The production daemon loop with its production runtime, personal policy.
-		RunConversationWakeController("dev", context.Background(), h.cfg, func() (*config.WingConfig, bool) { return &config.WingConfig{}, false })
+		RunConversationWakeController("dev", context.Background(), h.cfg, func() (*config.WingConfig, bool) { return &config.WingConfig{}, false }, testWingServer(nil, &Server{Version: "dev", Cfg: h.cfg, Principal: "owner"}).Sessions, "fixture-user")
 	case "wake-step":
 		opusPRWakeStep(h, os.Getenv("OPUS_PR_BOUNDARY"))
 	case "checkpoint-commit":
@@ -222,7 +222,7 @@ func opusPRAppendDurable(path string, record any) error {
 // One production processConversationWake step. Only the PTY transport is
 // replaced (as promptSession would compose it, but without gRPC to an egg).
 func opusPRWakeStep(h opusPRHelper, boundary string) {
-	s := &Server{Version: "dev", Cfg: h.cfg, Principal: opusPROwner}
+	s := testWingServer(nil, &Server{Version: "dev", Cfg: h.cfg, Principal: opusPROwner})
 	runtime := nativeConversationWakeRuntime(h.cfg)
 	runtime.Prompt = func(ctx context.Context, session eggclient.LocalSession, id, text string) (egg.SessionPromptResult, error) {
 		if boundary == "bound_before_reservation" {
@@ -287,7 +287,7 @@ func opusPRCheckpoint(s *Server, expected, after int64, text string) (map[string
 }
 
 func opusPRCheckpointCommit(h opusPRHelper) {
-	s := &Server{Version: "dev", Cfg: h.cfg, Principal: opusPROwner}
+	s := testWingServer(nil, &Server{Version: "dev", Cfg: h.cfg, Principal: opusPROwner})
 	read, err := opusPRRead(s, 0, 1)
 	if err != nil {
 		opusPREmit("OPUS_PR_RESULT", opusPRReport{Error: err.Error()})
@@ -305,7 +305,7 @@ func opusPRCheckpointCommit(h opusPRHelper) {
 }
 
 func opusPRCheckpointRecover(h opusPRHelper) {
-	s := &Server{Version: "dev", Cfg: h.cfg, Principal: opusPROwner}
+	s := testWingServer(nil, &Server{Version: "dev", Cfg: h.cfg, Principal: opusPROwner})
 	text := os.Getenv("OPUS_PR_CHECKPOINT")
 	expected, _ := strconv.ParseInt(os.Getenv("OPUS_PR_EXPECTED"), 10, 64)
 	after, _ := strconv.ParseInt(os.Getenv("OPUS_PR_AFTER"), 10, 64)

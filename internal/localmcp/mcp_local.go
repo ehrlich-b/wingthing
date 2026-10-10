@@ -16,7 +16,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -29,12 +28,10 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/procinfo"
-	"github.com/ehrlich-b/wingthing/internal/promptmgr"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/taskrun"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
-	"github.com/google/uuid"
 )
 
 const localMCPProtocolVersion = "2025-11-25"
@@ -47,6 +44,7 @@ type Server struct {
 	legacyLocalDefault                 bool
 	Sessions                           *wingsession.Service
 	sessionLaunch                      *wingsession.Launch
+	mailboxLocked                      bool
 	sessionRole                        string
 	sessionBrowser                     bool
 	sessionPublicKey, sessionAuthToken string
@@ -329,7 +327,7 @@ func (s *Server) handle(ctx context.Context, request localMCPRequest) (localMCPR
 }
 
 func (s *Server) mcpInstructions() string {
-	base := "Wingthing is an agent manager for agents. Use terminal tools for persistent PTYs, agent_run for supervised semantic work, prompt_loop for bounded iteration, and swarm_run for a dependency DAG."
+	base := "Wingthing is an agent manager for agents. Use terminal tools for persistent PTYs and agent_run for supervised semantic work."
 	if s.Unsandboxed {
 		return base + " This server trusts an outer VM/container boundary: spawned processes have the full authority of the local OS user."
 	}
@@ -515,6 +513,9 @@ func localMCPToolResult(data map[string]any, isError bool) map[string]any {
 }
 
 func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMessage) (map[string]any, bool, *localMCPError) {
+	if s.mailboxLocked && conversationBrokerMutations[name] {
+		return map[string]any{"error": "the wing is locked; host mailbox mutations are paused"}, true, nil
+	}
 	var data map[string]any
 	var err error
 	isError := false
@@ -547,12 +548,6 @@ func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMe
 	switch name {
 	case "wingthing_capabilities":
 		data, err = s.toolCapabilities(arguments)
-	case "message_send":
-		data, err = s.toolMessageSend(arguments)
-	case "message_list":
-		data, err = s.toolMessageList(arguments)
-	case "message_wait":
-		data, err = s.toolMessageWait(ctx, arguments)
 	case "sandbox_explain":
 		data, err = s.toolSandboxExplain(arguments)
 	case "terminal_list":
@@ -607,20 +602,6 @@ func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMe
 		data, err = s.ToolTerminalRename(ctx, arguments)
 	case "terminal_stop":
 		data, err = s.toolTerminalStop(ctx, arguments)
-	case "prompt_list":
-		data, err = s.toolPromptList(arguments)
-	case "prompt_get":
-		data, err = s.toolPromptGet(arguments)
-	case "prompt_save":
-		data, err = s.toolPromptSave(arguments)
-	case "prompt_run":
-		data, isError, err = s.toolPromptRun(ctx, arguments)
-	case "task_get":
-		data, err = s.toolTaskGet(arguments)
-	case "prompt_loop":
-		data, isError, err = s.toolPromptLoop(ctx, arguments)
-	case "swarm_run":
-		data, isError, err = s.toolSwarmRun(ctx, arguments)
 	default:
 		err = fmt.Errorf("tool %q has no handler on %s", name, s.controlSurface())
 		return nil, false, &localMCPError{Code: -32603, Message: err.Error()}
@@ -731,286 +712,14 @@ func (s *Server) controlSurface() control.Surface {
 	return s.Surface
 }
 
-const maxMessageContentBytes = 32 << 10
-
-var messageKinds = map[string]bool{
-	"message":  true,
-	"status":   true,
-	"question": true,
-	"answer":   true,
-	"evidence": true,
-	"error":    true,
-}
-
-func (s *Server) toolMessageSend(arguments json.RawMessage) (map[string]any, error) {
-	var args struct {
-		Content    string `json:"content"`
-		Channel    string `json:"channel"`
-		ToActor    string `json:"to_actor"`
-		Kind       string `json:"kind"`
-		ReplyTo    string `json:"reply_to"`
-		TTLSeconds int    `json:"ttl_seconds"`
-	}
-	if err := decodeStrict(arguments, &args); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(args.Content) == "" {
-		return nil, errors.New("content is required")
-	}
-	if len([]byte(args.Content)) > maxMessageContentBytes {
-		return nil, fmt.Errorf("content exceeds %d bytes", maxMessageContentBytes)
-	}
-	channel, err := normalizeMessageChannel(args.Channel)
-	if err != nil {
-		return nil, err
-	}
-	toActor, err := normalizeMessageActorRef(args.ToActor, "to_actor")
-	if err != nil {
-		return nil, err
-	}
-	replyTo, err := normalizeMessageID(args.ReplyTo, "reply_to")
-	if err != nil {
-		return nil, err
-	}
-	kind := args.Kind
-	if kind == "" {
-		kind = "message"
-	}
-	if !messageKinds[kind] {
-		return nil, fmt.Errorf("unsupported message kind %q", kind)
-	}
-	ttl := args.TTLSeconds
-	if ttl == 0 {
-		ttl = 86400
-	}
-	if ttl < 60 || ttl > 604800 {
-		return nil, errors.New("ttl_seconds must be between 60 and 604800")
-	}
-
-	db, err := s.openMessageStore()
-	if err != nil {
-		return nil, err
-	}
-	defer cmdutil.CloseWithLog("message store", db)
-	if err := db.PurgeExpiredMessages(); err != nil {
-		return nil, err
-	}
-	message := &store.Message{
-		MessageID:      "msg-" + uuid.NewString(),
-		OwnerID:        s.clientPrincipal(),
-		SenderActor:    s.clientActor(),
-		RecipientActor: toActor,
-		Channel:        channel,
-		Kind:           kind,
-		ReplyTo:        replyTo,
-		Content:        args.Content,
-		ExpiresAt:      time.Now().UTC().Add(time.Duration(ttl) * time.Second),
-	}
-	if err := db.CreateMessage(message); err != nil {
-		return nil, err
-	}
-	return map[string]any{
-		"message":    messageResult(message),
-		"message_id": message.MessageID,
-		"owner":      s.clientPrincipal(),
-		"actor":      s.clientActor(),
-	}, nil
-}
-
-func (s *Server) toolMessageList(arguments json.RawMessage) (map[string]any, error) {
-	var args messageListArgs
-	if err := decodeStrict(arguments, &args); err != nil {
-		return nil, err
-	}
-	if err := args.normalize(); err != nil {
-		return nil, err
-	}
-	db, err := s.openMessageStore()
-	if err != nil {
-		return nil, err
-	}
-	defer cmdutil.CloseWithLog("message store", db)
-	if err := db.PurgeExpiredMessages(); err != nil {
-		return nil, err
-	}
-	messages, err := db.ListMessages(s.clientPrincipal(), s.clientActor(), args.Channel, args.AfterID, args.Limit, args.IncludeSent)
-	if err != nil {
-		return nil, err
-	}
-	return messageListResult(s, args.Channel, args.AfterID, messages, false), nil
-}
-
-func (s *Server) toolMessageWait(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {
-	var args messageWaitArgs
-	if err := decodeStrict(arguments, &args); err != nil {
-		return nil, err
-	}
-	if err := args.normalize(); err != nil {
-		return nil, err
-	}
-	db, err := s.openMessageStore()
-	if err != nil {
-		return nil, err
-	}
-	defer cmdutil.CloseWithLog("message store", db)
-	if err := db.PurgeExpiredMessages(); err != nil {
-		return nil, err
-	}
-	timeout := args.TimeoutSeconds
-	if timeout == 0 {
-		timeout = 30
-	}
-	if timeout < 0.1 || timeout > 3600 {
-		return nil, errors.New("timeout_seconds must be between 0.1 and 3600")
-	}
-	timer := time.NewTimer(time.Duration(timeout * float64(time.Second)))
-	defer timer.Stop()
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		messages, err := db.ListMessages(s.clientPrincipal(), s.clientActor(), args.Channel, args.AfterID, args.Limit, false)
-		if err != nil {
-			return nil, err
-		}
-		if len(messages) > 0 {
-			return messageListResult(s, args.Channel, args.AfterID, messages, false), nil
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-timer.C:
-			return messageListResult(s, args.Channel, args.AfterID, nil, true), nil
-		case <-ticker.C:
-		}
-	}
-}
-
-type messageListArgs struct {
-	Channel     string `json:"channel"`
-	AfterID     string `json:"after_id"`
-	Limit       int    `json:"limit"`
-	IncludeSent bool   `json:"include_sent"`
-}
-
-func (args *messageListArgs) normalize() error {
-	channel, err := normalizeMessageChannel(args.Channel)
-	if err != nil {
-		return err
-	}
-	afterID, err := normalizeMessageID(args.AfterID, "after_id")
-	if err != nil {
-		return err
-	}
-	args.Channel = channel
-	args.AfterID = afterID
-	if args.Limit == 0 {
-		args.Limit = 20
-	}
-	if args.Limit < 1 || args.Limit > 20 {
-		return errors.New("limit must be between 1 and 20")
-	}
-	return nil
-}
-
-type messageWaitArgs struct {
-	Channel        string  `json:"channel"`
-	AfterID        string  `json:"after_id"`
-	Limit          int     `json:"limit"`
-	TimeoutSeconds float64 `json:"timeout_seconds"`
-}
-
-func (args *messageWaitArgs) normalize() error {
-	list := messageListArgs{Channel: args.Channel, AfterID: args.AfterID, Limit: args.Limit}
-	if err := list.normalize(); err != nil {
-		return err
-	}
-	args.Channel, args.AfterID, args.Limit = list.Channel, list.AfterID, list.Limit
-	return nil
-}
-
-func normalizeMessageChannel(channel string) (string, error) {
-	channel = strings.TrimSpace(channel)
-	if channel == "" {
-		channel = "factory"
-	}
-	if err := eggclient.ValidateSessionName(channel); err != nil {
-		return "", fmt.Errorf("invalid message channel: %w", err)
-	}
-	return channel, nil
-}
-
-func normalizeMessageActorRef(actor, field string) (string, error) {
-	actor = strings.TrimSpace(actor)
-	if actor == "" {
-		return "", nil
-	}
-	if len(actor) > 256 {
-		return "", fmt.Errorf("%s must be at most 256 characters", field)
-	}
-	for _, r := range actor {
-		if r < 0x21 || r > 0x7e {
-			return "", fmt.Errorf("%s must contain printable non-space ASCII", field)
-		}
-	}
-	return actor, nil
-}
-
-func normalizeMessageID(id, field string) (string, error) {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return "", nil
-	}
-	if len(id) > 128 || !strings.HasPrefix(id, "msg-") {
-		return "", fmt.Errorf("%s is not a Wingthing message ID", field)
-	}
-	for _, r := range id {
-		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
-			return "", fmt.Errorf("%s is not a Wingthing message ID", field)
-		}
-	}
-	return id, nil
-}
-
-func (s *Server) openMessageStore() (*store.Store, error) {
+func (s *Server) openConversationStore() (*store.Store, error) {
 	if s.Cfg == nil || s.Cfg.Dir == "" {
-		return nil, errors.New("wingthing state directory is required for messages")
+		return nil, errors.New("wingthing state directory is required for conversations")
 	}
 	if err := os.MkdirAll(s.Cfg.Dir, 0700); err != nil {
 		return nil, err
 	}
 	return store.Open(s.Cfg.DBPath())
-}
-
-func messageResult(message *store.Message) map[string]any {
-	return map[string]any{
-		"message_id":   message.MessageID,
-		"sender_actor": message.SenderActor,
-		"to_actor":     message.RecipientActor,
-		"channel":      message.Channel,
-		"kind":         message.Kind,
-		"reply_to":     message.ReplyTo,
-		"content":      message.Content,
-		"created_at":   message.CreatedAt.UTC().Format(time.RFC3339),
-		"expires_at":   message.ExpiresAt.UTC().Format(time.RFC3339),
-	}
-}
-
-func messageListResult(s *Server, channel, afterID string, messages []*store.Message, timedOut bool) map[string]any {
-	items := make([]map[string]any, 0, len(messages))
-	next := afterID
-	for _, message := range messages {
-		items = append(items, messageResult(message))
-		next = message.MessageID
-	}
-	return map[string]any{
-		"owner":         s.clientPrincipal(),
-		"actor":         s.clientActor(),
-		"channel":       channel,
-		"messages":      items,
-		"next_after_id": next,
-		"timed_out":     timedOut,
-	}
 }
 
 func (s *Server) sessionIsolationMode() string {
@@ -1086,14 +795,7 @@ func (s *Server) resolveConfigPath(path string) (string, error) {
 }
 
 func (s *Server) ownsSession(session eggclient.LocalSession) bool {
-	if s.Sessions != nil {
-		return s.Sessions.Owns(s.sessionAuthority(), session)
-	}
-	principal := s.clientPrincipal()
-	if principal == "default" {
-		return session.Principal == "" || session.Principal == principal
-	}
-	return session.Principal == principal
+	return s.Sessions != nil && s.Sessions.Owns(s.sessionAuthority(), session)
 }
 
 func (s *Server) resolveOwnedSession(ctx context.Context, ref string) (eggclient.LocalSession, error) {
@@ -1250,7 +952,7 @@ func (s *Server) ToolTerminalList(ctx context.Context, arguments json.RawMessage
 		}
 		owned := make([]eggclient.MachineSession, 0, len(sessions))
 		for _, session := range sessions {
-			if s.ownsSession(session) {
+			if session.Principal == s.clientPrincipal() || s.legacyLocalDefault && (session.Principal == "" || session.Principal == "default") {
 				owned = append(owned, eggclient.MachineSession{LocalSession: session, Machine: *args.Remote})
 			}
 		}
@@ -1258,17 +960,16 @@ func (s *Server) ToolTerminalList(ctx context.Context, arguments json.RawMessage
 	}
 	var sessions []eggclient.LocalSession
 	var err error
-	if s.Sessions != nil {
-		sessions, err = s.Sessions.List(ctx, s.sessionAuthority())
-	} else {
-		sessions, err = eggclient.DiscoverActiveSessions(ctx, s.Cfg)
+	if s.Sessions == nil {
+		return nil, errors.New("wing session service is not ready")
 	}
+	sessions, err = s.Sessions.List(ctx, s.sessionAuthority())
 	if err != nil {
 		return nil, err
 	}
 	root := ""
 	if s.broker != nil && s.BoundConversation != "" {
-		db, err := s.openMessageStore()
+		db, err := s.openConversationStore()
 		if err != nil {
 			return nil, err
 		}
@@ -1308,11 +1009,7 @@ func (s *Server) toolTerminalRead(ctx context.Context, arguments json.RawMessage
 	}
 	var session eggclient.LocalSession
 	var snapshot []byte
-	if s.Sessions != nil {
-		session, snapshot, err = s.Sessions.Snapshot(ctx, s.sessionAuthority(), owned.ID)
-	} else {
-		session, snapshot, err = eggclient.ReadSessionSnapshot(ctx, s.Cfg, owned.ID)
-	}
+	session, snapshot, err = s.Sessions.Snapshot(ctx, s.sessionAuthority(), owned.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1343,11 +1040,7 @@ func (s *Server) toolTerminalSend(ctx context.Context, arguments json.RawMessage
 		return nil, err
 	}
 	var session eggclient.LocalSession
-	if s.Sessions != nil {
-		session, err = s.Sessions.Send(ctx, s.sessionAuthority(), owned.ID, input, args.Enter)
-	} else {
-		session, err = eggclient.SendSessionInput(ctx, s.Cfg, owned.ID, input, args.Enter, s.identity.UserID)
-	}
+	session, err = s.Sessions.Send(ctx, s.sessionAuthority(), owned.ID, input, args.Enter)
 	if err != nil {
 		return nil, err
 	}
@@ -1814,17 +1507,6 @@ func (s *Server) freezeTaskLaunchConfig(task *store.Task) error {
 	task.EggConfigYAML, err = cfg.TaskYAML()
 	task.CWD = cwd
 	return err
-}
-
-func (s *Server) runTask(ctx context.Context, taskStore *store.Store, task *store.Task) error {
-	options, err := s.agentTaskRunOptions()
-	if err != nil {
-		return err
-	}
-	if s.runAgentTask != nil {
-		return s.runAgentTask(ctx, s.Cfg, taskStore, task, options)
-	}
-	return taskrun.RunTaskToWithOptions(ctx, s.Cfg, taskStore, task, io.Discard, options)
 }
 
 func (s *Server) setAgentRunError(runID string, runErr error) {
@@ -2339,680 +2021,22 @@ func (s *Server) toolTerminalStop(ctx context.Context, arguments json.RawMessage
 	if args.Session == "" {
 		return nil, errors.New("session is required")
 	}
-	var session eggclient.LocalSession
-	var err error
-	if s.Sessions != nil {
-		session, err = s.Sessions.Stop(ctx, s.sessionAuthority(), args.Session)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		owned, err := s.resolveOwnedSession(ctx, args.Session)
-		if err != nil {
-			return nil, err
-		}
-		var ec *egg.Client
-		session, ec, err = eggclient.OpenLocalEgg(ctx, s.Cfg, owned.ID)
-		if err != nil {
-			return nil, err
-		}
-		defer cmdutil.CloseWithLog("egg client", ec)
-		if err := ec.Kill(ctx, session.ID); err != nil {
-			return nil, err
-		}
+	if s.Sessions == nil {
+		return nil, errors.New("wing session service is not ready")
+	}
+	session, err := s.Sessions.Stop(ctx, s.sessionAuthority(), args.Session)
+	if err != nil {
+		return nil, err
 	}
 
 	return map[string]any{"session": session.ID, "status": "stopped"}, nil
 }
 
-func (s *Server) toolPromptList(arguments json.RawMessage) (map[string]any, error) {
-	if err := requireEmptyObject(arguments); err != nil {
-		return nil, err
-	}
-	assets, err := promptmgr.New(s.Cfg.PromptsDir()).List()
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"prompts": assets}, nil
-}
-
-func (s *Server) toolPromptGet(arguments json.RawMessage) (map[string]any, error) {
-	var args struct {
-		Name     string `json:"name"`
-		Revision string `json:"revision"`
-	}
-	if err := decodeStrict(arguments, &args); err != nil {
-		return nil, err
-	}
-	if args.Name == "" {
-		return nil, errors.New("name is required")
-	}
-	asset, err := promptmgr.New(s.Cfg.PromptsDir()).Get(args.Name, args.Revision)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"prompt": asset}, nil
-}
-
-func (s *Server) toolPromptSave(arguments json.RawMessage) (map[string]any, error) {
-	var args struct {
-		Name             string   `json:"name"`
-		Description      string   `json:"description"`
-		Template         string   `json:"template"`
-		Variables        []string `json:"variables"`
-		Agent            string   `json:"agent"`
-		CWD              string   `json:"cwd"`
-		ExpectedRevision string   `json:"expected_revision"`
-	}
-	if err := decodeStrict(arguments, &args); err != nil {
-		return nil, err
-	}
-	if args.Name == "" || strings.TrimSpace(args.Template) == "" {
-		return nil, errors.New("name and template are required")
-	}
-	if args.Agent != "" {
-		if _, ok := agentpkg.LookupDefinition(args.Agent); !ok {
-			return nil, fmt.Errorf("unsupported agent %q", args.Agent)
-		}
-	}
-	asset, err := promptmgr.New(s.Cfg.PromptsDir()).Save(promptmgr.Asset{
-		Name: args.Name, Description: args.Description, Template: args.Template,
-		Variables: args.Variables, Agent: args.Agent, CWD: args.CWD,
-	}, args.ExpectedRevision)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"prompt": asset}, nil
-}
-
-func (s *Server) toolPromptRun(ctx context.Context, arguments json.RawMessage) (map[string]any, bool, error) {
-	var args struct {
-		Prompt     string            `json:"prompt"`
-		PromptName string            `json:"prompt_name"`
-		Revision   string            `json:"revision"`
-		Variables  map[string]string `json:"variables"`
-		Agent      string            `json:"agent"`
-		CWD        string            `json:"cwd"`
-	}
-	if err := decodeStrict(arguments, &args); err != nil {
-		return nil, false, err
-	}
-	hasRaw := strings.TrimSpace(args.Prompt) != ""
-	hasSaved := args.PromptName != ""
-	if hasRaw == hasSaved {
-		return nil, false, errors.New("provide exactly one of prompt or prompt_name")
-	}
-	promptName := ""
-	promptRevision := ""
-	if hasSaved {
-		asset, err := promptmgr.New(s.Cfg.PromptsDir()).Get(args.PromptName, args.Revision)
-		if err != nil {
-			return nil, false, err
-		}
-		args.Prompt, err = promptmgr.Render(asset, args.Variables)
-		if err != nil {
-			return nil, false, err
-		}
-		promptName = asset.Name
-		promptRevision = asset.Revision
-		if args.Agent == "" {
-			args.Agent = asset.Agent
-		}
-		if args.CWD == "" {
-			args.CWD = asset.CWD
-		}
-	} else if args.Revision != "" || len(args.Variables) > 0 {
-		return nil, false, errors.New("revision and variables require prompt_name")
-	}
-	resolvedCWD, err := s.resolveWorkingDirectory(args.CWD)
-	if err != nil {
-		return nil, false, err
-	}
-	args.CWD = resolvedCWD
-	task, runErr := s.executePrompt(ctx, args.Prompt, args.Agent, args.CWD, promptName, promptRevision, nil, nil)
-	if task == nil {
-		return nil, true, runErr
-	}
-	return taskData(task), runErr != nil, nil
-}
-
-func (s *Server) toolTaskGet(arguments json.RawMessage) (map[string]any, error) {
-	var args struct {
-		TaskID string `json:"task_id"`
-	}
-	if err := decodeStrict(arguments, &args); err != nil {
-		return nil, err
-	}
-	if args.TaskID == "" {
-		return nil, errors.New("task_id is required")
-	}
-	taskStore, err := store.Open(s.Cfg.DBPath())
-	if err != nil {
-		return nil, err
-	}
-	defer cmdutil.CloseWithLog("task store", taskStore)
-	task, err := taskStore.GetTask(args.TaskID)
-	if err != nil {
-		return nil, err
-	}
-	if task == nil {
-		return nil, fmt.Errorf("task %q not found", args.TaskID)
-	}
-	if !s.ownsTask(task) {
-		owner := task.Principal
-		if owner == "" {
-			owner = "human/default"
-		}
-		return nil, fmt.Errorf("task %s is owned by principal %q; caller is %q", task.ID, owner, s.clientPrincipal())
-	}
-	return taskData(task), nil
-}
-
 func (s *Server) ownsTask(task *store.Task) bool {
-	if s.clientPrincipal() == "default" {
+	if s.clientPrincipal() == "default" || s.legacyLocalDefault {
 		return task.Principal == "" || task.Principal == "default"
 	}
 	return task.Principal == s.clientPrincipal()
-}
-
-func (s *Server) executePrompt(ctx context.Context, prompt, agentName, cwd, promptName, promptRevision string, parentID, dependsOn *string) (*store.Task, error) {
-	if agentName == "" {
-		agentName = s.Cfg.DefaultAgent
-	}
-	if _, ok := agentpkg.LookupDefinition(agentName); !ok {
-		return nil, fmt.Errorf("unsupported agent %q", agentName)
-	}
-	taskStore, err := store.Open(s.Cfg.DBPath())
-	if err != nil {
-		return nil, err
-	}
-	defer cmdutil.CloseWithLog("task store", taskStore)
-	task := &store.Task{
-		ID: cmdutil.GenTaskID(), Type: "prompt", What: prompt, Agent: agentName,
-		RunAt: time.Now().UTC(), ParentID: parentID, DependsOn: dependsOn, CWD: cwd,
-		PromptName: promptName, PromptRevision: promptRevision, Principal: s.clientPrincipal(),
-	}
-	if s.Unsandboxed {
-		task.Isolation = "privileged"
-	}
-	if err := s.freezeTaskLaunchConfig(task); err != nil {
-		return nil, err
-	}
-	if err := taskStore.CreateTask(task); err != nil {
-		return nil, err
-	}
-	runErr := s.runTask(ctx, taskStore, task)
-	stored, getErr := taskStore.GetTask(task.ID)
-	if getErr != nil {
-		return task, errors.Join(runErr, getErr)
-	}
-	return stored, runErr
-}
-
-type promptLoopArgs struct {
-	Prompt        string `json:"prompt"`
-	Agent         string `json:"agent"`
-	CWD           string `json:"cwd"`
-	MaxIterations int    `json:"max_iterations"`
-	UntilContains string `json:"until_contains"`
-}
-
-func (s *Server) toolPromptLoop(ctx context.Context, arguments json.RawMessage) (map[string]any, bool, error) {
-	var args promptLoopArgs
-	if err := decodeStrict(arguments, &args); err != nil {
-		return nil, false, err
-	}
-	if strings.TrimSpace(args.Prompt) == "" {
-		return nil, false, errors.New("prompt is required")
-	}
-	if args.MaxIterations == 0 {
-		args.MaxIterations = 3
-	}
-	if args.MaxIterations < 1 || args.MaxIterations > 12 {
-		return nil, false, errors.New("max_iterations must be between 1 and 12")
-	}
-	if args.Agent == "" {
-		args.Agent = s.Cfg.DefaultAgent
-	}
-	if _, ok := agentpkg.LookupDefinition(args.Agent); !ok {
-		return nil, false, fmt.Errorf("unsupported agent %q", args.Agent)
-	}
-	resolvedCWD, err := s.resolveWorkingDirectory(args.CWD)
-	if err != nil {
-		return nil, false, err
-	}
-	args.CWD = resolvedCWD
-
-	probe := &store.Task{CWD: args.CWD}
-	if s.Unsandboxed {
-		probe.Isolation = "privileged"
-	}
-	if err := s.freezeTaskLaunchConfig(probe); err != nil {
-		return nil, false, err
-	}
-
-	root, rootStore, err := s.createMetaTask("loop", args.Prompt, args.Agent, args.CWD)
-	if err != nil {
-		return nil, false, err
-	}
-	if err := rootStore.Close(); err != nil {
-		return nil, false, fmt.Errorf("close root task store: %w", err)
-	}
-	results := make([]map[string]any, 0, args.MaxIterations)
-	var previousTaskID string
-	failed := false
-	stopReason := "max_iterations"
-	for iteration := 1; iteration <= args.MaxIterations; iteration++ {
-		select {
-		case <-ctx.Done():
-			failed = true
-			stopReason = "cancelled"
-			iteration = args.MaxIterations
-			continue
-		default:
-		}
-		var dependsJSON *string
-		if previousTaskID != "" {
-			encoded, _ := json.Marshal([]string{previousTaskID})
-			value := string(encoded)
-			dependsJSON = &value
-		}
-		task, runErr := s.executePrompt(ctx, args.Prompt, args.Agent, args.CWD, "", "", &root.ID, dependsJSON)
-		if task != nil {
-			entry := taskData(task)
-			entry["iteration"] = iteration
-			results = append(results, entry)
-			previousTaskID = task.ID
-		}
-		if runErr != nil || task == nil || task.Status != "done" {
-			failed = true
-			stopReason = "failed"
-			break
-		}
-		if args.UntilContains != "" && task.Output != nil && strings.Contains(*task.Output, args.UntilContains) {
-			stopReason = "condition_met"
-			break
-		}
-	}
-	status := "done"
-	if failed {
-		status = "failed"
-	}
-	data := map[string]any{
-		"loop_id": root.ID, "status": status, "stop_reason": stopReason,
-		"iterations": results, "until_contains": args.UntilContains,
-	}
-	if err := s.finishMetaTask(root.ID, status, data); err != nil {
-		return nil, true, err
-	}
-	return data, failed, nil
-}
-
-type swarmNodeSpec struct {
-	ID        string   `json:"id"`
-	Prompt    string   `json:"prompt"`
-	Agent     string   `json:"agent"`
-	DependsOn []string `json:"depends_on"`
-}
-
-type swarmRunArgs struct {
-	Name        string          `json:"name"`
-	CWD         string          `json:"cwd"`
-	MaxParallel int             `json:"max_parallel"`
-	Nodes       []swarmNodeSpec `json:"nodes"`
-}
-
-type swarmNodeResult struct {
-	logicalID string
-	task      *store.Task
-	err       error
-}
-
-func (s *Server) toolSwarmRun(ctx context.Context, arguments json.RawMessage) (map[string]any, bool, error) {
-	var args swarmRunArgs
-	if err := decodeStrict(arguments, &args); err != nil {
-		return nil, false, err
-	}
-	if args.MaxParallel == 0 {
-		args.MaxParallel = 2
-	}
-	if args.MaxParallel < 1 || args.MaxParallel > 4 {
-		return nil, false, errors.New("max_parallel must be between 1 and 4")
-	}
-	if len(args.Nodes) < 1 || len(args.Nodes) > 16 {
-		return nil, false, errors.New("nodes must contain between 1 and 16 entries")
-	}
-	if err := validateSwarm(args.Nodes, s.Cfg.DefaultAgent); err != nil {
-		return nil, false, err
-	}
-	if args.Name == "" {
-		args.Name = "agent swarm"
-	}
-	resolvedCWD, err := s.resolveWorkingDirectory(args.CWD)
-	if err != nil {
-		return nil, false, err
-	}
-	args.CWD = resolvedCWD
-
-	probe := &store.Task{CWD: args.CWD}
-	if s.Unsandboxed {
-		probe.Isolation = "privileged"
-	}
-	if err := s.freezeTaskLaunchConfig(probe); err != nil {
-		return nil, false, err
-	}
-
-	root, rootStore, err := s.createMetaTask("swarm", args.Name, s.Cfg.DefaultAgent, args.CWD)
-	if err != nil {
-		return nil, false, err
-	}
-	defer cmdutil.CloseWithLog("root task store", rootStore)
-
-	taskIDs := make(map[string]string, len(args.Nodes))
-	byID := make(map[string]swarmNodeSpec, len(args.Nodes))
-	for _, node := range args.Nodes {
-		taskIDs[node.ID] = cmdutil.GenTaskID()
-		byID[node.ID] = node
-	}
-	for _, node := range args.Nodes {
-		agentName := node.Agent
-		if agentName == "" {
-			agentName = s.Cfg.DefaultAgent
-		}
-		depends := make([]string, 0, len(node.DependsOn))
-		for _, dep := range node.DependsOn {
-			depends = append(depends, taskIDs[dep])
-		}
-		var dependsJSON *string
-		if len(depends) > 0 {
-			encoded, _ := json.Marshal(depends)
-			value := string(encoded)
-			dependsJSON = &value
-		}
-		parentID := root.ID
-		task := &store.Task{
-			ID: taskIDs[node.ID], Type: "prompt", What: node.Prompt, Agent: agentName,
-			RunAt: time.Now().UTC(), ParentID: &parentID, DependsOn: dependsJSON, CWD: args.CWD,
-			Principal: s.clientPrincipal(),
-		}
-		if s.Unsandboxed {
-			task.Isolation = "privileged"
-		}
-		if err := s.freezeTaskLaunchConfig(task); err != nil {
-			return nil, true, errors.Join(err, rootStore.UpdateTaskStatus(root.ID, "failed"))
-		}
-		if err := rootStore.CreateTask(task); err != nil {
-			return nil, true, errors.Join(err, rootStore.UpdateTaskStatus(root.ID, "failed"))
-		}
-	}
-
-	state := make(map[string]string, len(args.Nodes))
-	results := make(map[string]*store.Task, len(args.Nodes))
-	agentSemaphores := make(map[string]chan struct{})
-	for _, definition := range agentpkg.Definitions() {
-		if definition.MaxParallel > 0 {
-			agentSemaphores[definition.Name] = make(chan struct{}, definition.MaxParallel)
-		}
-	}
-	for len(state) < len(args.Nodes) {
-		var ready []swarmNodeSpec
-		for _, node := range args.Nodes {
-			if state[node.ID] != "" {
-				continue
-			}
-			allTerminal := true
-			dependencyFailed := false
-			for _, dep := range node.DependsOn {
-				if state[dep] == "" {
-					allTerminal = false
-					break
-				}
-				if state[dep] != "done" {
-					dependencyFailed = true
-				}
-			}
-			if !allTerminal {
-				continue
-			}
-			if dependencyFailed {
-				message := "one or more dependencies failed"
-				if err := rootStore.SetTaskError(taskIDs[node.ID], message); err != nil {
-					return nil, true, fmt.Errorf("mark blocked swarm node %s failed: %w", node.ID, err)
-				}
-				skipped, err := rootStore.GetTask(taskIDs[node.ID])
-				if err != nil {
-					return nil, true, fmt.Errorf("reload blocked swarm node %s: %w", node.ID, err)
-				}
-				results[node.ID] = skipped
-				state[node.ID] = "blocked"
-				continue
-			}
-			ready = append(ready, node)
-		}
-		if len(ready) == 0 {
-			break
-		}
-
-		resultCh := make(chan swarmNodeResult, len(ready))
-		semaphore := make(chan struct{}, args.MaxParallel)
-		var wg sync.WaitGroup
-		for _, node := range ready {
-			node := node
-			state[node.ID] = "running"
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				semaphore <- struct{}{}
-				defer func() { <-semaphore }()
-				agentName := node.Agent
-				if agentName == "" {
-					agentName = s.Cfg.DefaultAgent
-				}
-				if agentSemaphore := agentSemaphores[agentName]; agentSemaphore != nil {
-					agentSemaphore <- struct{}{}
-					defer func() { <-agentSemaphore }()
-				}
-				taskStore, openErr := store.Open(s.Cfg.DBPath())
-				if openErr != nil {
-					resultCh <- swarmNodeResult{logicalID: node.ID, err: openErr}
-					return
-				}
-				defer cmdutil.CloseWithLog("task store", taskStore)
-				task, getErr := taskStore.GetTask(taskIDs[node.ID])
-				if getErr == nil && task != nil {
-					runErr := s.runTask(ctx, taskStore, task)
-					refreshed, refreshErr := taskStore.GetTask(task.ID)
-					if refreshErr == nil {
-						task = refreshed
-					}
-					getErr = errors.Join(runErr, refreshErr)
-				}
-				resultCh <- swarmNodeResult{logicalID: node.ID, task: task, err: getErr}
-			}()
-		}
-		wg.Wait()
-		close(resultCh)
-		for result := range resultCh {
-			results[result.logicalID] = result.task
-			if result.err != nil || result.task == nil || result.task.Status != "done" {
-				state[result.logicalID] = "failed"
-			} else {
-				state[result.logicalID] = "done"
-			}
-		}
-	}
-
-	failed := false
-	nodeData := make([]map[string]any, 0, len(args.Nodes))
-	for _, node := range args.Nodes {
-		entry := map[string]any{
-			"id": node.ID, "task_id": taskIDs[node.ID], "status": state[node.ID],
-			"depends_on": node.DependsOn,
-		}
-		if task := results[node.ID]; task != nil {
-			entry["task"] = taskData(task)
-		}
-		if state[node.ID] != "done" {
-			failed = true
-		}
-		nodeData = append(nodeData, entry)
-	}
-	status := "done"
-	if failed {
-		status = "failed"
-	}
-	data := map[string]any{"swarm_id": root.ID, "name": args.Name, "status": status, "nodes": nodeData}
-	if err := s.finishMetaTask(root.ID, status, data); err != nil {
-		return nil, true, err
-	}
-	return data, failed, nil
-}
-
-func validateSwarm(nodes []swarmNodeSpec, defaultAgent string) error {
-	byID := make(map[string]swarmNodeSpec, len(nodes))
-	for _, node := range nodes {
-		if err := eggclient.ValidateSessionName(node.ID); err != nil || node.ID == "" {
-			return fmt.Errorf("invalid swarm node ID %q", node.ID)
-		}
-		if _, exists := byID[node.ID]; exists {
-			return fmt.Errorf("duplicate swarm node ID %q", node.ID)
-		}
-		if strings.TrimSpace(node.Prompt) == "" {
-			return fmt.Errorf("swarm node %q has an empty prompt", node.ID)
-		}
-		agentName := node.Agent
-		if agentName == "" {
-			agentName = defaultAgent
-		}
-		if _, ok := agentpkg.LookupDefinition(agentName); !ok {
-			return fmt.Errorf("swarm node %q uses unsupported agent %q", node.ID, agentName)
-		}
-		byID[node.ID] = node
-	}
-	for _, node := range nodes {
-		for _, dependency := range node.DependsOn {
-			if dependency == node.ID {
-				return fmt.Errorf("swarm node %q depends on itself", node.ID)
-			}
-			if _, exists := byID[dependency]; !exists {
-				return fmt.Errorf("swarm node %q depends on unknown node %q", node.ID, dependency)
-			}
-		}
-	}
-	visiting := make(map[string]bool)
-	visited := make(map[string]bool)
-	var visit func(string) error
-	visit = func(id string) error {
-		if visiting[id] {
-			return fmt.Errorf("swarm dependency cycle includes %q", id)
-		}
-		if visited[id] {
-			return nil
-		}
-		visiting[id] = true
-		for _, dependency := range byID[id].DependsOn {
-			if err := visit(dependency); err != nil {
-				return err
-			}
-		}
-		visiting[id] = false
-		visited[id] = true
-		return nil
-	}
-	ids := make([]string, 0, len(byID))
-	for id := range byID {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		if err := visit(id); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *Server) createMetaTask(kind, what, agentName, cwd string) (*store.Task, *store.Store, error) {
-	taskStore, err := store.Open(s.Cfg.DBPath())
-	if err != nil {
-		return nil, nil, err
-	}
-	task := &store.Task{
-		ID: cmdutil.GenTaskID(), Type: kind, What: what, Agent: agentName,
-		RunAt: time.Now().UTC(), Status: "pending", CWD: cwd, Principal: s.clientPrincipal(),
-	}
-	if err := taskStore.CreateTask(task); err != nil {
-		return nil, nil, cmdutil.CloseAndJoin("task store", taskStore, err)
-	}
-	if err := taskStore.UpdateTaskStatus(task.ID, "running"); err != nil {
-		return nil, nil, cmdutil.CloseAndJoin("task store", taskStore, err)
-	}
-	return task, taskStore, nil
-}
-
-func (s *Server) finishMetaTask(taskID, status string, data map[string]any) error {
-	taskStore, err := store.Open(s.Cfg.DBPath())
-	if err != nil {
-		return err
-	}
-	defer cmdutil.CloseWithLog("task store", taskStore)
-	encoded, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-	if status == "failed" {
-		if err := taskStore.SetTaskError(taskID, "one or more child tasks failed"); err != nil {
-			return err
-		}
-		return taskStore.SetTaskOutput(taskID, string(encoded))
-	}
-	if err := taskStore.SetTaskOutput(taskID, string(encoded)); err != nil {
-		return err
-	}
-	return taskStore.UpdateTaskStatus(taskID, "done")
-}
-
-func taskData(task *store.Task) map[string]any {
-	data := map[string]any{
-		"id": task.ID, "type": task.Type, "prompt": task.What,
-		"agent": task.Agent, "isolation": task.Isolation, "status": task.Status,
-		"run_at":      task.RunAt.UTC().Format(time.RFC3339),
-		"created_at":  task.CreatedAt.UTC().Format(time.RFC3339),
-		"retry_count": task.RetryCount, "max_retries": task.MaxRetries,
-		"principal": task.Principal,
-	}
-	if task.Model != "" {
-		data["model"] = task.Model
-	}
-	if task.CWD != "" {
-		data["cwd"] = task.CWD
-	}
-	if task.PromptName != "" {
-		data["prompt_name"] = task.PromptName
-		data["prompt_revision"] = task.PromptRevision
-	}
-	if task.ParentID != nil {
-		data["parent_id"] = *task.ParentID
-	}
-	if task.DependsOn != nil {
-		var dependencies []string
-		if json.Unmarshal([]byte(*task.DependsOn), &dependencies) == nil {
-			data["depends_on"] = dependencies
-		}
-	}
-	if task.StartedAt != nil {
-		data["started_at"] = task.StartedAt.UTC().Format(time.RFC3339)
-	}
-	if task.FinishedAt != nil {
-		data["finished_at"] = task.FinishedAt.UTC().Format(time.RFC3339)
-	}
-	if task.Output != nil {
-		data["output"] = *task.Output
-	}
-	if task.Error != nil {
-		data["error"] = *task.Error
-	}
-	return data
 }
 
 func (s *Server) resolveWorkingDirectory(cwd string) (string, error) {
@@ -3042,13 +2066,7 @@ func (s *Server) loadLaunchConfig(cwd string) (*egg.EggConfig, error) {
 	if s.launchConfig != nil {
 		return s.launchConfig(cwd)
 	}
-	if s.broker != nil {
-		return s.broker.childEggConfig(cwd)
-	}
-	if s.identity.UserID != "" && (s.identity.SharedHost || s.identity.OrgWing) {
-		return nil, errors.New("administrator runtime egg policy is required")
-	}
-	return eggclient.LoadSpawnEggConfig("", cwd, s.Unsandboxed)
+	return s.loadSessionLaunchConfig(cwd)
 }
 
 func ResolveWorkingDirectory(cwd string) (string, error) {

@@ -19,6 +19,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
+	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
 type conversationWakeRuntime struct {
@@ -55,7 +56,7 @@ func (s *Server) ToolConversationWake(arguments json.RawMessage) (map[string]any
 	if wc.Org != "" || s.identity.OrgWing || s.identity.SharedHost {
 		return nil, errors.New("automatic wake is available only on personal wings")
 	}
-	db, err := s.openMessageStore()
+	db, err := s.openConversationStore()
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +126,7 @@ func processConversationWake(ctx context.Context, s *Server, root string, runtim
 		return err
 	}
 	defer cmdutil.CloseWithLog("conversation wake lock", lock)
-	db, err := s.openMessageStore()
+	db, err := s.openConversationStore()
 	if err != nil {
 		return err
 	}
@@ -165,8 +166,7 @@ func processConversationWake(ctx context.Context, s *Server, root string, runtim
 		return err
 	}
 	meta := eggclient.ReadEggMetaValues(filepath.Join(s.Cfg.Dir, "eggs", target))
-	owner := eggclient.ReadEggOwner(filepath.Join(s.Cfg.Dir, "eggs", target))
-	if session.Principal != c.OwnerID || (owner != "" && roostSessionPrincipal(owner) != c.OwnerID) {
+	if session.Principal != c.OwnerID || !s.ownsSession(session) {
 		return errors.New("wake parent ownership does not match retained principal")
 	}
 	if !fresh && target != c.SessionID {
@@ -213,7 +213,7 @@ func processConversationWake(ctx context.Context, s *Server, root string, runtim
 
 // Started by the existing host wing daemon. No provider process, credentials,
 // grants, permission replies, or new transport listeners are created here.
-func RunConversationWakeController(version string, ctx context.Context, cfg *config.Config, policy func() (*config.WingConfig, bool)) {
+func RunConversationWakeController(version string, ctx context.Context, cfg *config.Config, policy func() (*config.WingConfig, bool), sessions *wingsession.Service, ownerUserID string) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	after := ""
@@ -253,7 +253,11 @@ func RunConversationWakeController(version string, ctx context.Context, cfg *con
 			paths := wingpolicy.CanonicalPaths(wc.Paths.Strings())
 			// This private helper only reconciles owned artifacts and the opted
 			// root prompt. It is never registered as a general MCP grant server.
-			s := &Server{Version: version, Cfg: cfg, Principal: c.OwnerID, Logs: os.Stderr, allowedPaths: paths, enforcePathBounds: len(paths) > 0}
+			owner := eggclient.ReadEggOwner(filepath.Join(cfg.Dir, "eggs", c.SessionID))
+			if owner == "" && c.OwnerID == wingsession.UserPrincipal(ownerUserID) {
+				owner = ownerUserID
+			}
+			s := &Server{Version: version, Cfg: cfg, Sessions: sessions, Principal: c.OwnerID, Logs: os.Stderr, sessionRole: "owner", identity: eggclient.EggIdentity{UserID: owner}, allowedPaths: paths, enforcePathBounds: len(paths) > 0, legacyLocalDefault: c.OwnerID == wingsession.UserPrincipal(ownerUserID)}
 			step, cancel := context.WithTimeout(ctx, 3*time.Second)
 			err = processConversationWake(step, s, c.ID, nativeConversationWakeRuntime(cfg))
 			cancel()

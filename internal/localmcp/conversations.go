@@ -51,7 +51,7 @@ func (s *Server) reserveAgentConversation(agent, cwd, title, role, parent, reque
 	if strings.TrimSpace(requestID) != requestID || requestID == "" || len(requestID) > 128 || strings.ContainsAny(requestID, "\x00\r\n") {
 		return nil, false, errors.New("linked launch requires a bounded request_id for reconnect-safe retries")
 	}
-	db, err := s.openMessageStore()
+	db, err := s.openConversationStore()
 	if err != nil {
 		return nil, false, err
 	}
@@ -82,7 +82,7 @@ func (s *Server) markConversationLaunch(c *store.Conversation, spawnErr error) e
 	if c == nil {
 		return nil
 	}
-	db, err := s.openMessageStore()
+	db, err := s.openConversationStore()
 	if err != nil {
 		return err
 	}
@@ -133,7 +133,7 @@ func (s *Server) ToolConversationList(arguments json.RawMessage) (map[string]any
 	if err := decodeStrict(arguments, &args); err != nil {
 		return nil, err
 	}
-	db, err := s.openMessageStore()
+	db, err := s.openConversationStore()
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +177,7 @@ func (s *Server) ToolConversationRead(ctx context.Context, arguments json.RawMes
 	if args.Limit < 1 || args.Limit > 100 {
 		return nil, errors.New("limit must be between 1 and 100")
 	}
-	db, err := s.openMessageStore()
+	db, err := s.openConversationStore()
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +320,7 @@ func (s *Server) toolConversationCheckpoint(arguments json.RawMessage) (map[stri
 	if err := decodeStrict(arguments, &args); err != nil {
 		return nil, err
 	}
-	db, err := s.openMessageStore()
+	db, err := s.openConversationStore()
 	if err != nil {
 		return nil, err
 	}
@@ -354,7 +354,7 @@ func ValidateBoundConversation(s *Server) error {
 	if s.BoundConversation == "" {
 		return nil
 	}
-	db, err := s.openMessageStore()
+	db, err := s.openConversationStore()
 	if err != nil {
 		return err
 	}
@@ -545,7 +545,7 @@ func (s *Server) toolConversationBootstrap(arguments json.RawMessage) (map[strin
 	if err := decodeStrict(arguments, &args); err != nil {
 		return nil, err
 	}
-	db, err := s.openMessageStore()
+	db, err := s.openConversationStore()
 	if err != nil {
 		return nil, err
 	}

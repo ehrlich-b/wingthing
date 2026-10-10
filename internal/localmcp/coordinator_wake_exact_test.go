@@ -149,6 +149,9 @@ func wakeExactEgg(t *testing.T, cfg *config.Config, id, owner, provider string) 
 	if err := os.WriteFile(filepath.Join(dir, "lifecycle.jsonl"), append(line, '\n'), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err := eggclient.WriteEggOwner(dir, "fixture-user", ""); err != nil {
+		t.Fatal(err)
+	}
 	return dir
 }
 
@@ -180,7 +183,7 @@ func wakeExactTree(t *testing.T, cfg *config.Config, session string) *store.Conv
 }
 
 func wakeExactStep(cfg *config.Config, spy *wakeExactSpy) error {
-	return processConversationWake(context.Background(), &Server{Version: "dev", Cfg: cfg, Principal: "owner"}, "root", spy.runtime())
+	return processConversationWake(context.Background(), testWingServer(nil, &Server{Version: "dev", Cfg: cfg, Principal: "owner"}), "root", spy.runtime())
 }
 
 type wakeExactReservation struct {
@@ -536,7 +539,7 @@ func TestWakeExactBindingWithoutReservationOnRetiredTargetStaysPending(t *testin
 	spy.configure(true, map[string]string{})
 	db := wakeExactOpen(t, cfg)
 	args, _ := json.Marshal(map[string]any{"conversation_id": "root", "limit": 1})
-	if _, err := (&Server{Version: "dev", Cfg: cfg, Principal: "owner"}).ToolConversationRead(context.Background(), args); err != nil {
+	if _, err := (testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner"})).ToolConversationRead(context.Background(), args); err != nil {
 		t.Fatal(err)
 	}
 	w, err := db.QueueConversationWake("root")
@@ -576,7 +579,7 @@ func TestWakeExactResolverRejectsHumanSelectorsAndUnsafeIDs(t *testing.T) {
 	if err := eggclient.WriteSessionName(filepath.Join(cfg.Dir, "eggs", wakeExactLegacy), "parent"); err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{Version: "dev", Cfg: cfg, Principal: "owner"}
+	s := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner"})
 	for _, ref := range []string{"a1b2", "parent"} {
 		if got, err := s.resolveOwnedLifecycleSession(ref); err != nil || got.ID != wakeExactLegacy {
 			t.Fatalf("public selector %q no longer resolves: %#v %v", ref, got, err)
@@ -593,7 +596,7 @@ func TestWakeExactResolverRejectsHumanSelectorsAndUnsafeIDs(t *testing.T) {
 	if err != nil || got.ID != wakeExactLegacy || got.Principal != "owner" || got.Agent != "claude" || got.CWD != cfg.Dir || got.Name != "parent" {
 		t.Fatalf("exact execution %#v %v", got, err)
 	}
-	bounded := &Server{Version: "dev", Cfg: cfg, Principal: "owner", enforcePathBounds: true, allowedPaths: []string{filepath.Join(cfg.Dir, "elsewhere")}}
+	bounded := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner", enforcePathBounds: true, allowedPaths: []string{filepath.Join(cfg.Dir, "elsewhere")}})
 	if _, err = bounded.resolveExactWakeTarget(db, root, wakeExactLegacy); err == nil {
 		t.Fatal("exact wake resolver ignored path bounds")
 	}

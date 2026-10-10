@@ -36,6 +36,9 @@ func fixtureConversation(t *testing.T, db *store.Store, cfg *config.Config, id, 
 	if err := os.WriteFile(filepath.Join(dir, "egg.pid"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err := eggclient.WriteEggOwner(dir, "fixture-user", ""); err != nil {
+		t.Fatal(err)
+	}
 	if err := eggclient.WriteSessionPrincipal(dir, owner); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +74,7 @@ func TestConversationReadKeepsIntermediateNativeStatesAcrossReconnectAndResume(t
 	if err := db.ResumeConversationExecution(child.SessionID, next.SessionID); err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{Version: "dev", Cfg: cfg, Principal: "owner", BoundConversation: root.ID, Logs: &bytes.Buffer{}}
+	server := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner", BoundConversation: root.ID, Logs: &bytes.Buffer{}})
 	args, _ := json.Marshal(map[string]any{"conversation_id": root.ID})
 	result, err := server.ToolConversationRead(context.Background(), args)
 	if err != nil {
@@ -87,7 +90,7 @@ func TestConversationReadKeepsIntermediateNativeStatesAcrossReconnectAndResume(t
 	if strings.Join(childStates, ",") != "working,needs_input,completed,working" {
 		t.Fatalf("lost native transitions %v", childStates)
 	}
-	server = &Server{Version: "dev", Cfg: cfg, Principal: "owner", BoundConversation: root.ID, Logs: &bytes.Buffer{}}
+	server = testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner", BoundConversation: root.ID, Logs: &bytes.Buffer{}})
 	again, err := server.ToolConversationRead(context.Background(), args)
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +119,7 @@ func TestBoundConversationBootstrapPreservesBrowserOwnerAndRejectsOtherTrees(t *
 	if err := eggclient.WriteEggOwner(dir, user, "fixture@example.invalid"); err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{Version: "dev", Cfg: cfg, Principal: owner, BoundConversation: root.ID, Logs: &bytes.Buffer{}}
+	server := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: owner, BoundConversation: root.ID, Logs: &bytes.Buffer{}})
 	if err := ValidateBoundConversation(server); err != nil {
 		t.Fatal(err)
 	}
@@ -153,11 +156,11 @@ func TestBoundConversationBootstrapPreservesBrowserOwnerAndRejectsOtherTrees(t *
 	if len(listing["conversations"].([]*store.Conversation)) != 2 {
 		t.Fatalf("bound listing %v", listing)
 	}
-	browser, err := BrowserSessionControl("dev", context.Background(), cfg, &config.WingConfig{}, ws.TunnelRequest{SenderUserID: user, SenderOrgRole: "owner"}, "conversation_list", json.RawMessage(`{}`), cfg.Dir, false)
+	browser, err := testBrowserControl(t, "dev", context.Background(), cfg, &config.WingConfig{}, ws.TunnelRequest{SenderUserID: user, SenderOrgRole: "owner"}, "conversation_list", json.RawMessage(`{}`), cfg.Dir, false)
 	if err != nil || len(browser["conversations"].([]*store.Conversation)) != 3 {
 		t.Fatalf("shared browser inventory %v %v", browser, err)
 	}
-	foreign, err := BrowserSessionControl("dev", context.Background(), cfg, &config.WingConfig{}, ws.TunnelRequest{SenderUserID: "different-user", SenderOrgRole: "owner"}, "conversation_list", json.RawMessage(`{}`), cfg.Dir, false)
+	foreign, err := testBrowserControl(t, "dev", context.Background(), cfg, &config.WingConfig{}, ws.TunnelRequest{SenderUserID: "different-user", SenderOrgRole: "owner"}, "conversation_list", json.RawMessage(`{}`), cfg.Dir, false)
 	if err != nil || len(foreign["conversations"].([]*store.Conversation)) != 0 {
 		t.Fatalf("foreign inventory %v %v", foreign, err)
 	}
@@ -167,7 +170,7 @@ func TestAutomaticParentMCPUsesExistingSandboxAndRejectsConfigCollision(t *testi
 	workspace := t.TempDir()
 	cfg := &config.Config{Dir: filepath.Join(workspace, "preview-state")}
 	c := &store.Conversation{ID: "parent", CWD: workspace, OwnerID: "owner"}
-	server := &Server{Version: "dev", Cfg: cfg, Principal: "owner"}
+	server := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner"})
 	args, err := server.prepareBoundParentMCP(c, egg.DefaultEggConfig(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -217,7 +220,7 @@ func TestConversationDirectMCPPreservesConfiguredClientAndOwner(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cfg.Dir, "clients.yaml"), []byte("require_client: true\nclients:\n  coordinator:\n    owner: alice\n    grants: [terminal.read]\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	launcher := &Server{Version: "dev", Cfg: cfg, Principal: "alice", Actor: "coordinator", Surface: control.SurfaceLocalMCP}
+	launcher := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "alice", Actor: "coordinator", Surface: control.SurfaceLocalMCP})
 	args, err := launcher.prepareBoundParentMCP(root, egg.DefaultEggConfig(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -254,7 +257,7 @@ func TestConversationDirectMCPPreservesConfiguredClientAndOwner(t *testing.T) {
 			if !ok || client.Owner != "alice" {
 				t.Fatalf("injected client lost configured owner mapping: %+v", client)
 			}
-			bound := &Server{Version: "dev", Cfg: cfg, Principal: client.Owner, Actor: server.Args[3], BoundConversation: root.ID, Grants: GrantSet(client.Grants)}
+			bound := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: client.Owner, Actor: server.Args[3], BoundConversation: root.ID, Grants: GrantSet(client.Grants)})
 			if err := ValidateBoundConversation(bound); err != nil || !bound.toolAllowed("session_read") || bound.toolAllowed("agent_start") {
 				t.Fatalf("bound client lost configured owner or grants: %v", err)
 			}

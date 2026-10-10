@@ -23,6 +23,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/store"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
+	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -34,7 +35,7 @@ func forkServerFixture(t *testing.T) *Server {
 	if err := eggclient.WriteSessionPrincipal(dir, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	return &Server{Version: "dev", Cfg: cfg, Principal: "owner", Logs: &bytes.Buffer{}, spawnFork: func(*eggclient.SessionForkPlan) error { return nil }}
+	return testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner", identity: eggclient.EggIdentity{UserID: "alice"}, Logs: &bytes.Buffer{}, spawnFork: func(*eggclient.SessionForkPlan) error { return nil }})
 }
 
 func TestSessionForkMCPGrantAndSourceAuditTarget(t *testing.T) {
@@ -74,6 +75,9 @@ func TestSessionForkMCPUsesSpawnBoundsAndRefusesBoundConnections(t *testing.T) {
 			switch name {
 			case "sessions":
 				seedRemoteListSession(t, s.Cfg, "active", "owner")
+				if err := eggclient.WriteEggOwner(filepath.Join(s.Cfg.Dir, "eggs", "active"), s.identity.UserID, ""); err != nil {
+					t.Fatal(err)
+				}
 				s.MaxSessions = 1
 				want = "max_sessions"
 			case "rate":
@@ -118,10 +122,13 @@ func TestConcurrentForksRecheckSessionBoundsUnderNameLock(t *testing.T) {
 		if err := eggclient.WriteSessionName(dir, plan.Options.Label); err != nil {
 			return err
 		}
+		if err := eggclient.WriteEggOwner(dir, first.identity.UserID, ""); err != nil {
+			return err
+		}
 		return eggclient.WriteSessionPrincipal(dir, "owner")
 	}
 	// Independent servers model CLI processes with separate admission state.
-	second := &Server{Version: "dev", Cfg: first.Cfg, Principal: first.Principal, MaxSessions: 1, spawnFork: first.spawnFork}
+	second := testWingServer(t, &Server{Version: "dev", Cfg: first.Cfg, Principal: first.Principal, identity: first.identity, MaxSessions: 1, spawnFork: first.spawnFork})
 	admitted := make(chan struct{}, 2)
 	start := make(chan struct{})
 	t.Cleanup(func() {
@@ -185,7 +192,7 @@ func TestBrowserSessionForkSharedOwnerRules(t *testing.T) {
 	for _, shared := range []bool{false, true} {
 		for _, user := range []string{"alice", "bob"} {
 			req := ws.TunnelRequest{SenderUserID: user, SenderOrgRole: "admin", SenderEmail: user + "@example.com"}
-			_, err := BrowserSessionControl("dev", context.Background(), s.Cfg, &config.WingConfig{Org: "shared-org"}, req, "session_fork", args, s.Cfg.Dir, shared)
+			_, err := testBrowserControl(t, "dev", context.Background(), s.Cfg, &config.WingConfig{Org: "shared-org"}, req, "session_fork", args, s.Cfg.Dir, shared)
 			want := "only Claude"
 			if user == "bob" {
 				want = "owned"
@@ -264,11 +271,17 @@ func TestSessionForkIdentityMatchesFreshLaunchOnEverySurface(t *testing.T) {
 				s.Surface, s.identity = control.SurfaceDirectMCP, policy.identity
 				s.allowedPaths, s.enforcePathBounds = policy.allowedPaths, policy.enforcePathBounds
 				s.launchConfig = runtimeLaunchConfig(wc, cwd, true, s.allowedPaths, egg.DefaultEggConfig(), nil)
+				s.sessionRole = "member"
+				s.Sessions.Home = cwd
+				s.Sessions.Policy = func() wingsession.Policy { return wingsession.Policy{Wing: wc, Egg: egg.DefaultEggConfig()} }
 			case "HTTP shared host":
-				server := newRoostNativeMCPServer("dev", s.Cfg, true, NewMCPAdmissionState(), mcppkg.Principal{UserID: req.SenderUserID, Email: req.SenderEmail}, []string{cwd})
+				server := testNativeServer(t, "dev", s.Cfg, true, NewMCPAdmissionState(), mcppkg.Principal{UserID: req.SenderUserID, Email: req.SenderEmail}, []string{cwd})
 				s.Surface, s.identity = server.Surface, server.identity
 				s.allowedPaths, s.enforcePathBounds = server.allowedPaths, server.enforcePathBounds
 				s.launchConfig = server.launchConfig
+				s.sessionRole = server.sessionRole
+				s.Sessions.SharedHost = true
+				s.Sessions.Policy = server.Sessions.Policy
 			case "browser org member", "browser shared host":
 				if err := os.WriteFile(filepath.Join(cwd, "egg.yaml"), []byte("base: none\nfs: [deny:/, rw:"+cwd+"]\nnetwork: none\n"), 0600); err != nil {
 					t.Fatal(err)
@@ -279,13 +292,16 @@ func TestSessionForkIdentityMatchesFreshLaunchOnEverySurface(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				configureBrowserFork(s, wc, req, cwd, shared, egg.DefaultEggConfig(), nil)
+				testBrowserFork(t, s, wc, req, cwd, shared, egg.DefaultEggConfig(), nil)
 			case "CLI":
 				s.Actor, s.MCPClient = "cli:session-fork", "default"
 			}
 			if freshConfig == nil {
 				freshConfig, err = s.loadLaunchConfig(cwd)
 				freshIdentity = s.identity
+				if s.sessionLaunch != nil {
+					freshIdentity = s.sessionLaunch.Identity
+				}
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -331,7 +347,7 @@ func TestBrowserForkRefusesCWDThatFreshPTYWouldRedirect(t *testing.T) {
 	}
 	wc := &config.WingConfig{Paths: config.PathList{{Path: root}}}
 	req := ws.TunnelRequest{SenderUserID: "alice", SenderOrgRole: "member"}
-	configureBrowserFork(s, wc, req, root, false, egg.DefaultEggConfig(), nil)
+	testBrowserFork(t, s, wc, req, root, false, egg.DefaultEggConfig(), nil)
 	start := ws.PTYStart{UserID: "alice", OrgRole: "member", CWD: subdir}
 	if _, _, err := eggclient.PrepareBrowserLaunch(wc, &start, root, false, egg.DefaultEggConfig()); err != nil || start.CWD != root {
 		t.Fatalf("fresh PTY should use configured root: %#v, %v", start, err)
@@ -419,7 +435,7 @@ func TestBrowserForkNeverAdoptsSourceMCPPrincipal(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := ws.TunnelRequest{SenderUserID: "alice", SenderEmail: "alice@example.com", SenderOrgRole: "owner"}
-	_, err = BrowserSessionControl("dev", context.Background(), s.Cfg, &config.WingConfig{}, req, "session_fork", json.RawMessage(`{"session":"source","name":"branch"}`), s.Cfg.Dir, false)
+	_, err = testBrowserControl(t, "dev", context.Background(), s.Cfg, &config.WingConfig{}, req, "session_fork", json.RawMessage(`{"session":"source","name":"branch"}`), s.Cfg.Dir, false)
 	if err == nil || !strings.Contains(err.Error(), "conversation not found or not owned") {
 		t.Fatalf("browser adopted an egg-directory MCP owner: %v", err)
 	}
@@ -431,7 +447,7 @@ func TestBrowserForkUsesCurrentWingDefault(t *testing.T) {
 	wc := &config.WingConfig{IdleTimeout: "15m", Audit: true}
 	req := ws.TunnelRequest{SenderUserID: "alice", SenderOrgRole: "owner"}
 	wingDefault := &egg.EggConfig{FS: []string{"deny:/", "rw:" + cwd}, Shell: "/bin/current-wing-shell", Trace: true}
-	configureBrowserFork(s, wc, req, cwd, false, wingDefault, nil)
+	testBrowserFork(t, s, wc, req, cwd, false, wingDefault, nil)
 	s.spawnFork = func(plan *eggclient.SessionForkPlan) error {
 		if plan.Config.Shell != wingDefault.Shell || !plan.Config.Audit || !plan.Config.Trace || !reflect.DeepEqual(plan.Config.FS, wingDefault.FS) || !s.forkTrace || s.forkIdleTimeout != 15*time.Minute {
 			t.Fatalf("fork omitted current wing launch settings: %#v", plan)
@@ -461,9 +477,9 @@ func TestBrowserForkInitializesCurrentToolsAndCleansUpFailedSpawn(t *testing.T) 
 	if err := eggclient.WriteSessionPrincipal(dir, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{Version: "dev", Cfg: cfg, Principal: "owner"}
+	s := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner"})
 	tools := []*config.ToolConfig{{Name: "current-tool", Run: "printf configured"}}
-	configureBrowserFork(s, &config.WingConfig{}, ws.TunnelRequest{SenderUserID: "alice", SenderOrgRole: "owner"}, root, false, egg.DefaultEggConfig(), tools)
+	testBrowserFork(t, s, &config.WingConfig{}, ws.TunnelRequest{SenderUserID: "alice", SenderOrgRole: "owner"}, root, false, egg.DefaultEggConfig(), tools)
 	// The fork retains the same immutable snapshot as a fresh browser PTY.
 	tools[0] = &config.ToolConfig{Name: "later-tool", Run: "printf later"}
 	var socket string

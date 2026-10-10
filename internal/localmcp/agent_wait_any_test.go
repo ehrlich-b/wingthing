@@ -34,7 +34,7 @@ func fakeAgentWaitRuns(t *testing.T, tasks ...*store.Task) (*Server, *store.Stor
 			t.Fatal(err)
 		}
 	}
-	return &Server{Version: "test", Cfg: cfg, Principal: "owner", Logs: io.Discard}, db
+	return testWingServer(t, &Server{Version: "test", Cfg: cfg, Principal: "owner", Logs: io.Discard}), db
 }
 
 func TestAgentWaitAnyReturnsFirstOfThreeFakeRuns(t *testing.T) {
@@ -226,7 +226,7 @@ func TestAgentWaitAnyCancellation(t *testing.T) {
 }
 
 func TestAgentWaitAnyValidatesBounds(t *testing.T) {
-	server := &Server{Version: "test"}
+	server := testWingServer(t, &Server{Version: "test"})
 	tooMany, _ := json.Marshal(map[string]any{"run_ids": make([]string, 65)})
 	for _, input := range []string{
 		`{}`, `{"run_ids":null}`, `{"run_ids":[]}`, string(tooMany),
@@ -330,7 +330,7 @@ func TestAgentWaitAnyLimitsConcurrentCallsPerPrincipal(t *testing.T) {
 		})
 		arguments, _ := json.Marshal(map[string]any{"run_ids": []string{"running"}, "timeout_seconds": timeout})
 		for index := 0; index < 4; index++ {
-			peer := &Server{Version: "test", Cfg: server.Cfg, Principal: "owner", Actor: strings.Repeat("a", index+1), Logs: io.Discard}
+			peer := testWingServer(t, &Server{Version: "test", Cfg: server.Cfg, Principal: "owner", Actor: strings.Repeat("a", index+1), Logs: io.Discard})
 			waitCtx := &agentWaitStartedContext{Context: ctx, started: started}
 			go func() {
 				_, err := peer.toolAgentWaitAny(waitCtx, arguments)
@@ -350,7 +350,7 @@ func TestAgentWaitAnyLimitsConcurrentCallsPerPrincipal(t *testing.T) {
 		if _, err := server.AgentWaitAny(context.Background(), json.RawMessage(`{"run_ids":["done"]}`)); err == nil || !strings.Contains(err.Error(), "too many concurrent waits") {
 			t.Fatalf("fifth wait error = %v", err)
 		}
-		other := &Server{Version: "test", Cfg: server.Cfg, Principal: "other", Logs: io.Discard}
+		other := testWingServer(t, &Server{Version: "test", Cfg: server.Cfg, Principal: "other", Logs: io.Discard})
 		if data, err := other.AgentWaitAny(context.Background(), json.RawMessage(`{"run_ids":["other-done"]}`)); err != nil || len(data["finished"].([]map[string]any)) != 1 {
 			t.Fatalf("other principal wait = %#v, %v", data, err)
 		}

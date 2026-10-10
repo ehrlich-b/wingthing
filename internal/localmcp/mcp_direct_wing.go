@@ -32,7 +32,6 @@ const (
 // compatibility test until its default remote authority is consciously reviewed.
 var defaultDirectMCPGrants = []string{
 	"capabilities.read",
-	"message.send", "message.read",
 	"sandbox.read",
 	"terminal.read", "terminal.send", "terminal.start", "terminal.rename", "terminal.stop",
 	"agent.run", "agent.read", "agent.stop",

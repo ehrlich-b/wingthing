@@ -48,10 +48,10 @@ func (s *localWingProxy) handle(ctx context.Context, request localMCPRequest) (l
 		response.Result = map[string]any{}
 	case "tools/list":
 		tools := control.Tools(control.SurfaceLocalMCP)
-		if grants := s.client.Welcome.Grants; grants != nil {
+		if grants := s.client.Welcome.Grants; grants != nil || s.client.Welcome.Tools != nil {
 			filtered := tools[:0]
 			for _, tool := range tools {
-				if grants[tool.Grant] {
+				if (grants == nil || grants[tool.Grant]) && (s.client.Welcome.Tools == nil || s.client.Welcome.Tools[tool.Name]) {
 					filtered = append(filtered, tool)
 				}
 			}

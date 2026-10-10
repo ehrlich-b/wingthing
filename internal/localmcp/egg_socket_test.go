@@ -34,7 +34,7 @@ func TestSocketPathMCPReportsReadableFailureWithoutSessionCreation(t *testing.T)
 		state := filepath.Join(t.TempDir(), strings.Repeat("x", 120))
 		t.Setenv("WINGTHING_DIR", state)
 		t.Setenv("WINGTHING_PREVIEW_DIR", "")
-		server := &Server{Version: "dev", Cfg: &config.Config{Dir: state}, Logs: &bytes.Buffer{}}
+		server := testWingServer(t, &Server{Version: "dev", Cfg: &config.Config{Dir: state}, Logs: &bytes.Buffer{}})
 		args, err := json.Marshal(map[string]any{"cwd": cwd, "agent": "codex"})
 		if tool == "terminal_start" {
 			args, err = json.Marshal(map[string]any{"cwd": cwd, "command": []string{"/bin/sh"}})

@@ -6,7 +6,6 @@ import (
 	"errors"
 
 	"github.com/ehrlich-b/wingthing/internal/egg"
-	"github.com/ehrlich-b/wingthing/internal/eggclient"
 )
 
 func (s *Server) toolSessionPrompt(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {
@@ -30,11 +29,7 @@ func (s *Server) toolSessionPrompt(ctx context.Context, arguments json.RawMessag
 		return nil, err
 	}
 	var result egg.SessionPromptResult
-	if s.Sessions != nil {
-		_, result, err = s.Sessions.Prompt(ctx, s.sessionAuthority(), session.ID, args.RequestID, args.Input, durationSeconds(args.TimeoutSeconds), "mcp:"+s.clientActor())
-	} else {
-		result, err = eggclient.PromptSession(ctx, s.Cfg, session, args.RequestID, args.Input, durationSeconds(args.TimeoutSeconds), "mcp:"+s.clientActor(), s.identity.UserID)
-	}
+	_, result, err = s.Sessions.Prompt(ctx, s.sessionAuthority(), session.ID, args.RequestID, args.Input, durationSeconds(args.TimeoutSeconds), "mcp:"+s.clientActor())
 	if err != nil {
 		return nil, err
 	}

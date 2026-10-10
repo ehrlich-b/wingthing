@@ -19,7 +19,7 @@ func TestMCPTerminalListRemoteArgument(t *testing.T) {
 	if err := config.SaveRemotes(cfg.Dir, map[string]config.Remote{"work": {SSHTarget: "me@host"}}); err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{Version: "dev", Cfg: cfg, Principal: "alpha", Logs: io.Discard}
+	server := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "alpha", Logs: io.Discard})
 	noSSH := context.WithValue(context.Background(), remotepkg.IOContextKey{}, remotepkg.IO{SSHPath: filepath.Join(cfg.Dir, "must-not-run-ssh")})
 	local, isError, protocolErr := server.callTool(noSSH, "terminal_list", json.RawMessage(`{}`))
 	if isError || protocolErr != nil {

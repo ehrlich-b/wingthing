@@ -681,9 +681,9 @@ func TestUpgradeEveryStoreMigrationBaselinePreservesData(t *testing.T) {
 				}
 			}
 			if baseline >= 12 {
-				message, err := store.GetMessage("owner", "upgrade-message")
-				if err != nil || message == nil || message.Content != "keep this too" {
-					t.Fatalf("upgraded durable message = %#v, %v", message, err)
+				var content string
+				if err := store.DB().QueryRow("SELECT content FROM messages WHERE owner_id='owner' AND message_id='upgrade-message'").Scan(&content); err != nil || content != "keep this too" {
+					t.Fatalf("historical message row lost during migration: %q, %v", content, err)
 				}
 			}
 			var applied int

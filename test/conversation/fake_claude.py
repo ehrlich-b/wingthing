@@ -172,7 +172,7 @@ def run_parent(configuration):
     listed = sorted(item['name'] for item in client.request('tools/list', {})['tools'])
     evidence = {'transport': transport, 'parent_conversation_id': parent_id, 'parent_provider_session_id': provider_id, 'tools': listed, 'children': []}
     if transport == 'host_mailbox':
-        if 'terminal_send' in listed or 'prompt_run' in listed or 'terminal_start' in listed:
+        if 'terminal_send' in listed or 'terminal_start' in listed:
             raise RuntimeError('host mailbox exposed raw input or command tools: ' + str(listed))
         refused('terminal_send', {'session': provider_id, 'input': 'raw'}, 'not available on this connection')
         refused('session_status', {'session': 'execution-outside-tree'}, 'bound task tree')

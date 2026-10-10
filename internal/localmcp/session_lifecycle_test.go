@@ -33,7 +33,7 @@ func lifecycleMCPFixture(t *testing.T) (*Server, string) {
 	if err := egg.RecordSessionProcessEvent(dir, "session_exit", "failed", "cancelled"); err != nil {
 		t.Fatal(err)
 	}
-	return &Server{Version: "dev", Cfg: cfg, Principal: "owner", Logs: os.Stderr}, dir
+	return testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner", Logs: os.Stderr}), dir
 }
 
 func TestSessionLifecycleMCPDispatchArchiveOwnershipStrictArguments(t *testing.T) {

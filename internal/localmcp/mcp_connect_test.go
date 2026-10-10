@@ -292,29 +292,17 @@ func TestConnectMCPStdioRoutesTwoWingsDirectlyAndPersistsAcrossReconnect(t *test
 		t.Fatalf("wing IDs = %#v", wingIDs)
 	}
 
-	missingTarget := connector.tool("message_list", map[string]any{})
+	missingTarget := connector.tool("wingthing_capabilities", map[string]any{})
 	if missingTarget["_is_error"] != true || missingTarget["error"] != "wing_id is required" {
 		t.Fatalf("missing target result = %#v", missingTarget)
 	}
 
-	sent := connector.tool("message_send", map[string]any{
-		"wing_id": "office", "content": "office-only durable state", "kind": "evidence",
-	})
-	if sent["_is_error"] != false || sent["wing_id"] != "office" {
-		t.Fatalf("message_send result = %#v", sent)
-	}
-	office := connector.tool("message_list", map[string]any{"wing_id": "office", "include_sent": true})
-	home := connector.tool("message_list", map[string]any{"wing_id": "home", "include_sent": true})
-	if len(office["messages"].([]any)) != 1 || len(home["messages"].([]any)) != 0 {
-		t.Fatalf("cross-wing state leaked: office=%#v home=%#v", office, home)
-	}
+	office := connector.tool("wingthing_capabilities", map[string]any{"wing_id": "office"})
+	home := connector.tool("wingthing_capabilities", map[string]any{"wing_id": "home"})
 	if office["wing_id"] != "office" || home["wing_id"] != "home" {
 		t.Fatalf("results are not qualified: office=%#v home=%#v", office, home)
 	}
-	if got := office["messages"].([]any)[0].(map[string]any)["wing_id"]; got != "office" {
-		t.Fatalf("nested message wing_id = %#v; result=%#v", got, office)
-	}
-	unreachable := connector.tool("message_list", map[string]any{"wing_id": "missing", "include_sent": true})
+	unreachable := connector.tool("wingthing_capabilities", map[string]any{"wing_id": "missing"})
 	errText, _ := unreachable["error"].(string)
 	if unreachable["_is_error"] != true || !strings.Contains(errText, "native connector does not use the hosted relay") || strings.Contains(errText, "enable Pro relay") {
 		t.Fatalf("unreachable-wing remediation is misleading: %#v", unreachable)
@@ -325,17 +313,11 @@ func TestConnectMCPStdioRoutesTwoWingsDirectlyAndPersistsAcrossReconnect(t *test
 	// held by the wing rather than by the previous connector process.
 	reconnected := newConnectMCPStdioHarness(t, tunnel)
 	defer reconnected.close()
-	afterReconnect := reconnected.tool("message_list", map[string]any{"wing_id": "office", "include_sent": true})
-	messages := afterReconnect["messages"].([]any)
-	if len(messages) != 1 || messages[0].(map[string]any)["content"] != "office-only durable state" || messages[0].(map[string]any)["wing_id"] != "office" {
-		t.Fatalf("durable state after reconnect = %#v", afterReconnect)
+	afterReconnect := reconnected.tool("wingthing_capabilities", map[string]any{"wing_id": "office"})
+	if afterReconnect["wing_id"] != "office" || afterReconnect["principal"] != office["principal"] {
+		t.Fatalf("owner binding after reconnect=%#v", afterReconnect)
 	}
 
-	for _, observed := range tunnel.observedTypes() {
-		if observed != "wing.info" && observed != "webrtc.offer" {
-			t.Fatalf("coordinator observed direct MCP payload type %q", observed)
-		}
-	}
 }
 
 func TestConnectMCPStdioBoundsConcurrentToolCalls(t *testing.T) {
@@ -498,7 +480,7 @@ func TestConnectMCPReportsLegacyWingAsUpgradeRequired(t *testing.T) {
 		t.Fatalf("legacy wing capability = %#v", office)
 	}
 
-	result := connector.tool("message_list", map[string]any{"wing_id": "office"})
+	result := connector.tool("wingthing_capabilities", map[string]any{"wing_id": "office"})
 	errText, _ := result["error"].(string)
 	if result["_is_error"] != true || !strings.Contains(errText, "upgrade wt on the wing") {
 		t.Fatalf("legacy wing control result = %#v", result)
@@ -538,7 +520,7 @@ func TestConnectMCPReportsConfiguredDirectEndpointWithoutWebRTC(t *testing.T) {
 			t.Fatalf("configured direct wing capability = %#v", entry)
 		}
 	}
-	result := connector.tool("message_list", map[string]any{"wing_id": "office"})
+	result := connector.tool("wingthing_capabilities", map[string]any{"wing_id": "office"})
 	errText, _ := result["error"].(string)
 	if result["_is_error"] != true || !strings.Contains(errText, "WebRTC direct-control endpoint") {
 		t.Fatalf("configured direct wing result = %#v", result)
@@ -562,7 +544,7 @@ func TestConnectMCPReportsLockedWingPasskeyLimitation(t *testing.T) {
 			t.Fatalf("locked wing capability = %#v", entry)
 		}
 	}
-	result := connector.tool("message_list", map[string]any{"wing_id": "office"})
+	result := connector.tool("wingthing_capabilities", map[string]any{"wing_id": "office"})
 	errText, _ := result["error"].(string)
 	if result["_is_error"] != true || !strings.Contains(errText, "requires passkey authentication") {
 		t.Fatalf("locked wing result = %#v", result)

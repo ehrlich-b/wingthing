@@ -14,7 +14,6 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
-	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"golang.org/x/sys/unix"
 )
@@ -34,6 +33,7 @@ func TestSessionListingsDoNotWaitForLifecycleLock(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+			wingCall := testWingTool(t, cfg, "alice")
 			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 			defer cancel()
 			result := make(chan error, 1)
@@ -57,9 +57,10 @@ func TestSessionListingsDoNotWaitForLifecycleLock(t *testing.T) {
 					}
 				case "MCP terminal_list":
 					var listed map[string]any
-					listed, err = (&localmcp.Server{Version: version, Cfg: cfg}).ToolTerminalList(ctx, json.RawMessage(`{}`))
+					listed, err = wingCall(ctx, "terminal_list", json.RawMessage(`{}`))
 					if err == nil {
-						sessions = listed["sessions"].([]eggclient.LocalSession)
+						data, _ := json.Marshal(listed["sessions"])
+						err = json.Unmarshal(data, &sessions)
 					}
 				}
 				if err == nil && entrypoint != "attach selection" && (len(sessions) != 1 || sessions[0].Status != "unknown") {

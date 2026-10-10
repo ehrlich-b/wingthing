@@ -18,7 +18,6 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
-	"github.com/ehrlich-b/wingthing/internal/promptmgr"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/taskrun"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
@@ -32,12 +31,12 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"wingthing_capabilities","arguments":{},"_meta":{"progressToken":"claude-code"}}}`,
 	}, "\n") + "\n"
 	var output bytes.Buffer
-	server := &Server{Version: "dev",
+	server := testWingServer(t, &Server{Version: "dev",
 		Cfg:  &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"},
 		In:   strings.NewReader(input),
 		Out:  &output,
 		Logs: &bytes.Buffer{},
-	}
+	})
 	if err := server.Serve(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -72,12 +71,6 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 		if tool.InputSchema["type"] != "object" {
 			t.Errorf("tool %s has invalid input schema: %#v", tool.Name, tool.InputSchema)
 		}
-		if tool.Name == "prompt_run" {
-			properties := tool.InputSchema["properties"].(map[string]any)
-			if _, ok := properties["cwd"]; !ok {
-				t.Error("prompt_run schema does not expose working directory")
-			}
-		}
 		// Choosing a model is the most ordinary thing a human does at an agent
 		// prompt. A model that cannot express it is not at parity, so the
 		// passthrough has to be discoverable in the schema, not just accepted.
@@ -101,8 +94,8 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 	}
 	for _, want := range []string{
 		"terminal_list", "terminal_start", "terminal_rename", "agent_start", "agent_run", "agent_status",
-		"agent_wait", "agent_wait_any", "agent_result", "agent_events", "agent_steer", "agent_stop", "prompt_list", "prompt_get", "prompt_save",
-		"prompt_run", "prompt_loop", "swarm_run", "sandbox_explain", "message_send", "message_list", "message_wait",
+		"agent_wait", "agent_wait_any", "agent_result", "agent_events", "agent_steer", "agent_stop",
+		"sandbox_explain",
 	} {
 		if !names[want] {
 			t.Errorf("missing tool %q", want)
@@ -136,13 +129,13 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 func TestLocalMCPStdioEOFCancelsOutstandingWait(t *testing.T) {
 	inputReader, inputWriter := io.Pipe()
 	var output bytes.Buffer
-	server := &Server{Version: "dev",
+	server := testWingServer(t, &Server{Version: "dev",
 		Cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"},
 		In:  inputReader, Out: &output, Logs: &bytes.Buffer{}, Principal: "owner", Actor: "test",
-	}
+	})
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(context.Background()) }()
-	if _, err := io.WriteString(inputWriter, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"message_wait","arguments":{"timeout_seconds":3600}}}`+"\n"); err != nil {
+	if _, err := io.WriteString(inputWriter, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"agent_wait_any","arguments":{"run_ids":["missing"],"timeout_seconds":3600}}}`+"\n"); err != nil {
 		t.Fatal(err)
 	}
 	// The request is dispatched asynchronously. EOF must cancel it whether it
@@ -177,7 +170,7 @@ func TestLocalMCPCallAdmissionIsBounded(t *testing.T) {
 }
 
 func TestMCPToolCallParamsStillRejectUnknownEnvelopeFields(t *testing.T) {
-	server := &Server{Version: "dev"}
+	server := testWingServer(t, &Server{Version: "dev"})
 	response, _ := server.handle(context.Background(), localMCPRequest{
 		JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "tools/call",
 		Params: json.RawMessage(`{"name":"wingthing_capabilities","arguments":{},"_meta":{"progressToken":"ok"},"surprise":true}`),
@@ -188,7 +181,7 @@ func TestMCPToolCallParamsStillRejectUnknownEnvelopeFields(t *testing.T) {
 }
 
 func TestUnknownMCPToolIsNotMisreportedAsMissingGrant(t *testing.T) {
-	server := &Server{Version: "dev", Grants: map[string]bool{}, Logs: io.Discard}
+	server := testWingServer(t, &Server{Version: "dev", Grants: map[string]bool{}, Logs: io.Discard})
 	_, _, protocolErr := server.callTool(context.Background(), "not_a_tool", json.RawMessage(`{}`))
 	if protocolErr == nil || protocolErr.Code != -32602 || protocolErr.Message != "unknown tool: not_a_tool" {
 		t.Fatalf("unknown tool error = %#v", protocolErr)
@@ -198,7 +191,7 @@ func TestUnknownMCPToolIsNotMisreportedAsMissingGrant(t *testing.T) {
 func TestRoostNativeMCPAuthorityIsExplicitBoundedAndShared(t *testing.T) {
 	admission := NewMCPAdmissionState()
 	paths := []string{"/srv/alice"}
-	server := newRoostNativeMCPServer("dev", &config.Config{Dir: t.TempDir()}, true, admission, mcppkg.Principal{
+	server := testNativeServer(t, "dev", &config.Config{Dir: t.TempDir()}, true, admission, mcppkg.Principal{
 		UserID: "alice", Email: "alice@example.com", ClientID: "codex",
 	}, paths)
 	paths[0] = "/srv/mutated"
@@ -228,7 +221,7 @@ func TestRoostCapabilitiesReportHTTPContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	var capabilities mcppkg.NativeTool
-	for _, tool := range RoostNativeMCPTools("dev", cfg, true) {
+	for _, tool := range testNativeTools(t, "dev", cfg, true) {
 		if tool.Name == "wingthing_capabilities" {
 			capabilities = tool
 			break
@@ -257,10 +250,10 @@ func TestRoostCapabilitiesReportHTTPContract(t *testing.T) {
 
 func TestLocalMCPUnsandboxedModeIsExplicitAndAudited(t *testing.T) {
 	dir := t.TempDir()
-	server := &Server{Version: "dev",
+	server := testWingServer(t, &Server{Version: "dev",
 		Cfg: &config.Config{Dir: dir, DefaultAgent: "claude"}, Logs: &bytes.Buffer{},
 		Principal: "claude-code", Unsandboxed: true,
-	}
+	})
 	capabilities, err := server.toolCapabilities(json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatal(err)
@@ -298,7 +291,7 @@ func TestLocalMCPUnsandboxedModeIsExplicitAndAudited(t *testing.T) {
 }
 
 func TestLocalMCPRejectsUnknownToolAndArguments(t *testing.T) {
-	server := &Server{Version: "dev", Cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, Logs: &bytes.Buffer{}}
+	server := testWingServer(t, &Server{Version: "dev", Cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, Logs: &bytes.Buffer{}})
 
 	unknown := localMCPRequest{
 		JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "tools/call",
@@ -334,41 +327,6 @@ func TestLocalMCPRejectsUnknownToolAndArguments(t *testing.T) {
 	}
 }
 
-func TestValidateSwarmRejectsInvalidGraphs(t *testing.T) {
-	valid := []swarmNodeSpec{
-		{ID: "research-a", Prompt: "research A", Agent: "claude"},
-		{ID: "research-b", Prompt: "research B", Agent: "gemini"},
-		{ID: "synthesize", Prompt: "synthesize", Agent: "codex", DependsOn: []string{"research-a", "research-b"}},
-	}
-	if err := validateSwarm(valid, "claude"); err != nil {
-		t.Fatalf("valid swarm: %v", err)
-	}
-
-	tests := map[string][]swarmNodeSpec{
-		"cycle": {
-			{ID: "a", Prompt: "a", DependsOn: []string{"b"}},
-			{ID: "b", Prompt: "b", DependsOn: []string{"a"}},
-		},
-		"unknown dependency": {
-			{ID: "a", Prompt: "a", DependsOn: []string{"missing"}},
-		},
-		"unknown agent": {
-			{ID: "a", Prompt: "a", Agent: "made-up-agent"},
-		},
-		"duplicate": {
-			{ID: "a", Prompt: "a"},
-			{ID: "a", Prompt: "again"},
-		},
-	}
-	for name, nodes := range tests {
-		t.Run(name, func(t *testing.T) {
-			if err := validateSwarm(nodes, "claude"); err == nil {
-				t.Fatal("invalid swarm was accepted")
-			}
-		})
-	}
-}
-
 func TestResolveWorkingDirectory(t *testing.T) {
 	dir := t.TempDir()
 	got, err := ResolveWorkingDirectory(dir)
@@ -393,7 +351,7 @@ func TestLocalMCPSandboxExplain(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte("base: none\nfs: [\"rw:./\"]\nnetwork: [corp.example]\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{Version: "dev", Cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, Logs: &bytes.Buffer{}}
+	server := testWingServer(t, &Server{Version: "dev", Cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, Logs: &bytes.Buffer{}})
 
 	args := json.RawMessage(`{"agent":"claude","config":` + strconv.Quote(configPath) + `}`)
 	got, isError, protocolErr := server.callTool(context.Background(), "sandbox_explain", args)
@@ -467,10 +425,10 @@ func TestRoostMCPSandboxExplainBoundsExplicitConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := &Server{Version: "dev",
+	server := testWingServer(t, &Server{Version: "dev",
 		Cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, Logs: &bytes.Buffer{},
 		allowedPaths: []string{wingpolicy.CanonicalSessionPath(workspace)}, enforcePathBounds: true,
-	}
+	})
 	for name, configPath := range map[string]string{
 		"outside":         outside,
 		"symlink outside": link,
@@ -486,30 +444,6 @@ func TestRoostMCPSandboxExplainBoundsExplicitConfig(t *testing.T) {
 	arguments := json.RawMessage(`{"cwd":` + strconv.Quote(workspace) + `,"config":` + strconv.Quote(inside) + `}`)
 	if _, err := server.toolSandboxExplain(arguments); err != nil {
 		t.Fatalf("in-workspace config rejected: %v", err)
-	}
-}
-
-func TestLocalMCPPromptManager(t *testing.T) {
-	server := &Server{Version: "dev", Cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, Logs: &bytes.Buffer{}}
-	saved, isError, protocolErr := server.callTool(context.Background(), "prompt_save", json.RawMessage(`{
-		"name":"review","description":"review code","template":"Review {{.target}}",
-		"variables":["target"],"agent":"opencode","cwd":"/work/repo"
-	}`))
-	if protocolErr != nil || isError {
-		t.Fatalf("save = %#v isError=%v protocol=%v", saved, isError, protocolErr)
-	}
-	asset := saved["prompt"].(*promptmgr.Asset)
-	if asset.Revision == "" {
-		t.Fatal("saved prompt has no revision")
-	}
-
-	got, isError, _ := server.callTool(context.Background(), "prompt_get", json.RawMessage(`{"name":"review"}`))
-	if isError || got["prompt"].(*promptmgr.Asset).Revision != asset.Revision {
-		t.Fatalf("get = %#v isError=%v", got, isError)
-	}
-	listed, isError, _ := server.callTool(context.Background(), "prompt_list", json.RawMessage(`{}`))
-	if isError || len(listed["prompts"].([]promptmgr.Asset)) != 1 {
-		t.Fatalf("list = %#v isError=%v", listed, isError)
 	}
 }
 
@@ -536,11 +470,11 @@ func TestLocalMCPPrincipalOwnershipAndAudit(t *testing.T) {
 	createSession("beta001", "beta")
 	createSession("human01", "")
 
-	server := &Server{Version: "dev",
+	server := testWingServer(t, &Server{Version: "dev",
 		Cfg:       &config.Config{Dir: dir, DefaultAgent: "claude"},
 		Logs:      &bytes.Buffer{},
 		Principal: "alpha",
-	}
+	})
 	listed, isError, protocolErr := server.callTool(context.Background(), "terminal_list", json.RawMessage(`{}`))
 	if protocolErr != nil || isError {
 		t.Fatalf("terminal_list failed: %#v %v", listed, protocolErr)
@@ -553,7 +487,7 @@ func TestLocalMCPPrincipalOwnershipAndAudit(t *testing.T) {
 		t.Fatalf("cross-principal lookup error = %v", err)
 	}
 
-	defaultServer := &Server{Version: "dev", Cfg: server.Cfg, Logs: &bytes.Buffer{}}
+	defaultServer := testWingServer(t, &Server{Version: "dev", Cfg: server.Cfg, Logs: &bytes.Buffer{}})
 	if _, err := defaultServer.resolveOwnedSession(context.Background(), "human01"); err != nil {
 		t.Fatalf("default principal should retain access to legacy sessions: %v", err)
 	}
@@ -589,14 +523,14 @@ clients:
 		t.Fatal(err)
 	}
 	client := loaded.Clients["observer"]
-	server := &Server{Version: "dev",
+	server := testWingServer(t, &Server{Version: "dev",
 		Cfg:              &config.Config{Dir: dir},
 		Logs:             &bytes.Buffer{},
 		Principal:        "observer",
 		Grants:           GrantSet(client.Grants),
 		MaxSessions:      client.Bounds.MaxSessions,
 		MaxSpawnsPerHour: client.Bounds.MaxSpawnsPerHour,
-	}
+	})
 	if !loaded.RequireClient || client.Owner != "ehrlich" || !server.toolAllowed("terminal_list") || server.toolAllowed("terminal_send") || server.toolAllowed("agent_start") {
 		t.Fatalf("grant evaluation is wrong: %#v", loaded)
 	}
@@ -606,166 +540,13 @@ clients:
 	}
 }
 
-func TestLocalMCPMessagesShareOwnerAndPreserveActorIsolation(t *testing.T) {
-	dir := t.TempDir()
-	codex := &Server{Version: "dev",
-		Cfg: &config.Config{Dir: dir}, Logs: &bytes.Buffer{},
-		Principal: "ehrlich", Actor: "codex",
-	}
-	claude := &Server{Version: "dev",
-		Cfg: &config.Config{Dir: dir}, Logs: &bytes.Buffer{},
-		Principal: "ehrlich", Actor: "claude",
-	}
-	otherOwner := &Server{Version: "dev",
-		Cfg: &config.Config{Dir: dir}, Logs: &bytes.Buffer{},
-		Principal: "someone-else", Actor: "claude",
-	}
-
-	secretBody := "filesystem gate passed; canary content stays redacted"
-	sent, isError, protocolErr := codex.callTool(context.Background(), "message_send", json.RawMessage(`{
-		"channel":"factory-security","kind":"evidence","content":"filesystem gate passed; canary content stays redacted"
-	}`))
-	if protocolErr != nil || isError {
-		t.Fatalf("send = %#v isError=%v protocol=%v", sent, isError, protocolErr)
-	}
-	messageID := sent["message_id"].(string)
-
-	listed, isError, protocolErr := claude.callTool(context.Background(), "message_list", json.RawMessage(`{"channel":"factory-security"}`))
-	if protocolErr != nil || isError {
-		t.Fatalf("list = %#v isError=%v protocol=%v", listed, isError, protocolErr)
-	}
-	messages := listed["messages"].([]map[string]any)
-	if len(messages) != 1 || messages[0]["message_id"] != messageID || messages[0]["sender_actor"] != "codex" {
-		t.Fatalf("claude messages = %#v", messages)
-	}
-
-	self, _, _ := codex.callTool(context.Background(), "message_list", json.RawMessage(`{"channel":"factory-security"}`))
-	if got := self["messages"].([]map[string]any); len(got) != 0 {
-		t.Fatalf("sender received its own broadcast: %#v", got)
-	}
-	foreign, _, _ := otherOwner.callTool(context.Background(), "message_list", json.RawMessage(`{"channel":"factory-security"}`))
-	if got := foreign["messages"].([]map[string]any); len(got) != 0 {
-		t.Fatalf("other owner saw messages: %#v", got)
-	}
-
-	audit, err := os.ReadFile(filepath.Join(dir, "mcp-audit.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Contains(audit, []byte(secretBody)) {
-		t.Fatalf("message content leaked into audit log: %s", audit)
-	}
-	if !bytes.Contains(audit, []byte(`"actor":"codex"`)) || !bytes.Contains(audit, []byte(`"target":"`+messageID+`"`)) {
-		t.Fatalf("message audit missing actor/target: %s", audit)
-	}
-}
-
-func TestLocalMCPMessageWaitUnblocksOnSameOwnerSend(t *testing.T) {
-	dir := t.TempDir()
-	codex := &Server{Version: "dev", Cfg: &config.Config{Dir: dir}, Logs: &bytes.Buffer{}, Principal: "ehrlich", Actor: "codex"}
-	claude := &Server{Version: "dev", Cfg: &config.Config{Dir: dir}, Logs: &bytes.Buffer{}, Principal: "ehrlich", Actor: "claude"}
-
-	type waitResult struct {
-		data map[string]any
-		err  error
-	}
-	waited := make(chan waitResult, 1)
-	go func() {
-		data, err := claude.toolMessageWait(context.Background(), json.RawMessage(`{
-			"channel":"factory-live","timeout_seconds":2
-		}`))
-		waited <- waitResult{data: data, err: err}
-	}()
-	time.Sleep(250 * time.Millisecond)
-	if _, err := codex.toolMessageSend(json.RawMessage(`{
-		"channel":"factory-live","kind":"question","content":"rerun the Arli canary"
-	}`)); err != nil {
-		t.Fatal(err)
-	}
-
-	select {
-	case result := <-waited:
-		if result.err != nil {
-			t.Fatal(result.err)
-		}
-		if result.data["timed_out"] != false || len(result.data["messages"].([]map[string]any)) != 1 {
-			t.Fatalf("wait result = %#v", result.data)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("message_wait stayed blocked after message_send")
-	}
-}
-
-func TestRoostMessageToolsShareOneOwnerAcrossOAuthClients(t *testing.T) {
-	dir := t.TempDir()
-	workspace := t.TempDir()
-	cfg := &config.Config{Dir: dir}
-	if err := config.SaveWingConfig(dir, &config.WingConfig{Paths: config.PathList{{Path: workspace}}}); err != nil {
-		t.Fatal(err)
-	}
-	var sendTool, listTool mcppkg.NativeTool
-	for _, tool := range RoostNativeMCPTools("dev", cfg, true) {
-		switch tool.Name {
-		case "message_send":
-			sendTool = tool
-		case "message_list":
-			listTool = tool
-		}
-	}
-	if sendTool.Call == nil || listTool.Call == nil {
-		t.Fatal("roost message tools are missing")
-	}
-
-	aliceCodex := mcppkg.Principal{UserID: "alice", Email: "alice@example.com", ClientID: "codex-client"}
-	aliceClaude := mcppkg.Principal{UserID: "alice", Email: "alice@example.com", ClientID: "claude-client"}
-	bobClaude := mcppkg.Principal{UserID: "bob", Email: "bob@example.com", ClientID: "claude-client"}
-	sent, isError, err := sendTool.Call(context.Background(), aliceCodex, json.RawMessage(`{"content":"factory evidence","kind":"evidence"}`))
-	if err != nil || isError {
-		t.Fatalf("roost send = %#v isError=%v err=%v", sent, isError, err)
-	}
-	for _, test := range []struct {
-		name      string
-		principal mcppkg.Principal
-		want      int
-	}{{"same owner", aliceClaude, 1}, {"other owner", bobClaude, 0}, {"sender", aliceCodex, 0}} {
-		t.Run(test.name, func(t *testing.T) {
-			listed, isError, err := listTool.Call(context.Background(), test.principal, json.RawMessage(`{}`))
-			if err != nil || isError {
-				t.Fatalf("list = %#v isError=%v err=%v", listed, isError, err)
-			}
-			if got := len(listed["messages"].([]map[string]any)); got != test.want {
-				t.Fatalf("messages = %d, want %d (%#v)", got, test.want, listed)
-			}
-		})
-	}
-}
-
-func TestLocalMCPTaskOwnership(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &config.Config{Dir: dir}
-	taskStore, err := store.Open(cfg.DBPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := taskStore.CreateTask(&store.Task{ID: "task-beta", What: "secret", RunAt: time.Now(), Principal: "beta"}); err != nil {
-		t.Fatal(err)
-	}
-	closeForTest(t, "task store", taskStore)
-
-	server := &Server{Version: "dev", Cfg: cfg, Logs: &bytes.Buffer{}, Principal: "alpha"}
-	result, isError, protocolErr := server.callTool(context.Background(), "task_get", json.RawMessage(`{"task_id":"task-beta"}`))
-	if protocolErr != nil || !isError || !strings.Contains(result["error"].(string), `owned by principal "beta"`) {
-		t.Fatalf("cross-principal task result = %#v isError=%v protocol=%v", result, isError, protocolErr)
-	}
-}
-
 func TestLocalMCPAgentRunLifecycleIsSemanticAndOwnerScoped(t *testing.T) {
 	dir := t.TempDir()
 	cwd := t.TempDir()
 	cfg := &config.Config{Dir: dir, DefaultAgent: "claude"}
 	started := make(chan struct{})
 	release := make(chan struct{})
-	server := &Server{Version: "dev",
+	server := testWingServer(t, &Server{Version: "dev",
 		Cfg: cfg, Logs: &bytes.Buffer{}, Principal: "alpha",
 		runAgentTask: func(ctx context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
 			if err := taskStore.UpdateTaskStatus(task.ID, "running"); err != nil {
@@ -783,7 +564,7 @@ func TestLocalMCPAgentRunLifecycleIsSemanticAndOwnerScoped(t *testing.T) {
 			}
 			return taskStore.UpdateTaskStatus(task.ID, "done")
 		},
-	}
+	})
 	startedData, isError, protocolErr := server.callTool(context.Background(), "agent_run", json.RawMessage(`{
 		"prompt":"review this branch","agent":"claude","model":"opus","cwd":"`+cwd+`","label":"review"
 	}`))
@@ -797,7 +578,7 @@ func TestLocalMCPAgentRunLifecycleIsSemanticAndOwnerScoped(t *testing.T) {
 	if err != nil || status["status"] != "running" || status["model"] != "opus" {
 		t.Fatalf("agent_status = %#v err=%v", status, err)
 	}
-	other := &Server{Version: "dev", Cfg: cfg, Logs: &bytes.Buffer{}, Principal: "beta"}
+	other := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Logs: &bytes.Buffer{}, Principal: "beta"})
 	wantHidden := fmt.Sprintf("agent run %q not found or not owned by caller", runID)
 	if _, err := other.toolAgentStatus(json.RawMessage(`{"run_id":"` + runID + `"}`)); err == nil || err.Error() != wantHidden {
 		t.Fatalf("cross-principal lookup error = %v, want %q", err, wantHidden)
@@ -830,7 +611,7 @@ func TestAgentStopWinsCompletionRace(t *testing.T) {
 	dir := t.TempDir()
 	cwd := t.TempDir()
 	started := make(chan struct{})
-	server := &Server{Version: "dev",
+	server := testWingServer(t, &Server{Version: "dev",
 		Cfg: &config.Config{Dir: dir, DefaultAgent: "claude"}, Logs: &bytes.Buffer{}, Principal: "alpha",
 		runAgentTask: func(ctx context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
 			if err := taskStore.UpdateTaskStatus(task.ID, "running"); err != nil {
@@ -844,7 +625,7 @@ func TestAgentStopWinsCompletionRace(t *testing.T) {
 			_ = taskStore.SetTaskOutput(task.ID, "late output")
 			return taskStore.UpdateTaskStatus(task.ID, "done")
 		},
-	}
+	})
 	created, err := server.toolAgentRun(json.RawMessage(`{"prompt":"keep working","agent":"claude","cwd":` + strconv.Quote(cwd) + `}`))
 	if err != nil {
 		t.Fatal(err)
@@ -868,14 +649,14 @@ func TestUnsandboxedAgentRunPersistsPrivilegedIsolation(t *testing.T) {
 	dir := t.TempDir()
 	cwd := t.TempDir()
 	seen := make(chan string, 1)
-	server := &Server{Version: "dev",
+	server := testWingServer(t, &Server{Version: "dev",
 		Cfg: &config.Config{Dir: dir, DefaultAgent: "claude"}, Logs: &bytes.Buffer{},
 		Principal: "alpha", Unsandboxed: true,
 		runAgentTask: func(_ context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
 			seen <- task.Isolation
 			return taskStore.UpdateTaskStatus(task.ID, "done")
 		},
-	}
+	})
 	created, err := server.toolAgentRun(json.RawMessage(`{"prompt":"trusted task","agent":"claude","cwd":` + strconv.Quote(cwd) + `}`))
 	if err != nil {
 		t.Fatal(err)
@@ -911,7 +692,7 @@ func TestAgentStatusMarksOrphanedRunnerFailed(t *testing.T) {
 		t.Fatal(err)
 	}
 	closeForTest(t, "task store", taskStore)
-	server := &Server{Version: "dev", Cfg: cfg, Logs: &bytes.Buffer{}, Principal: "alpha"}
+	server := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Logs: &bytes.Buffer{}, Principal: "alpha"})
 	status, err := server.toolAgentStatus(json.RawMessage(`{"run_id":"orphaned-run"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -1075,13 +856,13 @@ func TestAgentSteerPassesAndPersistsPriorResult(t *testing.T) {
 
 	wantPrompt := agentSteerPrompt(parent.What, "the auth boundary is sound", "", "now review the UI")
 	seenPrompt := make(chan string, 1)
-	server := &Server{Version: "dev",
+	server := testWingServer(t, &Server{Version: "dev",
 		Cfg: cfg, Logs: &bytes.Buffer{}, Principal: "alpha",
 		runAgentTask: func(_ context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
 			seenPrompt <- task.What
 			return taskStore.UpdateTaskStatus(task.ID, "done")
 		},
-	}
+	})
 	created, err := server.toolAgentSteer(json.RawMessage(`{"run_id":"completed-parent","prompt":"now review the UI"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -1128,7 +909,7 @@ func TestStdioWaitDoesNotBlockStop(t *testing.T) {
 	started := make(chan struct{})
 	inputReader, inputWriter := io.Pipe()
 	outputReader, outputWriter := io.Pipe()
-	server := &Server{Version: "dev",
+	server := testWingServer(t, &Server{Version: "dev",
 		Cfg: &config.Config{Dir: dir, DefaultAgent: "claude"}, In: inputReader, Out: outputWriter,
 		Logs: &bytes.Buffer{}, Principal: "alpha",
 		runAgentTask: func(ctx context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
@@ -1139,7 +920,7 @@ func TestStdioWaitDoesNotBlockStop(t *testing.T) {
 			<-ctx.Done()
 			return taskStore.SetTaskError(task.ID, ctx.Err().Error())
 		},
-	}
+	})
 	created, err := server.toolAgentRun(json.RawMessage(`{"prompt":"long task","agent":"claude","cwd":` + strconv.Quote(cwd) + `}`))
 	if err != nil {
 		t.Fatal(err)
@@ -1199,10 +980,10 @@ func TestStdioWaitDoesNotBlockStop(t *testing.T) {
 func TestSharedRoostPathBoundsFailClosed(t *testing.T) {
 	dir := t.TempDir()
 	workspace := t.TempDir()
-	server := &Server{Version: "dev",
+	server := testWingServer(t, &Server{Version: "dev",
 		Cfg: &config.Config{Dir: dir, DefaultAgent: "claude"}, Logs: &bytes.Buffer{},
 		Principal: "member", enforcePathBounds: true,
-	}
+	})
 	if _, err := server.resolveWorkingDirectory(workspace); err == nil || !strings.Contains(err.Error(), "no configured workspace paths") {
 		t.Fatalf("empty path policy error = %v", err)
 	}
@@ -1240,7 +1021,7 @@ func TestRoostControlToolsKeepTwoUsersSessionsSeparate(t *testing.T) {
 		}
 	}
 	var listTool mcppkg.NativeTool
-	for _, tool := range RoostNativeMCPTools("dev", cfg, true) {
+	for _, tool := range testNativeTools(t, "dev", cfg, true) {
 		if tool.Name == "terminal_list" {
 			listTool = tool
 			break

@@ -98,7 +98,7 @@ func opusNativeReader(cfg *config.Config, session eggclient.LocalSession) func(c
 }
 
 func opusServer(cfg *config.Config, bound string) *Server {
-	return &Server{Version: "dev", Cfg: cfg, Principal: "owner", BoundConversation: bound, Logs: &bytes.Buffer{}}
+	return testWingServer(nil, &Server{Version: "dev", Cfg: cfg, Principal: "owner", BoundConversation: bound, Logs: &bytes.Buffer{}})
 }
 
 func opusCall(t *testing.T, s *Server, tool string, args map[string]any) (map[string]any, error) {

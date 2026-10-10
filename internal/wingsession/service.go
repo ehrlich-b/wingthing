@@ -349,6 +349,9 @@ func (s *Service) Fork(ctx context.Context, a Authority, ref, label string, scop
 		if err != nil {
 			return nil, err
 		}
+		if wingpolicy.CanonicalSessionPath(launch.CWD) != wingpolicy.CanonicalSessionPath(cwd) {
+			return nil, errors.New("source working directory is outside current browser launch paths")
+		}
 		return launch.Config, nil
 	}
 	scope.Spawn = func(plan *eggclient.SessionForkPlan) error {

@@ -58,7 +58,7 @@ type brokerFixture struct {
 
 func newBrokerFixture(t *testing.T, surface control.Surface, actor string) brokerFixture {
 	t.Helper()
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: shortWingTestState(t), WingID: "fixture-wing"}
 	if err := config.SaveWingConfig(cfg.Dir, &config.WingConfig{Conversations: config.ConversationsEnabled}); err != nil {
 		t.Fatal(err)
 	}
@@ -98,6 +98,13 @@ func newBrokerFixture(t *testing.T, surface control.Surface, actor string) broke
 	t.Cleanup(func() { _ = mailbox.Close() })
 	epoch, _ := newMailboxID()
 	b := &conversationBroker{version: "dev", cfg: cfg, reg: loaded, dir: conversationBrokerDir(cfg, root.SessionID), epoch: epoch, provider: "provider-root", admission: NewMCPAdmissionState(), mailbox: mailbox, logs: &bytes.Buffer{}, inflight: map[string]bool{}, slots: make(chan struct{}, 8)}
+	server := testWingServer(t, &Server{Version: "test", Cfg: cfg, Principal: "owner"})
+	b.admission.Sessions = server.Sessions
+	listener, err := ListenLocalWingControl(t.Context(), "test", server.Sessions, server.identity.UserID, NewMCPAdmissionState())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
 	return brokerFixture{b: b, cfg: cfg, db: db, root: root, child: child, other: other}
 }
 
@@ -180,7 +187,7 @@ func TestHostMailboxBrokerServesOnlyBridgeToolsUnderCapturedOwner(t *testing.T) 
 	if !slices.Equal(listed, expected) {
 		t.Fatalf("host mailbox listed %v, want exactly %v", listed, expected)
 	}
-	for _, forbidden := range []string{"terminal_send", "terminal_start", "prompt_run", "conversation_wake", "terminal_stop"} {
+	for _, forbidden := range []string{"terminal_send", "terminal_start", "conversation_wake", "terminal_stop"} {
 		envelope, structured := f.call(t, forbidden, map[string]any{})
 		if !strings.Contains(structured["error"].(string), "not available on this connection") || !envelope.Dispatched {
 			t.Fatalf("%s reachable through host mailbox: %v", forbidden, structured)
@@ -201,7 +208,7 @@ func TestHostMailboxBrokerServesOnlyBridgeToolsUnderCapturedOwner(t *testing.T) 
 // `--conversation` stdio connection keeps the deployed terminal contract.
 func TestBoundTreeScopeRulesApplyOnlyToBrokerConnections(t *testing.T) {
 	f := newBrokerFixture(t, control.SurfaceHTTPMCP, "browser")
-	direct := &Server{Version: "dev", Cfg: f.cfg, Principal: "owner", BoundConversation: f.root.ID}
+	direct := testWingServer(t, &Server{Version: "dev", Cfg: f.cfg, Principal: "owner", BoundConversation: f.root.ID})
 	if err := direct.checkBoundSessionTarget("session_status", json.RawMessage(`{"session":"`+f.other.SessionID+`"}`)); err != nil {
 		t.Fatalf("direct bound connection gained broker tree rules: %v", err)
 	}
@@ -287,7 +294,7 @@ func TestHostMailboxRecoveryRefusalKeepsPriorMutationUnconfirmed(t *testing.T) {
 				f := newBrokerFixture(t, control.SurfaceLocalMCP, "codex")
 				arguments := map[string]any{"agent": "claude", "cwd": f.cfg.Dir, "request_id": f.child.LaunchKey}
 				if tool == "agent_start" {
-					if err := (&Server{Version: "dev", Cfg: f.cfg}).markConversationLaunch(f.child, nil); err != nil {
+					if err := (testWingServer(t, &Server{Version: "dev", Cfg: f.cfg})).markConversationLaunch(f.child, nil); err != nil {
 						t.Fatal(err)
 					}
 				} else {
@@ -360,7 +367,7 @@ func TestHostMailboxReintersectsCurrentWingPathsPerCall(t *testing.T) {
 	}
 }
 
-func TestHostMailboxBrokerKeepsEverySessionTargetInsideCapturedRoot(t *testing.T) {
+func TestHostMailboxStillScoped(t *testing.T) {
 	f := newBrokerFixture(t, control.SurfaceHTTPMCP, "browser")
 	resumed := fixtureConversation(t, f.db, f.cfg, "resumed", "", "owner", "idle")
 	if _, err := f.db.DB().Exec(`DELETE FROM conversation_executions WHERE session_id = ?`, resumed.SessionID); err != nil {
@@ -658,7 +665,7 @@ func TestHostMailboxDurableSpawnRateSurvivesBrokerRestart(t *testing.T) {
 
 func TestHostMailboxActivationKeepsDirectTransportAndCapturesFiniteAuthority(t *testing.T) {
 	workspace := wingpolicy.CanonicalPolicyPath(t.TempDir())
-	direct := &Server{Version: "dev", Cfg: &config.Config{Dir: filepath.Join(workspace, "state")}, Principal: "owner"}
+	direct := testWingServer(t, &Server{Version: "dev", Cfg: &config.Config{Dir: filepath.Join(workspace, "state")}, Principal: "owner"})
 	c := &store.Conversation{ID: "parent", RootID: "parent", SessionID: "parent-exec", CWD: workspace, Agent: "claude"}
 	args, err := direct.prepareBoundParentMCP(c, egg.DefaultEggConfig(), nil)
 	if err != nil {
@@ -670,7 +677,7 @@ func TestHostMailboxActivationKeepsDirectTransportAndCapturesFiniteAuthority(t *
 	}
 	// Only the workspace is writable, so state elsewhere selects the mailbox.
 	narrow := func() *egg.EggConfig { return &egg.EggConfig{FS: []string{"ro:/", "rw:./"}} }
-	exposed := &Server{Version: "dev", Cfg: &config.Config{Dir: t.TempDir()}, Principal: "owner"}
+	exposed := testWingServer(t, &Server{Version: "dev", Cfg: &config.Config{Dir: t.TempDir()}, Principal: "owner"})
 	var protectedTargets []string
 	conversationBrokerProtection = func(_ *config.Config, _ *egg.EggConfig, _, _, _ string, _ eggclient.EggIdentity, targets []string) error {
 		protectedTargets = targets
@@ -717,11 +724,11 @@ func TestHostMailboxActivationKeepsDirectTransportAndCapturesFiniteAuthority(t *
 	}
 	// A resumed browser parent cannot carry the launch contract and never
 	// registers a broker.
-	resumed := &Server{Version: "dev", Cfg: exposed.Cfg, Principal: "owner", hostMailboxUnavailable: "resume refused"}
+	resumed := testWingServer(t, &Server{Version: "dev", Cfg: exposed.Cfg, Principal: "owner", hostMailboxUnavailable: "resume refused"})
 	if _, err := resumed.prepareBoundParentMCP(c, narrow(), nil); err == nil || !strings.Contains(err.Error(), "host mailbox unavailable: resume refused") || len(started) != 0 {
 		t.Fatalf("resume selected the host mailbox: %v", err)
 	}
-	launcher := &Server{Version: "dev", Cfg: exposed.Cfg, Principal: roostSessionPrincipal("user"), Actor: "browser", Surface: control.SurfaceHTTPMCP, identity: eggclient.EggIdentity{UserID: "user", Email: "user@example.invalid"}}
+	launcher := testWingServer(t, &Server{Version: "dev", Cfg: exposed.Cfg, Principal: roostSessionPrincipal("user"), Actor: "browser", Surface: control.SurfaceHTTPMCP, identity: eggclient.EggIdentity{UserID: "user", Email: "user@example.invalid"}})
 	args, managed, err := launcher.prepareBoundParentLaunch(c, narrow(), []string{"--model", "selected"})
 	if err != nil {
 		t.Fatal(err)
@@ -769,7 +776,7 @@ func TestHostMailboxActivationKeepsDirectTransportAndCapturesFiniteAuthority(t *
 	if _, err := launcher.prepareBoundParentMCP(c, narrow(), nil); err == nil {
 		t.Fatal("one execution registered twice")
 	}
-	limited := &Server{Version: "dev", Cfg: exposed.Cfg, Principal: "owner", Grants: GrantSet([]string{"terminal.read"}), MaxSessions: 2, MaxSpawnsPerHour: 5}
+	limited := testWingServer(t, &Server{Version: "dev", Cfg: exposed.Cfg, Principal: "owner", Grants: GrantSet([]string{"terminal.read"}), MaxSessions: 2, MaxSpawnsPerHour: 5})
 	second := &store.Conversation{ID: "parent", RootID: "parent", SessionID: "parent-exec-2", CWD: workspace, Agent: "claude"}
 	if _, err := limited.prepareBoundParentMCP(second, narrow(), nil); err != nil {
 		t.Fatal(err)
@@ -873,7 +880,7 @@ func TestStableConversationHostMailboxOptIn(t *testing.T) {
 	}
 	workspace := wingpolicy.CanonicalPolicyPath(t.TempDir())
 	c := &store.Conversation{ID: "parent", RootID: "parent", SessionID: "parent-exec", CWD: workspace, Agent: "claude"}
-	launcher := &Server{Version: "dev", Cfg: cfg, Principal: roostSessionPrincipal("user"), Actor: "browser", Surface: control.SurfaceHTTPMCP, identity: eggclient.EggIdentity{UserID: "user"}}
+	launcher := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: roostSessionPrincipal("user"), Actor: "browser", Surface: control.SurfaceHTTPMCP, identity: eggclient.EggIdentity{UserID: "user"}})
 	policy := &egg.EggConfig{FS: []string{"ro:/", "rw:./"}}
 	before, _ := policy.YAML()
 	var protected int
