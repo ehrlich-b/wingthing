@@ -32,11 +32,12 @@ type PromptDelivery struct {
 }
 
 type SessionPromptOptions struct {
-	RequestID string
-	Input     string
-	Timeout   time.Duration
-	Read      func(context.Context, int64, int) (SessionView, error)
-	Send      func(context.Context, string) (PromptDelivery, error)
+	RequestID     string
+	Input         string
+	Timeout       time.Duration
+	Read          func(context.Context, int64, int) (SessionView, error)
+	Send          func(context.Context, string) (PromptDelivery, error)
+	maxInputBytes int // Native run turns have a separate bound from session_prompt.
 }
 
 type SessionPromptResult struct {
@@ -75,8 +76,12 @@ func validateSessionPromptOptions(o SessionPromptOptions) error {
 			return errors.New("request_id must not contain whitespace or control characters")
 		}
 	}
-	if strings.TrimSpace(o.Input) == "" || len(o.Input) > MaxSessionPromptBytes || !utf8.ValidString(o.Input) {
-		return errors.New("input must be non-empty UTF-8 text of at most 65536 bytes")
+	limit := o.maxInputBytes
+	if limit == 0 {
+		limit = MaxSessionPromptBytes
+	}
+	if strings.TrimSpace(o.Input) == "" || len(o.Input) > limit || !utf8.ValidString(o.Input) {
+		return fmt.Errorf("input must be non-empty UTF-8 text of at most %d bytes", limit)
 	}
 	for _, r := range o.Input {
 		if unicode.IsControl(r) && r != '\n' && r != '\t' {

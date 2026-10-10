@@ -119,6 +119,7 @@ func eggRunCmd() *cobra.Command {
 		commandFlag                []string
 		agentArgFlag               []string
 		initialRunFlag             string
+		initialRunFileRequired     bool
 		outerBoundaryFlag          bool
 		protectedWriteTargetFlag   []string
 		omitBrowserBridgeFlag      bool
@@ -211,6 +212,13 @@ func eggRunCmd() *cobra.Command {
 					return errors.New("invalid initial native run request")
 				}
 			}
+			if initialRunFileRequired {
+				var err error
+				rc.InitialRun, err = egg.ReadInitialRunFile(filepath.Join(cfg.Dir, "eggs", sessionID))
+				if err != nil {
+					return err
+				}
+			}
 
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
@@ -283,6 +291,11 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&commandFlag, "command-arg", nil, "command argument (internal)")
 	cmd.Flags().StringArrayVar(&agentArgFlag, "agent-arg", nil, "extra agent argument (internal)")
 	cmd.Flags().StringVar(&initialRunFlag, "initial-run", "", "host-admitted initial native turn (internal)")
+	cmd.Flags().BoolVar(&initialRunFileRequired, "initial-run-file-required", false, "consume a private initial native turn file (internal)")
+	cmd.MarkFlagsMutuallyExclusive("initial-run", "initial-run-file-required")
+	if err := cmd.Flags().MarkHidden("initial-run-file-required"); err != nil {
+		panic(err)
+	}
 	if err := cmd.Flags().MarkHidden("initial-run"); err != nil {
 		panic(err)
 	}

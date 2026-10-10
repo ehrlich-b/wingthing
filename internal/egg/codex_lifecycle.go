@@ -19,8 +19,8 @@ import (
 // These are the main-thread events in Codex 0.159.3. Subagent events use the
 // parent's session ID and must not end its turn. There is no Notification or
 // MCP elicitation event; unsupported transitions cannot be inferred from a PTY.
-// These hooks report readiness and prompt admission. CodexRunArgs separately
-// installs notify to provide authoritative turn completion and final text.
+// These hooks report readiness and prompt admission. Run completion additionally
+// requires the exact hook-bound transcript's final task_complete record.
 var codexLifecycleEvents = []struct{ name, key string }{
 	{"SessionStart", "session_start"},
 	{"UserPromptSubmit", "user_prompt_submit"},
@@ -104,7 +104,7 @@ func parseCodexVersion(output string) ([3]uint64, bool) {
 
 // CodexLifecycleArgs installs observational hooks in the session-flags layer.
 // Only the exact generated definitions are trusted. Neither CODEX_HOME nor its
-// config, notify, existing hook sources, or global trust policy is changed.
+// config, existing hook sources, or global trust policy is changed.
 func CodexLifecycleArgs(args []string, home, sessionID string) ([]string, error) {
 	if home == "" || !validLifecycleID(sessionID) {
 		return nil, errors.New("provider home and exact egg identity required for Codex hooks")

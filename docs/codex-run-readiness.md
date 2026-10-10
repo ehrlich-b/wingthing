@@ -48,11 +48,26 @@ probe establishes first-turn hook ordering, not live provider success.
 
 For a new Codex `agent_run`, the wing passes its admitted prompt and absolute
 deadline to the egg. Before launching Codex, the egg persists the run and arms
-both the execution deadline and a 30-second readiness bound. The normal TUI
-receives the prompt through argv; Wingthing sends no prompt keystrokes. The egg
-then reads its own fresh hook and notify spools from their beginning, including
-events that arrived before the socket became available. Completion still
-requires matching native thread, turn and prompt receipts and final notify.
+both the execution deadline and a 30-second readiness bound. The egg
+uses a private `0600` request file for the wing-to-egg handoff and deletes it
+after reading. Codex receives no positional prompt. After process startup, the
+egg waits for the rendered `OpenAI Codex` header and `Ask Codex to do anything`
+composer, refuses known startup modals, and bracketed-pastes the reserved prompt
+once under the input lease. This is a declared screen fallback for first-input
+transport only: an empty TUI has no native readiness signal. Native readiness
+still requires exact `SessionStart` and `UserPromptSubmit` identities and text.
+The existing reservation and timers precede both provider launch and input.
+
+Codex's external notify callback also carries prompt text in argv, so generated
+run arguments disable it with `notify=[]`. Completion requires the matching
+native Stop hook and a flushed `task_complete` record for that same turn, with
+identical final text, in the exact transcript named by the native hooks. The
+transcript must be under this provider home's `.codex/sessions`, its metadata
+must match the bound thread, and symlinks are refused. No rollout inventory or
+recency search occurs. A Stop hook alone cannot complete a run. Reading legacy
+egg notify spools remains supported for already-running eggs.
+Native `task_complete.error` records retain typed failure classification without
+requiring a Stop hook, and their arbitrary diagnostic text is discarded.
 
 Missing native admission ends as `provider_not_ready`; cleanup kills the same
 provider process group. The error contains only an allowlisted classification
@@ -64,6 +79,20 @@ The fake Codex models the first-turn hook boundary and can display an unexpected
 startup modal. Tests cover absence of empty-startup hooks, completion before
 socket readiness, exact result recovery after client exit and wing restart,
 modal failure, diagnostic redaction and timer behavior under virtual time.
+
+Codex run prompts accept up to 1 MiB of UTF-8 text; `session_prompt` retains its 64 KiB
+bound. Wrapper RPC and private-file limits allow JSON escaping overhead. Large
+Codex prompt and Stop hooks have a separate bounded record allowance; oversized
+startup, foreign and malformed hooks still cannot bind a thread.
+
+An isolated probe of installed Mac Codex 0.159.3 against a loopback Responses
+stub confirmed empty-composer hook ordering, exact 1 MiB PTY submission, Stop payload and
+the final `task_complete` record. The process regression sends a 1 MiB prompt
+through built stdio, wing and egg, disconnects the client, restarts wing run
+observers, and checks exact completion plus wrapper/provider argv. It checks
+`/proc/*/cmdline` on Linux and `ps` where permitted. This Mac agent sandbox
+blocks `ps`; those OS-listing checks and Linux provider acceptance remain
+separate host gates. The probe used no real login or live model request.
 
 ## Coordinator canary
 

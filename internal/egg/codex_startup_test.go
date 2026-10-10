@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -32,7 +33,7 @@ func initialCodexFixture(t *testing.T) (*runTurnRuntime, string, RunTurnRequest,
 	}
 	rt := newRunTurnRuntime(dir, backend)
 	t.Cleanup(rt.stopActive)
-	return rt, home, RunTurnRequest{RunID: "initial", Prompt: "native argv prompt", Deadline: time.Now().Add(time.Hour)}, started
+	return rt, home, RunTurnRequest{RunID: "initial", Prompt: "native initial prompt", Deadline: time.Now().Add(time.Hour)}, started
 }
 
 func initialCodexHooks(t *testing.T, rt *runTurnRuntime, home, prompt string) {
@@ -145,5 +146,69 @@ func TestCodexStartupDiagnosticUsesLastScreenAndRedactsDetails(t *testing.T) {
 	_, _ = vt.Write([]byte("\x1b[2J\x1b[HSign in secret-new-token /private/path\r\n"))
 	if got := codexStartupDiagnostic(vt.ScreenText()); got != "Startup screen: authentication required (details redacted)." {
 		t.Fatal(got)
+	}
+}
+
+func TestCodexInitialPTYWaitsForComposerAndSubmitsOneMiBOnce(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		rt, home, request, started := initialCodexFixture(t)
+		request.Prompt = strings.Repeat("x", MaxRunPromptBytes)
+		var ready atomic.Bool
+		var sends atomic.Int32
+		rt.backend.StartupReady = ready.Load
+		rt.backend.InitialSend = func(ctx context.Context, prompt string) (PromptDelivery, error) {
+			if prompt != request.Prompt || !ready.Load() {
+				t.Error("initial PTY delivery lost the prompt or bypassed composer readiness")
+			}
+			sends.Add(1)
+			initialCodexHooks(t, rt, home, prompt)
+			return PromptDelivery{BytesEnqueued: len(prompt) + 13}, nil
+		}
+		if err := rt.startInitialCodex(request); err != nil {
+			t.Fatal(err)
+		}
+		close(started)
+		synctest.Wait()
+		if sends.Load() != 0 {
+			t.Fatal("sent before the startup composer was ready")
+		}
+		ready.Store(true)
+		time.Sleep(time.Second)
+		synctest.Wait()
+		result, err := rt.get(request.RunID, false)
+		if err != nil || result.Status != "running" || result.ProviderSessionID != "thread-exact" {
+			t.Fatalf("one MiB native readiness: %+v %v", result, err)
+		}
+		if _, err := rt.submit(request); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Second)
+		if sends.Load() != 1 {
+			t.Fatal("retried initial prompt was submitted twice")
+		}
+		rt.stop(request.RunID)
+	})
+}
+
+func TestCodexComposerGateRefusesStartupModals(t *testing.T) {
+	composer := "OpenAI Codex\nAsk Codex to do anything"
+	if !codexComposerReady(composer) {
+		t.Fatal("verified composer was not recognized")
+	}
+	for _, screen := range []string{"", "Ask Codex to do anything", "OpenAI Codex", composer + "\nUpdate available", composer + "\nSign in", composer + "\nTrust this workspace", composer + "\nLoading"} {
+		if codexComposerReady(screen) {
+			t.Fatalf("accepted an incomplete or blocked composer: %q", screen)
+		}
+	}
+}
+
+func TestCodexInitialRunRejectsOversizedPromptBeforeReservation(t *testing.T) {
+	rt, _, request, _ := initialCodexFixture(t)
+	request.Prompt = strings.Repeat("x", MaxRunPromptBytes+1)
+	if err := rt.startInitialCodex(request); err == nil {
+		t.Fatal("accepted a prompt above the run bound")
+	}
+	if _, err := ReadRunTurnResult(rt.dir, request.RunID); !os.IsNotExist(err) {
+		t.Fatal("invalid initial prompt was durably reserved")
 	}
 }

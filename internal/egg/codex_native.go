@@ -2,7 +2,7 @@ package egg
 
 // This is a native-protocol building block, not an enabled provider adapter.
 // The app-server/remote-TUI path is not enabled. Interactive run turns use the
-// egg's PTY TUI, native hooks and notify records in run_codex.go instead.
+// egg's PTY TUI, native hooks and hook-bound transcript in run_codex.go instead.
 import (
 	"bytes"
 	"encoding/json"

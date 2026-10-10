@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/ehrlich-b/wingthing/internal/agent"
@@ -17,8 +16,8 @@ func codexNotifySpool(home, sessionID string) string {
 }
 
 // CodexRunArgs keeps Codex's TUI and embedded runtime in the egg's process
-// group. Native notifications publish atomically through a short-lived shell
-// callback owned by Codex; no daemon, provider restart or rollout search exists.
+// group. Completion comes from exact native hooks and their bound transcript.
+// Codex notify appends prompt-bearing JSON to argv, so disable that callback.
 func CodexRunArgs(args []string, home, sessionID string) ([]string, bool, error) {
 	hooked, err := CodexLifecycleArgs(args, home, sessionID)
 	if err != nil {
@@ -50,15 +49,8 @@ func CodexRunArgs(args []string, home, sessionID string) ([]string, bool, error)
 	if err = os.MkdirAll(spool, 0700); err != nil {
 		return nil, false, err
 	}
-	command := "printf '%s\\n' \"$1\" | (" + lifecycleHookCommand(spool) + ")"
-	// notify appends its one native JSON payload after these argv, as $1.
-	values := []string{"/bin/sh", "-c", command, "wt-codex-notify"}
-	quoted := make([]string, len(values))
-	for i, value := range values {
-		quoted[i] = strconv.Quote(value)
-	}
 	// This overrides config.toml notify; no effective-config reader exists to chain it.
-	prefix := []string{"--no-daemon", "-c", "notify=[" + strings.Join(quoted, ",") + "]"}
+	prefix := []string{"--no-daemon", "-c", "notify=[]"}
 	return append(prefix, hooked...), true, nil
 }
 
@@ -102,6 +94,12 @@ func codexRunScanner(home, sessionID, providerID, prompt string, read func(conte
 	}
 	var evidence turnEvidence
 	var receiptKey string
+	var transcriptPath string
+	var stopLast *string
+	var completion *string
+	var completionFailure agent.ErrorKind
+	var transcriptOffset int64
+	var transcriptBound bool
 	pending := make(map[string]codexTurnNotification)
 	return func() (turnEvidence, error) {
 		for {
@@ -121,10 +119,12 @@ func codexRunScanner(home, sessionID, providerID, prompt string, read func(conte
 					return evidence, err
 				}
 				var hook struct {
-					SessionID string `json:"session_id"`
-					TurnID    string `json:"turn_id"`
-					Event     string `json:"hook_event_name"`
-					Prompt    string `json:"prompt"`
+					SessionID      string  `json:"session_id"`
+					TurnID         string  `json:"turn_id"`
+					Event          string  `json:"hook_event_name"`
+					Prompt         string  `json:"prompt"`
+					TranscriptPath string  `json:"transcript_path"`
+					Last           *string `json:"last_assistant_message"`
 				}
 				if json.Unmarshal(data, &hook) != nil {
 					continue
@@ -135,6 +135,16 @@ func codexRunScanner(home, sessionID, providerID, prompt string, read func(conte
 				}
 				if providerID == "" || hook.SessionID != providerID {
 					continue
+				}
+				if hook.TranscriptPath != "" {
+					path, err := codexBoundTranscriptPath(home, providerID, hook.TranscriptPath)
+					if err != nil {
+						return evidence, err
+					}
+					if transcriptPath != "" && transcriptPath != path {
+						return evidence, errors.New("native Codex transcript changed")
+					}
+					transcriptPath = path
 				}
 				if hook.Event == "UserPromptSubmit" {
 					if receiptKey == event.SourceKey {
@@ -152,11 +162,32 @@ func codexRunScanner(home, sessionID, providerID, prompt string, read func(conte
 				if hook.Event == "Interrupt" && hook.TurnID == evidence.TurnID {
 					evidence.Failure = agent.Stopped
 				}
+				if hook.Event == "Stop" && evidence.Receipt && hook.TurnID == evidence.TurnID {
+					stopLast = hook.Last
+				}
 			}
 			advanced := view.Cursor > cursor
 			cursor = view.Cursor
 			if !view.HasMore || !advanced {
 				break
+			}
+		}
+		if evidence.Receipt && transcriptPath != "" {
+			final, flushed, err := readCodexTurnCompletion(home, transcriptPath, providerID, evidence.TurnID, &transcriptOffset, &transcriptBound)
+			if err != nil {
+				return evidence, err
+			}
+			if final.Text != nil {
+				completion = final.Text
+			}
+			if final.Failure != "" {
+				completionFailure = final.Failure
+			}
+			if flushed && completionFailure != "" {
+				evidence.Failure = completionFailure
+			}
+			if flushed && completion != nil && stopLast != nil && *completion == *stopLast {
+				evidence.Complete, evidence.Text = true, *completion
 			}
 		}
 		root, err := openProviderHome(home)

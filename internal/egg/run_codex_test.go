@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -173,7 +172,7 @@ func TestCodexRunArgsExactArgvAndNativePublisher(t *testing.T) {
 	}
 	spool := codexNotifySpool(home, "egg-exact")
 	command := "printf '%s\\n' \"$1\" | (" + lifecycleHookCommand(spool) + ")"
-	want := append([]string{"--no-daemon", "-c", "notify=[\"/bin/sh\",\"-c\"," + strconv.Quote(command) + ",\"wt-codex-notify\"]"}, hooked...)
+	want := append([]string{"--no-daemon", "-c", "notify=[]"}, hooked...)
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("argv=%q, want %q", args, want)
 	}

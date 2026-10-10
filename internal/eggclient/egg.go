@@ -886,11 +886,12 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		args = append(args, "--agent-arg="+arg)
 	}
 	if o.InitialRun != nil {
-		wire, err := json.Marshal(o.InitialRun)
+		path, err := egg.WriteInitialRunFile(dir, o.InitialRun)
 		if err != nil {
 			return nil, err
 		}
-		args = append(args, "--initial-run="+string(wire))
+		defer os.Remove(path)
+		args = append(args, "--initial-run-file-required")
 	}
 	if eggCfg.Shell != "" {
 		args = append(args, "--shell", eggCfg.Shell)
