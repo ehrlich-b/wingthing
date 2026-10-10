@@ -553,6 +553,71 @@ Cgroups v2 requires delegation from the init system (systemd usually provides th
 
 macOS Seatbelt does not support resource limits.
 
+#### Provider lifetime containment (GAPS #12 and #13)
+
+Each egg launches its provider behind a private inherited-pipe barrier. The
+provider cannot execute or fork until the egg records its process identity and,
+on Linux with cgroup v2 delegation, attaches it to a private cgroup. Existing
+sandbox memory/PID cgroups serve as that same boundary; lifecycle containment
+also applies with no configured limits and in trusted outer-boundary mode.
+The barrier preserves inherited network-bridge descriptors and sandbox namespace
+attributes. An attachment failure aborts startup before the provider executes.
+
+Stop, run deadline, idle timeout, shutdown, and provider exit clean up the same
+tree. Linux uses recursive `cgroup.kill` when available (kernel 5.14+), with
+recursive membership enumeration and identity-checked signals on older v2
+kernels. An egg enables `PR_SET_CHILD_SUBREAPER` before launch, so double-forked
+and `setsid` orphans reparent to the egg. Without writable cgroup delegation it
+uses that adoption plus repeated process-tree sweeps. Only a dedicated egg with
+one provider can attribute newly adopted children this way; pre-existing direct
+children are excluded. Adopted zombies are reaped by exact PID, never a global
+wait that could steal `exec.Cmd`'s child status.
+
+macOS inventories native kernel process records, tracks descendants across
+group/session changes, and sweeps the known process groups and sessions. Linux
+identities use kernel start ticks; macOS identities use microsecond start times.
+Signals recheck identity, and Linux uses pidfds where supported. Cleanup freezes
+identified survivors, kills them, refreshes the inventory, and waits for their
+disappearance. Native stop/timeout outcomes preserve `surviving_descendants` and set
+`containment_error` if cleanup or inventory cannot be verified. Neither field
+includes provider command arguments or environment.
+
+GAPS #12 (detached children surviving timeout) and #13 (Python multiprocessing
+resource tracker surviving stop) have regressions for a `setsid` grandchild,
+a multiprocessing worker in its own session, and its resource tracker. The
+server tests cross the actual PTY launch and cleanup paths. A Linux-only test
+forces the subreaper fallback with an immediately double-forked orphan that
+escapes ancestry before the first sweep. Native Linux cgroup acceptance remains
+a coordinator gate; cross-building on macOS is not that evidence.
+
+### Lifetime containment limits without elevated authority
+
+On macOS there is no unprivileged cgroup/subreaper equivalent. A child that
+double-forks, changes session, and loses all observed ancestry before a scan can
+escape attribution. A known detached child is killed; an unobserved fully
+detached daemon cannot be safely distinguished from unrelated same-user work.
+GAPS #12 therefore remains a platform limit for this case. Guaranteeing cleanup
+requires an operator-owned VM/container boundary or another stronger supervisor.
+An empty survivor list proves only the inventory's known scope on this platform.
+
+Linux cgroups require delegation by the host's service manager/operator; WT
+does not acquire root or modify host delegation. Subreaper sweeps handle normal
+daemonization, but cannot provide the kernel's atomic fork containment. A process
+that changes credentials beyond the egg's signal authority, hides from the
+inventory, or outlives a forcibly killed egg can escape the fallback. Even a
+delegated cgroup is a lifetime boundary, not hostile same-UID isolation: a
+provider with permission to write an ancestor/foreign `cgroup.procs` can migrate
+itself out. Root, an external launcher/service manager, or an outer VM/container
+must enforce a non-escapable boundary for that threat model. WT reports observed
+survivors and verification failures rather than claiming GAPS #12/#13 are closed
+for these cases. Uninterruptible kernel waits can also delay SIGKILL; cleanup is
+bounded and reports failure instead of declaring success. If the egg itself is
+forcibly killed, it cannot perform its cleanup on any platform; cgroups do not
+automatically kill their members when the egg exits. The existing sandbox PID
+namespace/parent-death signals or an external service manager/VM provide that
+separate crash boundary. These regressions establish stop and timeout behavior,
+not universal cleanup after an egg SIGKILL or host crash.
+
 ### Known Limitations
 
 #### Network protocol coverage

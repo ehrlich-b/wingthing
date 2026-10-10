@@ -63,21 +63,7 @@ func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
 	}
 	// The egg Unix sockets need a short spelling on Darwin. State and provider
 	// homes remain disposable; no installed wt or real wing is used.
-	scratch := filepath.Join(repo, ".scratch")
-	if err := os.MkdirAll(scratch, 0700); err != nil {
-		t.Fatal(err)
-	}
-	alias, err := os.MkdirTemp(scratch, "l")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(fixture, alias); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(alias) })
+	alias := shortFixtureStateAlias(t, repo, fixture)
 	state := filepath.Join(alias, "s")
 	work := config.CanonicalProviderPath(fixture)
 	childWork := filepath.Join(work, "runs", "batch")

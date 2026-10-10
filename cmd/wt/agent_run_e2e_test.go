@@ -166,21 +166,7 @@ func testBuiltWTStdioWingEggFakeCodexMode(t *testing.T, modal, nativeTask bool) 
 	if err := os.WriteFile(provider, []byte("#!"+python+"\n"+fakeRunCodex), 0700); err != nil {
 		t.Fatal(err)
 	}
-	scratch := filepath.Join(repo, ".scratch")
-	if err := os.MkdirAll(scratch, 0700); err != nil {
-		t.Fatal(err)
-	}
-	alias, err := os.MkdirTemp(scratch, "e")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(fixture, alias); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Remove(alias) })
+	alias := shortFixtureStateAlias(t, repo, fixture)
 	state := filepath.Join(alias, "s")
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", state)

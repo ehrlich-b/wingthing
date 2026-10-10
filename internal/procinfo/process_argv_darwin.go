@@ -5,6 +5,7 @@ package procinfo
 import (
 	"encoding/binary"
 	"fmt"
+	"os"
 
 	"golang.org/x/sys/unix"
 )
@@ -15,6 +16,21 @@ import (
 func ProcessArgv(pid int) ([]string, error) {
 	data, err := unix.SysctlRaw("kern.procargs2", pid)
 	if err != nil {
+		// A zombie still accepts kill(pid, 0), but has no argv and Darwin
+		// returns EINVAL. Confirm it has exited before normalizing the error;
+		// inspection failures for a live process must continue to fail closed.
+		if processes, scanErr := unix.SysctlKinfoProcSlice("kern.proc.all"); scanErr == nil {
+			live := false
+			for _, process := range processes {
+				if int(process.Proc.P_pid) == pid && process.Proc.P_stat != 5 {
+					live = true
+					break
+				}
+			}
+			if !live {
+				return nil, os.ErrNotExist
+			}
+		}
 		return nil, err
 	}
 	return parseDarwinProcArgs(data)

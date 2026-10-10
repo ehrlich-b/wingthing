@@ -180,6 +180,28 @@ Session termination assertions must wait for process exit and disappearance from
 the active inventory. Interactive shells may ignore SIGTERM; a command that merely
 accepted the signal request is not evidence that the session stopped.
 
+Provider containment regressions for GAPS #12/#13 are untagged egg tests:
+
+```sh
+go test ./internal/egg -run 'Test(SessionContainmentStopAndTimeout|DeadlineKillsProcessGroupAndDetachedDescendants|SubreaperContainsImmediateOrphans|ContainmentLaunch|ProcessTreeRejectsReusedIdentities|IdentifiedSignalDoesNotKillReusedPID|ProcStatIdentityWithComplexName|CgroupMembershipIncludesNestedGroups)' -count=1 -v -timeout=90s
+```
+
+`TestSessionContainmentStopAndTimeout` runs the real server/PTY lifecycle against
+Python 3 multiprocessing, including its resource tracker and a `setsid`
+grandchild, for stop, deadline timeout and provider exit. Linux requires writable
+cgroup v2 delegation; its absence is an explicit unsupported skip. If creation
+succeeds but attachment/cleanup fails, the test fails. Python absence is a
+missing-fixture skip, not acceptance. Run this command on the coordinator's
+delegated Linux host as well as macOS; a Linux cross-build cannot close the
+runtime gate. `TestSubreaperContainsImmediateOrphans` uses a dedicated Linux helper
+and deliberately disables cgroups to exercise adoption of an already orphaned
+daemon. Launch-barrier tests require failed startup to execute no provider, cover
+zero-argument commands, and preserve inherited network descriptors. Identity
+negative controls refuse reused PIDs, parents, groups and sessions.
+
+See [containment limits](security.md#lifetime-containment-limits-without-elevated-authority)
+before interpreting an empty descendant inventory as universal cleanup evidence.
+
 The suite should consume generated schemas and capability data. Hard-coded tool
 counts such as `14`, `20`, or `27` should be replaced by an expected
 operation set for each adapter and version.
