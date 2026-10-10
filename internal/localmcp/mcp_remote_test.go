@@ -4,13 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/ehrlich-b/wingthing/internal/sshcontrol"
+	"github.com/ehrlich-b/wingthing/internal/testssh"
 )
 
 func TestMCPTerminalListRemoteArgument(t *testing.T) {
@@ -33,15 +37,37 @@ func TestMCPTerminalListRemoteArgument(t *testing.T) {
 	if strings.Contains(string(data), `"machine"`) {
 		t.Fatalf("default local response gained remote fields: %s", data)
 	}
-	sshPath := fakeInventorySSH(t, eggclient.RemoteSessionInventory{Version: "remote-test", ContractVersion: eggclient.RemoteSessionContractVersion,
-		Sessions: []eggclient.LocalSession{{ID: "remote-owned", Principal: "alpha"}, {ID: "remote-other", Principal: "beta"}}})
-	ctx := context.WithValue(context.Background(), remotepkg.IOContextKey{}, remotepkg.IO{SSHPath: sshPath})
+	h := testssh.New(t)
+	t.Setenv("PATH", h.Root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	remoteCfg := &config.Config{Dir: t.TempDir(), WingID: "remote-wing"}
+	seedRemoteListSession(t, remoteCfg, "remote-owned", "alpha")
+	seedRemoteListSession(t, remoteCfg, "remote-other", "beta")
+	remoteServer := testWingServer(t, &Server{Cfg: remoteCfg, Principal: "alpha", Logs: io.Discard})
+	listener, err := ListenLocalWingControl(t.Context(), "test", remoteServer.Sessions, "fixture-user", NewMCPAdmissionState())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	meta, err := sshcontrol.InspectLocal(t.Context(), remoteCfg.Dir, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Host(t, "host", meta)
+	if err := config.SaveRemotes(cfg.Dir, map[string]config.Remote{"work": {SSHTarget: "host", WingID: meta.WingID, WingthingDir: meta.WingthingDir, ControlSocket: meta.ControlSocket, ControlVersion: meta.Version}}); err != nil {
+		t.Fatal(err)
+	}
+	manager := newRememberedWings(t.Context(), cfg.Dir, "local-wing")
+	defer manager.Close()
+	server.remoteToolCall = func(ctx context.Context, name, tool string, args []byte) (map[string]any, error) {
+		return manager.remoteByName(ctx, controlsocket.Hello{Client: "alpha"}, name, tool, args)
+	}
+	ctx := t.Context()
 	remote, isError, protocolErr := server.callTool(ctx, "terminal_list", json.RawMessage(`{"remote":"work"}`))
 	if isError || protocolErr != nil {
 		t.Fatalf("remote list: %#v, %v", remote, protocolErr)
 	}
-	rows := remote["sessions"].([]eggclient.MachineSession)
-	if len(rows) != 1 || rows[0].ID != "remote-owned" || rows[0].Machine != "work" {
+	rows := remote["sessions"].([]any)
+	if len(rows) != 1 || rows[0].(map[string]any)["id"] != "remote-owned" || rows[0].(map[string]any)["wing_id"] != "remote-wing" {
 		t.Fatalf("remote argument did not select only the owned remote inventory: %#v", rows)
 	}
 	for _, args := range []string{`{"remote":"missing"}`, `{"remote":"me@host"}`, `{"remote":""}`, `{"remote":123}`, `{"remote":"work","extra":true}`} {

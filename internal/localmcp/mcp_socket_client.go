@@ -29,6 +29,7 @@ func ServeLocalWingClient(ctx context.Context, version, dir, clientName, convers
 }
 
 type localWingProxy struct {
+	aggregate      bool
 	version        string
 	client         *controlsocket.Client
 	onForwardError func(error)
@@ -43,6 +44,9 @@ func (s *localWingProxy) handle(ctx context.Context, request localMCPRequest) (l
 	switch request.Method {
 	case "initialize":
 		instructions := "Wingthing manages persistent sessions and bounded agent runs in your local wing. Use terminal tools for PTYs and agent_run for supervised semantic work. Accepted work survives this MCP client exiting."
+		if s.aggregate {
+			instructions = "Wingthing manages durable agents across your local wing and remembered SSH wings. Call wing_list, then pass wing_id to wing-owned tools. Offline entries stay visible; accepted runs survive SSH and MCP disconnects. Reconcile unknown admissions with the original idempotency_key."
+		}
 		if s.client.Welcome.Isolation == "outer-boundary" {
 			instructions += " This wing trusts the outer VM/container boundary; spawned processes have the full authority of its OS user."
 		}
@@ -57,7 +61,11 @@ func (s *localWingProxy) handle(ctx context.Context, request localMCPRequest) (l
 	case "ping":
 		response.Result = map[string]any{}
 	case "tools/list":
-		tools := control.Tools(control.SurfaceLocalMCP)
+		surface := control.SurfaceLocalMCP
+		if s.aggregate {
+			surface = control.SurfaceDirectMCP
+		}
+		tools := control.Tools(surface)
 		if grants := s.client.Welcome.Grants; grants != nil || s.client.Welcome.Tools != nil {
 			filtered := tools[:0]
 			for _, tool := range tools {
@@ -83,7 +91,14 @@ func (s *localWingProxy) handle(ctx context.Context, request localMCPRequest) (l
 			response.Error = &localMCPError{Code: -32602, Message: "unknown tool: " + call.Name}
 			break
 		}
-		arguments, err := shapeLocalArguments(tool, call.Arguments)
+		arguments := call.Arguments
+		if len(arguments) == 0 {
+			arguments = json.RawMessage(`{}`)
+		}
+		var err error
+		if !s.aggregate {
+			arguments, err = shapeLocalArguments(tool, arguments)
+		}
 		var data map[string]any
 		isError := false
 		if err == nil {

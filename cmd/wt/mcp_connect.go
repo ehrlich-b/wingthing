@@ -20,12 +20,12 @@ func connectMCPCmd() *cobra.Command {
 	var clientName string
 	var roost string
 	var connectTimeout time.Duration
+	var unsandboxed bool
 	command := &cobra.Command{
 		Use:   "connect",
-		Short: "Manage agents on remote wings over direct encrypted connections",
-		Long: "Run one local MCP server for every accessible wing. Wingthing uses the roost for " +
-			"identity, inventory, and WebRTC signaling; control payloads go directly to the selected wing.",
-		Args: cobra.NoArgs,
+		Short: "Manage agents on this wing and remembered SSH wings",
+		Long:  "Run one stdio MCP server for this wing and every remembered SSH wing. Use connect add once per already running remote. No account or roost is required. An explicit --roost selects the existing hosted connector.",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -35,11 +35,15 @@ func connectMCPCmd() *cobra.Command {
 			if actor == "" {
 				actor = strings.TrimSpace(os.Getenv("WT_MCP_CLIENT"))
 			}
-			if actor == "" {
-				actor = "default"
-			}
+
 			if err := eggclient.ValidateSessionName(actor); err != nil {
 				return fmt.Errorf("invalid MCP client name: %w", err)
+			}
+			if !cmd.Flags().Changed("roost") {
+				return localmcp.ServeRememberedWingClient(cmd.Context(), version, cfg.Dir, actor, unsandboxed, connectTimeout, cmd.InOrStdin(), cmd.OutOrStdout())
+			}
+			if actor == "" {
+				actor = "default"
 			}
 			tokenStore := auth.NewTokenStore(cfg.Dir)
 			token, err := tokenStore.Load()
@@ -70,7 +74,8 @@ func connectMCPCmd() *cobra.Command {
 	}
 	command.AddCommand(addConnectMCPCmd(&clientName, &connectTimeout))
 	command.PersistentFlags().StringVar(&clientName, "client", "", "MCP actor name used for attribution (or WT_MCP_CLIENT)")
+	command.Flags().BoolVar(&unsandboxed, "unsandboxed", false, "request the outer VM/container boundary on selected wings")
 	command.Flags().StringVar(&roost, "roost", "", "coordination roost URL (default: config or wingthing.ai)")
-	command.PersistentFlags().DurationVar(&connectTimeout, "connect-timeout", 15*time.Second, "deadline for establishing each direct wing connection")
+	command.PersistentFlags().DurationVar(&connectTimeout, "connect-timeout", 15*time.Second, "deadline for establishing the local or hosted control connection")
 	return command
 }

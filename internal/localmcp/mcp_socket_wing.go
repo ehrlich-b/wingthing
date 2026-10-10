@@ -30,12 +30,16 @@ func ListenLocalWingControl(ctx context.Context, version string, sessions *wings
 	if wingID == "" {
 		wingID = sessions.Config.WingID
 	}
-	return controlsocket.Listen(ctx, sessions.Config.Dir, wingID, func(hello controlsocket.Hello) (controlsocket.Welcome, controlsocket.Handler, error) {
+	remotes := newRememberedWings(ctx, sessions.Config.Dir, wingID)
+	listener, err := controlsocket.Listen(ctx, sessions.Config.Dir, wingID, func(hello controlsocket.Hello) (controlsocket.Welcome, controlsocket.Handler, error) {
 		server, err := resolveLocalWingClient(version, sessions, ownerUserID, admission, hello)
 		if err != nil {
 			return controlsocket.Welcome{}, nil, err
 		}
-		welcome := controlsocket.Welcome{Principal: server.clientPrincipal(), Actor: server.clientActor(), Grants: server.Grants, Tools: server.tools, Isolation: server.sessionIsolationMode()}
+		if hello.Aggregate && (hello.Conversation != "" || hello.Execution != "") {
+			return controlsocket.Welcome{}, nil, errors.New("aggregate control is unavailable on a conversation-bound MCP connection")
+		}
+		welcome := controlsocket.Welcome{RemoteAllowed: !server.enforcePathBounds && server.BoundConversation == "", Principal: server.clientPrincipal(), Actor: server.clientActor(), Grants: server.Grants, Tools: server.tools, Isolation: server.sessionIsolationMode()}
 		return welcome, func(callCtx context.Context, request control.DirectRequest) control.DirectResponse {
 			// Resolve each call against live wing policy and clients.yaml. A connection
 			// is not a lease on permissions revoked after its handshake.
@@ -43,13 +47,29 @@ func ListenLocalWingControl(ctx context.Context, version string, sessions *wings
 			if err != nil {
 				return control.DirectResponse{Version: control.ContractVersion, ID: request.ID, Error: err.Error(), ErrorKind: control.ErrorKindOf(err)}
 			}
-			response := current.handleDirectRequest(callCtx, request)
+			current.remoteToolCall = func(ctx context.Context, name, tool string, args []byte) (map[string]any, error) {
+				return remotes.remoteByName(ctx, hello, name, tool, args)
+			}
+			var response control.DirectResponse
+			if hello.Aggregate {
+				response = remotes.dispatch(callCtx, current, hello, request)
+			} else {
+				response = current.handleDirectRequest(callCtx, request)
+			}
 			if response.Result != nil {
-				response.Result = control.QualifyResult(wingID, response.Result)
+				if _, qualified := response.Result["wing_id"]; !qualified {
+					response.Result = control.QualifyResult(wingID, response.Result)
+				}
 			}
 			return response
 		}, nil
 	})
+	if err != nil {
+		_ = remotes.Close()
+		return nil, err
+	}
+	listener.AddCloser(remotes)
+	return listener, nil
 }
 
 func (s *Server) toolLocalWingList(arguments []byte) (map[string]any, error) {
