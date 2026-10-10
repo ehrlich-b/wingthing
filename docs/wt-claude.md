@@ -103,9 +103,10 @@ wt attach --read-only forge:SESSION_ID
 ```
 
 Read-only attachment does not claim input, resize, or change turn ownership.
-Ordinary `wt attach` checks the current client's `terminal.read` and
+With a running wing, `wt attach` checks the current client's `terminal.read` and
 `terminal.send` grants; set `WT_MCP_CLIENT` when your wing requires a named
-client.
+client. Without a wing, unnamed local CLI attachments retain direct access to
+standalone eggs. A wing policy refusal never falls back to direct access.
 
 Separately, exit the parent while workers are still running. A fresh authorized
 MCP client using `wt mcp connect` can call `agent_status`, `agent_wait`, and
