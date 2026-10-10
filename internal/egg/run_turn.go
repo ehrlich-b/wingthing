@@ -74,6 +74,7 @@ type ownedRunTurn struct {
 	err        error
 	cancel     context.CancelFunc
 	timer      *time.Timer
+	started    bool
 }
 
 // runTurnRuntime lives only in the existing egg. Client contexts cancel RPC
@@ -130,7 +131,15 @@ func readRunTurnRecord(dir, id string) (runTurnRecord, error) {
 	return record, err
 }
 
+func (rt *runTurnRuntime) reserve(request RunTurnRequest) (RunTurnResult, error) {
+	return rt.admit(request, false)
+}
+
 func (rt *runTurnRuntime) submit(request RunTurnRequest) (RunTurnResult, error) {
+	return rt.admit(request, true)
+}
+
+func (rt *runTurnRuntime) admit(request RunTurnRequest, execute bool) (RunTurnResult, error) {
 	options := SessionPromptOptions{RequestID: request.RunID, Input: request.Prompt, Timeout: time.Minute, Read: rt.backend.Read, Send: rt.backend.Send}
 	if err := validateSessionPromptOptions(options); err != nil {
 		return RunTurnResult{}, err
@@ -148,6 +157,11 @@ func (rt *runTurnRuntime) submit(request RunTurnRequest) (RunTurnResult, error) 
 		defer run.mu.Unlock()
 		if run.record.SpecHash != hash {
 			return RunTurnResult{}, errors.New("run_id already has a different prompt or deadline")
+		}
+		if execute && !run.started && !run.finishing {
+			if err := rt.begin(run, request, options); err != nil {
+				return RunTurnResult{}, err
+			}
 		}
 		return run.record.Result, run.err
 	}
@@ -178,23 +192,12 @@ func (rt *runTurnRuntime) submit(request RunTurnRequest) (RunTurnResult, error) 
 			return RunTurnResult{}, errors.New("an egg run turn is already active")
 		}
 	}
-	view, err := rt.backend.Read(context.Background(), 0, 1)
-	if err != nil {
-		return RunTurnResult{}, err
-	}
-	if !NativePromptReady(view) {
-		return RunTurnResult{}, errors.New("exact native foreground readiness is required")
-	}
-	scan, err := rt.backend.Prepare(request.Prompt, view.ProviderSessionID)
-	if err != nil {
-		return RunTurnResult{}, err
-	}
-	result := RunTurnResult{RunID: request.RunID, SessionID: filepath.Base(rt.dir), Status: "pending", Deadline: request.Deadline.UTC(), ProviderSessionID: view.ProviderSessionID}
+	result := RunTurnResult{RunID: request.RunID, SessionID: filepath.Base(rt.dir), Status: "pending", Deadline: request.Deadline.UTC()}
 	run := &ownedRunTurn{record: runTurnRecord{Version: 1, SpecHash: hash, Result: result}, done: make(chan struct{}), workerDone: make(chan struct{})}
-	if err = persistRunTurn(rt.dir, run.record); err != nil {
+	if err := persistRunTurn(rt.dir, run.record); err != nil {
 		return RunTurnResult{}, err
 	}
-	workerCtx, cancel := context.WithDeadline(context.Background(), request.Deadline)
+	_, cancel := context.WithDeadline(context.Background(), request.Deadline)
 	run.cancel = cancel
 	rt.runs[request.RunID] = run
 	// Admission is durable before arming execution, and the timer is armed before
@@ -202,8 +205,46 @@ func (rt *runTurnRuntime) submit(request RunTurnRequest) (RunTurnResult, error) 
 	run.mu.Lock()
 	run.timer = time.AfterFunc(time.Until(request.Deadline), func() { rt.finish(run, "timeout", agent.Timeout, turnEvidence{}, true) })
 	run.mu.Unlock()
-	go rt.execute(workerCtx, run, options, scan)
+	close(run.workerDone)
+	if execute {
+		run.mu.Lock()
+		err := rt.begin(run, request, options)
+		result = run.record.Result
+		run.mu.Unlock()
+		if err != nil {
+			return RunTurnResult{}, err
+		}
+	}
 	return result, nil
+}
+
+// begin is called with the runtime and run locks held. Reserving arms the
+// deadline independently of readiness; only Submit authorizes prompt input.
+func (rt *runTurnRuntime) begin(run *ownedRunTurn, request RunTurnRequest, options SessionPromptOptions) error {
+	view, err := rt.backend.Read(context.Background(), 0, 1)
+	if err != nil {
+		return err
+	}
+	if !NativePromptReady(view) {
+		return errors.New("exact native foreground readiness is required")
+	}
+	scan, err := rt.backend.Prepare(request.Prompt, view.ProviderSessionID)
+	if err != nil {
+		return err
+	}
+	record := run.record
+	record.Result.ProviderSessionID = view.ProviderSessionID
+	if err = persistRunTurn(rt.dir, record); err != nil {
+		return err
+	}
+	run.record = record
+	run.started = true
+	run.workerDone = make(chan struct{})
+	run.cancel()
+	ctx, cancel := context.WithDeadline(context.Background(), request.Deadline)
+	run.cancel = cancel
+	go rt.execute(ctx, run, options, scan)
+	return nil
 }
 
 func (rt *runTurnRuntime) execute(ctx context.Context, run *ownedRunTurn, options SessionPromptOptions, scan func() (turnEvidence, error)) {

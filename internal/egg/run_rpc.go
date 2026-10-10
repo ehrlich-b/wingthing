@@ -20,7 +20,7 @@ type RunTurnRPCServer interface {
 
 func RegisterRunTurnRPC(server *grpc.Server, handler RunTurnRPCServer) {
 	description := grpc.ServiceDesc{ServiceName: "egg.RunTurns", HandlerType: (*RunTurnRPCServer)(nil)}
-	for _, method := range []string{"Submit", "Status", "Wait", "Result", "Stop"} {
+	for _, method := range []string{"Reserve", "Submit", "Status", "Wait", "Result", "Stop"} {
 		description.Methods = append(description.Methods, grpc.MethodDesc{MethodName: method, Handler: func(srv any, ctx context.Context, decode func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 			message := new(structpb.Struct)
 			if err := decode(message); err != nil {
@@ -71,6 +71,8 @@ func (s *Server) HandleRunTurn(ctx context.Context, method string, request RunTu
 	var result RunTurnResult
 	var err error
 	switch method {
+	case "Reserve":
+		result, err = s.runTurns.reserve(request)
 	case "Submit":
 		result, err = s.runTurns.submit(request)
 	case "Status":
@@ -126,4 +128,8 @@ func (c *Client) ReadRunTurnResult(ctx context.Context, id string) (RunTurnResul
 }
 func (c *Client) StopRunTurn(ctx context.Context, id string) (RunTurnResult, error) {
 	return c.runTurn(ctx, "Stop", RunTurnRequest{RunID: id})
+}
+
+func (c *Client) ReserveRunTurn(ctx context.Context, request RunTurnRequest) (RunTurnResult, error) {
+	return c.runTurn(ctx, "Reserve", request)
 }

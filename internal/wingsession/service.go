@@ -51,8 +51,11 @@ type Service struct {
 	// Spawn is replaceable by isolated protocol fixtures; production uses SpawnEgg.
 	Spawn func(*Launch, StartOptions) (*egg.Client, error)
 	// Register installs wing input routing before Start acknowledges the egg.
-	Register func(string) error
-	tools    sync.Map // session ID -> wing-owned tool listener
+	Register   func(string) error
+	tools      sync.Map // session ID -> wing-owned tool listener
+	runMu      sync.Mutex
+	RunManager *Runs
+	RunBackend *RunBackend
 }
 
 type Launch struct {
