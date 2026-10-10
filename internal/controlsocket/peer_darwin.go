@@ -19,7 +19,10 @@ func checkPeer(conn *net.UnixConn) error {
 	var gid C.gid_t
 	var peerErr error
 	if err := raw.Control(func(fd uintptr) {
-		_, peerErr = C.getpeereid(C.int(fd), &uid, &gid)
+		result, callErr := C.getpeereid(C.int(fd), &uid, &gid)
+		if result != 0 {
+			peerErr = callErr
+		}
 	}); err != nil {
 		return err
 	}

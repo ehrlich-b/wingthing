@@ -1085,6 +1085,20 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	})
 	defer stopSessionRegistration()
 	directMCPAdmission.Sessions = sessions
+	ownerUserID := tok.UserID
+	if !sharedHost && orgFlag == "" && ownerUserID == "" {
+		ownerUserID, err = bindLocalWingOwner(cfg.Dir, roostURL, tok, local)
+		if err != nil {
+			return fmt.Errorf("bind local wing owner: %w", err)
+		}
+	}
+	localControl, err := localmcp.ListenLocalWingControl(ctx, version, sessions, ownerUserID, directMCPAdmission)
+	if err != nil {
+		return fmt.Errorf("local wing control: %w", err)
+	}
+	if localControl != nil {
+		defer localControl.Close()
+	}
 	if options.SetSessionService != nil {
 		options.SetSessionService(sessions)
 	}

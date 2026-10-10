@@ -44,6 +44,7 @@ const maxConcurrentLocalMCPCalls = 64
 const maxConcurrentAgentWaitAnyCalls = 4
 
 type Server struct {
+	legacyLocalDefault                 bool
 	Sessions                           *wingsession.Service
 	sessionLaunch                      *wingsession.Launch
 	sessionRole                        string
@@ -173,11 +174,15 @@ type localMCPError struct {
 type LocalMCPTool = control.Tool
 
 func (s *Server) Serve(ctx context.Context) error {
+	return serveStdio(ctx, s.In, s.Out, s.handle)
+}
+
+func serveStdio(ctx context.Context, in io.Reader, out io.Writer, handle func(context.Context, localMCPRequest) (localMCPResponse, bool)) error {
 	callCtx, cancelCalls := context.WithCancel(ctx)
 	defer cancelCalls()
-	scanner := bufio.NewScanner(s.In)
+	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-	encoder := json.NewEncoder(s.Out)
+	encoder := json.NewEncoder(out)
 	var calls sync.WaitGroup
 	requestSlots := make(chan struct{}, maxConcurrentLocalMCPCalls)
 	var encodeMu sync.Mutex
@@ -190,7 +195,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 	}
 	dispatch := func(request localMCPRequest) {
-		response, respond := s.handle(callCtx, request)
+		response, respond := handle(callCtx, request)
 		if respond {
 			writeResponse(response)
 		}

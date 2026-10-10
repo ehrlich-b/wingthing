@@ -33,7 +33,7 @@ type Welcome struct {
 	WingID    string          `json:"wing_id"`
 	Principal string          `json:"principal,omitempty"`
 	Actor     string          `json:"actor,omitempty"`
-	Grants    map[string]bool `json:"grants,omitempty"`
+	Grants    map[string]bool `json:"grants"`
 	Error     string          `json:"error,omitempty"`
 }
 type Handler func(context.Context, control.DirectRequest) control.DirectResponse
