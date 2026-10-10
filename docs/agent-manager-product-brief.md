@@ -68,8 +68,8 @@ whether setup succeeded.
 ### Agents manage other agents
 
 An outer agent can discover available wings and workers, launch Claude or Codex,
-wait without polling, inspect structured status and results, steer a run, exchange
-owner-scoped messages, and stop it. Model choice is a parameter, not an architectural
+wait without polling, inspect structured status and results, steer a run, checkpoint
+conversation progress, and stop it. Model choice is a parameter, not an architectural
 fork. Concurrent work is bounded by policy.
 
 ### Choose the trust boundary
@@ -120,7 +120,7 @@ they become usable product workflows.
 | One office VM and one home VM, durable Claude/Codex sessions, one parent-agent inventory | Register both wings with one coordinator; run `wt mcp connect`; call `wing_list`; qualify every operation with `wing_id`. | `remote-orchestration`; working direct MCP, including the 2026-08-28 Mac-plus-Bryan physical two-host canary. |
 | The same multi-machine view for a person, without trusting public payload relay | Run one private roost behind a VPN/tailnet and valid HTTPS, enroll exact account emails, then register the wings with its gateway. The private roost supplies the browser relay inside the operator's trust boundary. | `shared-web-roost`; browser-direct hosted transport and roost federation remain gaps. |
 | Run shell setup, make a directory or Git worktree, then launch the chosen agent there | Use an existing idempotent setup script through `terminal_start`, wait for its completion canary, then call `agent_run` or `agent_start` with the resulting `cwd`. | Compose now; typed `workspace_prepare`/worktree lifecycle is P0. |
-| Let an outer agent supervise inner Claude, Codex, OpenCode, or another worker | Register local stdio MCP or the native direct connector; use semantic start/status/wait/result/steer/stop plus durable messages. | `local-subagents` and `remote-orchestration`; working. |
+| Let an outer agent supervise inner Claude, Codex, OpenCode, or another worker | Register local stdio MCP or the native direct connector; use semantic start/status/wait/result/steer/stop plus durable conversation checkpoints. | `local-subagents` and `remote-orchestration`; working. |
 | Choose agent configuration, nested sandbox, remote access, or an outer VM/container independently | Use ordinary egg policy for the nested boundary, or explicitly declare trusted outer-boundary mode when the VM/container is the sandbox. | `local-sandbox`; remote outer-boundary policy parity remains partial. |
 | Scheduled log/error review using Prometheus, Grafana, OpenSearch, or databases, followed by a Slack report | Put data access behind authenticated MCP tools. Local scheduled tasks exist, but remote schedule CRUD, revocable service identities, and typed delivery are not shipped. | P1 automation gap. |
 | Let local agents use governed Jira/log/database/context connectors | Add the authenticated roost/context-service HTTP MCP endpoint to the local client; keep connector ACLs and audit at that service. | `shared-roost-agents`; working for configured tools. |
@@ -152,7 +152,7 @@ and routing that do not exist yet.
 | User need | State | What is actually true |
 | --- | --- | --- |
 | Durable local Claude/Codex/OpenCode sessions | Working | Persistent PTYs and semantic agent runs survive client disconnects; the default idle timeout is disabled. |
-| Local agent orchestrates agents | Working | `wt mcp stdio` exposes typed terminal, agent-run, message, sandbox, prompt, loop, and swarm controls. |
+| Local agent orchestrates agents | Working | `wt mcp stdio` forwards typed terminal, agent-run, conversation, and sandbox controls to the local wing. |
 | Remote agent controls multiple wings | Field-proven across two physical wings | `wt mcp connect` listed an external macOS wing and Bryan simultaneously, reported `direct-webrtc` for both, started real Codex and Claude sessions on the qualified targets, received distinct exact responses, and stopped only the returned session IDs. A real Claude Sonnet orchestrator separately exercised the richer lifecycle on Bryan. |
 | Mixed agent backends | Working | Claude, Codex, Cursor, Gemini, Hermes, Ollama, and OpenCode adapters exist. |
 | Long-running semantic runs | Working | Start, status, events, wait, result, steer, and stop operations exist. |
@@ -162,10 +162,10 @@ and routing that do not exist yet.
 | User-selectable direct-only policy | Working on branch | `hosted_relay: deny` overrides hosted and private-roost relay entitlement at the honest gateway and again at the wing. Omitted policy remains `allow` for deployed wings. |
 | Hosted relay for native MCP | Deliberate non-feature in this slice | The connector is direct-only and says so on failure. Hosted relay access applies to the browser/control-relay surface; the native connector never silently changes transports. |
 | First-class workspace/worktree preparation | Partial | `terminal_start` accepts argv and `agent_start` accepts `cwd`; no typed one-shot execution, worktree object, setup hook, or atomic prepare-and-launch operation exists. |
-| Prompt assets, loops, and swarms remotely | Missing | These registry tools remain local-MCP-only. |
+| Prompt assets, loops, and swarms through MCP | Removed | Compose semantic agent runs and conversation controls instead. |
 | Recurring automation through MCP | Missing | Internal cron support and schedule parsing exist, but there are no schedule create/list/remove MCP tools or delivery targets. |
 | Unattended service identity | Designed only | Human OAuth exists; the service-account design has not been implemented. |
-| Bring-your-own outer sandbox | Partial | Local MCP exposes trusted outer-boundary mode. The remote direct surface does not expose an equally clear policy contract. |
+| Bring-your-own outer sandbox | Partial | Local MCP requests trusted outer-boundary mode only when the personal wing opts in with `allow_unsandboxed: true`. The remote direct surface does not expose an equally clear policy contract. |
 | Linux network confinement | Working on branch | The route-less network namespace and inherited-FD relay enforce one egress path without root; the WSL2 battery passed. |
 | Peer roost federation | Missing | A client selects a gateway URL; independent roosts are separate inventories. |
 | Durable context/memory sync | Missing | Context sync remains backlog work. |
@@ -182,7 +182,7 @@ machines. A `cwd` selects an existing directory; it does not copy a workspace.
 
 | Surface | Shipped boundary |
 | --- | --- |
-| Local CLI and `wt mcp stdio` | OS-user authority; optional named owner/actor, grants, bounds and audit. No hosted account or wing daemon is required for local stdio. |
+| Local CLI and `wt mcp stdio` | OS-user authority; optional named owner/actor, grants, bounds and audit. Local stdio requires a personal wing already running for its `WINGTHING_DIR` (`wt roost start` or `wt wing`); every tool executes in that wing. The default client shares the owner's web principal. |
 | Shared-roost HTTP `POST /mcp` | OAuth and owner/role policy; native tools operate only the embedded wing. Its roster can list external wings without controlling them. |
 | Native `wt mcp connect` | Authenticated direct WebRTC to an explicitly selected `wing_id`; qualified resources, wing-derived authority and no automatic hosted-relay fallback. |
 | Browser encrypted tunnel | Access-filtered wing roster and separate encrypted session/directory controls; hosted relay requires account entitlement and wing policy. |
@@ -400,8 +400,9 @@ should not scrape terminal state when a typed fact can exist.
 
 ### Remote automation is narrower than local automation
 
-Prompt assets, bounded loops, and swarms are local-only registry surfaces. Cron has
-no MCP surface. Therefore “everything a person can do, an LLM can do remotely” is
+The local and remote MCP surfaces share terminal, semantic-run, conversation, and
+sandbox controls. Prompt assets, bounded loops, and swarms have been removed from
+MCP. Cron has no MCP surface. Therefore “everything a person can do, an LLM can do remotely” is
 not yet an accurate claim.
 
 ### Public and private relay policy are separated
@@ -424,7 +425,7 @@ or ingress already restricts membership.
 ### Result qualification is explicit
 
 Every direct wing-owned result has a top-level `wing_id`. Resource objects returned
-by the current list/send operations (sessions and messages) also carry their own
+by the current list operations (sessions and conversations) also carry their own
 `wing_id`, so retaining one object outside its response does not create mutable
 "current wing" state. Connector tests cover nested qualification and verify that the
 wing-side source result is not mutated.
@@ -568,7 +569,7 @@ prepared workspace appears without restarting the wing.
    delivery or external server-to-server use is promoted.
 3. Add declared delivery targets with bounded payloads, retry policy, and content-safe
    audit; start with Slack webhook/app delivery and email only if ownership is clear.
-4. Decide which prompt, loop, and swarm resources are safe remotely, then expose them
+4. Decide which higher-level orchestration resources belong in the shared surface, then expose them
    through the same registry and wing qualification contract.
 5. Add headless agent-run inventory and steering to the human browser.
 6. Add deliberate context and memory synchronization with allowlists and conflict
@@ -597,7 +598,7 @@ This slice is implemented and verified on 2026-08-25.
    `cmd/wt/mcp_direct_wing_test.go`, and `test/web/orgmode.mjs` where possible.
 2. Introduce the smallest policy value type needed by direct MCP.
 3. Resolve it in the wing-side authenticated direct-channel path.
-4. Populate grants and bounds on `localMCPServer` without changing local stdio
+4. Populate grants and bounds on the wing-side MCP adapter without changing local stdio
    compatibility.
 5. Make a missing remote policy fail closed.
 6. Add table-driven tests in `cmd/wt/mcp_direct_wing_test.go` for allowed grant,

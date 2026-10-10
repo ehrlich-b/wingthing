@@ -73,7 +73,7 @@ The current implementation proves part of this:
 - self-hosted HTTP MCP calls the roost's embedded wing with authenticated
   owner and actor identity; and
 - native direct MCP selects external wings explicitly and carries the shared
-  terminal, run, message, and sandbox operation subset over WebRTC; and
+  terminal, run, conversation, and sandbox operation subset over WebRTC; and
 - the browser can aggregate sessions from several external wings registered to
   one gateway.
 
@@ -83,7 +83,8 @@ wing.
 
 ## MCP interfaces
 
-Register the local stdio server:
+Start a personal wing with `wt roost start` or `wt wing`, then register the local
+stdio client for that same `WINGTHING_DIR`:
 
 ```bash
 codex mcp add wingthing -- wt mcp stdio --client codex
@@ -102,8 +103,8 @@ The current local operation set is defined and tested in `internal/control`:
 | Sessions | `terminal_list`, `terminal_read`, `terminal_send`, `terminal_wait`, `terminal_start`, `agent_start`, `terminal_rename`, `terminal_stop` |
 | Runs | `agent_run`, `agent_status`, `agent_wait`, `agent_result`, `agent_events`, `agent_steer`, `agent_stop` |
 
-The local MCP process has the operating-system authority of the user that
-launched it. The client name controls ownership and audit attribution inside
+The local MCP process forwards calls to the already-running personal wing over
+its owner-only Unix socket. The wing owns execution and resolves client policy. The client name controls ownership and audit attribution inside
 Wingthing; it is not independent OS authentication. A mode-0600
 `~/.wingthing/clients.yaml` can restrict client names, grants, and spawn
 bounds.
@@ -114,8 +115,9 @@ A pre-isolated VM or container can use:
 wt mcp stdio --client CLIENT --unsandboxed
 ```
 
-This is a server-wide authority decision. Sessions and tasks then run with the
-VM user's authority. Capabilities and audit rows report `outer-boundary`.
+The personal wing must opt in with `allow_unsandboxed: true` in `wing.yaml`.
+Sessions and tasks then run with the VM user's authority, while the wing continues
+to enforce client grants, ownership, paths, and spawn bounds. Capabilities and audit rows report `outer-boundary`.
 
 For a self-hosted roost with OAuth:
 
@@ -127,38 +129,6 @@ codex mcp login lab
 That HTTP endpoint currently controls the roost's embedded wing. Register
 several independent roost URLs under distinct names if the parent LLM needs
 several targets. There is no peer-roost discovery or federation.
-
-## Loop and swarm semantics
-
-A loop:
-
-1. runs the base prompt;
-2. stores the task and output;
-3. adds the output to the next iteration as a dependency result;
-4. stops if `until_contains` matches; and
-5. otherwise stops at `max_iterations`, capped at 12.
-
-The runtime guarantees dependency delivery and the hard bound. It does not
-guarantee that a model follows instructions contained in a dependency result.
-
-A swarm is a DAG:
-
-```text
-research-a --\
-              +--> synthesis --> review
-research-b --/
-```
-
-- Independent ready nodes may run concurrently.
-- Dependency outputs are injected into downstream prompts.
-- Unknown dependencies, duplicate IDs, self-dependencies, and cycles are
-  rejected before a model starts.
-- A failed node prevents dependent nodes from running.
-- A graph is capped at 16 nodes and four workers.
-- Every parent and child is a durable task record.
-
-This is enough for map/reduce, independent investigation, synthesis, and staged
-review without inventing a general workflow language.
 
 ## Safety and authority
 

@@ -24,8 +24,9 @@ func ServeLocalWingClient(ctx context.Context, version, dir, clientName, convers
 }
 
 type localWingProxy struct {
-	version string
-	client  *controlsocket.Client
+	version        string
+	client         *controlsocket.Client
+	onForwardError func(error)
 }
 
 func (s *localWingProxy) handle(ctx context.Context, request localMCPRequest) (localMCPResponse, bool) {
@@ -36,11 +37,15 @@ func (s *localWingProxy) handle(ctx context.Context, request localMCPRequest) (l
 	}
 	switch request.Method {
 	case "initialize":
+		instructions := "Wingthing manages persistent sessions and bounded agent runs in your local wing. Use terminal tools for PTYs and agent_run for supervised semantic work. Accepted work survives this MCP client exiting."
+		if s.client.Welcome.Isolation == "outer-boundary" {
+			instructions += " This wing trusts the outer VM/container boundary; spawned processes have the full authority of its OS user."
+		}
 		response.Result = map[string]any{
 			"protocolVersion": localMCPProtocolVersion,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "wingthing-local", "version": s.version, "principal": s.client.Welcome.Principal, "actor": s.client.Welcome.Actor},
-			"instructions":    "Wingthing manages persistent sessions and bounded agent runs in your local wing. Use terminal tools for PTYs and agent_run for supervised semantic work. Accepted work survives this MCP client exiting.",
+			"instructions":    instructions,
 		}
 	case "notifications/initialized", "notifications/cancelled":
 		return localMCPResponse{}, false
@@ -78,6 +83,9 @@ func (s *localWingProxy) handle(ctx context.Context, request localMCPRequest) (l
 		isError := false
 		if err == nil {
 			data, isError, err = s.client.Call(ctx, call.Name, arguments)
+			if err != nil && s.onForwardError != nil {
+				s.onForwardError(err)
+			}
 		}
 		if err != nil {
 			data = map[string]any{"error": err.Error()}

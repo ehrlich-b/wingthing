@@ -57,6 +57,7 @@ func testWingServer(t *testing.T, s *Server) *Server {
 	if err != nil {
 		wc = &config.WingConfig{}
 	}
+	wc.AllowUnsandboxed = s.Unsandboxed
 	defaultEgg, err := loadRuntimeEggDefault(s.Cfg.Dir, wc)
 	if err != nil {
 		defaultEgg = egg.DefaultEggConfig()

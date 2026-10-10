@@ -1198,6 +1198,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 					wingCfgMu.Lock()
 					config.RetainContextConfig(newCfg, wingCfg.Context)
 					wingCfg.Locked = newCfg.Locked
+					wingCfg.AllowUnsandboxed = newCfg.AllowUnsandboxed
 					wingCfg.Spectate = newCfg.Spectate
 					wingCfg.AllowKeys = newCfg.AllowKeys
 					wingCfg.Admins = newCfg.Admins

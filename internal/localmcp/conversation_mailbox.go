@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"io"
 	"os"
@@ -455,6 +456,20 @@ func mailboxEnvelopeError(envelope conversationMailboxResponse) error {
 
 func forwardMailboxCall(ctx context.Context, client conversationMailboxClient, request localMCPRequest) localMCPResponse {
 	response := localMCPResponse{JSONRPC: "2.0", ID: request.ID}
+	if request.Method == "tools/call" {
+		var call localMCPToolCallParams
+		if decodeStrict(request.Params, &call) == nil {
+			if tool, ok := control.Lookup(call.Name); ok {
+				args, err := shapeLocalArguments(tool, call.Arguments)
+				if err != nil {
+					response.Error = &localMCPError{Code: -32602, Message: err.Error()}
+					return response
+				}
+				call.Arguments = args
+				request.Params, _ = json.Marshal(call)
+			}
+		}
+	}
 	envelope, err := client.exchange(ctx, conversationMailboxCall{Method: request.Method, Params: request.Params})
 	if err == nil && envelope.Error != "" {
 		err = mailboxEnvelopeError(envelope)

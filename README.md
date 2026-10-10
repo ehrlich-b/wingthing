@@ -24,11 +24,12 @@ Choose the smallest route that fits:
 
 ## 1. Local agent control: stdio MCP
 
-Install Wingthing, then register its local MCP server with the agent that will
-coordinate the work:
+Install Wingthing, start a personal wing, then register its local MCP client with
+the agent that will coordinate the work:
 
 ```bash
 curl -fsSL https://wingthing.ai/install.sh | sh
+wt roost start  # starts a local roost with its wing
 
 # Codex
 codex mcp add wingthing -- wt mcp stdio --client codex
@@ -48,15 +49,22 @@ Restart the client after registration. Ask it to call
 - start a persistent agent terminal that a person can reattach to;
 - submit a headless `agent_run` with a provider and model, then wait for its
   semantic result without parsing terminal output;
-- coordinate bounded prompt loops and dependency graphs;
-- exchange owner-scoped messages with another authenticated agent client; and
+- inspect durable conversation trees and checkpoint progress; and
 - inspect the effective sandbox before launching anything.
 
 The child agents use existing project directories and provider credentials on
 this computer. Wingthing does not clone the code or copy a provider login. The
-local server uses the current OS user's authority. `--client` supplies ownership
-and audit attribution inside Wingthing, not a new operating-system security
-boundary. Optional grants and spawn bounds live in `~/.wingthing/clients.yaml`.
+wing executes every tool and resolves `--client` against its `clients.yaml`.
+Sessions belong to the wing's owner user. The unnamed/default client shares that
+user's web and remote MCP sessions; named clients have separate logical principals
+unless `clients.yaml` maps them to a common owner. Grants and spawn bounds remain
+wing policy, within the current OS user's authority.
+
+`wt mcp stdio` requires a wing already running for the same `WINGTHING_DIR`.
+Start one with `wt roost start` or `wt wing`; stdio never starts a daemon. The
+personal wing's owner-only `control.sock` checks the connecting UID and negotiates
+the control protocol and wing ID. Local control keeps working while the relay is
+offline. Shared and organization wings do not expose this socket.
 
 ## 2. Local human terminal: sandboxed agent
 
@@ -282,7 +290,20 @@ the resolved boundary before launch. Put a default policy at
 If the machine is already an access-segregated VM, `--unsandboxed` declares the
 outer VM as the security boundary. Wingthing still provides persistence and the
 control plane, reports `outer-boundary` to MCP clients, and records that mode in
-the audit log.
+the audit log. For local MCP, the personal wing must explicitly opt in through
+its `wing.yaml`:
+
+```yaml
+allow_unsandboxed: true
+```
+
+Then `wt mcp stdio --unsandboxed --client claude` requests that profile. Paths,
+grants, ownership, and spawn bounds still apply; the flag cannot override them.
+For a work VM with a wing already running for that state directory:
+
+```bash
+ssh HOST "WINGTHING_DIR=/srv/wingthing-state wt mcp stdio --unsandboxed --client claude"
+```
 
 ## 4. Browser visibility: self-hosted roost
 

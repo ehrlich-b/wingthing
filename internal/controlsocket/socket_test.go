@@ -99,3 +99,15 @@ func TestSocketRejectsUnsafePathsAndLiveReplacement(t *testing.T) {
 		t.Fatal("symlink state accepted")
 	}
 }
+
+func TestControlEnvelopeRejectsCallerAuthorityAndTrailingData(t *testing.T) {
+	for _, input := range []string{
+		`{"version":"` + control.ContractVersion + `","principal":"owner"}`,
+		`{"version":"` + control.ContractVersion + `","grants":{"terminal.start":true}}`,
+		`{"version":"` + control.ContractVersion + `"} {"client":"default"}`,
+	} {
+		if err := strictJSON([]byte(input), new(Hello)); err == nil {
+			t.Fatalf("accepted caller authority or extra envelope: %s", input)
+		}
+	}
+}
