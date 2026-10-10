@@ -43,17 +43,7 @@ func testBuiltWTConnectRememberedSSHRun(t *testing.T, nativeTask bool) {
 	}
 	home, bin := filepath.Join(h.Root, "home"), filepath.Join(h.Root, "bin")
 	// Preserve short egg socket spellings while all data stays in this fixture.
-	alias, err := os.MkdirTemp(filepath.Join(repo, ".scratch"), "c")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(h.Root, alias); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(alias) })
+	alias := shortFixtureStateAlias(t, repo, h.Root)
 	localState, remoteState := filepath.Join(alias, "l"), filepath.Join(alias, "r")
 	for _, dir := range []string{home, bin, localState, remoteState} {
 		if err := os.Mkdir(dir, 0700); err != nil {

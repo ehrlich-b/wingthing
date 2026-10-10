@@ -60,25 +60,12 @@ func (f *localSocketEggFixture) Session(stream grpc.BidiStreamingServer[pb.Sessi
 }
 
 func TestStdioStartedSessionSurvivesClientExitAndIsWebVisible(t *testing.T) {
-	scratch, err := filepath.Abs("../../.scratch")
+	repo, err := filepath.Abs("../..")
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	alias, err := os.MkdirTemp(scratch, "m")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(root, alias); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(alias) })
+	alias := shortFixtureStateAlias(t, repo, root)
 	t.Chdir(root)
 	state := filepath.Join(alias, "s")
 	t.Setenv("WINGTHING_DIR", state)

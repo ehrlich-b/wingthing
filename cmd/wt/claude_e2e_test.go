@@ -161,17 +161,7 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool) {
 	remoteGate := testprovider.NewCompletionGate(t, remoteWork)
 	// Short state spellings keep egg sockets within Darwin sockaddr_un while
 	// their canonical paths remain outside the parent's writable workspace.
-	alias, err := os.MkdirTemp(filepath.Join(repo, ".scratch"), "c")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(home, alias); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(alias) })
+	alias := shortFixtureStateAlias(t, repo, home)
 	localState, remoteState := filepath.Join(alias, "l"), filepath.Join(alias, "r")
 	path := bin + string(os.PathListSeparator) + h.Root + string(os.PathListSeparator) + os.Getenv("PATH")
 	environment := func(state string) []string {
