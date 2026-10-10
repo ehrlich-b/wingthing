@@ -182,7 +182,7 @@ machines. A `cwd` selects an existing directory; it does not copy a workspace.
 
 | Surface | Shipped boundary |
 | --- | --- |
-| Local CLI and `wt mcp stdio` | OS-user authority; optional named owner/actor, grants, bounds and audit. Local stdio requires a personal wing already running for its `WINGTHING_DIR` (`wt roost start` or `wt wing`); every tool executes in that wing. The default client shares the owner's web principal. |
+| Local CLI and `wt mcp stdio` | OS-user authority; optional named owner/actor, grants, bounds and audit. Local stdio requires a personal wing already running for its `WINGTHING_DIR` (`wt wing start --local-only` or `wt roost start`); every tool executes in that wing. The default client resolves from the wing's persistent local owner. |
 | Shared-roost HTTP `POST /mcp` | OAuth and owner/role policy; native tools operate only the embedded wing. Its roster can list external wings without controlling them. |
 | Native `wt mcp connect` | Authenticated direct WebRTC to an explicitly selected `wing_id`; qualified resources, wing-derived authority and no automatic hosted-relay fallback. |
 | Browser encrypted tunnel | Access-filtered wing roster and separate encrypted session/directory controls; hosted relay requires account entitlement and wing policy. |
@@ -194,6 +194,27 @@ consume that registry. Their shared handler extraction remains in progress;
 browser tunnel and REST contracts still differ. A unified qualified session/run
 inventory, a wing-owned control service and `/api/v1` adapters are target work.
 Tool membership comes from the registry, rather than a prose count.
+
+For an account-free personal wing, choose a state directory and start it once:
+
+```sh
+export WINGTHING_DIR="$HOME/.local/share/wt-personal"
+wt wing start --local-only --paths "$HOME/repos"
+wt mcp stdio
+```
+
+`--local-only` serves the local control socket without reading relay credentials
+or making relay connections, even when a roost is saved in configuration. It
+requires a personal wing and cannot be combined with `--local`, `--roost` or
+`--org`. Add `--foreground` to keep the wing in the current terminal. `--local`
+continues to mean a connection to a self-hosted relay. Provider authentication
+is still configured independently on the machine that runs the eggs.
+
+`wing_list` reports the local wing's stable ID, paths and socket transport.
+Accepted sessions register locally and are reclaimed on wing boot. When relay
+access is configured, an unreachable relay or rejected token leaves local
+control running. Stop the wing with `wt wing stop`; running eggs keep their own
+lifetime and can be reclaimed on the next start.
 
 Free native MCP is separate from hosted browser relay. Browser-direct terminal
 transport has not shipped for free hosted accounts. The connector never changes

@@ -161,7 +161,7 @@ func ReadWingStatus() (*WingStatus, error) {
 }
 
 // waitForWingStatus polls wing.status for up to timeout, returning the final state.
-// Returns "connected", "auth_failed", or "" (timeout/still connecting).
+// Returns "local", "connected", "auth_failed", or "" (timeout/still connecting).
 func WaitForWingStatus(pid int, timeout time.Duration) string {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {

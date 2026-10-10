@@ -2,6 +2,7 @@ package wing
 
 import (
 	"context"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -72,8 +73,11 @@ func reconcileEggSessions(ctx context.Context, sessions *wingsession.Service) er
 		return err
 	}
 	for _, session := range active {
-		if err := sessions.Register(session.SessionID); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if err := sessions.Register(session.SessionID); err != nil {
+			log.Printf("egg: local reclaim %s: %v", session.SessionID, err)
 		}
 	}
 	return nil
