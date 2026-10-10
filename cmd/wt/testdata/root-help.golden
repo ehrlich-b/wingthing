@@ -10,7 +10,7 @@ Available Commands:
   channel      Show executable channel, isolated state, and update feed
   completion   Generate the autocompletion script for the specified shell
   conversation Inspect persistent parent and child conversations
-  daemon       Connect this machine to a relay, accessible from anywhere
+  daemon       Run this machine’s wing, locally or through a relay
   doctor       Check available agents, embedders, and API keys
   embed        Generate embeddings
   help         Help about any command

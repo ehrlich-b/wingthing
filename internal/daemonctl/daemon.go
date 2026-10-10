@@ -161,17 +161,13 @@ func ReadWingStatus() (*WingStatus, error) {
 }
 
 // waitForWingStatus polls wing.status for up to timeout, returning the final state.
-// Returns "local", "connected", "auth_failed", or "" (timeout/still connecting).
+// Returns "local", "connected", "auth_failed", "exited", or "" (timeout).
 func WaitForWingStatus(pid int, timeout time.Duration) string {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		// Check if daemon died
 		if !procinfo.OwnedProcessIsAlive(pid) {
-			// Process exited — check final status
-			if s, err := ReadWingStatus(); err == nil {
-				return s.State
-			}
-			return "auth_failed" // daemon died, likely auth
+			return "exited"
 		}
 		if s, err := ReadWingStatus(); err == nil {
 			switch s.State {

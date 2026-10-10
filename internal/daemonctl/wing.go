@@ -88,6 +88,12 @@ func RestartWingDaemonIfRunning() error {
 
 	result := WaitForWingStatus(child.Process.Pid, 5*time.Second)
 	switch result {
+	case "exited":
+		AbandonStartedDaemon(child)
+		if err := cmdutil.RemoveFiles(WingPidPath(), WingArgsPath(), WingStatusPath()); err != nil {
+			return fmt.Errorf("remove failed daemon metadata: %w", err)
+		}
+		return fmt.Errorf("wing daemon exited before readiness; inspect %s", WingLogPath())
 	case "connected":
 		fmt.Printf("wing daemon restarted (pid %d)\n", child.Process.Pid)
 		fmt.Printf("  relay: connected\n")

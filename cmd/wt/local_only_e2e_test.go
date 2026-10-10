@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,20 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func localOnlyFixtureBinary(t *testing.T, repo, fixture string) string {
+	t.Helper()
+	if binary := os.Getenv("WT_TEST_BINARY"); binary != "" {
+		return binary
+	}
+	binary := filepath.Join(fixture, "wt")
+	build := exec.Command("nice", "-n", "15", "go", "build", "-p", "2", "-buildvcs=false", "-o", binary, "./cmd/wt")
+	build.Dir = repo
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build fixture wt: %v\n%s", err, output)
+	}
+	return binary
+}
+
 // This fixture uses the actual CLI wing, stdio adapter, spawner and egg. Only
 // Codex is fake, with a FIFO barrier holding its native completion receipt.
 func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
@@ -27,15 +42,7 @@ func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture := t.TempDir()
-	binary := os.Getenv("WT_TEST_BINARY")
-	if binary == "" {
-		binary = filepath.Join(fixture, "wt")
-		build := exec.Command("nice", "-n", "15", "go", "build", "-p", "2", "-buildvcs=false", "-o", binary, "./cmd/wt")
-		build.Dir = repo
-		if output, err := build.CombinedOutput(); err != nil {
-			t.Fatalf("build fixture wt: %v\n%s", err, output)
-		}
-	}
+	binary := localOnlyFixtureBinary(t, repo, fixture)
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Fatal(err)
@@ -281,5 +288,59 @@ func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(state, name)); !os.IsNotExist(err) {
 			t.Fatalf("account-free flow wrote a relay token %s: %v", name, err)
 		}
+	}
+}
+
+func TestBuiltWTLocalOnlyDaemonBootsWithoutTokens(t *testing.T) {
+	repo, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := localOnlyFixtureBinary(t, repo, t.TempDir())
+	scratch := filepath.Join(repo, ".scratch")
+	if err := os.MkdirAll(scratch, 0700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.MkdirTemp(scratch, "daemon-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	home, state := filepath.Join(root, "home"), filepath.Join(root, "s")
+	if err := os.Mkdir(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	environment := []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=/bin:/usr/bin"}
+	start := exec.CommandContext(t.Context(), binary, "wing", "start", "--local-only", "--paths", home)
+	start.Env = environment
+	output, err := start.CombinedOutput()
+	// If a later assertion fails, terminate only the daemon admitted into this
+	// fixture's private state. It is the child launched by the command above.
+	t.Cleanup(func() {
+		if data, err := os.ReadFile(filepath.Join(state, "wing.pid")); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+				if process, err := os.FindProcess(pid); err == nil {
+					_ = process.Signal(os.Interrupt)
+				}
+			}
+		}
+	})
+	if err != nil || !strings.Contains(string(output), "local control: ready") {
+		t.Fatalf("default local-only daemon start: %v\n%s", err, output)
+	}
+	client, err := controlsocket.Dial(t.Context(), state, controlsocket.Hello{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	for _, tool := range []string{"wingthing_capabilities", "wing_list"} {
+		if result, denied, err := client.Call(t.Context(), tool, json.RawMessage(`{}`)); err != nil || denied {
+			t.Fatalf("default daemon %s: %v denied=%v error=%v", tool, result, denied, err)
+		}
+	}
+	stop := exec.CommandContext(t.Context(), binary, "wing", "stop")
+	stop.Env = environment
+	if output, err := stop.CombinedOutput(); err != nil {
+		t.Fatalf("stop fixture daemon: %v\n%s", err, output)
 	}
 }

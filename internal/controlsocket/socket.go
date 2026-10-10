@@ -232,7 +232,7 @@ func Dial(ctx context.Context, dir string, hello Hello) (*Client, error) {
 		conn, err = (&net.Dialer{}).DialContext(ctx, "unix", path)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("no local wing for WINGTHING_DIR=%s: %w; start one with wt roost start or wt wing", dir, err)
+		return nil, fmt.Errorf("no local wing for WINGTHING_DIR=%s: %w; start one with wt wing start --local-only or wt roost start", dir, err)
 	}
 	success := false
 	defer func() {
