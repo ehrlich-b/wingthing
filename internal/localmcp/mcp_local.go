@@ -212,14 +212,14 @@ scanLoop:
 				RequestID json.RawMessage `json:"requestId"`
 			}
 			if json.Unmarshal(request.Params, &params) == nil {
-				lifetimes.Cancel(string(params.RequestID))
+				lifetimes.Cancel(mcpRequestKey(params.RequestID))
 			}
 			continue
 		}
 		// Tool calls may wait for terminals or agent runs. Dispatching them
 		// independently lets the same stdio client send agent_stop, steering,
 		// and status calls while another request is waiting.
-		if request.Method == "tools/call" || request.Method == "tasks/result" {
+		if request.Method == "tools/call" || request.Method == "tasks/get" || request.Method == "tasks/result" || request.Method == "tasks/list" || request.Method == "tasks/cancel" {
 			if !acquireLocalMCPCallSlot(requestSlots) {
 				if len(request.ID) > 0 {
 					writeResponse(localMCPResponse{
@@ -229,7 +229,7 @@ scanLoop:
 				}
 				continue
 			}
-			requestCtx, finish, ok := lifetimes.Start(callCtx, string(request.ID))
+			requestCtx, finish, ok := lifetimes.Start(callCtx, mcpRequestKey(request.ID))
 			if !ok {
 				<-requestSlots
 				writeResponse(localMCPResponse{JSONRPC: "2.0", ID: request.ID, Error: &localMCPError{Code: -32600, Message: "duplicate active request ID"}})
