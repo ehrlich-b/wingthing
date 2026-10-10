@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
@@ -29,9 +28,11 @@ const contextInputDisabled = "Context tools are disabled after another user took
 
 type contextInputEgg struct {
 	pb.UnimplementedEggServer
-	onInput func([]byte)
-	inputs  atomic.Int32
-	reject  bool
+	onInput      func([]byte)
+	recordPrompt func(string) error
+	processed    chan struct{}
+	inputs       atomic.Int32
+	reject       bool
 }
 
 func (f *contextInputEgg) Session(stream grpc.BidiStreamingServer[pb.SessionMsg, pb.SessionMsg]) error {
@@ -45,6 +46,7 @@ func (f *contextInputEgg) Session(stream grpc.BidiStreamingServer[pb.SessionMsg,
 	if err := stream.Send(&pb.SessionMsg{SessionId: first.SessionId, Payload: &pb.SessionMsg_Output{Output: []byte("snapshot")}}); err != nil {
 		return err
 	}
+	var prompt string
 	for {
 		message, err := stream.Recv()
 		if err == io.EOF {
@@ -57,22 +59,46 @@ func (f *contextInputEgg) Session(stream grpc.BidiStreamingServer[pb.SessionMsg,
 		case *pb.SessionMsg_Input:
 			f.onInput(payload.Input)
 			f.inputs.Add(1)
+			if strings.HasPrefix(string(payload.Input), "\x1b[200~") {
+				prompt = strings.TrimSuffix(strings.TrimPrefix(string(payload.Input), "\x1b[200~"), "\x1b[201~")
+			}
+			select {
+			case f.processed <- struct{}{}:
+			case <-stream.Context().Done():
+				return stream.Context().Err()
+			}
+			if string(payload.Input) == "\r" && prompt != "" {
+				if err := f.recordPrompt(prompt); err != nil {
+					return err
+				}
+				prompt = ""
+			}
 		case *pb.SessionMsg_Detach:
 			return nil
 		}
 	}
 }
 
+func (f *contextInputEgg) waitInput(t *testing.T, frames int) {
+	t.Helper()
+	for range frames {
+		select {
+		case <-f.processed:
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		}
+	}
+}
+
 func contextInputToolCall(t *testing.T, path string) egg.ToolResponse {
 	t.Helper()
-	conn, err := net.DialTimeout("unix", path, time.Second)
+	conn, err := (&net.Dialer{}).DialContext(t.Context(), "unix", path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
+	stop := context.AfterFunc(t.Context(), func() { _ = conn.Close() })
+	defer stop()
 	if err := json.NewEncoder(conn).Encode(egg.ToolRequest{Tool: "context"}); err != nil {
 		t.Fatal(err)
 	}
@@ -88,21 +114,27 @@ func contextInputToolCall(t *testing.T, path string) egg.ToolResponse {
 
 func contextInputFixture(t *testing.T) (*config.Config, *contextInputEgg, string) {
 	t.Helper()
-	// Keep Unix socket names short and fixture state inside this checkout.
-	root, err := os.MkdirTemp("../..", ".ctx-")
+	root := config.CanonicalProviderPath(t.TempDir())
+	// Keep Unix socket names short while all fixture state lives in t.TempDir.
+	scratch, err := filepath.Abs("../../.scratch")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
-	root, err = filepath.Abs(root)
+	if err = os.MkdirAll(scratch, 0700); err != nil {
+		t.Fatal(err)
+	}
+	alias, err := os.MkdirTemp(scratch, "c")
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err = filepath.EvalSymlinks(root)
-	if err != nil {
+	if err = os.Remove(alias); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &config.Config{Dir: root}
+	if err = os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(alias) })
+	cfg := &config.Config{Dir: alias}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/oauth/token":
@@ -130,7 +162,7 @@ func contextInputFixture(t *testing.T) (*config.Config, *contextInputEgg, string
 		t.Fatalf("prepare tools: %v", err)
 	}
 	t.Cleanup(func() { _ = tools.Close() })
-	dir := filepath.Join(root, "eggs", "fixture")
+	dir := filepath.Join(alias, "eggs", "fixture")
 	for name, content := range map[string]string{
 		"egg.pid": fmt.Sprint(os.Getpid()), "egg.token": "fixture-token", "egg.owner": "owner",
 		"egg.meta":          "kind=agent\nagent=claude\ncwd=" + root + "\nprovider_home=" + root + "\nprovider_session_id=ours\n",
@@ -147,13 +179,43 @@ func contextInputFixture(t *testing.T) (*config.Config, *contextInputEgg, string
 	if err := os.WriteFile(filepath.Join(spool, "session.json"), []byte(`{"session_id":"ours","hook_event_name":"SessionStart"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
+	transcript := filepath.Join(root, ".claude", "projects", strings.ReplaceAll(root, "/", "-"), "ours.jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0700); err != nil {
+		t.Fatal(err)
+	}
 	socket, err := net.Listen("unix", filepath.Join(dir, "egg.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	server := grpc.NewServer()
 	t.Cleanup(server.Stop)
-	fixture := &contextInputEgg{}
+	fixture := &contextInputEgg{processed: make(chan struct{}, 8)}
+	sequence := 0
+	// A native receipt after Enter completes prompt waits by observable delivery.
+	fixture.recordPrompt = func(input string) error {
+		record, err := json.Marshal(map[string]any{"type": "user", "sessionId": "ours", "message": map[string]any{"role": "user", "content": input}})
+		if err != nil {
+			return err
+		}
+		file, err := os.OpenFile(transcript, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			return err
+		}
+		_, writeErr := file.Write(append(record, '\n'))
+		closeErr := file.Close()
+		if writeErr != nil {
+			return writeErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		sequence++
+		name := filepath.Join(spool, fmt.Sprintf("seq.%020d.json", sequence))
+		if err := os.WriteFile(name+".pending", []byte(`{"session_id":"ours","hook_event_name":"Stop"}`), 0600); err != nil {
+			return err
+		}
+		return os.Rename(name+".pending", name)
+	}
 	pb.RegisterEggServer(server, fixture)
 	go func() { _ = server.Serve(socket) }()
 	return cfg, fixture, opts.ToolSocketPath
@@ -186,10 +248,10 @@ func TestContextInputAdaptersRevokeBeforeNonOwnerInput(t *testing.T) {
 					}
 					args := map[string]any{"session": "fixture", "input": fmt.Sprintf("input-%d", index)}
 					if operation == "session_prompt" {
-						args["request_id"], args["timeout_seconds"] = fmt.Sprintf("request-%d", index), 0.2
+						args["request_id"] = fmt.Sprintf("request-%d", index)
 					}
 					arguments, _ := json.Marshal(args)
-					ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+					ctx := t.Context()
 					var result map[string]any
 					var err error
 					if adapter == "tunnel" {
@@ -205,13 +267,18 @@ func TestContextInputAdaptersRevokeBeforeNonOwnerInput(t *testing.T) {
 							t.Fatalf("MCP input failed: %v %v", result, protocolErr)
 						}
 					}
-					cancel()
 					if err != nil {
 						t.Fatal(err)
 					}
-					if operation == "session_prompt" && !result["receipt"].(egg.SessionPromptResult).TransportEnqueued {
-						t.Fatalf("prompt never reached the egg: %v", result)
+					frames := 1
+					if operation == "session_prompt" {
+						frames = 2
+						receipt := result["receipt"].(egg.SessionPromptResult)
+						if !receipt.TransportEnqueued || !receipt.NativeReceiptObserved {
+							t.Fatalf("prompt never reached the egg: %v", result)
+						}
 					}
+					fixture.waitInput(t, frames)
 					assertContext()
 				}
 				expected := int32(3)
@@ -261,7 +328,7 @@ func TestContextInputLocalMCPRejectsOtherPrincipal(t *testing.T) {
 	for _, operation := range []string{"terminal_send", "session_prompt"} {
 		args := map[string]any{"session": "fixture", "input": "owner"}
 		if operation == "session_prompt" {
-			args["request_id"], args["timeout_seconds"] = "owner", 0.2
+			args["request_id"] = "owner"
 		}
 		arguments, _ := json.Marshal(args)
 		result, isError, protocolErr := s.callTool(context.Background(), operation, arguments)
@@ -285,7 +352,7 @@ func TestContextInputRejectedClaimsPreserveAuthority(t *testing.T) {
 			fixture.onInput = func([]byte) { t.Error("rejected claim sent input") }
 			args := map[string]any{"session": "fixture", "input": "admin"}
 			if operation == "session_prompt" {
-				args["request_id"], args["timeout_seconds"] = "admin", 0.2
+				args["request_id"] = "admin"
 			}
 			arguments, _ := json.Marshal(args)
 			result, err := BrowserSessionControl("dev", context.Background(), cfg, &config.WingConfig{Org: "fixture-org"}, ws.TunnelRequest{SenderUserID: "admin", SenderOrgRole: "admin"}, operation, arguments, cfg.Dir, false)
