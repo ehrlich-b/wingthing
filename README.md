@@ -70,6 +70,20 @@ personal wing's owner-only `control.sock` checks the connecting UID and negotiat
 the control protocol and wing ID. Local control keeps working while the relay is
 offline. Shared and organization wings do not expose this socket.
 
+On a Mac, start Claude itself as a wing-owned parent with its scoped MCP already
+injected:
+
+```bash
+wt wing start --local-only --paths "$HOME/repos"
+cd "$HOME/repos/my-project"
+wt claude --name research -- --model sonnet
+# Ctrl+B Q detaches; wt attach research returns to the same session.
+```
+
+Its local and remote workers run as eggs on their owning wings. See
+[Claude across a Mac and an SSH wing](docs/wt-claude.md) for setup, durable
+receipts, disconnect recovery, and read-only observation.
+
 ## 2. Local human terminal: sandboxed agent
 
 Use the same runtime directly when a person wants the terminal:
@@ -83,8 +97,9 @@ wt attach research
 ```
 
 The provider CLI must already be installed and authenticated for the current OS
-user. The project must already exist. No Wingthing account or wing daemon is
-required.
+user. The project must already exist. No Wingthing account is required. The
+initial `wt egg` command can run independently; `wt attach` requires a running
+wing and checks that client's grants and session ownership.
 
 The CLI also exposes persistent shells, arbitrary commands, and raw terminal
 operations:

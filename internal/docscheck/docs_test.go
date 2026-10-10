@@ -272,7 +272,8 @@ func TestPublicEntryPointsKeepLocalAgentFirstHierarchy(t *testing.T) {
 	contracts := map[string][]string{
 		"README.md": {
 			"using the code and provider login already\nthere",
-			"No Wingthing account or wing daemon is\nrequired",
+			"No Wingthing account is required",
+			"`wt attach` requires a running\nwing and checks that client's grants and session ownership",
 			"It never silently falls back to the hosted relay",
 			"run the browser portal locally first",
 			"already has hosted-relay access",
