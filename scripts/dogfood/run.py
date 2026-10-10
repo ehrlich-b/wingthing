@@ -17,9 +17,11 @@ LOG_LIMIT = 256 * 1024
 LOG_COUNT = 24
 
 
-def main():
+def run_once(repo=REPO, arguments=None, timeout_seconds=12 * 60, cleanup_seconds=60):
+    """Testable wrapper; the command-line entry point keeps the production bounds."""
     os.umask(0o077)
-    logs = REPO / ".scratch/dogfood-logs"
+    arguments = sys.argv[1:] if arguments is None else arguments
+    logs = repo / ".scratch/dogfood-logs"
     logs.mkdir(mode=0o700, parents=True, exist_ok=True)
     with (logs / "run.lock").open("a") as lock:
         try:
@@ -33,7 +35,7 @@ def main():
         for stale in sorted(logs.glob("*.jsonl"))[:-(LOG_COUNT - 1)]:
             stale.unlink()
         started = time.monotonic()
-        proc = subprocess.Popen([str(REPO / "scripts/dogfood/canary.sh")] + sys.argv[1:],
+        proc = subprocess.Popen([str(repo / "scripts/dogfood/canary.sh")] + arguments,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         stderr = collections.deque(maxlen=32)
         def drain_errors():
@@ -50,11 +52,11 @@ def main():
             if proc.poll() is None:
                 os.killpg(proc.pid, signal.SIGTERM)
         def watchdog():
-            if stopped.wait(12 * 60):
+            if stopped.wait(timeout_seconds):
                 return
             expired.set()
             terminate()
-            if not stopped.wait(60) and proc.poll() is None:
+            if not stopped.wait(cleanup_seconds) and proc.poll() is None:
                 os.killpg(proc.pid, signal.SIGKILL)
         timer = threading.Thread(target=watchdog, daemon=True)
         timer.start()
@@ -96,7 +98,7 @@ def main():
                         failed = True
                         terminate()
                         break
-                code = proc.wait(timeout=60)
+                code = proc.wait(timeout=cleanup_seconds)
             except subprocess.TimeoutExpired:
                 os.killpg(proc.pid, signal.SIGKILL)
                 code = proc.wait(timeout=5)
@@ -116,4 +118,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_once())
