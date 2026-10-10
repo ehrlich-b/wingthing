@@ -34,6 +34,8 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	pionwebrtc "github.com/pion/webrtc/v4"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // The providers are protocol fixtures. Wing routing, encryption, tunnel and MCP
@@ -44,6 +46,7 @@ type sessionEggFixture struct {
 	snapshot   []byte
 	input      chan []byte
 	killed     chan struct{}
+	killErr    error
 	stop       sync.Once
 	dir        string
 	agent      string
@@ -57,6 +60,12 @@ func (f *sessionEggFixture) Status(context.Context, *pb.StatusRequest) (*pb.Stat
 	return &pb.StatusResponse{Agent: f.agent, RenderedConfig: "fixture-policy"}, nil
 }
 func (f *sessionEggFixture) Kill(context.Context, *pb.KillRequest) (*pb.KillResponse, error) {
+	f.mu.Lock()
+	err := f.killErr
+	f.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 	f.stop.Do(func() { _ = os.Remove(filepath.Join(f.dir, "egg.pid")); close(f.killed) })
 	return &pb.KillResponse{}, nil
 }
@@ -474,6 +483,89 @@ func TestMCPStartVisibleAndAttachableViaWebAPI(t *testing.T) {
 			}
 			callSessionMCP(t, owner, "terminal_stop", map[string]any{"session": id})
 		})
+	}
+}
+
+func TestUnreachableSessionStopViaWebAndMCP(t *testing.T) {
+	for _, mode := range []string{"web", "http", "direct"} {
+		for _, active := range []bool{false, true} {
+			t.Run(mode+"/active="+strconv.FormatBool(active), func(t *testing.T) {
+				f := newSessionTransportFixture(t)
+				const id = "unreachable"
+				dir := filepath.Join(f.cfg.Dir, "eggs", id)
+				if err := os.MkdirAll(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+				files := map[string]string{"egg.meta": "cwd=" + f.work + "\n", "egg.token": "unreachable-token"}
+				if active {
+					// A recycled PID is live but does not match this session; stop
+					// must clean its metadata without signaling the test process.
+					files["egg.pid"] = strconv.Itoa(os.Getpid())
+				}
+				for name, value := range files {
+					if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := eggclient.WriteEggOwner(dir, "alice", "alice@example.com"); err != nil {
+					t.Fatal(err)
+				}
+				if err := eggclient.WriteSessionPrincipal(dir, wingsession.UserPrincipal("alice")); err != nil {
+					t.Fatal(err)
+				}
+				stop := func(user string) (map[string]any, bool, error) {
+					if mode == "web" {
+						result := f.tunnel(user, map[string]any{"type": "pty.kill", "session_id": id})
+						return result, result["error"] != nil, nil
+					}
+					args, _ := json.Marshal(map[string]any{"session": id})
+					return f.mcp(mode, user)("terminal_stop", args)
+				}
+				if result, isError, err := stop("bob"); err != nil || !isError {
+					t.Fatalf("foreign stop admitted: %v, %v, %v", result, isError, err)
+				}
+				for name, want := range files {
+					data, err := os.ReadFile(filepath.Join(dir, name))
+					if err != nil || string(data) != want {
+						t.Fatalf("foreign stop changed %s: %q, %v", name, data, err)
+					}
+				}
+				if result, isError, err := stop("alice"); err != nil || isError {
+					t.Fatalf("owned stop failed: %v, %v, %v", result, isError, err)
+				}
+				if _, err := os.Stat(dir); !os.IsNotExist(err) {
+					t.Fatalf("stale session directory remains: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestSessionStopPreservesMetadataOnRPCDenial(t *testing.T) {
+	f := newSessionTransportFixture(t)
+	owner := f.mcp("http", "alice")
+	result := callSessionMCP(t, owner, "terminal_start", map[string]any{"command": []string{"fixture-command"}, "cwd": f.work})
+	id := result["session"].(string)
+	ef := f.egg(id)
+	ef.mu.Lock()
+	ef.killErr = status.Error(codes.PermissionDenied, "fixture kill denied")
+	ef.mu.Unlock()
+	args, _ := json.Marshal(map[string]any{"session": id})
+	if result, isError, err := owner("terminal_stop", args); err != nil || !isError {
+		t.Fatalf("RPC denial ignored: %v, %v, %v", result, isError, err)
+	}
+	if result := f.tunnel("alice", map[string]any{"type": "pty.kill", "session_id": id}); result["error"] == nil {
+		t.Fatalf("web RPC denial ignored: %v", result)
+	}
+	for _, name := range []string{"egg.pid", "egg.meta", "egg.owner", "egg.token", "egg.sock"} {
+		if _, err := os.Stat(filepath.Join(ef.dir, name)); err != nil {
+			t.Fatalf("RPC denial cleaned %s: %v", name, err)
+		}
+	}
+	select {
+	case <-ef.killed:
+		t.Fatal("RPC denial killed the session")
+	default:
 	}
 }
 
