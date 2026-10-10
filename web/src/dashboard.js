@@ -1,7 +1,7 @@
 import { S, DOM } from './state.js';
 import { wingDisplayName } from './helpers.js';
 import { renderDashboard, renderSidebar, renderWingDetailPage } from './render.js';
-import { getCachedWings, fetchWingSessions, mergeWingSessions, loadHome, probeWing, saveWingCache } from './data.js';
+import { getCachedWings, fetchWingSessions, mergeWingSessions, loadHome, probeWing, cancelWingProbe, saveWingCache } from './data.js';
 import { updatePaletteState } from './palette.js';
 import { tunnelCloseWing } from './tunnel.js';
 import { setNotification } from './notify.js';
@@ -77,6 +77,9 @@ export function connectAppWS() {
 }
 
 function applyWingEvent(ev) {
+    if (ev.type === 'wing.online' || ev.type === 'wing.offline' || ev.type === 'wing.config') {
+        cancelWingProbe(ev.wing_id);
+    }
     var needsFullRender = false;
     if (ev.type === 'wing.online') {
         var found = false;

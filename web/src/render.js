@@ -24,6 +24,44 @@ import { browserLocalStorage } from './storage-scope.js';
 var sessionStopPending = new Set();
 var sessionStopConfirm = new Map();
 var sessionActionErrors = new Map();
+var sidebarListenerContainers = new WeakSet();
+
+function setupSidebarListeners(container) {
+    if (sidebarListenerContainers.has(container)) return;
+    sidebarListenerContainers.add(container);
+    function eventTab(event) {
+        var tab = event.target.closest('.session-tab');
+        return tab && container === DOM.sessionTabs && container.contains(tab) ? tab : null;
+    }
+    function openSession(tab) {
+        var session = findSessionResource(S.sessionsData, tab.dataset.sid, tab.dataset.wingId);
+        if (!session || !session.swept) return;
+        if (sessionIsSelected(session, S.ptySessionId, S.ptyWingId) && S.activeView === 'terminal') return;
+        switchToSession(session.id, undefined, session.wing_id);
+    }
+    container.addEventListener('click', function(event) {
+        var tab = eventTab(event);
+        if (!tab) return;
+        var rename = event.target.closest('.session-rename-btn');
+        if (rename && tab.contains(rename)) {
+            event.stopPropagation();
+            var session = findSessionResource(S.sessionsData, tab.dataset.sid, tab.dataset.wingId);
+            if (session) beginSessionRename(tab, session);
+            return;
+        }
+        if (event.target.closest('button, input, .forking')) return;
+        openSession(tab);
+    });
+    container.addEventListener('keydown', function(event) {
+        var tab = eventTab(event);
+        if (!tab || event.target !== tab) return;
+        if (navigateSessionRows(event, Array.from(container.querySelectorAll('.session-tab')), tab)) return;
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            openSession(tab);
+        }
+    });
+}
 
 function sessionWing(session) {
     return S.wingsData.find(function(wing) { return wing.wing_id === session.wing_id; });
@@ -70,6 +108,7 @@ function sessionConnectionDot(s) {
 export function renderSidebar() {
     renderChannelBanner();
     refreshParentDot();
+    setupSidebarListeners(DOM.sessionTabs);
     // Live inventory refreshes must not discard an unfinished rename.
     if (DOM.sessionTabs.querySelector('.renaming, .forking')) return;
     var focus = captureSessionFocus(DOM.sessionTabs, document.activeElement);
@@ -99,34 +138,6 @@ export function renderSidebar() {
     // Sessions keep their saved order; state changes never move a row.
     DOM.sessionTabs.innerHTML = sessions.map(renderTab).join('');
 
-    DOM.sessionTabs.querySelectorAll('.session-tab').forEach(function(tab) {
-        function openSession() {
-            var sid = tab.dataset.sid;
-            var s = findSessionResource(S.sessionsData, sid, tab.dataset.wingId);
-            if (s && sessionIsSelected(s, S.ptySessionId, S.ptyWingId) && S.activeView === 'terminal') return;
-            if (s && !s.swept) return;
-            switchToSession(sid, undefined, tab.dataset.wingId);
-        }
-        tab.addEventListener('click', function(e) {
-            if (e.target.closest('button, input, .forking')) return;
-            openSession();
-        });
-        tab.addEventListener('keydown', function(e) {
-            if (e.target === tab && navigateSessionRows(e, Array.from(DOM.sessionTabs.querySelectorAll('.session-tab')), tab)) return;
-            if ((e.key === 'Enter' || e.key === ' ') && e.target === tab) {
-                e.preventDefault();
-                openSession();
-            }
-        });
-        var rename = tab.querySelector('.session-rename-btn');
-        if (rename) {
-            rename.addEventListener('click', function(e) {
-                e.stopPropagation();
-                var session = findSessionResource(S.sessionsData, tab.dataset.sid, tab.dataset.wingId);
-                if (session) beginSessionRename(tab, session);
-            });
-        }
-    });
     restoreSessionFocus(DOM.sessionTabs, focus);
 }
 

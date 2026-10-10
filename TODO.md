@@ -215,10 +215,10 @@ account management, org settings, audit display.
 
 - [ ] Split into `renderWings.js`, `renderSessions.js`, `renderAccount.js`,
   `renderOrg.js`, `renderAudit.js`
-- [ ] Fix event listener leaks in sidebar re-renders — `renderSidebar()` calls
-  `addEventListener` on every tab without removing old listeners, so after N
-  re-renders each tab has N click handlers. Use event delegation on the
-  container instead
+- [x] Investigated repeated sidebar listeners: `innerHTML` replaces the tab nodes;
+  100 bounded render/remove cycles retain one action per click, not N handlers.
+- [x] Prevent retained or reattached sidebar tabs from opening deleted sessions;
+  delegated listeners resolve the current qualified inventory before dispatch.
 - [x] Investigated the session switching guard: `swept` means confirmed by the
   latest wing inventory sweep. The guard intentionally refuses cached sessions after
   a wing goes offline; tests cover the reconciliation state. Rename the field in a
@@ -226,14 +226,16 @@ account management, org settings, audit display.
 
 ### JS: Async correctness
 
-- [ ] `data.js` `probeWing()` dedup — `_probeInflight` is deleted in `.finally()`
-  before callers resolve, creating a race window for duplicate probes
-- [ ] `bytesToB64()` in `helpers.js` uses O(n²) string concatenation in a loop
-  on every encrypt/decrypt — use `String.fromCharCode.apply(null, bytes)` or
-  typed array approach
-- [ ] `terminal.js` `saveTermBuffer()` debounces at 500ms and clears a session's
-  buffer on deletion, but still serializes up to 200KB per retained session with no
-  global quota. Add oldest-entry eviction or a total storage budget.
+- [x] `probeWing()` immediate fulfillment/rejection/retry already deduplicates;
+  guard stale results across disconnect, replacement identity and account changes,
+  and invalidate old probes on wing lifecycle events before probing again.
+- [x] Check `bytesToB64()` against exact byte fixtures through 262,144-byte
+  terminal chunks. No demonstrated helper defect; keep the implementation and
+  strengthen delayed cache saves/restores across account changes and reconnects.
+- [x] Bound terminal buffers and thumbnails to 2 MB total, including keys and
+  timestamp metadata, with 200 KB entries, deterministic oldest-session eviction,
+  and a 24-hour expiration. Byte accounting bounds UTF-8 and UTF-16 storage;
+  the selected session survives quota pressure, and deleted pending saves cancel.
 
 ### Tests
 
