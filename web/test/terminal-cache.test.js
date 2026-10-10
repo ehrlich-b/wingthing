@@ -206,8 +206,10 @@ test('a queued save or restore cannot write after deletion or terminal replaceme
     const h = harness(memoryStorage(), { navigator });
     const save = h.save('current', 'stale');
     const runSave = release;
-    h.context.clearTermBuffer('current', 'mac');
+    const deletion = h.context.clearTermBuffer('current', 'mac');
+    const runDeletion = release;
     runSave(); await save;
+    runDeletion(); await deletion;
     assert.equal(h.read('current'), null);
     const replayed = [];
     h.storage.setItem(sessionContentKey(TERM_BUF_PREFIX, 'mac', 'current'), 'cached');
@@ -215,4 +217,16 @@ test('a queued save or restore cannot write after deletion or terminal replaceme
     const restore = h.context.restoreTermBuffer('current', 'mac');
     h.S.ptyWingId = 'linux'; release(); await restore;
     assert.deepEqual(replayed, []);
+});
+
+test('a queued deletion belongs to its account and cannot remove a replacement account\'s cache', async () => {
+    let release;
+    const navigator = { locks: { request(_, callback) { return new Promise(resolve => { release = () => resolve(callback()); }); } } };
+    const h = harness(memoryStorage(), { navigator });
+    h.S.currentUser = { id: 'old-owner' };
+    const deletion = h.context.clearTermBuffer('current', 'mac');
+    h.S.currentUser = { id: 'new-owner' };
+    h.storage.setItem(sessionContentKey(TERM_BUF_PREFIX, 'mac', 'current'), 'new owner replay');
+    release(); await deletion;
+    assert.equal(h.read('current'), 'new owner replay');
 });

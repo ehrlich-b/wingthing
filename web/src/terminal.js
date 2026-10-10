@@ -409,12 +409,12 @@ export function saveTermBuffer() {
     clearTimeout(S.saveBufferTimer);
     S.saveBufferTimer = setTimeout(function () {
         return withTerminalCacheLock(function() {
-        try {
-            if (pending.cancelled || S.ptySessionId !== sessionId || S.ptyWingId !== wingId || S.serializeAddon !== serializer ||
-                    S.ptyWs !== socket || S.currentUser !== user) return;
-            var data = serializer.serialize();
-            if (writeTerminalCache(localStorage, TERM_BUF_PREFIX, wingId, sessionId, data)) saveTermThumb(wingId, sessionId);
-        } catch (e) {}
+            try {
+                if (pending.cancelled || S.ptySessionId !== sessionId || S.ptyWingId !== wingId || S.serializeAddon !== serializer ||
+                        S.ptyWs !== socket || S.currentUser !== user) return;
+                var data = serializer.serialize();
+                if (writeTerminalCache(localStorage, TERM_BUF_PREFIX, wingId, sessionId, data)) saveTermThumb(wingId, sessionId);
+            } catch (e) {}
         });
     }, 500);
 }
@@ -493,18 +493,20 @@ export function restoreTermBuffer(sessionId, wingId) {
     var term = S.term, selectedId = S.ptySessionId, selectedWing = S.ptyWingId;
     var socket = S.ptyWs, user = S.currentUser;
     return withTerminalCacheLock(function() {
-    try {
-        var key = sessionContentKey(TERM_BUF_PREFIX, wingId, sessionId);
-        if (!key) return;
-        sweepTerminalCache(localStorage, Date.now(), key.slice(TERM_BUF_PREFIX.length));
-        var data = readSessionContent(localStorage, TERM_BUF_PREFIX, wingId, sessionId);
-        if (data && term && S.term === term && S.ptySessionId === selectedId && S.ptyWingId === selectedWing &&
-                S.ptyWs === socket && S.currentUser === user) term.write(data);
-    } catch (e) {}
+        try {
+            if (S.term !== term || S.ptySessionId !== selectedId || S.ptyWingId !== selectedWing ||
+                    S.ptyWs !== socket || S.currentUser !== user) return;
+            var key = sessionContentKey(TERM_BUF_PREFIX, wingId, sessionId);
+            if (!key) return;
+            sweepTerminalCache(localStorage, Date.now(), key.slice(TERM_BUF_PREFIX.length));
+            var data = readSessionContent(localStorage, TERM_BUF_PREFIX, wingId, sessionId);
+            if (data && term) term.write(data);
+        } catch (e) {}
     });
 }
 
 export function clearTermBuffer(sessionId, wingId) {
+    var user = S.currentUser;
     var session = wingId ? null : findSessionResource(S.sessionsData, sessionId);
     wingId = wingId || (session && session.wing_id);
     if (pendingTermSave && pendingTermSave.sessionId === sessionId && pendingTermSave.wingId === wingId) {
@@ -513,6 +515,7 @@ export function clearTermBuffer(sessionId, wingId) {
     }
     return withTerminalCacheLock(function() {
         try {
+            if (S.currentUser !== user) return;
             clearSessionContent(localStorage, [TERM_BUF_PREFIX, TERM_THUMB_PREFIX], wingId, sessionId);
             sweepTerminalCache(localStorage, Date.now(), currentTerminalCacheGroup());
         } catch (e) {}
