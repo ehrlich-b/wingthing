@@ -430,3 +430,117 @@ func TestWingWaitAnyPreservesFinishedPendingAndHiddenErrors(t *testing.T) {
 	f.finish(t, a, "done", "")
 	f.wait(t, a)
 }
+
+func (f *runWingFixture) restart(t *testing.T) {
+	t.Helper()
+	old := f.service
+	if old.RunManager != nil {
+		if err := old.RunManager.Close(); err != nil {
+			t.Fatal(err)
+		}
+		old.RunManager = nil
+	}
+	next := &wingsession.Service{Config: old.Config, Home: old.Home, SharedHost: old.SharedHost, Policy: old.Policy, Register: old.Register, Spawn: old.Spawn, RunBackend: old.RunBackend}
+	if err := next.StartRuns(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	f.service = next
+	f.server.Sessions = next
+}
+
+func TestAgentRunSurvivesWingRestart(t *testing.T) {
+	f := newRunWingFixture(t, nil)
+	id := f.admit(t, "durable request")
+	<-f.submitted
+	f.restart(t)
+	f.finish(t, id, "complete after wing restart", "")
+	f.wait(t, id)
+	result, err := f.server.toolAgentResult(runArgs(id))
+	if err != nil || result["output"] != "complete after wing restart" || result["provider_session_id"] == "" {
+		t.Fatalf("restart: %v %v", result, err)
+	}
+	select {
+	case duplicate := <-f.submitted:
+		t.Fatalf("restart resent input: %s", duplicate)
+	default:
+	}
+	f.restart(t)
+	again, err := f.server.toolAgentResult(runArgs(id))
+	if err != nil || !reflect.DeepEqual(result, again) {
+		t.Fatalf("terminal restart changed result: %v %v", again, err)
+	}
+}
+
+func TestLostRunSubmissionAcknowledgementDoesNotResendAfterRestart(t *testing.T) {
+	f := newRunWingFixture(t, nil)
+	original := f.service.RunBackend.Submit
+	accepted := make(chan struct{})
+	f.service.RunBackend.Submit = func(ctx context.Context, cfg *config.Config, sess eggclient.LocalSession, r egg.RunTurnRequest) (egg.RunTurnResult, error) {
+		_, err := original(ctx, cfg, sess, r)
+		if err != nil {
+			return egg.RunTurnResult{}, err
+		}
+		close(accepted)
+		<-ctx.Done()
+		return egg.RunTurnResult{}, ctx.Err()
+	}
+	// Backend is captured by StartRuns, so recreate the idle service before use.
+	f.restart(t)
+	id := f.admit(t, "only once")
+	<-accepted
+	<-f.submitted
+	f.service.RunBackend.Submit = original
+	f.restart(t)
+	f.finish(t, id, "one accepted prompt", "")
+	f.wait(t, id)
+	result, err := f.server.toolAgentResult(runArgs(id))
+	if err != nil || result["status"] != "done" {
+		t.Fatalf("lost acknowledgement: %v %v", result, err)
+	}
+	select {
+	case duplicate := <-f.submitted:
+		t.Fatalf("ambiguous input resent: %s", duplicate)
+	default:
+	}
+}
+
+func TestStopIntentAndQueuedCancellationSurviveWingRestart(t *testing.T) {
+	f := newRunWingFixture(t, nil)
+	original := f.service.RunBackend.Stop
+	stopping := make(chan struct{})
+	f.service.RunBackend.Stop = func(ctx context.Context, _ *config.Config, _ eggclient.LocalSession, _ string) (egg.RunTurnResult, error) {
+		close(stopping)
+		<-ctx.Done()
+		return egg.RunTurnResult{}, ctx.Err()
+	}
+	f.restart(t)
+	parent := f.admit(t, "parent")
+	<-f.submitted
+	childData, err := f.server.toolAgentSteer(json.RawMessage(`{"run_id":"` + parent + `","prompt":"queued"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := childData["run_id"].(string)
+	stopped := make(chan error, 1)
+	go func() { _, err := f.server.toolAgentStop(runArgs(parent)); stopped <- err }()
+	<-stopping
+	if err := f.service.RunManager.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.service.RunManager = nil
+	<-stopped
+	f.service.RunBackend.Stop = original
+	f.restart(t)
+	f.wait(t, parent)
+	for _, id := range []string{parent, child} {
+		result, err := f.server.toolAgentResult(runArgs(id))
+		if err != nil || result["status"] != "stopped" {
+			t.Fatalf("stop restart: %v %v", result, err)
+		}
+	}
+	select {
+	case duplicate := <-f.submitted:
+		t.Fatalf("cancelled queue executed: %s", duplicate)
+	default:
+	}
+}

@@ -828,6 +828,9 @@ func (s *Server) checkSessionBounds() error {
 			return err
 		}
 		owned := 0
+		if s.Sessions != nil && s.Sessions.RunManager != nil {
+			owned = s.Sessions.RunManager.ReservedSessions(s.sessionAuthority())
+		}
 		for _, session := range sessions {
 			if s.ownsSession(session) {
 				owned++
