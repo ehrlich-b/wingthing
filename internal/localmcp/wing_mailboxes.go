@@ -85,7 +85,15 @@ func newWingMailboxes(ctx context.Context, version, owner string, sessions *wing
 	ctx, cancel := context.WithCancel(ctx)
 	return &wingMailboxes{ctx: ctx, cancel: cancel, version: version, owner: owner, sessions: sessions, admission: admission, remotes: remotes, active: map[string]bool{}}
 }
-func (m *wingMailboxes) Close() error { m.cancel(); m.wg.Wait(); return nil }
+func (m *wingMailboxes) Close() error {
+	// Serialize cancellation with start's context check and WaitGroup.Add, so
+	// shutdown cannot finish before an already-admitted broker is tracked.
+	m.mu.Lock()
+	m.cancel()
+	m.mu.Unlock()
+	m.wg.Wait()
+	return nil
+}
 func (m *wingMailboxes) restore() {
 	entries, _ := os.ReadDir(filepath.Join(m.sessions.Config.Dir, conversationBrokersDir))
 	for _, entry := range entries {
