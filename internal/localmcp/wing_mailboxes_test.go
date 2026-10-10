@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,6 +130,15 @@ func TestScopedParentLocalAndSSHChildrenSurviveReconnect(t *testing.T) {
 		t.Fatal("wrong provider turn")
 	}
 	for _, target := range []struct {
+		wing    string
+		receipt map[string]any
+	}{{local.server.Cfg.WingID, localReceipt}, {remote.server.Cfg.WingID, remoteReceipt}} {
+		status := scopedCall(t, client, "session_status", map[string]any{"wing_id": target.wing, "session": target.receipt["session_id"]})
+		if status["session"] != target.receipt["session_id"] {
+			t.Fatalf("native child cannot use scoped session controls: %v", status)
+		}
+	}
+	for _, target := range []struct {
 		wing, prompt, key, run string
 		receipt                map[string]any
 	}{{local.server.Cfg.WingID, "local request", "local", localID, localReceipt}, {remote.server.Cfg.WingID, "remote request", "remote", remoteID, remoteReceipt}} {
@@ -164,6 +174,7 @@ func TestScopedParentLocalAndSSHChildrenSurviveReconnect(t *testing.T) {
 	// A different parent under the same principal cannot claim these children.
 	other := scopedRegistration(t, local, reg.Wings, "other-parent")
 	scopedDenied(t, scopedClient(t, local, other), "agent_result", map[string]any{"wing_id": meta.WingID, "run_id": remoteID})
+	scopedDenied(t, scopedClient(t, local, other), "session_status", map[string]any{"wing_id": local.server.Cfg.WingID, "session": localReceipt["session_id"]})
 	scopedDenied(t, client, "agent_result", map[string]any{"wing_id": local.server.Cfg.WingID, "run_id": remoteID})
 	scopedDenied(t, client, "agent_run", map[string]any{"wing_id": "ungranted", "agent": "codex", "cwd": work, "prompt": "denied", "idempotency_key": "denied"})
 	scopedDenied(t, client, "agent_run", map[string]any{"wing_id": meta.WingID, "agent": "codex", "cwd": work, "prompt": "overlong key", "idempotency_key": strings.Repeat("x", 201)})
@@ -342,5 +353,45 @@ func TestScopedParentUnknownRemoteAdmissionPreservesCallerKey(t *testing.T) {
 	recovered := scopedCall(t, client, "agent_run", args)
 	if recovered["run_id"] != "original-run" || recovered["session_id"] != "original-session" || <-admitted != namespaced {
 		t.Fatalf("ambiguous admission retry changed child identity: %v", recovered)
+	}
+}
+
+func TestScopedParentSealsHostSSHAcrossProviderHomes(t *testing.T) {
+	h := testssh.New(t)
+	t.Setenv("HOME", h.Root)
+	endpoint := filepath.Join(h.Root, "agent.sock")
+	agent, err := net.Listen("unix", endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Close()
+	t.Setenv("SSH_AUTH_SOCK", endpoint)
+	policy := egg.DefaultEggConfig()
+	policy.Env = egg.EnvField{"*", "SSH_AUTH_SOCK"}
+	state := filepath.Join(h.Root, "state")
+	if err := os.Mkdir(state, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := sealMailboxPolicy(&config.Config{Dir: state}, policy); err != nil {
+		t.Fatal(err)
+	}
+	providerHome := filepath.Join(h.Root, "provider-home")
+	for _, entry := range policy.BuildEnv(providerHome) {
+		if strings.HasPrefix(entry, "SSH_AUTH_SOCK=") {
+			t.Fatal("scoped parent inherited the host SSH agent")
+		}
+	}
+	_, denied, _ := egg.ParseFSRules(policy.FS, providerHome)
+	for _, protected := range []string{wingpolicy.CanonicalPolicyPath(filepath.Join(h.Root, ".ssh")), wingpolicy.CanonicalPolicyPath(endpoint)} {
+		found := false
+		for _, path := range denied {
+			if path == protected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("host authentication path %s remains visible from provider home %s: %v", protected, providerHome, denied)
+		}
 	}
 }

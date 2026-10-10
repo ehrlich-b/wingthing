@@ -28,8 +28,10 @@ type providerWriteRegion struct {
 // (internal/egg/server.go): allow-default, then deny writes under the egg
 // process HOME, then reopen writable mounts, agent profile directories,
 // keychains, TMPDIR and /private/tmp. Deny and deny-write rules are
-// deliberately ignored. They only remove write access, so ignoring them may
-// refuse a safe layout but can never approve an exposed one.
+// deliberately ignored for writable regions. They only remove write access,
+// so ignoring them may refuse a safe layout but cannot approve an exposed one.
+// Literal deny-write directory entries can separately pin rename ancestors;
+// they do not make a writable target or its contents safe.
 //
 // This is a host-side model of the policy that will be rendered, used before
 // any provider runs. The native fixture separately observes the real denial.

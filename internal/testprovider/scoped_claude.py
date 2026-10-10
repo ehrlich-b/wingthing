@@ -36,9 +36,11 @@ def rpc(method,params):
 def connect():
  global client
  client=subprocess.Popen([server['command']]+server['args'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
- rpc('initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'fake-parent','version':'1'}})
+ initialized=rpc('initialize',{'protocolVersion':'2025-11-25','capabilities':{},'clientInfo':{'name':'fake-parent','version':'1'}})
+ assert initialized['protocolVersion']=='2025-11-25' and 'tasks' not in initialized['capabilities']
  catalog=rpc('tools/list',{})['tools']
  names={tool['name'] for tool in catalog}
+ assert all('execution' not in tool for tool in catalog)
  assert {'wing_list','agent_run','agent_status','agent_wait','agent_wait_any','agent_result','agent_stop','agent_steer'}<=names
 def call(name,args,denied=False):
  result=rpc('tools/call',{'name':name,'arguments':args})

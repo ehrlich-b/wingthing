@@ -40,7 +40,20 @@ func sealMailboxPolicy(cfg *config.Config, policy *egg.EggConfig) error {
 	if err != nil {
 		return err
 	}
-	policy.FS = append(append([]string{}, policy.FS...), "deny:"+state, "deny:"+wingpolicy.CanonicalPolicyPath(socket), "deny:~/.ssh")
+	policy.FS = append(append([]string{}, policy.FS...), "deny:"+state, "deny:"+wingpolicy.CanonicalPolicyPath(socket), "deny:~/.ssh", "deny:"+wingpolicy.CanonicalPolicyPath(filepath.Join(home, ".ssh")))
+	// A preview provider home differs from the wing's HOME. Deny the host's
+	// absolute keys as well as ~, and remove even an explicit agent opt-in.
+	policy.Env = append(egg.EnvField(nil), policy.Env...)
+	for i := 0; i < len(policy.Env); {
+		if policy.Env[i] == "SSH_AUTH_SOCK" {
+			policy.Env = append(policy.Env[:i], policy.Env[i+1:]...)
+		} else {
+			i++
+		}
+	}
+	for _, path := range policy.SSHAgentSocketDenyPaths(home, true) {
+		policy.FS = append(policy.FS, "deny:"+path)
+	}
 	if !wingpolicy.SessionPolicyContains(state, wingpolicy.CanonicalPolicyPath(socket)) {
 		policy.FS = append(policy.FS, "deny:"+wingpolicy.CanonicalPolicyPath(filepath.Dir(socket)))
 	}
@@ -177,6 +190,12 @@ func (m *wingMailboxes) call(ctx context.Context, reg conversationBrokerRegistra
 	req := localMCPRequest{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: call.Method, Params: call.Params}
 	if !reg.Scoped || call.Method != "tools/call" {
 		response, _ := s.handle(ctx, req)
+		if result, ok := response.Result.(map[string]any); reg.Scoped && call.Method == "initialize" && ok {
+			// The mailbox admits ordinary durable runs. Do not advertise native
+			// task methods that its envelope intentionally does not expose.
+			result["capabilities"] = map[string]any{"tools": map[string]any{}}
+			result["instructions"] = "Wingthing manages this parent's worker eggs. Call wing_list and use the selected wing's advertised workspace paths. Delegate worker tasks through agent_run. Preserve each wing_id, run_id, session_id and idempotency_key receipt; retry an ambiguous admission with the original key. Use agent_status, agent_wait and agent_result to recover recorded children across viewer, mailbox, SSH and parent exit. Native MCP task augmentation is unavailable on this scoped mailbox."
+		}
 		if reg.Scoped && call.Method == "tools/list" {
 			tools := []control.Tool{}
 			for _, tool := range control.Tools(control.SurfaceDirectMCP) {
@@ -184,7 +203,7 @@ func (m *wingMailboxes) call(ctx context.Context, reg conversationBrokerRegistra
 					tools = append(tools, tool)
 				}
 			}
-			response.Result = map[string]any{"tools": tools}
+			response.Result = map[string]any{"tools": mcpVersionTools(tools, false)}
 		}
 		return response, nil
 	}
@@ -455,6 +474,8 @@ func (m *wingMailboxes) dispatch(ctx context.Context, s *Server, request control
 	request.Arguments = args
 	var response control.DirectResponse
 	if id == m.remotes.wingID {
+		s.allowedPaths, s.enforcePathBounds = paths, true
+		s.identity.AllowedPaths = paths
 		response = s.handleDirectRequest(ctx, request)
 		if response.Result != nil {
 			response.Result = control.QualifyResult(id, response.Result)
