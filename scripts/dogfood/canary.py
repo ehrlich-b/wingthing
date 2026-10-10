@@ -144,7 +144,9 @@ class Canary:
         self.egg_pids = set()
         scratch = REPO / ".scratch"
         scratch.mkdir(mode=0o700, exist_ok=True)
-        self.root = pathlib.Path(tempfile.mkdtemp(prefix="d", dir=scratch))
+        # Eight random characters leave this long clone's egg socket at Darwin's
+        # 103-byte limit; an extra prefix would exceed it. Keep all state local.
+        self.root = pathlib.Path(tempfile.mkdtemp(prefix="", dir=scratch))
         # Seatbelt denies HOME writes, then reopens the workspace, TMPDIR and
         # provider profile directories. State must be a sibling of those roots
         # inside HOME; an ordinary temp directory outside HOME is writable too.

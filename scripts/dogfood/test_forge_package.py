@@ -1,5 +1,6 @@
 """Offline functional fixtures for the finite forge package, never installed wt."""
 import fcntl
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 
 from contracts import CHECKS
@@ -49,6 +51,7 @@ class ForgeFixture(unittest.TestCase):
         scratch = REPO / ".scratch"
         scratch.mkdir(exist_ok=True)
         self.root = Path(tempfile.mkdtemp(prefix="forge-test-", dir=scratch))
+        self.additional_roots = []
         self.repo = self.root / "checkout with spaces"
         self.scripts = self.repo / "scripts/dogfood"
         self.scripts.mkdir(parents=True)
@@ -65,8 +68,12 @@ class ForgeFixture(unittest.TestCase):
         failed = result and any(test is self for test, _ in result.errors + result.failures)
         if failed:
             print("Failed fixture retained: " + str(self.root), file=sys.stderr)
+            for root in self.additional_roots:
+                print("Failed canary layout fixture retained: " + str(root), file=sys.stderr)
         else:
             shutil.rmtree(self.root)
+            for root in self.additional_roots:
+                shutil.rmtree(root)
 
     def run_wrapper(self, mode="success", timeout=720, environment=None):
         # Only the fixture API overrides the clock bound; CLI always uses 12 minutes.
@@ -89,6 +96,24 @@ class ForgeFixture(unittest.TestCase):
 
 
 class WrapperTests(ForgeFixture):
+    def test_canary_fixture_keeps_private_layout_and_short_socket(self):
+        binary = self.root / "fake-wt"
+        binary.write_text("never executed by this layout fixture\n")
+        spec = importlib.util.spec_from_file_location("canary_layout_fixture", HERE / "canary.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        canary = module.Canary(SimpleNamespace(wt=binary))
+        self.additional_roots.append(canary.root)
+        self.assertEqual(canary.home, canary.root)
+        self.assertEqual(canary.state.parent, canary.home)
+        self.assertEqual(canary.binary.parent, canary.home)
+        self.assertNotEqual(canary.state.parent, canary.work)
+        self.assertEqual(canary.root.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(canary.state.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((canary.state / "wing.yaml").stat().st_mode & 0o777, 0o600)
+        socket = canary.state / "eggs" / ("f" * 16) / "egg.sock"
+        self.assertLessEqual(len(str(socket).encode()), 103 if sys.platform == "darwin" else 107)
+
     def test_success_and_optional_skip(self):
         result = self.run_wrapper()
         self.assertEqual(result.returncode, 0, result.stderr)

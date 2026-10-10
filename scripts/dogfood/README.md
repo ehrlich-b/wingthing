@@ -66,6 +66,11 @@ mkdir -p .scratch/tmp .scratch/gopath
 export TMPDIR="$PWD/.scratch/tmp" GOTMPDIR="$PWD/.scratch/tmp"
 export GOCACHE="$PWD/.scratch/gocache" GOMODCACHE="$PWD/.scratch/gomod" GOPATH="$PWD/.scratch/gopath"
 export GOPROXY=off GOSUMDB=off GOTOOLCHAIN=go1.26.9 GOFLAGS=-p=2 GOMAXPROCS=2
+# Select the already-staged executable; an older Go launcher may demand sumdb verification.
+dogfood_go_os=$(uname -s | tr '[:upper:]' '[:lower:]')
+dogfood_go_arch=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+export PATH="$GOMODCACHE/golang.org/toolchain@v0.0.1-go1.26.9.$dogfood_go_os-$dogfood_go_arch/bin:$PATH"
+go version
 export npm_config_cache="$PWD/.scratch/npm" npm_config_offline=true PYTHONDONTWRITEBYTECODE=1
 nice -n 15 make -j1 check
 python3 -B scripts/dogfood/prepare-forge.py --repo "$PWD" --out "$PWD/.scratch/forge-package" --until 2026-10-13T12:00:00Z
