@@ -3,13 +3,181 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import '@xterm/xterm/css/xterm.css';
 import { S, DOM, TERM_BUF_PREFIX, TERM_THUMB_PREFIX } from './state.js';
-import { readSessionContent, writeSessionContent, clearSessionContent, terminalReferenceMatches } from './session-reference.js';
+import { readSessionContent, sessionContentKey, clearSessionContent, terminalReferenceMatches } from './session-reference.js';
 import { findSessionResource } from './session-inventory.js';
 import { e2eEncrypt } from './crypto.js';
 import { setNotification, clearNotification } from './notify.js';
 import { showHome } from './nav.js';
 import { sendViaDC } from './webrtc.js';
 import { cleanTerminalSelection, copyTextWithFallback, terminalClipboardAvailable } from './terminal-selection.js';
+
+export var TERMINAL_CACHE_BUDGET = 2000000;
+export var TERMINAL_CACHE_ENTRY_BUDGET = 200000;
+export var TERMINAL_CACHE_MAX_AGE = 86400000;
+var TERMINAL_CACHE_INDEX = 'wt_terminal_cache_v1';
+var pendingTermSave = null;
+
+// Charge each scalar for the greater of its UTF-8 and UTF-16 storage cost.
+// This bounds both common localStorage quota conventions, including keys and
+// metadata. ASCII costs two bytes; supplementary characters cost four.
+export function terminalStorageBytes(text) {
+    var bytes = 0;
+    for (var i = 0; i < text.length; i++) {
+        var point = text.codePointAt(i);
+        bytes += point > 0xffff ? 4 : point > 0x7ff ? 3 : 2;
+        if (point > 0xffff) i++;
+    }
+    return bytes;
+}
+
+function trimTerminalBuffer(text) {
+    var bytes = 0, start = text.length;
+    while (start > 0) {
+        var next = start - 1, unit = text.charCodeAt(next);
+        if (unit >= 0xdc00 && unit <= 0xdfff && next > 0) {
+            var previous = text.charCodeAt(next - 1);
+            if (previous >= 0xd800 && previous <= 0xdbff) next--;
+        }
+        var point = text.codePointAt(next);
+        var cost = point > 0xffff ? 4 : point > 0x7ff ? 3 : 2;
+        if (bytes + cost > TERMINAL_CACHE_ENTRY_BUDGET) break;
+        bytes += cost;
+        start = next;
+    }
+    return text.slice(start);
+}
+
+function terminalCacheEntries(storage, now) {
+    var index = {};
+    try { index = JSON.parse(storage.getItem(TERMINAL_CACHE_INDEX)) || {}; } catch (e) {}
+    var keys = [];
+    for (var i = 0; i < storage.length; i++) {
+        var key = storage.key(i);
+        if (key && (key.startsWith(TERM_BUF_PREFIX) || key.startsWith(TERM_THUMB_PREFIX))) keys.push(key);
+    }
+    return keys.map(function(key) {
+        var prefix = key.startsWith(TERM_BUF_PREFIX) ? TERM_BUF_PREFIX : TERM_THUMB_PREFIX;
+        var savedAt = index[key];
+        return { key: key, prefix: prefix, group: key.slice(prefix.length), value: storage.getItem(key),
+            savedAt: Number.isFinite(savedAt) && savedAt >= 0 ? savedAt : now };
+    }).filter(function(entry) { return entry.value !== null; });
+}
+
+function terminalCacheIndex(entries) {
+    var index = {};
+    entries.slice().sort(function(a, b) { return a.key < b.key ? -1 : a.key > b.key ? 1 : 0; })
+        .forEach(function(entry) { index[entry.key] = entry.savedAt; });
+    return JSON.stringify(index);
+}
+
+function terminalCacheBytes(entries, index) {
+    return entries.reduce(function(bytes, entry) {
+        return bytes + terminalStorageBytes(entry.key) + terminalStorageBytes(entry.value);
+    }, terminalStorageBytes(TERMINAL_CACHE_INDEX) + terminalStorageBytes(index));
+}
+
+function terminalCacheGroups(entries) {
+    var groups = new Map();
+    entries.forEach(function(entry) {
+        groups.set(entry.group, Math.max(groups.get(entry.group) || 0, entry.savedAt));
+    });
+    return Array.from(groups, function(pair) { return { key: pair[0], savedAt: pair[1] }; })
+        .sort(function(a, b) { return a.savedAt - b.savedAt || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0); });
+}
+
+function removeTerminalCacheGroup(storage, entries, group) {
+    entries.filter(function(entry) { return entry.group === group; }).forEach(function(entry) { storage.removeItem(entry.key); });
+    return entries.filter(function(entry) { return entry.group !== group; });
+}
+
+function quotaError(error) {
+    return error && (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED' || error.code === 22 || error.code === 1014);
+}
+
+function currentTerminalCacheGroup() {
+    var key = sessionContentKey(TERM_BUF_PREFIX, S.ptyWingId, S.ptySessionId);
+    return key && key.slice(TERM_BUF_PREFIX.length);
+}
+
+// Re-read storage for every operation; there is no in-memory index to lose
+// another tab's save. Eviction removes a snapshot and its thumbnail together.
+function sweepTerminalCache(storage, now, pinned) {
+    var entries = terminalCacheEntries(storage, now);
+    terminalCacheGroups(entries).forEach(function(group) {
+        // Expiration applies even to the selected session. Cached output is
+        // only a preview; fresh inventory remains the attachment authority.
+        if (now - group.savedAt >= TERMINAL_CACHE_MAX_AGE) entries = removeTerminalCacheGroup(storage, entries, group.key);
+    });
+    entries = entries.filter(function(entry) {
+        if (terminalStorageBytes(entry.value) <= TERMINAL_CACHE_ENTRY_BUDGET) return true;
+        if (entry.prefix === TERM_BUF_PREFIX) {
+            entry.value = trimTerminalBuffer(entry.value);
+            storage.setItem(entry.key, entry.value);
+            return true;
+        }
+        storage.removeItem(entry.key);
+        return false;
+    });
+    while (true) {
+        var index = terminalCacheIndex(entries);
+        var previousIndex = storage.getItem(TERMINAL_CACHE_INDEX) || '';
+        var fits = Math.max(terminalCacheBytes(entries, index), terminalCacheBytes(entries, previousIndex)) <= TERMINAL_CACHE_BUDGET;
+        if (fits) {
+            try { storage.setItem(TERMINAL_CACHE_INDEX, index); return entries; }
+            catch (error) { if (!quotaError(error)) throw error; }
+        }
+        var victim = terminalCacheGroups(entries).find(function(group) { return group.key !== pinned; });
+        if (!victim) return entries;
+        entries = removeTerminalCacheGroup(storage, entries, victim.key);
+    }
+}
+
+export function writeTerminalCache(storage, prefix, wingId, sessionId, content, now) {
+    var key = sessionContentKey(prefix, wingId, sessionId);
+    if (!key || (prefix !== TERM_BUF_PREFIX && prefix !== TERM_THUMB_PREFIX)) return false;
+    now = now === undefined ? Date.now() : now;
+    if (prefix === TERM_BUF_PREFIX) content = trimTerminalBuffer(content);
+    else if (terminalStorageBytes(content) > TERMINAL_CACHE_ENTRY_BUDGET) return false;
+    try {
+        var pinned = currentTerminalCacheGroup(), target = key.slice(prefix.length);
+        var entries = sweepTerminalCache(storage, now, pinned);
+        while (true) {
+            var planned = entries.filter(function(entry) { return entry.key !== key; });
+            planned.push({ key: key, prefix: prefix, group: target, value: content, savedAt: now });
+            var index = terminalCacheIndex(planned);
+            // Reserve enough space for the index while the old value is still
+            // present, then replace the raw replay string without an envelope.
+            var fits = Math.max(terminalCacheBytes(planned, index), terminalCacheBytes(entries, index)) <= TERMINAL_CACHE_BUDGET;
+            if (fits) {
+                try {
+                    storage.setItem(TERMINAL_CACHE_INDEX, index);
+                    storage.setItem(key, content);
+                    return true;
+                } catch (error) {
+                    try { storage.setItem(TERMINAL_CACHE_INDEX, terminalCacheIndex(entries)); } catch (e) {}
+                    if (!quotaError(error)) return false;
+                }
+            }
+            // The selected session is protected under budget/quota pressure.
+            // If no other entry can make room, skip this save rather than
+            // destroy its previous snapshot or another wing's equal-ID data.
+            var victim = terminalCacheGroups(entries).find(function(group) { return group.key !== pinned && group.key !== target; });
+            if (!victim) return false;
+            entries = removeTerminalCacheGroup(storage, entries, victim.key);
+        }
+    } catch (e) { return false; }
+}
+
+function withTerminalCacheLock(callback) {
+    try {
+        if (typeof navigator !== 'undefined' && navigator.locks) {
+            return navigator.locks.request('wt-terminal-cache', callback).catch(function() { return false; });
+        }
+        // Older/insecure browsers still save synchronously and re-scan the
+        // shared storage each time; Web Locks serialize tabs when available.
+        return Promise.resolve(callback());
+    } catch (e) { return Promise.resolve(false); }
+}
 
 export function copyTerminalSelection() {
     if (!S.term || !S.term.hasSelection()) return Promise.resolve(false);
@@ -234,15 +402,18 @@ export function initTerminal() {
 export function saveTermBuffer() {
     if (!S.ptySessionId || !S.serializeAddon) return;
     var sessionId = S.ptySessionId, wingId = S.ptyWingId, serializer = S.serializeAddon;
+    if (pendingTermSave) pendingTermSave.cancelled = true;
+    var pending = { sessionId: sessionId, wingId: wingId, cancelled: false };
+    pendingTermSave = pending;
     clearTimeout(S.saveBufferTimer);
     S.saveBufferTimer = setTimeout(function () {
+        return withTerminalCacheLock(function() {
         try {
-            if (S.ptySessionId !== sessionId || S.ptyWingId !== wingId || S.serializeAddon !== serializer) return;
+            if (pending.cancelled || S.ptySessionId !== sessionId || S.ptyWingId !== wingId || S.serializeAddon !== serializer) return;
             var data = serializer.serialize();
-            if (data.length > 200000) data = data.slice(-200000);
-            writeSessionContent(localStorage, TERM_BUF_PREFIX, wingId, sessionId, data);
-            saveTermThumb(wingId, sessionId);
+            if (writeTerminalCache(localStorage, TERM_BUF_PREFIX, wingId, sessionId, data)) saveTermThumb(wingId, sessionId);
         } catch (e) {}
+        });
     }, 500);
 }
 
@@ -312,20 +483,36 @@ export function saveTermThumb(wingId, sessionId) {
             if (run) { ctx.fillStyle = lastColor; ctx.fillText(run, padX + runX * charW, padY + y * lineH); }
         }
 
-        writeSessionContent(localStorage, TERM_THUMB_PREFIX, wingId, sessionId, c.toDataURL('image/webp', 0.6));
+        writeTerminalCache(localStorage, TERM_THUMB_PREFIX, wingId, sessionId, c.toDataURL('image/webp', 0.6));
     } catch (e) {}
 }
 
 export function restoreTermBuffer(sessionId, wingId) {
+    var term = S.term, selectedId = S.ptySessionId, selectedWing = S.ptyWingId;
+    return withTerminalCacheLock(function() {
     try {
+        var key = sessionContentKey(TERM_BUF_PREFIX, wingId, sessionId);
+        if (!key) return;
+        sweepTerminalCache(localStorage, Date.now(), key.slice(TERM_BUF_PREFIX.length));
         var data = readSessionContent(localStorage, TERM_BUF_PREFIX, wingId, sessionId);
-        if (data && S.term) S.term.write(data);
+        if (data && term && S.term === term && S.ptySessionId === selectedId && S.ptyWingId === selectedWing) term.write(data);
     } catch (e) {}
+    });
 }
 
 export function clearTermBuffer(sessionId, wingId) {
     var session = wingId ? null : findSessionResource(S.sessionsData, sessionId);
-    clearSessionContent(localStorage, [TERM_BUF_PREFIX, TERM_THUMB_PREFIX], wingId || (session && session.wing_id), sessionId);
+    wingId = wingId || (session && session.wing_id);
+    if (pendingTermSave && pendingTermSave.sessionId === sessionId && pendingTermSave.wingId === wingId) {
+        pendingTermSave.cancelled = true;
+        clearTimeout(S.saveBufferTimer);
+    }
+    return withTerminalCacheLock(function() {
+        try {
+            clearSessionContent(localStorage, [TERM_BUF_PREFIX, TERM_THUMB_PREFIX], wingId, sessionId);
+            sweepTerminalCache(localStorage, Date.now(), currentTerminalCacheGroup());
+        } catch (e) {}
+    });
 }
 
 var _spectateToastTimer = null;

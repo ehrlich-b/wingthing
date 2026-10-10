@@ -232,9 +232,10 @@ account management, org settings, audit display.
 - [ ] `bytesToB64()` in `helpers.js` uses O(n²) string concatenation in a loop
   on every encrypt/decrypt — use `String.fromCharCode.apply(null, bytes)` or
   typed array approach
-- [ ] `terminal.js` `saveTermBuffer()` debounces at 500ms and clears a session's
-  buffer on deletion, but still serializes up to 200KB per retained session with no
-  global quota. Add oldest-entry eviction or a total storage budget.
+- [x] Bound terminal buffers and thumbnails to 2 MB total, including keys and
+  timestamp metadata, with 200 KB entries, deterministic oldest-session eviction,
+  and a 24-hour expiration. Byte accounting bounds UTF-8 and UTF-16 storage;
+  the selected session survives quota pressure, and deleted pending saves cancel.
 
 ### Tests
 
