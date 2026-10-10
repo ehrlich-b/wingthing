@@ -14,6 +14,11 @@ func nativeRunSupported(kind, agent string, command []string, codexRun bool) boo
 
 func (s *Server) sessionRunTurns(sess *Session, home, providerID string) *runTurnRuntime {
 	tree := &runProcessTree{root: sess.PID}
+	setRoot := func() {
+		tree.mu.Lock()
+		tree.root = sess.PID
+		tree.mu.Unlock()
+	}
 	read := func(ctx context.Context, after int64, limit int) (SessionView, error) {
 		if err := ctx.Err(); err != nil {
 			return SessionView{}, err
@@ -26,7 +31,10 @@ func (s *Server) sessionRunTurns(sess *Session, home, providerID string) *runTur
 		}
 		return ReadSessionLifecycle(s.dir, sess.Agent, sess.CWD, home, providerID, alive, after, limit)
 	}
-	backend := runTurnBackend{Agent: sess.Agent, Read: read, Done: sess.done, Kill: func() ([]RunDescendant, error) { return tree.kill(sess) }}
+	backend := runTurnBackend{Agent: sess.Agent, Read: read, Done: sess.done, Kill: func() ([]RunDescendant, error) {
+		setRoot()
+		return tree.kill(sess)
+	}, StartupDiagnostic: func() string { return codexStartupDiagnostic(sess.vterm.ScreenText()) }}
 	if !nativeRunSupported(sess.Kind, sess.Agent, sess.Command, sess.codexRun) {
 		backend.Agent = ""
 	}
@@ -43,6 +51,7 @@ func (s *Server) sessionRunTurns(sess *Session, home, providerID string) *runTur
 		}
 		last := time.Time{}
 		return func() (turnEvidence, error) {
+			setRoot()
 			if time.Since(last) >= time.Second {
 				if snapshot, err := processSnapshot(); err == nil {
 					tree.observe(snapshot)

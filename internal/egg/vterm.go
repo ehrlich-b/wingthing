@@ -132,6 +132,24 @@ func (v *VTerm) Resize(cols, rows int) {
 	v.rows = rows
 }
 
+// ScreenText returns only the currently rendered grid, excluding scrollback.
+func (v *VTerm) ScreenText() string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	var text strings.Builder
+	for y := 0; y < v.rows; y++ {
+		for x := 0; x < v.cols; x++ {
+			if cell := v.emu.CellAt(x, y); cell != nil && cell.Content != "" {
+				text.WriteString(cell.Content)
+			} else {
+				text.WriteByte(' ')
+			}
+		}
+		text.WriteByte('\n')
+	}
+	return text.String()
+}
+
 // Snapshot generates a reconnect payload: scrollback + grid + cursor restore.
 // The output is valid ANSI that any terminal emulator can consume directly.
 func (v *VTerm) Snapshot() []byte {

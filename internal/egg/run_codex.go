@@ -74,7 +74,8 @@ type codexTurnNotification struct {
 // Read only our egg's native notification spool. Thread identity comes from
 // SessionStart and turn identity from UserPromptSubmit, never file recency.
 func codexRunScanner(home, sessionID, providerID, prompt string, read func(context.Context, int64, int) (SessionView, error), readFile runFileReader) (func() (turnEvidence, error), error) {
-	if !validCodexNativeID(providerID) {
+	initialPrompt := providerID == ""
+	if !initialPrompt && !validCodexNativeID(providerID) {
 		return nil, errors.New("exact native Codex thread required")
 	}
 	root, err := openProviderHome(home)
@@ -88,14 +89,17 @@ func codexRunScanner(home, sessionID, providerID, prompt string, read func(conte
 		return nil, err
 	}
 	seen := make(map[string]bool)
-	for name := range initialFiles {
-		seen[name] = true
+	var cursor int64
+	if !initialPrompt {
+		for name := range initialFiles {
+			seen[name] = true
+		}
+		initial, err := read(context.Background(), 0, 1)
+		if err != nil {
+			return nil, err
+		}
+		cursor = initial.HeadCursor
 	}
-	initial, err := read(context.Background(), 0, 1)
-	if err != nil {
-		return nil, err
-	}
-	cursor := initial.HeadCursor
 	var evidence turnEvidence
 	var receiptKey string
 	pending := make(map[string]codexTurnNotification)
@@ -105,7 +109,7 @@ func codexRunScanner(home, sessionID, providerID, prompt string, read func(conte
 			if err != nil {
 				return evidence, err
 			}
-			if view.ProviderSessionID != providerID {
+			if providerID != "" && view.ProviderSessionID != providerID {
 				evidence.Conflict = true
 			}
 			for _, event := range view.Events {
@@ -122,7 +126,14 @@ func codexRunScanner(home, sessionID, providerID, prompt string, read func(conte
 					Event     string `json:"hook_event_name"`
 					Prompt    string `json:"prompt"`
 				}
-				if json.Unmarshal(data, &hook) != nil || hook.SessionID != providerID {
+				if json.Unmarshal(data, &hook) != nil {
+					continue
+				}
+				if initialPrompt && providerID == "" && hook.Event == "SessionStart" && validCodexNativeID(hook.SessionID) {
+					providerID = hook.SessionID
+					evidence.ProviderSessionID = providerID
+				}
+				if providerID == "" || hook.SessionID != providerID {
 					continue
 				}
 				if hook.Event == "UserPromptSubmit" {
