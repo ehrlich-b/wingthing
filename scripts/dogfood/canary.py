@@ -145,8 +145,12 @@ class Canary:
         scratch = REPO / ".scratch"
         scratch.mkdir(mode=0o700, exist_ok=True)
         self.root = pathlib.Path(tempfile.mkdtemp(prefix="d", dir=scratch))
-        self.home, self.bin, self.work, self.tmp = (self.root / x for x in ("h", "b", "w", "t"))
-        for path in (self.home, self.bin, self.work, self.tmp):
+        # Seatbelt denies HOME writes, then reopens the workspace, TMPDIR and
+        # provider profile directories. State must be a sibling of those roots
+        # inside HOME; an ordinary temp directory outside HOME is writable too.
+        self.home = self.root
+        self.bin, self.work, self.tmp = (self.home / x for x in ("b", "w", "t"))
+        for path in (self.bin, self.work, self.tmp):
             path.mkdir(mode=0o700)
         # Copy into the fixture home so a sandboxed parent can execute its client.
         self.binary = self.home / "wt"
@@ -182,7 +186,7 @@ class Canary:
         try:
             detail = action() or {}
             status = detail.pop("status_override", "pass")
-            if status == "skip" and self.args.require_all:
+            if status in ("skip", "unsupported-on-linux") and self.args.require_all:
                 raise RuntimeError(detail.get("reason", "required check unavailable"))
             self.emit(name, status, started, **detail)
             return True
@@ -190,8 +194,8 @@ class Canary:
             self.emit(name, "fail", started, error)
             return False
 
-    def new_state(self, name):
-        state = self.root / name
+    def new_state(self, name, parent=None):
+        state = (parent or self.home) / name
         state.mkdir(mode=0o700)
         (state / "wing.yaml").write_text('allow_unsandboxed: true\nroost: "http://127.0.0.1:1"\n')
         (state / "wing.yaml").chmod(0o600)
@@ -405,10 +409,37 @@ class Canary:
         require(all(result[x] == receipt[x] for x in ("run_id", "session_id", "wing_id")), "fake SSH changed child identity")
         proc.close()
 
-    def mailbox(self):
-        # The protected-write boundary is deliberately unavailable on Linux.
+    def mailbox_platform(self):
+        if sys.platform.startswith("linux"):
+            return {"status_override": "unsupported-on-linux",
+                    "reason": "Linux cannot enforce wt claude's protected state/mailbox boundary; see GAPS.md"}
         if sys.platform != "darwin":
-            return {"status_override": "skip", "reason": "Linux protected-write sandbox cannot enforce wt claude's scoped parent boundary; see GAPS.md"}
+            return {"status_override": "skip", "reason": "scoped mailbox protection is unavailable on " + sys.platform}
+
+    def mailbox_refuses_writable_state(self):
+        unsupported = self.mailbox_platform()
+        if unsupported:
+            return unsupported
+        # This refusal occurs before sandbox launch, so it can run even when
+        # the host forbids nested sandbox-exec. Only the expected policy error
+        # counts; provider crashes and unrelated startup failures must fail.
+        state = self.new_state("x", parent=self.work)
+        self.start_wing(state)
+        result = subprocess.run([str(self.binary), "claude", "--name", "dogfood-unsafe-state",
+                                 "--", "--model", "fake-parent"], env=self.environment(state),
+                                cwd=self.work, capture_output=True, timeout=TIMEOUT)
+        error = result.stderr.decode(errors="replace")[-4096:]
+        expected = (str(state.resolve()) + " is provider-writable (writable egg filesystem mount " +
+                    str(self.work.resolve()) + ")")
+        require(result.returncode != 0 and expected in error,
+                "expected provider-writable state refusal (exit " + str(result.returncode) + "): " + error)
+        require(not list((state / "eggs").glob("*/egg.pid")), "refused parent left a running egg")
+        require(not list((state / "conversation-brokers").glob("*")), "refused parent registered a mailbox")
+
+    def mailbox(self):
+        unsupported = self.mailbox_platform()
+        if unsupported:
+            return unsupported
         probe = subprocess.run(["/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)", "/usr/bin/true"], capture_output=True)
         if probe.returncode and b"sandbox_apply: Operation not permitted" in probe.stderr:
             return {"status_override": "skip", "reason": "host forbids nested sandbox-exec; native mailbox acceptance unavailable"}
@@ -552,6 +583,7 @@ class Canary:
                   ("mcp_stdio_agent_run_wait_result", self.stdio), ("mcp_client_disconnect", self.disconnect),
                   ("wing_restart_mid_run", self.restart), ("mcp_tasks_get_result_list_cancel", self.tasks),
                   ("remembered_ssh_fixture", self.remembered_fixture),
+                  ("wt_claude_refuses_provider_writable_state", self.mailbox_refuses_writable_state),
                   ("wt_claude_scoped_mailbox", self.mailbox), ("remembered_ssh_connect", self.remembered_ssh),
                   ("real_codex", self.real_codex)]
         try:

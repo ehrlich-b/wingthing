@@ -6,6 +6,9 @@ Go and npm. It never resolves `wt` from PATH, installs a binary, logs in, or
 reuses a real wing's state. Every invocation allocates a mode-0700 fixture under
 this checkout's `.scratch`, uses fresh HOME/WINGTHING_DIR, and reuses the native
 Codex, Claude and SSH fixtures in `internal/testprovider` and `internal/testssh`.
+The fixture root is HOME: protected state and the copied controller binary sit
+beside the writable workspace, TMPDIR and provider profile directories. State
+outside HOME would be provider-writable under the current Seatbelt policy.
 
 ```sh
 nice -n 15 make web
@@ -14,10 +17,11 @@ nice -n 15 go build -p 2 -buildvcs=false -o wt ./cmd/wt
 ```
 
 The runner executes once; the coordinator schedules it. Stdout contains one
-JSON record per check and one runner receipt. Each has `check`, `status`,
-`latency_ms`, and `error`. Any failure exits nonzero. Unconfigured live checks
-and unavailable OS sandbox acceptance are explicit `skip` records. A skip is
-never evidence that its flow passed. `--require-all` makes skips fail.
+JSON record per check (13 including cleanup) and one runner receipt. Each has
+`check`, `status`, `latency_ms`, and `error`. Any failure exits nonzero. Unconfigured live checks
+and unavailable OS sandbox acceptance are explicit `skip` records; Linux mailbox
+checks use `unsupported-on-linux`. Neither status is evidence that a flow passed.
+`--require-all` makes both unavailable statuses fail.
 
 The fixture checks cover local-only foreground and default-daemon startup without relay tokens,
 stdio admission/wait/result, SIGKILL of an MCP client, SIGKILL/replacement of a wing while
@@ -26,7 +30,10 @@ get/list/result/cancel including cancellation surviving a wing crash, and rememb
 execution after disconnect. The Mac scoped Claude check verifies strict MCP
 configuration, refusal of protected files/control socket and foreign IDs,
 two qualified child receipts, viewer exit, mailbox-client replacement and
-native child result recovery. Linux refuses this protected-write boundary;
+native child result recovery. A separate negative check puts state inside the
+writable workspace and requires the exact provider-writable refusal before any
+egg or mailbox starts; it runs even when nested `sandbox-exec` is forbidden.
+Linux refuses this protected-write boundary;
 Mac hosts prohibiting nested `sandbox-exec` explicitly skip it. Existing tests
 are unchanged. This harness's fixture runs request the documented trusted outer
 boundary for deterministic provider tests; they do not establish OS confinement.

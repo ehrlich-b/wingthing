@@ -84,7 +84,7 @@ def main():
                         break
                     try:
                         record = json.loads(line)
-                        if not isinstance(record, dict) or record.get("status") not in ("pass", "fail", "skip"):
+                        if not isinstance(record, dict) or record.get("status") not in ("pass", "fail", "skip", "unsupported-on-linux"):
                             raise ValueError("invalid canary record")
                         require_keys = {"check", "status", "latency_ms", "error"}
                         if not require_keys <= record.keys():
@@ -106,7 +106,7 @@ def main():
                 reader.join(timeout=1)
                 proc.stdout.close()
                 proc.stderr.close()
-            failed |= code != 0 or count != 12 or expired.is_set()
+            failed |= code != 0 or count != 13 or expired.is_set()
             emit({"check": "runner", "status": "fail" if failed else "pass",
                   "latency_ms": round((time.monotonic() - started) * 1000, 2),
                   "error": ("canary failed/timed out or emitted incomplete JSONL; " +

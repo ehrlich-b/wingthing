@@ -97,12 +97,21 @@ that violated the brief's no-SSH rule. No additional network operation followed.
   not a release, update, or installed-version acceptance. Bryan must choose
   promotion and verify the exact binary/hash on each host. This task leaves the
   installed MCP host unchanged.
-- **P1 — Linux scoped Claude is unavailable:** the current Linux non-jail
-  sandbox refuses nonempty protected-write targets
-  (`internal/sandbox/protected_linux_test.go`). The canary emits an explicit
-  skip; `--require-all` fails it. Implement and independently prove the same
-  parent ceiling and protected state/socket contract before claiming two-host
-  weekend parity.
+- **P1 — Linux scoped Claude is unavailable:** the host preflight models provider
+  writes only for macOS (`internal/localmcp/conversation_broker_policy.go:46`),
+  and the Linux backend refuses every nonempty protected-write set before its
+  capability probe (`internal/sandbox/linux.go:81`; regression:
+  `internal/sandbox/protected_linux_test.go:13`). `sandbox.New` preserves this
+  policy refusal without fallback (`internal/sandbox/sandbox.go:83`). Linux
+  needs a host write model and final-policy enforcement that protect the entire
+  state tree and controller executable from writes, replacement and ancestor
+  renames, including paths outside HOME and overlay-prefix grants. Preserve the
+  scoped parent's immutable child ceiling, host SSH denial and inaccessible
+  unrestricted control socket (`internal/localmcp/wing_mailboxes.go:33`), while
+  allowing its workspace mailbox. Prove native parent/child denial and recovery
+  across disconnect/restart on Linux before claiming parity. The canary emits
+  `unsupported-on-linux`, which the runner accepts without failing; strict
+  `--require-all` still rejects unavailable coverage.
 - **P2 — native client Tasks UI is unverified:** server protocol support does
   not show that a real Claude/Codex client negotiates 2025-11-25, sends optional
   augmentation or displays background tasks. Follow `docs/mcp-tasks.md` and
@@ -132,6 +141,25 @@ that violated the brief's no-SSH rule. No additional network operation followed.
   defect was established by the initial harness failures (incorrect assumptions
   about foreground daemon PID files, SIGINT exit codes and cancelled-result
   `isError` were corrected in the harness).
+- **Mac receipt confirmed fail-closed protection of unsafe canary state:**
+  `.scratch/dogfood-logs/20261010T162501.908821Z.jsonl` reports 9 passes, 2 skips
+  and the intended `provider-writable` refusal. State was beside the fixture
+  HOME, outside Seatbelt's write-deny root. The guard rejects both writable
+  targets and writable regions within authoritative state
+  (`internal/localmcp/conversation_broker_policy.go:108`,
+  `internal/localmcp/conversation_broker_policy.go:125`), before mailbox
+  registration or provider launch (`internal/localmcp/conversation_broker.go:303`).
+  The canary now uses its fixture root as HOME, with state and controller beside
+  workspace/TMPDIR/profile write roots. Its separate negative check deliberately
+  puts state beneath the writable workspace and requires that exact refusal,
+  no running egg and no mailbox registration. The follow-up Mac sandbox rerun
+  passed 10 checks (including negative refusal and cleanup), with 3 explicit
+  skips. A separate launch passed the corrected layout's host protection
+  preflight and registered its mailbox. A reporting smoke with simulated Linux
+  platform selection verified that both mailbox checks emit
+  `unsupported-on-linux` and the wrapper accepts all 13 records; it used a Mac
+  binary and does not establish Linux runtime acceptance. Positive native
+  acceptance still needs a Mac shell permitting `sandbox-exec`.
 - **Harness failure behavior verified:** an intentionally failing checkout-local
   binary produced nonzero status, explicit blocked-check records and successful
   fixture cleanup. A second wrapper invocation while locked skipped immediately.
