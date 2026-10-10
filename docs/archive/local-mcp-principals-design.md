@@ -99,13 +99,13 @@ require_client: true
 clients:
   claude-code:
     owner: ehrlich
-    grants: [terminal.start, terminal.read, terminal.send, terminal.stop, prompt.run, message.read, message.send]
+    grants: [terminal.start, terminal.read, terminal.send, terminal.stop, agent.run]
     bounds: {max_sessions: 4, max_spawns_per_hour: 20}
   codex:
     owner: ehrlich
-    grants: [terminal.read, message.read, message.send]
+    grants: [terminal.read]
   cron-jobs:
-    grants: [prompt.run]
+    grants: [agent.run]
 ```
 
 Grant names map to tools, not to transports, so the same vocabulary works when these
@@ -117,8 +117,7 @@ list gets no tools.
 Implemented bounds are `max_sessions` and `max_spawns_per_hour`. Implemented
 grant names are `capabilities.read`, `sandbox.read`, `terminal.start`,
 `terminal.read`, `terminal.send`, `terminal.rename`, `terminal.stop`,
-`agent.run`, `agent.read`, `agent.stop`, `message.read`, `message.send`,
-`prompt.read`, `prompt.save`, and `prompt.run`. The rolling per-hour spawn count
+`agent.run`, `agent.read`, and `agent.stop`. The rolling per-hour spawn count
 is process-local and therefore a guardrail, not a durable quota or hostile-client
 security boundary.
 

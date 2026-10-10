@@ -43,7 +43,7 @@ func TestConversationWakeQueuesApprovalAndReconcilesNativeReceiptAfterRestart(t 
 		t.Fatal(err)
 	}
 	_ = db.Close()
-	s := &Server{Version: "dev", Cfg: cfg, Principal: "owner"}
+	s := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner"})
 	state := "needs_input"
 	sends := 0
 	var sentID, sentText string
@@ -98,7 +98,7 @@ func TestConversationWakeQueuesApprovalAndReconcilesNativeReceiptAfterRestart(t 
 	}
 	// Restart the controller and observe the real typed prompt reservation's
 	// native transcript receipt while the parent is already doing other work.
-	s = &Server{Version: "dev", Cfg: cfg, Principal: "owner"}
+	s = testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner"})
 	state = "working"
 	raw, _ := json.Marshal(map[string]any{"type": "user", "sessionId": "provider-root", "message": map[string]any{"role": "user", "content": sentText}})
 	nativeEvents = append(nativeEvents, egg.SessionEvent{Sequence: 2, Type: "message", Source: "claude_transcript", ProviderSessionID: "provider-root", Raw: raw})
@@ -148,7 +148,7 @@ func TestConversationWakeFreshAttemptsRequireExplicitNoInputProof(t *testing.T) 
 				ids = append(ids, id)
 				return egg.SessionPromptResult{Status: "not_sent", DefinitelyNotSent: known, TransportBytesEnqueued: 0}, nil
 			}}
-			s := &Server{Version: "dev", Cfg: cfg, Principal: "owner"}
+			s := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner"})
 			for i := 0; i < 4; i++ {
 				if err = processConversationWake(context.Background(), s, root.ID, runtime); err != nil {
 					t.Fatal(err)
@@ -180,7 +180,7 @@ func TestConversationWakeNeverRedirectsUnknownToResumedParent(t *testing.T) {
 	root := fixtureConversation(t, db, cfg, "root", "", "owner", "idle")
 	_ = fixtureConversation(t, db, cfg, "child", root.ID, "owner", "completed")
 	_ = db.SetConversationWake("owner", root.ID, true)
-	s := &Server{Version: "dev", Cfg: cfg, Principal: "owner"}
+	s := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner"})
 	var destinations, requests []string
 	runtime := conversationWakeRuntime{Now: time.Now, Read: func(_ context.Context, session eggclient.LocalSession) (egg.SessionView, error) {
 		return egg.SessionView{SessionID: session.ID, Agent: "claude", ProviderSessionID: eggclient.ReadEggMetaValues(filepath.Join(cfg.Dir, "eggs", session.ID))["provider_session_id"], State: "idle", StateSource: "claude_hook", Ready: true, ProcessAlive: true}, nil
@@ -236,7 +236,7 @@ func TestConversationWakeRebindsOnlyAfterLockedReservationAbsence(t *testing.T) 
 			root := wakeExactTree(t, cfg, wakeExactLegacy)
 			db := wakeExactOpen(t, cfg)
 			defer func() { _ = db.Close() }()
-			s := &Server{Version: "dev", Cfg: cfg, Principal: "owner"}
+			s := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner"})
 			args, _ := json.Marshal(map[string]any{"conversation_id": root.ID})
 			if _, err := s.ToolConversationRead(context.Background(), args); err != nil {
 				t.Fatal(err)
@@ -336,7 +336,7 @@ func TestConversationWakeOptInOwnerAndPersonalScope(t *testing.T) {
 	root := fixtureConversation(t, db, cfg, "root", "", "owner", "idle")
 	_ = db.Close()
 	args, _ := json.Marshal(map[string]any{"conversation_id": root.ID, "enabled": true})
-	s := &Server{Version: "dev", Cfg: cfg, Principal: "other"}
+	s := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "other"})
 	if _, err = s.ToolConversationWake(args); err == nil {
 		t.Fatal("wrong owner opted in")
 	}
@@ -396,7 +396,7 @@ func TestConversationWakeRetainedRuntimeExitAndStartupFailure(t *testing.T) {
 					return egg.SessionPromptResult{Status: "native_receipt_observed", NativeReceiptObserved: true, ReceiptCursor: 7}, nil
 				},
 			}
-			s := &Server{Version: "dev", Cfg: cfg, Principal: "owner"}
+			s := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner"})
 			if err = processConversationWake(context.Background(), s, root.ID, runtime); err != nil {
 				t.Fatal(err)
 			}
@@ -438,7 +438,7 @@ func TestConversationWakeConcurrentControllersHaveOneRootSender(t *testing.T) {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			s := &Server{Version: "dev", Cfg: cfg, Principal: "owner"}
+			s := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner"})
 			errs <- processConversationWake(context.Background(), s, root.ID, runtime)
 		}()
 	}
@@ -495,7 +495,7 @@ func TestConversationWakeExplicitRetryAfterWriterReleaseUsesFreshNativeRequest(t
 			return egg.PromptDelivery{BytesEnqueued: len(text)}, nil
 		}})
 	}}
-	s := &Server{Version: "dev", Cfg: cfg, Principal: "owner"}
+	s := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner"})
 	for i := 0; i < 3; i++ {
 		if err = processConversationWake(context.Background(), s, root.ID, runtime); err != nil {
 			t.Fatal(err)

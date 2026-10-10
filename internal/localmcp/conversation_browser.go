@@ -147,24 +147,4 @@ func configureBrowserFork(s *Server, wc *config.WingConfig, req ws.TunnelRequest
 	s.forkIdleTimeout, _ = time.ParseDuration(wc.IdleTimeout)
 	s.forkTrace = true
 	s.forkTools = append([]*config.ToolConfig(nil), tools...)
-	if s.Sessions != nil {
-		return
-	}
-	s.launchConfig = func(cwd string) (*egg.EggConfig, error) {
-		launch := start
-		launch.CWD = cwd
-		cfg, _, err := eggclient.PrepareBrowserLaunch(wc, &launch, home, sharedHost, wingDefault)
-		if err != nil {
-			return nil, err
-		}
-		if wingpolicy.CanonicalSessionPath(launch.CWD) != cwd {
-			return nil, errors.New("source working directory is outside current browser launch paths")
-		}
-		if wc.Audit || wingDefault != nil && wingDefault.Audit {
-			copyCfg := *cfg
-			cfg = &copyCfg
-			cfg.Audit = true
-		}
-		return cfg, nil
-	}
 }

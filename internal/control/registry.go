@@ -110,11 +110,6 @@ func ObjectKinds(surface Surface) []string {
 		{name: "terminal", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}},
 		{name: "conversation", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}},
 		{name: "agent_run", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}},
-		{name: "message", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}},
-		{name: "prompt_asset", surfaces: []Surface{SurfaceLocalMCP}},
-		{name: "task", surfaces: []Surface{SurfaceLocalMCP}},
-		{name: "loop", surfaces: []Surface{SurfaceLocalMCP}},
-		{name: "swarm", surfaces: []Surface{SurfaceLocalMCP}},
 		{name: "sandbox_policy", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}},
 	}
 	var names []string
@@ -268,7 +263,6 @@ func buildTools() []Tool {
 	modelCall := map[string]any{"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true}
 	destructive := map[string]any{"readOnlyHint": false, "destructiveHint": true, "openWorldHint": false}
 	both := []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}
-	local := []Surface{SurfaceLocalMCP}
 
 	tools := []Tool{
 		{
@@ -276,47 +270,6 @@ func buildTools() []Tool {
 			Description: "Discover supported and installed agent CLIs plus the local runtime primitives available on this machine.",
 			InputSchema: objectSchema(map[string]any{}), Annotations: readOnly,
 			Grant: "capabilities.read", Surfaces: both,
-		},
-		{
-			Name: "message_send", Title: "Send owner message",
-			Description: "Send a durable message to another Codex, Claude, or other client authenticated as the same Wingthing owner.",
-			InputSchema: objectSchema(map[string]any{
-				"content":  stringProperty("Message body; stored owner-scoped and omitted from audit logs"),
-				"channel":  stringProperty("Conversation channel; defaults to factory"),
-				"to_actor": stringProperty("Optional recipient actor ID; empty broadcasts to the owner's other clients"),
-				"kind": map[string]any{
-					"type": "string", "enum": []string{"message", "status", "question", "answer", "evidence", "error"},
-					"default": "message", "description": "Structured message kind",
-				},
-				"reply_to": stringProperty("Optional owner-scoped message ID being answered"),
-				"ttl_seconds": map[string]any{
-					"type": "integer", "minimum": 60, "maximum": 604800, "default": 86400,
-					"description": "Retention time from one minute through seven days",
-				},
-			}, "content"), Annotations: mutating,
-			Grant: "message.send", Surfaces: both, AuditTargetKeys: []string{"reply_to", "message_id"},
-		},
-		{
-			Name: "message_list", Title: "List owner messages",
-			Description: "List durable messages visible to this authenticated actor in ascending order, with a cursor for the next call.",
-			InputSchema: objectSchema(map[string]any{
-				"channel":      stringProperty("Conversation channel; defaults to factory"),
-				"after_id":     stringProperty("Return messages after this owner-scoped message ID"),
-				"limit":        map[string]any{"type": "integer", "minimum": 1, "maximum": 20, "default": 20},
-				"include_sent": map[string]any{"type": "boolean", "default": false, "description": "Include messages sent by this actor"},
-			}), Annotations: readOnly,
-			Grant: "message.read", Surfaces: both, AuditTargetKeys: []string{"after_id", "message_id"},
-		},
-		{
-			Name: "message_wait", Title: "Wait for owner message",
-			Description: "Wait until another same-owner client sends a visible message after the supplied cursor, or until the bounded timeout expires.",
-			InputSchema: objectSchema(map[string]any{
-				"channel":         stringProperty("Conversation channel; defaults to factory"),
-				"after_id":        stringProperty("Wait for messages after this owner-scoped message ID"),
-				"limit":           map[string]any{"type": "integer", "minimum": 1, "maximum": 20, "default": 20},
-				"timeout_seconds": map[string]any{"type": "number", "minimum": 0.1, "maximum": 3600, "default": 30},
-			}), Annotations: readOnly,
-			Grant: "message.read", Surfaces: both, AuditTargetKeys: []string{"after_id", "message_id"},
 		},
 		{
 			Name: "sandbox_explain", Title: "Explain sandbox policy",
@@ -538,87 +491,6 @@ func buildTools() []Tool {
 				"session": stringProperty("Session ID, unique ID prefix, or label"),
 			}, "session"), Annotations: destructive,
 			Grant: "terminal.stop", Surfaces: both, AuditTargetKeys: []string{"session"},
-		},
-		{
-			Name: "prompt_list", Title: "List saved prompts",
-			Description: "List current named prompt assets with immutable revisions, variables, default agents, and working directories.",
-			InputSchema: objectSchema(map[string]any{}), Annotations: readOnly,
-			Grant: "prompt.read", Surfaces: local,
-		},
-		{
-			Name: "prompt_get", Title: "Get saved prompt",
-			Description: "Read the current or an immutable historical revision of a named prompt asset.",
-			InputSchema: objectSchema(map[string]any{
-				"name":     stringProperty("Prompt asset name"),
-				"revision": stringProperty("Optional immutable revision; current revision when omitted"),
-			}, "name"), Annotations: readOnly,
-			Grant: "prompt.read", Surfaces: local, AuditTargetKeys: []string{"name"},
-		},
-		{
-			Name: "prompt_save", Title: "Save prompt",
-			Description: "Create or atomically update a named prompt template while preserving a content-addressed historical revision.",
-			InputSchema: objectSchema(map[string]any{
-				"name":              stringProperty("Prompt asset name"),
-				"description":       stringProperty("Human-readable purpose"),
-				"template":          stringProperty("Go text/template prompt body; variables use {{.name}}"),
-				"variables":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "default": []string{}},
-				"agent":             stringProperty("Optional default supported agent"),
-				"cwd":               stringProperty("Optional absolute default working directory"),
-				"expected_revision": stringProperty("Reject the update unless this is still the current revision"),
-			}, "name", "template"), Annotations: mutating,
-			Grant: "prompt.save", Surfaces: local, AuditTargetKeys: []string{"name"},
-		},
-		{
-			Name: "prompt_run", Title: "Run one prompt",
-			Description: "Run either a raw prompt or a named immutable prompt revision through a supported agent, under the MCP server's declared isolation mode and with durable task provenance.",
-			InputSchema: objectSchema(map[string]any{
-				"prompt":      stringProperty("Raw prompt to execute; mutually exclusive with prompt_name"),
-				"prompt_name": stringProperty("Saved prompt asset; mutually exclusive with prompt"),
-				"revision":    stringProperty("Optional immutable saved-prompt revision"),
-				"variables":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "default": map[string]string{}},
-				"agent":       stringProperty("Agent override; then prompt default; then Wingthing default"),
-				"cwd":         stringProperty("Working-directory override; then prompt default; then MCP server cwd"),
-			}), Annotations: modelCall,
-			Grant: "prompt.run", Surfaces: local, AuditTargetKeys: []string{"prompt_name", "task_id"},
-		},
-		{
-			Name: "task_get", Title: "Get prompt task",
-			Description: "Get structured status, output, error, timing, agent, and dependency data for a Wingthing task.",
-			InputSchema: objectSchema(map[string]any{
-				"task_id": stringProperty("Wingthing task ID"),
-			}, "task_id"), Annotations: readOnly,
-			Grant: "prompt.read", Surfaces: local, AuditTargetKeys: []string{"task_id"},
-		},
-		{
-			Name: "prompt_loop", Title: "Run bounded prompt loop",
-			Description: "Run a prompt sequentially for a bounded number of iterations. Each iteration receives the prior result and stops early when until_contains matches.",
-			InputSchema: objectSchema(map[string]any{
-				"prompt":         stringProperty("Base prompt for every iteration"),
-				"agent":          stringProperty("Supported agent name; defaults to Wingthing configuration"),
-				"cwd":            stringProperty("Working directory shared by every iteration"),
-				"max_iterations": map[string]any{"type": "integer", "minimum": 1, "maximum": 12, "default": 3},
-				"until_contains": stringProperty("Stop when an iteration's output contains this text"),
-			}, "prompt"), Annotations: modelCall,
-			Grant: "prompt.run", Surfaces: local, AuditTargetKeys: []string{"task_id"},
-		},
-		{
-			Name: "swarm_run", Title: "Run agent swarm DAG",
-			Description: "Run a bounded dependency graph of prompts. Independent nodes execute in parallel; completed dependency outputs are injected into downstream prompts.",
-			InputSchema: objectSchema(map[string]any{
-				"name":         stringProperty("Human-readable swarm purpose"),
-				"cwd":          stringProperty("Working directory shared by every node"),
-				"max_parallel": map[string]any{"type": "integer", "minimum": 1, "maximum": 4, "default": 2},
-				"nodes": map[string]any{
-					"type": "array", "minItems": 1, "maxItems": 16,
-					"items": objectSchema(map[string]any{
-						"id":         stringProperty("Unique logical node ID"),
-						"prompt":     stringProperty("Prompt executed by this node"),
-						"agent":      stringProperty("Supported agent name; defaults to Wingthing configuration"),
-						"depends_on": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "default": []string{}},
-					}, "id", "prompt"),
-				},
-			}, "nodes"), Annotations: modelCall,
-			Grant: "prompt.run", Surfaces: local, AuditTargetKeys: []string{"name", "task_id"},
 		},
 		{
 			Name: "wing_list", Title: "List portal wings",

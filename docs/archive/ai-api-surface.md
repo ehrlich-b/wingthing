@@ -29,12 +29,11 @@ cannot toggle it per call.
 
 ### Local MCP operations (surface 1)
 
-`wingthing_capabilities`, `message_send`, `message_list`, `message_wait`,
+`wingthing_capabilities`,
 `sandbox_explain`, `terminal_list`, `terminal_read`,
 `terminal_send`, `terminal_wait`, `terminal_start`, `agent_start`,
 `agent_run`, `agent_status`, `agent_wait`, `agent_result`, `agent_events`,
-`agent_steer`, `agent_stop`, `terminal_rename`, `terminal_stop`, `prompt_list`,
-`prompt_get`, `prompt_save`, `prompt_run`, `task_get`, `prompt_loop`, `swarm_run`.
+`agent_steer`, `agent_stop`, `terminal_rename`, `terminal_stop`.
 
 ### The problems
 

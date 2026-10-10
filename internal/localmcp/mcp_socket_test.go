@@ -283,7 +283,7 @@ func TestAgentRunSurvivesStdioClientExit(t *testing.T) {
 		t.Fatalf("accepted work died with client: %+v %v", result, err)
 	}
 	var audit bytes.Buffer
-	server := &Server{Version: "test", Cfg: service.Config, Principal: "foreign", Logs: &audit}
+	server := testWingServer(t, &Server{Version: "test", Cfg: service.Config, Principal: "foreign", Logs: &audit})
 	if _, _, err := server.ownedAgentRun(task.ID); err == nil {
 		t.Fatal("foreign owner observed run")
 	}

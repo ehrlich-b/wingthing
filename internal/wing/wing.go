@@ -1269,7 +1269,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		copyCfg := *wingCfg
 		wingCfgMu.Unlock()
 		return &copyCfg, sharedHost
-	})
+	}, sessions, ownerUserID)
 
 	// Idle session reaper — kills sessions that have been idle too long.
 	// Always runs; reads wingCfg.IdleTimeout dynamically so SIGHUP reload works.

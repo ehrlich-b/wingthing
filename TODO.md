@@ -249,12 +249,7 @@ account management, org settings, audit display.
 
 - [x] Prove a live Codex–Claude conversation using an owner-local mailbox and
   exact-TTY notification while dogfooding the Arli workload.
-- [x] Add owner-scoped durable message objects and typed `message_send`,
-  `message_wait`, and `message_list` controls. Local stdio clients may declare
-  one owner with distinct actors; OAuth roost clients derive owner and actor
-  from authentication. Proved two-way Codex/Claude actor exchange, cursor
-  replies, blocking wait, cross-owner isolation, TTL bounds, and content-free
-  audit records through real stdio processes.
+
 
 ### Narrow agent egress
 

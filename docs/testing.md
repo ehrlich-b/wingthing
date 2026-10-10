@@ -288,13 +288,9 @@ call does not pass.
 | OpenCode | OpenAI-compatible provider -> Ollama Qwen3 8B | yes | yes | OpenCode `write` creates exact file |
 | Ollama | native chat/tool API, plus Wingthing text adapter | yes | yes | exact structured call is safely dispatched; adapter returns marker |
 
-The same fresh-home run also drives Wingthing as an MCP server and verifies
-registry-defined tool discovery, a raw `prompt_run`, a saved/versioned prompt render and run,
-an early-stopping `prompt_loop`, and a dependency-aware `swarm_run`, all with
-the local Ollama adapter. The matrix reports each assertion independently. MCP discovery also compares the catalog's
-`provider_substitution` and `release_canary` declarations with the harnesses in
-this matrix. Adding a provider-substitutable agent to the catalog without adding
-its live release canary makes the gate fail.
+Local MCP discovery, policy, and session survival are covered by isolated
+socket and fake-provider fixtures. The removed synchronous workflow tools
+are no longer part of the live provider matrix.
 
 Cursor Agent remains in the ordinary real-startup battery. It can select models
 inside its vendor boundary but does not expose the same arbitrary local/provider

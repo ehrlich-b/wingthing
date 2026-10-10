@@ -243,7 +243,7 @@ func TestContextInputAdaptersRevokeBeforeNonOwnerInput(t *testing.T) {
 				}
 				fixture.onInput = func([]byte) { assertContext() }
 				for index, user := range []string{"owner", "admin", "owner"} {
-					if user == "admin" {
+					if user == "admin" && adapter == "tunnel" {
 						disabled.Store(true)
 					}
 					args := map[string]any{"session": "fixture", "input": fmt.Sprintf("input-%d", index)}
@@ -255,14 +255,20 @@ func TestContextInputAdaptersRevokeBeforeNonOwnerInput(t *testing.T) {
 					var result map[string]any
 					var err error
 					if adapter == "tunnel" {
-						result, err = BrowserSessionControl("dev", ctx, cfg, &config.WingConfig{Org: "fixture-org"}, ws.TunnelRequest{SenderUserID: user, SenderEmail: user + "@example.com", SenderOrgRole: "admin"}, operation, arguments, cfg.Dir, false)
+						result, err = testBrowserControl(t, "dev", ctx, cfg, &config.WingConfig{Org: "fixture-org"}, ws.TunnelRequest{SenderUserID: user, SenderEmail: user + "@example.com", SenderOrgRole: "admin"}, operation, arguments, cfg.Dir, false)
 					} else {
 						// The shared typed adapter must retain the verified controller
 						// even when routing under legacy logical session ownership.
-						s := &Server{Version: "dev", Cfg: cfg, Principal: "legacy-owner", Logs: io.Discard, identity: eggclient.EggIdentity{UserID: user}}
+						s := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "legacy-owner", Logs: io.Discard, identity: eggclient.EggIdentity{UserID: user}})
 						var isError bool
 						var protocolErr *localMCPError
 						result, isError, protocolErr = s.callTool(ctx, operation, arguments)
+						if user == "admin" {
+							if !isError || protocolErr != nil {
+								t.Fatal("MCP crossed authenticated user ownership")
+							}
+							continue
+						}
 						if isError || protocolErr != nil {
 							t.Fatalf("MCP input failed: %v %v", result, protocolErr)
 						}
@@ -282,6 +288,9 @@ func TestContextInputAdaptersRevokeBeforeNonOwnerInput(t *testing.T) {
 					assertContext()
 				}
 				expected := int32(3)
+				if adapter == "mcp" {
+					expected = 2
+				}
 				if operation == "session_prompt" {
 					expected *= 2
 				}
@@ -299,7 +308,7 @@ func TestContextInputLocalMCPRejectsOtherPrincipal(t *testing.T) {
 	t.Cleanup(func() { config.ReleaseChannel = old })
 	cfg, fixture, toolPath := contextInputFixture(t)
 	fixture.onInput = func([]byte) { t.Error("foreign principal input reached the egg") }
-	s := &Server{Version: "dev", Cfg: cfg, Principal: "other-principal", Logs: io.Discard, identity: eggclient.EggIdentity{UserID: "admin"}}
+	s := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "other-principal", Logs: io.Discard, identity: eggclient.EggIdentity{UserID: "admin"}})
 	for _, operation := range []string{"terminal_send", "session_prompt"} {
 		args := map[string]any{"session": "fixture", "input": "foreign"}
 		if operation == "session_prompt" {
@@ -317,9 +326,9 @@ func TestContextInputLocalMCPRejectsOtherPrincipal(t *testing.T) {
 	if response := contextInputToolCall(t, toolPath); response.Error != "" {
 		t.Fatalf("rejected input revoked owner authority: %+v", response)
 	}
-	// A local client with the retained logical owner has no relay user ID.
-	// Its accepted input must not be mistaken for a different verified user.
-	s.Principal, s.identity = "legacy-owner", eggclient.EggIdentity{}
+	// The wing binds a local client to the authenticated wing owner.
+	// Its accepted input must retain that owner's Context authority.
+	s.Principal, s.identity = "legacy-owner", eggclient.EggIdentity{UserID: "owner"}
 	fixture.onInput = func([]byte) {
 		if response := contextInputToolCall(t, toolPath); response.Error != "" {
 			t.Errorf("local owner lost Context authority: %+v", response)
@@ -355,7 +364,7 @@ func TestContextInputRejectedClaimsPreserveAuthority(t *testing.T) {
 				args["request_id"] = "admin"
 			}
 			arguments, _ := json.Marshal(args)
-			result, err := BrowserSessionControl("dev", context.Background(), cfg, &config.WingConfig{Org: "fixture-org"}, ws.TunnelRequest{SenderUserID: "admin", SenderOrgRole: "admin"}, operation, arguments, cfg.Dir, false)
+			result, err := testBrowserControl(t, "dev", context.Background(), cfg, &config.WingConfig{Org: "fixture-org"}, ws.TunnelRequest{SenderUserID: "admin", SenderOrgRole: "admin"}, operation, arguments, cfg.Dir, false)
 			if operation == "terminal_send" && err == nil {
 				t.Fatal("rejected terminal claim succeeded")
 			}

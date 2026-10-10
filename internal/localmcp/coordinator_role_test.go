@@ -22,7 +22,7 @@ func TestPublicCoordinatorRoleInjectedAndInspectableThroughBootstrap(t *testing.
 	}
 	defer func() { _ = db.Close() }()
 	c := fixtureConversation(t, db, cfg, "root-role", "", "owner", "idle")
-	server := &Server{Version: "dev", Cfg: cfg, Principal: c.OwnerID, BoundConversation: c.ID, Logs: &bytes.Buffer{}}
+	server := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: c.OwnerID, BoundConversation: c.ID, Logs: &bytes.Buffer{}})
 	args, err := server.prepareBoundParentMCP(c, egg.DefaultEggConfig(), []string{"--model", "already-selected-model"})
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestConversationReadReportsContextForActualLocalTasks(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	root := fixtureConversation(t, db, cfg, "role-root", "", "owner", "idle")
 	child := fixtureConversation(t, db, cfg, "role-child", root.ID, "owner", "completed")
-	server := &Server{Version: "dev", Cfg: cfg, Principal: "owner", BoundConversation: root.ID}
+	server := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner", BoundConversation: root.ID})
 	request, _ := json.Marshal(map[string]any{"conversation_id": root.ID})
 	read, err := server.ToolConversationRead(context.Background(), request)
 	if err != nil {

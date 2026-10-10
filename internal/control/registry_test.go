@@ -10,19 +10,16 @@ import (
 func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 	local := []string{
 		"wingthing_capabilities",
-		"message_send", "message_list", "message_wait",
 		"sandbox_explain",
 		"terminal_list", "terminal_read", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "terminal_wait",
 		"session_fork", "terminal_start", "agent_start",
 		"agent_run", "agent_status", "agent_wait", "agent_wait_any", "agent_result",
 		"agent_events", "agent_steer", "agent_stop",
 		"terminal_rename", "terminal_stop",
-		"prompt_list", "prompt_get", "prompt_save", "prompt_run", "task_get",
-		"prompt_loop", "swarm_run", "conversation_bootstrap", "conversation_list", "conversation_read", "conversation_checkpoint", "conversation_wake",
+		"conversation_bootstrap", "conversation_list", "conversation_read", "conversation_checkpoint", "conversation_wake",
 	}
 	http := []string{
 		"wingthing_capabilities",
-		"message_send", "message_list", "message_wait",
 		"sandbox_explain",
 		"terminal_list", "terminal_read", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "terminal_wait",
 		"session_fork", "terminal_start", "agent_start",
@@ -158,29 +155,26 @@ func TestAgentWaitAnySchemaAndPolicy(t *testing.T) {
 
 func TestObjectKindsFollowSurfaceAvailability(t *testing.T) {
 	if got, want := ObjectKinds(SurfaceLocalMCP), []string{
-		"terminal", "conversation", "agent_run", "message", "prompt_asset", "task", "loop", "swarm", "sandbox_policy",
+		"terminal", "conversation", "agent_run", "sandbox_policy",
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("local objects = %v, want %v", got, want)
 	}
 	if got, want := ObjectKinds(SurfaceHTTPMCP), []string{
-		"wing", "terminal", "conversation", "agent_run", "message", "sandbox_policy",
+		"wing", "terminal", "conversation", "agent_run", "sandbox_policy",
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("HTTP objects = %v, want %v", got, want)
 	}
 	if got, want := ObjectKinds(SurfaceDirectMCP), []string{
-		"wing", "terminal", "conversation", "agent_run", "message", "sandbox_policy",
+		"wing", "terminal", "conversation", "agent_run", "sandbox_policy",
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("direct objects = %v, want %v", got, want)
 	}
 }
 
 func TestAuditTargetUsesOnlyDeclaredResourceFields(t *testing.T) {
-	secret := json.RawMessage(`{"content":"do not log me","reply_to":"msg-1"}`)
-	if got := AuditTarget("message_send", secret, map[string]any{"message_id": "msg-2"}); got != "msg-1" {
-		t.Fatalf("message target = %q, want msg-1", got)
-	}
-	if got := AuditTarget("message_send", json.RawMessage(`{"content":"do not log me"}`), map[string]any{"message_id": "msg-2"}); got != "msg-2" {
-		t.Fatalf("message result target = %q, want msg-2", got)
+	secret := json.RawMessage(`{"session":"s1","input":"do not log me"}`)
+	if got := AuditTarget("terminal_send", secret, nil); got != "s1" {
+		t.Fatalf("session target = %q", got)
 	}
 	if got := AuditTarget("wingthing_capabilities", json.RawMessage(`{"name":"not-approved"}`), nil); got != "" {
 		t.Fatalf("capabilities leaked undeclared target %q", got)
@@ -237,18 +231,25 @@ func TestRegistryReturnsDeeplyIndependentDefinitions(t *testing.T) {
 	first[0].Annotations["readOnlyHint"] = false
 	first[0].InputSchema["type"] = "mutated"
 	first[0].Surfaces[0] = Surface("mutated")
-	messageProperties := first[1].InputSchema["properties"].(map[string]any)
-	messageProperties["content"].(map[string]any)["description"] = "mutated"
+	var sendIndex int
+	for index, tool := range first {
+		if tool.Name == "terminal_send" {
+			sendIndex = index
+			break
+		}
+	}
+	messageProperties := first[sendIndex].InputSchema["properties"].(map[string]any)
+	messageProperties["input"].(map[string]any)["description"] = "mutated"
 
 	second := Tools(SurfaceLocalMCP)
 	if second[0].Annotations["readOnlyHint"] != true || second[0].InputSchema["type"] != "object" || second[0].Surfaces[0] != SurfaceLocalMCP {
 		t.Fatalf("tool registry shared top-level storage: %#v", second[0])
 	}
-	secondProperties := second[1].InputSchema["properties"].(map[string]any)
-	if secondProperties["content"].(map[string]any)["description"] == "mutated" {
+	secondProperties := second[sendIndex].InputSchema["properties"].(map[string]any)
+	if secondProperties["input"].(map[string]any)["description"] == "mutated" {
 		t.Fatal("tool registry shared nested schema storage")
 	}
-	lookedUp, ok := Lookup("message_send")
+	lookedUp, ok := Lookup("terminal_send")
 	if !ok || lookedUp.InputSchema["type"] != "object" {
 		t.Fatalf("Lookup observed a prior mutation: %#v", lookedUp)
 	}
@@ -261,8 +262,6 @@ func TestRegistryPreservesDeployedEmptyArrayDefaults(t *testing.T) {
 	}{
 		{tool: "terminal_start", path: []string{"command"}},
 		{tool: "agent_start", path: []string{"args"}},
-		{tool: "prompt_save", path: []string{"variables"}},
-		{tool: "swarm_run", path: []string{"nodes", "items", "properties", "depends_on"}},
 	}
 	for _, check := range checks {
 		t.Run(check.tool, func(t *testing.T) {

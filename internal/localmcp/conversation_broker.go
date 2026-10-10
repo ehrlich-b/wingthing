@@ -37,10 +37,12 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
+	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
+	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"golang.org/x/sys/unix"
 )
 
@@ -466,6 +468,9 @@ func (r *conversationBrokerRegistration) server(version string, cfg *config.Conf
 		if owner == "" {
 			owner = key
 		}
+		if owner == "default" && r.UserID != "" {
+			owner = wingsession.UserPrincipal(r.UserID)
+		}
 		if owner != r.Principal {
 			return fmt.Errorf("clients.yaml entry %q no longer maps to the captured owner", key)
 		}
@@ -510,11 +515,17 @@ func (r *conversationBrokerRegistration) server(version string, cfg *config.Conf
 	reg := *r
 	return &Server{Version: version,
 		Cfg: cfg, Logs: os.Stderr, Principal: r.Principal, Actor: brokerActor(r.ConversationID, r.SessionID),
-		Surface: control.SurfaceLocalMCP, Grants: grants, tools: tools,
+		Surface: control.SurfaceLocalMCP, Grants: grants, tools: tools, sessionRole: "owner",
 		MaxSessions: maxSessions, MaxSpawnsPerHour: maxSpawns, admission: admission,
 		identity:     eggclient.EggIdentity{UserID: r.UserID, Email: r.Email},
 		allowedPaths: paths, enforcePathBounds: enforce,
 		BoundConversation: r.ConversationID, broker: &reg,
+		Sessions: func() *wingsession.Service {
+			if admission != nil {
+				return admission.Sessions
+			}
+			return nil
+		}(),
 	}, wc, nil
 }
 
@@ -562,7 +573,7 @@ func (s *Server) preflightBrokerChild(eggCfg *egg.EggConfig, agentName, cwd, ses
 	if err := conversationBrokerProtection(s.Cfg, eggCfg, agentName, wingpolicy.CanonicalPolicyPath(cwd), sessionID, s.identity, s.broker.protectedTargets(s.Cfg)); err != nil {
 		return fmt.Errorf("child policy preflight: %w", err)
 	}
-	db, err := s.openMessageStore()
+	db, err := s.openConversationStore()
 	if err != nil {
 		return err
 	}
@@ -607,7 +618,7 @@ func (s *Server) checkBoundSessionTarget(tool string, arguments json.RawMessage)
 	if err != nil || !info.IsDir() {
 		return outside
 	}
-	db, err := s.openMessageStore()
+	db, err := s.openConversationStore()
 	if err != nil {
 		return err
 	}
@@ -992,14 +1003,23 @@ func (b *conversationBroker) complete(ctx context.Context, entry conversationBro
 }
 
 func (b *conversationBroker) dispatch(ctx context.Context, call conversationMailboxCall, tool string) (json.RawMessage, string, string) {
-	server, wc, err := b.reg.server(b.version, b.cfg, b.admission)
+	_, wc, err := b.reg.server(b.version, b.cfg, b.admission)
 	if err != nil {
 		return nil, brokerOutcomeNotDispatched, "host mailbox policy refused the call: " + err.Error() + "; the request was not dispatched"
 	}
 	if wc.Locked && conversationBrokerMutations[tool] {
 		return nil, brokerOutcomeNotDispatched, "the wing is locked; host mailbox mutations are paused; the request was not dispatched"
 	}
-	response, _ := server.handle(ctx, localMCPRequest{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: call.Method, Params: call.Params})
+	if ctx.Err() != nil && conversationBrokerMutations[tool] {
+		return nil, brokerOutcomeUnconfirmed, "host broker stopped during " + tool + "; its outcome is unconfirmed"
+	}
+	client, err := controlsocket.Dial(ctx, b.cfg.Dir, controlsocket.Hello{Conversation: b.reg.ConversationID, Execution: b.reg.SessionID})
+	if err != nil {
+		return nil, brokerOutcomeNotDispatched, "host mailbox wing unavailable: " + err.Error() + "; the request was not dispatched"
+	}
+	defer client.Close()
+	proxy := &localWingProxy{version: b.version, client: client}
+	response, _ := proxy.handle(ctx, localMCPRequest{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: call.Method, Params: call.Params})
 	response.ID = nil
 	data, err := json.Marshal(response)
 	if err != nil {

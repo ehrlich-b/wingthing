@@ -140,10 +140,10 @@ func TestResolveDirectMCPPolicyHonorsAdditiveWingRestrictions(t *testing.T) {
 	if policy.maxSessions != 2 || policy.maxSpawnsPerHour != 3 {
 		t.Fatalf("restricted bounds = sessions:%d spawns:%d", policy.maxSessions, policy.maxSpawnsPerHour)
 	}
-	server := &Server{Version: "dev",
+	server := testWingServer(t, &Server{Version: "dev",
 		Cfg: &config.Config{Dir: t.TempDir()}, Principal: "owner", Actor: "codex",
 		Surface: control.SurfaceDirectMCP, Grants: policy.grants,
-	}
+	})
 	result, isError, protocolErr := server.callTool(context.Background(), "terminal_list", json.RawMessage(`{}`))
 	if protocolErr != nil || !isError || !strings.Contains(result["error"].(string), "lacks grant") {
 		t.Fatalf("denied direct tool = result %#v, isError %v, protocolErr %v", result, isError, protocolErr)
@@ -177,9 +177,9 @@ func TestResolveDirectMCPPolicyRejectsDisabledAndUnknownGrant(t *testing.T) {
 
 func TestDirectMCPSpawnRateSurvivesClientReconnect(t *testing.T) {
 	admission := NewMCPAdmissionState()
-	one := &Server{Version: "dev", Principal: "same-owner", MaxSpawnsPerHour: 1, admission: admission}
-	two := &Server{Version: "dev", Principal: "same-owner", MaxSpawnsPerHour: 1, admission: admission}
-	other := &Server{Version: "dev", Principal: "other-owner", MaxSpawnsPerHour: 1, admission: admission}
+	one := testWingServer(t, &Server{Version: "dev", Principal: "same-owner", MaxSpawnsPerHour: 1, admission: admission})
+	two := testWingServer(t, &Server{Version: "dev", Principal: "same-owner", MaxSpawnsPerHour: 1, admission: admission})
+	other := testWingServer(t, &Server{Version: "dev", Principal: "other-owner", MaxSpawnsPerHour: 1, admission: admission})
 
 	if err := one.admitSpawn(func() error { return nil }); err != nil {
 		t.Fatalf("first spawn: %v", err)
@@ -209,12 +209,12 @@ func TestDirectMCPMaxSessionsIsSharedAcrossConnections(t *testing.T) {
 	}
 
 	admission := NewMCPAdmissionState()
-	sameOwner := &Server{Version: "dev",
+	sameOwner := testWingServer(t, &Server{Version: "dev",
 		Cfg: &config.Config{Dir: dir}, Principal: "same-owner", MaxSessions: 1, admission: admission,
-	}
-	otherOwner := &Server{Version: "dev",
+	})
+	otherOwner := testWingServer(t, &Server{Version: "dev",
 		Cfg: &config.Config{Dir: dir}, Principal: "other-owner", MaxSessions: 1, admission: admission,
-	}
+	})
 	if err := sameOwner.admitSpawn(func() error { return nil }); err == nil || !strings.Contains(err.Error(), "max_sessions=1") {
 		t.Fatalf("same owner session bound error = %v", err)
 	}

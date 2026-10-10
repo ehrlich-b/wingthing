@@ -105,11 +105,7 @@ func (s *Server) toolSessionWait(ctx context.Context, arguments json.RawMessage)
 	defer cancel()
 	var view egg.SessionView
 	var matched bool
-	if s.Sessions != nil {
-		view, matched, err = s.Sessions.Wait(waitCtx, s.sessionAuthority(), session.ID, args.AfterCursor, args.State)
-	} else {
-		view, matched, err = eggclient.WaitSessionLifecycle(waitCtx, s.Cfg, session, args.AfterCursor, args.State)
-	}
+	view, matched, err = s.Sessions.Wait(waitCtx, s.sessionAuthority(), session.ID, args.AfterCursor, args.State)
 	if err != nil {
 		return nil, err
 	}
@@ -120,8 +116,8 @@ func (s *Server) toolSessionWait(ctx context.Context, arguments json.RawMessage)
 }
 
 func (s *Server) readSessionView(ctx context.Context, session eggclient.LocalSession, after int64, limit int) (egg.SessionView, error) {
-	if s.Sessions != nil {
-		return s.Sessions.Read(ctx, s.sessionAuthority(), session.ID, after, limit)
+	if s.Sessions == nil {
+		return egg.SessionView{}, errors.New("wing session service is not ready")
 	}
-	return eggclient.LifecycleViewForSession(s.Cfg, session, after, limit)
+	return s.Sessions.Read(ctx, s.sessionAuthority(), session.ID, after, limit)
 }

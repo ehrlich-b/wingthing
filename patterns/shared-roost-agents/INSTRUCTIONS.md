@@ -51,10 +51,8 @@ the roost server. If a child agent reports `auth_required`, open the returned lo
 session and complete that provider's login there.
 
 Model choice is an `agent_run` parameter. Keep its returned run ID, wait with
-`agent_wait`, and read the final result with `agent_result`. Clients logged in as the
-same person can also exchange durable Wingthing messages: send with `message_send`,
-wait with `message_wait`, and carry the returned cursor into the next wait. Message
-bodies stay out of audit logs.
+`agent_wait`, and read the final result with `agent_result`. The parent agent
+coordinates its workers using their run IDs and results.
 
 The HTTP MCP endpoint controls only this roost's built-in agent runtime. To let one
 parent select several external computers registered with a coordinator, use the

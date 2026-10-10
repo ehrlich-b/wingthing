@@ -99,10 +99,8 @@ The current local operation set is defined and tested in `internal/control`:
 | Group | Tools |
 | --- | --- |
 | Discovery | `wingthing_capabilities`, `sandbox_explain` |
-| Messages | `message_send`, `message_list`, `message_wait` |
 | Sessions | `terminal_list`, `terminal_read`, `terminal_send`, `terminal_wait`, `terminal_start`, `agent_start`, `terminal_rename`, `terminal_stop` |
 | Runs | `agent_run`, `agent_status`, `agent_wait`, `agent_result`, `agent_events`, `agent_steer`, `agent_stop` |
-| Prompt workflows | `prompt_list`, `prompt_get`, `prompt_save`, `prompt_run`, `task_get`, `prompt_loop`, `swarm_run` |
 
 The local MCP process has the operating-system authority of the user that
 launched it. The client name controls ownership and audit attribution inside

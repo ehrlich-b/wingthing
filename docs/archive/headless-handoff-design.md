@@ -113,7 +113,7 @@ Per `ai-api-surface.md`, the capability is defined once and exposed three ways:
 
 - CLI: `wt run` prints the task ID and resumability; `wt attach --resume <task-id>`
   resolves task to agent + session ID and spawns the PTY.
-- MCP: `task_get` returns `agent_session_id` and `resumable`; a new
+- MCP: `agent_result` returns `agent_session_id` and `resumable`; a new
   `agent_resume` tool starts a terminal from a task.
 - REST: `GET /api/v1/tasks/{id}` carries the same fields.
 

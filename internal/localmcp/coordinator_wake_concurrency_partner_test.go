@@ -166,7 +166,7 @@ func (h *opusWakeHarness) runtime() conversationWakeRuntime {
 // step is one controller invocation from a fresh server; the store and root
 // lock are reopened inside, so consecutive steps model controller restarts.
 func (h *opusWakeHarness) step(root string) error {
-	return processConversationWake(context.Background(), &Server{Version: "dev", Cfg: h.cfg, Principal: "owner"}, root, h.runtime())
+	return processConversationWake(context.Background(), testWingServer(nil, &Server{Version: "dev", Cfg: h.cfg, Principal: "owner"}), root, h.runtime())
 }
 
 func (h *opusWakeHarness) promptIDs() []string {
@@ -266,7 +266,7 @@ func (h *opusWakeHarness) lockPath(root string) string {
 func (h *opusWakeHarness) read(t *testing.T, root string, after int64, limit int) map[string]any {
 	t.Helper()
 	args, _ := json.Marshal(map[string]any{"conversation_id": root, "after_cursor": after, "limit": limit})
-	out, err := (&Server{Version: "dev", Cfg: h.cfg, Principal: "owner"}).ToolConversationRead(context.Background(), args)
+	out, err := (testWingServer(t, &Server{Version: "dev", Cfg: h.cfg, Principal: "owner"})).ToolConversationRead(context.Background(), args)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func (h *opusWakeHarness) paginate(t *testing.T, root string, after int64, limit
 
 func (h *opusWakeHarness) checkpoint(root string, expected, after int64, text string) error {
 	args, _ := json.Marshal(map[string]any{"conversation_id": root, "expected_revision": expected, "after_cursor": after, "checkpoint": text})
-	_, err := (&Server{Version: "dev", Cfg: h.cfg, Principal: "owner"}).toolConversationCheckpoint(args)
+	_, err := (testWingServer(nil, &Server{Version: "dev", Cfg: h.cfg, Principal: "owner"})).toolConversationCheckpoint(args)
 	return err
 }
 
@@ -559,7 +559,7 @@ func TestOpusWakeRecoveryDuplicateImportsDedupeAndDistinctEventsWakeInOrder(t *t
 			go func() {
 				defer group.Done()
 				args, _ := json.Marshal(map[string]any{"conversation_id": root.ID, "limit": 1})
-				_, err := (&Server{Version: "dev", Cfg: h.cfg, Principal: "owner"}).ToolConversationRead(context.Background(), args)
+				_, err := (testWingServer(t, &Server{Version: "dev", Cfg: h.cfg, Principal: "owner"})).ToolConversationRead(context.Background(), args)
 				errs <- err
 			}()
 		}

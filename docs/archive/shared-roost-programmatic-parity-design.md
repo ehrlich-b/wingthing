@@ -49,9 +49,6 @@ the embedded roost runtime:
   IDs;
 - `agent_run`, `agent_status`, `agent_wait`, `agent_result`, `agent_events`,
   `agent_steer`, and `agent_stop` provide a durable semantic lifecycle;
-- `message_send`, `message_list`, and `message_wait` provide durable same-owner
-  communication across Codex, Claude, and other authenticated clients while
-  preserving distinct audit actors;
 - Claude and Codex accept the same top-level `model` field;
 - shared users receive stable per-user agent homes with ambient provider
   credentials removed;
@@ -139,8 +136,7 @@ amd64 artifact in the workspace, staged it to an owned Ubuntu 24.04 Proxmox VM,
 ran unprivileged and root enforcement gates, collected evidence, and cleaned up
 the temporary bundle. Claude independently found the negative control that
 failed. The durable roost implementation replaces SSH, SCP, the cached Proxmox
-helper, and mailbox files with the typed operations above plus owner-scoped
-`message_send`, `message_wait`, and `message_list`.
+helper, and mailbox files with the typed operations above.
 
 ## Protected workflow and new workflow
 
@@ -306,9 +302,7 @@ text appearing on a terminal. The semantic result is bounded plain text plus
 structured usage/error data. A terminal snapshot remains available for human
 reattachment and debugging, but is never presented as an agent result.
 
-Long-running prompt APIs should also become submit-first. `prompt_run` currently
-blocks the MCP request; the roost needs durable submit, get/list, wait, cancel,
-and retry operations before it can be reliable factory infrastructure.
+
 
 ## Workspace rules
 

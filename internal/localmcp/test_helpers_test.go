@@ -89,6 +89,9 @@ func seedRemoteListSession(t *testing.T, cfg *config.Config, id, principal strin
 			t.Fatal(err)
 		}
 	}
+	if err := eggclient.WriteEggOwner(dir, "fixture-user", ""); err != nil {
+		t.Fatal(err)
+	}
 	if err := eggclient.WriteSessionPrincipal(dir, principal); err != nil {
 		t.Fatal(err)
 	}

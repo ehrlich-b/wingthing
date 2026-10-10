@@ -39,7 +39,7 @@ func TestRoostMCPPathsDoNotReloadLegacyWritablePolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	var list mcppkg.NativeTool
-	for _, tool := range RoostNativeMCPTools("test", cfg, true) {
+	for _, tool := range testNativeTools(t, "test", cfg, true) {
 		if tool.Name == "terminal_list" {
 			list = tool
 		}
@@ -115,7 +115,7 @@ func TestRoostTransportsSelectedRootACL(t *testing.T) {
 			}
 			source := func() (*config.WingConfig, *egg.EggConfig) { return wc, egg.DefaultEggConfig() }
 			var explain mcppkg.NativeTool
-			for _, tool := range RoostNativeMCPTools("test", cfg, shared, source) {
+			for _, tool := range testNativeTools(t, "test", cfg, shared, source) {
 				if tool.Name == "sandbox_explain" {
 					explain = tool
 				}
@@ -130,19 +130,14 @@ func TestRoostTransportsSelectedRootACL(t *testing.T) {
 			if !isError || !strings.Contains(fmt.Sprint(result, err), child) {
 				t.Errorf("direct MCP admitted Bob's child policy: %v, %v", result, err)
 			}
-			server := newRoostNativeMCPServer("test", cfg, shared, NewMCPAdmissionState(), principal, []string{root}, source)
+			server := testNativeServer(t, "test", cfg, shared, NewMCPAdmissionState(), principal, []string{root}, source)
 			// Prevent provider execution even when replayed without the ACL fix.
 			server.MaxSpawnsPerHour = 1
 			server.admission.spawnTimes[server.clientPrincipal()] = []time.Time{time.Now()}
 			if _, err := server.toolAgentRun(json.RawMessage(`{"prompt":"inspect","agent":"claude","cwd":` + strconv.Quote(sub) + `}`)); err == nil || !strings.Contains(err.Error(), child) {
 				t.Errorf("headless agent did not reject selected-root ACL: %v", err)
 			}
-			cancelled, cancel := context.WithCancel(context.Background())
-			cancel()
-			if _, _, err := server.toolSwarmRun(cancelled, json.RawMessage(`{"cwd":`+strconv.Quote(sub)+`,"nodes":[{"id":"one","prompt":"inspect","agent":"claude"}]}`)); err == nil || !strings.Contains(err.Error(), child) {
-				t.Errorf("headless swarm did not reject selected-root ACL: %v", err)
-			}
-			configureBrowserFork(server, wc, ws.TunnelRequest{SenderUserID: principal.UserID, SenderEmail: principal.Email, SenderOrgRole: "member"}, home, shared, egg.DefaultEggConfig(), nil)
+			testBrowserFork(t, server, wc, ws.TunnelRequest{SenderUserID: principal.UserID, SenderEmail: principal.Email, SenderOrgRole: "member"}, home, shared, egg.DefaultEggConfig(), nil)
 			if _, err := server.loadLaunchConfig(sub); err == nil || !strings.Contains(err.Error(), child) {
 				t.Errorf("browser fork admitted Bob's child policy: %v", err)
 			}
@@ -161,7 +156,7 @@ func TestRoostTransportsSelectedRootACL(t *testing.T) {
 			bobClient, bobCtx := connectDirectMCPTestClientWithPolicySource(t, cfg, home, shared, webrtcpkg.PeerIdentity{UserID: bob.UserID, Email: bob.Email, OrgRole: "member"}, func() (*config.WingConfig, []config.AllowKey) { return wc.Clone(), nil })
 			result, isError, err = bobClient.Call(bobCtx, "sandbox_explain", json.RawMessage(`{}`))
 			assertChildPolicy(result, isError, err)
-			bobServer := newRoostNativeMCPServer("test", cfg, shared, NewMCPAdmissionState(), bob, []string{child}, source)
+			bobServer := testNativeServer(t, "test", cfg, shared, NewMCPAdmissionState(), bob, []string{child}, source)
 			load := bobServer.launchConfig
 			loaded := false
 			bobServer.launchConfig = func(cwd string) (*egg.EggConfig, error) {
@@ -176,12 +171,9 @@ func TestRoostTransportsSelectedRootACL(t *testing.T) {
 			}
 			// Local orchestration handlers share this authenticated launch policy.
 			bobServer.Surface, bobServer.Grants = control.SurfaceLocalMCP, nil
-			for _, tool := range []string{"agent_run", "swarm_run", "prompt_run", "prompt_loop"} {
+			for _, tool := range []string{"agent_run"} {
 				loaded = false
 				args := `{"prompt":"inspect","agent":"claude"}`
-				if tool == "swarm_run" {
-					args = `{"nodes":[{"id":"one","prompt":"inspect","agent":"claude"}]}`
-				}
 				result, _, protocolErr := bobServer.callTool(context.Background(), tool, json.RawMessage(args))
 				if protocolErr != nil || !loaded {
 					t.Fatalf("omitted cwd bypassed %s loader: %v, %v", tool, result, protocolErr)
@@ -248,7 +240,7 @@ func TestRoostTransportsRejectUnsafeRoots(t *testing.T) {
 				for _, role := range []string{"member", "admin"} {
 					principal := mcppkg.Principal{UserID: role, Email: role + "@example.com"}
 					var explain mcppkg.NativeTool
-					for _, tool := range RoostNativeMCPTools("test", cfg, shared, source) {
+					for _, tool := range testNativeTools(t, "test", cfg, shared, source) {
 						if tool.Name == "sandbox_explain" {
 							explain = tool
 						}
@@ -265,7 +257,7 @@ func TestRoostTransportsRejectUnsafeRoots(t *testing.T) {
 						t.Errorf("direct MCP admitted unsafe roots: %v, %v", result, err)
 					}
 					checkErr(fmt.Errorf("%v %v", result, err))
-					server := newRoostNativeMCPServer("test", cfg, shared, NewMCPAdmissionState(), principal, []string{root}, source)
+					server := testNativeServer(t, "test", cfg, shared, NewMCPAdmissionState(), principal, []string{root}, source)
 					// Refuse execution even when replayed before root validation.
 					load := server.launchConfig
 					server.launchConfig = func(cwd string) (*egg.EggConfig, error) {
@@ -276,11 +268,7 @@ func TestRoostTransportsRejectUnsafeRoots(t *testing.T) {
 					}
 					_, err = server.toolAgentRun(json.RawMessage(`{"prompt":"inspect","agent":"claude","cwd":` + strconv.Quote(root) + `}`))
 					checkErr(err)
-					cancelled, cancel := context.WithCancel(context.Background())
-					cancel()
-					_, _, err = server.toolSwarmRun(cancelled, json.RawMessage(`{"cwd":`+strconv.Quote(root)+`,"nodes":[{"id":"one","prompt":"inspect","agent":"claude"}]}`))
-					checkErr(err)
-					configureBrowserFork(server, wc, ws.TunnelRequest{SenderUserID: principal.UserID, SenderEmail: principal.Email, SenderOrgRole: role}, home, shared, egg.DefaultEggConfig(), nil)
+					testBrowserFork(t, server, wc, ws.TunnelRequest{SenderUserID: principal.UserID, SenderEmail: principal.Email, SenderOrgRole: role}, home, shared, egg.DefaultEggConfig(), nil)
 					_, err = server.loadLaunchConfig(root)
 					checkErr(err)
 				}
@@ -325,7 +313,7 @@ func TestRoostTransportsExplainRoleRootPolicy(t *testing.T) {
 			t.Fatal(err)
 		}
 		var explain mcppkg.NativeTool
-		for _, tool := range RoostNativeMCPTools("test", cfg, shared) {
+		for _, tool := range testNativeTools(t, "test", cfg, shared) {
 			if tool.Name == "sandbox_explain" {
 				explain = tool
 			}
@@ -398,7 +386,7 @@ func TestRoostLaunchesUseRoleRootPolicy(t *testing.T) {
 		if err := config.SaveWingConfig(cfg.Dir, &config.WingConfig{Org: org, Paths: config.PathList{{Path: filepath.Dir(workspace), Members: []string{"eng@example.com"}}}}); err != nil {
 			t.Fatal(err)
 		}
-		server := newRoostNativeMCPServer("test", cfg, shared, NewMCPAdmissionState(), mcppkg.Principal{UserID: "eng", Email: "eng@example.com"}, []string{filepath.Dir(workspace)})
+		server := testNativeServer(t, "test", cfg, shared, NewMCPAdmissionState(), mcppkg.Principal{UserID: "eng", Email: "eng@example.com"}, []string{filepath.Dir(workspace)})
 		policy, err := server.loadLaunchConfig(workspace)
 		if err != nil {
 			t.Fatal(err)
@@ -472,12 +460,7 @@ func TestRoostLaunchesUseRoleRootPolicy(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(filepath.Dir(workspace), "egg.yaml"), roostRolePolicy(filepath.Dir(workspace)), 0600); err != nil {
 			t.Fatal(err)
 		}
-		// Cancellation keeps the baseline runner from invoking an installed
-		// provider if this test is replayed before the runtime policy fix.
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		_, _, _ = server.toolSwarmRun(ctx, json.RawMessage(`{"cwd":`+strconv.Quote(workspace)+`,"nodes":[{"id":"one","prompt":"inspect","agent":"claude"}]}`))
-		for range 2 {
+		for range 1 {
 			select {
 			case task := <-started:
 				if task.EggConfigYAML == "" {
@@ -496,128 +479,6 @@ func TestRoostLaunchesUseRoleRootPolicy(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-}
-
-func TestRoostMetaTasksRejectInvalidLaunchPolicy(t *testing.T) {
-	for _, shared := range []bool{false, true} {
-		for _, tool := range []string{"swarm_run", "prompt_loop"} {
-			for _, policy := range []string{"missing", "invalid", "privileged"} {
-				t.Run(fmt.Sprintf("shared=%v/%s/%s", shared, tool, policy), func(t *testing.T) {
-					server, root, taskStore := roostMetaTaskFixture(t, shared)
-					wantError := "egg.yaml"
-					switch policy {
-					case "invalid":
-						if err := os.WriteFile(filepath.Join(root, "egg.yaml"), []byte("fs: ["), 0600); err != nil {
-							t.Fatal(err)
-						}
-					case "privileged":
-						if err := os.WriteFile(filepath.Join(root, "egg.yaml"), roostRolePolicy(root), 0600); err != nil {
-							t.Fatal(err)
-						}
-						server.Unsandboxed = true
-						wantError = "privileged isolation"
-					}
-					args := json.RawMessage(`{"cwd":` + strconv.Quote(root) + `,"prompt":"inspect"}`)
-					var err error
-					if tool == "swarm_run" {
-						args = json.RawMessage(`{"cwd":` + strconv.Quote(root) + `,"nodes":[{"id":"one","prompt":"inspect"}]}`)
-						_, _, err = server.toolSwarmRun(context.Background(), args)
-					} else {
-						_, _, err = server.toolPromptLoop(context.Background(), args)
-					}
-					if err == nil || !strings.Contains(err.Error(), wantError) {
-						t.Errorf("%s did not return the launch policy error: %v", tool, err)
-					}
-					tasks, err := taskStore.ListRecent(10)
-					if err != nil {
-						t.Fatal(err)
-					}
-					for _, task := range tasks {
-						if task.Status == "running" {
-							t.Errorf("rejected launch left %s task %s running", task.Type, task.ID)
-						}
-					}
-					if len(tasks) != 0 {
-						t.Errorf("rejected launch persisted %d tasks", len(tasks))
-					}
-				})
-			}
-		}
-	}
-}
-
-func TestRoostSwarmNodeSetupFailureMarksParentFailed(t *testing.T) {
-	for _, failure := range []string{"policy", "create"} {
-		t.Run(failure, func(t *testing.T) {
-			server, root, taskStore := roostMetaTaskFixture(t, false)
-			if err := os.WriteFile(filepath.Join(root, "egg.yaml"), roostRolePolicy(root), 0600); err != nil {
-				t.Fatal(err)
-			}
-			wantError := "egg.yaml"
-			if failure == "policy" {
-				load := server.launchConfig
-				server.launchConfig = func(cwd string) (*egg.EggConfig, error) {
-					var parents int
-					if err := taskStore.DB().QueryRow("SELECT COUNT(*) FROM tasks WHERE type = 'swarm'").Scan(&parents); err != nil {
-						return nil, err
-					}
-					if parents > 0 {
-						if err := os.Remove(filepath.Join(root, "egg.yaml")); err != nil {
-							return nil, err
-						}
-					}
-					return load(cwd)
-				}
-			} else {
-				wantError = "reject child task"
-				if _, err := taskStore.DB().Exec(`CREATE TRIGGER reject_child_task BEFORE INSERT ON tasks
-					WHEN NEW.type = 'prompt' BEGIN SELECT RAISE(FAIL, 'reject child task'); END`); err != nil {
-					t.Fatal(err)
-				}
-			}
-			_, _, err := server.toolSwarmRun(context.Background(), json.RawMessage(`{"cwd":`+strconv.Quote(root)+`,"nodes":[{"id":"one","prompt":"inspect"}]}`))
-			if err == nil || !strings.Contains(err.Error(), wantError) {
-				t.Fatalf("swarm did not return the node setup error: %v", err)
-			}
-			tasks, err := taskStore.ListRecent(10)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(tasks) != 1 || tasks[0].Type != "swarm" || tasks[0].Status != "failed" || tasks[0].FinishedAt == nil {
-				t.Fatalf("node setup failure did not finish the swarm parent: %+v", tasks)
-			}
-		})
-	}
-}
-
-func roostMetaTaskFixture(t *testing.T, shared bool) (*Server, string, *store.Store) {
-	t.Helper()
-	home := config.CanonicalProviderPath(t.TempDir())
-	t.Setenv("HOME", home)
-	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
-	cfg := &config.Config{Dir: filepath.Join(home, "state"), DefaultAgent: "claude"}
-	root := filepath.Join(home, "eng")
-	for _, dir := range []string{cfg.Dir, root} {
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	wc := &config.WingConfig{Org: "org", Paths: config.PathList{{Path: root, Members: []string{"eng@example.com"}}}}
-	if shared {
-		wc.Org = ""
-	}
-	source := func() (*config.WingConfig, *egg.EggConfig) { return wc, egg.DefaultEggConfig() }
-	server := newRoostNativeMCPServer("test", cfg, shared, NewMCPAdmissionState(), mcppkg.Principal{UserID: "eng", Email: "eng@example.com"}, []string{root}, source)
-	server.runAgentTask = func(context.Context, *config.Config, *store.Store, *store.Task, taskrun.TaskRunOptions) error {
-		t.Error("rejected launch reached the task runner")
-		return fmt.Errorf("unexpected execution")
-	}
-	taskStore, err := store.Open(cfg.DBPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = taskStore.Close() })
-	return server, root, taskStore
 }
 
 func TestRoostContinuationUsesRoleRootPolicy(t *testing.T) {
@@ -648,18 +509,13 @@ func TestRoostContinuationUsesRoleRootPolicy(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(c.CWD, "egg.yaml"), []byte("base: none\nfs: [ro:/opt/wingthing/support]\nnetwork: ['*']\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			server := newRoostNativeMCPServer("test", s.Cfg, shared, NewMCPAdmissionState(), mcppkg.Principal{UserID: "eng"}, []string{root})
+			server := testNativeServer(t, "test", s.Cfg, shared, NewMCPAdmissionState(), mcppkg.Principal{UserID: "eng"}, []string{root})
 			s.identity = server.identity
 			loaded := false
-			s.launchConfig = func(cwd string) (*egg.EggConfig, error) {
-				loaded = true
-				cfg, err := server.loadLaunchConfig(cwd)
-				if err != nil {
-					t.Fatalf("continuation admitted caller policy: %#v, %v", cfg, err)
-				}
-				assertRoostRolePolicy(t, cfg)
-				return cfg, nil
-			}
+			s.sessionRole = server.sessionRole
+			s.Sessions = server.Sessions
+			originalPolicy := s.Sessions.Policy
+			s.Sessions.Policy = func() wingsession.Policy { loaded = true; return originalPolicy() }
 			// Refuse at admission before restoring history or spawning an egg.
 			s.MaxSpawnsPerHour = 1
 			s.spawnTimes = []time.Time{time.Now()}
@@ -671,7 +527,7 @@ func TestRoostContinuationUsesRoleRootPolicy(t *testing.T) {
 	}
 }
 
-func TestPersonalMCPLaunchDiscoversWorkspacePolicy(t *testing.T) {
+func TestPersonalMCPLaunchUsesWebPathPolicy(t *testing.T) {
 	home := config.CanonicalProviderPath(t.TempDir())
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
@@ -686,10 +542,10 @@ func TestPersonalMCPLaunchDiscoversWorkspacePolicy(t *testing.T) {
 	if err := config.SaveWingConfig(cfg.Dir, &config.WingConfig{Paths: config.PathList{{Path: filepath.Dir(workspace)}}}); err != nil {
 		t.Fatal(err)
 	}
-	server := newRoostNativeMCPServer("test", cfg, false, NewMCPAdmissionState(), mcppkg.Principal{UserID: "owner"}, []string{filepath.Dir(workspace)})
+	server := testNativeServer(t, "test", cfg, false, NewMCPAdmissionState(), mcppkg.Principal{UserID: "owner"}, []string{filepath.Dir(workspace)})
 	policy, err := server.loadLaunchConfig(workspace)
-	if err != nil || !eggclient.ContainsExactPath(policy.Network.Domains, "workspace.example") {
-		t.Fatalf("personal wing lost workspace discovery: %#v, %v", policy, err)
+	if err == nil || !strings.Contains(err.Error(), "current launch paths") {
+		t.Fatalf("personal MCP accepted a CWD that web redirects: %#v, %v", policy, err)
 	}
 }
 
@@ -751,7 +607,7 @@ func TestRoostMCPRolePolicyMissingAndAdminFallback(t *testing.T) {
 		wc := &config.WingConfig{Org: org, Admins: []string{"admin@example.com"}, Paths: config.PathList{{Path: root}}}
 		source := func() (*config.WingConfig, *egg.EggConfig) { return wc, defaultPolicy }
 		for _, email := range []string{"member@example.com", "admin@example.com"} {
-			server := newRoostNativeMCPServer("test", cfg, shared, NewMCPAdmissionState(), mcppkg.Principal{UserID: "user", Email: email}, []string{root}, source)
+			server := testNativeServer(t, "test", cfg, shared, NewMCPAdmissionState(), mcppkg.Principal{UserID: "user", Email: email}, []string{root}, source)
 			for _, cwd := range []string{root, sub, outside} {
 				policy, err := server.loadLaunchConfig(cwd)
 				if email == "member@example.com" {
@@ -786,7 +642,7 @@ func TestRoostBrowserForkUsesRoleRootPolicyInSubdirectory(t *testing.T) {
 		}
 		wc := &config.WingConfig{Org: org, Paths: config.PathList{{Path: root}}}
 		req := ws.TunnelRequest{SenderUserID: "alice", SenderOrgRole: "member"}
-		configureBrowserFork(s, wc, req, root, shared, egg.DefaultEggConfig(), nil)
+		testBrowserFork(t, s, wc, req, root, shared, egg.DefaultEggConfig(), nil)
 		policy, err := s.loadLaunchConfig(sub)
 		if err != nil {
 			t.Fatal(err)
@@ -816,7 +672,7 @@ func TestRoostHeadlessSubmissionUsesRoleRootPolicy(t *testing.T) {
 	if err := config.SaveWingConfig(cfg.Dir, &config.WingConfig{Org: "org", Paths: config.PathList{{Path: root}}}); err != nil {
 		t.Fatal(err)
 	}
-	server := newRoostNativeMCPServer("test", cfg, false, NewMCPAdmissionState(), mcppkg.Principal{UserID: "eng"}, []string{root})
+	server := testNativeServer(t, "test", cfg, false, NewMCPAdmissionState(), mcppkg.Principal{UserID: "eng"}, []string{root})
 	// A pending dependency prevents provider execution on both revisions.
 	taskStore, err := store.Open(cfg.DBPath())
 	if err != nil {
@@ -864,17 +720,5 @@ func TestRoostHeadlessSubmissionUsesRoleRootPolicy(t *testing.T) {
 			}
 		}()
 		checkTask(t, runID)
-	})
-	t.Run("swarm_run", func(t *testing.T) {
-		// An already-cancelled context prevents execution on both revisions.
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		swarm, _, err := server.toolSwarmRun(ctx, json.RawMessage(`{"cwd":`+strconv.Quote(sub)+`,"nodes":[{"id":"one","prompt":"inspect","agent":"claude"}]}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, node := range swarm["nodes"].([]map[string]any) {
-			checkTask(t, node["task_id"].(string))
-		}
 	})
 }

@@ -126,7 +126,7 @@ func (s *Server) addSessionContinuation(result map[string]any, view egg.SessionV
 	if _, err := os.Stat(s.Cfg.DBPath()); err != nil {
 		return
 	}
-	db, err := s.openMessageStore()
+	db, err := s.openConversationStore()
 	if err != nil {
 		return
 	}
@@ -183,7 +183,7 @@ func (s *Server) toolAgentContinue(arguments json.RawMessage) (map[string]any, e
 	encoded, _ := json.Marshal(struct{ Source, Role, Input string }{args.SourceSession, args.Role, args.Input})
 	digest := sha256.Sum256(encoded)
 	specDigest := hex.EncodeToString(digest[:])
-	db, err := s.openMessageStore()
+	db, err := s.openConversationStore()
 	if err != nil {
 		return nil, err
 	}
