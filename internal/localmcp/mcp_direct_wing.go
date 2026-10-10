@@ -224,12 +224,6 @@ func serveDirectMCPChannelWithPolicySourceAndLease(version string, cfg *config.C
 				send(response)
 				return
 			}
-			tool, known := control.Lookup(request.Tool)
-			if request.Version != control.ContractVersion || request.ID == "" || !known || tool.Authority != control.AuthorityWing || !tool.Supports(control.SurfaceDirectMCP) {
-				response.Error = fmt.Sprintf("unsupported %s control operation %q", request.Version, request.Tool)
-				send(response)
-				return
-			}
 			server := &Server{Version: version,
 				Cfg: cfg, Logs: os.Stderr,
 				Principal:         roostSessionPrincipal(identity.UserID),
@@ -255,16 +249,7 @@ func serveDirectMCPChannelWithPolicySourceAndLease(version string, cfg *config.C
 				server.Sessions = admission.Sessions
 			}
 
-			arguments := request.Arguments
-			if len(arguments) == 0 {
-				arguments = json.RawMessage(`{}`)
-			}
-			result, isError, protocolErr := server.callTool(ctx, request.Tool, arguments)
-			response.Result = result
-			response.IsError = isError
-			if protocolErr != nil {
-				response.Error = protocolErr.Message
-			}
+			response = server.handleDirectRequest(ctx, request)
 			send(response)
 		}()
 	})
@@ -314,4 +299,25 @@ func directMCPAuthorizationError(wingCfg *config.WingConfig, allowedKeys []confi
 		return "passkey authentication is required; the native direct MCP passkey ceremony is not available in this release"
 	}
 	return ""
+}
+
+// handleDirectRequest is shared by the direct channel and the local wing socket.
+func (s *Server) handleDirectRequest(ctx context.Context, request control.DirectRequest) control.DirectResponse {
+	response := control.DirectResponse{Version: control.ContractVersion, ID: request.ID}
+	tool, known := control.Lookup(request.Tool)
+	if request.Version != control.ContractVersion || request.ID == "" || !known || tool.Authority != control.AuthorityWing || !tool.Supports(s.controlSurface()) {
+		response.Error = fmt.Sprintf("unsupported %s control operation %q; upgrade wt and the wing", request.Version, request.Tool)
+		return response
+	}
+	arguments := request.Arguments
+	if len(arguments) == 0 {
+		arguments = json.RawMessage(`{}`)
+	}
+	result, isError, protocolErr := s.callTool(ctx, request.Tool, arguments)
+	response.Result = result
+	response.IsError = isError
+	if protocolErr != nil {
+		response.Error = protocolErr.Message
+	}
+	return response
 }
