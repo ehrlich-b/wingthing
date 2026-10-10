@@ -21,9 +21,19 @@ func TestClaudeLifecycleRefusesHostSettingsOutsideFinalPolicy(t *testing.T) {
 	if ok, help := sandbox.CheckCapability(); !ok {
 		t.Skip(help)
 	}
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scratch := filepath.Join(root, ".scratch")
+	if err := os.MkdirAll(scratch, 0700); err != nil {
+		t.Fatal(err)
+	}
 	for _, attack := range []string{"deny", "ancestor-alias", "unmounted", "hardlink", "controller", "directory-alias", "allowed"} {
 		t.Run(attack, func(t *testing.T) {
-			temp, err := os.MkdirTemp("", "wt-settings-")
+			// Keep the canonical egg socket below Darwin's 103-byte limit even
+			// when the OS temporary directory expands through /private/var.
+			temp, err := os.MkdirTemp(scratch, "s")
 			if err != nil {
 				t.Fatal(err)
 			}
