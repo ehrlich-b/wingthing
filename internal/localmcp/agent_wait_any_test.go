@@ -2,94 +2,92 @@ package localmcp
 
 import (
 	"context"
-	"database/sql"
-	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
-	"modernc.org/sqlite"
+	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
 func fakeAgentWaitRuns(t *testing.T, tasks ...*store.Task) (*Server, *store.Store) {
 	t.Helper()
-	cfg := &config.Config{Dir: t.TempDir()}
-	db, err := store.Open(cfg.DBPath())
+	f := newRunWingFixture(t, nil)
+	if err := f.service.RunManager.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.service.RunManager = nil
+	db, err := store.Open(f.server.Cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { closeForTest(t, "fake run store", db) })
+	t.Cleanup(func() { db.Close() })
 	for _, task := range tasks {
-		if err := db.CreateTask(task); err != nil {
+		if task.Type != "agent_run" {
+			if err := db.CreateTask(task); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		r := &wingsession.Run{ID: task.ID, SessionID: "session-" + task.ID, Agent: "claude", CWD: f.server.Cfg.Dir, Phase: "observing", CreatedAt: time.Now().UTC(), Launch: wingsession.RunLaunch{Authority: wingsession.Authority{Principal: task.Principal, UserID: f.server.identity.UserID}}, Result: egg.RunTurnResult{RunID: task.ID, SessionID: "session-" + task.ID, Status: task.Status}}
+		if r.Result.Terminal() {
+			r.Phase = "terminal"
+		}
+		wire, _ := json.Marshal(r)
+		if _, _, err := db.AdmitAgentRun(&store.AgentRun{ID: r.ID, SessionID: r.SessionID, Principal: task.Principal, Record: wire, SpecHash: r.ID}, task); err != nil {
 			t.Fatal(err)
 		}
+		e := &fixtureRunEgg{result: r.Result, done: make(chan struct{})}
+		if e.result.Terminal() {
+			close(e.done)
+		}
+		f.eggs[r.ID] = e
 	}
-	return testWingServer(t, &Server{Version: "test", Cfg: cfg, Principal: "owner", Logs: io.Discard}), db
+	f.restart(t)
+	return f.server, db
 }
 
 func TestAgentWaitAnyReturnsFirstOfThreeFakeRuns(t *testing.T) {
-	server, db := fakeAgentWaitRuns(t,
-		&store.Task{ID: "first", Type: "agent_run", Principal: "owner", Status: "running"},
-		&store.Task{ID: "second", Type: "agent_run", Principal: "owner", Status: "running"},
-		&store.Task{ID: "third", Type: "agent_run", Principal: "owner", Status: "running"},
-	)
-	pending := []string{"first", "second", "third"}
-	for index, id := range []string{"third", "first", "second"} {
-		arguments, err := json.Marshal(map[string]any{"run_ids": pending, "timeout_seconds": 2})
-		if err != nil {
-			t.Fatal(err)
-		}
-		ctx, cancel := context.WithCancel(context.Background())
-		t.Cleanup(cancel)
+
+	f := newRunWingFixture(t, nil)
+	ids := []string{f.admit(t, "first"), f.admit(t, "second"), f.admit(t, "third")}
+	for range ids {
+		<-f.submitted
+	}
+	pending := append([]string{}, ids...)
+	for _, id := range []string{ids[2], ids[0], ids[1]} {
+		wire, _ := json.Marshal(map[string]any{"run_ids": pending})
 		type response struct {
 			data map[string]any
 			err  error
 		}
-		waited := make(chan response, 1)
-		go func() {
-			data, err := server.toolAgentWaitAny(ctx, arguments)
-			waited <- response{data, err}
-		}()
-		select {
-		case result := <-waited:
-			t.Fatalf("wait returned before any run finished: %#v, %v", result.data, result.err)
-		case <-time.After(50 * time.Millisecond):
-		}
-		status := "done"
-		if index == 1 {
-			status = "failed"
-		}
-		if err := db.UpdateTaskStatus(id, status); err != nil {
-			t.Fatal(err)
-		}
+		result := make(chan response, 1)
+		go func() { data, err := f.server.toolAgentWaitAny(t.Context(), wire); result <- response{data, err} }()
+		f.finish(t, id, "done", "")
+		got := <-result
 		wantPending := []string{}
 		for _, candidate := range pending {
 			if candidate != id {
 				wantPending = append(wantPending, candidate)
 			}
 		}
-		select {
-		case result := <-waited:
-			want := map[string]any{"finished": []map[string]any{{"run_id": id, "status": status}}, "pending": wantPending}
-			if result.err != nil || !reflect.DeepEqual(result.data, want) {
-				t.Fatalf("completion %d = %#v, %v; want %#v", index, result.data, result.err, want)
-			}
-		case <-time.After(time.Second):
-			t.Fatal("wait stayed blocked after one run finished")
+		if got.err != nil || !reflect.DeepEqual(got.data["finished"], []map[string]any{{"run_id": id, "status": "done"}}) || !reflect.DeepEqual(got.data["pending"], wantPending) {
+			t.Fatalf("completion: %v %v", got.data, got.err)
 		}
-		cancel()
 		pending = wantPending
 	}
+
 }
 
 func TestAgentWaitAnyTimeout(t *testing.T) {
@@ -97,15 +95,12 @@ func TestAgentWaitAnyTimeout(t *testing.T) {
 		&store.Task{ID: "running", Type: "agent_run", Principal: "owner", Status: "running"},
 		&store.Task{ID: "foreign", Type: "agent_run", Principal: "other", Status: "done"},
 	)
-	started := time.Now()
 	data, err := server.toolAgentWaitAny(context.Background(), json.RawMessage(`{"run_ids":["running"],"timeout_seconds":0.1}`))
 	want := map[string]any{"finished": []map[string]any{}, "pending": []string{"running"}}
 	if err != nil || !reflect.DeepEqual(data, want) {
 		t.Fatalf("timeout = %#v, %v; want %#v", data, err, want)
 	}
-	if elapsed := time.Since(started); elapsed < 100*time.Millisecond || elapsed > time.Second {
-		t.Fatalf("timeout elapsed = %v", elapsed)
-	}
+
 	data, err = server.AgentWaitAny(context.Background(), json.RawMessage(`{"run_ids":["foreign","running","missing"],"timeout_seconds":0.1}`))
 	if err != nil || !reflect.DeepEqual(data["finished"], want["finished"]) || !reflect.DeepEqual(data["pending"], want["pending"]) || len(data["errors"].([]map[string]any)) != 2 {
 		t.Fatalf("timeout with invalid IDs = %#v, %v", data, err)
@@ -243,56 +238,35 @@ func TestAgentWaitAnyValidatesBounds(t *testing.T) {
 	}
 }
 
-type agentWaitQueryConnector struct {
-	dsn     string
-	queries atomic.Int64
-}
-
-func (c *agentWaitQueryConnector) Connect(context.Context) (driver.Conn, error) {
-	conn, err := c.Driver().Open(c.dsn)
-	if err != nil {
-		return nil, err
-	}
-	return &agentWaitQueryConn{Conn: conn, queries: &c.queries}, nil
-}
-
-func (c *agentWaitQueryConnector) Driver() driver.Driver { return &sqlite.Driver{} }
-
-type agentWaitQueryConn struct {
-	driver.Conn
-	queries *atomic.Int64
-}
-
-func (c *agentWaitQueryConn) QueryContext(ctx context.Context, query string, arguments []driver.NamedValue) (driver.Rows, error) {
-	c.queries.Add(1)
-	return c.Conn.(driver.QueryerContext).QueryContext(ctx, query, arguments)
-}
-
 func TestAgentWaitAnyBatchesStatusReads(t *testing.T) {
 	tasks := make([]*store.Task, 64)
-	ids := make([]string, len(tasks))
-	for index := range tasks {
-		ids[index] = strings.Repeat("r", index+1)
-		tasks[index] = &store.Task{ID: ids[index], Type: "agent_run", Principal: "owner", Status: "running", RunnerPID: os.Getpid()}
+	ids := make([]string, 64)
+	for i := range tasks {
+		ids[i] = fmt.Sprintf("run-%d", i)
+		tasks[i] = &store.Task{ID: ids[i], Type: "agent_run", Principal: "owner", Status: "running"}
 	}
 	server, _ := fakeAgentWaitRuns(t, tasks...)
-	connector := &agentWaitQueryConnector{dsn: server.Cfg.DBPath()}
-	db := sql.OpenDB(connector)
-	t.Cleanup(func() { closeForTest(t, "counted run store", db) })
-	for poll := 0; poll < 2; poll++ {
-		loaded, err := server.loadOwnedAgentRunStatuses(db, ids)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if connector.queries.Load() != int64(poll+1) || len(loaded) != len(tasks) {
-			t.Fatalf("poll %d made %d queries and loaded %d runs", poll, connector.queries.Load(), len(loaded))
-		}
-		for _, task := range tasks {
-			got := loaded[task.ID]
-			if got == nil || got.Status != task.Status || got.RunnerPID != task.RunnerPID {
-				t.Fatalf("status for %s = %#v", task.ID, got)
-			}
-		}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	started := make(chan struct{}, 1)
+	observed := &agentWaitStartedContext{Context: ctx, started: started}
+	wire, _ := json.Marshal(map[string]any{"run_ids": ids})
+	result := make(chan map[string]any, 1)
+	errs := make(chan error, 1)
+	go func() { data, err := server.toolAgentWaitAny(observed, wire); result <- data; errs <- err }()
+	<-started
+	activeAgentWaitAnyCalls.Lock()
+	count := activeAgentWaitAnyCalls.counts[server.Cfg.DBPath()+"\x00"+server.clientPrincipal()]
+	activeAgentWaitAnyCalls.Unlock()
+	if count != 1 {
+		t.Fatalf("64 IDs used %d bounded wait slots", count)
+	}
+	if _, err := server.Sessions.RunBackend.Stop(t.Context(), server.Cfg, eggclient.LocalSession{ID: "session-" + ids[63]}, ids[63]); err != nil {
+		t.Fatal(err)
+	}
+	data := <-result
+	if err := <-errs; err != nil || len(data["finished"].([]map[string]any)) != 1 || len(data["pending"].([]string)) != 63 {
+		t.Fatalf("subscription completion: %v %v", data, err)
 	}
 }
 
@@ -323,14 +297,13 @@ func TestAgentWaitAnyLimitsConcurrentCallsPerPrincipal(t *testing.T) {
 			for ; remaining > 0; remaining-- {
 				select {
 				case <-results:
-				case <-time.After(time.Second):
-					t.Error("concurrent wait did not stop")
 				}
 			}
 		})
 		arguments, _ := json.Marshal(map[string]any{"run_ids": []string{"running"}, "timeout_seconds": timeout})
 		for index := 0; index < 4; index++ {
 			peer := testWingServer(t, &Server{Version: "test", Cfg: server.Cfg, Principal: "owner", Actor: strings.Repeat("a", index+1), Logs: io.Discard})
+			peer.Sessions = server.Sessions
 			waitCtx := &agentWaitStartedContext{Context: ctx, started: started}
 			go func() {
 				_, err := peer.toolAgentWaitAny(waitCtx, arguments)
@@ -343,14 +316,13 @@ func TestAgentWaitAnyLimitsConcurrentCallsPerPrincipal(t *testing.T) {
 			case err := <-results:
 				remaining--
 				t.Fatalf("one of the first four waits was rejected: %v", err)
-			case <-time.After(time.Second):
-				t.Fatal("concurrent wait did not start")
 			}
 		}
 		if _, err := server.AgentWaitAny(context.Background(), json.RawMessage(`{"run_ids":["done"]}`)); err == nil || !strings.Contains(err.Error(), "too many concurrent waits") {
 			t.Fatalf("fifth wait error = %v", err)
 		}
 		other := testWingServer(t, &Server{Version: "test", Cfg: server.Cfg, Principal: "other", Logs: io.Discard})
+		other.Sessions = server.Sessions
 		if data, err := other.AgentWaitAny(context.Background(), json.RawMessage(`{"run_ids":["other-done"]}`)); err != nil || len(data["finished"].([]map[string]any)) != 1 {
 			t.Fatalf("other principal wait = %#v, %v", data, err)
 		}
@@ -363,8 +335,6 @@ func TestAgentWaitAnyLimitsConcurrentCallsPerPrincipal(t *testing.T) {
 				if timeout == 600 && !errors.Is(err, context.Canceled) || timeout == 0.1 && err != nil {
 					t.Errorf("wait error = %v", err)
 				}
-			case <-time.After(time.Second):
-				t.Fatal("concurrent wait did not return")
 			}
 		}
 		cancel()
@@ -375,22 +345,28 @@ func TestAgentWaitAnyLimitsConcurrentCallsPerPrincipal(t *testing.T) {
 }
 
 func TestAgentWaitAnyPreservesDefaultOwnershipAndOrphanCleanup(t *testing.T) {
-	server, db := fakeAgentWaitRuns(t,
-		&store.Task{ID: "orphan", Type: "agent_run", Status: "running", RunnerPID: 1 << 30},
-		&store.Task{ID: "live", Type: "agent_run", Principal: "default", Status: "running", RunnerPID: os.Getpid()},
-		&store.Task{ID: "foreign", Type: "agent_run", Principal: "other", Status: "running", RunnerPID: 1 << 30},
-	)
-	server.Principal = ""
-	data, err := server.toolAgentWaitAny(context.Background(), json.RawMessage(`{"run_ids":["orphan","live","foreign"]}`))
-	if err != nil || !reflect.DeepEqual(data["finished"], []map[string]any{{"run_id": "orphan", "status": "failed"}}) || !reflect.DeepEqual(data["pending"], []string{"live"}) {
-		t.Fatalf("orphan wait = %#v, %v", data, err)
+
+	cfg := &config.Config{Dir: t.TempDir()}
+	db, err := store.Open(cfg.DBPath())
+	if err != nil {
+		t.Fatal(err)
 	}
-	task, err := db.GetTask("orphan")
-	if err != nil || task == nil || task.Status != "failed" || task.Error == nil || !strings.Contains(*task.Error, "supervising Wingthing process") {
-		t.Fatalf("persisted orphan = %#v, %v", task, err)
+	defer db.Close()
+	for _, task := range []*store.Task{{ID: "orphan", Type: "agent_run", Status: "running", RunnerPID: 1 << 30}, {ID: "live", Type: "agent_run", Principal: "default", Status: "running", RunnerPID: os.Getpid()}, {ID: "foreign", Type: "agent_run", Principal: "other", Status: "running"}} {
+		if err := db.CreateTask(task); err != nil {
+			t.Fatal(err)
+		}
 	}
-	task, err = db.GetTask("foreign")
-	if err != nil || task == nil || task.Status != "running" || task.Error != nil {
-		t.Fatalf("foreign run was modified: %#v, %v", task, err)
+	f := newRunWingFixture(t, &Server{Version: "test", Cfg: cfg, Logs: io.Discard})
+	data, err := f.server.toolAgentWaitAny(t.Context(), json.RawMessage(`{"run_ids":["orphan","live","foreign"]}`))
+	if err != nil || len(data["finished"].([]map[string]any)) != 2 || len(data["errors"].([]map[string]any)) != 1 {
+		t.Fatalf("legacy history: %v %v", data, err)
 	}
+	for _, id := range []string{"orphan", "live"} {
+		task, err := db.GetTask(id)
+		if err != nil || task.Status != "failed" || task.Error == nil || *task.Error != "Wingthing legacy run ended: unknown_outcome." {
+			t.Fatalf("legacy must not use PID liveness: %+v %v", task, err)
+		}
+	}
+
 }

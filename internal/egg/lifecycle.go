@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 
 	"golang.org/x/sys/unix"
@@ -792,6 +793,10 @@ func (j *lifecycleJournal) importTranscript(root *os.File, eggDir, cwd, id strin
 				event.Truncated = true
 			}
 		}
+		if kind, failed := nativeFailureKind("claude", line); failed {
+			event.Type, event.State, event.Reason = "turn_failed", "failed", string(kind)
+			event.Raw, event.Text, event.Role, event.Timestamp = nil, "", "", ""
+		}
 		event = boundedLifecycleEvent(event)
 		if event.Truncated {
 			event.OriginalBytes = size
@@ -1013,6 +1018,11 @@ func (j *lifecycleJournal) importProviderHooks(root *os.File, spool, providerID,
 			default:
 				e.Type = "provider_event"
 			}
+		}
+		if e.Type == "turn_failed" {
+			e.Reason = string(agentpkg.ClassifyProviderDiagnostic(string(data)))
+			e.Raw = nil
+			e.Text = ""
 		}
 		if len(e.Text) > 64<<10 {
 			e.Text = ""

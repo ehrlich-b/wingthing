@@ -4,7 +4,6 @@ import (
 	"compress/gzip"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -96,7 +95,7 @@ func CaptureSessionHistory(agent, cwd, eggDir, home string, startedAfter time.Ti
 	}
 
 	gw := gzip.NewWriter(tmp)
-	if _, err := io.Copy(gw, src); err != nil {
+	if err := copyConversationArchive(gw, src, agent); err != nil {
 		_ = gw.Close()
 		return fmt.Errorf("compress: %w", err)
 	}

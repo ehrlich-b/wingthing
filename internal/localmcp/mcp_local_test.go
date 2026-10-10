@@ -14,13 +14,15 @@ import (
 	"testing"
 	"time"
 
+	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
+	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/store"
-	"github.com/ehrlich-b/wingthing/internal/taskrun"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
+	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
 func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
@@ -541,362 +543,184 @@ clients:
 }
 
 func TestLocalMCPAgentRunLifecycleIsSemanticAndOwnerScoped(t *testing.T) {
-	dir := t.TempDir()
-	cwd := t.TempDir()
-	cfg := &config.Config{Dir: dir, DefaultAgent: "claude"}
-	started := make(chan struct{})
-	release := make(chan struct{})
-	server := testWingServer(t, &Server{Version: "dev",
-		Cfg: cfg, Logs: &bytes.Buffer{}, Principal: "alpha",
-		runAgentTask: func(ctx context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
-			if err := taskStore.UpdateTaskStatus(task.ID, "running"); err != nil {
-				return err
-			}
-			_ = taskStore.AppendLog(task.ID, "started", nil)
-			close(started)
-			select {
-			case <-ctx.Done():
-				return taskStore.SetTaskError(task.ID, ctx.Err().Error())
-			case <-release:
-			}
-			if err := taskStore.SetTaskOutput(task.ID, "semantic ✓ result"); err != nil {
-				return err
-			}
-			return taskStore.UpdateTaskStatus(task.ID, "done")
-		},
-	})
-	startedData, isError, protocolErr := server.callTool(context.Background(), "agent_run", json.RawMessage(`{
-		"prompt":"review this branch","agent":"claude","model":"opus","cwd":"`+cwd+`","label":"review"
-	}`))
-	if protocolErr != nil || isError {
-		t.Fatalf("agent_run = %#v isError=%v protocol=%v", startedData, isError, protocolErr)
-	}
-	runID := startedData["run_id"].(string)
-	<-started
 
-	status, err := server.toolAgentStatus(json.RawMessage(`{"run_id":"` + runID + `"}`))
-	if err != nil || status["status"] != "running" || status["model"] != "opus" {
-		t.Fatalf("agent_status = %#v err=%v", status, err)
-	}
-	other := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Logs: &bytes.Buffer{}, Principal: "beta"})
-	wantHidden := fmt.Sprintf("agent run %q not found or not owned by caller", runID)
-	if _, err := other.toolAgentStatus(json.RawMessage(`{"run_id":"` + runID + `"}`)); err == nil || err.Error() != wantHidden {
-		t.Fatalf("cross-principal lookup error = %v, want %q", err, wantHidden)
-	}
-	wantMissing := `agent run "missing-run" not found or not owned by caller`
-	if _, err := other.toolAgentStatus(json.RawMessage(`{"run_id":"missing-run"}`)); err == nil || err.Error() != wantMissing {
-		t.Fatalf("missing lookup error = %v, want %q", err, wantMissing)
-	}
-	before, err := server.toolAgentResult(json.RawMessage(`{"run_id":"` + runID + `"}`))
+	f := newRunWingFixture(t, nil)
+	id := f.admit(t, "review this branch")
+	<-f.submitted
+	before, err := f.server.toolAgentResult(runArgs(id))
 	if err != nil || before["ready"] != false {
-		t.Fatalf("early result = %#v err=%v", before, err)
+		t.Fatalf("early result: %v %v", before, err)
+	}
+	foreign := *f.server
+	foreign.Principal = "foreign"
+	for _, target := range []string{id, "missing-run"} {
+		if _, err := foreign.toolAgentStatus(runArgs(target)); err == nil || err.Error() != fmt.Sprintf("agent run %q not found or not owned by caller", target) {
+			t.Fatalf("ownership error: %v", err)
+		}
+	}
+	f.finish(t, id, "semantic ✓ result", "")
+	f.wait(t, id)
+	result, err := f.server.toolAgentResult(json.RawMessage(`{"run_id":"` + id + `","max_chars":10}`))
+	if err != nil || result["output"] != "semantic ✓" || result["truncated"] != true {
+		t.Fatalf("semantic result: %v %v", result, err)
+	}
+	events, err := f.server.toolAgentEvents(runArgs(id))
+	if err != nil || len(events["events"].([]map[string]any)) == 0 {
+		t.Fatalf("events: %v %v", events, err)
 	}
 
-	close(release)
-	waited, err := server.toolAgentWait(context.Background(), json.RawMessage(`{"run_id":"`+runID+`","timeout_seconds":2}`))
-	if err != nil || waited["status"] != "done" {
-		t.Fatalf("agent_wait = %#v err=%v", waited, err)
-	}
-	result, err := server.toolAgentResult(json.RawMessage(`{"run_id":"` + runID + `","max_chars":10}`))
-	if err != nil || result["output"] != "semantic ✓" || result["truncated"] != true {
-		t.Fatalf("agent_result = %#v err=%v", result, err)
-	}
-	events, err := server.toolAgentEvents(json.RawMessage(`{"run_id":"` + runID + `"}`))
-	if err != nil || len(events["events"].([]map[string]any)) == 0 {
-		t.Fatalf("agent_events = %#v err=%v", events, err)
-	}
 }
 
 func TestAgentStopWinsCompletionRace(t *testing.T) {
-	dir := t.TempDir()
-	cwd := t.TempDir()
-	started := make(chan struct{})
-	server := testWingServer(t, &Server{Version: "dev",
-		Cfg: &config.Config{Dir: dir, DefaultAgent: "claude"}, Logs: &bytes.Buffer{}, Principal: "alpha",
-		runAgentTask: func(ctx context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
-			if err := taskStore.UpdateTaskStatus(task.ID, "running"); err != nil {
-				return err
-			}
-			close(started)
-			<-ctx.Done()
-			// Deliberately attempt the stale completion write that used to win
-			// the cancellation race. toolAgentStop waits for this runner and
-			// writes the final stopped state afterward.
-			_ = taskStore.SetTaskOutput(task.ID, "late output")
-			return taskStore.UpdateTaskStatus(task.ID, "done")
-		},
-	})
-	created, err := server.toolAgentRun(json.RawMessage(`{"prompt":"keep working","agent":"claude","cwd":` + strconv.Quote(cwd) + `}`))
-	if err != nil {
-		t.Fatal(err)
+
+	f := newRunWingFixture(t, nil)
+	id := f.admit(t, "keep working")
+	<-f.submitted
+	stopped, err := f.server.toolAgentStop(runArgs(id))
+	if err != nil || stopped["status"] != "stopped" || stopped["stopped"] != true {
+		t.Fatalf("stop: %v %v", stopped, err)
 	}
-	runID := created["run_id"].(string)
-	<-started
-	stopped, err := server.toolAgentStop(json.RawMessage(`{"run_id":` + strconv.Quote(runID) + `}`))
-	if err != nil {
-		t.Fatal(err)
+	f.finish(t, id, "late output", "")
+	result, err := f.server.toolAgentResult(runArgs(id))
+	if err != nil || result["status"] != "stopped" || result["output"] != "" {
+		t.Fatalf("stale completion won: %v %v", result, err)
 	}
-	if stopped["status"] != "failed" || stopped["stopped"] != true {
-		t.Fatalf("stopped = %#v", stopped)
-	}
-	result, err := server.toolAgentResult(json.RawMessage(`{"run_id":` + strconv.Quote(runID) + `}`))
-	if err != nil || !strings.Contains(result["error"].(string), "stopped by MCP principal alpha") {
-		t.Fatalf("final result = %#v err=%v", result, err)
-	}
+
 }
 
 func TestUnsandboxedAgentRunPersistsPrivilegedIsolation(t *testing.T) {
-	dir := t.TempDir()
-	cwd := t.TempDir()
-	seen := make(chan string, 1)
-	server := testWingServer(t, &Server{Version: "dev",
-		Cfg: &config.Config{Dir: dir, DefaultAgent: "claude"}, Logs: &bytes.Buffer{},
-		Principal: "alpha", Unsandboxed: true,
-		runAgentTask: func(_ context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
-			seen <- task.Isolation
-			return taskStore.UpdateTaskStatus(task.ID, "done")
-		},
-	})
-	created, err := server.toolAgentRun(json.RawMessage(`{"prompt":"trusted task","agent":"claude","cwd":` + strconv.Quote(cwd) + `}`))
-	if err != nil {
-		t.Fatal(err)
+
+	f := newRunWingFixture(t, &Server{Version: "test", Cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, Principal: "alpha", Unsandboxed: true, Logs: io.Discard})
+	id := f.admit(t, "trusted task")
+	<-f.submitted
+	status, err := f.server.toolAgentStatus(runArgs(id))
+	if err != nil || status["isolation"] != "privileged" {
+		t.Fatalf("isolation: %v %v", status, err)
 	}
-	if created["isolation"] != "privileged" {
-		t.Fatalf("submitted isolation = %#v", created)
+	launch := <-f.launches
+	if egg.RequiresSandbox(launch.Config, "claude") {
+		t.Fatal("outer profile was replaced at egg launch")
 	}
-	select {
-	case isolation := <-seen:
-		if isolation != "privileged" {
-			t.Fatalf("runner isolation = %q", isolation)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("agent runner did not start")
-	}
+	f.finish(t, id, "done", "")
+	f.wait(t, id)
+
 }
 
 func TestAgentStatusMarksOrphanedRunnerFailed(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &config.Config{Dir: dir, DefaultAgent: "claude"}
-	taskStore, err := store.Open(cfg.DBPath())
+
+	cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}
+	db, err := store.Open(cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := &store.Task{
-		ID: "orphaned-run", Type: "agent_run", What: "orphan", Agent: "claude",
-		RunAt: time.Now(), CWD: t.TempDir(), Principal: "alpha", RunnerPID: 1 << 30,
-	}
-	if err := taskStore.CreateTask(task); err != nil {
+	defer db.Close()
+	task := &store.Task{ID: "legacy", Type: "agent_run", What: "orphan", Agent: "claude", Principal: "alpha", Status: "running", RunnerPID: 1 << 30, RunAt: time.Now(), CWD: cfg.Dir}
+	if err := db.CreateTask(task); err != nil {
 		t.Fatal(err)
 	}
-	if err := taskStore.UpdateTaskStatus(task.ID, "running"); err != nil {
-		t.Fatal(err)
+	f := newRunWingFixture(t, &Server{Version: "test", Cfg: cfg, Principal: "alpha", Logs: io.Discard})
+	status, err := f.server.toolAgentStatus(runArgs(task.ID))
+	if err != nil || status["status"] != "failed" {
+		t.Fatalf("legacy state: %v %v", status, err)
 	}
-	closeForTest(t, "task store", taskStore)
-	server := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Logs: &bytes.Buffer{}, Principal: "alpha"})
-	status, err := server.toolAgentStatus(json.RawMessage(`{"run_id":"orphaned-run"}`))
-	if err != nil {
-		t.Fatal(err)
+	result, err := f.server.toolAgentResult(runArgs(task.ID))
+	if err != nil || fmt.Sprint(result["failure_kind"]) != "unknown_outcome" || result["error"] != "Wingthing legacy run ended: unknown_outcome." {
+		t.Fatalf("legacy result: %v %v", result, err)
 	}
-	if status["status"] != "failed" {
-		t.Fatalf("orphan status = %#v", status)
-	}
-	result, err := server.toolAgentResult(json.RawMessage(`{"run_id":"orphaned-run"}`))
-	if err != nil || !strings.Contains(result["error"].(string), "supervising Wingthing process") {
-		t.Fatalf("orphan result = %#v err=%v", result, err)
-	}
+
 }
 
 func TestAgentSteerContinuesTerminalRunsWithPartialResultAndError(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		status string
-		output string
-		error  string
-	}{
-		{"failed-after-timeout", "failed", "partial review ✓", "agent error: context deadline exceeded"},
-		{"failed-without-result", "failed", "", "review failed"},
-		{"timeout", "timeout", "partial review ✓", "context deadline exceeded"},
-		{"stopped", "stopped", "partial review ✓", "stopped by MCP principal owner"},
-		{"done-without-result", "done", "", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cwd, err := filepath.EvalSymlinks(t.TempDir())
+
+	for _, kind := range []agentpkg.ErrorKind{"", agentpkg.ProviderError, agentpkg.Timeout, agentpkg.Stopped} {
+		t.Run(string(kind), func(t *testing.T) {
+			f := newRunWingFixture(t, nil)
+			parent := f.admit(t, "original review")
+			<-f.submitted
+			f.finish(t, parent, "partial review ✓", kind)
+			f.wait(t, parent)
+			created, err := f.server.toolAgentSteer(json.RawMessage(`{"run_id":"` + parent + `","prompt":"focus on auth"}`))
 			if err != nil {
 				t.Fatal(err)
 			}
-			parent := &store.Task{
-				ID: "parent", Type: "agent_run", What: "original review", Agent: "claude", Model: "opus",
-				RunAt: time.Now(), CWD: cwd, Principal: "owner", RunnerPID: os.Getpid(), TimeoutSeconds: 120,
+			child := created["run_id"].(string)
+			if <-f.submitted != child {
+				t.Fatal("wrong child")
 			}
-			server, taskStore := fakeAgentWaitRuns(t, parent)
-			if tc.output != "" {
-				if err := taskStore.SetTaskOutput(parent.ID, tc.output); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if tc.error != "" {
-				if err := taskStore.SetTaskError(parent.ID, tc.error); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if err := taskStore.UpdateTaskStatus(parent.ID, tc.status); err != nil {
-				t.Fatal(err)
-			}
-			wantPrompt := "Prior request:\noriginal review\n\nPrior result:\n" + tc.output
-			if tc.error != "" {
-				wantPrompt += "\n\nPrior error:\n" + tc.error
-			}
-			wantPrompt += "\n\nNew direction:\nfocus on auth"
-			seenPrompt := make(chan string, 1)
-			server.runAgentTask = func(_ context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
-				seenPrompt <- task.What
-				return taskStore.UpdateTaskStatus(task.ID, "done")
-			}
-			created, err := server.toolAgentSteer(json.RawMessage(`{"run_id":"parent","prompt":"focus on auth"}`))
+			r, err := f.service.RunManager.Get(f.server.sessionAuthority(), child)
 			if err != nil {
 				t.Fatal(err)
 			}
-			childID := created["run_id"].(string)
-			t.Cleanup(func() {
-				if value, ok := activeMCPAgentRuns.Load(server.agentRunKey(childID)); ok {
-					active := value.(activeMCPAgentRun)
-					active.cancel()
-					<-active.done
-				}
-			})
-			waited, err := server.toolAgentWait(context.Background(), json.RawMessage(`{"run_id":`+strconv.Quote(childID)+`,"timeout_seconds":2}`))
-			if err != nil || waited["status"] != "done" {
-				t.Fatalf("child wait = %#v err=%v", waited, err)
+			if !strings.Contains(r.Prompt, "Prior result:\npartial review ✓") || !strings.HasSuffix(r.Prompt, "New direction:\nfocus on auth") || r.ParentID != parent || r.Agent != "claude" || r.Model != "opus" || r.TimeoutSeconds != 900 {
+				t.Fatalf("followup inheritance: %+v", r)
 			}
-			select {
-			case got := <-seenPrompt:
-				if got != wantPrompt {
-					t.Fatalf("runner prompt = %q, want %q", got, wantPrompt)
-				}
-			default:
-				t.Fatal("terminal parent did not release the steered child")
+			if kind != "" && !strings.Contains(r.Prompt, "Prior error:\nEgg run turn ended: "+string(kind)+".") {
+				t.Fatal("missing authored prior error")
 			}
-			child, err := taskStore.GetTask(childID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if child.What != wantPrompt || child.ParentID == nil || *child.ParentID != parent.ID ||
-				child.Agent != parent.Agent || child.Model != parent.Model || child.CWD != parent.CWD || child.TimeoutSeconds != parent.TimeoutSeconds {
-				t.Fatalf("steered child = %#v, want prior context and inherited settings", child)
-			}
+			f.finish(t, child, "done", "")
+			f.wait(t, child)
 		})
 	}
+
 }
 
-func TestAgentSteerRejectsActiveAndUnownedRuns(t *testing.T) {
-	for _, tc := range []struct {
-		status    string
-		principal string
-		wantError string
-	}{
-		{"pending", "owner", "is not terminal"},
-		{"running", "owner", "is not terminal"},
-		{"done", "other", "not found or not owned by caller"},
-		{"failed", "other", "not found or not owned by caller"},
-		{"timeout", "other", "not found or not owned by caller"},
-		{"stopped", "other", "not found or not owned by caller"},
-	} {
-		t.Run(tc.status+"/"+tc.principal, func(t *testing.T) {
-			server, taskStore := fakeAgentWaitRuns(t, &store.Task{
-				ID: "parent", Type: "agent_run", Agent: "claude", What: "review", CWD: t.TempDir(),
-				Status: tc.status, Principal: tc.principal, RunnerPID: os.Getpid(),
-			})
-			created, err := server.toolAgentSteer(json.RawMessage(`{"run_id":"parent","prompt":"continue"}`))
-			if err == nil {
-				// Cancel an unexpectedly accepted follow-up so a regression cannot
-				// leave a runner waiting on the active parent after this test.
-				if value, ok := activeMCPAgentRuns.Load(server.agentRunKey(created["run_id"].(string))); ok {
-					active := value.(activeMCPAgentRun)
-					active.cancel()
-					<-active.done
-				}
-				t.Fatalf("steer accepted %s run owned by %s: %#v", tc.status, tc.principal, created)
-			}
-			if !strings.Contains(err.Error(), tc.wantError) {
-				t.Fatalf("steer error = %v, want %q", err, tc.wantError)
-			}
-			var count int
-			if err := taskStore.DB().QueryRow("SELECT COUNT(*) FROM tasks").Scan(&count); err != nil {
-				t.Fatal(err)
-			}
-			if count != 1 {
-				t.Fatalf("rejected steer created a task: count = %d", count)
-			}
-		})
+func TestAgentSteerQueuesActiveAndRejectsUnownedRuns(t *testing.T) {
+
+	f := newRunWingFixture(t, nil)
+	parent := f.admit(t, "review")
+	<-f.submitted
+	created, err := f.server.toolAgentSteer(json.RawMessage(`{"run_id":"` + parent + `","prompt":"continue"}`))
+	if err != nil || created["status"] != "pending" {
+		t.Fatalf("active parent queue: %v %v", created, err)
 	}
+	foreign := *f.server
+	foreign.Principal = "other"
+	for _, id := range []string{parent, "missing"} {
+		if _, err := foreign.toolAgentSteer(json.RawMessage(`{"run_id":"` + id + `","prompt":"continue"}`)); err == nil {
+			t.Fatal("unowned steer admitted")
+		}
+	}
+	if _, err := f.server.toolAgentStop(runArgs(parent)); err != nil {
+		t.Fatal(err)
+	}
+
 }
 
 func TestAgentSteerPassesAndPersistsPriorResult(t *testing.T) {
-	dir := t.TempDir()
-	cwd := t.TempDir()
-	cfg := &config.Config{Dir: dir, DefaultAgent: "claude"}
-	taskStore, err := store.Open(cfg.DBPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	parent := &store.Task{
-		ID: "completed-parent", Type: "agent_run", What: "review this branch", Agent: "claude", Model: "opus",
-		RunAt: time.Now(), CWD: cwd, Principal: "alpha", RunnerPID: os.Getpid(),
-	}
-	if err := taskStore.CreateTask(parent); err != nil {
-		t.Fatal(err)
-	}
-	if err := taskStore.SetTaskOutput(parent.ID, "the auth boundary is sound"); err != nil {
-		t.Fatal(err)
-	}
-	if err := taskStore.UpdateTaskStatus(parent.ID, "done"); err != nil {
-		t.Fatal(err)
-	}
-	closeForTest(t, "task store", taskStore)
 
-	wantPrompt := agentSteerPrompt(parent.What, "the auth boundary is sound", "", "now review the UI")
-	seenPrompt := make(chan string, 1)
-	server := testWingServer(t, &Server{Version: "dev",
-		Cfg: cfg, Logs: &bytes.Buffer{}, Principal: "alpha",
-		runAgentTask: func(_ context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
-			seenPrompt <- task.What
-			return taskStore.UpdateTaskStatus(task.ID, "done")
-		},
-	})
-	created, err := server.toolAgentSteer(json.RawMessage(`{"run_id":"completed-parent","prompt":"now review the UI"}`))
+	f := newRunWingFixture(t, nil)
+	parent := f.admit(t, "review this branch")
+	<-f.submitted
+	f.finish(t, parent, "the auth boundary is sound", "")
+	f.wait(t, parent)
+	created, err := f.server.toolAgentSteer(json.RawMessage(`{"run_id":"` + parent + `","prompt":"now review the UI"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	childID := created["run_id"].(string)
-	select {
-	case got := <-seenPrompt:
-		if got != wantPrompt {
-			t.Fatalf("runner prompt = %q, want %q", got, wantPrompt)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("steered agent runner did not start")
-	}
-	waited, err := server.toolAgentWait(context.Background(), json.RawMessage(`{"run_id":`+strconv.Quote(childID)+`,"timeout_seconds":2}`))
-	if err != nil || waited["status"] != "done" {
-		t.Fatalf("child wait = %#v err=%v", waited, err)
-	}
-	child, childStore, err := server.ownedAgentRun(childID)
+	child := created["run_id"].(string)
+	<-f.submitted
+	db, err := store.Open(f.server.Cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer closeForTest(t, "child task store", childStore)
-	if child.What != wantPrompt {
-		t.Fatalf("persisted prompt = %q, want %q", child.What, wantPrompt)
+	defer db.Close()
+	stored, err := db.GetTask(child)
+	want := wingsession.SteerPrompt("review this branch", "the auth boundary is sound", "", "now review the UI")
+	if err != nil || stored.What != want || stored.ParentID == nil || *stored.ParentID != parent {
+		t.Fatalf("persisted followup: %+v %v", stored, err)
 	}
+	f.finish(t, child, "done", "")
+	f.wait(t, child)
+
 }
 
 func TestAgentSteerBoundsPriorResultWithoutSplittingUnicode(t *testing.T) {
-	prior := strings.Repeat("✓", maxAgentSteerPriorResultChars+1)
-	prompt := agentSteerPrompt("review", prior, "", "continue")
-	if strings.Contains(prompt, strings.Repeat("✓", maxAgentSteerPriorResultChars+1)) {
+	prior := strings.Repeat("✓", 200000+1)
+	prompt := wingsession.SteerPrompt("review", prior, "", "continue")
+	if strings.Contains(prompt, strings.Repeat("✓", 200000+1)) {
 		t.Fatal("follow-up retained the unbounded prior result")
 	}
-	if !strings.Contains(prompt, strings.Repeat("✓", maxAgentSteerPriorResultChars)) ||
+	if !strings.Contains(prompt, strings.Repeat("✓", 200000)) ||
 		!strings.Contains(prompt, "[Wingthing truncated the prior result for this follow-up.]") ||
 		!strings.HasSuffix(prompt, "New direction:\ncontinue") {
 		t.Fatalf("bounded follow-up prompt has the wrong shape: prefix=%q suffix=%q", prompt[:64], prompt[len(prompt)-96:])
@@ -904,77 +728,49 @@ func TestAgentSteerBoundsPriorResultWithoutSplittingUnicode(t *testing.T) {
 }
 
 func TestStdioWaitDoesNotBlockStop(t *testing.T) {
-	dir := t.TempDir()
-	cwd := t.TempDir()
-	started := make(chan struct{})
-	inputReader, inputWriter := io.Pipe()
-	outputReader, outputWriter := io.Pipe()
-	server := testWingServer(t, &Server{Version: "dev",
-		Cfg: &config.Config{Dir: dir, DefaultAgent: "claude"}, In: inputReader, Out: outputWriter,
-		Logs: &bytes.Buffer{}, Principal: "alpha",
-		runAgentTask: func(ctx context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
-			if err := taskStore.UpdateTaskStatus(task.ID, "running"); err != nil {
-				return err
+
+	f := newRunWingFixture(t, nil)
+	id := f.admit(t, "long task")
+	<-f.submitted
+	input, send := io.Pipe()
+	receive, output := io.Pipe()
+	f.server.In = input
+	f.server.Out = output
+	done := make(chan error, 1)
+	go func() { done <- f.server.Serve(t.Context()) }()
+	replies := make(chan []localMCPResponse, 1)
+	go func() {
+		var got []localMCPResponse
+		decoder := json.NewDecoder(receive)
+		for len(got) < 2 {
+			var r localMCPResponse
+			if decoder.Decode(&r) != nil {
+				break
 			}
-			close(started)
-			<-ctx.Done()
-			return taskStore.SetTaskError(task.ID, ctx.Err().Error())
-		},
-	})
-	created, err := server.toolAgentRun(json.RawMessage(`{"prompt":"long task","agent":"claude","cwd":` + strconv.Quote(cwd) + `}`))
-	if err != nil {
-		t.Fatal(err)
+			got = append(got, r)
+		}
+		replies <- got
+	}()
+	for i, name := range []string{"agent_wait", "agent_stop"} {
+		wire, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": i + 1, "method": "tools/call", "params": map[string]any{"name": name, "arguments": map[string]any{"run_id": id}}})
+		if _, err := send.Write(append(wire, '\n')); err != nil {
+			t.Fatal(err)
+		}
 	}
-	runID := created["run_id"].(string)
-	<-started
-	serveDone := make(chan error, 1)
-	go func() { serveDone <- server.Serve(context.Background()) }()
-	if _, err := fmt.Fprintf(inputWriter, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"agent_wait","arguments":{"run_id":%s,"timeout_seconds":10}}}`+"\n", strconv.Quote(runID)); err != nil {
-		t.Fatal(err)
+	got := <-replies
+	seen := map[string]bool{}
+	for _, r := range got {
+		seen[string(r.ID)] = true
 	}
-	time.Sleep(50 * time.Millisecond)
-	if _, err := fmt.Fprintf(inputWriter, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"agent_stop","arguments":{"run_id":%s}}}`+"\n", strconv.Quote(runID)); err != nil {
+	if !seen["1"] || !seen["2"] {
+		t.Fatalf("concurrent stdio responses: %+v", got)
+	}
+	send.Close()
+	receive.Close()
+	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
 
-	responses := make(chan []localMCPResponse, 1)
-	go func() {
-		decoder := json.NewDecoder(outputReader)
-		var got []localMCPResponse
-		for len(got) < 2 {
-			var response localMCPResponse
-			if err := decoder.Decode(&response); err != nil {
-				break
-			}
-			got = append(got, response)
-		}
-		responses <- got
-	}()
-	select {
-	case got := <-responses:
-		if len(got) != 2 {
-			t.Fatalf("responses = %#v", got)
-		}
-		seen := map[string]bool{}
-		for _, response := range got {
-			seen[string(response.ID)] = true
-		}
-		if !seen["1"] || !seen["2"] {
-			t.Fatalf("response IDs = %#v", seen)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("agent_stop was blocked behind agent_wait")
-	}
-	_ = inputWriter.Close()
-	_ = outputReader.Close()
-	select {
-	case err := <-serveDone:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("stdio server did not finish")
-	}
 }
 
 func TestSharedRoostPathBoundsFailClosed(t *testing.T) {

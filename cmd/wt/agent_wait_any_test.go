@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,11 +13,19 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
 func TestAgentWaitAnyCLI(t *testing.T) {
-	dir := t.TempDir()
+	t.Chdir(t.TempDir())
+	dir := "s"
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("WINGTHING_DIR", dir)
 	t.Setenv("WT_MCP_CLIENT", "")
 	cfg := &config.Config{Dir: dir}
@@ -29,11 +38,35 @@ func TestAgentWaitAnyCLI(t *testing.T) {
 		{ID: "running", Type: "agent_run", Status: "running"},
 		{ID: "owner-run", Type: "agent_run", Principal: "alice", Status: "done"},
 	} {
-		if err := db.CreateTask(task); err != nil {
+		principal := task.Principal
+		if principal == "" {
+			principal = wingsession.UserPrincipal("cli-owner")
+		}
+		task.Principal = principal
+		run := &wingsession.Run{ID: task.ID, SessionID: "session-" + task.ID, Phase: "observing", Launch: wingsession.RunLaunch{Authority: wingsession.Authority{Principal: principal, UserID: "cli-owner"}}, Result: egg.RunTurnResult{RunID: task.ID, SessionID: "session-" + task.ID, Status: task.Status}}
+		if run.Result.Terminal() {
+			run.Phase = "terminal"
+		}
+		wire, _ := json.Marshal(run)
+		if _, _, err := db.AdmitAgentRun(&store.AgentRun{ID: task.ID, SessionID: run.SessionID, Principal: principal, SpecHash: task.ID, Record: wire}, task); err != nil {
 			t.Fatal(err)
 		}
 	}
 	closeForTest(t, "CLI fake run store", db)
+	wc := &config.WingConfig{WingID: "fixture-wing"}
+	service := &wingsession.Service{Config: cfg, Policy: func() wingsession.Policy { return wingsession.Policy{Wing: wc, Egg: egg.DefaultEggConfig()} }, RunBackend: &wingsession.RunBackend{Wait: func(ctx context.Context, _ *config.Config, _ eggclient.LocalSession, _ string) (egg.RunTurnResult, error) {
+		<-ctx.Done()
+		return egg.RunTurnResult{}, ctx.Err()
+	}}}
+	if err := service.StartRuns(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer service.RunManager.Close()
+	listener, err := localmcp.ListenLocalWingControl(t.Context(), "test", service, "cli-owner", localmcp.NewMCPAdmissionState())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
 	clients := "clients:\n  reader:\n    owner: alice\n    grants: [agent.read]\n  observer:\n    owner: alice\n    grants: [terminal.read]\n"
 	for _, test := range []struct {
 		name       string

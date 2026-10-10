@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
+
+	"github.com/ehrlich-b/wingthing/internal/agent"
 )
 
 const maxCodexNativeWire = 256 << 10
@@ -243,6 +245,10 @@ func ParseCodexNativeEvent(providerID string, wire []byte) (CodexNativeEvent, bo
 		e.Type, e.Reason = "provider_request_resolved", "request answered or cleared; no approval decision inferred"
 	default:
 		return CodexNativeEvent{}, false, nil
+	}
+	if e.State == "failed" {
+		e.Reason = string(agent.ClassifyProviderDiagnostic(string(wire)))
+		e.Raw, e.Text = nil, ""
 	}
 	if len(e.Text) > 64<<10 {
 		e.Text = string([]rune(e.Text)[:min(len([]rune(e.Text)), 16000)])

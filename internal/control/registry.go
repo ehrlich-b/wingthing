@@ -399,7 +399,7 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "agent_run", Title: "Run agent task",
-			Description: "Start a supervised headless agent run and return immediately with an owner-scoped run ID. Use agent_wait and agent_result instead of reading terminal ANSI.",
+			Description: "Durably admit an agent run in a wing-owned attachable egg and return its owner-scoped run and session IDs. Use agent_wait and agent_result to observe the foreground turn.",
 			InputSchema: objectSchema(map[string]any{
 				"prompt":          stringProperty("Task for the agent"),
 				"idempotency_key": stringProperty("Optional owner-scoped retry key for durable admission"),
@@ -471,7 +471,7 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "agent_stop", Title: "Stop agent run",
-			Description: "Cancel an active owner-scoped run and its provider process tree.",
+			Description: "Durably cancel an owner-scoped run and its unstarted follow-ups, then await egg process-group cleanup and report surviving descendants.",
 			InputSchema: objectSchema(map[string]any{
 				"run_id": stringProperty("Wingthing agent run ID"),
 			}, "run_id"), Annotations: destructive,

@@ -44,6 +44,9 @@ func newRunWingFixture(t *testing.T, s *Server) *runWingFixture {
 		s = &Server{Version: "test", Cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, Principal: "owner", Logs: io.Discard}
 	}
 	s = testWingServer(t, s)
+	if s.Sessions.Register == nil {
+		s.Sessions.Register = func(string) error { return nil }
+	}
 	f := &runWingFixture{server: s, service: s.Sessions, eggs: map[string]*fixtureRunEgg{}, submitted: make(chan string, 64), spawned: make(chan wingsession.StartOptions, 64), launches: make(chan *wingsession.Launch, 64)}
 	f.service.Spawn = func(l *wingsession.Launch, o wingsession.StartOptions) (*egg.Client, error) {
 		dir := filepath.Join(s.Cfg.Dir, "eggs", o.SessionID)
@@ -156,6 +159,12 @@ func (f *runWingFixture) finish(t *testing.T, id, text string, kind agent.ErrorK
 	e.result.EndedAt = time.Now().UTC()
 	if kind != "" {
 		e.result.Status = "failed"
+		if kind == agent.Timeout {
+			e.result.Status = "timeout"
+		}
+		if kind == agent.Stopped {
+			e.result.Status = "stopped"
+		}
 		e.result.FailureKind = kind
 		e.result.Error = "Egg run turn ended: " + string(kind) + "."
 	}
@@ -179,7 +188,7 @@ func (f *runWingFixture) wait(t *testing.T, id string) {
 }
 
 func TestAgentRunResultShapeParity(t *testing.T) {
-	for _, kind := range []agent.ErrorKind{"", agent.AuthFailed, agent.RateLimited, agent.UnknownOutcome} {
+	for _, kind := range []agent.ErrorKind{"", agent.AuthFailed, agent.RateLimited, agent.UnknownOutcome, agent.Timeout, agent.Stopped} {
 		t.Run(string(kind), func(t *testing.T) {
 			f := newRunWingFixture(t, nil)
 			id := f.admit(t, "fixture request")
@@ -250,11 +259,152 @@ func TestWingRunAdmissionRetryKeepsEggAndModel(t *testing.T) {
 	f.wait(t, id)
 }
 
-func TestMCPStartedAgentSurvivesHostExit(t *testing.T) {
+func TestRunAdmissionRetryCannotCrossOwnerBinding(t *testing.T) {
+	f := newRunWingFixture(t, nil)
+	wire, _ := json.Marshal(map[string]any{"prompt": "private request", "agent": "claude", "cwd": f.server.Cfg.Dir, "idempotency_key": "private-key"})
+	if _, err := f.server.toolAgentRun(wire); err != nil {
+		t.Fatal(err)
+	}
+	id := <-f.submitted
+	other := *f.server
+	other.identity.UserID = "another-user"
+	if _, err := other.toolAgentResult(runArgs(id)); err == nil {
+		t.Fatal("changed web owner disclosed prior run")
+	}
+	if _, err := other.toolAgentRun(wire); err == nil {
+		t.Fatal("retry key disclosed a run from the prior owner binding")
+	}
+	f.finish(t, id, "private result", "")
+	f.wait(t, id)
+}
+
+func TestLostSubmitAcknowledgementKeepsCompleteTerminalArtifact(t *testing.T) {
+	f := newRunWingFixture(t, nil)
+	submit := f.service.RunBackend.Submit
+	status := f.service.RunBackend.Status
+	f.service.RunBackend.Submit = func(ctx context.Context, cfg *config.Config, sess eggclient.LocalSession, request egg.RunTurnRequest) (egg.RunTurnResult, error) {
+		if _, err := submit(ctx, cfg, sess, request); err != nil {
+			return egg.RunTurnResult{}, err
+		}
+		f.finish(t, request.RunID, "complete Ω🙂 result", "")
+		return egg.RunTurnResult{}, fmt.Errorf("lost submit acknowledgement")
+	}
+	f.service.RunBackend.Status = func(ctx context.Context, cfg *config.Config, sess eggclient.LocalSession, id string) (egg.RunTurnResult, error) {
+		r, err := status(ctx, cfg, sess, id)
+		r.Text = ""
+		return r, err
+	}
+	f.restart(t)
+	id := f.admit(t, "request")
+	<-f.submitted
+	f.wait(t, id)
+	result, err := f.server.toolAgentResult(runArgs(id))
+	if err != nil || result["ready"] != true || result["output"] != "complete Ω🙂 result" {
+		t.Fatalf("published an incomplete terminal artifact: %v, %v", result, err)
+	}
+}
+
+func TestRunRejectsMismatchedNativeResultIdentity(t *testing.T) {
+	f := newRunWingFixture(t, nil)
+	submit := f.service.RunBackend.Submit
+	f.service.RunBackend.Submit = func(ctx context.Context, cfg *config.Config, sess eggclient.LocalSession, request egg.RunTurnRequest) (egg.RunTurnResult, error) {
+		r, err := submit(ctx, cfg, sess, request)
+		r.SessionID = "another-session"
+		return r, err
+	}
+	f.restart(t)
+	id := f.admit(t, "request")
+	<-f.submitted
+	f.wait(t, id)
+	result, err := f.server.toolAgentResult(runArgs(id))
+	if err != nil || result["status"] != "failed" || result["failure_kind"] != agent.UnknownOutcome {
+		t.Fatalf("mismatched native result: %v, %v", result, err)
+	}
+}
+
+func TestQueuedLegacyFollowUpSurvivesWingRestart(t *testing.T) {
+	f := newRunWingFixture(t, nil)
+	id := f.admit(t, "launch template")
+	<-f.submitted
+	f.finish(t, id, "template outcome", "")
+	f.wait(t, id)
+	r, err := f.service.RunManager.Get(f.server.sessionAuthority(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.RunManager.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.service.RunManager = nil
+	db, err := store.Open(f.server.Cfg.DBPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior := "legacy Ω result"
+	parent := &store.Task{ID: "legacy-parent", Type: "agent_run", What: "legacy request", Agent: "claude", Model: "opus", CWD: f.server.Cfg.Dir, Principal: f.server.Principal, Status: "done", Output: &prior, RunAt: time.Now().UTC()}
+	if err := db.CreateTask(parent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB().Exec("UPDATE tasks SET output=? WHERE id=?", prior, parent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB().Exec("INSERT INTO task_log (task_id,event,detail) VALUES (?,'failed','legacy-provider-diagnostic-canary')", parent.ID); err != nil {
+		t.Fatal(err)
+	}
+	r.ID, r.SessionID = "legacy-child", "legacy-child-egg"
+	r.ParentID, r.Direction, r.Phase = parent.ID, "new direction", "queued"
+	r.QueueExpiresAt = time.Now().UTC().Add(time.Hour)
+	r.Launch.Options.SessionID = r.SessionID
+	r.Result = egg.RunTurnResult{RunID: r.ID, SessionID: r.SessionID, Status: "pending"}
+	wire, _ := json.Marshal(r)
+	if _, _, err := db.AdmitAgentRun(&store.AgentRun{ID: r.ID, SessionID: r.SessionID, Principal: f.server.Principal, SpecHash: r.SpecHash, Record: wire}, &store.Task{ID: r.ID, What: r.Prompt, Agent: r.Agent, CWD: r.CWD, Principal: f.server.Principal, Status: "pending", RunAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.StartRuns(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-f.submitted; got != r.ID {
+		t.Fatalf("reconciled %s, want %s", got, r.ID)
+	}
+	f.mu.Lock()
+	child := f.eggs[r.ID]
+	f.mu.Unlock()
+	child.mu.Lock()
+	prompt := child.prompt
+	child.mu.Unlock()
+	if !strings.Contains(prompt, "Prior request:\nlegacy request") || !strings.Contains(prompt, "Prior result:\n"+prior) || !strings.Contains(prompt, "New direction:\nnew direction") {
+		t.Fatalf("restarted legacy follow-up lost context: %q", prompt)
+	}
+	f.finish(t, r.ID, "continued", "")
+	f.wait(t, r.ID)
+	stopped, err := f.server.toolAgentStop(runArgs(parent.ID))
+	if err != nil || stopped["status"] != "done" {
+		t.Fatalf("terminal legacy stop changed history: %v, %v", stopped, err)
+	}
+	events, err := f.server.toolAgentEvents(runArgs(parent.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(events)
+	if strings.Contains(string(encoded), "legacy-provider-diagnostic-canary") {
+		t.Fatalf("legacy stop exposed archived provider diagnostics: %s", encoded)
+	}
+}
+
+func TestMCPStartedAgentSurvivesHostExit(t *testing.T) { exerciseMCPRunClientExit(t) }
+
+func exerciseMCPRunClientExit(t *testing.T) {
+	t.Helper()
 	f := newRunWingFixture(t, nil)
 	// Keep socket paths short without changing TMPDIR or touching any live state.
 	root, err := filepath.Abs("../../.scratch")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(root, 0700); err != nil {
 		t.Fatal(err)
 	}
 	alias, err := os.MkdirTemp(root, "s")
@@ -385,7 +535,7 @@ func TestQueuedSteerReceivesParentOutcomeAndModelOverride(t *testing.T) {
 	}
 	<-f.spawned
 	opts := <-f.spawned
-	if !reflect.DeepEqual(opts.Egg.AgentArgs, []string{"--model", "sonnet"}) || opts.SessionID == follow["session_id"] && opts.SessionID == "" {
+	if !reflect.DeepEqual(opts.Egg.AgentArgs, []string{"--model", "sonnet"}) || opts.SessionID != follow["session_id"] {
 		t.Fatalf("followup model: %+v", opts)
 	}
 	f.finish(t, child, "fixed", "")
@@ -543,4 +693,20 @@ func TestStopIntentAndQueuedCancellationSurviveWingRestart(t *testing.T) {
 		t.Fatalf("cancelled queue executed: %s", duplicate)
 	default:
 	}
+}
+
+func agentRunStatusData(task *store.Task) map[string]any {
+	data := map[string]any{
+		"run_id": task.ID, "status": task.Status, "agent": task.Agent,
+		"model": task.Model, "cwd": task.CWD, "isolation": task.Isolation,
+		"timeout_seconds": task.TimeoutSeconds,
+		"created_at":      task.CreatedAt.UTC().Format(time.RFC3339),
+	}
+	if task.StartedAt != nil {
+		data["started_at"] = task.StartedAt.UTC().Format(time.RFC3339)
+	}
+	if task.FinishedAt != nil {
+		data["finished_at"] = task.FinishedAt.UTC().Format(time.RFC3339)
+	}
+	return data
 }

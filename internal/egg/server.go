@@ -1093,8 +1093,8 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		isolationMode = "wingthing-sandbox"
 	}
 	nativeRun := len(rc.Command) == 0 && (codexRun || (rc.Agent == "claude" && rc.ProviderSessionID != ""))
-	metaContent := fmt.Sprintf("agent=%s\nkind=%s\ncommand=%s\ncwd=%s\nnetwork=%s\nisolation=%s\ncols=%d\nrows=%d\nstarted_at=%d\nprovider_session_id=%s\nprovider_home=%s\nnative_run=%t\n",
-		rc.Agent, rc.Kind, formatCommand(rc.Command), rc.CWD, networkSummary, isolationMode, rc.Cols, rc.Rows, sess.StartedAt.Unix(), rc.ProviderSessionID, captureHome, nativeRun)
+	metaContent := fmt.Sprintf("agent=%s\nkind=%s\ncommand=%s\ncwd=%s\nnetwork=%s\nisolation=%s\ncols=%d\nrows=%d\nstarted_at=%d\nstarted_at_nanos=%d\nprovider_session_id=%s\nprovider_home=%s\nnative_run=%t\n",
+		rc.Agent, rc.Kind, formatCommand(rc.Command), rc.CWD, networkSummary, isolationMode, rc.Cols, rc.Rows, sess.StartedAt.Unix(), sess.StartedAt.UnixNano(), rc.ProviderSessionID, captureHome, nativeRun)
 	if err := atomicWritePrivate(metaPath, []byte(metaContent)); err != nil {
 		log.Printf("egg: warning: write meta: %v", err)
 	}
