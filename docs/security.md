@@ -222,9 +222,23 @@ the wing checks the peer UID with `getpeereid` on macOS and `SO_PEERCRED` on Lin
 The handshake negotiates the control protocol and wing ID. Shared and organization
 wings do not serve this socket. Stdio never starts a wing or opens the session store.
 
+`wt wing start --local-only` creates an account-free personal wing. Its owner ID
+is persisted atomically in mode 0600 `local-owner.yaml` inside `WINGTHING_DIR`
+and reused on every boot. This mode reads no relay token and starts no relay,
+WebRTC or browser listener. Configured relay connectivity is an independent
+adapter: a relay outage or 401 cannot shut down the local runtime.
+
+Relay enrollment must explicitly bind a relay URL and authenticated user ID to
+the existing local owner. The binding data model preserves the local owner ID
+and egg ownership; loading an unrelated account token does not create that
+binding. The enrollment command for an account-free wing is future work.
+
 The wing resolves `--client NAME` using its `clients.yaml`. Sessions are owned by
-the wing's owner user; the unnamed/default client shares that user's web and remote
-MCP principal, including older sessions with an empty or `default` principal.
+the wing's persistent owner; the unnamed/default client uses that owner's
+principal. On account-backed wings this preserves the existing user principal;
+on account-free wings web/remote ownership requires the explicit enrollment
+binding above. Older ownerless sessions with an empty or `default` principal
+retain their personal-wing compatibility scope.
 Named MCP clients see and control their separate logical principals unless mapped
 to a common owner. The human CLI still sees all sessions. Every
 MCP tool call appends a timestamp, principal, tool, target, decision, and argument

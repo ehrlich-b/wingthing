@@ -43,7 +43,11 @@ func ListenLocalWingControl(ctx context.Context, version string, sessions *wings
 			if err != nil {
 				return control.DirectResponse{Version: control.ContractVersion, ID: request.ID, Error: err.Error(), ErrorKind: control.ErrorKindOf(err)}
 			}
-			return current.handleDirectRequest(callCtx, request)
+			response := current.handleDirectRequest(callCtx, request)
+			if response.Result != nil {
+				response.Result = control.QualifyResult(wingID, response.Result)
+			}
+			return response
 		}, nil
 	})
 }

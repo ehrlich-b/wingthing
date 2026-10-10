@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
@@ -266,4 +267,60 @@ func TestLocalOnlyWingRestartReclaimsEggs(t *testing.T) {
 	localOnlyCall(t, reconnected, "terminal_stop", map[string]any{"session": id})
 	<-fixture.killed
 	second.stop()
+}
+
+func TestWingLocalAPISurvivesUnreachableRelay(t *testing.T) {
+	state, home, work := localOnlyState(t)
+	if err := auth.NewTokenStore(state).Save(&auth.DeviceToken{Token: "fixture", UserID: "fixture-owner"}); err != nil {
+		t.Fatal(err)
+	}
+	relay := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := relay.URL
+	relay.Close()
+	unreachable := make(chan struct{})
+	var observed sync.Once
+	startLocalOnlyRuntime(t, home, work, url, EntryOptions{RelayState: func(state string, err error) {
+		if state == "disconnected" && err != nil {
+			observed.Do(func() { close(unreachable) })
+		}
+	}}, nil)
+	<-unreachable
+	client := localOnlyClient(t, state, controlsocket.Hello{})
+	localOnlyCall(t, client, "wingthing_capabilities", map[string]any{})
+	localOnlyCall(t, client, "wing_list", map[string]any{})
+}
+
+func TestRelayEnrollmentPreservesEggOwnership(t *testing.T) {
+	state, home, work := localOnlyState(t)
+	first := startLocalOnlyRuntime(t, home, work, "", EntryOptions{LocalOnly: true}, nil)
+	client := localOnlyClient(t, state, controlsocket.Hello{})
+	id := localOnlyCall(t, client, "agent_start", map[string]any{"agent": "claude", "cwd": work})["session"].(string)
+	fixture := first.fixture.egg(id)
+	<-fixture.attached
+	ownerBefore := eggclient.ReadEggOwner(filepath.Join(state, "eggs", id))
+	principalBefore := eggclient.ReadSessionPrincipal(filepath.Join(state, "eggs", id))
+	first.stop()
+	bound, err := config.BindLocalOwnerRelay(state, "https://relay.example", "account-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := startLocalOnlyRuntime(t, home, work, "", EntryOptions{LocalOnly: true}, nil)
+	<-fixture.attached
+	// Relay and local adapters normalize to the same durable owner. The egg's
+	// owner and logical principal files are never rewritten during enrollment.
+	authority := wingsession.Authority{UserID: bound.OwnerForRelay("wss://relay.example/", "account-owner"), Principal: principalBefore}
+	if _, err := second.service.Resolve(t.Context(), authority, id, false); err != nil {
+		t.Fatalf("enrolled owner lost existing egg: %v", err)
+	}
+	if bound.ID != ownerBefore || eggclient.ReadEggOwner(filepath.Join(state, "eggs", id)) != ownerBefore {
+		t.Fatal("enrollment replaced existing ownership")
+	}
+	foreign := authority
+	foreign.Principal = "other-client"
+	if _, err := second.service.Resolve(t.Context(), foreign, id, false); err == nil {
+		t.Fatal("owner binding bypassed named-client isolation")
+	}
+	reconnected := localOnlyClient(t, state, controlsocket.Hello{})
+	localOnlyCall(t, reconnected, "terminal_stop", map[string]any{"session": id})
+	<-fixture.killed
 }
