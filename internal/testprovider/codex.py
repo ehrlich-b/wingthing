@@ -44,8 +44,9 @@ while True:
  with open(gate_path,'rb', buffering=0) as gate:
   if scoped_gate:
    ready=gate_path+'.ready'
-   with open(ready+'.tmp','w') as marker: marker.write('waiting\n')
-   os.rename(ready+'.tmp',ready)
+   # Readiness is the marker's existence, after the hook and FIFO open above.
+   # Publish one persistent entry: kqueue can race with a temporary-file rename.
+   os.close(os.open(ready, os.O_CREAT|os.O_EXCL|os.O_WRONLY, 0o600))
   assert gate.read(1)==b'\x01', 'completion gate closed without explicit release'
  payload={'type':'agent-turn-complete','thread-id':thread,'turn-id':turn,'input-messages':[prompt],'last-assistant-message':'Fake Codex '+model+': Ω🙂 '+prompt}
  subprocess.run(notify+[json.dumps(payload)],check=True)
