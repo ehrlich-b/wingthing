@@ -86,6 +86,21 @@ func attachLocalIO(ctx context.Context, cfg *config.Config, sessionID string, in
 	defer cmdutil.CloseWithLog("egg client", ec)
 	sessionID = resolved.ID
 
+	return AttachStreamIO(ctx, sessionID, input, output, options, func(ctx context.Context, options egg.AttachOptions) (SessionStream, error) {
+		return ec.AttachSessionWithOptions(ctx, sessionID, options)
+	})
+}
+
+// SessionStream is shared by direct egg RPC and authenticated wing streaming.
+type SessionStream interface {
+	Send(*pb.SessionMsg) error
+	Recv() (*pb.SessionMsg, error)
+}
+
+// AttachStreamIO is terminal presentation only; open supplies the authorized API.
+func AttachStreamIO(ctx context.Context, sessionID string, input io.Reader, output io.Writer, options egg.AttachOptions, open func(context.Context, egg.AttachOptions) (SessionStream, error)) (bool, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	fd := -1
 	if file, ok := input.(*os.File); ok {
 		fd = int(file.Fd())
@@ -95,16 +110,9 @@ func attachLocalIO(ctx context.Context, cfg *config.Config, sessionID string, in
 			options.Rows, options.Cols = uint32(rows), uint32(cols)
 		}
 	}
-	stream, err := ec.AttachSessionWithOptions(ctx, sessionID, options)
+	stream, err := open(ctx, options)
 	if err != nil {
 		return false, fmt.Errorf("attach session %s: %w", sessionID, err)
-	}
-	if !options.ReadOnly && fd >= 0 && term.IsTerminal(fd) {
-		if cols, rows, sizeErr := term.GetSize(fd); sizeErr == nil {
-			if resizeErr := ec.Resize(ctx, sessionID, uint32(rows), uint32(cols)); resizeErr != nil {
-				return false, fmt.Errorf("resize session %s: %w", sessionID, resizeErr)
-			}
-		}
 	}
 
 	if fd >= 0 && term.IsTerminal(fd) {
@@ -132,7 +140,7 @@ func attachLocalIO(ctx context.Context, cfg *config.Config, sessionID string, in
 					continue
 				}
 				if cols, rows, sizeErr := term.GetSize(fd); sizeErr == nil {
-					_ = ec.Resize(ctx, sessionID, uint32(rows), uint32(cols))
+					_ = stream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Resize{Resize: &pb.Resize{Rows: uint32(rows), Cols: uint32(cols)}}})
 				}
 			}
 		}
@@ -181,7 +189,7 @@ func attachLocalIO(ctx context.Context, cfg *config.Config, sessionID string, in
 	}
 }
 
-func receiveAttachedOutput(stream pb.Egg_SessionClient, output io.Writer, resultCh chan<- attachResult, detaching ...*atomic.Bool) {
+func receiveAttachedOutput(stream SessionStream, output io.Writer, resultCh chan<- attachResult, detaching ...*atomic.Bool) {
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
@@ -211,11 +219,11 @@ type attachInputResult struct {
 	err      error
 }
 
-func sendAttachedInput(stream pb.Egg_SessionClient, sessionID string, input io.Reader, resultCh chan<- attachInputResult, readOnly ...bool) {
+func sendAttachedInput(stream SessionStream, sessionID string, input io.Reader, resultCh chan<- attachInputResult, readOnly ...bool) {
 	sendAttachedInputMode(stream, sessionID, input, resultCh, len(readOnly) > 0 && readOnly[0], nil)
 }
 
-func sendAttachedInputMode(stream pb.Egg_SessionClient, sessionID string, input io.Reader, resultCh chan<- attachInputResult, readOnly bool, detaching *atomic.Bool) {
+func sendAttachedInputMode(stream SessionStream, sessionID string, input io.Reader, resultCh chan<- attachInputResult, readOnly bool, detaching *atomic.Bool) {
 	filter := &AttachInputFilter{}
 	buffer := make([]byte, 4096)
 	for {

@@ -187,11 +187,15 @@ func (t Transport) Dial(ctx context.Context, remote config.Remote, hello control
 	if socketDir == "" {
 		socketDir = "/tmp"
 	}
-	dir, err := os.MkdirTemp(socketDir, "wt-ssh-")
+	prefix, socketName := "wt-ssh-", "control.sock"
+	if t.SocketDir != "" {
+		prefix, socketName = "s", "c"
+	}
+	dir, err := os.MkdirTemp(socketDir, prefix)
 	if err != nil {
 		return nil, err
 	}
-	local := filepath.Join(dir, "control.sock")
+	local := filepath.Join(dir, socketName)
 	if len(local) > 103 {
 		_ = os.RemoveAll(dir)
 		return nil, errors.New("SSH socket directory is too long; select a shorter private state path")

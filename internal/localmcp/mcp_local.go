@@ -81,6 +81,11 @@ type Server struct {
 	// hostMailboxUnavailable, when set, refuses host mailbox selection for a
 	// launcher whose spawn cannot apply the broker launch contract.
 	hostMailboxUnavailable string
+	wingGrants             map[string][]string
+	restrictWings          bool
+	scopedParent           bool
+	startMailbox           func(conversationBrokerRegistration) error
+	captureWings           func(*Server) (map[string][]string, error)
 }
 
 // mcpAdmissionState keeps process-local spawn admission shared across reconnecting
@@ -712,6 +717,7 @@ func (s *Server) toolCapabilities(arguments json.RawMessage) (map[string]any, er
 	return map[string]any{
 		"version":           s.Version,
 		"principal":         s.clientPrincipal(),
+		"paths":             s.allowedPaths,
 		"agents":            agents,
 		"actor":             s.clientActor(),
 		"objects":           control.ObjectKinds(surface),
@@ -1179,6 +1185,7 @@ func (s *Server) toolAgentStart(arguments json.RawMessage) (map[string]any, erro
 		Model                string   `json:"model"`
 		CWD                  string   `json:"cwd"`
 		Label                string   `json:"label"`
+		ScopedMCP            bool     `json:"scoped_mcp,omitempty"`
 		Unattended           bool     `json:"unattended"`
 		Args                 []string `json:"args"`
 		ConversationRole     string   `json:"conversation_role"`
@@ -1190,6 +1197,10 @@ func (s *Server) toolAgentStart(arguments json.RawMessage) (map[string]any, erro
 	if err := decodeStrict(arguments, &args); err != nil {
 		return nil, err
 	}
+	if args.ScopedMCP && (args.ConversationRole != "parent" || args.Agent != "claude" || s.Unsandboxed || s.broker != nil) {
+		return nil, errors.New("scoped_mcp requires a sandboxed Claude parent")
+	}
+	s.scopedParent = args.ScopedMCP
 	if args.ResumeSession != "" {
 		return s.toolAgentContinue(arguments)
 	}

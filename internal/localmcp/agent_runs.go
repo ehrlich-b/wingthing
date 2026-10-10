@@ -274,9 +274,10 @@ func (s *Server) toolAgentEvents(arguments json.RawMessage) (map[string]any, err
 
 func (s *Server) toolAgentSteer(arguments json.RawMessage) (map[string]any, error) {
 	var args struct {
-		RunID  string `json:"run_id"`
-		Prompt string `json:"prompt"`
-		Model  string `json:"model"`
+		RequestKey string `json:"idempotency_key,omitempty"`
+		RunID      string `json:"run_id"`
+		Prompt     string `json:"prompt"`
+		Model      string `json:"model"`
 	}
 	if err := decodeStrict(arguments, &args); err != nil {
 		return nil, err
@@ -294,7 +295,7 @@ func (s *Server) toolAgentSteer(arguments json.RawMessage) (map[string]any, erro
 	if args.Model == "" {
 		args.Model = r.Model
 	}
-	return s.wingSubmitRun(wingsession.RunRequest{Prompt: "Prior request:\n" + r.OriginalPrompt + "\n\nNew direction:\n" + args.Prompt, Agent: r.Agent, Model: args.Model, CWD: r.CWD, Label: "followup-" + r.ID, TimeoutSeconds: r.TimeoutSeconds, ParentID: r.ID, Direction: args.Prompt})
+	return s.wingSubmitRun(wingsession.RunRequest{Prompt: "Prior request:\n" + r.OriginalPrompt + "\n\nNew direction:\n" + args.Prompt, Agent: r.Agent, Model: args.Model, CWD: r.CWD, Label: "followup-" + r.ID, TimeoutSeconds: r.TimeoutSeconds, ParentID: r.ID, Direction: args.Prompt, RequestKey: args.RequestKey})
 }
 
 func (s *Server) toolAgentStop(arguments json.RawMessage) (map[string]any, error) {

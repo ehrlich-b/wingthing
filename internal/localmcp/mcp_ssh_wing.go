@@ -11,6 +11,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
+	"github.com/ehrlich-b/wingthing/internal/sshcontrol"
 	"github.com/ehrlich-b/wingthing/internal/wingconnect"
 )
 
@@ -50,7 +51,7 @@ func (m *rememberedWings) pool(hello controlsocket.Hello) (*wingconnect.Pool, er
 	if p := m.pools[hello]; p != nil {
 		return p, nil
 	}
-	p, err := wingconnect.New(m.ctx, wingconnect.Options{Dir: m.dir, LocalWingID: m.wingID, Hello: hello})
+	p, err := wingconnect.New(m.ctx, wingconnect.Options{Dir: m.dir, LocalWingID: m.wingID, Hello: hello, Transport: sshcontrol.Transport{SocketDir: m.dir}})
 	if err == nil {
 		m.pools[hello] = p
 	}

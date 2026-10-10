@@ -17,6 +17,7 @@ type localMCPClientBounds struct {
 
 type localMCPClientConfig struct {
 	Owner  string               `yaml:"owner"`
+	Wings  map[string][]string  `yaml:"wings"`
 	Grants []string             `yaml:"grants"`
 	Bounds localMCPClientBounds `yaml:"bounds"`
 }
