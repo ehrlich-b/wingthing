@@ -196,6 +196,18 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool) {
 	}
 	startWing(localState, work)
 	startWing(remoteState, remoteWork)
+	// Clean all fixture eggs even if the parent fails before publishing receipts.
+	// Wing shutdown itself deliberately leaves accepted eggs alive.
+	t.Cleanup(func() {
+		for _, state := range []string{localState, remoteState} {
+			entries, _ := os.ReadDir(filepath.Join(state, "eggs"))
+			for _, entry := range entries {
+				stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				_ = eggclient.KillOrphanEggContext(stopCtx, &config.Config{Dir: state}, entry.Name())
+				stopCancel()
+			}
+		}
+	})
 	meta, err := sshcontrol.InspectLocal(t.Context(), remoteState, "")
 	if err != nil {
 		t.Fatal(err)
@@ -227,17 +239,6 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool) {
 	if len(captured.Receipts) != 2 {
 		t.Fatalf("parent did not spawn two children: %s", receiptData)
 	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		for _, receipt := range captured.Receipts {
-			state := localState
-			if receipt["wing_id"] == meta.WingID {
-				state = remoteState
-			}
-			_ = eggclient.KillOrphanEggContext(ctx, &config.Config{Dir: state}, receipt["session_id"].(string))
-		}
-	})
 	owner, err := controlsocket.Dial(t.Context(), localState, controlsocket.Hello{Aggregate: true})
 	if err != nil {
 		t.Fatal(err)
@@ -257,11 +258,6 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool) {
 	if parentID == "" {
 		t.Fatalf("parent is not a named wing egg: %v", list)
 	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = eggclient.KillOrphanEggContext(ctx, &config.Config{Dir: localState}, parentID)
-	})
 	// Opening the provider FIFO is the deterministic native-prompt barrier.
 	gate, err := os.OpenFile(filepath.Join(h.Root, "completion-gate"), os.O_WRONLY, 0600)
 	if err != nil {
@@ -300,7 +296,10 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool) {
 			t.Fatal(err)
 		}
 		connection := sliceCArtifact(t, work, "mailbox-reconnected.json", reattached)
-		if !json.Valid(connection) {
+		var reconnected struct {
+			PID int `json:"pid"`
+		}
+		if err := json.Unmarshal(connection, &reconnected); err != nil || reconnected.PID == captured.MailboxPID {
 			t.Fatalf("mailbox did not reconnect: %s", connection)
 		}
 		if _, err := gate.Write([]byte{1, 1}); err != nil {
@@ -317,7 +316,7 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool) {
 			t.Fatalf("recovered %d results", len(results))
 		}
 		for i, result := range results {
-			if result["run_id"] != captured.Receipts[i]["run_id"] || result["ready"] != true {
+			if result["run_id"] != captured.Receipts[i]["run_id"] || result["session_id"] != captured.Receipts[i]["session_id"] || result["wing_id"] != captured.Receipts[i]["wing_id"] || result["ready"] != true {
 				t.Fatalf("reattachment changed child identity: %v", result)
 			}
 		}

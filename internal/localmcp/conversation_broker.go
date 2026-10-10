@@ -644,6 +644,19 @@ func (s *Server) checkBoundSessionTarget(tool string, arguments json.RawMessage)
 	if err != nil || !info.IsDir() {
 		return outside
 	}
+	if s.broker.Scoped {
+		children, err := mailboxChildren(s.Cfg, s.broker, nil)
+		if err != nil {
+			return err
+		}
+		wingID := s.Cfg.WingID
+		if s.Sessions != nil && s.Sessions.Policy().Wing != nil && s.Sessions.Policy().Wing.WingID != "" {
+			wingID = s.Sessions.Policy().Wing.WingID
+		}
+		if child, ok := children[childKey(wingID, selector.Session)]; ok && child.SessionID == selector.Session && wingpolicy.IsUnderPaths(child.CWD, s.allowedPaths) {
+			return nil
+		}
+	}
 	db, err := s.openConversationStore()
 	if err != nil {
 		return err
