@@ -46,9 +46,11 @@ probe establishes first-turn hook ordering, not live provider success.
 
 ## Runtime contract
 
-For a new Codex `agent_run`, the wing passes its admitted prompt and absolute
-deadline to the egg. Before launching Codex, the egg persists the run and arms
-both the execution deadline and a 30-second readiness bound. The normal TUI
+For a new Codex `agent_run`, the wing passes its admitted prompt and optional
+absolute deadline to the egg. Omitted or zero `timeout_seconds` means no
+execution deadline; positive values must be at least 10 seconds, with no upper
+cap. Before launching Codex, the egg persists the run, arms any execution
+deadline, and retains a 30-second readiness bound. The normal TUI
 receives the prompt through argv; Wingthing sends no prompt keystrokes. The egg
 then reads its own fresh hook and notify spools from their beginning, including
 events that arrived before the socket became available. Completion still
@@ -57,8 +59,10 @@ requires matching native thread, turn and prompt receipts and final notify.
 Missing native admission ends as `provider_not_ready`; cleanup kills the same
 provider process group. The error contains only an allowlisted classification
 of the last rendered screen, with all arbitrary screen text discarded. A
-native receipt cancels the startup timer while the absolute execution deadline
-continues. Client exit and wing restart never resubmit the initial prompt.
+native receipt cancels the startup timer while any absolute execution deadline
+continues. Unbounded runs still stop through `agent_stop` and end when the
+provider or egg host exits. Client exit and wing restart never resubmit the
+initial prompt.
 
 The fake Codex models the first-turn hook boundary and can display an unexpected
 startup modal. Tests cover absence of empty-startup hooks, completion before

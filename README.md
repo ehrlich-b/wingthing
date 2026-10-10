@@ -56,6 +56,14 @@ Clients using MCP 2025-11-25 can submit `agent_run` as a native task and retriev
 its result after disconnecting. See [MCP Tasks and client verification](docs/mcp-tasks.md)
 for protocol examples and the Claude Code compatibility check.
 
+`agent_run` has no deadline by default. Omit `timeout_seconds` or set it to `0`
+to run until the agent finishes, you call `agent_stop`, or the provider or egg
+host exits. A positive timeout must be at least 10 seconds and has no upper cap;
+`86400` sets a one-day timeout. `agent_status` reports `deadline: "no deadline"`
+for unbounded runs. Wait-tool timeouts only end that observation, and client
+disconnection or a wing restart does not stop an admitted egg. Persistent
+`agent_start` and `terminal_start` sessions also have no deadline.
+
 The child agents use existing project directories and provider credentials on
 this computer. Wingthing does not clone the code or copy a provider login. The
 wing executes every tool and resolves `--client` against its `clients.yaml`.

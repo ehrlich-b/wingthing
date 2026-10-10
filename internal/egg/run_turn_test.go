@@ -382,6 +382,66 @@ func TestRunTurnStopIsIdempotentAndDisarmsDeadline(t *testing.T) {
 	}
 }
 
+func TestUnboundedRunTurnLifecycle(t *testing.T) {
+	for _, outcome := range []string{"completion", "stop", "provider exit", "egg shutdown"} {
+		t.Run(outcome, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				fixture := newRunFixture(t)
+				fixture.request.Deadline = time.Time{}
+				var kills atomic.Int32
+				fixture.runtime.backend.Kill = func() ([]RunDescendant, error) { kills.Add(1); return nil, nil }
+				exited := make(chan struct{})
+				fixture.runtime.backend.Done = exited
+				// Hold transcript scans while the synthetic clock advances; the
+				// test should exercise timers without rereading a file all day.
+				scanGate := make(chan struct{})
+				prepare := fixture.runtime.backend.Prepare
+				fixture.runtime.backend.Prepare = func(prompt, id string) (func() (turnEvidence, error), error) {
+					scan, err := prepare(prompt, id)
+					return func() (turnEvidence, error) { <-scanGate; return scan() }, err
+				}
+				if _, err := fixture.runtime.reserve(fixture.request); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := fixture.runtime.submit(fixture.request); err != nil {
+					t.Fatal(err)
+				}
+				<-fixture.sent
+				time.Sleep(24 * time.Hour)
+				result, err := fixture.runtime.get(fixture.request.RunID, false)
+				close(scanGate)
+				if err != nil || result.Terminal() || !result.Deadline.IsZero() {
+					t.Fatalf("unbounded run ended early: %+v %v", result, err)
+				}
+				wantStatus, wantKind, wantKills := "done", agent.ErrorKind(""), int32(0)
+				switch outcome {
+				case "completion":
+					appendNative(t, fixture.path, assistantRecord("complete without a deadline", "end_turn"))
+				case "stop":
+					wantStatus, wantKind, wantKills = "stopped", agent.Stopped, 1
+					if _, err := fixture.runtime.stop(fixture.request.RunID); err != nil {
+						t.Fatal(err)
+					}
+				case "provider exit":
+					wantStatus, wantKind = "failed", agent.ProviderExit
+					close(exited)
+				case "egg shutdown":
+					wantStatus, wantKind, wantKills = "stopped", agent.Stopped, 1
+					fixture.runtime.stopActive()
+				}
+				result = waitRunFixture(t, fixture)
+				fixture.runtime.awaitProcessExit()
+				if result.Status != wantStatus || result.FailureKind != wantKind || !result.Deadline.IsZero() || kills.Load() != wantKills {
+					t.Fatalf("outcome: %+v kills=%d", result, kills.Load())
+				}
+				if outcome == "completion" && result.Text != "complete without a deadline" {
+					t.Fatal("lost unbounded run result")
+				}
+			})
+		})
+	}
+}
+
 func TestClaudeStopRequiresMatchingFlushedAssistantText(t *testing.T) {
 	fixture := newRunFixture(t)
 	if _, err := fixture.runtime.submit(fixture.request); err != nil {
@@ -500,6 +560,15 @@ func TestRunProcessHelper(t *testing.T) {
 }
 
 func TestDeadlineKillsProcessGroupAndReportsSurvivors(t *testing.T) {
+	testRunProcessGroupCleanup(t, false)
+}
+
+func TestUnboundedStopKillsProcessGroupAndReportsSurvivors(t *testing.T) {
+	testRunProcessGroupCleanup(t, true)
+}
+
+func testRunProcessGroupCleanup(t *testing.T, unbounded bool) {
+	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestRunProcessHelper$")
 	cmd.Env = append(os.Environ(), "WT_RUN_PROCESS_FIXTURE=root")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -537,11 +606,22 @@ func TestDeadlineKillsProcessGroupAndReportsSurvivors(t *testing.T) {
 	fixture := newRunFixture(t)
 	fixture.runtime.backend.Kill = func() ([]RunDescendant, error) { return tree.kill(sess) }
 	fixture.request.Deadline = time.Now().Add(-time.Second)
+	wantStatus := "timeout"
+	if unbounded {
+		fixture.request.Deadline = time.Time{}
+		wantStatus = "stopped"
+	}
 	if _, err := fixture.runtime.submit(fixture.request); err != nil {
 		t.Fatal(err)
 	}
+	if unbounded {
+		<-fixture.sent
+		if _, err := fixture.runtime.stop(fixture.request.RunID); err != nil {
+			t.Fatal(err)
+		}
+	}
 	result := waitRunFixture(t, fixture)
-	if result.Status != "timeout" || len(result.SurvivingDescendants) != 1 || result.SurvivingDescendants[0].PID != pids["escape"] {
+	if result.Status != wantStatus || len(result.SurvivingDescendants) != 1 || result.SurvivingDescendants[0].PID != pids["escape"] {
 		t.Fatalf("containment result: %+v", result)
 	}
 	<-done
@@ -600,5 +680,30 @@ func TestReservedRunSubmitsOnceAndKeepsDeadline(t *testing.T) {
 	result := waitRunFixture(t, fixture)
 	if result.Status != "done" || !result.Deadline.Equal(fixture.request.Deadline) || fixture.sends.Load() != 1 {
 		t.Fatalf("reserved submission: %+v", result)
+	}
+}
+
+func TestReservedRunReapedOnProviderExit(t *testing.T) {
+	for _, bounded := range []bool{false, true} {
+		t.Run(fmt.Sprintf("bounded=%t", bounded), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				fixture := newRunFixture(t)
+				if !bounded {
+					fixture.request.Deadline = time.Time{}
+				}
+				exited := make(chan struct{})
+				fixture.runtime.backend.Done = exited
+				if _, err := fixture.runtime.reserve(fixture.request); err != nil {
+					t.Fatal(err)
+				}
+				close(exited)
+				// The real egg joins run workers after its provider has exited.
+				fixture.runtime.awaitProcessExit()
+				result := waitRunFixture(t, fixture)
+				if result.Status != "failed" || result.FailureKind != agent.ProviderExit || fixture.sends.Load() != 0 || !result.Deadline.Equal(fixture.request.Deadline) {
+					t.Fatalf("provider exit did not reap its reservation: %+v", result)
+				}
+			})
+		})
 	}
 }

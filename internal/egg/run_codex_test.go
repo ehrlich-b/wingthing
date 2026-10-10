@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/agent"
@@ -57,6 +58,44 @@ func publishCodexNotify(t *testing.T, home, sessionID, name, threadID, turnID, i
 	wire, _ := json.Marshal(map[string]any{"type": "agent-turn-complete", "thread-id": threadID, "turn-id": turnID, "input-messages": []string{input}, "last-assistant-message": text})
 	if err := atomicWritePrivate(filepath.Join(spool, name+".json"), wire); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInitialCodexRunWithoutDeadline(t *testing.T) {
+	for _, receipt := range []bool{false, true} {
+		t.Run(strconv.FormatBool(receipt), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				rt, home, request, _ := codexRunFixture(t)
+				request.Deadline = time.Time{}
+				if err := rt.startInitialCodex(request); err != nil {
+					t.Fatal(err)
+				}
+				if receipt {
+					sessionID := filepath.Base(rt.dir)
+					wire, err := json.Marshal(map[string]string{"session_id": "thread-exact", "turn_id": "turn-exact", "hook_event_name": "UserPromptSubmit", "prompt": request.Prompt})
+					if err != nil {
+						t.Fatal(err)
+					}
+					lifecycleWrite(t, filepath.Join(home, ".codex", "wingthing-events", sessionID, "seq.00000000000000000002.json"), string(wire))
+					publishCodexNotify(t, home, sessionID, "complete", "thread-exact", "turn-exact", request.Prompt, "unbounded Codex result")
+				}
+				if _, err := rt.wait(t.Context(), request.RunID); err != nil {
+					t.Fatal(err)
+				}
+				rt.awaitProcessExit()
+				result, err := ReadRunTurnResult(rt.dir, request.RunID)
+				if err != nil || !result.Deadline.IsZero() {
+					t.Fatalf("unbounded result: %+v %v", result, err)
+				}
+				if receipt {
+					if result.Status != "done" || result.Text != "unbounded Codex result" {
+						t.Fatalf("initial prompt failed: %+v", result)
+					}
+				} else if result.Status != "failed" || result.FailureKind != agent.ProviderNotReady {
+					t.Fatalf("unbounded run lost readiness bound: %+v", result)
+				}
+			})
+		})
 	}
 }
 

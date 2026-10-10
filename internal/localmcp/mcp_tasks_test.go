@@ -139,7 +139,7 @@ func TestMCPTaskLifecycleResultParityAndIsolation(t *testing.T) {
 				t.Fatalf("working: %v", get)
 			}
 			// Transport metadata never becomes part of the tool's strict schema.
-			if run, err := f.service.RunManager.Get(f.server.sessionAuthority(), id); err != nil || run.TimeoutSeconds != 900 {
+			if run, err := f.service.RunManager.Get(f.server.sessionAuthority(), id); err != nil || run.TimeoutSeconds != 0 || !run.Result.Deadline.IsZero() {
 				t.Fatalf("ttl changed timeout: %v %v", run, err)
 			}
 			stranger := &Server{Version: "test", Cfg: f.server.Cfg, Sessions: f.service, Principal: "stranger", identity: f.server.identity}

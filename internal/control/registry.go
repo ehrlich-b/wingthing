@@ -373,7 +373,7 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "terminal_start", Title: "Start persistent terminal",
-			Description: "Start a durable shell or command terminal under the MCP server's declared isolation mode and return immediately with its session ID.",
+			Description: "Start a durable shell or command terminal with no deadline under the MCP server's declared isolation mode and return immediately with its session ID.",
 			InputSchema: objectSchema(map[string]any{
 				"command": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "default": []string{}, "description": "Executable and arguments; omit to start $SHELL"},
 				"cwd":     stringProperty("Working directory; defaults to the MCP server's current directory"),
@@ -383,7 +383,7 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "agent_start", Title: "Start persistent agent terminal",
-			Description: "Start a supported agent in a durable PTY under the MCP server's declared isolation mode and return immediately with its session ID.",
+			Description: "Start a supported agent in a durable PTY with no deadline under the MCP server's declared isolation mode and return immediately with its session ID.",
 			InputSchema: objectSchema(map[string]any{
 				"agent":                  stringProperty("Supported agent name; required unless resume_session is set"),
 				"model":                  stringProperty("Provider model name, such as opus or gpt-5.6-terra"),
@@ -413,13 +413,17 @@ func buildTools() []Tool {
 				"model":           stringProperty("Provider model name, such as gpt-5.6-terra or opus"),
 				"cwd":             stringProperty("Working directory; defaults to the MCP server's current directory"),
 				"label":           stringProperty("Short human-readable purpose recorded with the run"),
-				"timeout_seconds": map[string]any{"type": "integer", "minimum": 10, "maximum": 7200, "default": 900, "description": "Provider process deadline"},
+				"timeout_seconds": map[string]any{
+					"type": "integer", "default": 0,
+					"anyOf":       []any{map[string]any{"const": 0}, map[string]any{"minimum": 10}},
+					"description": "Provider process timeout in seconds; omit or use 0 for no deadline. Positive values must be at least 10; no upper cap.",
+				},
 			}, "prompt", "agent"), Annotations: modelCall,
 			Grant: "agent.run", Surfaces: both, AuditTargetKeys: []string{"run_id"},
 		},
 		{
 			Name: "agent_status", Title: "Get agent run status",
-			Description: "Read bounded lifecycle metadata for one run owned by this MCP principal.",
+			Description: "Read bounded lifecycle metadata for one run owned by this MCP principal, including its deadline or no deadline.",
 			InputSchema: objectSchema(map[string]any{
 				"run_id": stringProperty("Wingthing agent run ID"),
 			}, "run_id"), Annotations: readOnly,

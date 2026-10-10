@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/agent"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 )
 
@@ -115,6 +116,14 @@ func (rt *runTurnRuntime) awaitProcessExit() {
 	rt.mu.Lock()
 	var runs []*ownedRunTurn
 	for _, run := range rt.runs {
+		run.mu.Lock()
+		reserved := !run.started
+		run.mu.Unlock()
+		if reserved {
+			// No worker observes provider exit until Submit. Reap reservations
+			// here so an unbounded pre-prompt run cannot hold the egg open.
+			rt.finish(run, "failed", agent.ProviderExit, turnEvidence{}, false)
+		}
 		runs = append(runs, run)
 	}
 	rt.mu.Unlock()

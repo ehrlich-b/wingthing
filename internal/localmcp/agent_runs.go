@@ -24,6 +24,11 @@ func wingRunStatus(r *wingsession.Run) map[string]any {
 	if r.RequestKey != "" {
 		data["idempotency_key"] = r.RequestKey
 	}
+	if r.TimeoutSeconds == 0 {
+		data["deadline"] = "no deadline"
+	} else if !r.Result.Deadline.IsZero() {
+		data["deadline"] = r.Result.Deadline.UTC().Format(time.RFC3339)
+	}
 	if !r.Result.StartedAt.IsZero() {
 		data["started_at"] = r.Result.StartedAt.UTC().Format(time.RFC3339)
 	}
@@ -77,9 +82,6 @@ func (s *Server) wingSubmitRun(request wingsession.RunRequest) (map[string]any, 
 	}
 	if request.Agent == "" {
 		request.Agent = s.Cfg.DefaultAgent
-	}
-	if request.TimeoutSeconds == 0 {
-		request.TimeoutSeconds = 900
 	}
 	if err := eggclient.ValidateSessionName(request.Label); err != nil {
 		return nil, err

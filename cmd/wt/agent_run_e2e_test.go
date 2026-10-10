@@ -114,11 +114,20 @@ func TestBuiltWTStdioWingEggFakeCodexTaskResult(t *testing.T) {
 	testBuiltWTStdioWingEggFakeCodexMode(t, false, true)
 }
 
+func TestBuiltWTStdioWingEggFakeCodexUnboundedResult(t *testing.T) {
+	testBuiltWTStdioWingEggFakeCodexTimeout(t, false, false, 0)
+}
+
 func testBuiltWTStdioWingEggFakeCodex(t *testing.T, modal bool) {
 	testBuiltWTStdioWingEggFakeCodexMode(t, modal, false)
 }
 
 func testBuiltWTStdioWingEggFakeCodexMode(t *testing.T, modal, nativeTask bool) {
+	testBuiltWTStdioWingEggFakeCodexTimeout(t, modal, nativeTask, 30)
+}
+
+func testBuiltWTStdioWingEggFakeCodexTimeout(t *testing.T, modal, nativeTask bool, timeout int) {
+	t.Helper()
 	repo, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -308,11 +317,15 @@ func testBuiltWTStdioWingEggFakeCodexMode(t *testing.T, modal, nativeTask bool) 
 			process.Wait()
 		}
 	}()
-	model, timeout := "fixture-model", 30
+	model := "fixture-model"
 	if modal {
 		model, timeout = "fixture-modal", 10
 	}
-	args, _ := json.Marshal(map[string]any{"prompt": "fixture request", "agent": "codex", "model": model, "cwd": fixture, "timeout_seconds": timeout})
+	arguments := map[string]any{"prompt": "fixture request", "agent": "codex", "model": model, "cwd": fixture}
+	if timeout != 0 {
+		arguments["timeout_seconds"] = timeout
+	}
+	args, _ := json.Marshal(arguments)
 	params := map[string]any{"name": "agent_run", "arguments": json.RawMessage(args)}
 	if nativeTask {
 		params["task"] = map[string]any{"ttl": 60000}
@@ -349,6 +362,9 @@ func testBuiltWTStdioWingEggFakeCodexMode(t *testing.T, modal, nativeTask bool) 
 	} else {
 		id = response.Result.Data["run_id"].(string)
 		session = response.Result.Data["session_id"].(string)
+		if timeout == 0 && (response.Result.Data["timeout_seconds"] != float64(0) || response.Result.Data["deadline"] != "no deadline") {
+			t.Fatalf("default run is bounded: %v", response.Result.Data)
+		}
 	}
 	input.Close()
 	if err := process.Wait(); err != nil {
@@ -395,7 +411,7 @@ func testBuiltWTStdioWingEggFakeCodexMode(t *testing.T, modal, nativeTask bool) 
 	}
 	reserved, err := eggclient.RunTurnStatus(t.Context(), cfg, eggclient.LocalSession{ID: session, Agent: "codex"}, id)
 	admitted, err := service.RunManager.Get(wingsession.Authority{UserID: "fixture-owner", Principal: wingsession.UserPrincipal("fixture-owner")}, id)
-	if err != nil || !reserved.Deadline.Equal(admitted.Result.Deadline) || reserved.Deadline.Before(time.Unix(0, started)) {
+	if err != nil || !reserved.Deadline.Equal(admitted.Result.Deadline) || timeout != 0 && reserved.Deadline.Before(time.Unix(0, started)) || timeout == 0 && !reserved.Deadline.IsZero() {
 		t.Fatalf("egg deadline did not start at provider launch: %+v, %v", reserved, err)
 	}
 	if err := listener.Close(); err != nil {
