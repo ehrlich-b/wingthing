@@ -28,24 +28,28 @@ type Hello struct {
 	Unsandboxed  bool   `json:"unsandboxed,omitempty"`
 	Conversation string `json:"conversation,omitempty"`
 	Execution    string `json:"execution,omitempty"`
+	Aggregate    bool   `json:"aggregate,omitempty"`
 }
 type Welcome struct {
-	Isolation string          `json:"isolation,omitempty"`
-	Version   string          `json:"version"`
-	WingID    string          `json:"wing_id"`
-	Principal string          `json:"principal,omitempty"`
-	Actor     string          `json:"actor,omitempty"`
-	Grants    map[string]bool `json:"grants"`
-	Tools     map[string]bool `json:"tools,omitempty"`
-	Error     string          `json:"error,omitempty"`
+	Isolation     string          `json:"isolation,omitempty"`
+	RemoteAllowed bool            `json:"remote_allowed,omitempty"`
+	Version       string          `json:"version"`
+	WingID        string          `json:"wing_id"`
+	Principal     string          `json:"principal,omitempty"`
+	Actor         string          `json:"actor,omitempty"`
+	Grants        map[string]bool `json:"grants"`
+	Tools         map[string]bool `json:"tools,omitempty"`
+	Error         string          `json:"error,omitempty"`
 }
 type Handler func(context.Context, control.DirectRequest) control.DirectResponse
 type Bind func(Hello) (Welcome, Handler, error)
 
 type Server struct {
-	listener *net.UnixListener
-	cancel   context.CancelFunc
-	done     chan struct{}
+	listener  *net.UnixListener
+	cancel    context.CancelFunc
+	done      chan struct{}
+	closeOnce sync.Once
+	closers   []io.Closer
 }
 
 // Listen never starts a wing. Only the wing calls it, before connecting to its relay.
@@ -119,7 +123,19 @@ func Listen(ctx context.Context, dir, wingID string, bind Bind) (*Server, error)
 	}()
 	return s, nil
 }
-func (s *Server) Close() error { s.cancel(); <-s.done; return nil }
+
+// AddCloser attaches wing-owned transports before publishing the server.
+func (s *Server) AddCloser(closer io.Closer) { s.closers = append(s.closers, closer) }
+func (s *Server) Close() error {
+	s.closeOnce.Do(func() {
+		s.cancel()
+		for _, closer := range s.closers {
+			_ = closer.Close()
+		}
+		<-s.done
+	})
+	return nil
+}
 
 func scan(conn net.Conn) *bufio.Scanner {
 	scanner := bufio.NewScanner(conn)
@@ -212,27 +228,42 @@ func strictJSON(data []byte, out any) error {
 }
 
 type Client struct {
-	conn    net.Conn
-	Welcome Welcome
-	scanner *bufio.Scanner
-	writeMu sync.Mutex
-	mu      sync.Mutex
-	pending map[string]chan control.DirectResponse
-	done    chan struct{}
-	next    atomic.Uint64
+	conn      net.Conn
+	Welcome   Welcome
+	scanner   *bufio.Scanner
+	writeSlot chan struct{}
+	mu        sync.Mutex
+	pending   map[string]chan control.DirectResponse
+	done      chan struct{}
+	next      atomic.Uint64
 }
 
-func Dial(ctx context.Context, dir string, hello Hello) (*Client, error) {
+// Path returns the derived endpoint, never a caller-writable socket pointer.
+func Path(dir string) (string, error) {
 	path, relocated, err := socketPath(dir)
 	if err == nil && relocated {
 		err = verifyRuntimeSocketDir(runtimeSocketDir(), false)
 	}
-	var conn net.Conn
-	if err == nil {
-		conn, err = (&net.Dialer{}).DialContext(ctx, "unix", path)
+	return path, err
+}
+func Dial(ctx context.Context, dir string, hello Hello) (*Client, error) {
+	path, err := Path(dir)
+	if err != nil {
+		return nil, err
 	}
+	client, err := DialPath(ctx, path, hello)
 	if err != nil {
 		return nil, fmt.Errorf("no local wing for WINGTHING_DIR=%s: %w; start one with wt wing start --local-only or wt roost start", dir, err)
+	}
+	return client, nil
+}
+
+// DialPath connects to a verified SSH stream-local forward as well as local IPC.
+// The forwarding process must belong to this UID; Hello pins the remote wing.
+func DialPath(ctx context.Context, path string, hello Hello) (*Client, error) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", path)
+	if err != nil {
+		return nil, err
 	}
 	success := false
 	defer func() {
@@ -267,7 +298,7 @@ func Dial(ctx context.Context, dir string, hello Hello) (*Client, error) {
 		return nil, errors.New("incompatible local wing handshake; upgrade wt and restart the wing")
 	}
 	_ = conn.SetDeadline(time.Time{})
-	c := &Client{conn: conn, Welcome: welcome, scanner: scanner, pending: make(map[string]chan control.DirectResponse), done: make(chan struct{})}
+	c := &Client{conn: conn, Welcome: welcome, scanner: scanner, pending: make(map[string]chan control.DirectResponse), done: make(chan struct{}), writeSlot: make(chan struct{}, 1)}
 	success = true
 	go c.read()
 	return c, nil
@@ -305,11 +336,22 @@ func (c *Client) Call(ctx context.Context, tool string, arguments json.RawMessag
 	if len(payload) > maxEnvelope {
 		return nil, true, errors.New("request exceeds local control envelope limit")
 	}
-	c.writeMu.Lock()
+	select {
+	case c.writeSlot <- struct{}{}:
+	case <-ctx.Done():
+		return nil, true, ctx.Err()
+	case <-c.done:
+		return nil, true, &TransportError{Err: errors.New("wing control disconnected")}
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	_ = c.conn.SetWriteDeadline(deadline)
 	_, err = c.conn.Write(append(payload, '\n'))
-	c.writeMu.Unlock()
+	<-c.writeSlot
 	if err != nil {
-		return nil, true, err
+		return nil, true, &TransportError{Err: err}
 	}
 	select {
 	case r := <-ch:
@@ -320,7 +362,16 @@ func (c *Client) Call(ctx context.Context, tool string, arguments json.RawMessag
 	case <-ctx.Done():
 		return nil, true, ctx.Err()
 	case <-c.done:
-		return nil, true, errors.New("local wing control disconnected")
+		return nil, true, &TransportError{Err: errors.New("wing control disconnected")}
 	}
 }
 func (c *Client) Close() error { return c.conn.Close() }
+
+// Done signals a lost channel without requiring another tool call.
+func (c *Client) Done() <-chan struct{} { return c.done }
+
+// TransportError distinguishes unknown delivery from authoritative tool errors.
+type TransportError struct{ Err error }
+
+func (e *TransportError) Error() string { return e.Err.Error() }
+func (e *TransportError) Unwrap() error { return e.Err }

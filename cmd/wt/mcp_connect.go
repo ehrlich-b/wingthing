@@ -62,8 +62,15 @@ func connectMCPCmd() *cobra.Command {
 			return server.Serve(cmd.Context())
 		},
 	}
-	command.Flags().StringVar(&clientName, "client", "", "MCP actor name used for attribution (or WT_MCP_CLIENT)")
+	legacy := remoteCmd()
+	for _, sub := range legacy.Commands() {
+		if sub.Name() == "ls" || sub.Name() == "rm" {
+			command.AddCommand(sub)
+		}
+	}
+	command.AddCommand(addConnectMCPCmd(&clientName, &connectTimeout))
+	command.PersistentFlags().StringVar(&clientName, "client", "", "MCP actor name used for attribution (or WT_MCP_CLIENT)")
 	command.Flags().StringVar(&roost, "roost", "", "coordination roost URL (default: config or wingthing.ai)")
-	command.Flags().DurationVar(&connectTimeout, "connect-timeout", 15*time.Second, "deadline for establishing each direct wing connection")
+	command.PersistentFlags().DurationVar(&connectTimeout, "connect-timeout", 15*time.Second, "deadline for establishing each direct wing connection")
 	return command
 }
