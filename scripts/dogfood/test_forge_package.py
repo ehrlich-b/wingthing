@@ -131,5 +131,63 @@ class WrapperTests(ForgeFixture):
         self.assertEqual(receipts[-1].stat().st_mode & 0o777, 0o600)
 
 
+class PreparationTests(ForgeFixture):
+    def setUp(self):
+        super().setUp()
+        shutil.copyfile(HERE / "run.sh", self.scripts / "run.sh")
+        (self.scripts / "run.sh").chmod(0o700)
+        (self.repo / "wt").write_text("#!/bin/sh\nexit 99\n")
+        (self.repo / "wt").chmod(0o700)
+        self.package = self.root / "package with spaces"
+
+    def prepare(self, until="2099-01-01T00:00:00Z"):
+        return subprocess.run([sys.executable, "-B", str(HERE / "prepare-forge.py"),
+                               "--repo", str(self.repo), "--out", str(self.package),
+                               "--until", until], capture_output=True, text=True, timeout=5)
+
+    def test_generate_private_package_with_spaces_without_execution(self):
+        result = self.prepare()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(json.loads(result.stdout)["installed"])
+        manifest = json.loads((self.package / "manifest.json").read_text())
+        self.assertEqual(manifest["repo"], str(self.repo))
+        self.assertEqual(self.package.stat().st_mode & 0o777, 0o700)
+        for name in manifest["files"]:
+            self.assertEqual((self.package / name).stat().st_mode & 0o077, 0)
+        syntax = subprocess.run(["bash", "-n", str(self.package / "install.sh")], capture_output=True)
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+        self.assertEqual(subprocess.run(["bash", "-n", str(self.package / "remove.sh")]).returncode, 0)
+        env = subprocess.run(["bash", "-c", 'source "$1"; printf "%s\\n" "$WT_DOGFOOD_REPO" "$WT_DOGFOOD_UNTIL"',
+                              "fixture", str(self.package / "forge.env")], capture_output=True, text=True)
+        self.assertEqual(env.stdout.splitlines(), [str(self.repo), "2099-01-01T00:00:00Z"])
+        service = (self.package / "wingthing-dogfood.service").read_text()
+        self.assertIn('$${WT_DOGFOOD_REPO}', service)
+        self.assertIn("UMask=0077", service)
+        self.assertIn("KillMode=control-group", service)
+        self.assertNotIn("set-environment", (self.package / "install.sh").read_text())
+
+    def test_missing_binary_refuses_without_creating_output(self):
+        (self.repo / "wt").unlink()
+        result = self.prepare()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("missing checkout-local executable", result.stderr)
+        self.assertFalse(self.package.exists())
+
+    def test_expired_or_non_utc_deadline_refuses(self):
+        for until in ("2000-01-01T00:00:00Z", "2099-01-01T00:00:00", "2099-01-01T00:00:00-04:00"):
+            with self.subTest(until=until):
+                self.assertEqual(self.prepare(until).returncode, 2)
+                self.assertFalse(self.package.exists())
+
+    def test_existing_output_is_preserved(self):
+        self.package.mkdir()
+        edit = self.package / "operator-note"
+        edit.write_text("keep this")
+        result = self.prepare()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("preserved", result.stderr)
+        self.assertEqual(edit.read_text(), "keep this")
+
+
 if __name__ == "__main__":
     unittest.main()
