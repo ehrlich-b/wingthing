@@ -24,7 +24,6 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/testssh"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"github.com/fsnotify/fsnotify"
-	"golang.org/x/sys/unix"
 )
 
 // Built CLI and egg processes use fake providers and the ordinary wing services.
@@ -79,6 +78,8 @@ func (p *mailboxProcess) diagnostics() string {
 }
 func mailboxProcessArtifact(t *testing.T, p *mailboxProcess, workspace, name string) []byte {
 	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		t.Fatal(err)
@@ -98,8 +99,8 @@ func mailboxProcessArtifact(t *testing.T, p *mailboxProcess, workspace, name str
 		case err := <-p.done:
 			p.done <- err
 			t.Fatalf("before %s: %v\n%s", name, err, p.diagnostics())
-		case <-t.Context().Done():
-			t.Fatalf("waiting for %s: %v\n%s", name, t.Context().Err(), p.diagnostics())
+		case <-ctx.Done():
+			t.Fatalf("waiting for %s: %v\n%s", name, ctx.Err(), p.diagnostics())
 		}
 	}
 }
@@ -142,9 +143,8 @@ func builtScopedParentProtocol(t *testing.T, exitParent bool) {
 			t.Fatal(err)
 		}
 	}
-	if err := unix.Mkfifo(filepath.Join(h.Root, "completion-gate"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	localGate := testprovider.NewCompletionGate(t, work)
+	remoteGate := testprovider.NewCompletionGate(t, remoteWork)
 	alias, err := os.MkdirTemp(filepath.Join(repo, ".scratch"), "c")
 	if err != nil {
 		t.Fatal(err)
@@ -271,9 +271,21 @@ func builtScopedParentProtocol(t *testing.T, exitParent bool) {
 	}
 	viewer, _ := mailboxProcessStart(t, binary, []string{"claude", "--name", "weekend", "--", "--model", "fake-parent", "--fixture-control", controlPath, "--fixture-unconfined"}, env(localState), work, input, "PARENT_READY")
 	t.Cleanup(func() { _ = input.Close(); _ = writer.Close(); _ = viewer.cmd.Process.Kill(); <-viewer.done })
+	t.Cleanup(func() {
+		if t.Failed() {
+			for _, state := range []string{localState, remoteState} {
+				entries, _ := os.ReadDir(filepath.Join(state, "eggs"))
+				for _, entry := range entries {
+					testprovider.LogEggTails(t, filepath.Join(state, "eggs", entry.Name()))
+				}
+			}
+		}
+	})
 	var captured struct {
-		Receipts   []map[string]any `json:"receipts"`
-		MailboxPID int              `json:"mailbox_pid"`
+		Receipts        []map[string]any `json:"receipts"`
+		MailboxPID      int              `json:"mailbox_pid"`
+		Mailbox         string           `json:"mailbox"`
+		ParentSessionID string           `json:"parent_session_id"`
 	}
 	if err := json.Unmarshal(mailboxProcessArtifact(t, viewer, work, "receipts.json"), &captured); err != nil {
 		t.Fatal(err)
@@ -281,11 +293,40 @@ func builtScopedParentProtocol(t *testing.T, exitParent bool) {
 	if len(captured.Receipts) != 2 {
 		t.Fatalf("parent children: %+v", captured)
 	}
-	gate, err := os.OpenFile(filepath.Join(h.Root, "completion-gate"), os.O_WRONLY, 0600)
-	if err != nil {
-		t.Fatal(err)
+	if captured.Mailbox == "" || captured.ParentSessionID == "" || eggclient.ReadSessionName(filepath.Join(localState, "eggs", captured.ParentSessionID)) != "weekend" {
+		t.Fatalf("missing named parent mailbox: %+v", captured)
 	}
-	defer gate.Close()
+	childStates := map[string]string{local.Config.WingID: localState, remote.Config.WingID: remoteState}
+	childGates := map[string]*testprovider.CompletionGate{local.Config.WingID: localGate, remote.Config.WingID: remoteGate}
+	childPIDs := map[string]int{}
+	assertWorking := func(receipt map[string]any) {
+		t.Helper()
+		state, id := childStates[receipt["wing_id"].(string)], receipt["session_id"].(string)
+		pid, alive := eggclient.ReadAliveEggPID(filepath.Join(state, "eggs", id))
+		if !alive || childPIDs[id] != 0 && childPIDs[id] != pid {
+			t.Fatalf("child did not survive: receipt=%v pid=%d original_pid=%d alive=%t", receipt, pid, childPIDs[id], alive)
+		}
+		view, err := eggclient.ReadSessionLifecycleView(t.Context(), &config.Config{Dir: state}, id, 0, 50)
+		if err != nil || !view.ProcessAlive || view.State != "working" || view.StateSource != "codex_hook" {
+			t.Fatalf("unreleased child is not working: receipt=%v lifecycle=%+v err=%v", receipt, view, err)
+		}
+		childPIDs[id] = pid
+	}
+	readyCtx, readyCancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer readyCancel()
+	seenWings := map[string]bool{}
+	for _, receipt := range captured.Receipts {
+		wing := receipt["wing_id"].(string)
+		gate := childGates[wing]
+		if gate == nil || seenWings[wing] {
+			t.Fatalf("expected one child per fixture wing: %v", captured.Receipts)
+		}
+		seenWings[wing] = true
+		if err := gate.WaitReady(readyCtx); err != nil {
+			t.Fatal(err)
+		}
+		assertWorking(receipt)
+	}
 	for _, receipt := range captured.Receipts {
 		if receipt["wing_id"] != local.Config.WingID {
 			continue
@@ -323,7 +364,11 @@ func builtScopedParentProtocol(t *testing.T, exitParent bool) {
 		forward := <-h.Started
 		forward.Drop()
 	}
+	var reattached *mailboxProcess
+	var reattachWriter *os.File
 	if exitParent {
+		exitCtx, exitCancel := context.WithTimeout(t.Context(), 30*time.Second)
+		defer exitCancel()
 		if _, err := io.WriteString(writer, "exit\r"); err != nil {
 			t.Fatal(err)
 		}
@@ -333,18 +378,25 @@ func builtScopedParentProtocol(t *testing.T, exitParent bool) {
 			if err != nil {
 				t.Fatalf("parent exit: %v %s", err, viewer.diagnostics())
 			}
-		case <-t.Context().Done():
-			t.Fatal(t.Context().Err())
+		case <-exitCtx.Done():
+			t.Fatalf("parent exit: %v\n%s", exitCtx.Err(), viewer.diagnostics())
+		}
+		if err := testprovider.WaitParentMailboxExit(exitCtx, captured.Mailbox, captured.ParentSessionID); err != nil {
+			t.Fatal(err)
+		}
+		if _, alive := eggclient.ReadAliveEggPID(filepath.Join(localState, "eggs", captured.ParentSessionID)); alive {
+			t.Fatal("parent egg is still alive after mailbox exit")
 		}
 	} else {
 		_ = viewer.cmd.Process.Kill()
 		<-viewer.done
 		viewer.done <- nil
-		reattachInput, reattachWriter, err := os.Pipe()
+		var reattachInput *os.File
+		reattachInput, reattachWriter, err = os.Pipe()
 		if err != nil {
 			t.Fatal(err)
 		}
-		reattached, _ := mailboxProcessStart(t, binary, []string{"attach", "weekend"}, env(localState), work, reattachInput, "PARENT_READY")
+		reattached, _ = mailboxProcessStart(t, binary, []string{"attach", "weekend"}, env(localState), work, reattachInput, "PARENT_READY")
 		t.Cleanup(func() {
 			_ = reattachInput.Close()
 			_ = reattachWriter.Close()
@@ -363,9 +415,38 @@ func builtScopedParentProtocol(t *testing.T, exitParent bool) {
 		if connection.PID == captured.MailboxPID {
 			t.Fatal("mailbox connection was not replaced")
 		}
-		if _, err := gate.Write([]byte{1, 1}); err != nil {
+	}
+	// Both eggs must retain their original processes and native working state
+	// after parent exit or viewer/mailbox replacement, before either release.
+	for _, receipt := range captured.Receipts {
+		assertWorking(receipt)
+	}
+	fresh, err := controlsocket.Dial(t.Context(), localState, controlsocket.Hello{Aggregate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fresh.Close()
+	for _, receipt := range captured.Receipts {
+		// In particular, releasing the first child must not release the second.
+		assertWorking(receipt)
+		pending := scopedCall(t, fresh, "agent_result", map[string]any{"wing_id": receipt["wing_id"], "run_id": receipt["run_id"]})
+		if pending["ready"] != false || pending["status"] != "pending" {
+			t.Fatalf("child completed before its release: %v", pending)
+		}
+		if err := childGates[receipt["wing_id"].(string)].Release(); err != nil {
 			t.Fatal(err)
 		}
+		args := map[string]any{"wing_id": receipt["wing_id"], "run_id": receipt["run_id"], "timeout_seconds": 60}
+		if data := scopedCall(t, fresh, "agent_wait", args); data["status"] != "done" || data["timed_out"] == true {
+			t.Fatalf("fresh client wait: %v", data)
+		}
+		delete(args, "timeout_seconds")
+		result := scopedCall(t, fresh, "agent_result", args)
+		if result["ready"] != true || result["status"] != "done" || result["run_id"] != receipt["run_id"] || result["session_id"] != receipt["session_id"] || result["wing_id"] != receipt["wing_id"] || !strings.Contains(fmt.Sprint(result["output"]), "Fake Codex fixture-model") {
+			t.Fatalf("fresh result: %v", result)
+		}
+	}
+	if !exitParent {
 		if _, err := io.WriteString(reattachWriter, "recover\r"); err != nil {
 			t.Fatal(err)
 		}
@@ -380,26 +461,6 @@ func builtScopedParentProtocol(t *testing.T, exitParent bool) {
 			if result["run_id"] != captured.Receipts[i]["run_id"] || result["session_id"] != captured.Receipts[i]["session_id"] || result["wing_id"] != captured.Receipts[i]["wing_id"] || result["ready"] != true {
 				t.Fatalf("changed receipt: %v", result)
 			}
-		}
-	}
-	if exitParent {
-		if _, err := gate.Write([]byte{1, 1}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	_ = gate.Close()
-	fresh, err := controlsocket.Dial(t.Context(), localState, controlsocket.Hello{Aggregate: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer fresh.Close()
-	for _, receipt := range captured.Receipts {
-		args := map[string]any{"wing_id": receipt["wing_id"], "run_id": receipt["run_id"], "timeout_seconds": 60}
-		scopedCall(t, fresh, "agent_wait", args)
-		delete(args, "timeout_seconds")
-		result := scopedCall(t, fresh, "agent_result", args)
-		if result["ready"] != true || result["session_id"] != receipt["session_id"] || !strings.Contains(fmt.Sprint(result["output"]), "Fake Codex fixture-model") {
-			t.Fatalf("fresh result: %v", result)
 		}
 	}
 }

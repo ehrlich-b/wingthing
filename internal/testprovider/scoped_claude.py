@@ -60,7 +60,7 @@ for wing in wings:
  receipts.append(receipt)
 call('agent_run',{'wing_id':'ungranted','agent':'codex','cwd':os.getcwd(),'prompt':'denied','idempotency_key':'denied'},True)
 call('agent_result',{'wing_id':wings[0]['wing_id'],'run_id':'foreign'},True)
-publish('receipts.json',{'receipts':receipts,'mailbox_pid':client.pid})
+publish('receipts.json',{'receipts':receipts,'mailbox_pid':client.pid,'mailbox':mailbox,'parent_session_id':server['args'][server['args'].index('--execution')+1]})
 os.write(1,b'PARENT_READY\r\n')
 buffer=b''
 while True:
