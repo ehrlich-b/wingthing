@@ -54,6 +54,6 @@ func mcpCmd() *cobra.Command {
 	stdioCmd.Flags().StringVar(&hostMailbox, "host-mailbox", "", "forward to the host broker registered for this parent execution")
 	stdioCmd.Flags().BoolVar(&unsandboxed, "unsandboxed", false, "request the outer VM/container boundary (requires allow_unsandboxed in wing.yaml)")
 	cmd.AddCommand(stdioCmd)
-	cmd.AddCommand(connectMCPCmd())
+	cmd.AddCommand(connectMCPCmd(), inspectMCPCmd())
 	return cmd
 }

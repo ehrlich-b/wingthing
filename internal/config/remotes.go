@@ -16,8 +16,11 @@ import (
 )
 
 type Remote struct {
-	SSHTarget    string `yaml:"ssh_target" json:"ssh_target"`
-	WingthingDir string `yaml:"wingthing_dir,omitempty" json:"wingthing_dir,omitempty"`
+	SSHTarget      string `yaml:"ssh_target" json:"ssh_target"`
+	WingthingDir   string `yaml:"wingthing_dir,omitempty" json:"wingthing_dir,omitempty"`
+	WingID         string `yaml:"wing_id,omitempty" json:"wing_id,omitempty"`
+	ControlSocket  string `yaml:"control_socket,omitempty" json:"control_socket,omitempty"`
+	ControlVersion string `yaml:"control_version,omitempty" json:"control_version,omitempty"`
 }
 
 type remotesFile struct {
@@ -65,6 +68,14 @@ func validateRemotes(remotes map[string]Remote) error {
 		}
 		if remote.WingthingDir != "" && (!strings.HasPrefix(remote.WingthingDir, "/") || strings.ContainsAny(remote.WingthingDir, "\x00\r\n")) {
 			return fmt.Errorf("remote %q: wingthing_dir must be an absolute remote path without NUL, CR or LF", name)
+		}
+		if remote.WingID != "" || remote.ControlSocket != "" || remote.ControlVersion != "" {
+			if remote.WingID == "" || remote.ControlVersion == "" || remote.WingthingDir == "" || !strings.HasPrefix(remote.ControlSocket, "/") || strings.ContainsAny(remote.ControlSocket, "\x00\r\n:") {
+				return fmt.Errorf("remote %q: incomplete or invalid verified control metadata", name)
+			}
+			if strings.ContainsAny(remote.WingID, "\x00\r\n:") {
+				return fmt.Errorf("remote %q: invalid wing ID", name)
+			}
 		}
 	}
 	return nil
