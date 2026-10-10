@@ -23,6 +23,9 @@ func testWingTool(t *testing.T, cfg *config.Config, owner string) func(context.C
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(scratch, 0700); err != nil {
+		t.Fatal(err)
+	}
 	alias, err := os.MkdirTemp(scratch, "m")
 	if err != nil {
 		t.Fatal(err)
