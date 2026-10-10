@@ -209,7 +209,15 @@ as that user can bypass MCP and invoke `wt` directly, so local MCP principals ar
 an accident-prevention and attribution boundary, not hostile same-UID isolation.
 
 `wt mcp stdio` forwards to the already-running personal wing's `control.sock` in
-its `WINGTHING_DIR`. The state directory is mode 0700 and the socket mode 0600;
+its `WINGTHING_DIR`. When the canonical socket address exceeds 103 bytes, the
+wing instead uses `/tmp/wt-<uid>/<sha256-of-canonical-state-directory>.sock`.
+The runtime parent must already be owned by that UID, mode 0700 and not a symlink,
+or the wing creates it with those permissions; unsafe existing parents are
+refused. A mode 0600 `control.socket-path` file in the state directory records
+the address for inspection. Clients derive the address independently rather
+than trusting that file, so aliases find the same wing and different state
+directories remain isolated. Neither the user's state directory nor `TMPDIR`
+changes. The state directory is mode 0700 and the socket mode 0600;
 the wing checks the peer UID with `getpeereid` on macOS and `SO_PEERCRED` on Linux.
 The handshake negotiates the control protocol and wing ID. Shared and organization
 wings do not serve this socket. Stdio never starts a wing or opens the session store.

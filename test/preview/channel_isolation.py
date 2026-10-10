@@ -73,15 +73,36 @@ with tempfile.TemporaryDirectory(prefix="wtp-", dir="/tmp") as temporary:
             {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
             {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "terminal_start", "arguments": {"cwd": str(base), "command": ["/bin/sh", "-c", f"touch {process_marker}"]}}},
         ]
+        # Stdio is a wing client: absence must fail without creating state or
+        # starting a daemon. Start an isolated wing explicitly for tool errors.
         result = subprocess.run([str(channel_binary), "mcp", "stdio", "--client", "socket-fixture"], env=long_env, input="".join(json.dumps(r) + "\n" for r in requests), capture_output=True, text=True, timeout=5)
-        assert result.returncode == 0, result.stderr
-        response = next(json.loads(line)["result"] for line in result.stdout.splitlines() if json.loads(line).get("id") == 2)
-        message = response["structuredContent"]["error"]
-        assert response["isError"] and not (long_state / "eggs").exists() and not process_marker.exists()
-        for fragment in [str(long_state / "eggs"), "egg.sock", "bytes", f"at most {socket_limit} bytes", "WINGTHING_DIR", "shorter"]:
-            assert fragment in message, message
-        assert (long_state / "mcp-audit.log").exists()
-        socket_errors[channel_binary.name + "_mcp"] = message
+        assert result.returncode != 0 and "no local wing" in result.stderr
+        assert not long_state.exists() and not process_marker.exists()
+        run(channel_binary, "roost", "start", "--addr", f"127.0.0.1:{free_port()}", extra=long_env)
+        try:
+            # Keep stdin open until the response: EOF cancels observations on
+            # this thin client, including a tool RPC not yet acknowledged.
+            with subprocess.Popen([str(channel_binary), "mcp", "stdio", "--client", "socket-fixture"], env=long_env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as client:
+                client.stdin.write("".join(json.dumps(r) + "\n" for r in requests))
+                client.stdin.flush()
+                response = None
+                for line in client.stdout:
+                    envelope = json.loads(line)
+                    if envelope.get("id") == 2:
+                        response = envelope["result"]
+                        break
+                client.stdin.close()
+                client.stdin = None
+                _, stderr = client.communicate(timeout=5)
+                assert client.returncode == 0 and response is not None, stderr
+            message = response["structuredContent"]["error"]
+            assert response["isError"] and not (long_state / "eggs").exists() and not process_marker.exists()
+            for fragment in [str(long_state / "eggs"), "egg.sock", "bytes", f"at most {socket_limit} bytes", "WINGTHING_DIR", "shorter"]:
+                assert fragment in message, message
+            assert (long_state / "mcp-audit.log").exists()
+            socket_errors[channel_binary.name + "_mcp"] = message
+        finally:
+            run(channel_binary, "roost", "stop", extra=long_env)
     run(preview_binary, "init", extra={"WINGTHING_DIR": str(stable_state)}, ok=False)
     alias = base / "stable-alias"
     alias.symlink_to(stable_state)
@@ -156,6 +177,6 @@ with tempfile.TemporaryDirectory(prefix="wtp-", dir="/tmp") as temporary:
         intact()
     finally:
         run(stable_install, "session", "kill", stable_session)
-    receipt = {"result": "passed", "stable_binary_sha256_before": stable_hash, "stable_binary_sha256_after": digest(stable_install), "stable_sentinel_sha256_before": stable_sentinel, "stable_sentinel_sha256_after": digest(sentinel), "stable_token_sha256_before": stable_token_hash, "stable_token_sha256_after": digest(stable_tokens), "version": identity["version"], "socket_path_limit_bytes": socket_limit, "socket_path_errors": socket_errors, "checks": ["read-only identity", "long socket CLI path fails before state or process creation", "long socket MCP path returns actionable audited tool error", "state overlap and symlink refusal", "no auth import", "no org/shared coordinator", "stable egg copy refused", "preview egg reads clean provider HOME and survives daemon upgrade", "provider links resolve only inside exact preview state", "local install", "preview daemon start/upgrade/restart/stop", "stable binary preserved", "preview uninstall preserves stable process and all state"]}
+    receipt = {"result": "passed", "stable_binary_sha256_before": stable_hash, "stable_binary_sha256_after": digest(stable_install), "stable_sentinel_sha256_before": stable_sentinel, "stable_sentinel_sha256_after": digest(sentinel), "stable_token_sha256_before": stable_token_hash, "stable_token_sha256_after": digest(stable_tokens), "version": identity["version"], "socket_path_limit_bytes": socket_limit, "socket_path_errors": socket_errors, "checks": ["read-only identity", "long socket CLI path fails before state or process creation", "stdio without wing fails without creating state", "long control socket connects to explicit wing and returns actionable audited egg path error", "state overlap and symlink refusal", "no auth import", "no org/shared coordinator", "stable egg copy refused", "preview egg reads clean provider HOME and survives daemon upgrade", "provider links resolve only inside exact preview state", "local install", "preview daemon start/upgrade/restart/stop", "stable binary preserved", "preview uninstall preserves stable process and all state"]}
     (package / "isolation-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
     print(json.dumps(receipt, indent=2))
