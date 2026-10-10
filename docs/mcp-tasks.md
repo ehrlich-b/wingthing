@@ -82,6 +82,25 @@ terminal task returns invalid params (`-32602`).
 
 ## Durability, ownership, and retention
 
+Ordinary run receipts and status/result responses include `phase`, the saved
+`idempotency_key` when present, and `parent_id` for a steered follow-up. Retain
+the owning `wing_id` with each run ID; parent IDs are on that same wing. A queued
+child waits for its parent's terminal result, including a timeout, then starts
+with the prior request, safe result, typed error, and new direction. Stopping a
+parent cancels its queued/admitted children; a child that already started keeps
+its own run lifecycle even when the parent is terminal. Reconnect with the same
+retry key to reconcile an ambiguous admission, including `agent_steer` across
+remembered SSH connections.
+
+The wing commits admission and transition intent; the egg owns the native turn,
+deadline, and terminal result artifact. Phases `admitted`, `queued`,
+`spawning`, `spawned`, `submitting`, `observing`, and `terminal` distinguish
+durable intent from execution evidence. Public statuses remain `pending`,
+`running`, `done`, `failed`, `timeout`, and `stopped`. Restart never resends an
+ambiguous submission; missing evidence becomes a typed `unknown_outcome`.
+Native Claude failures retain ordinary assistant output preceding the failure
+while excluding the failure record's provider diagnostic.
+
 The task record is committed with durable wing run admission. A new MCP client
 using the same principal can get, list, and retrieve it after a disconnect or
 wing restart. Another principal cannot read or cancel it. Existing grants and

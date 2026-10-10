@@ -168,7 +168,7 @@ func (m *rememberedWings) dispatch(ctx context.Context, s *Server, hello control
 	}
 	request.Arguments = args
 	key := ""
-	if request.Tool == "agent_run" {
+	if request.Tool == "agent_run" || request.Tool == "agent_steer" {
 		request.Arguments, key, err = wingconnect.AdmissionArguments(args)
 		if err != nil {
 			return fail(err)

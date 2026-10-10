@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := check
-.PHONY: check gate e2e-linux e2e-web e2e-mac release deploy ops proto web serve clean
+.PHONY: check gate test-run-recovery test-run-load test-run-load-full test-run-canary e2e-linux e2e-web e2e-mac release deploy ops proto web serve clean
 
 GO ?= nice -n 15 go
 NODE ?= nice -n 15 node
@@ -17,6 +17,8 @@ RACE_BASE ?= HEAD~1
 # Override for release-wide coverage or a specific package list. Otherwise use
 # Buildable untagged Go packages touched since RACE_BASE, including local files.
 RACE_PACKAGES ?=
+RUN_RECOVERY_PACKAGES ?= ./internal/wingsession ./internal/localmcp ./internal/wingconnect ./internal/egg
+RUN_RECOVERY_TESTS ?= ^(TestRunRecovery.*|TestStopIntentAndQueuedCancellationSurviveWingRestart|TestLostRunSubmissionAcknowledgementDoesNotResendAfterRestart|TestRememberedPool(LostAdmissionReconcilesOriginalKey|UnreconciledAdmissionReportsOriginalKey)|TestProviderFailureContentAbsentFromLifecycleAndArchive)$$
 
 HOST_ARCH := $(shell uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
 HOST_OS := $(shell uname -s | tr '[:upper:]' '[:lower:]')
@@ -71,6 +73,24 @@ web:
 	cd web && for f in src/chat-view.js src/conversation-view.js src/parent-dot.js; do $(NODE) --check $$f || exit 1; done
 	cd web && $(NPM) test
 	cd web && $(NPM) run build
+
+# Finite, offline native-provider fixtures; no live provider or remote launches.
+test-run-recovery: | web/dist
+	$(GO) test -p 2 $(RUN_RECOVERY_PACKAGES) -run '$(RUN_RECOVERY_TESTS)' -count=$(COUNT) -timeout=5m
+
+test-run-load: | web/dist
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 ./cmd/wt -run '^TestBuiltWTLocalOnlyDaemonBootsWithoutTokens$$' -count=10 -timeout=5m
+	$(GO) test -p 2 ./internal/wingconnect -run '^TestRememberedPoolCanceledCallIsBounded$$' -count=10 -timeout=5m
+	$(MAKE) --no-print-directory test-run-load-full
+
+test-run-load-full: | web/dist
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 ./cmd/wt ./internal/wingconnect -count=1 -timeout=15m
+
+test-run-canary: | web/dist
+	$(stable-build)
+	scripts/dogfood/run.sh
 
 # Select one or more profiles, e.g. make gate GATE='integration compat'. Real
 # provider profiles are opt-in and fail when their required fixtures are absent.

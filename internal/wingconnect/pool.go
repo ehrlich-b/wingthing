@@ -304,6 +304,19 @@ func (e *entry) acquire(ctx context.Context) (Connection, error) {
 		}
 	}
 }
+
+func (e *entry) discard(conn Connection) {
+	// Call can observe transport failure before the Done notifier runs. Detach
+	// that exact connection before retrying; never evict a newer replacement.
+	e.mu.Lock()
+	if e.connection == conn {
+		e.connection = nil
+		e.lastError = "SSH wing control disconnected"
+		e.signal()
+	}
+	e.mu.Unlock()
+	_ = conn.Close()
+}
 func (p *Pool) Entries() ([]map[string]any, string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -416,7 +429,7 @@ func (p *Pool) Call(ctx context.Context, wingID, name string, args json.RawMessa
 		return nil, true, err
 	}
 	key := ""
-	if name == "agent_run" {
+	if name == "agent_run" || name == "agent_steer" {
 		args, key, err = AdmissionArguments(args)
 		if err != nil {
 			return nil, true, err
@@ -429,7 +442,7 @@ func (p *Pool) Call(ctx context.Context, wingID, name string, args json.RawMessa
 		}
 	}
 	delivered := false
-	retry := tool.Annotations["readOnlyHint"] == true || name == "agent_run" || name == control.MCPTaskCreate
+	retry := tool.Annotations["readOnlyHint"] == true || name == "agent_run" || name == "agent_steer" || name == control.MCPTaskCreate
 	for attempt := 0; attempt < 2; attempt++ {
 		conn, connectErr := e.acquire(ctx)
 		if connectErr != nil {
@@ -457,7 +470,7 @@ func (p *Pool) Call(ctx context.Context, wingID, name string, args json.RawMessa
 			// connection and its other observers when just one wait ends.
 			return data, denied, ctx.Err()
 		}
-		_ = conn.Close()
+		e.discard(conn)
 		if !retry || ctx.Err() != nil {
 			break
 		}

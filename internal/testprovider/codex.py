@@ -49,5 +49,9 @@ while True:
    os.close(os.open(ready, os.O_CREAT|os.O_EXCL|os.O_WRONLY, 0o600))
   assert gate.read(1)==b'\x01', 'completion gate closed without explicit release'
  payload={'type':'agent-turn-complete','thread-id':thread,'turn-id':turn,'input-messages':[prompt],'last-assistant-message':'Fake Codex '+model+': Ω🙂 '+prompt}
+ failures={'fixture-auth':'Invalid API key', 'fixture-rate':'429 Too Many Requests: rate limit exceeded', 'fixture-refused':'content_policy_violation'}
+ if model in failures:
+  payload.pop('last-assistant-message')
+  payload['error']={'message':failures[model]+' private-failure-credential-canary'}
  subprocess.run(notify+[json.dumps(payload)],check=True)
  hook('Stop',turn_id=turn)

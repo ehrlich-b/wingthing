@@ -17,7 +17,7 @@ nice -n 15 go build -p 2 -buildvcs=false -o wt ./cmd/wt
 ```
 
 The runner executes once; the coordinator schedules it. Stdout contains one
-JSON record per check (13 including cleanup) and one runner receipt. Each has
+JSON record per check (17 including cleanup) and one runner receipt. Each has
 `check`, `status`, `latency_ms`, and `error`. Any failure exits nonzero. Unconfigured live checks
 and unavailable OS sandbox acceptance are explicit `skip` records; Linux mailbox
 checks use `unsupported-on-linux`. Neither status is evidence that a flow passed.
@@ -37,6 +37,18 @@ Linux refuses this protected-write boundary;
 Mac hosts prohibiting nested `sandbox-exec` explicitly skip it. Existing tests
 are unchanged. This harness's fixture runs request the documented trusted outer
 boundary for deterministic provider tests; they do not establish OS confinement.
+
+Run recovery adds a native timeout followed by steering, queued steering followed
+by parent stop, and terminal-parent stop while the child is already running.
+These checks replace the private wing at the accepted/queued, running and terminal
+boundaries, retain parent/run/session/wing IDs, retry original keys, and compare
+the CLI `agent wait-any` JSON with MCP terminal statuses. Auth, rate-limit and
+refusal notifications also survive restart with typed reasons and no diagnostic
+sentinel in results. The deterministic `make test-run-recovery` fixtures cover
+all ten selected persisted boundaries and Claude's safe partial failure output.
+`make test-run-load` runs the two named focused checks ten times each, then both
+full packages against the checkout-built binary. `make test-run-canary` builds
+and runs this default fixture-only mode; no live-provider or SSH flags are set.
 
 Logs live in `.scratch/dogfood-logs`: at most 24 JSONL receipts of 256 KiB each,
 plus one lock file. A nonblocking lock avoids overlap, and a 12-minute watchdog

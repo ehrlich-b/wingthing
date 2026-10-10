@@ -132,6 +132,11 @@ class Gate:
         self.ready()
         os.write(self.fd, b"\x01")
 
+    def reset(self):
+        # Only call after the previous turn is terminal. The next marker then
+        # proves the child's own native receipt and FIFO open, not the parent.
+        pathlib.Path(str(self.path) + ".ready").unlink()
+
 
 class Canary:
     def __init__(self, args):
@@ -331,6 +336,108 @@ class Canary:
         gate.release()
         self.outcome(ident, "restart")
 
+    def replace_wing(self):
+        self.mcp.close()
+        self.stop_wing(abrupt=True)
+        self.wing = self.start_wing()
+        self.mcp = self.client()
+
+    def run_result(self, ident, status, failure=None):
+        waited = self.mcp.tool("agent_wait", {"run_id": ident, "timeout_seconds": 30})
+        require(waited["status"] == status, "unexpected terminal state: " + json.dumps(waited))
+        result = self.mcp.tool("agent_result", {"run_id": ident})
+        require(result["ready"] is True and result["phase"] == "terminal" and result["status"] == status,
+                "result does not match terminal state")
+        if failure:
+            require(result["failure_kind"] == failure and result.get("error"), "missing typed failure reason")
+        return result
+
+    def cli_wait_parity(self, ident, status):
+        result = json.loads(self.command(["agent", "wait-any", ident, "--timeout", "0.1"]))
+        require(result["wing_id"] == self.wing_id and result["finished"] == [{"run_id": ident, "status": status}]
+                and result["pending"] == [], "CLI/MCP terminal states differ")
+
+    def timeout_steer(self):
+        work = self.work / "timeout-steer"
+        work.mkdir(mode=0o700)
+        gate = self.gate(work)
+        receipt = self.mcp.tool("agent_run", {"agent": "codex", "model": "fixture-model", "cwd": str(work),
+                                             "prompt": "timeout parent", "timeout_seconds": 10,
+                                             "idempotency_key": "timeout-parent"})
+        parent = receipt["run_id"]
+        gate.ready()
+        prior = self.run_result(parent, "timeout", "timeout")
+        self.replace_wing()
+        require(self.mcp.tool("agent_result", {"run_id": parent}) == prior, "restart changed timeout history")
+        gate.reset()
+        args = {"run_id": parent, "prompt": "complete the remainder", "idempotency_key": "timeout-child"}
+        child = self.mcp.tool("agent_steer", args)
+        require(child["parent_id"] == parent and child["wing_id"] == self.wing_id, "unqualified child/parent link")
+        gate.ready()
+        self.replace_wing()
+        retry = self.mcp.tool("agent_steer", args)
+        require(all(retry[k] == child[k] for k in ("run_id", "session_id", "parent_id", "wing_id")), "steer retry duplicated child")
+        gate.release()
+        result = self.run_result(child["run_id"], "done")
+        expected = ("Prior request:\ntimeout parent\n\nPrior result:\n" + prior["output"] +
+                    "\n\nPrior error:\n" + prior["error"] + "\n\nNew direction:\ncomplete the remainder")
+        require(result["output"] == "Fake Codex fixture-model: Ω🙂 " + expected, "timeout follow-up lost exact context")
+        self.cli_wait_parity(child["run_id"], "done")
+        self.replace_wing()
+        require(self.mcp.tool("agent_result", {"run_id": child["run_id"]}) == result, "restart changed child result")
+        return {"restarts": 3, "accepted_children": 1}
+
+    def queued_steer_stop(self):
+        parent, _, _ = self.launch("queued-steer-stop")
+        args = {"run_id": parent, "prompt": "queued direction", "idempotency_key": "queued-child"}
+        child = self.mcp.tool("agent_steer", args)
+        require(child["phase"] == "queued" and child["parent_id"] == parent, "child did not wait for active parent")
+        self.replace_wing()
+        retry = self.mcp.tool("agent_steer", args)
+        require(retry["run_id"] == child["run_id"] and retry["session_id"] == child["session_id"], "queued retry changed child")
+        self.mcp.tool("agent_stop", {"run_id": parent})
+        result = self.run_result(child["run_id"], "stopped", "stopped")
+        require(result["parent_id"] == parent, "cancelled child lost parent")
+        require(not (self.state / "eggs" / child["session_id"]).exists(), "cancelled queued child executed")
+        self.replace_wing()
+        require(self.mcp.tool("agent_result", {"run_id": child["run_id"]}) == result, "restart lost queued cancellation")
+        self.cli_wait_parity(child["run_id"], "stopped")
+        return {"restarts": 2, "accepted_children": 1, "cancelled_children": 1}
+
+    def terminal_steer_stop(self):
+        parent, _, gate = self.launch("terminal-steer-stop")
+        gate.release()
+        prior = self.outcome(parent, "terminal-steer-stop")
+        gate.reset()
+        child = self.mcp.tool("agent_steer", {"run_id": parent, "prompt": "child direction", "idempotency_key": "terminal-child"})
+        gate.ready()
+        self.mcp.tool("agent_stop", {"run_id": parent})
+        self.replace_wing()
+        gate.release()
+        result = self.run_result(child["run_id"], "done")
+        require(result["parent_id"] == parent, "started child lost parent")
+        require(self.mcp.tool("agent_result", {"run_id": parent}) == prior, "stop changed terminal parent")
+        self.cli_wait_parity(child["run_id"], "done")
+        return {"restarts": 1, "accepted_children": 1}
+
+    def provider_failures(self):
+        for model, kind in (("fixture-auth", "auth_failed"), ("fixture-rate", "rate_limited"),
+                            ("fixture-refused", "provider_refused")):
+            work = self.work / model
+            work.mkdir(mode=0o700)
+            gate = self.gate(work)
+            receipt = self.mcp.tool("agent_run", {"agent": "codex", "model": model, "cwd": str(work),
+                                                 "prompt": "failure fixture", "idempotency_key": model,
+                                                 "timeout_seconds": 120})
+            gate.release()
+            result = self.run_result(receipt["run_id"], "failed", kind)
+            require(result["output"] == "" and "private-failure-credential-canary" not in json.dumps(result),
+                    "native failure exposed provider diagnostics")
+            self.cli_wait_parity(receipt["run_id"], "failed")
+            self.replace_wing()
+            require(self.mcp.tool("agent_result", {"run_id": receipt["run_id"]}) == result, "restart changed typed failure")
+        return {"failure_kinds": 3, "restarts": 3}
+
     def tasks(self):
         ident, _, gate = self.launch("tasks", task=True)
         require(self.mcp.rpc("tasks/get", {"taskId": ident})["status"] == "working", "tasks/get lost active task")
@@ -407,6 +514,22 @@ class Canary:
         result = proc.tool("agent_result", {"wing_id": metadata["wing_id"], "run_id": receipt["run_id"]})
         require(result["status"] == "done" and result["output"] == "Fake Codex fixture-model: Ω🙂 ssh request", "fake SSH result mismatch")
         require(all(result[x] == receipt[x] for x in ("run_id", "session_id", "wing_id")), "fake SSH changed child identity")
+        gate.reset()
+        args = {"wing_id": metadata["wing_id"], "run_id": receipt["run_id"], "prompt": "ssh direction"}
+        followup = proc.tool("agent_steer", args)
+        require(followup["parent_id"] == receipt["run_id"] and followup.get("idempotency_key"), "fake SSH steer lost parent/key")
+        gate.ready()
+        proc.close(abrupt=True)
+        proc = self.client(connect=True)
+        args["idempotency_key"] = followup["idempotency_key"]
+        retried = proc.tool("agent_steer", args)
+        require(all(retried[k] == followup[k] for k in ("run_id", "session_id", "wing_id", "parent_id")), "fake SSH duplicated steer")
+        gate.release()
+        proc.tool("agent_wait", {"wing_id": metadata["wing_id"], "run_id": followup["run_id"], "timeout_seconds": 30})
+        continued = proc.tool("agent_result", {"wing_id": metadata["wing_id"], "run_id": followup["run_id"]})
+        expected = "Prior request:\nssh request\n\nPrior result:\n" + result["output"] + "\n\nNew direction:\nssh direction"
+        require(continued["status"] == "done" and continued["output"] == "Fake Codex fixture-model: Ω🙂 " + expected,
+                "fake SSH follow-up lost prior context")
         proc.close()
 
     def mailbox_platform(self):
@@ -582,6 +705,10 @@ class Canary:
                   ("terminal_start_send_stop", self.terminal),
                   ("mcp_stdio_agent_run_wait_result", self.stdio), ("mcp_client_disconnect", self.disconnect),
                   ("wing_restart_mid_run", self.restart), ("mcp_tasks_get_result_list_cancel", self.tasks),
+                  ("timeout_steer_child_restart", self.timeout_steer),
+                  ("queued_steer_stop_restart", self.queued_steer_stop),
+                  ("terminal_parent_steer_stop_restart", self.terminal_steer_stop),
+                  ("provider_failure_kinds_restart", self.provider_failures),
                   ("remembered_ssh_fixture", self.remembered_fixture),
                   ("wt_claude_refuses_provider_writable_state", self.mailbox_refuses_writable_state),
                   ("wt_claude_scoped_mailbox", self.mailbox), ("remembered_ssh_connect", self.remembered_ssh),

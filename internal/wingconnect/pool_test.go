@@ -229,12 +229,20 @@ func TestRememberedPoolHostAndWingIdentityChangesFailClosed(t *testing.T) {
 	}
 }
 func TestRememberedPoolLostAdmissionReconcilesOriginalKey(t *testing.T) {
+	for _, tool := range []string{"agent_run", "agent_steer"} {
+		for _, key := range []string{"original", ""} {
+			t.Run(tool+"/key="+key, func(t *testing.T) { rememberedPoolLostAdmission(t, tool, key) })
+		}
+	}
+}
+
+func rememberedPoolLostAdmission(t *testing.T, tool, key string) {
+	t.Helper()
 	h := testssh.New(t)
 	var mu sync.Mutex
 	keys := map[string]string{}
 	calls := 0
 	admitted := make(chan struct{})
-	release := make(chan struct{})
 	handler := func(ctx context.Context, r control.DirectRequest) control.DirectResponse {
 		var args struct {
 			Key string `json:"idempotency_key"`
@@ -252,10 +260,9 @@ func TestRememberedPoolLostAdmissionReconcilesOriginalKey(t *testing.T) {
 		mu.Unlock()
 		if first {
 			close(admitted)
-			select {
-			case <-ctx.Done():
-			case <-release:
-			}
+			// Do not publish the first receipt until its transport is gone.
+			// Releasing alongside Drop can race a successful acknowledgement.
+			<-ctx.Done()
 		}
 		return control.DirectResponse{Version: control.ContractVersion, ID: r.ID, Result: map[string]any{"run_id": "single-run", "session_id": id}}
 	}
@@ -273,18 +280,27 @@ func TestRememberedPoolLostAdmissionReconcilesOriginalKey(t *testing.T) {
 		err  error
 	}
 	done := make(chan result, 1)
+	args := map[string]any{"prompt": "request"}
+	if tool == "agent_steer" {
+		args["run_id"] = "parent-run"
+	}
+	if key != "" {
+		args["idempotency_key"] = key
+	}
+	wire, _ := json.Marshal(args)
 	go func() {
-		data, _, err := p.Call(t.Context(), one.WingID, "agent_run", json.RawMessage(`{"prompt":"request","idempotency_key":"original"}`))
+		data, _, err := p.Call(t.Context(), one.WingID, tool, wire)
 		done <- result{data, err}
 	}()
 	<-admitted
 	f.Drop()
-	close(release)
 	got := <-done
-	if got.err != nil || got.data["session_id"] != "single-egg" || got.data["idempotency_key"] != "original" {
+	if got.err != nil || got.data["session_id"] != "single-egg" || got.data["wing_id"] != one.WingID || got.data["idempotency_key"] == nil || got.data["idempotency_key"] == "" || key != "" && got.data["idempotency_key"] != key {
 		t.Fatalf("reconciliation: %v %v", got.data, got.err)
 	}
-	again, _, err := p.Call(t.Context(), one.WingID, "agent_run", json.RawMessage(`{"prompt":"request","idempotency_key":"original"}`))
+	args["idempotency_key"] = got.data["idempotency_key"]
+	wire, _ = json.Marshal(args)
+	again, _, err := p.Call(t.Context(), one.WingID, tool, wire)
 	if err != nil || again["run_id"] != got.data["run_id"] {
 		t.Fatalf("explicit retry: %v %v", again, err)
 	}
@@ -328,6 +344,13 @@ func TestRememberedPoolBackoffBoundsAndDemandRetry(t *testing.T) {
 }
 
 func TestRememberedPoolUnreconciledAdmissionReportsOriginalKey(t *testing.T) {
+	for _, tool := range []string{"agent_run", "agent_steer"} {
+		t.Run(tool, func(t *testing.T) { rememberedPoolUnreconciledAdmission(t, tool) })
+	}
+}
+
+func rememberedPoolUnreconciledAdmission(t *testing.T, tool string) {
+	t.Helper()
 	h := testssh.New(t)
 	admitted := make(chan struct{})
 	one, s := fakeWing(t, h, "one", "wing-one", func(ctx context.Context, r control.DirectRequest) control.DirectResponse {
@@ -345,7 +368,7 @@ func TestRememberedPoolUnreconciledAdmissionReportsOriginalKey(t *testing.T) {
 	f := <-h.Started
 	result := make(chan error, 1)
 	go func() {
-		_, _, err := p.Call(t.Context(), one.WingID, "agent_run", json.RawMessage(`{"prompt":"request","idempotency_key":"original-key"}`))
+		_, _, err := p.Call(t.Context(), one.WingID, tool, json.RawMessage(`{"prompt":"request","run_id":"parent-run","idempotency_key":"original-key"}`))
 		result <- err
 	}()
 	<-admitted

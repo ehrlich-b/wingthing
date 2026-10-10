@@ -370,7 +370,9 @@ func (rt *runTurnRuntime) execute(ctx context.Context, run *ownedRunTurn, option
 			return
 		}
 		if evidence.Failure != "" {
-			rt.finish(run, "failed", evidence.Failure, turnEvidence{}, false)
+			// Native scanners exclude failure records from Text. Preserve earlier
+			// ordinary assistant output without copying the provider diagnostic.
+			rt.finish(run, "failed", evidence.Failure, turnEvidence{Text: evidence.Text}, false)
 			return
 		}
 		if evidence.Receipt && evidence.Complete {
