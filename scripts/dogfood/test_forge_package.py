@@ -31,7 +31,7 @@ def emit(check, status="pass", **extra):
 def records():
     for n, check in enumerate(CHECKS[:-1]):
         emit(check, "skip" if n == 11 else "pass", resource_env={key: __import__('os').environ.get(key) for key in ('GOMAXPROCS', 'GOFLAGS', 'TMPDIR')})
-    emit("cleanup", "fail" if mode == "cleanup-fail" else "pass")
+    emit("cleanup", "fail" if mode == "cleanup-fail" else "skip" if mode == "cleanup-skip" else "pass")
 if mode == "timeout":
     signal.signal(signal.SIGTERM, lambda *_: (records(), sys.exit(0)))
     (root / "ready").touch()
@@ -167,6 +167,24 @@ class WrapperTests(ForgeFixture):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(list(self.logs.glob("*.jsonl")), [])
 
+    def test_unknown_cleanup_cannot_be_cleared_by_another_run(self):
+        self.assertEqual(self.run_wrapper("cleanup-skip").returncode, 1)
+        self.assertEqual(self.run_wrapper().returncode, 1)
+        self.assertEqual((self.repo / "invocations").read_text().splitlines(), ["cleanup-skip"])
+
+    def test_corrupt_state_refuses_and_preserves_evidence(self):
+        file = self.logs / "runner-state.json"
+        file.write_text('{"schema":1,"phase":"invalid","cleanup_status":"pass"}\n')
+        before = file.read_bytes()
+        self.assertEqual(self.run_wrapper().returncode, 1)
+        self.assertEqual(file.read_bytes(), before)
+
+    def test_stale_temporary_state_does_not_get_overwritten(self):
+        file = self.logs / "runner-state.new"
+        file.write_text("unrelated earlier diagnostic")
+        self.assertEqual(self.run_wrapper().returncode, 0)
+        self.assertEqual(file.read_text(), "unrelated earlier diagnostic")
+
     def test_receipts_rotate_to_24_and_are_private(self):
         legacy = [{"check": check, "status": "pass", "latency_ms": 0, "error": None} for check in CHECKS]
         legacy.append({"check": "runner", "status": "pass", "latency_ms": 0, "error": None})
@@ -256,6 +274,22 @@ class PreparationTests(PackageFixture):
         self.assertEqual(result.returncode, 2)
         self.assertIn("operator edits preserved", result.stderr)
         self.assertTrue(edit.read_text().endswith("# operator edit\n"))
+
+    def test_shell_metacharacters_in_checkout_path_are_inert(self):
+        new_repo = self.root / 'checkout % $() " \\ and apostrophe\''
+        self.repo.rename(new_repo)
+        self.repo = new_repo
+        self.scripts = self.repo / "scripts/dogfood"
+        self.logs = self.repo / ".scratch/dogfood-logs"
+        result = self.prepare()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        loaded = subprocess.run(["bash", "-c", 'source "$1"; printf "%s" "$WT_DOGFOOD_REPO"',
+                                 "fixture", str(self.package / "forge.env")], capture_output=True, text=True)
+        self.assertEqual(loaded.returncode, 0, loaded.stderr)
+        self.assertEqual(loaded.stdout, str(self.repo))
+        dropin = (self.package / "10-forge.conf").read_text()
+        self.assertIn("%%", dropin)
+        self.assertEqual(subprocess.run(["bash", "-n", str(self.package / "install.sh")]).returncode, 0)
 
 
 class StatusTests(ForgeFixture):

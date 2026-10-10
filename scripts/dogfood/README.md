@@ -11,8 +11,7 @@ beside the writable workspace, TMPDIR and provider profile directories. State
 outside HOME would be provider-writable under the current Seatbelt policy.
 
 ```sh
-nice -n 15 make web
-nice -n 15 go build -p 2 -buildvcs=false -o wt ./cmd/wt
+nice -n 15 make -j1 check
 ./scripts/dogfood/run.sh
 ```
 
@@ -39,7 +38,7 @@ are unchanged. This harness's fixture runs request the documented trusted outer
 boundary for deterministic provider tests; they do not establish OS confinement.
 
 Logs live in `.scratch/dogfood-logs`: at most 24 JSONL receipts of 256 KiB each,
-plus one lock file. A nonblocking lock avoids overlap, and a 12-minute watchdog
+plus one lock and one atomic runner-state file. A nonblocking lock avoids overlap, and a 12-minute watchdog
 allows one minute for cleanup. Diagnostics in each error are capped at 4 KiB;
 process output is continuously drained into bounded tails. Cleanup stops every
 private egg endpoint, closes adapters/forwards and wings, and removes fixture
@@ -48,38 +47,81 @@ verify descendant inventory; a host denial of `ps` is explicitly recorded in
 the cleanup receipt. Failure retains state and exits nonzero.
 Do not run two raw `canary.sh` invocations when a locked wrapper is intended.
 
-## Forge commands for the coordinator
+## Forge handoff for the coordinator
 
-On Forge itself, in its dedicated checkout (no deployment or installed wt change):
+Use only the isolated personal development host, an already-running systemd
+user manager and a durable dedicated checkout. This package does not enable
+lingering, change login policy, download dependencies, install `wt`, or activate
+units during generation. Linux/systemd scheduling, restart survival and native
+provider acceptance are **REQUIRED-UNRUN** until the coordinator returns evidence.
+The chosen handoff end is **2026-10-13T12:00:00Z**; if it has passed, choose a new
+explicit end and a new package directory. A deadline change in an existing
+package is refused, so a manager restart or regeneration cannot extend it.
+
+Stage independent offline Go 1.26.9/module/build and npm caches under `.scratch`
+first; missing cached inputs are blockers. On Forge, from the dedicated checkout:
 
 ```sh
-nice -n 15 make web
-nice -n 15 go build -p 2 -buildvcs=false -o wt ./cmd/wt
-./scripts/dogfood/run.sh
-mkdir -p "$HOME/.config/systemd/user"
-cp scripts/dogfood/wingthing-dogfood.{service,timer} "$HOME/.config/systemd/user/"
-systemctl --user set-environment "WT_DOGFOOD_REPO=$PWD"
-systemctl --user daemon-reload
+mkdir -p .scratch/tmp .scratch/gopath
+export TMPDIR="$PWD/.scratch/tmp" GOTMPDIR="$PWD/.scratch/tmp"
+export GOCACHE="$PWD/.scratch/gocache" GOMODCACHE="$PWD/.scratch/gomod" GOPATH="$PWD/.scratch/gopath"
+export GOPROXY=off GOSUMDB=off GOTOOLCHAIN=go1.26.9 GOFLAGS=-p=2 GOMAXPROCS=2
+export npm_config_cache="$PWD/.scratch/npm" npm_config_offline=true PYTHONDONTWRITEBYTECODE=1
+nice -n 15 make -j1 check
+python3 -B scripts/dogfood/prepare-forge.py --repo "$PWD" --out "$PWD/.scratch/forge-package" --until 2026-10-13T12:00:00Z
+bash -n .scratch/forge-package/install.sh .scratch/forge-package/remove.sh
+systemd-analyze --user verify .scratch/forge-package/wingthing-dogfood.service .scratch/forge-package/wingthing-dogfood.timer
+cat .scratch/forge-package/forge.env .scratch/forge-package/10-forge.conf .scratch/forge-package/manifest.json
+```
+
+The finite one-shot, with fixture providers only, is exactly:
+
+```sh
+( source .scratch/forge-package/forge.env; ./scripts/dogfood/run.sh )
+python3 -B scripts/dogfood/status.py --logs .scratch/dogfood-logs --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --json
+```
+
+Review both scripts and the units before running this separate installation and
+activation sequence on that host. Installation refuses edited package or
+installed files before any write, reloads the manager, and leaves activation to
+the coordinator. Repeating preparation with unchanged inputs preserves the
+original epoch, bytes and mtimes; extra operator files are left alone. A changed
+file is preserved with a clear refusal, requiring a fresh package directory or
+an explicit operator reconciliation.
+
+```sh
+cat .scratch/forge-package/install.sh .scratch/forge-package/remove.sh
+bash .scratch/forge-package/install.sh
 systemctl --user enable --now wingthing-dogfood.timer
 systemctl --user start wingthing-dogfood.service
 systemctl --user list-timers wingthing-dogfood.timer
+systemctl --user status wingthing-dogfood.service
+systemctl --user show wingthing-dogfood.service -p Environment -p Nice -p UMask -p KillMode -p Result -p ExecMainStatus
 ```
 
-`set-environment` must be repeated after a user-manager restart. To persist it,
-the coordinator can supply an `Environment=WT_DOGFOOD_REPO=/absolute/checkout`
-service drop-in. These files do not enable lingering or change host login policy;
-the user manager must already remain running for unattended weekend checks.
-The timer runs every 45 minutes, with up to one minute scheduling slack. Inspect
-the newest JSONL receipt after each run; service failure remains visible through
-`systemctl --user status wingthing-dogfood.service`. Stop scheduling with
-`systemctl --user disable --now wingthing-dogfood.timer`.
+The environment is stored in `wingthing-dogfood.service.d/10-forge.conf`, with
+no transient `set-environment` dependency. Runs are scheduled every 45 minutes,
+with one minute of slack, and a nonblocking checkout lock prevents overlap.
+`Nice=15`, `UMask=0077`, `GOMAXPROCS=2`, `GOFLAGS=-p=2`, the 12-minute wrapper
+watchdog and systemd control-group cleanup remain in force. The timer remains
+armed after expiry, but invocations start no new work; remove it to stop wakeups.
+Returned acceptance should include receipts/status and the exact unit
+configuration, timer times and service result before/after an independently
+coordinated manager restart. A fake systemctl/parser fixture proves argument and
+rendering contracts only. No manager restart is performed by this worker.
+
+Remove this exact unedited package while preserving receipts and retained state:
+
+```sh
+bash .scratch/forge-package/remove.sh
+```
 
 ## Mac manual commands
 
 ```sh
-cd /Users/ehrlich/repos/wingthing-dogfood-20261010
-nice -n 15 make web
-nice -n 15 go build -p 2 -buildvcs=false -o wt ./cmd/wt
+cd /Users/ehrlich/repos/wingthing-forge-canary-20261010
+# Use the same staged offline environment above.
+taskpolicy -b nice -n 15 make -j1 check
 ./scripts/dogfood/run.sh
 ```
 

@@ -176,7 +176,8 @@ class Canary:
                   "latency_ms": round((time.monotonic() - started) * 1000, 2),
                   "error": str(error)[:4096] if error else None,
                   "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                  "platform": sys.platform, "binary_sha256": self.binary_hash, **extra}
+                  "platform": sys.platform, "binary_sha256": self.binary_hash,
+                  "fixture_root": str(self.root), **extra}
         print(json.dumps(record, ensure_ascii=False), flush=True)
         if status == "fail":
             self.failed = True

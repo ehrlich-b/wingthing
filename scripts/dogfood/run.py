@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 
 from contracts import CHECKS, LOG_COUNT, LOG_LIMIT, STATUSES, read_json, read_receipt, source_identity, timestamp, utc
@@ -19,11 +20,15 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 
 
 def save_state(logs, state):
-    temporary = logs / "runner-state.new"
-    with temporary.open("w") as output:
-        json.dump(state, output)
-        output.write("\n")
-    temporary.replace(logs / "runner-state.json")
+    descriptor, name = tempfile.mkstemp(prefix="runner-state-", dir=logs)
+    temporary = pathlib.Path(name)
+    try:
+        with os.fdopen(descriptor, "w") as output:
+            json.dump(state, output)
+            output.write("\n")
+        temporary.replace(logs / "runner-state.json")
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def history(logs):
@@ -31,7 +36,9 @@ def history(logs):
     state_file = logs / "runner-state.json"
     if state_file.exists():
         state = read_json(state_file)
-        if not isinstance(state, dict) or state.get("schema") != 1:
+        if (not isinstance(state, dict) or state.get("schema") != 1 or
+                state.get("phase") not in ("running", "complete") or
+                state.get("cleanup_status") not in ("pass", "fail", "unknown")):
             raise ValueError("invalid runner state; preserve and inspect it")
         return state
     receipts = sorted(logs.glob("*.jsonl"))
@@ -72,7 +79,7 @@ def run_once(repo=REPO, arguments=None, timeout_seconds=12 * 60, cleanup_seconds
             previous = history(logs)
         except (OSError, ValueError) as error:
             return refuse("unreadable prior evidence; inspect before continuing: " + str(error))
-        unresolved = previous.get("phase") == "running" or previous.get("cleanup_status") in ("fail", "unknown")
+        unresolved = bool(previous) and (previous.get("phase") == "running" or previous.get("cleanup_status") != "pass")
         epoch = os.environ.get("WT_DOGFOOD_EPOCH")
         until = os.environ.get("WT_DOGFOOD_UNTIL")
         now = datetime.datetime.now(datetime.timezone.utc)

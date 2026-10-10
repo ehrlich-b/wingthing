@@ -36,8 +36,8 @@ def timestamp(value=None):
 
 
 def read_json(path):
-    if path.stat().st_size > LOG_LIMIT:
-        raise ValueError("oversized diagnostic file: " + str(path))
+    if path.is_symlink() or path.stat().st_size > LOG_LIMIT:
+        raise ValueError("symlinked or oversized diagnostic file: " + str(path))
     return json.loads(path.read_text())
 
 
@@ -64,7 +64,8 @@ def source_identity(repo):
             if not raw:
                 continue
             file = repo / raw.decode()
-            data = file.read_bytes() if file.is_file() else b"<missing>"
+            data = (file.readlink().as_posix().encode() if file.is_symlink() else
+                    file.read_bytes() if file.is_file() else b"<missing>")
             digest.update(raw + b"\0" + str(len(data)).encode() + b"\0" + data)
         return {"source_commit": commit, "source_sha256": digest.hexdigest()}
     except (OSError, subprocess.SubprocessError):
