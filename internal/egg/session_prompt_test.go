@@ -134,34 +134,38 @@ func TestSessionPromptConcurrentRetrySendsAtMostOnceAndKeepsLease(t *testing.T) 
 }
 
 func TestSessionPromptTimeoutLostAckAndReconnectNativeReceipt(t *testing.T) {
-	dir, path, o := promptFixtureOptions(t)
-	var sends atomic.Int32
-	lost := make(chan error, 1)
-	lost <- errors.New("connection reset")
-	o.Send = func(context.Context, string) (PromptDelivery, error) {
-		sends.Add(1)
-		return PromptDelivery{BytesEnqueued: 99, Lost: lost}, nil
-	}
-	r, err := SubmitSessionPrompt(context.Background(), dir, o)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.NativeReceiptObserved || !r.TransportEnqueued || r.Status != "unconfirmed" || !strings.Contains(r.Reason, "connection") {
-		t.Fatalf("lost acknowledgement lied: %+v", r)
-	}
-	writeNativeUserPrompt(t, path, o.Input)
-	r, err = SubmitSessionPrompt(context.Background(), dir, o)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !r.NativeReceiptObserved || !r.Retried || sends.Load() != 1 {
-		t.Fatalf("retry duplicated or lost receipt: %+v sends=%d", r, sends.Load())
-	}
-	// An identical human prompt is observational evidence; never claim the
-	// provider causally acknowledged Wingthing's request ID.
-	if r.ProviderRequestAcknowledged || r.Causality != "unverified_without_provider_request_id" {
-		t.Fatalf("claimed request-ID linkage: %+v", r)
-	}
+	// Preserve the 200ms receipt bound while excluding scheduler and disk
+	// latency, as in the concurrent-retry test above.
+	synctest.Test(t, func(t *testing.T) {
+		dir, path, o := promptFixtureOptions(t)
+		var sends atomic.Int32
+		lost := make(chan error, 1)
+		lost <- errors.New("connection reset")
+		o.Send = func(context.Context, string) (PromptDelivery, error) {
+			sends.Add(1)
+			return PromptDelivery{BytesEnqueued: 99, Lost: lost}, nil
+		}
+		r, err := SubmitSessionPrompt(context.Background(), dir, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.NativeReceiptObserved || !r.TransportEnqueued || r.Status != "unconfirmed" || !strings.Contains(r.Reason, "connection") {
+			t.Fatalf("lost acknowledgement lied: %+v", r)
+		}
+		writeNativeUserPrompt(t, path, o.Input)
+		r, err = SubmitSessionPrompt(context.Background(), dir, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !r.NativeReceiptObserved || !r.Retried || sends.Load() != 1 {
+			t.Fatalf("retry duplicated or lost receipt: %+v sends=%d", r, sends.Load())
+		}
+		// An identical human prompt is observational evidence; never claim the
+		// provider causally acknowledged Wingthing's request ID.
+		if r.ProviderRequestAcknowledged || r.Causality != "unverified_without_provider_request_id" {
+			t.Fatalf("claimed request-ID linkage: %+v", r)
+		}
+	})
 }
 
 func TestSessionPromptCrashGapIsReservedAndNeverResent(t *testing.T) {
