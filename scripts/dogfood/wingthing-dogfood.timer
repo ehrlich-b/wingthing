@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the Wingthing canary every 45 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=45min
+AccuracySec=1min
+Persistent=false
+Unit=wingthing-dogfood.service
+
+[Install]
+WantedBy=timers.target

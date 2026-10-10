@@ -17,6 +17,13 @@ var errExistingAgentRun = errors.New("run already admitted")
 
 func wingRunStatus(r *wingsession.Run) map[string]any {
 	data := map[string]any{"run_id": r.ID, "status": r.Result.Status, "agent": r.Agent, "model": r.Model, "cwd": r.CWD, "isolation": r.Isolation, "timeout_seconds": r.TimeoutSeconds, "created_at": r.CreatedAt.UTC().Format(time.RFC3339), "session_id": r.SessionID}
+	data["phase"] = r.Phase
+	if r.ParentID != "" {
+		data["parent_id"] = r.ParentID
+	}
+	if r.RequestKey != "" {
+		data["idempotency_key"] = r.RequestKey
+	}
 	if !r.Result.StartedAt.IsZero() {
 		data["started_at"] = r.Result.StartedAt.UTC().Format(time.RFC3339)
 	}
@@ -158,6 +165,9 @@ func (s *Server) toolAgentResult(arguments json.RawMessage) (map[string]any, err
 	}
 	if r.MCPTask != nil && r.MCPTask.CancelledResult != nil {
 		r.Result = *r.MCPTask.CancelledResult
+		// The frozen task result is terminal while the wing may still be
+		// reconciling its separately persisted stop intent with the egg.
+		r.Phase = "terminal"
 	}
 	data := wingRunStatus(r)
 	data["ready"] = r.Result.Terminal()

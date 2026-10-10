@@ -1,0 +1,15 @@
+[Unit]
+Description=Wingthing isolated weekend canary
+
+[Service]
+Type=oneshot
+# Coordinator sets WT_DOGFOOD_REPO in its user-manager environment.
+ExecStart=/bin/sh -c 'exec "$WT_DOGFOOD_REPO/scripts/dogfood/run.sh"'
+Nice=15
+UMask=0077
+TimeoutStartSec=15min
+TimeoutStopSec=60s
+KillMode=control-group
+# Bounded JSONL files are kept by run.py, independently of journald policy.
+StandardOutput=null
+StandardError=null
