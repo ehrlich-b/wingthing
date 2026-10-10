@@ -11,7 +11,7 @@ import (
 )
 
 func (s *Server) sessionAuthority() wingsession.Authority {
-	return wingsession.Authority{Principal: s.clientPrincipal(), UserID: s.identity.UserID, Email: s.identity.Email, Role: s.sessionRole, Browser: s.sessionBrowser, PublicKey: s.sessionPublicKey, AuthToken: s.sessionAuthToken, AllowedPaths: s.allowedPaths, EnforcePaths: s.enforcePathBounds, SealedFS: s.identity.SealedFS}
+	return wingsession.Authority{Principal: s.clientPrincipal(), UserID: s.identity.UserID, Email: s.identity.Email, Role: s.sessionRole, Browser: s.sessionBrowser, PublicKey: s.sessionPublicKey, AuthToken: s.sessionAuthToken, AllowedPaths: s.allowedPaths, EnforcePaths: s.enforcePathBounds, SealedFS: s.identity.SealedFS, LegacyLocalDefault: s.legacyLocalDefault}
 }
 
 func (s *Server) startSession(id, agent, cwd string, cfg *egg.EggConfig, opts eggclient.SpawnEggOpts) (*egg.Client, error) {

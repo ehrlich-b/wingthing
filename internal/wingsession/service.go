@@ -28,6 +28,7 @@ type Authority struct {
 	PublicKey, AuthToken string
 	AllowedPaths         []string
 	EnforcePaths         bool
+	LegacyLocalDefault   bool
 	SealedFS             bool
 }
 
@@ -203,7 +204,11 @@ func (s *Service) Start(ctx context.Context, launch *Launch, opts StartOptions) 
 
 func (s *Service) Owns(a Authority, session eggclient.LocalSession) bool {
 	dir := filepath.Join(s.Config.Dir, "eggs", session.ID)
-	if a.UserID == "" || (!a.Browser && eggclient.ReadEggOwner(dir) != a.UserID) || (a.Browser && !wingpolicy.CanAttachSession(a.UserID, a.Role, eggclient.ReadEggOwner(dir))) {
+	legacy := a.LegacyLocalDefault && !s.SharedHost && a.Principal == UserPrincipal(a.UserID) && (session.Principal == "" || session.Principal == "default") && eggclient.ReadEggOwner(dir) == ""
+	if legacy && s.Policy != nil {
+		legacy = s.Policy().Wing.Org == ""
+	}
+	if a.UserID == "" || (!a.Browser && eggclient.ReadEggOwner(dir) != a.UserID && !legacy) || (a.Browser && !wingpolicy.CanAttachSession(a.UserID, a.Role, eggclient.ReadEggOwner(dir))) {
 		return false
 	}
 	if a.EnforcePaths && (len(a.AllowedPaths) == 0 || !wingpolicy.IsUnderPaths(wingpolicy.CanonicalSessionPath(session.CWD), a.AllowedPaths)) {

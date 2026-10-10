@@ -143,7 +143,7 @@ func RunRoostForeground(version string, addrFlag string, devFlag bool, labelsFla
 	// Auth mode detection: same pattern as serve.go
 	hasAuth := AuthProvidersConfigured()
 
-	var wingToken string
+	var wingToken, wingOwnerUserID string
 	if !hasAuth {
 		// No auth providers — single user, no login (existing behavior)
 		user, token, err := store.CreateLocalUser()
@@ -153,6 +153,7 @@ func RunRoostForeground(version string, addrFlag string, devFlag bool, labelsFla
 		srv.LocalMode = true
 		srv.SetLocalUser(user)
 		wingToken = token
+		wingOwnerUserID = user.ID
 
 		// Grant pro tier — self-hosted has no bandwidth cap
 		if err := EnsureSelfHostedPro(store, user.ID, "local"); err != nil {
@@ -167,6 +168,7 @@ func RunRoostForeground(version string, addrFlag string, devFlag bool, labelsFla
 			return fmt.Errorf("setup service user: %w", err)
 		}
 		wingToken = token
+		wingOwnerUserID = user.ID
 
 		// Grant pro to service user
 		if err := EnsureSelfHostedPro(store, user.ID, "roost"); err != nil {
@@ -213,6 +215,7 @@ func RunRoostForeground(version string, addrFlag string, devFlag bool, labelsFla
 	// ordinary token store would replace an operator's unrelated hosted login.
 	embeddedWingToken := &auth.DeviceToken{
 		Token:    wingToken,
+		UserID:   wingOwnerUserID,
 		DeviceID: "local",
 	}
 

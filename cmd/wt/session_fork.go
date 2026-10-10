@@ -3,6 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/ehrlich-b/wingthing/internal/localmcp"
+	"os"
+	"strings"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/spf13/cobra"
@@ -12,7 +15,7 @@ func sessionForkCmd() *cobra.Command {
 	var name, clientName string
 	var jsonFlag bool
 	cmd := &cobra.Command{Use: "fork SESSION", Short: "Fork an owned Claude conversation into a new named session", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load()
+		dir, err := config.StateDir()
 		if err != nil {
 			return err
 		}
@@ -20,12 +23,11 @@ func sessionForkCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		server, err := newLocalMCPServer(cfg, clientName, false)
-		if err != nil {
-			return err
+		client := strings.TrimSpace(clientName)
+		if client == "" {
+			client = strings.TrimSpace(os.Getenv("WT_MCP_CLIENT"))
 		}
-		server.Actor = "cli:session-fork"
-		result, err := server.ToolSessionFork(cmd.Context(), arguments)
+		result, err := localmcp.CallLocalWingTool(cmd.Context(), dir, client, "session_fork", arguments)
 		if err != nil {
 			return err
 		}
