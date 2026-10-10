@@ -43,6 +43,11 @@ the selected machine; they are not resolved on the client or synchronized.
 Use an explicit `idempotency_key` when submitting a run so it can be reconciled
 even if the MCP client itself loses the reply.
 
+MCP 2025-11-25 clients can also submit `agent_run` as a native task. The returned
+task ID identifies its owning wing, so subsequent task get/result/cancel calls
+route without another `wing_id`. See [MCP Tasks](mcp-tasks.md) for retention,
+ownership, pagination, and the real-client verification requirement.
+
 `connect add` performs a read-only handshake, resolves `~/` on the remote once,
 and stores the canonical state directory, control socket, protocol version and
 wing ID in the existing `remotes.yaml` registry. It does not install software,

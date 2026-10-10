@@ -52,6 +52,10 @@ Restart the client after registration. Ask it to call
 - inspect durable conversation trees and checkpoint progress; and
 - inspect the effective sandbox before launching anything.
 
+Clients using MCP 2025-11-25 can submit `agent_run` as a native task and retrieve
+its result after disconnecting. See [MCP Tasks and client verification](docs/mcp-tasks.md)
+for protocol examples and the Claude Code compatibility check.
+
 The child agents use existing project directories and provider credentials on
 this computer. Wingthing does not clone the code or copy a provider login. The
 wing executes every tool and resolves `--client` against its `clients.yaml`.
