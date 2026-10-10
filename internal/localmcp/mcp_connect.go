@@ -147,7 +147,7 @@ func (s *ConnectMCPServer) handle(ctx context.Context, request localMCPRequest) 
 		}
 		result, isError, err := s.callTool(ctx, call.Name, call.Arguments)
 		if err != nil {
-			result = map[string]any{"error": err.Error()}
+			result = control.ErrorResult(err)
 			isError = true
 		}
 		response.Result = localMCPToolResult(result, isError)

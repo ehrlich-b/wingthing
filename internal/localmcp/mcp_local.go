@@ -391,7 +391,10 @@ func RoostNativeMCPToolsWithSessions(version string, cfg *config.Config, sharedH
 				if protocolErr != nil {
 					return map[string]any{"error": protocolErr.Message}, true, nil
 				}
-				return data, isError, nil
+				if isError {
+					return data, true, control.ToolError(data)
+				}
+				return data, false, nil
 			},
 		})
 	}
@@ -540,10 +543,10 @@ func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMe
 		if s.tools != nil && !s.tools[name] {
 			err = fmt.Errorf("tool %q is not available on this connection", name)
 		}
-		return map[string]any{"error": err.Error()}, true, nil
+		return control.ErrorResult(err), true, nil
 	}
 	if err = s.checkBoundSessionTarget(name, arguments); err != nil {
-		return map[string]any{"error": err.Error()}, true, nil
+		return control.ErrorResult(err), true, nil
 	}
 	switch name {
 	case "wingthing_capabilities":
@@ -610,7 +613,7 @@ func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMe
 		if logErr := cmdutil.Writef(s.Logs, "wingthing MCP %s: %v\n", name, err); logErr != nil {
 			log.Printf("write MCP failure: %v", logErr)
 		}
-		return map[string]any{"error": err.Error()}, true, nil
+		return control.ErrorResult(err), true, nil
 	}
 	return data, isError, nil
 }

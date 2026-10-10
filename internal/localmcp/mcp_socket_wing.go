@@ -41,7 +41,7 @@ func ListenLocalWingControl(ctx context.Context, version string, sessions *wings
 			// is not a lease on permissions revoked after its handshake.
 			current, err := resolveLocalWingClient(version, sessions, ownerUserID, admission, hello)
 			if err != nil {
-				return control.DirectResponse{Version: control.ContractVersion, ID: request.ID, Error: err.Error()}
+				return control.DirectResponse{Version: control.ContractVersion, ID: request.ID, Error: err.Error(), ErrorKind: control.ErrorKindOf(err)}
 			}
 			return current.handleDirectRequest(callCtx, request)
 		}, nil

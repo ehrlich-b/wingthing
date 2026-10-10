@@ -21,11 +21,27 @@ type DirectRequest struct {
 
 // DirectResponse is the bounded result envelope returned by a wing.
 type DirectResponse struct {
-	Version string         `json:"version"`
-	ID      string         `json:"id"`
-	Result  map[string]any `json:"result,omitempty"`
-	IsError bool           `json:"is_error,omitempty"`
-	Error   string         `json:"error,omitempty"`
+	Version   string         `json:"version"`
+	ID        string         `json:"id"`
+	Result    map[string]any `json:"result,omitempty"`
+	IsError   bool           `json:"is_error,omitempty"`
+	Error     string         `json:"error,omitempty"`
+	ErrorKind ErrorKind      `json:"error_kind,omitempty"`
+}
+
+// Err restores typed failures while preserving legacy tool-result semantics.
+func (r DirectResponse) Err() error {
+	if r.Error != "" {
+		return DecodeError(r.ErrorKind, r.Error)
+	}
+	if !r.IsError {
+		return nil
+	}
+	if r.ErrorKind != "" {
+		message, _ := r.Result["error"].(string)
+		return DecodeError(r.ErrorKind, message)
+	}
+	return ToolError(r.Result)
 }
 
 // SplitWingTarget validates and removes the transport-only wing_id argument.

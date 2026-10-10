@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 )
 
@@ -336,7 +337,7 @@ func (s *Server) handleCall(w http.ResponseWriter, r *http.Request, req rpcReque
 		}
 		data, isError, err := tool.Call(r.Context(), principal, params.Arguments)
 		if err != nil {
-			data = map[string]any{"error": err.Error()}
+			data = control.ErrorResult(err)
 			isError = true
 		}
 		if s.observeNative != nil {
