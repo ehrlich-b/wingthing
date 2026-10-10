@@ -551,8 +551,7 @@ func TestLocalMCPAgentRunLifecycleIsSemanticAndOwnerScoped(t *testing.T) {
 	if err != nil || before["ready"] != false {
 		t.Fatalf("early result: %v %v", before, err)
 	}
-	foreign := *f.server
-	foreign.Principal = "foreign"
+	foreign := &Server{Version: f.server.Version, Cfg: f.server.Cfg, Sessions: f.service, Principal: "foreign", identity: f.server.identity, sessionRole: f.server.sessionRole}
 	for _, target := range []string{id, "missing-run"} {
 		if _, err := foreign.toolAgentStatus(runArgs(target)); err == nil || err.Error() != fmt.Sprintf("agent run %q not found or not owned by caller", target) {
 			t.Fatalf("ownership error: %v", err)
@@ -673,8 +672,7 @@ func TestAgentSteerQueuesActiveAndRejectsUnownedRuns(t *testing.T) {
 	if err != nil || created["status"] != "pending" {
 		t.Fatalf("active parent queue: %v %v", created, err)
 	}
-	foreign := *f.server
-	foreign.Principal = "other"
+	foreign := &Server{Version: f.server.Version, Cfg: f.server.Cfg, Sessions: f.service, Principal: "other", identity: f.server.identity, sessionRole: f.server.sessionRole}
 	for _, id := range []string{parent, "missing"} {
 		if _, err := foreign.toolAgentSteer(json.RawMessage(`{"run_id":"` + id + `","prompt":"continue"}`)); err == nil {
 			t.Fatal("unowned steer admitted")

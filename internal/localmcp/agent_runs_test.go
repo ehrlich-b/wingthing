@@ -230,8 +230,7 @@ func TestAgentRunResultShapeParity(t *testing.T) {
 			if _, err := f.server.toolAgentResult(json.RawMessage(`{"run_id":"` + id + `","max_chars":200001}`)); err == nil {
 				t.Fatal("unbounded result")
 			}
-			stranger := *f.server
-			stranger.Principal = "foreign"
+			stranger := &Server{Version: f.server.Version, Cfg: f.server.Cfg, Sessions: f.service, Principal: "foreign", identity: f.server.identity, sessionRole: f.server.sessionRole}
 			if _, err := stranger.toolAgentResult(runArgs(id)); err == nil {
 				t.Fatal("foreign result disclosed")
 			}
@@ -266,7 +265,7 @@ func TestRunAdmissionRetryCannotCrossOwnerBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := <-f.submitted
-	other := *f.server
+	other := &Server{Version: f.server.Version, Cfg: f.server.Cfg, Sessions: f.service, Principal: f.server.Principal, identity: f.server.identity, sessionRole: f.server.sessionRole}
 	other.identity.UserID = "another-user"
 	if _, err := other.toolAgentResult(runArgs(id)); err == nil {
 		t.Fatal("changed web owner disclosed prior run")
@@ -479,7 +478,7 @@ func TestStopAndQueuedSteerSurviveReconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	child := queued["run_id"].(string)
-	reconnected := *f.server
+	reconnected := &Server{Version: f.server.Version, Cfg: f.server.Cfg, Sessions: f.service, Principal: f.server.Principal, identity: f.server.identity, sessionRole: f.server.sessionRole}
 	stopped, err := reconnected.toolAgentStop(runArgs(parent))
 	if err != nil || stopped["status"] != "stopped" || stopped["stopped"] != true {
 		t.Fatalf("stop: %v %v", stopped, err)
@@ -499,8 +498,7 @@ func TestStopAndQueuedSteerSurviveReconnect(t *testing.T) {
 		t.Fatalf("cancelled follow-up executed: %s", id)
 	default:
 	}
-	stranger := reconnected
-	stranger.Principal = "stranger"
+	stranger := &Server{Version: reconnected.Version, Cfg: reconnected.Cfg, Sessions: reconnected.Sessions, Principal: "stranger", identity: reconnected.identity, sessionRole: reconnected.sessionRole}
 	if _, err := stranger.toolAgentStop(runArgs(parent)); err == nil {
 		t.Fatal("foreign stop accepted")
 	}
