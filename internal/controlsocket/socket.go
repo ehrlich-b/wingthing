@@ -11,7 +11,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -61,7 +60,15 @@ func Listen(ctx context.Context, dir, wingID string, bind Bind) (*Server, error)
 	if err := os.Chmod(dir, 0700); err != nil {
 		return nil, err
 	}
-	path := filepath.Join(dir, SocketName)
+	path, relocated, err := socketPath(dir)
+	if err != nil {
+		return nil, err
+	}
+	if relocated {
+		if err := verifyRuntimeSocketDir(runtimeSocketDir(), true); err != nil {
+			return nil, err
+		}
+	}
 	if info, err := os.Lstat(path); err == nil {
 		if info.Mode()&os.ModeSocket == 0 || !ownedByUser(info) {
 			return nil, errors.New("local control path is not an owned socket")
@@ -87,6 +94,12 @@ func Listen(ctx context.Context, dir, wingID string, bind Bind) (*Server, error)
 	if err := os.Chmod(path, 0600); err != nil {
 		_ = listener.Close()
 		return nil, err
+	}
+	if relocated {
+		if err := writeSocketPath(dir, path); err != nil {
+			_ = listener.Close()
+			return nil, err
+		}
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	s := &Server{listener: listener, cancel: cancel, done: make(chan struct{})}
@@ -210,7 +223,14 @@ type Client struct {
 }
 
 func Dial(ctx context.Context, dir string, hello Hello) (*Client, error) {
-	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(dir, SocketName))
+	path, relocated, err := socketPath(dir)
+	if err == nil && relocated {
+		err = verifyRuntimeSocketDir(runtimeSocketDir(), false)
+	}
+	var conn net.Conn
+	if err == nil {
+		conn, err = (&net.Dialer{}).DialContext(ctx, "unix", path)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("no local wing for WINGTHING_DIR=%s: %w; start one with wt roost start or wt wing", dir, err)
 	}
