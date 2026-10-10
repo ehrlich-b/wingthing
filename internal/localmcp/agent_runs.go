@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -162,6 +163,157 @@ func (s *Server) wingAgentWait(ctx context.Context, arguments json.RawMessage) (
 	data := wingRunStatus(r)
 	if errors.Is(err, context.DeadlineExceeded) {
 		data["timed_out"] = true
+		return data, nil
+	}
+	return data, err
+}
+
+func (s *Server) wingAgentStatus(arguments json.RawMessage) (map[string]any, error) {
+	var args struct {
+		RunID string `json:"run_id"`
+	}
+	if err := decodeStrict(arguments, &args); err != nil {
+		return nil, err
+	}
+	r, err := s.Sessions.RunManager.Get(s.sessionAuthority(), args.RunID)
+	if err != nil {
+		return nil, err
+	}
+	return wingRunStatus(r), nil
+}
+
+func (s *Server) wingAgentEvents(arguments json.RawMessage) (map[string]any, error) {
+	var args struct {
+		RunID  string `json:"run_id"`
+		Limit  int    `json:"limit"`
+		Cursor int64  `json:"cursor"`
+	}
+	if err := decodeStrict(arguments, &args); err != nil {
+		return nil, err
+	}
+	if args.Limit == 0 {
+		args.Limit = 50
+	}
+	if args.Limit < 1 || args.Limit > 200 {
+		return nil, errors.New("limit must be between 1 and 200")
+	}
+	if args.Cursor < 0 {
+		return nil, errors.New("cursor must be nonnegative")
+	}
+	entries, err := s.Sessions.RunManager.Events(s.sessionAuthority(), args.RunID, args.Cursor, args.Limit)
+	if err != nil {
+		return nil, err
+	}
+	events := []map[string]any{}
+	var cursor int64
+	for _, e := range entries {
+		entry := map[string]any{"timestamp": e.Timestamp, "event": e.Event, "cursor": e.Cursor}
+		if e.Detail != "" {
+			entry["detail"] = e.Detail
+		}
+		events = append(events, entry)
+		cursor = e.Cursor
+	}
+	data := map[string]any{"run_id": args.RunID, "events": events}
+	if cursor > 0 {
+		data["next_cursor"] = cursor
+	}
+	return data, nil
+}
+
+func (s *Server) wingAgentSteer(arguments json.RawMessage) (map[string]any, error) {
+	var args struct {
+		RunID  string `json:"run_id"`
+		Prompt string `json:"prompt"`
+		Model  string `json:"model"`
+	}
+	if err := decodeStrict(arguments, &args); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(args.Prompt) == "" {
+		return nil, errors.New("prompt is required")
+	}
+	r, err := s.Sessions.RunManager.Get(s.sessionAuthority(), args.RunID)
+	if err != nil {
+		return nil, err
+	}
+	if args.Model == "" {
+		args.Model = r.Model
+	}
+	return s.wingSubmitRun(wingsession.RunRequest{Prompt: "Prior request:\n" + r.OriginalPrompt + "\n\nNew direction:\n" + args.Prompt, Agent: r.Agent, Model: args.Model, CWD: r.CWD, Label: "followup-" + r.ID, TimeoutSeconds: r.TimeoutSeconds, ParentID: r.ID, Direction: args.Prompt})
+}
+
+func (s *Server) wingAgentStop(arguments json.RawMessage) (map[string]any, error) {
+	var args struct {
+		RunID string `json:"run_id"`
+	}
+	if err := decodeStrict(arguments, &args); err != nil {
+		return nil, err
+	}
+	r, err := s.Sessions.RunManager.Stop(s.sessionAuthority(), args.RunID)
+	if err != nil {
+		return nil, err
+	}
+	data := wingRunStatus(r)
+	if r.Result.Status == "stopped" {
+		data["stopped"] = true
+	}
+	return data, nil
+}
+
+func (s *Server) wingAgentWaitAny(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {
+	var args struct {
+		RunIDs         []string `json:"run_ids"`
+		TimeoutSeconds float64  `json:"timeout_seconds"`
+	}
+	if err := decodeStrict(arguments, &args); err != nil {
+		return nil, err
+	}
+	if len(args.RunIDs) < 1 || len(args.RunIDs) > 64 {
+		return nil, errors.New("run_ids must contain between 1 and 64 IDs")
+	}
+	if args.TimeoutSeconds == 0 {
+		args.TimeoutSeconds = 30
+	}
+	if args.TimeoutSeconds < 0.1 || args.TimeoutSeconds > 600 {
+		return nil, errors.New("timeout_seconds must be between 0.1 and 600")
+	}
+	release, err := s.admitAgentWaitAny()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	ids := []string{}
+	seen := map[string]bool{}
+	for _, id := range args.RunIDs {
+		if !seen[id] {
+			ids = append(ids, id)
+			seen[id] = true
+		}
+	}
+	m := s.Sessions.RunManager
+	a := s.sessionAuthority()
+	waitCtx, cancel := context.WithTimeout(ctx, durationSeconds(args.TimeoutSeconds))
+	defer cancel()
+	err = m.Wait(waitCtx, a, ids)
+	finished := []map[string]any{}
+	pending := []string{}
+	failures := []map[string]any{}
+	for _, id := range ids {
+		r, err := m.Get(a, id)
+		if err != nil {
+			failures = append(failures, map[string]any{"run_id": id, "error": "agent run " + strconv.Quote(id) + " not found or not owned by caller"})
+		} else if r.Result.Terminal() {
+			finished = append(finished, map[string]any{"run_id": id, "status": r.Result.Status})
+		} else {
+			pending = append(pending, id)
+		}
+	}
+	data := map[string]any{"finished": finished, "pending": pending}
+	if len(failures) > 0 {
+		data["errors"] = failures
+	}
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 		return data, nil
 	}
 	return data, err
