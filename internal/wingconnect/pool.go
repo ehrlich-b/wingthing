@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -127,7 +128,7 @@ func New(ctx context.Context, opts Options) (*Pool, error) {
 				if !ok {
 					return
 				}
-				if event.Name == opts.Dir+"/remotes.yaml" {
+				if event.Name == filepath.Join(opts.Dir, "remotes.yaml") {
 					_ = p.Reload()
 				}
 			case err, ok := <-watcher.Errors:
@@ -272,10 +273,13 @@ func (e *entry) acquire(ctx context.Context) (Connection, error) {
 		}
 	}
 	version := e.attempts
+	connecting := e.connecting
 	e.mu.Unlock()
-	select {
-	case e.wake <- struct{}{}:
-	default:
+	if !connecting {
+		select {
+		case e.wake <- struct{}{}:
+		default:
+		}
 	}
 	for {
 		e.mu.Lock()

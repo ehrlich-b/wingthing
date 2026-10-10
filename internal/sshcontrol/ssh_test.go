@@ -31,9 +31,13 @@ func TestSSHInspectAndPinnedForward(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	meta, err := sshcontrol.InspectLocal(t.Context(), state, "")
+	t.Setenv("HOME", h.Root)
+	meta, err := sshcontrol.InspectLocal(t.Context(), "~/state", "")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if meta.WingthingDir != state {
+		t.Fatalf("remote home was not resolved once: %+v", meta)
 	}
 	h.Host(t, "host", meta)
 	transport := sshcontrol.Transport{SSHPath: h.SSHPath, SocketDir: h.Root}

@@ -27,10 +27,6 @@ func connectMCPCmd() *cobra.Command {
 		Long:  "Run one stdio MCP server for this wing and every remembered SSH wing. Use connect add once per already running remote. No account or roost is required. An explicit --roost selects the existing hosted connector.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
 			actor := strings.TrimSpace(clientName)
 			if actor == "" {
 				actor = strings.TrimSpace(os.Getenv("WT_MCP_CLIENT"))
@@ -39,8 +35,19 @@ func connectMCPCmd() *cobra.Command {
 			if err := eggclient.ValidateSessionName(actor); err != nil {
 				return fmt.Errorf("invalid MCP client name: %w", err)
 			}
+			if connectTimeout <= 0 {
+				return fmt.Errorf("connect-timeout must be positive")
+			}
 			if !cmd.Flags().Changed("roost") {
-				return localmcp.ServeRememberedWingClient(cmd.Context(), version, cfg.Dir, actor, unsandboxed, connectTimeout, cmd.InOrStdin(), cmd.OutOrStdout())
+				dir, err := config.StateDir()
+				if err != nil {
+					return err
+				}
+				return localmcp.ServeRememberedWingClient(cmd.Context(), version, dir, actor, unsandboxed, connectTimeout, cmd.InOrStdin(), cmd.OutOrStdout())
+			}
+			cfg, err := config.Load()
+			if err != nil {
+				return err
 			}
 			if actor == "" {
 				actor = "default"
