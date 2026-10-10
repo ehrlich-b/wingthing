@@ -17,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
@@ -53,12 +54,14 @@ type Run struct {
 	Phase          string            `json:"phase"`
 	Cancelled      bool              `json:"cancelled,omitempty"`
 	Result         egg.RunTurnResult `json:"result"`
+	MCPTask        *MCPTaskRecord    `json:"mcp_task,omitempty"`
 	revision       int64
 }
 
 type RunRequest struct {
 	Prompt, Agent, Model, CWD, Label, RequestKey, ParentID, Direction string
 	TimeoutSeconds                                                    int
+	MCPTask                                                           *control.MCPTaskParams `json:"mcp_task,omitempty"`
 }
 
 // RunBackend only substitutes egg transport in isolated protocol fixtures.
@@ -265,6 +268,9 @@ func (m *Runs) Admit(launch *Launch, request RunRequest, options StartOptions, a
 	authority.AuthToken = ""
 	run.Launch = RunLaunch{Authority: authority, Identity: launch.Identity, ConfigYAML: yaml, Options: options, Actor: actor}
 	run.Result = egg.RunTurnResult{RunID: run.ID, SessionID: run.SessionID, Status: "pending"}
+	if request.MCPTask != nil {
+		run.MCPTask = &MCPTaskRecord{RetentionMillis: request.MCPTask.TTL}
+	}
 	if run.ParentID != "" {
 		run.Phase = "queued"
 		run.QueueExpiresAt = now.Add(2 * time.Hour)
