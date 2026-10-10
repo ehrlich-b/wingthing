@@ -116,7 +116,7 @@ func TestAgentWaitAnyCLI(t *testing.T) {
 			} else if err != nil {
 				t.Fatal(err)
 			}
-			if test.exitCode == 2 && output.String() != "{\"finished\":[],\"pending\":[\"running\"]}\n" {
+			if test.exitCode == 2 && output.String() != "{\"finished\":[],\"pending\":[\"running\"],\"wing_id\":\"fixture-wing\"}\n" {
 				t.Fatalf("timeout JSON changed: %q", output.String())
 			}
 			var data struct {

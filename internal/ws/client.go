@@ -485,7 +485,6 @@ func (c *Client) SendAttention(ctx context.Context, sessionID string) error {
 	return c.writeJSON(ctx, SessionAttention{Type: TypeSessionAttention, SessionID: sessionID})
 }
 
-// HasPTYSession returns true if a goroutine is already handling this session.
 func (c *Client) ptyRoutes() *PTYRegistry {
 	c.ptyRoutesOnce.Do(func() {
 		if c.PTYRoutes == nil {
@@ -495,6 +494,7 @@ func (c *Client) ptyRoutes() *PTYRegistry {
 	return c.PTYRoutes
 }
 
+// HasPTYSession returns true if a goroutine is already handling this session.
 func (c *Client) HasPTYSession(sessionID string) bool {
 	return c.ptyRoutes().HasPTYSession(sessionID)
 }

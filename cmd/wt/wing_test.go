@@ -1,10 +1,22 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 )
+
+func TestLocalOnlyWingRejectsRelayAndOrganizationFlags(t *testing.T) {
+	for _, conflict := range [][]string{{"--local"}, {"--roost", "http://relay.example"}, {"--org", "example"}} {
+		cmd := wingStartCmd()
+		cmd.SilenceErrors, cmd.SilenceUsage = true, true
+		cmd.SetArgs(append([]string{"--foreground", "--local-only"}, conflict...))
+		if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--local-only cannot be combined") {
+			t.Fatalf("conflicting local-only flags %v: %v", conflict, err)
+		}
+	}
+}
 
 func TestFormatUserIdentity(t *testing.T) {
 	tests := []struct {

@@ -42,7 +42,7 @@ func TestNoWingFailsWithoutSpawning(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "wt roost start or wt wing") {
+	if err == nil || !strings.Contains(err.Error(), "wt wing start --local-only") {
 		t.Fatalf("no wing error: %v", err)
 	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {

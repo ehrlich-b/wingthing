@@ -171,6 +171,10 @@ func wingStartCmd() *cobra.Command {
 			// Wait for daemon to report initial connection state
 			startupResult := daemonctl.WaitForWingStatus(child.Process.Pid, 5*time.Second)
 			switch startupResult {
+			case "exited":
+				daemonctl.AbandonStartedDaemon(child)
+				startupErr := fmt.Errorf("wing daemon exited before readiness; inspect %s", daemonctl.WingLogPath())
+				return errors.Join(startupErr, cmdutil.RemoveFiles(daemonctl.WingPidPath(), daemonctl.WingArgsPath(), daemonctl.WingStatusPath()))
 			case "local":
 				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
 				fmt.Println("  local control: ready")

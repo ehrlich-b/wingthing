@@ -14,6 +14,17 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/procinfo"
 )
 
+func TestWingStartupSeparatesRelay401FromDaemonExit(t *testing.T) {
+	t.Setenv("WINGTHING_DIR", t.TempDir())
+	WriteWingStatusForRoost("auth_failed", "relay rejected authentication (401)", "https://relay.example")
+	if state := WaitForWingStatus(os.Getpid(), time.Second); state != "auth_failed" {
+		t.Fatalf("live local daemon with relay 401: %s", state)
+	}
+	if state := WaitForWingStatus(0, time.Second); state != "exited" {
+		t.Fatalf("dead daemon with stale relay status: %s", state)
+	}
+}
+
 func TestDaemonArgvMatchesOnlyExpectedForegroundProcess(t *testing.T) {
 	for _, test := range []struct {
 		name string

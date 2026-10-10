@@ -725,19 +725,17 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	}
 	wingCfg.Org = orgFlag
 	// Merge paths: CLI extends yaml (same pattern as labels)
-	var cliPaths []string
+	var cliPathEntries config.PathList
 	if pathsFlag != "" {
 		for _, p := range strings.Split(pathsFlag, ",") {
 			p = strings.TrimSpace(p)
 			if p != "" {
-				cliPaths = append(cliPaths, p)
-				wingCfg.Paths = append(wingCfg.Paths, config.PathEntry{Path: p})
+				cliPathEntries = append(cliPathEntries, config.PathEntry{Path: p})
 			}
 		}
 	}
-	if len(wingCfg.Paths) > 0 {
-		cliPaths = wingCfg.Paths.Strings()
-	}
+	wingCfg.Paths = append(wingCfg.Paths, cliPathEntries...)
+	cliPaths := wingCfg.Paths.Strings()
 	if eggConfigFlag == "" && wingCfg.EggConfig != "" {
 		eggConfigFlag = wingCfg.EggConfig
 	}
@@ -1245,8 +1243,8 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 					wingCfg.Exports = newCfg.Exports
 
 					// Hot-reload paths
-					wingCfg.Paths = newCfg.Paths
-					resolvedPaths = wingpolicy.ResolvePathStrings(newCfg.Paths.Strings(), home)
+					wingCfg.Paths = append(newCfg.Paths, cliPathEntries...)
+					resolvedPaths = wingpolicy.ResolvePathStrings(wingCfg.Paths.Strings(), home)
 					if len(resolvedPaths) > 0 {
 						rootDir = resolvedPaths[0]
 					} else {
