@@ -79,6 +79,15 @@ func (s *Server) wingSubmitRun(request wingsession.RunRequest) (map[string]any, 
 	if err != nil {
 		return nil, err
 	}
+	if saved, err := s.Sessions.RunManager.Retry(s.sessionLaunch, request); err != nil {
+		return nil, err
+	} else if saved != nil {
+		data := wingRunStatus(saved)
+		if saved.Label != "" {
+			data["label"] = saved.Label
+		}
+		return data, nil
+	}
 	opts := eggclient.SpawnEggOpts{AgentArgs: modelArgs}
 	if s.broker != nil {
 		opts = s.broker.launchOpts(s.Cfg, opts)

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -117,11 +118,13 @@ func (s *Service) StartRuns(ctx context.Context) error {
 		m.records[run.ID] = &run
 	}
 	s.RunManager = m
+	m.mu.Lock()
 	for _, run := range m.records {
 		if !run.Result.Terminal() {
 			m.start(run.ID)
 		}
 	}
+	m.mu.Unlock()
 	return nil
 }
 
@@ -237,17 +240,8 @@ func (m *Runs) Admit(launch *Launch, request RunRequest, options StartOptions, a
 	if err != nil {
 		return nil, false, err
 	}
-	normalized := request
-	normalized.RequestKey = ""
-	normalized.CWD = launch.CWD
-	spec, _ := json.Marshal(struct {
-		Request     RunRequest
-		Principal   string
-		Unsandboxed bool
-	}{normalized, launch.authority.Principal, launch.authority.Unsandboxed})
-	digest := sha256.Sum256(spec)
 	now := time.Now().UTC()
-	run := &Run{ID: cmdutil.GenTaskID(), SessionID: cmdutil.NewRuntimeID(), RequestKey: request.RequestKey, SpecHash: hex.EncodeToString(digest[:]), Prompt: request.Prompt, OriginalPrompt: request.Prompt, Agent: request.Agent, Model: request.Model, CWD: launch.CWD, Label: request.Label, TimeoutSeconds: request.TimeoutSeconds, CreatedAt: now, ParentID: request.ParentID, Direction: request.Direction, Phase: "admitted", Isolation: "sandbox"}
+	run := &Run{ID: cmdutil.GenTaskID(), SessionID: cmdutil.NewRuntimeID(), RequestKey: request.RequestKey, SpecHash: runRequestHash(launch, request), Prompt: request.Prompt, OriginalPrompt: request.Prompt, Agent: request.Agent, Model: request.Model, CWD: launch.CWD, Label: request.Label, TimeoutSeconds: request.TimeoutSeconds, CreatedAt: now, ParentID: request.ParentID, Direction: request.Direction, Phase: "admitted", Isolation: "sandbox"}
 	if launch.authority.Unsandboxed {
 		run.Isolation = "privileged"
 	}
@@ -387,7 +381,12 @@ func (m *Runs) reconcile(id string) {
 			}
 			return
 		}
-		if err = m.update(id, "spawned", func(r *Run) { r.Phase = "spawned" }); err != nil {
+		if err = m.update(id, "spawned", func(r *Run) {
+			r.Phase = "spawned"
+			if sec, err := strconv.ParseInt(eggclient.ReadEggMetaValues(filepath.Join(m.service.Config.Dir, "eggs", r.SessionID))["started_at"], 10, 64); err == nil {
+				r.Result.Deadline = time.Unix(sec, 0).UTC().Add(time.Duration(r.TimeoutSeconds) * time.Second)
+			}
+		}); err != nil {
 			return
 		}
 		r = m.snapshot(id)
@@ -426,6 +425,14 @@ func (m *Runs) reconcile(id string) {
 		cancel()
 		if err != nil {
 			if m.ctx.Err() == nil {
+				result, readErr := m.backend.Wait(m.ctx, m.service.Config, session, id)
+				if readErr == nil && result.Terminal() {
+					full, readErr := m.backend.Result(m.ctx, m.service.Config, session, id)
+					if readErr == nil {
+						_ = m.accept(id, full)
+						return
+					}
+				}
 				m.fail(id, agent.UnknownOutcome)
 			}
 			return
@@ -692,4 +699,50 @@ func awaitNativeRunReady(ctx context.Context, cfg *config.Config, session eggcli
 			return err
 		}
 	}
+}
+
+func runRequestHash(launch *Launch, request RunRequest) string {
+	request.RequestKey = ""
+	request.CWD = launch.CWD
+	spec, _ := json.Marshal(struct {
+		Request     RunRequest
+		Principal   string
+		Unsandboxed bool
+	}{request, launch.authority.Principal, launch.authority.Unsandboxed})
+	digest := sha256.Sum256(spec)
+	return hex.EncodeToString(digest[:])
+}
+
+// Retry resolves accepted work before charging admission bounds again.
+func (m *Runs) Retry(launch *Launch, request RunRequest) (*Run, error) {
+	if request.RequestKey == "" {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range m.records {
+		if r.RequestKey == request.RequestKey && m.owned(launch.authority, r) {
+			if r.SpecHash != runRequestHash(launch, request) {
+				return nil, errors.New("idempotency_key already has a different run request")
+			}
+			return cloneRun(r), nil
+		}
+	}
+	return nil, nil
+}
+
+// ReservedSessions includes durable queue slots not yet represented in egg
+// inventory, so async launches cannot race through a principal's last slot.
+func (m *Runs) ReservedSessions(a Authority) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, r := range m.records {
+		if m.owned(a, r) && !r.Result.Terminal() {
+			if _, alive := eggclient.ReadAliveEggPID(filepath.Join(m.service.Config.Dir, "eggs", r.SessionID)); !alive {
+				n++
+			}
+		}
+	}
+	return n
 }

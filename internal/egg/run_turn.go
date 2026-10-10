@@ -221,6 +221,9 @@ func (rt *runTurnRuntime) admit(request RunTurnRequest, execute bool) (RunTurnRe
 // begin is called with the runtime and run locks held. Reserving arms the
 // deadline independently of readiness; only Submit authorizes prompt input.
 func (rt *runTurnRuntime) begin(run *ownedRunTurn, request RunTurnRequest, options SessionPromptOptions) error {
+	if run.finishing {
+		return nil
+	}
 	view, err := rt.backend.Read(context.Background(), 0, 1)
 	if err != nil {
 		return err
@@ -234,6 +237,7 @@ func (rt *runTurnRuntime) begin(run *ownedRunTurn, request RunTurnRequest, optio
 	}
 	record := run.record
 	record.Result.ProviderSessionID = view.ProviderSessionID
+	record.Result.Status, record.Result.StartedAt = "running", time.Now().UTC()
 	if err = persistRunTurn(rt.dir, record); err != nil {
 		return err
 	}
@@ -254,7 +258,6 @@ func (rt *runTurnRuntime) execute(ctx context.Context, run *ownedRunTurn, option
 		run.mu.Unlock()
 		return
 	}
-	run.record.Result.Status, run.record.Result.StartedAt = "running", time.Now().UTC()
 	err := persistRunTurn(rt.dir, run.record)
 	run.mu.Unlock()
 	if err != nil {
