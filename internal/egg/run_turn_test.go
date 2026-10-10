@@ -559,3 +559,46 @@ func TestDeadlineKillsProcessGroupAndReportsSurvivors(t *testing.T) {
 		t.Fatal("child survived process-group kill")
 	}
 }
+
+func TestDeadlineEnforcedByEggAfterWingExit(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newRunFixture(t)
+		fixture.request.Deadline = time.Now().Add(time.Minute)
+		killed := make(chan struct{}, 1)
+		fixture.runtime.backend.Kill = func() ([]RunDescendant, error) { killed <- struct{}{}; return nil, nil }
+		wingCtx, wingExit := context.WithCancel(context.Background())
+		server := &Server{runTurns: fixture.runtime}
+		result, err := server.HandleRunTurn(wingCtx, "Reserve", fixture.request)
+		if err != nil || result.Status != "pending" {
+			t.Fatalf("reserve: %+v %v", result, err)
+		}
+		wingExit()
+		result = waitRunFixture(t, fixture)
+		<-killed
+		if result.Status != "timeout" || result.FailureKind != agent.Timeout || fixture.sends.Load() != 0 {
+			t.Fatalf("egg did not own pre-prompt deadline: %+v", result)
+		}
+	})
+}
+
+func TestReservedRunSubmitsOnceAndKeepsDeadline(t *testing.T) {
+	fixture := newRunFixture(t)
+	if _, err := fixture.runtime.reserve(fixture.request); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.sends.Load() != 0 {
+		t.Fatal("reservation delivered input")
+	}
+	if _, err := fixture.runtime.submit(fixture.request); err != nil {
+		t.Fatal(err)
+	}
+	<-fixture.sent
+	if _, err := fixture.runtime.submit(fixture.request); err != nil {
+		t.Fatal(err)
+	}
+	appendNative(t, fixture.path, assistantRecord("complete", "end_turn"))
+	result := waitRunFixture(t, fixture)
+	if result.Status != "done" || !result.Deadline.Equal(fixture.request.Deadline) || fixture.sends.Load() != 1 {
+		t.Fatalf("reserved submission: %+v", result)
+	}
+}

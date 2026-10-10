@@ -402,6 +402,7 @@ func buildTools() []Tool {
 			Description: "Start a supervised headless agent run and return immediately with an owner-scoped run ID. Use agent_wait and agent_result instead of reading terminal ANSI.",
 			InputSchema: objectSchema(map[string]any{
 				"prompt":          stringProperty("Task for the agent"),
+				"idempotency_key": stringProperty("Optional owner-scoped retry key for durable admission"),
 				"agent":           stringProperty("Supported agent name, such as codex or claude"),
 				"model":           stringProperty("Provider model name, such as gpt-5.6-terra or opus"),
 				"cwd":             stringProperty("Working directory; defaults to the MCP server's current directory"),

@@ -64,3 +64,12 @@ func observeRunTurn(ctx context.Context, cfg *config.Config, session LocalSessio
 		return client.ReadRunTurnResult(ctx, runID)
 	}
 }
+
+func ReserveRunTurn(ctx context.Context, cfg *config.Config, session LocalSession, request egg.RunTurnRequest) (egg.RunTurnResult, error) {
+	_, client, err := OpenLocalEgg(ctx, cfg, session.ID)
+	if err != nil {
+		return egg.RunTurnResult{}, err
+	}
+	defer client.Close()
+	return client.ReserveRunTurn(ctx, request)
+}

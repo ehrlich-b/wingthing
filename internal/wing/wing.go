@@ -1084,6 +1084,10 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		return append([]*config.ToolConfig(nil), wingTools...)
 	})
 	defer stopSessionRegistration()
+	if err := sessions.StartRuns(ctx); err != nil {
+		return fmt.Errorf("agent run service: %w", err)
+	}
+	defer sessions.RunManager.Close()
 	directMCPAdmission.Sessions = sessions
 	ownerUserID := tok.UserID
 	if !sharedHost && orgFlag == "" && ownerUserID == "" {

@@ -110,43 +110,58 @@ func (s *Store) ListAgentRuns() ([]*AgentRun, error) {
 // SaveAgentRun atomically publishes full output, terminal metadata and a
 // content-free event. Revision comparison prevents a stale observer replacing
 // a stop intent or a terminal outcome after reconnect.
+type AgentRunUpdate struct {
+	Run           *AgentRun
+	Task          *Task
+	Event, Detail string
+}
+
 func (s *Store) SaveAgentRun(r *AgentRun, task *Task, event, detail string) error {
+	return s.SaveAgentRuns([]AgentRunUpdate{{Run: r, Task: task, Event: event, Detail: detail}})
+}
+
+// SaveAgentRuns commits a parent stop intent and every unstarted follow-up
+// cancellation together, including their task projections and events.
+func (s *Store) SaveAgentRuns(updates []AgentRunUpdate) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.Exec("UPDATE agent_runs SET record=?,revision=revision+1 WHERE id=? AND revision=?", string(r.Record), r.ID, r.Revision)
-	if err != nil {
-		return err
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n != 1 {
-		return fmt.Errorf("agent run revision changed: %s", r.ID)
-	}
-	var start, finish any
-	if task.StartedAt != nil {
-		start = task.StartedAt.UTC().Format(timeFmt)
-	}
-	if task.FinishedAt != nil {
-		finish = task.FinishedAt.UTC().Format(timeFmt)
-	}
-	_, err = tx.Exec("UPDATE tasks SET status=?,what=?,started_at=?,finished_at=?,output=?,error=? WHERE id=?", task.Status, task.What, start, finish, task.Output, task.Error, r.ID)
-	if err != nil {
-		return err
-	}
-	if event != "" {
-		_, err = tx.Exec("INSERT INTO task_log (task_id,event,detail) VALUES (?,?,NULLIF(?,''))", r.ID, event, detail)
+	for _, u := range updates {
+		r, task := u.Run, u.Task
+		result, err := tx.Exec("UPDATE agent_runs SET record=?,revision=revision+1 WHERE id=? AND revision=?", string(r.Record), r.ID, r.Revision)
 		if err != nil {
 			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return fmt.Errorf("agent run revision changed: %s", r.ID)
+		}
+		var start, finish any
+		if task.StartedAt != nil {
+			start = task.StartedAt.UTC().Format(timeFmt)
+		}
+		if task.FinishedAt != nil {
+			finish = task.FinishedAt.UTC().Format(timeFmt)
+		}
+		if _, err = tx.Exec("UPDATE tasks SET status=?,what=?,started_at=?,finished_at=?,output=?,error=? WHERE id=?", task.Status, task.What, start, finish, task.Output, task.Error, r.ID); err != nil {
+			return err
+		}
+		if u.Event != "" {
+			if _, err = tx.Exec("INSERT INTO task_log (task_id,event,detail) VALUES (?,?,NULLIF(?,''))", r.ID, u.Event, u.Detail); err != nil {
+				return err
+			}
 		}
 	}
 	if err = tx.Commit(); err != nil {
 		return err
 	}
-	r.Revision++
+	for _, u := range updates {
+		u.Run.Revision++
+	}
 	return nil
 }

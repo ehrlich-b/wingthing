@@ -1319,6 +1319,9 @@ type agentRunFollowup struct {
 const maxAgentSteerPriorResultChars = 200000
 
 func (s *Server) toolAgentRun(arguments json.RawMessage) (map[string]any, error) {
+	if s.Sessions != nil && s.Sessions.RunManager != nil {
+		return s.wingAgentRun(arguments)
+	}
 	var args agentRunArgs
 	if err := decodeStrict(arguments, &args); err != nil {
 		return nil, err
@@ -1608,6 +1611,9 @@ func (s *Server) toolAgentStatus(arguments json.RawMessage) (map[string]any, err
 }
 
 func (s *Server) toolAgentWait(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {
+	if s.Sessions != nil && s.Sessions.RunManager != nil {
+		return s.wingAgentWait(ctx, arguments)
+	}
 	var args struct {
 		RunID          string  `json:"run_id"`
 		TimeoutSeconds float64 `json:"timeout_seconds"`
@@ -1805,6 +1811,9 @@ func (s *Server) loadOwnedAgentRunStatuses(db *sql.DB, runIDs []string) (map[str
 }
 
 func (s *Server) toolAgentResult(arguments json.RawMessage) (map[string]any, error) {
+	if s.Sessions != nil && s.Sessions.RunManager != nil {
+		return s.wingAgentResult(arguments)
+	}
 	var args struct {
 		RunID    string `json:"run_id"`
 		MaxChars int    `json:"max_chars"`
