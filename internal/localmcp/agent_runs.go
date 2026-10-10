@@ -12,6 +12,8 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
+var errExistingAgentRun = errors.New("run already admitted")
+
 func wingRunStatus(r *wingsession.Run) map[string]any {
 	data := map[string]any{"run_id": r.ID, "status": r.Result.Status, "agent": r.Agent, "model": r.Model, "cwd": r.CWD, "isolation": r.Isolation, "timeout_seconds": r.TimeoutSeconds, "created_at": r.CreatedAt.UTC().Format(time.RFC3339), "session_id": r.SessionID}
 	if !r.Result.StartedAt.IsZero() {
@@ -38,7 +40,7 @@ func wingRunStatus(r *wingsession.Run) map[string]any {
 	return data
 }
 
-func (s *Server) wingAgentRun(arguments json.RawMessage) (map[string]any, error) {
+func (s *Server) toolAgentRun(arguments json.RawMessage) (map[string]any, error) {
 	var args struct {
 		Prompt         string `json:"prompt"`
 		Agent          string `json:"agent"`
@@ -55,6 +57,9 @@ func (s *Server) wingAgentRun(arguments json.RawMessage) (map[string]any, error)
 }
 
 func (s *Server) wingSubmitRun(request wingsession.RunRequest) (map[string]any, error) {
+	if s.Sessions == nil || s.Sessions.RunManager == nil {
+		return nil, errors.New("wing run service is not ready")
+	}
 	if strings.TrimSpace(request.Prompt) == "" {
 		return nil, errors.New("prompt is required")
 	}
@@ -95,9 +100,26 @@ func (s *Server) wingSubmitRun(request wingsession.RunRequest) (map[string]any, 
 	var run *wingsession.Run
 	err = s.admitSpawn(func() error {
 		var err error
-		run, _, err = s.Sessions.RunManager.Admit(s.sessionLaunch, request, wingsession.StartOptions{Egg: opts, Tools: s.forkTools, Trace: s.forkTrace && cfg.Trace, IdleTimeout: s.forkIdleTimeout}, s.clientActor())
+		var fresh bool
+		run, fresh, err = s.Sessions.RunManager.Admit(s.sessionLaunch, request, wingsession.StartOptions{Egg: opts, Tools: s.forkTools, Trace: s.forkTrace && cfg.Trace, IdleTimeout: s.forkIdleTimeout}, s.clientActor())
+		if err == nil && !fresh {
+			return errExistingAgentRun
+		}
 		return err
 	})
+	if errors.Is(err, errExistingAgentRun) {
+		err = nil
+	}
+	if err != nil && request.RequestKey != "" {
+		saved, retryErr := s.Sessions.RunManager.Retry(s.sessionLaunch, request)
+		if retryErr != nil {
+			return nil, retryErr
+		}
+		if saved != nil {
+			run = saved
+			err = nil
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +130,7 @@ func (s *Server) wingSubmitRun(request wingsession.RunRequest) (map[string]any, 
 	return data, nil
 }
 
-func (s *Server) wingAgentResult(arguments json.RawMessage) (map[string]any, error) {
+func (s *Server) toolAgentResult(arguments json.RawMessage) (map[string]any, error) {
 	var args struct {
 		RunID    string `json:"run_id"`
 		MaxChars int    `json:"max_chars"`
@@ -121,6 +143,9 @@ func (s *Server) wingAgentResult(arguments json.RawMessage) (map[string]any, err
 	}
 	if args.MaxChars < 1 || args.MaxChars > 200000 {
 		return nil, errors.New("max_chars must be between 1 and 200000")
+	}
+	if s.Sessions == nil || s.Sessions.RunManager == nil {
+		return nil, errors.New("wing run service is not ready")
 	}
 	r, err := s.Sessions.RunManager.Get(s.sessionAuthority(), args.RunID)
 	if err != nil {
@@ -143,7 +168,7 @@ func (s *Server) wingAgentResult(arguments json.RawMessage) (map[string]any, err
 	return data, nil
 }
 
-func (s *Server) wingAgentWait(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {
+func (s *Server) toolAgentWait(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {
 	var args struct {
 		RunID          string  `json:"run_id"`
 		TimeoutSeconds float64 `json:"timeout_seconds"`
@@ -156,6 +181,9 @@ func (s *Server) wingAgentWait(ctx context.Context, arguments json.RawMessage) (
 	}
 	if args.TimeoutSeconds < 0.1 || args.TimeoutSeconds > 3600 {
 		return nil, errors.New("timeout_seconds must be between 0.1 and 3600")
+	}
+	if s.Sessions == nil || s.Sessions.RunManager == nil {
+		return nil, errors.New("wing run service is not ready")
 	}
 	m := s.Sessions.RunManager
 	a := s.sessionAuthority()
@@ -177,12 +205,15 @@ func (s *Server) wingAgentWait(ctx context.Context, arguments json.RawMessage) (
 	return data, err
 }
 
-func (s *Server) wingAgentStatus(arguments json.RawMessage) (map[string]any, error) {
+func (s *Server) toolAgentStatus(arguments json.RawMessage) (map[string]any, error) {
 	var args struct {
 		RunID string `json:"run_id"`
 	}
 	if err := decodeStrict(arguments, &args); err != nil {
 		return nil, err
+	}
+	if s.Sessions == nil || s.Sessions.RunManager == nil {
+		return nil, errors.New("wing run service is not ready")
 	}
 	r, err := s.Sessions.RunManager.Get(s.sessionAuthority(), args.RunID)
 	if err != nil {
@@ -191,7 +222,7 @@ func (s *Server) wingAgentStatus(arguments json.RawMessage) (map[string]any, err
 	return wingRunStatus(r), nil
 }
 
-func (s *Server) wingAgentEvents(arguments json.RawMessage) (map[string]any, error) {
+func (s *Server) toolAgentEvents(arguments json.RawMessage) (map[string]any, error) {
 	var args struct {
 		RunID  string `json:"run_id"`
 		Limit  int    `json:"limit"`
@@ -208,6 +239,9 @@ func (s *Server) wingAgentEvents(arguments json.RawMessage) (map[string]any, err
 	}
 	if args.Cursor < 0 {
 		return nil, errors.New("cursor must be nonnegative")
+	}
+	if s.Sessions == nil || s.Sessions.RunManager == nil {
+		return nil, errors.New("wing run service is not ready")
 	}
 	entries, err := s.Sessions.RunManager.Events(s.sessionAuthority(), args.RunID, args.Cursor, args.Limit)
 	if err != nil {
@@ -230,7 +264,7 @@ func (s *Server) wingAgentEvents(arguments json.RawMessage) (map[string]any, err
 	return data, nil
 }
 
-func (s *Server) wingAgentSteer(arguments json.RawMessage) (map[string]any, error) {
+func (s *Server) toolAgentSteer(arguments json.RawMessage) (map[string]any, error) {
 	var args struct {
 		RunID  string `json:"run_id"`
 		Prompt string `json:"prompt"`
@@ -242,6 +276,9 @@ func (s *Server) wingAgentSteer(arguments json.RawMessage) (map[string]any, erro
 	if strings.TrimSpace(args.Prompt) == "" {
 		return nil, errors.New("prompt is required")
 	}
+	if s.Sessions == nil || s.Sessions.RunManager == nil {
+		return nil, errors.New("wing run service is not ready")
+	}
 	r, err := s.Sessions.RunManager.Get(s.sessionAuthority(), args.RunID)
 	if err != nil {
 		return nil, err
@@ -252,12 +289,15 @@ func (s *Server) wingAgentSteer(arguments json.RawMessage) (map[string]any, erro
 	return s.wingSubmitRun(wingsession.RunRequest{Prompt: "Prior request:\n" + r.OriginalPrompt + "\n\nNew direction:\n" + args.Prompt, Agent: r.Agent, Model: args.Model, CWD: r.CWD, Label: "followup-" + r.ID, TimeoutSeconds: r.TimeoutSeconds, ParentID: r.ID, Direction: args.Prompt})
 }
 
-func (s *Server) wingAgentStop(arguments json.RawMessage) (map[string]any, error) {
+func (s *Server) toolAgentStop(arguments json.RawMessage) (map[string]any, error) {
 	var args struct {
 		RunID string `json:"run_id"`
 	}
 	if err := decodeStrict(arguments, &args); err != nil {
 		return nil, err
+	}
+	if s.Sessions == nil || s.Sessions.RunManager == nil {
+		return nil, errors.New("wing run service is not ready")
 	}
 	r, err := s.Sessions.RunManager.Stop(s.sessionAuthority(), args.RunID)
 	if err != nil {
@@ -270,7 +310,7 @@ func (s *Server) wingAgentStop(arguments json.RawMessage) (map[string]any, error
 	return data, nil
 }
 
-func (s *Server) wingAgentWaitAny(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {
+func (s *Server) toolAgentWaitAny(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {
 	var args struct {
 		RunIDs         []string `json:"run_ids"`
 		TimeoutSeconds float64  `json:"timeout_seconds"`
@@ -299,6 +339,9 @@ func (s *Server) wingAgentWaitAny(ctx context.Context, arguments json.RawMessage
 			ids = append(ids, id)
 			seen[id] = true
 		}
+	}
+	if s.Sessions == nil || s.Sessions.RunManager == nil {
+		return nil, errors.New("wing run service is not ready")
 	}
 	m := s.Sessions.RunManager
 	a := s.sessionAuthority()

@@ -1,12 +1,9 @@
 package localmcp
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -21,8 +18,6 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
-	"github.com/ehrlich-b/wingthing/internal/store"
-	"github.com/ehrlich-b/wingthing/internal/taskrun"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
@@ -344,86 +339,7 @@ func TestLocalProxyShapesCWDWithoutAuthorityFields(t *testing.T) {
 	}
 }
 
-func TestAgentRunSurvivesStdioClientExit(t *testing.T) {
-	service, _ := localSocketPolicyFixture(t)
-	started := make(chan *store.Task, 1)
-	release := make(chan struct{})
-	finished := make(chan struct{})
-	defer func() {
-		select {
-		case <-release:
-		default:
-			close(release)
-		}
-	}()
-	admission := NewMCPAdmissionState()
-	listener, err := controlsocket.Listen(t.Context(), "state", "fixture-wing", func(hello controlsocket.Hello) (controlsocket.Welcome, controlsocket.Handler, error) {
-		server, err := resolveLocalWingClient("test", service, "owner", admission, hello)
-		if err != nil {
-			return controlsocket.Welcome{}, nil, err
-		}
-		server.runAgentTask = func(ctx context.Context, _ *config.Config, db *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
-			defer close(finished)
-			started <- task
-			<-release
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			output := "complete fixture answer"
-			if err := db.SetTaskOutput(task.ID, output); err != nil {
-				return err
-			}
-			return db.UpdateTaskStatus(task.ID, "done")
-		}
-		return controlsocket.Welcome{Principal: server.Principal, Actor: server.Actor, Grants: server.Grants}, server.handleDirectRequest, nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	input, sender := io.Pipe()
-	output, receiver := io.Pipe()
-	clientDone := make(chan error, 1)
-	go func() {
-		clientDone <- ServeLocalWingClient(t.Context(), "test", "state", "", "", false, input, receiver)
-	}()
-	defer output.Close()
-	request := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"agent_run","arguments":{"agent":"claude","prompt":"fixture"}}}` + "\n"
-	if _, err := io.WriteString(sender, request); err != nil {
-		t.Fatal(err)
-	}
-	var response localMCPResponse
-	if err := json.NewDecoder(output).Decode(&response); err != nil {
-		t.Fatal(err)
-	}
-	if response.Error != nil || response.Result.(map[string]any)["isError"] == true {
-		t.Fatalf("run refused: %+v", response)
-	}
-	task := <-started
-	if response.Error != nil || task.Principal != wingsession.UserPrincipal("owner") {
-		t.Fatalf("run response: %+v", response)
-	}
-	_ = sender.Close()
-	if err := <-clientDone; err != nil {
-		t.Fatal(err)
-	}
-	close(release)
-	<-finished
-	db, err := store.Open(service.Config.DBPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	result, err := db.GetTask(task.ID)
-	if err != nil || result.Status != "done" || result.Output == nil || *result.Output != "complete fixture answer" {
-		t.Fatalf("accepted work died with client: %+v %v", result, err)
-	}
-	var audit bytes.Buffer
-	server := testWingServer(t, &Server{Version: "test", Cfg: service.Config, Principal: "foreign", Logs: &audit})
-	if _, _, err := server.ownedAgentRun(task.ID); err == nil {
-		t.Fatal("foreign owner observed run")
-	}
-}
+func TestAgentRunSurvivesStdioClientExit(t *testing.T) { exerciseMCPRunClientExit(t) }
 
 // The outer boundary selects a launch profile; all admission still belongs to
 // the wing, including revocation on an already-open connection.

@@ -18,7 +18,6 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/store"
-	"github.com/ehrlich-b/wingthing/internal/taskrun"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"github.com/ehrlich-b/wingthing/internal/ws"
@@ -131,6 +130,7 @@ func TestRoostTransportsSelectedRootACL(t *testing.T) {
 				t.Errorf("direct MCP admitted Bob's child policy: %v, %v", result, err)
 			}
 			server := testNativeServer(t, "test", cfg, shared, NewMCPAdmissionState(), principal, []string{root}, source)
+			newRunWingFixture(t, server)
 			// Prevent provider execution even when replayed without the ACL fix.
 			server.MaxSpawnsPerHour = 1
 			server.admission.spawnTimes[server.clientPrincipal()] = []time.Time{time.Now()}
@@ -157,27 +157,34 @@ func TestRoostTransportsSelectedRootACL(t *testing.T) {
 			result, isError, err = bobClient.Call(bobCtx, "sandbox_explain", json.RawMessage(`{}`))
 			assertChildPolicy(result, isError, err)
 			bobServer := testNativeServer(t, "test", cfg, shared, NewMCPAdmissionState(), bob, []string{child}, source)
-			load := bobServer.launchConfig
-			loaded := false
-			bobServer.launchConfig = func(cwd string) (*egg.EggConfig, error) {
-				loaded = true
-				if cwd != child {
-					t.Fatalf("omitted headless cwd = %s, want %s", cwd, child)
-				}
-				if _, err := load(cwd); err != nil {
-					t.Fatal(err)
-				}
-				return nil, fmt.Errorf("stop before provider execution")
+			bobRuns := newRunWingFixture(t, bobServer)
+			expected, err := bobServer.loadLaunchConfig(child)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expectedYAML, err := expected.TaskYAML()
+			if err != nil {
+				t.Fatal(err)
 			}
 			// Local orchestration handlers share this authenticated launch policy.
 			bobServer.Surface, bobServer.Grants = control.SurfaceLocalMCP, nil
 			for _, tool := range []string{"agent_run"} {
-				loaded = false
 				args := `{"prompt":"inspect","agent":"claude"}`
-				result, _, protocolErr := bobServer.callTool(context.Background(), tool, json.RawMessage(args))
-				if protocolErr != nil || !loaded {
+				result, isError, protocolErr := bobServer.callTool(context.Background(), tool, json.RawMessage(args))
+				if protocolErr != nil || isError {
 					t.Fatalf("omitted cwd bypassed %s loader: %v, %v", tool, result, protocolErr)
 				}
+				launch := <-bobRuns.launches
+				actualYAML, err := launch.Config.TaskYAML()
+				if err != nil || launch.CWD != child || actualYAML != expectedYAML {
+					t.Fatalf("omitted cwd selected wrong launch: cwd=%s config=%s, %v", launch.CWD, actualYAML, err)
+				}
+				id := result["run_id"].(string)
+				if got := <-bobRuns.submitted; got != id {
+					t.Fatalf("submitted %s, want %s", got, id)
+				}
+				bobRuns.finish(t, id, "fixture complete", "")
+				bobRuns.wait(t, id)
 			}
 		})
 	}
@@ -258,6 +265,7 @@ func TestRoostTransportsRejectUnsafeRoots(t *testing.T) {
 					}
 					checkErr(fmt.Errorf("%v %v", result, err))
 					server := testNativeServer(t, "test", cfg, shared, NewMCPAdmissionState(), principal, []string{root}, source)
+					newRunWingFixture(t, server)
 					// Refuse execution even when replayed before root validation.
 					load := server.launchConfig
 					server.launchConfig = func(cwd string) (*egg.EggConfig, error) {
@@ -436,48 +444,42 @@ func TestRoostLaunchesUseRoleRootPolicy(t *testing.T) {
 		}
 		server.MaxSpawnsPerHour = 60
 		delete(server.admission.spawnTimes, server.clientPrincipal())
-		started := make(chan *store.Task, 4)
-		server.runAgentTask = func(_ context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, options taskrun.TaskRunOptions) error {
-			started <- task
-			if err := os.WriteFile(filepath.Join(filepath.Dir(workspace), "egg.yaml"), []byte(malicious), 0600); err != nil {
-				return err
-			}
-			if options.SharedHost != shared || !strings.HasPrefix(options.UserHome, cfg.Dir) {
-				return fmt.Errorf("lost shared/org task identity: %+v", options)
-			}
-			return taskStore.UpdateTaskStatus(task.ID, "done")
-		}
+		f := newRunWingFixture(t, server)
 		result, err := server.toolAgentRun(json.RawMessage(`{"prompt":"inspect","agent":"claude","cwd":` + strconv.Quote(workspace) + `}`))
 		if err != nil {
 			t.Fatal(err)
 		}
-		waitCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		if err := server.waitForAgentRunTerminal(waitCtx, result["run_id"].(string)); err != nil {
-			cancel()
+		id := result["run_id"].(string)
+		<-f.submitted
+		launch := <-f.launches
+		if launch.Identity.SharedHost != shared || (!launch.Identity.OrgWing && !shared) || launch.Identity.UserID != "eng" {
+			t.Fatalf("lost shared/org egg identity: %+v", launch.Identity)
+		}
+		assertRoostRolePolicy(t, launch.Config)
+		db, err := store.Open(cfg.DBPath())
+		if err != nil {
 			t.Fatal(err)
 		}
-		cancel()
+		task, err := db.GetTask(id)
+		db.Close()
+		if err != nil || task == nil {
+			t.Fatalf("missing task: %v", err)
+		}
+		frozen, err := egg.LoadTaskEggConfigFromYAML(task.EggConfigYAML)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertRoostRolePolicy(t, frozen)
+		if err := os.WriteFile(filepath.Join(filepath.Dir(workspace), "egg.yaml"), []byte(malicious), 0600); err != nil {
+			t.Fatal(err)
+		}
+		assertRoostRolePolicy(t, frozen)
+		f.finish(t, id, "done", "")
+		f.wait(t, id)
 		if err := os.WriteFile(filepath.Join(filepath.Dir(workspace), "egg.yaml"), roostRolePolicy(filepath.Dir(workspace)), 0600); err != nil {
 			t.Fatal(err)
 		}
-		for range 1 {
-			select {
-			case task := <-started:
-				if task.EggConfigYAML == "" {
-					t.Fatalf("headless %s has no submission policy snapshot", task.Type)
-				}
-				cfg, err := egg.LoadEggConfigFromYAML(task.EggConfigYAML)
-				if err != nil {
-					t.Fatal(err)
-				}
-				assertRoostRolePolicy(t, cfg)
-			case <-time.After(time.Second):
-				t.Fatal("headless launch did not use the owner-scoped runner")
-			}
-		}
-		if err := os.WriteFile(filepath.Join(filepath.Dir(workspace), "egg.yaml"), roostRolePolicy(filepath.Dir(workspace)), 0600); err != nil {
-			t.Fatal(err)
-		}
+
 	}
 }
 
@@ -673,52 +675,39 @@ func TestRoostHeadlessSubmissionUsesRoleRootPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := testNativeServer(t, "test", cfg, false, NewMCPAdmissionState(), mcppkg.Principal{UserID: "eng"}, []string{root})
-	// A pending dependency prevents provider execution on both revisions.
-	taskStore, err := store.Open(cfg.DBPath())
+	f := newRunWingFixture(t, server)
+	result, err := server.toolAgentRun(json.RawMessage(`{"prompt":"pending","agent":"claude","cwd":` + strconv.Quote(sub) + `}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC()
-	parent := &store.Task{ID: "parent", Type: "agent_run", What: "pending", Agent: "claude", Principal: server.clientPrincipal(), RunnerPID: os.Getpid(), RunAt: now, CreatedAt: now}
-	if err := taskStore.CreateTask(parent); err != nil {
-		t.Fatal(err)
-	}
-	if err := taskStore.Close(); err != nil {
-		t.Fatal(err)
-	}
-	checkTask := func(t *testing.T, id string) {
-		t.Helper()
-		taskStore, err := store.Open(cfg.DBPath())
+	parent := result["run_id"].(string)
+	<-f.submitted
+	t.Run("agent_run", func(t *testing.T) {
+		result, err := server.wingSubmitRun(wingsession.RunRequest{Prompt: "inspect", Agent: "claude", CWD: sub, ParentID: parent, Direction: "inspect"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer taskStore.Close()
-		task, err := taskStore.GetTask(id)
-		if err != nil || task == nil {
-			t.Fatalf("missing headless task: %#v, %v", task, err)
+		db, err := store.Open(cfg.DBPath())
+		if err != nil {
+			t.Fatal(err)
 		}
-		if task.EggConfigYAML == "" {
-			t.Fatalf("headless %s has no submission policy snapshot", task.Type)
+		defer db.Close()
+		task, err := db.GetTask(result["run_id"].(string))
+		if err != nil || task == nil || task.EggConfigYAML == "" {
+			t.Fatalf("missing run launch snapshot: %+v %v", task, err)
 		}
-		policy, err := egg.LoadEggConfigFromYAML(task.EggConfigYAML)
+		policy, err := egg.LoadTaskEggConfigFromYAML(task.EggConfigYAML)
 		if err != nil {
 			t.Fatal(err)
 		}
 		assertRoostRolePolicy(t, policy)
-	}
-	t.Run("agent_run", func(t *testing.T) {
-		result, err := server.submitAgentRun(agentRunArgs{Prompt: "inspect", Agent: "claude", CWD: sub}, &agentRunFollowup{parentID: "parent", direction: "inspect"})
-		if err != nil {
-			t.Fatal(err)
+		select {
+		case id := <-f.submitted:
+			t.Fatalf("queued egg executed: %s", id)
+		default:
 		}
-		runID := result["run_id"].(string)
-		defer func() {
-			if value, ok := activeMCPAgentRuns.Load(server.agentRunKey(runID)); ok {
-				active := value.(activeMCPAgentRun)
-				active.cancel()
-				<-active.done
-			}
-		}()
-		checkTask(t, runID)
 	})
+	if _, err := server.toolAgentStop(runArgs(parent)); err != nil {
+		t.Fatal(err)
+	}
 }

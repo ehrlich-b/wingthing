@@ -40,29 +40,43 @@ func observeRunTurn(ctx context.Context, cfg *config.Config, session LocalSessio
 	if err := ctx.Err(); err != nil {
 		return egg.RunTurnResult{}, err
 	}
+	archived := func() (egg.RunTurnResult, error) {
+		result, err := egg.ReadRunTurnResult(filepath.Join(cfg.Dir, "eggs", session.ID), runID)
+		if operation != "result" {
+			result.Text = ""
+		}
+		return result, err
+	}
 	_, client, err := OpenLocalEgg(ctx, cfg, session.ID)
 	if err != nil {
+		result, readErr := archived()
+		if readErr == nil && result.Terminal() {
+			return result, nil
+		}
 		_, alive := ReadAliveEggPID(filepath.Join(cfg.Dir, "eggs", session.ID))
 		if operation == "stop" || alive {
 			return egg.RunTurnResult{}, err
 		}
-		result, readErr := egg.ReadRunTurnResult(filepath.Join(cfg.Dir, "eggs", session.ID), runID)
-		if operation != "result" {
-			result.Text = ""
-		}
 		return result, readErr
 	}
 	defer client.Close()
+	var result egg.RunTurnResult
 	switch operation {
 	case "status":
-		return client.RunTurnStatus(ctx, runID)
+		result, err = client.RunTurnStatus(ctx, runID)
 	case "wait":
-		return client.WaitRunTurn(ctx, runID)
+		result, err = client.WaitRunTurn(ctx, runID)
 	case "stop":
-		return client.StopRunTurn(ctx, runID)
+		result, err = client.StopRunTurn(ctx, runID)
 	default:
-		return client.ReadRunTurnResult(ctx, runID)
+		result, err = client.ReadRunTurnResult(ctx, runID)
 	}
+	if err != nil && ctx.Err() == nil {
+		if saved, readErr := archived(); readErr == nil && saved.Terminal() {
+			return saved, nil
+		}
+	}
+	return result, err
 }
 
 func ReserveRunTurn(ctx context.Context, cfg *config.Config, session LocalSession, request egg.RunTurnRequest) (egg.RunTurnResult, error) {

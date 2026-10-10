@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -117,6 +118,11 @@ func (s *Service) StartRuns(ctx context.Context) error {
 		run.revision = row.Revision
 		m.records[run.ID] = &run
 	}
+	if _, err = db.DB().Exec("UPDATE tasks SET status='failed',error='Wingthing legacy run ended: unknown_outcome.',finished_at=CURRENT_TIMESTAMP WHERE type='agent_run' AND status IN ('pending','running') AND id NOT IN (SELECT id FROM agent_runs)"); err != nil {
+		cancel()
+		db.Close()
+		return err
+	}
 	s.RunManager = m
 	m.mu.Lock()
 	for _, run := range m.records {
@@ -214,8 +220,11 @@ func wingRunPathAllowed(cwd string, paths []string) bool {
 func (m *Runs) Get(a Authority, id string) (*Run, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.records[id] == nil {
+		return m.legacy(a, id)
+	}
 	if !m.owned(a, m.records[id]) {
-		return nil, errors.New("agent run not found or not owned by caller")
+		return nil, fmt.Errorf("agent run %q not found or not owned by caller", id)
 	}
 	return cloneRun(m.records[id]), nil
 }
@@ -265,8 +274,18 @@ func (m *Runs) Admit(launch *Launch, request RunRequest, options StartOptions, a
 	if err = m.ctx.Err(); err != nil {
 		return nil, false, err
 	}
-	if run.ParentID != "" && !m.owned(authority, m.records[run.ParentID]) {
-		return nil, false, errors.New("agent run not found or not owned by caller")
+	if run.ParentID != "" {
+		if parent := m.records[run.ParentID]; parent != nil {
+			if !m.owned(authority, parent) {
+				return nil, false, errors.New("agent run not found or not owned by caller")
+			}
+		} else {
+			parent, err := m.legacy(authority, run.ParentID)
+			if err != nil {
+				return nil, false, err
+			}
+			m.records[parent.ID] = parent
+		}
 	}
 	wire, err := json.Marshal(run)
 	if err != nil {
@@ -280,6 +299,9 @@ func (m *Runs) Admit(launch *Launch, request RunRequest, options StartOptions, a
 		var saved Run
 		if err = json.Unmarshal(row.Record, &saved); err != nil {
 			return nil, false, err
+		}
+		if !m.owned(authority, &saved) {
+			return nil, false, errors.New("idempotency_key belongs to another owner")
 		}
 		saved.revision = row.Revision
 		return &saved, false, nil
@@ -311,6 +333,9 @@ func (m *Runs) fail(id string, kind agent.ErrorKind) {
 	_ = m.update(id, string(kind), func(r *Run) {
 		r.Phase = "terminal"
 		r.Result.Status = "failed"
+		if kind == agent.Timeout {
+			r.Result.Status = "timeout"
+		}
 		r.Result.FailureKind = kind
 		r.Result.Error = "Wingthing run ended: " + string(kind) + "."
 		r.Result.EndedAt = time.Now().UTC()
@@ -337,7 +362,11 @@ func (m *Runs) reconcile(id string) {
 			}
 			return
 		}
-		parent := m.snapshot(r.ParentID)
+		parent, err := m.Get(r.Launch.Authority, r.ParentID)
+		if err != nil {
+			m.fail(id, agent.UnknownOutcome)
+			return
+		}
 		if err := m.update(id, "dequeued", func(r *Run) {
 			r.Prompt = SteerPrompt(parent.OriginalPrompt, parent.Result.Text, parent.Result.Error, r.Direction)
 			r.Phase = "admitted"
@@ -383,7 +412,10 @@ func (m *Runs) reconcile(id string) {
 		}
 		if err = m.update(id, "spawned", func(r *Run) {
 			r.Phase = "spawned"
-			if sec, err := strconv.ParseInt(eggclient.ReadEggMetaValues(filepath.Join(m.service.Config.Dir, "eggs", r.SessionID))["started_at"], 10, 64); err == nil {
+			meta := eggclient.ReadEggMetaValues(filepath.Join(m.service.Config.Dir, "eggs", r.SessionID))
+			if nanos, err := strconv.ParseInt(meta["started_at_nanos"], 10, 64); err == nil {
+				r.Result.Deadline = time.Unix(0, nanos).UTC().Add(time.Duration(r.TimeoutSeconds) * time.Second)
+			} else if sec, err := strconv.ParseInt(meta["started_at"], 10, 64); err == nil {
 				r.Result.Deadline = time.Unix(sec, 0).UTC().Add(time.Duration(r.TimeoutSeconds) * time.Second)
 			}
 		}); err != nil {
@@ -458,6 +490,17 @@ func (m *Runs) reconcile(id string) {
 				return
 			}
 		}
+		if result.Terminal() {
+			// Status/Submit receipts can omit text. Publish ready only with the
+			// complete artifact, including when submission lost its acknowledgement.
+			result, err = m.backend.Result(m.ctx, m.service.Config, session, id)
+			if err != nil {
+				if m.ctx.Err() == nil {
+					m.fail(id, agent.UnknownOutcome)
+				}
+				return
+			}
+		}
 		if err = m.accept(id, result); err != nil {
 			return
 		}
@@ -493,6 +536,7 @@ func (m *Runs) reconcile(id string) {
 
 func (m *Runs) accept(id string, result egg.RunTurnResult) error {
 	if result.RunID != id || result.SessionID != m.snapshot(id).SessionID {
+		m.fail(id, agent.UnknownOutcome)
 		return errors.New("egg result identity mismatch")
 	}
 	return m.update(id, result.Status, func(r *Run) {
@@ -545,9 +589,14 @@ func (m *Runs) cancelEgg(r *Run) {
 	result, err := m.backend.Stop(m.ctx, m.service.Config, session, r.ID)
 	if err == nil {
 		if result.Terminal() {
-			if full, readErr := m.backend.Result(m.ctx, m.service.Config, session, r.ID); readErr == nil {
-				result = full
+			full, readErr := m.backend.Result(m.ctx, m.service.Config, session, r.ID)
+			if readErr != nil {
+				if m.ctx.Err() == nil {
+					m.fail(r.ID, agent.UnknownOutcome)
+				}
+				return
 			}
+			result = full
 			_ = m.accept(r.ID, result)
 			return
 		}
@@ -580,6 +629,14 @@ func markRunStopped(r *Run) {
 
 func (m *Runs) Stop(a Authority, id string) (*Run, error) {
 	m.mu.Lock()
+	if m.records[id] == nil {
+		legacy, err := m.legacy(a, id)
+		if err != nil {
+			m.mu.Unlock()
+			return nil, err
+		}
+		m.records[id] = legacy
+	}
 	if !m.owned(a, m.records[id]) {
 		m.mu.Unlock()
 		return nil, errors.New("agent run not found or not owned by caller")
@@ -645,8 +702,13 @@ type RunEvent struct {
 func (m *Runs) Events(a Authority, id string, cursor int64, limit int) ([]RunEvent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !m.owned(a, m.records[id]) {
-		return nil, errors.New("agent run not found or not owned by caller")
+	legacy := m.records[id] == nil || m.records[id].SessionID == ""
+	if m.records[id] == nil {
+		if _, err := m.legacy(a, id); err != nil {
+			return nil, err
+		}
+	} else if !m.owned(a, m.records[id]) {
+		return nil, fmt.Errorf("agent run %q not found or not owned by caller", id)
 	}
 	rows, err := m.db.DB().Query("SELECT id,timestamp,event,COALESCE(detail,'') FROM task_log WHERE task_id=? AND (?=0 OR id<?) ORDER BY id DESC LIMIT ?", id, cursor, cursor, limit)
 	if err != nil {
@@ -658,6 +720,9 @@ func (m *Runs) Events(a Authority, id string, cursor int64, limit int) ([]RunEve
 		var e RunEvent
 		if err := rows.Scan(&e.Cursor, &e.Timestamp, &e.Event, &e.Detail); err != nil {
 			return nil, err
+		}
+		if legacy {
+			e.Detail = ""
 		}
 		out = append(out, e)
 	}
@@ -745,4 +810,33 @@ func (m *Runs) ReservedSessions(a Authority) int {
 		}
 	}
 	return n
+}
+
+func (m *Runs) legacy(a Authority, id string) (*Run, error) {
+	if id == "" {
+		return nil, errors.New("run_id is required")
+	}
+	t, err := m.db.GetTask(id)
+	if err != nil {
+		return nil, err
+	}
+	if t == nil || t.Type != "agent_run" || !(t.Principal == a.Principal || a.LegacyLocalDefault && (t.Principal == "" || t.Principal == "default")) || (a.EnforcePaths && !wingRunPathAllowed(t.CWD, a.AllowedPaths)) {
+		return nil, fmt.Errorf("agent run %q not found or not owned by caller", id)
+	}
+	r := &Run{ID: t.ID, Prompt: t.What, OriginalPrompt: t.What, Agent: t.Agent, Model: t.Model, CWD: t.CWD, Isolation: t.Isolation, TimeoutSeconds: t.TimeoutSeconds, CreatedAt: t.CreatedAt, Phase: "terminal", Launch: RunLaunch{Authority: a}, Result: egg.RunTurnResult{RunID: t.ID, Status: t.Status}}
+	if t.StartedAt != nil {
+		r.Result.StartedAt = *t.StartedAt
+	}
+	if t.FinishedAt != nil {
+		r.Result.EndedAt = *t.FinishedAt
+	}
+	if t.Output != nil {
+		r.Result.Text = *t.Output
+	}
+	if t.Status != "done" {
+		r.Result.Text = ""
+		r.Result.FailureKind = agent.UnknownOutcome
+		r.Result.Error = "Wingthing legacy run ended: unknown_outcome."
+	}
+	return r, nil
 }
