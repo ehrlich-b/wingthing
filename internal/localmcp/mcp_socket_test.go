@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -24,6 +25,50 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/taskrun"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
+
+func TestBoundStdioUnavailableSocketExplainsMailbox(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root bypasses directory permission denial")
+	}
+	// A short endpoint under the checkout avoids the long-path runtime fallback;
+	// removing directory search permission reproduces the sandbox's inability
+	// to reach a live wing before initialization or linked-child reservation.
+	scratch, err := filepath.Abs("../../.scratch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(scratch, 0700); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.MkdirTemp(scratch, "bound-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	var binds atomic.Int32
+	listener, err := controlsocket.Listen(t.Context(), dir, "bound-wing", func(controlsocket.Hello) (controlsocket.Welcome, controlsocket.Handler, error) {
+		binds.Add(1)
+		return controlsocket.Welcome{}, nil, errors.New("unexpected bound dispatch")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if err := os.Chmod(dir, 0000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0700)
+	var output bytes.Buffer
+	requests := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n" +
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"agent_start","arguments":{"agent":"claude","request_id":"child"}}}` + "\n")
+	err = ServeLocalWingClient(t.Context(), "test", dir, "owner", "parent", false, requests, &output)
+	if err == nil || !strings.Contains(err.Error(), "host mailbox") {
+		t.Fatalf("bound MCP lost its launch before reservation without mailbox guidance: %v", err)
+	}
+	if binds.Load() != 0 || output.Len() != 0 {
+		t.Fatal("unreachable bound stdio reached wing dispatch")
+	}
+}
 
 func localSocketPolicyFixture(t *testing.T) (*wingsession.Service, *config.WingConfig) {
 	t.Helper()
