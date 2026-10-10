@@ -67,16 +67,16 @@ func TestBuiltWTStdioWingEggFakeCodexResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture := t.TempDir()
-	binary := filepath.Join(fixture, "wt")
-	mk := filepath.Join(fixture, "fixture.mk")
-	makefile := fmt.Sprintf("include %s/Makefile\n.PHONY: fixture\nfixture: | web/dist\n\t$(GO) build -p 2 -buildvcs=false -o %s ./cmd/wt\n", repo, binary)
-	if err := os.WriteFile(mk, []byte(makefile), 0600); err != nil {
-		t.Fatal(err)
-	}
-	build := exec.Command("nice", "-n", "15", "make", "-f", mk, "fixture")
-	build.Dir = repo
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build fixture wt: %v\n%s", err, output)
+	// Linux test images carry this checkout's built fixture, without Go or
+	// source. Otherwise build it directly, without requiring make.
+	binary := os.Getenv("WT_TEST_BINARY")
+	if binary == "" {
+		binary = filepath.Join(fixture, "wt")
+		build := exec.Command("nice", "-n", "15", "go", "build", "-p", "2", "-buildvcs=false", "-o", binary, "./cmd/wt")
+		build.Dir = repo
+		if output, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("build fixture wt: %v\n%s", err, output)
+		}
 	}
 	python, err := exec.LookPath("python3")
 	if err != nil {
@@ -125,6 +125,7 @@ func TestBuiltWTStdioWingEggFakeCodexResult(t *testing.T) {
 	var children []*exec.Cmd
 	var exited []chan error
 	spawnErrors := make(chan error, 8)
+	eggReady := make(chan struct{})
 	service.Spawn = func(launch *wingsession.Launch, opts wingsession.StartOptions) (client *egg.Client, spawnErr error) {
 		defer func() {
 			if spawnErr != nil {
@@ -158,7 +159,6 @@ func TestBuiltWTStdioWingEggFakeCodexResult(t *testing.T) {
 		if err := child.Start(); err != nil {
 			return nil, err
 		}
-		ready := make(chan struct{})
 		done := make(chan error, 1)
 		mu.Lock()
 		children = append(children, child)
@@ -172,7 +172,7 @@ func TestBuiltWTStdioWingEggFakeCodexResult(t *testing.T) {
 				diagnostics.WriteString(scan.Text() + "\n")
 				if !announced && strings.Contains(scan.Text(), "egg: serving on ") {
 					announced = true
-					close(ready)
+					close(eggReady)
 				}
 			}
 			err := child.Wait()
@@ -182,7 +182,7 @@ func TestBuiltWTStdioWingEggFakeCodexResult(t *testing.T) {
 			done <- err
 		}()
 		select {
-		case <-ready:
+		case <-eggReady:
 			return egg.Dial(filepath.Join(dir, "egg.sock"), filepath.Join(dir, "egg.token"))
 		case err := <-done:
 			done <- err
@@ -255,6 +255,15 @@ func TestBuiltWTStdioWingEggFakeCodexResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	finished = true
+	// Admission precedes the asynchronous spawn. Socket readiness is emitted
+	// after the egg has created its directory and persisted launch metadata.
+	select {
+	case <-eggReady:
+	case err := <-spawnErrors:
+		t.Fatalf("fixture egg startup: %v", err)
+	case <-t.Context().Done():
+		t.Fatal(t.Context().Err())
+	}
 	// The provider receipt is authoritative; hold its completion while the
 	// wing loses every in-memory observer and reloads the durable run map.
 	if _, _, err := eggclient.WaitSessionLifecycle(t.Context(), cfg, eggclient.LocalSession{ID: session, Agent: "codex", CWD: fixture}, 0, "working"); err != nil {
