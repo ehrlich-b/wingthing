@@ -37,6 +37,7 @@ const maxConcurrentLocalMCPCalls = 64
 const maxConcurrentAgentWaitAnyCalls = 4
 
 type Server struct {
+	protocol                           mcpProtocolState
 	remoteToolCall                     func(context.Context, string, string, []byte) (map[string]any, error)
 	legacyLocalDefault                 bool
 	Sessions                           *wingsession.Service
@@ -137,9 +138,10 @@ type localMCPRequest struct {
 // call. It is coordinator metadata, not a tool argument, so accept it at the
 // envelope boundary while keeping strict decoding for every other field.
 type localMCPToolCallParams struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"`
-	Meta      json.RawMessage `json:"_meta,omitempty"`
+	Name      string                 `json:"name"`
+	Arguments json.RawMessage        `json:"arguments"`
+	Meta      json.RawMessage        `json:"_meta,omitempty"`
+	Task      *control.MCPTaskParams `json:"task,omitempty"`
 }
 
 type localMCPResponse struct {
@@ -172,6 +174,7 @@ func serveStdio(ctx context.Context, in io.Reader, out io.Writer, handle func(co
 	var calls sync.WaitGroup
 	requestSlots := make(chan struct{}, maxConcurrentLocalMCPCalls)
 	var encodeMu sync.Mutex
+	var lifetimes control.RequestLifetimes
 	var encodeErr error
 	writeResponse := func(response localMCPResponse) {
 		encodeMu.Lock()
@@ -180,8 +183,8 @@ func serveStdio(ctx context.Context, in io.Reader, out io.Writer, handle func(co
 			encodeErr = encoder.Encode(response)
 		}
 	}
-	dispatch := func(request localMCPRequest) {
-		response, respond := handle(callCtx, request)
+	dispatch := func(ctx context.Context, request localMCPRequest) {
+		response, respond := handle(ctx, request)
 		if respond {
 			writeResponse(response)
 		}
@@ -204,10 +207,19 @@ scanLoop:
 			})
 			continue
 		}
+		if request.Method == "notifications/cancelled" {
+			var params struct {
+				RequestID json.RawMessage `json:"requestId"`
+			}
+			if json.Unmarshal(request.Params, &params) == nil {
+				lifetimes.Cancel(string(params.RequestID))
+			}
+			continue
+		}
 		// Tool calls may wait for terminals or agent runs. Dispatching them
 		// independently lets the same stdio client send agent_stop, steering,
 		// and status calls while another request is waiting.
-		if request.Method == "tools/call" {
+		if request.Method == "tools/call" || request.Method == "tasks/result" {
 			if !acquireLocalMCPCallSlot(requestSlots) {
 				if len(request.ID) > 0 {
 					writeResponse(localMCPResponse{
@@ -217,15 +229,25 @@ scanLoop:
 				}
 				continue
 			}
+			requestCtx, finish, ok := lifetimes.Start(callCtx, string(request.ID))
+			if !ok {
+				<-requestSlots
+				writeResponse(localMCPResponse{JSONRPC: "2.0", ID: request.ID, Error: &localMCPError{Code: -32600, Message: "duplicate active request ID"}})
+				continue
+			}
 			calls.Add(1)
 			go func() {
 				defer calls.Done()
 				defer func() { <-requestSlots }()
-				dispatch(request)
+				response, respond := handle(requestCtx, request)
+				finish()
+				if respond {
+					writeResponse(response)
+				}
 			}()
 			continue
 		}
-		dispatch(request)
+		dispatch(callCtx, request)
 	}
 	scanErr := scanner.Err()
 	// stdin EOF means the owning MCP client is gone. Cancel bounded waits and
@@ -259,9 +281,10 @@ func (s *Server) handle(ctx context.Context, request localMCPRequest) (localMCPR
 
 	switch request.Method {
 	case "initialize":
+		version := s.protocol.negotiate(request.Params)
 		response.Result = map[string]any{
-			"protocolVersion": localMCPProtocolVersion,
-			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"protocolVersion": version,
+			"capabilities":    mcpCapabilities(version),
 			"serverInfo": map[string]any{
 				"name":      "wingthing-local",
 				"version":   s.Version,
@@ -285,7 +308,7 @@ func (s *Server) handle(ctx context.Context, request localMCPRequest) (localMCPR
 			}
 			tools = filtered
 		}
-		response.Result = map[string]any{"tools": tools}
+		response.Result = map[string]any{"tools": mcpVersionTools(tools, s.protocol.tasksEnabled())}
 	case "tools/call":
 		var call localMCPToolCallParams
 		if err := decodeStrict(request.Params, &call); err != nil {
@@ -299,12 +322,20 @@ func (s *Server) handle(ctx context.Context, request localMCPRequest) (localMCPR
 		if len(call.Arguments) == 0 {
 			call.Arguments = json.RawMessage(`{}`)
 		}
+		if call.Task != nil && s.protocol.tasksEnabled() {
+			return handleMCPTaskRequest(ctx, request, s.callTaskControl, false), len(request.ID) > 0
+		}
 		data, isError, protocolErr := s.callTool(ctx, call.Name, call.Arguments)
 		if protocolErr != nil {
 			response.Error = protocolErr
 			break
 		}
 		response.Result = localMCPToolResult(data, isError)
+	case "tasks/get", "tasks/result", "tasks/list", "tasks/cancel":
+		if s.protocol.tasksEnabled() {
+			return handleMCPTaskRequest(ctx, request, s.callTaskControl, false), len(request.ID) > 0
+		}
+		response.Error = &localMCPError{Code: -32601, Message: "tasks require MCP 2025-11-25"}
 	default:
 		if len(request.ID) == 0 {
 			return localMCPResponse{}, false

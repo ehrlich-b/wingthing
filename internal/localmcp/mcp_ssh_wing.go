@@ -75,6 +75,9 @@ func (m *rememberedWings) remoteByName(ctx context.Context, hello controlsocket.
 	return result, err
 }
 func (m *rememberedWings) dispatch(ctx context.Context, s *Server, hello controlsocket.Hello, request control.DirectRequest) control.DirectResponse {
+	if _, taskOperation := control.MCPTaskTool(request.Tool); taskOperation && request.Version == control.ContractVersion && request.ID != "" {
+		return m.dispatchTasks(ctx, s, hello, request)
+	}
 	fail := func(err error) control.DirectResponse {
 		data := control.ErrorResult(err)
 		var unknown *wingconnect.UnknownOutcome

@@ -23,6 +23,13 @@ type MCPTaskParams struct {
 	TTL *int64 `json:"ttl,omitempty"`
 }
 
+type MCPTaskError struct {
+	Code    int
+	Message string
+}
+
+func (e *MCPTaskError) Error() string { return e.Message }
+
 // MCPTask is the MCP 2025-11-25 Task wire type. A nil TTL means unlimited.
 type MCPTask struct {
 	TaskID        string `json:"taskId"`

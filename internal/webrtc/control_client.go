@@ -148,6 +148,8 @@ func (c *ControlClient) Call(ctx context.Context, tool string, arguments json.Ra
 	}
 	select {
 	case <-ctx.Done():
+		payload, _ := json.Marshal(control.CancellationRequest(id))
+		_ = c.dc.Send(payload)
 		return nil, true, ctx.Err()
 	case <-c.done:
 		c.mu.Lock()

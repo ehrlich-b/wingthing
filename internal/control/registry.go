@@ -50,6 +50,7 @@ type Tool struct {
 	Description string         `json:"description"`
 	InputSchema map[string]any `json:"inputSchema"`
 	Annotations map[string]any `json:"annotations,omitempty"`
+	Execution   map[string]any `json:"execution,omitempty"`
 
 	Version         string            `json:"-"`
 	Grant           string            `json:"-"`
@@ -79,6 +80,9 @@ func Tools(surface Surface) []Tool {
 	for _, tool := range catalog {
 		if tool.Supports(surface) {
 			tool = cloneTool(tool)
+			if surface != SurfaceHTTPMCP && tool.Name == "agent_run" {
+				tool.Execution = map[string]any{"taskSupport": "optional"}
+			}
 			if surface == SurfaceDirectMCP && tool.Authority == AuthorityWing {
 				tool.InputSchema = withWingTarget(tool.InputSchema)
 			}
@@ -137,6 +141,7 @@ func Lookup(name string) (Tool, bool) {
 func cloneTool(tool Tool) Tool {
 	tool.InputSchema = cloneContractMap(tool.InputSchema)
 	tool.Annotations = cloneContractMap(tool.Annotations)
+	tool.Execution = cloneContractMap(tool.Execution)
 	tool.Surfaces = append([]Surface(nil), tool.Surfaces...)
 	tool.AuditTargetKeys = append([]string(nil), tool.AuditTargetKeys...)
 	return tool

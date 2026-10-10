@@ -400,11 +400,17 @@ func AdmissionArguments(args json.RawMessage) (json.RawMessage, string, error) {
 }
 func (p *Pool) Call(ctx context.Context, wingID, name string, args json.RawMessage) (map[string]any, bool, error) {
 	tool, ok := control.Lookup(name)
+	if !ok {
+		tool, ok = control.MCPTaskTool(name)
+	}
 	if !ok || !tool.Supports(control.SurfaceLocalMCP) {
 		return nil, true, fmt.Errorf("unknown tool %q", name)
 	}
-	ctx, cancel := context.WithTimeout(ctx, p.opts.CallTimeout)
-	defer cancel()
+	if name != control.MCPTaskResult {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, p.opts.CallTimeout)
+		defer cancel()
+	}
 	e, err := p.target(wingID)
 	if err != nil {
 		return nil, true, err
@@ -416,8 +422,14 @@ func (p *Pool) Call(ctx context.Context, wingID, name string, args json.RawMessa
 			return nil, true, err
 		}
 	}
+	if name == control.MCPTaskCreate {
+		args, key, err = control.TaskAdmissionArguments(args, AdmissionArguments)
+		if err != nil {
+			return nil, true, err
+		}
+	}
 	delivered := false
-	retry := tool.Annotations["readOnlyHint"] == true || name == "agent_run"
+	retry := tool.Annotations["readOnlyHint"] == true || name == "agent_run" || name == control.MCPTaskCreate
 	for attempt := 0; attempt < 2; attempt++ {
 		conn, connectErr := e.acquire(ctx)
 		if connectErr != nil {

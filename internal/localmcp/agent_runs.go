@@ -156,6 +156,9 @@ func (s *Server) toolAgentResult(arguments json.RawMessage) (map[string]any, err
 	if err != nil {
 		return nil, err
 	}
+	if r.MCPTask != nil && r.MCPTask.CancelledResult != nil {
+		r.Result = *r.MCPTask.CancelledResult
+	}
 	data := wingRunStatus(r)
 	data["ready"] = r.Result.Terminal()
 	if r.Result.Terminal() {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/creack/pty"
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
@@ -108,12 +110,31 @@ func TestBuiltWTStdioWingEggFakeCodexResult(t *testing.T) {
 	}
 }
 
+func TestBuiltWTStdioWingEggFakeCodexTaskResult(t *testing.T) {
+	testBuiltWTStdioWingEggFakeCodexMode(t, false, true)
+}
+
 func testBuiltWTStdioWingEggFakeCodex(t *testing.T, modal bool) {
+	testBuiltWTStdioWingEggFakeCodexMode(t, modal, false)
+}
+
+func testBuiltWTStdioWingEggFakeCodexMode(t *testing.T, modal, nativeTask bool) {
 	repo, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
 	fixture := t.TempDir()
+	if nativeTask {
+		scratch := filepath.Join(repo, ".scratch")
+		if err := os.MkdirAll(scratch, 0700); err != nil {
+			t.Fatal(err)
+		}
+		fixture, err = os.MkdirTemp(scratch, "task-codex-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(fixture) })
+	}
 	// Linux test images carry this checkout's built fixture, without Go or
 	// source. Otherwise build it directly, without requiring make.
 	binary := os.Getenv("WT_TEST_BINARY")
@@ -292,14 +313,19 @@ func testBuiltWTStdioWingEggFakeCodex(t *testing.T, modal bool) {
 		model, timeout = "fixture-modal", 10
 	}
 	args, _ := json.Marshal(map[string]any{"prompt": "fixture request", "agent": "codex", "model": model, "cwd": fixture, "timeout_seconds": timeout})
-	request, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "agent_run", "arguments": json.RawMessage(args)}})
+	params := map[string]any{"name": "agent_run", "arguments": json.RawMessage(args)}
+	if nativeTask {
+		params["task"] = map[string]any{"ttl": 60000}
+	}
+	request, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params})
 	if _, err := input.Write(append(request, '\n')); err != nil {
 		t.Fatal(err)
 	}
 	var response struct {
 		Result struct {
-			Data    map[string]any `json:"structuredContent"`
-			IsError bool           `json:"isError"`
+			Task    control.MCPTask `json:"task"`
+			Data    map[string]any  `json:"structuredContent"`
+			IsError bool            `json:"isError"`
 		} `json:"result"`
 		Error any `json:"error"`
 	}
@@ -309,8 +335,21 @@ func testBuiltWTStdioWingEggFakeCodex(t *testing.T, modal bool) {
 	if response.Error != nil || response.Result.IsError {
 		t.Fatalf("stdio admission: %+v", response)
 	}
-	id := response.Result.Data["run_id"].(string)
-	session := response.Result.Data["session_id"].(string)
+	id, session := "", ""
+	if nativeTask {
+		if response.Result.Task.Status != "working" || response.Result.Data != nil {
+			t.Fatalf("not a CreateTaskResult: %+v", response)
+		}
+		id = response.Result.Task.TaskID
+		run, err := service.RunManager.Get(wingsession.Authority{UserID: "fixture-owner", Principal: wingsession.UserPrincipal("fixture-owner")}, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		session = run.SessionID
+	} else {
+		id = response.Result.Data["run_id"].(string)
+		session = response.Result.Data["session_id"].(string)
+	}
 	input.Close()
 	if err := process.Wait(); err != nil {
 		t.Fatal(err)
@@ -373,6 +412,40 @@ func testBuiltWTStdioWingEggFakeCodex(t *testing.T, modal bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var nativeResult map[string]any
+	var restartedDecoder *json.Decoder
+	if nativeTask {
+		process = exec.Command(binary, "mcp", "stdio", "--unsandboxed")
+		process.Env = []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH")}
+		process.Stderr = os.Stderr
+		input, err = process.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		output, err = process.StdoutPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := process.Start(); err != nil {
+			t.Fatal(err)
+		}
+		finished = false
+		restartedDecoder = json.NewDecoder(output)
+		encoder := json.NewEncoder(input)
+		if err := encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tasks/get", "params": map[string]any{"taskId": id}}); err != nil {
+			t.Fatal(err)
+		}
+		var get struct {
+			Result control.MCPTask `json:"result"`
+			Error  any             `json:"error"`
+		}
+		if err := restartedDecoder.Decode(&get); err != nil || get.Error != nil || get.Result.Status != "working" {
+			t.Fatalf("new client lost running task: %+v %v", get, err)
+		}
+		if err := encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 3, "method": "tasks/result", "params": map[string]any{"taskId": id}}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	gate, err := os.OpenFile(gatePath, os.O_WRONLY, 0600)
 	if err != nil {
 		t.Fatal(err)
@@ -381,6 +454,24 @@ func testBuiltWTStdioWingEggFakeCodex(t *testing.T, modal bool) {
 		t.Fatal(err)
 	}
 	gate.Close()
+	if nativeTask {
+		var result struct {
+			Result map[string]any `json:"result"`
+			Error  any            `json:"error"`
+		}
+		if err := restartedDecoder.Decode(&result); err != nil || result.Error != nil {
+			t.Fatalf("native task result: %+v %v", result, err)
+		}
+		nativeResult = result.Result
+		if nativeResult["_meta"].(map[string]any)[control.MCPRelatedTask].(map[string]any)["taskId"] != id {
+			t.Fatal("task result correlation lost")
+		}
+		_ = input.Close()
+		if err := process.Wait(); err != nil {
+			t.Fatal(err)
+		}
+		finished = true
+	}
 	// A new MCP client observes the same wing-owned outcome after host exit.
 	client, err := controlsocket.Dial(t.Context(), state, controlsocket.Hello{Unsandboxed: true})
 	if err != nil {
@@ -400,6 +491,9 @@ func testBuiltWTStdioWingEggFakeCodex(t *testing.T, modal bool) {
 	result, denied, err := client.Call(t.Context(), "agent_result", wire)
 	if err != nil || denied || result["output"] != "Fake Codex fixture-model: Ω🙂 fixture request" || result["turn_id"] != "fake-turn" {
 		t.Fatalf("native result: %v %v", result, err)
+	}
+	if nativeTask && !reflect.DeepEqual(nativeResult["structuredContent"], result) {
+		t.Fatalf("tasks/result differs from agent_result: %v vs %v", nativeResult, result)
 	}
 	visible, err := service.ListWeb(context.Background(), wingsession.Authority{UserID: "fixture-owner", Role: "owner", Browser: true})
 	if err != nil || len(visible) != 1 || visible[0].SessionID != session {

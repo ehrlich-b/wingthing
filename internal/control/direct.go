@@ -21,16 +21,20 @@ type DirectRequest struct {
 
 // DirectResponse is the bounded result envelope returned by a wing.
 type DirectResponse struct {
-	Version   string         `json:"version"`
-	ID        string         `json:"id"`
-	Result    map[string]any `json:"result,omitempty"`
-	IsError   bool           `json:"is_error,omitempty"`
-	Error     string         `json:"error,omitempty"`
-	ErrorKind ErrorKind      `json:"error_kind,omitempty"`
+	Version      string         `json:"version"`
+	ID           string         `json:"id"`
+	Result       map[string]any `json:"result,omitempty"`
+	IsError      bool           `json:"is_error,omitempty"`
+	Error        string         `json:"error,omitempty"`
+	ErrorKind    ErrorKind      `json:"error_kind,omitempty"`
+	RPCErrorCode int            `json:"rpc_error_code,omitempty"`
 }
 
 // Err restores typed failures while preserving legacy tool-result semantics.
 func (r DirectResponse) Err() error {
+	if r.RPCErrorCode != 0 {
+		return &MCPTaskError{Code: r.RPCErrorCode, Message: r.Error}
+	}
 	if r.Error != "" {
 		return DecodeError(r.ErrorKind, r.Error)
 	}
