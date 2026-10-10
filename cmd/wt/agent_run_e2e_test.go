@@ -126,6 +126,7 @@ func TestBuiltWTStdioWingEggFakeCodexResult(t *testing.T) {
 	var exited []chan error
 	spawnErrors := make(chan error, 8)
 	eggReady := make(chan struct{})
+	var eggReadyOnce sync.Once
 	service.Spawn = func(launch *wingsession.Launch, opts wingsession.StartOptions) (client *egg.Client, spawnErr error) {
 		defer func() {
 			if spawnErr != nil {
@@ -159,6 +160,7 @@ func TestBuiltWTStdioWingEggFakeCodexResult(t *testing.T) {
 		if err := child.Start(); err != nil {
 			return nil, err
 		}
+		ready := make(chan struct{})
 		done := make(chan error, 1)
 		mu.Lock()
 		children = append(children, child)
@@ -172,7 +174,8 @@ func TestBuiltWTStdioWingEggFakeCodexResult(t *testing.T) {
 				diagnostics.WriteString(scan.Text() + "\n")
 				if !announced && strings.Contains(scan.Text(), "egg: serving on ") {
 					announced = true
-					close(eggReady)
+					close(ready)
+					eggReadyOnce.Do(func() { close(eggReady) })
 				}
 			}
 			err := child.Wait()
@@ -182,7 +185,7 @@ func TestBuiltWTStdioWingEggFakeCodexResult(t *testing.T) {
 			done <- err
 		}()
 		select {
-		case <-eggReady:
+		case <-ready:
 			return egg.Dial(filepath.Join(dir, "egg.sock"), filepath.Join(dir, "egg.token"))
 		case err := <-done:
 			done <- err
