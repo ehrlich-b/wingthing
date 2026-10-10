@@ -64,6 +64,9 @@ func TestStdioStartedSessionSurvivesClientExitAndIsWebVisible(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(scratch, 0700); err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
 	alias, err := os.MkdirTemp(scratch, "m")
 	if err != nil {
