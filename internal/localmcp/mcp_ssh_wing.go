@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -51,7 +52,15 @@ func (m *rememberedWings) pool(hello controlsocket.Hello) (*wingconnect.Pool, er
 	if p := m.pools[hello]; p != nil {
 		return p, nil
 	}
-	p, err := wingconnect.New(m.ctx, wingconnect.Options{Dir: m.dir, LocalWingID: m.wingID, Hello: hello, Transport: sshcontrol.Transport{SocketDir: m.dir}})
+	socketDir := m.dir
+	if len(filepath.Join(socketDir, "s0000000000", "c")) > 103 {
+		path, err := controlsocket.Path(m.dir)
+		if err != nil {
+			return nil, err
+		}
+		socketDir = filepath.Dir(path)
+	}
+	p, err := wingconnect.New(m.ctx, wingconnect.Options{Dir: m.dir, LocalWingID: m.wingID, Hello: hello, Transport: sshcontrol.Transport{SocketDir: socketDir}})
 	if err == nil {
 		m.pools[hello] = p
 	}

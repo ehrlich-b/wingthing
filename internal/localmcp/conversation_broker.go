@@ -98,6 +98,9 @@ func brokerActor(conversation, session string) string {
 // parent launch, when the broker starts, and before every child spawn.
 var conversationBrokerProtection = defaultConversationBrokerProtection
 
+// The built receiver is replaceable only by isolated protocol fixtures.
+var conversationBrokerExecutable = os.Executable
+
 func conversationBrokerEnabled(wc *config.WingConfig) bool {
 	return config.Channel() == "preview" || config.Channel() == "stable" && wc != nil && wc.Conversations == config.ConversationsEnabled
 }
@@ -261,7 +264,7 @@ func (s *Server) prepareBrokerParentMCP(c *store.Conversation, eggCfg *egg.EggCo
 	if len(tools) == 0 {
 		return nil, nil, errors.New("this launcher has no grant for any host mailbox operation")
 	}
-	executable, err := os.Executable()
+	executable, err := conversationBrokerExecutable()
 	if err != nil {
 		return nil, nil, err
 	}
