@@ -208,8 +208,12 @@ func builtScopedParentProtocol(t *testing.T, exitParent bool) {
 				args = append(args, "--agent-arg="+arg)
 			}
 			if opts.Egg.InitialRun != nil {
-				wire, _ := json.Marshal(opts.Egg.InitialRun)
-				args = append(args, "--initial-run="+string(wire))
+				runPath, err := egg.WriteInitialRunFile(dir, opts.Egg.InitialRun)
+				if err != nil {
+					return nil, err
+				}
+				defer os.Remove(runPath)
+				args = append(args, "--initial-run-file-required")
 			}
 			p, ready := mailboxProcessStart(t, binary, args, env(state), launch.CWD, nil, "egg: serving on")
 			mu.Lock()

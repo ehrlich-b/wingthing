@@ -926,18 +926,36 @@ func (j *lifecycleJournal) importProviderHooks(root *os.File, spool, providerID,
 			return providerID, err
 		}
 		e := SessionEvent{Source: source, SourceKey: "hook:" + file.name, ProviderSessionID: providerID, Timestamp: file.modified.UTC().Format(time.RFC3339Nano)}
+		recordLimit := maxLifecycleRecord
+		if agent == "codex" {
+			recordLimit = maxInitialRunWire
+		}
 		var data []byte
-		if info.Size() <= maxLifecycleRecord {
-			data, err = io.ReadAll(io.LimitReader(f, maxLifecycleRecord+1))
+		if info.Size() <= int64(recordLimit) {
+			data, err = io.ReadAll(io.LimitReader(f, int64(recordLimit)+1))
 		}
 		_ = f.Close()
 		if err != nil {
 			return providerID, err
 		}
-		if info.Size() > maxLifecycleRecord || len(data) > maxLifecycleRecord {
+		// Only a bound Codex prompt receipt or Stop payload needs the larger
+		// record limit. Oversized startup/foreign/malformed hooks cannot bind a
+		// thread or prevent later ordinary hooks from being imported.
+		largeAllowed := false
+		if agent == "codex" && providerID != "" && len(data) > maxLifecycleRecord {
+			var large struct {
+				SessionID string `json:"session_id"`
+				TurnID    string `json:"turn_id"`
+				Event     string `json:"hook_event_name"`
+				Prompt    string `json:"prompt"`
+			}
+			largeAllowed = json.Unmarshal(data, &large) == nil && large.SessionID == providerID && validCodexNativeID(large.TurnID) &&
+				((large.Event == "UserPromptSubmit" && len(large.Prompt) <= MaxRunPromptBytes) || large.Event == "Stop")
+		}
+		if info.Size() > int64(recordLimit) || len(data) > recordLimit || (info.Size() > maxLifecycleRecord && !largeAllowed) {
 			e.Type = "provider_warning"
 			e.State = "unknown"
-			e.Reason = "native hook exceeds 1 MiB; skipped"
+			e.Reason = fmt.Sprintf("native hook exceeds %d MiB; skipped", recordLimit>>20)
 			e.Truncated = true
 			e.OriginalBytes = info.Size()
 			if err = j.append(e); err != nil {

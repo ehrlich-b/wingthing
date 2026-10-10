@@ -683,7 +683,6 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		if !nativeRunSupported(rc.Kind, rc.Agent, rc.Command, codexRun) || rc.Agent != "codex" || rc.ResumeSessionID != "" || providerOptionsEnd(args) != len(args) {
 			return errors.New("initial run requires a fresh native Codex TUI without a positional prompt")
 		}
-		args = append(args, "--", rc.InitialRun.Prompt)
 	}
 	if home != "" {
 		localBin := filepath.Join(home, ".local", "bin")

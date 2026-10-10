@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,10 +44,16 @@ for i,a in enumerate(args):
    command=re.search(r'command=("(?:\\.|[^"\\])*")',value).group(1)
    hooks[event]=json.loads(command)
   elif value.startswith('notify='): notify=json.loads(value.split('=',1)[1])
-assert '--no-daemon' in args and notify and 'SessionStart' in hooks
+assert '--no-daemon' in args and notify == [] and 'SessionStart' in hooks
+with open(os.path.join(os.environ['HOME'],'.fixture-argv'),'w') as f: json.dump(sys.argv,f)
 thread='fake-thread'
+transcript=os.path.join(os.environ['HOME'],'.codex','sessions','rollout-fixture-'+thread+'.jsonl')
+os.makedirs(os.path.dirname(transcript),exist_ok=True)
+def record(data):
+ with open(transcript,'a') as f: f.write(json.dumps(data)+'\n')
+record({'type':'session_meta','payload':{'id':thread}})
 def hook(event, **extra):
- data={'hook_event_name':event,'session_id':thread};data.update(extra)
+ data={'hook_event_name':event,'session_id':thread,'transcript_path':transcript};data.update(extra)
  subprocess.run(['/bin/sh','-c',hooks[event]],input=json.dumps(data).encode(),check=True)
 tty.setraw(0)
 model=args[args.index('-m')+1]
@@ -56,22 +63,23 @@ if model=='fixture-modal':
  sys.exit(0)
 initial=args[args.index('--')+1] if '--' in args else None
 os.write(1,b'OpenAI Codex\r\nAsk Codex to do anything\r\n')
-buffer=b''
+buffer=bytearray()
 while True:
  if initial is not None:
   prompt=initial; initial=None
  else:
-  chunk=os.read(0,1)
+  chunk=os.read(0,65536)
   if not chunk: break
-  if chunk!=b'\r': buffer+=chunk;continue
-  prompt=buffer.decode().removeprefix('\x1b[200~').removesuffix('\x1b[201~');buffer=b''
+  buffer.extend(chunk)
+  if not buffer.endswith(b'\x1b[201~\r'): continue
+  prompt=buffer.decode().removeprefix('\x1b[200~').removesuffix('\x1b[201~\r');buffer=bytearray()
  hook('SessionStart',source='startup')
  turn='fake-turn'
  hook('UserPromptSubmit',turn_id=turn,prompt=prompt)
  with open(os.path.join(os.environ['HOME'],'..','completion-gate'),'rb') as gate: gate.read(1)
  payload={'type':'agent-turn-complete','thread-id':thread,'turn-id':turn,'input-messages':[prompt],'last-assistant-message':'Fake Codex '+model+': Ω🙂 '+prompt}
- subprocess.run(notify+[json.dumps(payload)],check=True)
- hook('Stop',turn_id=turn)
+ hook('Stop',turn_id=turn,last_assistant_message=payload['last-assistant-message'])
+ record({'type':'event_msg','payload':{'type':'task_complete','turn_id':turn,'last_agent_message':payload['last-assistant-message']}})
 `
 
 func TestFakeCodexDoesNotAnnounceReadinessAtEmptyStartup(t *testing.T) {
@@ -114,11 +122,24 @@ func TestBuiltWTStdioWingEggFakeCodexTaskResult(t *testing.T) {
 	testBuiltWTStdioWingEggFakeCodexMode(t, false, true)
 }
 
+func TestBuiltWTStdioWingEggFakeCodexOneMiBPromptIsPrivate(t *testing.T) {
+	for _, fill := range []string{"x", "<"} {
+		t.Run(fmt.Sprintf("fill=%s", fill), func(t *testing.T) {
+			prompt := "private-initial-prompt-sentinel-Ω🙂\n" + strings.Repeat(fill, egg.MaxRunPromptBytes-len("private-initial-prompt-sentinel-Ω🙂\n"))
+			testBuiltWTStdioWingEggFakeCodexPrompt(t, false, false, prompt)
+		})
+	}
+}
+
 func testBuiltWTStdioWingEggFakeCodex(t *testing.T, modal bool) {
 	testBuiltWTStdioWingEggFakeCodexMode(t, modal, false)
 }
 
 func testBuiltWTStdioWingEggFakeCodexMode(t *testing.T, modal, nativeTask bool) {
+	testBuiltWTStdioWingEggFakeCodexPrompt(t, modal, nativeTask, "fixture request")
+}
+
+func testBuiltWTStdioWingEggFakeCodexPrompt(t *testing.T, modal, nativeTask bool, prompt string) {
 	repo, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -219,13 +240,19 @@ func testBuiltWTStdioWingEggFakeCodexMode(t *testing.T, modal, nativeTask bool) 
 			args = append(args, "--agent-arg="+arg)
 		}
 		if opts.Egg.InitialRun != nil {
-			wire, err := json.Marshal(opts.Egg.InitialRun)
+			path, err := egg.WriteInitialRunFile(dir, opts.Egg.InitialRun)
 			if err != nil {
 				return nil, err
 			}
-			args = append(args, "--initial-run="+string(wire))
+			defer os.Remove(path)
+			args = append(args, "--initial-run-file-required")
 		}
 		child := exec.Command(binary, args...)
+		for _, arg := range child.Args {
+			if strings.Contains(arg, prompt) {
+				return nil, fmt.Errorf("initial prompt leaked into egg wrapper argv")
+			}
+		}
 		child.Env = []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH")}
 		child.Stdout = io.Discard
 		logs, err := child.StderrPipe()
@@ -312,7 +339,7 @@ func testBuiltWTStdioWingEggFakeCodexMode(t *testing.T, modal, nativeTask bool) 
 	if modal {
 		model, timeout = "fixture-modal", 10
 	}
-	args, _ := json.Marshal(map[string]any{"prompt": "fixture request", "agent": "codex", "model": model, "cwd": fixture, "timeout_seconds": timeout})
+	args, _ := json.Marshal(map[string]any{"prompt": prompt, "agent": "codex", "model": model, "cwd": fixture, "timeout_seconds": timeout})
 	params := map[string]any{"name": "agent_run", "arguments": json.RawMessage(args)}
 	if nativeTask {
 		params["task"] = map[string]any{"ttl": 60000}
@@ -388,6 +415,16 @@ func testBuiltWTStdioWingEggFakeCodexMode(t *testing.T, modal, nativeTask bool) 
 	if _, _, err := eggclient.WaitSessionLifecycle(t.Context(), cfg, eggclient.LocalSession{ID: session, Agent: "codex", CWD: fixture}, 0, "working"); err != nil {
 		t.Fatal(err)
 	}
+	// The provider writes its actual argv while completion is held. Inspect
+	// OS process listings too, when the host allows the platform interface.
+	providerArgv, err := os.ReadFile(filepath.Join(home, ".fixture-argv"))
+	if err != nil || strings.Contains(string(providerArgv), "private-initial-prompt-sentinel") || strings.Contains(string(providerArgv), prompt) {
+		t.Fatalf("provider argv privacy failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(state, "eggs", session, ".egg.run")); !os.IsNotExist(err) {
+		t.Fatal("initial prompt transport file remains after provider launch")
+	}
+	assertInitialPromptAbsentFromProcessListings(t, prompt)
 	meta := eggclient.ReadEggMetaValues(filepath.Join(state, "eggs", session))
 	started, err := strconv.ParseInt(meta["started_at_nanos"], 10, 64)
 	if err != nil {
@@ -489,8 +526,17 @@ func testBuiltWTStdioWingEggFakeCodexMode(t *testing.T, modal, nativeTask bool) 
 	}
 	wire, _ = json.Marshal(map[string]any{"run_id": id})
 	result, denied, err := client.Call(t.Context(), "agent_result", wire)
-	if err != nil || denied || result["output"] != "Fake Codex fixture-model: Ω🙂 fixture request" || result["turn_id"] != "fake-turn" {
-		t.Fatalf("native result: %v %v", result, err)
+	expected := "Fake Codex fixture-model: Ω🙂 " + prompt
+	publicText := []rune(expected)
+	if len(publicText) > 50000 {
+		publicText = publicText[:50000]
+	}
+	if err != nil || denied || result["output"] != string(publicText) || result["turn_id"] != "fake-turn" {
+		t.Fatalf("native result: status=%v turn=%v error=%v", result["status"], result["turn_id"], err)
+	}
+	saved, err := service.RunManager.Get(wingsession.Authority{UserID: "fixture-owner", Principal: wingsession.UserPrincipal("fixture-owner")}, id)
+	if err != nil || saved.Result.Text != expected {
+		t.Fatalf("full native result did not preserve the prompt: %v", err)
 	}
 	if nativeTask && !reflect.DeepEqual(nativeResult["structuredContent"], result) {
 		t.Fatalf("tasks/result differs from agent_result: %v vs %v", nativeResult, result)
@@ -498,5 +544,36 @@ func testBuiltWTStdioWingEggFakeCodexMode(t *testing.T, modal, nativeTask bool) 
 	visible, err := service.ListWeb(context.Background(), wingsession.Authority{UserID: "fixture-owner", Role: "owner", Browser: true})
 	if err != nil || len(visible) != 1 || visible[0].SessionID != session {
 		t.Fatalf("ordinary web egg: %v %v", visible, err)
+	}
+}
+
+func assertInitialPromptAbsentFromProcessListings(t *testing.T, prompt string) {
+	t.Helper()
+	sentinel := prompt
+	if i := strings.IndexByte(sentinel, '\n'); i >= 0 {
+		sentinel = sentinel[:i]
+	}
+	if runtime.GOOS == "linux" {
+		paths, err := filepath.Glob("/proc/[0-9]*/cmdline")
+		if err != nil || len(paths) == 0 {
+			t.Fatalf("no Linux process command lines: %v", err)
+		}
+		for _, path := range paths {
+			data, err := os.ReadFile(path)
+			if err == nil && strings.Contains(string(data), sentinel) {
+				t.Fatalf("initial prompt found in %s", path)
+			}
+		}
+	}
+	data, err := exec.Command("ps", "-axww", "-o", "pid=,command=").Output()
+	if err != nil {
+		if runtime.GOOS == "linux" {
+			t.Fatalf("Linux process listing failed: %v", err)
+		}
+		t.Logf("ps privacy check unavailable on this host: %v; actual wrapper and provider argv checked", err)
+		return
+	}
+	if strings.Contains(string(data), sentinel) {
+		t.Fatal("initial prompt found in ps output")
 	}
 }

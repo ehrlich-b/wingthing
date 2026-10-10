@@ -174,7 +174,8 @@ func serveStdio(ctx context.Context, in io.Reader, out io.Writer, handle func(co
 	callCtx, cancelCalls := context.WithCancel(ctx)
 	defer cancelCalls()
 	scanner := bufio.NewScanner(in)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	// A 1 MiB run prompt can expand sixfold in JSON, plus the RPC envelope.
+	scanner.Buffer(make([]byte, 64*1024), 8<<20)
 	encoder := json.NewEncoder(out)
 	var calls sync.WaitGroup
 	requestSlots := make(chan struct{}, maxConcurrentLocalMCPCalls)

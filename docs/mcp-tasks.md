@@ -67,6 +67,12 @@ an `agent_wait` timeout or the SSH pool's ordinary call timeout. It returns the
 same CallToolResult payload as `agent_result`, with related-task metadata.
 Run errors remain in that payload, as with ordinary `agent_result` calls.
 
+`agent_run.label` is optional display text of at most 200 Unicode characters,
+independent of the session slug. Spaces, punctuation and Unicode are accepted;
+whitespace is collapsed and control/format characters are removed. Labels need
+not be unique. Admission, status and result return the stored label; use the
+returned run/session IDs to address the work.
+
 The task's final payload differs from the admission receipt returned by plain
 `agent_run`. This preserves the existing tool behavior while supplying the
 durable run's result. **Verify:** this mapping against the spec's requirement

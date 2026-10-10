@@ -1,8 +1,10 @@
 package egg
 
 import (
+	"context"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Session-scoped overrides suppress startup UI without changing provider files
@@ -19,6 +21,55 @@ func codexStartupArgs(args []string, cwd string) []string {
 		out = append(out, "-c", value)
 	}
 	return append(out, args[end:]...)
+}
+
+// Codex has no native empty-composer signal. This narrow screen fallback gates
+// the first paste only; it never reports semantic readiness or completion.
+func codexComposerReady(screen string) bool {
+	screen = strings.ToLower(screen)
+	for _, blocker := range []string{"update available", "sign in", "log in", "trust", "loading"} {
+		if strings.Contains(screen, blocker) {
+			return false
+		}
+	}
+	return strings.Contains(screen, "openai codex") && strings.Contains(screen, "ask codex to do anything")
+}
+
+func (rt *runTurnRuntime) sendInitialCodex(ctx context.Context, input string, admitted <-chan struct{}) error {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		select {
+		case <-admitted:
+			return nil
+		default:
+		}
+		if rt.backend.StartupReady != nil && rt.backend.StartupReady() {
+			delivery, err := rt.backend.InitialSend(ctx, input)
+			if delivery.Release != nil {
+				defer delivery.Release()
+			}
+			if err != nil {
+				return err
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-admitted:
+				return nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-admitted:
+			return nil // Native receipt already observed: never paste twice.
+		case <-ticker.C:
+		}
+	}
 }
 
 // Retain only allowlisted descriptions of the last rendered screen. Arbitrary

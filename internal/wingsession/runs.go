@@ -248,6 +248,11 @@ func (m *Runs) Admit(launch *Launch, request RunRequest, options StartOptions, a
 	if len(request.RequestKey) > 200 {
 		return nil, false, errors.New("idempotency_key must have at most 200 bytes")
 	}
+	label, err := NormalizeRunLabel(request.Label)
+	if err != nil {
+		return nil, false, err
+	}
+	request.Label = label
 	yaml, err := launch.Config.TaskYAML()
 	if err != nil {
 		return nil, false, err
@@ -261,7 +266,8 @@ func (m *Runs) Admit(launch *Launch, request RunRequest, options StartOptions, a
 	options.Agent = run.Agent
 	options.Egg.Kind = "agent"
 	options.Egg.Principal = launch.authority.Principal
-	options.Egg.Label = request.Label
+	// A run label is display text, never a session slug or uniqueness claim.
+	options.Egg.Label = ""
 	// Passkey tokens authorize admission only and are never archived.
 	authority := launch.authority
 	authority.PublicKey = ""
@@ -804,6 +810,11 @@ func runRequestHash(launch *Launch, request RunRequest) string {
 
 // Retry resolves accepted work before charging admission bounds again.
 func (m *Runs) Retry(launch *Launch, request RunRequest) (*Run, error) {
+	label, err := NormalizeRunLabel(request.Label)
+	if err != nil {
+		return nil, err
+	}
+	request.Label = label
 	if request.RequestKey == "" {
 		return nil, nil
 	}

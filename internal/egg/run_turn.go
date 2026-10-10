@@ -14,6 +14,8 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/agent"
 )
 
+const MaxRunPromptBytes = 1 << 20
+
 // RunTurnRequest binds one prompt to an egg-owned absolute execution deadline.
 type RunTurnRequest struct {
 	RunID    string    `json:"run_id"`
@@ -56,6 +58,8 @@ type runTurnBackend struct {
 	Done              <-chan struct{}
 	Started           <-chan struct{}
 	StartupDiagnostic func() string
+	StartupReady      func() bool
+	InitialSend       func(context.Context, string) (PromptDelivery, error)
 }
 
 type turnEvidence struct {
@@ -147,6 +151,9 @@ func (rt *runTurnRuntime) submit(request RunTurnRequest) (RunTurnResult, error) 
 
 func (rt *runTurnRuntime) admit(request RunTurnRequest, execute bool) (RunTurnResult, error) {
 	options := SessionPromptOptions{RequestID: request.RunID, Input: request.Prompt, Timeout: time.Minute, Read: rt.backend.Read, Send: rt.backend.Send}
+	if rt.backend.Agent == "codex" {
+		options.maxInputBytes = MaxRunPromptBytes
+	}
 	if err := validateSessionPromptOptions(options); err != nil {
 		return RunTurnResult{}, err
 	}
@@ -264,7 +271,8 @@ func (rt *runTurnRuntime) begin(run *ownedRunTurn, request RunTurnRequest, optio
 }
 
 // startInitialCodex reserves and arms the deadline before the provider starts.
-// Codex owns submission of its initial argv prompt; Wingthing never types it.
+// The initial PTY submission is owned by this durable reservation, independently
+// of clients. Only exact native prompt admission establishes run readiness.
 func (rt *runTurnRuntime) startInitialCodex(request RunTurnRequest) error {
 	if rt.backend.Agent != "codex" {
 		return errors.New("initial native turn requires Codex")
@@ -292,7 +300,7 @@ func (rt *runTurnRuntime) startInitialCodex(request RunTurnRequest) error {
 	run.cancel()
 	ctx, cancel := context.WithDeadline(context.Background(), request.Deadline)
 	run.cancel = cancel
-	go rt.execute(ctx, run, SessionPromptOptions{}, scan)
+	go rt.execute(ctx, run, SessionPromptOptions{Input: request.Prompt}, scan)
 	return nil
 }
 
@@ -330,11 +338,19 @@ func (rt *runTurnRuntime) execute(ctx context.Context, run *ownedRunTurn, option
 	}
 	// The existing reservation makes retries safe even across a lost receipt.
 	var promptDone chan error
-	if !run.initial {
+	admitted := make(chan struct{})
+	receiptObserved := false
+	if run.initial && rt.backend.InitialSend != nil {
+		promptDone = make(chan error, 1)
+		go func() { promptDone <- rt.sendInitialCodex(ctx, options.Input, admitted) }()
+	} else if !run.initial {
 		promptDone = make(chan error, 1)
 		go func() { _, err := SubmitSessionPrompt(ctx, rt.dir, options); promptDone <- err }()
 	}
 	defer func() {
+		if !receiptObserved {
+			close(admitted)
+		}
 		if promptDone != nil {
 			<-promptDone
 		}
@@ -349,6 +365,10 @@ func (rt *runTurnRuntime) execute(ctx context.Context, run *ownedRunTurn, option
 			return
 		}
 		if evidence.Receipt && evidence.TurnID != "" {
+			if !receiptObserved {
+				close(admitted)
+				receiptObserved = true
+			}
 			run.mu.Lock()
 			if !run.finishing && run.record.Result.TurnID != evidence.TurnID {
 				run.record.Result.TurnID = evidence.TurnID

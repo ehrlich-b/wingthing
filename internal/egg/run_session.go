@@ -61,7 +61,7 @@ func (s *Server) sessionRunTurns(sess *Session, home, providerID string) *runTur
 			return scan()
 		}, nil
 	}
-	backend.Send = func(ctx context.Context, input string) (PromptDelivery, error) {
+	send := func(ctx context.Context, input string, initial bool) (PromptDelivery, error) {
 		delivery := PromptDelivery{NoInputAttempted: true}
 		attachment := s.inputLease.register(&pb.AttachOptions{Owner: "egg-run"})
 		if err := s.inputLease.claim(attachment, false); err != nil {
@@ -75,7 +75,10 @@ func (s *Server) sessionRunTurns(sess *Session, home, providerID string) *runTur
 			if err != nil {
 				return err
 			}
-			if !NativePromptReady(view) {
+			if initial && !codexComposerReady(sess.vterm.ScreenText()) {
+				return errors.New("Codex startup composer changed before input")
+			}
+			if !initial && !NativePromptReady(view) {
 				return errors.New("native foreground readiness changed before input")
 			}
 			if ctx.Err() != nil {
@@ -108,6 +111,9 @@ func (s *Server) sessionRunTurns(sess *Session, home, providerID string) *runTur
 		})
 		return delivery, err
 	}
+	backend.Send = func(ctx context.Context, input string) (PromptDelivery, error) { return send(ctx, input, false) }
+	backend.InitialSend = func(ctx context.Context, input string) (PromptDelivery, error) { return send(ctx, input, true) }
+	backend.StartupReady = func() bool { return codexComposerReady(sess.vterm.ScreenText()) }
 	return newRunTurnRuntime(s.dir, backend)
 }
 

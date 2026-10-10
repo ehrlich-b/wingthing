@@ -238,6 +238,43 @@ func TestAgentRunResultShapeParity(t *testing.T) {
 	}
 }
 
+func TestAgentRunDisplayLabelsAreSeparateFromSessionSlugs(t *testing.T) {
+	f := newRunWingFixture(t, nil)
+	var ids []string
+	for i := 0; i < 2; i++ {
+		wire, _ := json.Marshal(map[string]any{"prompt": "check tests", "agent": "claude", "cwd": f.server.Cfg.Dir, "label": "  weekend\n canary Ω🙂\x00\u202e", "idempotency_key": fmt.Sprintf("label-%d", i)})
+		data, err := f.server.toolAgentRun(wire)
+		if err != nil || data["label"] != "weekend canary Ω🙂" {
+			t.Fatalf("display label admission: %v %v", data, err)
+		}
+		id := data["run_id"].(string)
+		ids = append(ids, id)
+		if <-f.submitted != id {
+			t.Fatal("wrong run submitted")
+		}
+		spawn := <-f.spawned
+		if spawn.Egg.Label != "" || eggclient.ValidateSessionID(spawn.SessionID) != nil {
+			t.Fatalf("display label became a session slug: %+v", spawn)
+		}
+		if status, err := f.server.toolAgentStatus(runArgs(id)); err != nil || status["label"] != data["label"] {
+			t.Fatalf("label was not persisted: %v %v", status, err)
+		}
+		retry, err := f.server.toolAgentRun(wire)
+		if err != nil || retry["run_id"] != id || retry["label"] != data["label"] {
+			t.Fatalf("label retry: %v %v", retry, err)
+		}
+		f.finish(t, id, "done", "")
+		f.wait(t, id)
+	}
+	if ids[0] == ids[1] {
+		t.Fatal("identical display labels reused a run")
+	}
+	wire, _ := json.Marshal(map[string]any{"prompt": "check tests", "agent": "claude", "label": strings.Repeat("x", 201)})
+	if _, err := f.server.toolAgentRun(wire); err == nil {
+		t.Fatal("accepted an oversized label")
+	}
+}
+
 func TestWingRunAdmissionRetryKeepsEggAndModel(t *testing.T) {
 	f := newRunWingFixture(t, nil)
 	wire, _ := json.Marshal(map[string]any{"prompt": "request", "agent": "claude", "model": "opus", "cwd": f.server.Cfg.Dir, "idempotency_key": "retry"})

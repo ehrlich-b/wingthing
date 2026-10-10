@@ -18,7 +18,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/control"
 )
 
-const maxEnvelope = 1024 * 1024
+const maxEnvelope = 8 << 20 // A 1 MiB run prompt plus JSON escaping and envelope.
 const SocketName = "control.sock"
 
 type Hello struct {
