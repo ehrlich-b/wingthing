@@ -3,11 +3,13 @@ package webrtc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/control"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	pion "github.com/pion/webrtc/v4"
 )
 
@@ -39,10 +41,16 @@ func TestControlClientRoundTrip(t *testing.T) {
 			if request.Tool == "future-version" {
 				responseVersion = "control.v999"
 			}
-			payload, _ := json.Marshal(control.DirectResponse{
+			response := control.DirectResponse{
 				Version: responseVersion, ID: request.ID,
 				Result: map[string]any{"tool": request.Tool},
-			})
+			}
+			if request.Tool == "terminal_rename" {
+				response.IsError = true
+				response.ErrorKind = control.ErrorSessionNameInUse
+				response.Result = control.ErrorResult(eggclient.ErrSessionNameInUse)
+			}
+			payload, _ := json.Marshal(response)
 			if err := dc.Send(payload); err != nil {
 				t.Error(err)
 			}
@@ -75,6 +83,9 @@ func TestControlClientRoundTrip(t *testing.T) {
 	}
 	if _, _, err := client.Call(ctx, "future-version", json.RawMessage(`{}`)); err == nil || err.Error() != `direct control: unsupported response contract version "control.v999"` {
 		t.Fatalf("future response version err = %v", err)
+	}
+	if _, isError, err := client.Call(ctx, "terminal_rename", json.RawMessage(`{}`)); !isError || !errors.Is(err, eggclient.ErrSessionNameInUse) {
+		t.Fatalf("direct rename: isError=%v err=%v; want name-conflict sentinel", isError, err)
 	}
 }
 

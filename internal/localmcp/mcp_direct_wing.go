@@ -315,6 +315,10 @@ func (s *Server) handleDirectRequest(ctx context.Context, request control.Direct
 	result, isError, protocolErr := s.callTool(ctx, request.Tool, arguments)
 	response.Result = result
 	response.IsError = isError
+	if isError {
+		kind, _ := result["error_kind"].(string)
+		response.ErrorKind = control.ErrorKind(kind)
+	}
 	if protocolErr != nil {
 		response.Error = protocolErr.Message
 	}

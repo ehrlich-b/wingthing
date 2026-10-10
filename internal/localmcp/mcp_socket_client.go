@@ -88,7 +88,7 @@ func (s *localWingProxy) handle(ctx context.Context, request localMCPRequest) (l
 			}
 		}
 		if err != nil {
-			data = map[string]any{"error": err.Error()}
+			data = control.ErrorResult(err)
 			isError = true
 		}
 		response.Result = localMCPToolResult(data, isError)

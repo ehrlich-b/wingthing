@@ -158,8 +158,8 @@ func (c *ControlClient) Call(ctx context.Context, tool string, arguments json.Ra
 		if response.Version != control.ContractVersion {
 			return nil, true, fmt.Errorf("direct control: unsupported response contract version %q", response.Version)
 		}
-		if response.Error != "" {
-			return response.Result, true, fmt.Errorf("direct control: %s", response.Error)
+		if err := response.Err(); err != nil {
+			return response.Result, true, fmt.Errorf("direct control: %w", err)
 		}
 		return response.Result, response.IsError, nil
 	}

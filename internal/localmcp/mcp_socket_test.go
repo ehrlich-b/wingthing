@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -17,6 +19,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/taskrun"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
@@ -33,6 +36,93 @@ func localSocketPolicyFixture(t *testing.T) (*wingsession.Service, *config.WingC
 	wc := &config.WingConfig{WingID: cfg.WingID}
 	service := &wingsession.Service{Config: cfg, Policy: func() wingsession.Policy { return wingsession.Policy{Wing: wc, Egg: egg.DefaultEggConfig()} }}
 	return service, wc
+}
+
+func TestLocalWingRenameConflictPreservesSentinel(t *testing.T) {
+	service, wc := localSocketPolicyFixture(t)
+	workspace, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wc.Paths = config.PathList{{Path: workspace}}
+	for id, name := range map[string]string{"first": "shared", "second": "old"} {
+		dir := filepath.Join(service.Config.Dir, "eggs", id)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		for file, content := range map[string]string{
+			"egg.pid":  strconv.Itoa(os.Getpid()),
+			"egg.meta": "cwd=" + workspace + "\n",
+		} {
+			if err := os.WriteFile(filepath.Join(dir, file), []byte(content), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := eggclient.WriteEggOwner(dir, "owner", "owner@example.com"); err != nil {
+			t.Fatal(err)
+		}
+		if err := eggclient.WriteSessionPrincipal(dir, wingsession.UserPrincipal("owner")); err != nil {
+			t.Fatal(err)
+		}
+		if err := eggclient.WriteSessionName(dir, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The first session has already claimed the name: rejection is independent
+	// of scheduling. Dial and Call wait for the handshake and response.
+	listener, err := ListenLocalWingControl(t.Context(), "test", service, "owner", NewMCPAdmissionState())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	client, err := controlsocket.Dial(t.Context(), service.Config.Dir, controlsocket.Hello{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	arguments := json.RawMessage(`{"session":"second","name":"shared"}`)
+	result, isError, err := client.Call(t.Context(), "terminal_rename", arguments)
+	if !isError || !errors.Is(err, eggclient.ErrSessionNameInUse) {
+		t.Fatalf("socket rename: result=%#v isError=%v err=%v; want name-conflict sentinel", result, isError, err)
+	}
+	if result["error_kind"] != string(control.ErrorSessionNameInUse) {
+		t.Fatalf("socket lost error kind: %#v", result)
+	}
+	if _, err := CallLocalWingTool(t.Context(), service.Config.Dir, "", "terminal_rename", arguments); !errors.Is(err, eggclient.ErrSessionNameInUse) {
+		t.Fatalf("CLI socket helper lost sentinel: %v", err)
+	}
+	server, err := resolveLocalWingClient("test", service, "owner", NewMCPAdmissionState(), controlsocket.Hello{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Surface = control.SurfaceDirectMCP
+	direct := server.handleDirectRequest(t.Context(), control.DirectRequest{
+		Version: control.ContractVersion, ID: "rename", Tool: "terminal_rename", Arguments: arguments,
+	})
+	if direct.ErrorKind != control.ErrorSessionNameInUse || !errors.Is(direct.Err(), eggclient.ErrSessionNameInUse) {
+		t.Fatalf("direct wing response lost sentinel: %#v", direct)
+	}
+	proxy := &localWingProxy{version: "test", client: client}
+	response, _ := proxy.handle(t.Context(), localMCPRequest{
+		JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "tools/call",
+		Params: json.RawMessage(`{"name":"terminal_rename","arguments":{"session":"second","name":"shared"}}`),
+	})
+	structured := response.Result.(map[string]any)["structuredContent"].(map[string]any)
+	if !errors.Is(control.ToolError(structured), eggclient.ErrSessionNameInUse) {
+		t.Fatalf("stdio adapter lost kind: %#v", response)
+	}
+	for _, tool := range RoostNativeMCPToolsWithSessions("test", service.Config, false,
+		func() *wingsession.Service { return service },
+		func() (*config.WingConfig, *egg.EggConfig) { return wc, egg.DefaultEggConfig() }) {
+		if tool.Name == "terminal_rename" {
+			_, isError, err := tool.Call(t.Context(), mcppkg.Principal{UserID: "owner", Email: "owner@example.com"}, arguments)
+			if !isError || !errors.Is(err, eggclient.ErrSessionNameInUse) {
+				t.Fatalf("HTTP native rename lost sentinel: isError=%v err=%v", isError, err)
+			}
+			return
+		}
+	}
+	t.Fatal("HTTP terminal_rename tool missing")
 }
 
 func TestLocalWingPrincipalGrantParity(t *testing.T) {

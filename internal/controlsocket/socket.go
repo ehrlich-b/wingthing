@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
- "io"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -31,7 +31,7 @@ type Hello struct {
 	Execution    string `json:"execution,omitempty"`
 }
 type Welcome struct {
- Isolation string `json:"isolation,omitempty"`
+	Isolation string          `json:"isolation,omitempty"`
 	Version   string          `json:"version"`
 	WingID    string          `json:"wing_id"`
 	Principal string          `json:"principal,omitempty"`
@@ -189,9 +189,13 @@ func strictJSON(data []byte, out any) error {
 	reader := bytes.NewReader(data)
 	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
-	if err:=decoder.Decode(out);err!=nil {return err}
- if err:=decoder.Decode(new(any));err!=io.EOF {return errors.New("control envelope must contain one object")}
- return nil
+	if err := decoder.Decode(out); err != nil {
+		return err
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return errors.New("control envelope must contain one object")
+	}
+	return nil
 }
 
 type Client struct {
@@ -289,8 +293,8 @@ func (c *Client) Call(ctx context.Context, tool string, arguments json.RawMessag
 	}
 	select {
 	case r := <-ch:
-		if r.Error != "" {
-			return nil, true, errors.New(r.Error)
+		if err := r.Err(); err != nil {
+			return r.Result, true, err
 		}
 		return r.Result, r.IsError, nil
 	case <-ctx.Done():

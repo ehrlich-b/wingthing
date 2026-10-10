@@ -3,14 +3,46 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 )
+
+func TestNativeToolHTTPPreservesErrorKind(t *testing.T) {
+	srv := NewServer(nil, nil, nil)
+	srv.SetNativeTools([]NativeTool{{
+		Name: "terminal_rename",
+		Call: func(context.Context, Principal, json.RawMessage) (map[string]any, bool, error) {
+			return nil, true, fmt.Errorf("rename: %w", control.ErrSessionNameInUse)
+		},
+	}}, nil)
+	req := httptest.NewRequest(http.MethodPost, "https://wing.example/mcp", strings.NewReader(
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"terminal_rename"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("MCP-Protocol-Version", "2025-11-25")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	var response struct {
+		Result struct {
+			IsError bool           `json:"isError"`
+			Content map[string]any `json:"structuredContent"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	err := control.ToolError(response.Result.Content)
+	if w.Code != http.StatusOK || !response.Result.IsError || !errors.Is(err, control.ErrSessionNameInUse) || err.Error() != "rename: "+control.ErrSessionNameInUse.Error() {
+		t.Fatalf("HTTP tool error lost kind or context: %d %s", w.Code, w.Body.String())
+	}
+}
 
 func TestServerPublishesAndCallsNativeToolsWithoutRolePolicy(t *testing.T) {
 	srv := NewServer(nil, nil, nil)

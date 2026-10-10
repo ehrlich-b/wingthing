@@ -17,6 +17,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/procinfo"
@@ -35,7 +36,7 @@ const (
 	sessionEnterDelay = 50 * time.Millisecond
 )
 
-var ErrSessionNameInUse = errors.New("session name is already in use")
+var ErrSessionNameInUse = control.ErrSessionNameInUse
 
 type LocalSession struct {
 	ConversationLink
