@@ -22,6 +22,8 @@ STATUSES = {"pass", "fail", "skip", "unsupported-on-linux"}
 
 
 def utc(value):
+    if not isinstance(value, str):
+        raise ValueError("timestamp must be a UTC string")
     result = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
     if result.tzinfo is None or result.utcoffset() != datetime.timedelta(0):
         raise ValueError("timestamp must be explicit UTC (Z or +00:00)")

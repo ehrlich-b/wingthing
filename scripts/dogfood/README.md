@@ -105,3 +105,39 @@ different build within this checkout, including a regression build.
 See [GAPS.md](../../GAPS.md) for unresolved bugs and acceptance limits. Timer
 units are supplied here; this task does not install or activate them on either
 machine, replace the coordinator's MCP binary, publish, or release anything.
+
+## Local status and finite epochs
+
+```sh
+python3 -B scripts/dogfood/status.py --logs .scratch/dogfood-logs --now 2026-10-10T23:00:00Z --json
+```
+
+This command only reads local files. Exit 2 means no valid complete run exists;
+exit 1 means failure, an expected 45-minute timestamp gap (with one minute of
+slack), missing required coverage, or unknown evidence. Exit 0 means the required
+fixtures for the reported platform passed within the inspected interval. Every
+report sets `all_green: false`: optional provider/SSH skips, Linux unsupported
+mailbox checks and outstanding real-host acceptance remain separate. A required
+Mac sandbox skip and unavailable descendant inventory produce exit 1. The report
+shows the last complete run, newest attempt, last cleanup, exact binary SHA-256,
+Git commit and a SHA-256 of tracked checkout bytes at run start. Those are
+independent identities, not a claim of reproducible binary build provenance.
+Only the newest 24 receipts are read; older history is unknown, and a persisted
+epoch exposes initial scheduling gaps. Expectations stop at the fixed expiry.
+
+The generated environment supplies `WT_DOGFOOD_EPOCH` and `WT_DOGFOOD_UNTIL` in
+UTC. Restarting the user manager cannot change these values. At or after expiry,
+`run.sh` starts no new canary and returns 3 for a clean finite epoch (accepted by
+the generated service), or 1 if earlier failure/cleanup evidence remains. An
+in-flight run may finish its bounded cleanup after expiry. A manual wrapper
+without either variable runs once; a partial finite environment is refused.
+An overlapping invocation is a skip only when no earlier failure is retained.
+
+`runner-state.json` is atomically replaced under the file lock and retains the
+latest result through receipt rotation. Cleanup failure, unknown cleanup after
+interruption, and unreadable state refuse further runs. Preserve and inspect the
+named receipt and retained fixture before restarting. After verifying that all
+owned processes/endpoints have gone and resolving the failure, an operator may
+archive `runner-state.json` outside the log directory; keep the receipts. A
+legacy failed cleanup receipt still refuses admission, so archive that receipt
+alongside the state only after resolution. Never delete unrelated or live state.

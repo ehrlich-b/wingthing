@@ -251,5 +251,106 @@ class PreparationTests(ForgeFixture):
         self.assertTrue(edit.read_text().endswith("# operator edit\n"))
 
 
+class StatusTests(ForgeFixture):
+    def write_receipt(self, start="2026-10-10T10:00:00Z", platform="darwin", overrides=None,
+                      until=None, epoch=None):
+        overrides = overrides or {}
+        records = []
+        for check in CHECKS:
+            status = "skip" if check in ("remembered_ssh_connect", "real_codex") else "pass"
+            if platform == "linux" and check.startswith("wt_claude_"):
+                status = "unsupported-on-linux"
+            record = dict(check=check, status=status, latency_ms=1, error=None,
+                          timestamp=start, platform=platform, binary_sha256="b" * 64)
+            record.update(overrides.get(check, {}))
+            records.append(record)
+        failed = any(record["status"] == "fail" for record in records)
+        records.append(dict(check="runner", status="fail" if failed else "pass", latency_ms=1,
+                            error="fixture failure" if failed else None, timestamp=start,
+                            started_at=start, platform=platform, checks=13, exit_code=1 if failed else 0,
+                            binary_sha256="b" * 64, source_commit="c" * 40, source_sha256="d" * 64,
+                            epoch=epoch, until=until))
+        file = self.logs / (start.replace(":", "").replace("-", "") + ".jsonl")
+        file.write_text("".join(json.dumps(record) + "\n" for record in records))
+        return file
+
+    def status(self, now="2026-10-10T10:30:00Z"):
+        result = subprocess.run([sys.executable, "-B", str(HERE / "status.py"), "--logs", str(self.logs),
+                                 "--now", now, "--json"], capture_output=True, text=True, timeout=5)
+        self.assertFalse(result.stderr, result.stderr)
+        return result, json.loads(result.stdout)
+
+    def test_missing_logs_have_documented_nonzero_status(self):
+        result, report = self.status()
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(report["overall"], "missing-runs")
+        self.assertIsNone(report["last_complete_run"])
+        self.assertFalse(report["all_green"])
+
+    def test_optional_skips_are_limited_fixture_coverage(self):
+        self.write_receipt()
+        result, report = self.status()
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(report["overall"], "fixture-pass-limited-acceptance")
+        self.assertFalse(report["all_green"])
+        self.assertEqual(set(report["optional_unavailable"]), {"remembered_ssh_connect", "real_codex"})
+        self.assertEqual(report["last_complete_run"]["binary_sha256"], "b" * 64)
+        self.assertEqual(report["last_complete_run"]["source_sha256"], "d" * 64)
+
+    def test_required_mac_skip_remains_unavailable(self):
+        self.write_receipt(overrides={"wt_claude_scoped_mailbox": {"status": "skip", "reason": "nested sandbox denied"}})
+        result, report = self.status()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("wt_claude_scoped_mailbox", report["required_unavailable"])
+
+    def test_linux_unsupported_checks_are_explicit(self):
+        self.write_receipt(platform="linux")
+        result, report = self.status()
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(len(report["unsupported"]), 2)
+        self.assertFalse(report["all_green"])
+        self.assertEqual(report["checks"]["wt_claude_scoped_mailbox"]["requirement"], "unsupported")
+
+    def test_gaps_report_missing_schedule_and_latest_run(self):
+        self.write_receipt()
+        self.write_receipt(start="2026-10-10T11:30:00Z")
+        result, report = self.status("2026-10-10T12:30:00Z")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual([gap["kind"] for gap in report["schedule"]["gaps"]], ["between", "latest"])
+        self.assertEqual(report["last_complete_run"]["started_at"], "2026-10-10T11:30:00Z")
+
+    def test_expiry_caps_expected_gaps(self):
+        self.write_receipt(epoch="2026-10-10T10:00:00Z", until="2026-10-10T10:45:00Z")
+        result, report = self.status("2026-10-10T23:00:00Z")
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(report["schedule"]["expired"])
+        self.assertEqual(report["schedule"]["gaps"], [])
+
+    def test_failed_cleanup_and_incomplete_latest_attempt_remain_visible(self):
+        self.write_receipt(overrides={"cleanup": {"status": "fail", "error": "retained fixture /private/example"}})
+        result, report = self.status()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(report["last_cleanup"]["status"], "fail")
+        partial = self.logs / "20261010T101000Z.jsonl"
+        partial.write_text('{"check":"local_only_start","status":"pass"}\n')
+        result, report = self.status()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(report["complete_runs"], 1)
+        self.assertEqual(report["last_cleanup"]["status"], "unknown")
+        self.assertEqual(report["last_attempt"], str(partial))
+
+    def test_malformed_duplicate_and_unknown_identity_never_pass(self):
+        file = self.write_receipt()
+        records = [json.loads(line) for line in file.read_text().splitlines()]
+        records[-1]["source_sha256"] = None
+        file.write_text("".join(json.dumps(record) + "\n" for record in records))
+        self.assertEqual(self.status()[0].returncode, 1)
+        records[1] = records[0]
+        file.write_text("".join(json.dumps(record) + "\n" for record in records))
+        self.assertEqual(self.status()[0].returncode, 2)
+        file.write_text("not JSON\n")
+        self.assertEqual(self.status()[0].returncode, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
