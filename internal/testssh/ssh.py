@@ -24,10 +24,15 @@ if '-N' not in args:
 local, remote = args[args.index('-L')+1].split(':',1)
 assert remote == metadata['control_socket']
 listener = socket.socket(socket.AF_UNIX)
-listener.bind(local); listener.listen()
+listener.bind(local)
+bind_barrier = os.environ.get('WT_FAKE_SSH_BIND_BARRIER') == '1'
+if not bind_barrier: listener.listen()
 admin = socket.socket(socket.AF_UNIX)
 admin.connect(os.path.join(root,'supervisor.sock'))
 admin.sendall((json.dumps({'host':host,'pid':os.getpid(),'args':args,'socket':local})+'\n').encode())
+if bind_barrier:
+    if not admin.recv(1): os._exit(0)
+    listener.listen()
 def pump(source, destination):
     try:
         while True:

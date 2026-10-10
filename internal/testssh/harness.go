@@ -28,6 +28,12 @@ type Forward struct {
 
 func (f *Forward) Drop() { _, _ = f.conn.Write([]byte{1}); _ = f.conn.Close() }
 
+// StartListening releases the optional bind-before-listen fixture barrier.
+func (f *Forward) StartListening() error {
+	_, err := f.conn.Write([]byte{1})
+	return err
+}
+
 type Harness struct {
 	Root    string
 	SSHPath string
