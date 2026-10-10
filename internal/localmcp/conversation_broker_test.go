@@ -82,6 +82,15 @@ func newBrokerFixture(t *testing.T, surface control.Surface, actor string) broke
 		MaxSessions: 8, MaxSpawnsPerHour: 60, Workspace: workspace, Mailbox: filepath.Join(".wingthing-conversations", root.ID, root.SessionID, "mailbox"),
 		EggConfig: snapshot, Executable: "/usr/bin/false", RegisteredAt: time.Now().Unix(),
 	}
+	// Open the wing before publishing the manually driven broker's registration.
+	// Otherwise restore starts a second broker that races with protection hooks
+	// installed by these tests and can consume the same mailbox requests.
+	server := testWingServer(t, &Server{Version: "test", Cfg: cfg, Principal: "owner"})
+	listener, err := ListenLocalWingControl(t.Context(), "test", server.Sessions, server.identity.UserID, NewMCPAdmissionState())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
 	if err := writeConversationBrokerRegistration(cfg, reg); err != nil {
 		t.Fatal(err)
 	}
@@ -99,13 +108,7 @@ func newBrokerFixture(t *testing.T, surface control.Surface, actor string) broke
 	t.Cleanup(func() { _ = mailbox.Close() })
 	epoch, _ := newMailboxID()
 	b := &conversationBroker{version: "dev", cfg: cfg, reg: loaded, dir: conversationBrokerDir(cfg, root.SessionID), epoch: epoch, provider: "provider-root", admission: NewMCPAdmissionState(), mailbox: mailbox, logs: &bytes.Buffer{}, inflight: map[string]bool{}, slots: make(chan struct{}, 8)}
-	server := testWingServer(t, &Server{Version: "test", Cfg: cfg, Principal: "owner"})
 	b.admission.Sessions = server.Sessions
-	listener, err := ListenLocalWingControl(t.Context(), "test", server.Sessions, server.identity.UserID, NewMCPAdmissionState())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = listener.Close() })
 	return brokerFixture{b: b, cfg: cfg, db: db, root: root, child: child, other: other}
 }
 
