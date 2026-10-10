@@ -36,7 +36,17 @@ while True:
  hook('SessionStart',source='startup')
  turn='fake-turn'
  hook('UserPromptSubmit',turn_id=turn,prompt=prompt)
- with open(os.path.join(os.environ['HOME'],'..','completion-gate'),'rb', buffering=0) as gate: gate.read(1)
+ # Multi-provider fixtures use one gate in each child's granted workspace.
+ # The legacy shared gate remains for single-provider fixtures.
+ gate_path=os.path.join(os.getcwd(),'.fixture-completion-gate')
+ scoped_gate=os.path.exists(gate_path)
+ if not scoped_gate: gate_path=os.path.join(os.environ['HOME'],'..','completion-gate')
+ with open(gate_path,'rb', buffering=0) as gate:
+  if scoped_gate:
+   ready=gate_path+'.ready'
+   with open(ready+'.tmp','w') as marker: marker.write('waiting\n')
+   os.rename(ready+'.tmp',ready)
+  assert gate.read(1)==b'\x01', 'completion gate closed without explicit release'
  payload={'type':'agent-turn-complete','thread-id':thread,'turn-id':turn,'input-messages':[prompt],'last-assistant-message':'Fake Codex '+model+': Ω🙂 '+prompt}
  subprocess.run(notify+[json.dumps(payload)],check=True)
  hook('Stop',turn_id=turn)

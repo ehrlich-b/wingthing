@@ -22,7 +22,6 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
 	"github.com/ehrlich-b/wingthing/internal/testssh"
 	"github.com/fsnotify/fsnotify"
-	"golang.org/x/sys/unix"
 )
 
 var fakeScopedClaude = testprovider.ScopedClaude
@@ -70,6 +69,8 @@ func (p *sliceCProcess) diagnostics() string {
 
 func sliceCArtifact(t *testing.T, dir, name string, p *sliceCProcess) []byte {
 	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		t.Fatal(err)
@@ -93,8 +94,8 @@ func sliceCArtifact(t *testing.T, dir, name string, p *sliceCProcess) []byte {
 				t.Skip("host sandbox forbids nested sandbox-exec: " + diagnostics)
 			}
 			t.Fatalf("process ended before %s: %v\n%s", name, err, diagnostics)
-		case <-t.Context().Done():
-			t.Fatalf("waiting for %s: %v\n%s", name, t.Context().Err(), p.diagnostics())
+		case <-ctx.Done():
+			t.Fatalf("waiting for %s: %v\n%s", name, ctx.Err(), p.diagnostics())
 		}
 	}
 }
@@ -156,9 +157,8 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool) {
 			t.Fatal(err)
 		}
 	}
-	if err := unix.Mkfifo(filepath.Join(h.Root, "completion-gate"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	localGate := testprovider.NewCompletionGate(t, work)
+	remoteGate := testprovider.NewCompletionGate(t, remoteWork)
 	// Short state spellings keep egg sockets within Darwin sockaddr_un while
 	// their canonical paths remain outside the parent's writable workspace.
 	alias, err := os.MkdirTemp(filepath.Join(repo, ".scratch"), "c")
@@ -228,10 +228,22 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool) {
 	}
 	viewer, _ := startSliceCProcess(t, binary, []string{"claude", "--name", "weekend", "--", "--model", "fake-parent", "--fixture-control", controlPath, "--fixture-state-file", filepath.Join(localState, "wing.yaml"), "--fixture-ssh-key", keyFile}, environment(localState), work, "PARENT_READY", in)
 	t.Cleanup(func() { _ = out.Close(); _ = viewer.cmd.Process.Kill(); <-viewer.done })
+	t.Cleanup(func() {
+		if t.Failed() {
+			for _, state := range []string{localState, remoteState} {
+				entries, _ := os.ReadDir(filepath.Join(state, "eggs"))
+				for _, entry := range entries {
+					testprovider.LogEggTails(t, filepath.Join(state, "eggs", entry.Name()))
+				}
+			}
+		}
+	})
 	receiptData := sliceCArtifact(t, work, "receipts.json", viewer)
 	var captured struct {
-		Receipts   []map[string]any `json:"receipts"`
-		MailboxPID int              `json:"mailbox_pid"`
+		Receipts        []map[string]any `json:"receipts"`
+		MailboxPID      int              `json:"mailbox_pid"`
+		Mailbox         string           `json:"mailbox"`
+		ParentSessionID string           `json:"parent_session_id"`
 	}
 	if err := json.Unmarshal(receiptData, &captured); err != nil {
 		t.Fatal(err)
@@ -255,20 +267,49 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool) {
 			parentID = session["id"].(string)
 		}
 	}
-	if parentID == "" {
+	if parentID == "" || parentID != captured.ParentSessionID || captured.Mailbox == "" {
 		t.Fatalf("parent is not a named wing egg: %v", list)
 	}
-	// Opening the provider FIFO is the deterministic native-prompt barrier.
-	gate, err := os.OpenFile(filepath.Join(h.Root, "completion-gate"), os.O_WRONLY, 0600)
-	if err != nil {
-		t.Fatal(err)
+	childStates := map[string]string{owner.Welcome.WingID: localState, meta.WingID: remoteState}
+	childGates := map[string]*testprovider.CompletionGate{owner.Welcome.WingID: localGate, meta.WingID: remoteGate}
+	childPIDs := map[string]int{}
+	assertWorking := func(receipt map[string]any) {
+		t.Helper()
+		state, id := childStates[receipt["wing_id"].(string)], receipt["session_id"].(string)
+		pid, alive := eggclient.ReadAliveEggPID(filepath.Join(state, "eggs", id))
+		if !alive || childPIDs[id] != 0 && childPIDs[id] != pid {
+			t.Fatalf("child did not survive: receipt=%v pid=%d original_pid=%d alive=%t", receipt, pid, childPIDs[id], alive)
+		}
+		view, err := eggclient.ReadSessionLifecycleView(t.Context(), &config.Config{Dir: state}, id, 0, 50)
+		if err != nil || !view.ProcessAlive || view.State != "working" || view.StateSource != "codex_hook" {
+			t.Fatalf("unreleased child is not working: receipt=%v lifecycle=%+v err=%v", receipt, view, err)
+		}
+		childPIDs[id] = pid
 	}
-	defer gate.Close()
+	readyCtx, readyCancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer readyCancel()
+	seenWings := map[string]bool{}
+	for _, receipt := range captured.Receipts {
+		wing := receipt["wing_id"].(string)
+		gate := childGates[wing]
+		if gate == nil || seenWings[wing] {
+			t.Fatalf("expected one child per fixture wing: %v", captured.Receipts)
+		}
+		seenWings[wing] = true
+		if err := gate.WaitReady(readyCtx); err != nil {
+			t.Fatal(err)
+		}
+		assertWorking(receipt)
+	}
 	for range 2 {
 		forward := <-h.Started
 		forward.Drop()
 	}
+	var reattached *sliceCProcess
+	var reattachOut *os.File
 	if exitParent {
+		exitCtx, exitCancel := context.WithTimeout(t.Context(), 30*time.Second)
+		defer exitCancel()
 		if _, err := io.WriteString(out, "exit\r"); err != nil {
 			t.Fatal(err)
 		}
@@ -278,19 +319,26 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool) {
 			if err != nil {
 				t.Fatalf("parent exit: %v\n%s", err, viewer.diagnostics())
 			}
-		case <-t.Context().Done():
-			t.Fatal(t.Context().Err())
+		case <-exitCtx.Done():
+			t.Fatalf("parent exit: %v\n%s", exitCtx.Err(), viewer.diagnostics())
+		}
+		if err := testprovider.WaitParentMailboxExit(exitCtx, captured.Mailbox, parentID); err != nil {
+			t.Fatal(err)
+		}
+		if _, alive := eggclient.ReadAliveEggPID(filepath.Join(localState, "eggs", parentID)); alive {
+			t.Fatal("parent egg is still alive after mailbox exit")
 		}
 	} else {
 		_ = viewer.cmd.Process.Kill()
 		<-viewer.done
 		viewer.done <- nil
 		_ = out.Close()
-		reattachIn, reattachOut, err := os.Pipe()
+		var reattachIn *os.File
+		reattachIn, reattachOut, err = os.Pipe()
 		if err != nil {
 			t.Fatal(err)
 		}
-		reattached, _ := startSliceCProcess(t, binary, []string{"attach", "weekend"}, environment(localState), work, "PARENT_READY", reattachIn)
+		reattached, _ = startSliceCProcess(t, binary, []string{"attach", "weekend"}, environment(localState), work, "PARENT_READY", reattachIn)
 		t.Cleanup(func() { _ = reattachOut.Close(); _ = reattached.cmd.Process.Kill(); <-reattached.done })
 		if _, err := io.WriteString(reattachOut, "reconnect\r"); err != nil {
 			t.Fatal(err)
@@ -302,9 +350,39 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool) {
 		if err := json.Unmarshal(connection, &reconnected); err != nil || reconnected.PID == captured.MailboxPID {
 			t.Fatalf("mailbox did not reconnect: %s", connection)
 		}
-		if _, err := gate.Write([]byte{1, 1}); err != nil {
+	}
+	// Both eggs must retain their original processes and native working state
+	// after parent exit or viewer/mailbox replacement, before either release.
+	for _, receipt := range captured.Receipts {
+		assertWorking(receipt)
+	}
+	_ = owner.Close()
+	fresh, err := controlsocket.Dial(t.Context(), localState, controlsocket.Hello{Aggregate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fresh.Close()
+	for _, receipt := range captured.Receipts {
+		// In particular, releasing the first child must not release the second.
+		assertWorking(receipt)
+		pending, denied, err := fresh.Call(t.Context(), "agent_result", mustSliceJSON(map[string]any{"wing_id": receipt["wing_id"], "run_id": receipt["run_id"]}))
+		if err != nil || denied || pending["ready"] != false || pending["status"] != "pending" {
+			t.Fatalf("child completed before its release: %v %v", pending, err)
+		}
+		if err := childGates[receipt["wing_id"].(string)].Release(); err != nil {
 			t.Fatal(err)
 		}
+		args := map[string]any{"wing_id": receipt["wing_id"], "run_id": receipt["run_id"], "timeout_seconds": 60}
+		if data, denied, err := fresh.Call(t.Context(), "agent_wait", mustSliceJSON(args)); err != nil || denied || data["status"] != "done" || data["timed_out"] == true {
+			t.Fatalf("fresh client wait: %v %v", data, err)
+		}
+		delete(args, "timeout_seconds")
+		result, denied, err := fresh.Call(t.Context(), "agent_result", mustSliceJSON(args))
+		if err != nil || denied || result["ready"] != true || result["status"] != "done" || result["run_id"] != receipt["run_id"] || result["session_id"] != receipt["session_id"] || result["wing_id"] != receipt["wing_id"] || !strings.Contains(fmt.Sprint(result["output"]), "Fake Codex fixture-model") {
+			t.Fatalf("fresh client lost result: %v %v", result, err)
+		}
+	}
+	if !exitParent {
 		if _, err := io.WriteString(reattachOut, "recover\r"); err != nil {
 			t.Fatal(err)
 		}
@@ -319,29 +397,6 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool) {
 			if result["run_id"] != captured.Receipts[i]["run_id"] || result["session_id"] != captured.Receipts[i]["session_id"] || result["wing_id"] != captured.Receipts[i]["wing_id"] || result["ready"] != true {
 				t.Fatalf("reattachment changed child identity: %v", result)
 			}
-		}
-	}
-	if exitParent {
-		if _, err := gate.Write([]byte{1, 1}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	_ = gate.Close()
-	_ = owner.Close()
-	fresh, err := controlsocket.Dial(t.Context(), localState, controlsocket.Hello{Aggregate: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer fresh.Close()
-	for _, receipt := range captured.Receipts {
-		args := map[string]any{"wing_id": receipt["wing_id"], "run_id": receipt["run_id"], "timeout_seconds": 60}
-		if data, denied, err := fresh.Call(t.Context(), "agent_wait", mustSliceJSON(args)); err != nil || denied || data["status"] != "done" {
-			t.Fatalf("fresh client wait: %v %v", data, err)
-		}
-		delete(args, "timeout_seconds")
-		result, denied, err := fresh.Call(t.Context(), "agent_result", mustSliceJSON(args))
-		if err != nil || denied || result["session_id"] != receipt["session_id"] || result["wing_id"] != receipt["wing_id"] || !strings.Contains(fmt.Sprint(result["output"]), "Fake Codex fixture-model") {
-			t.Fatalf("fresh client lost result: %v %v", result, err)
 		}
 	}
 }
