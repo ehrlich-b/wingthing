@@ -1078,11 +1078,12 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		wingEggMu.Unlock()
 		return wingsession.Policy{Wing: wc, Egg: ec, Keys: keys, Audit: auditLive.Load()}
 	}}
-	configureSessionRegistration(sessions, ctx, client, currentPasskeyPolicy, func() []*config.ToolConfig {
+	stopSessionRegistration := configureSessionRegistration(sessions, ctx, client, currentPasskeyPolicy, func() []*config.ToolConfig {
 		wingToolsMu.Lock()
 		defer wingToolsMu.Unlock()
 		return append([]*config.ToolConfig(nil), wingTools...)
 	})
+	defer stopSessionRegistration()
 	directMCPAdmission.Sessions = sessions
 	if options.SetSessionService != nil {
 		options.SetSessionService(sessions)
@@ -1678,6 +1679,10 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 
 // handleReclaimedPTY sets up I/O routing for a reclaimed (surviving) egg session.
 func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client, sessionID, eggDir string, write ws.PTYWriteFunc, input <-chan []byte, wingCfg *config.WingConfig, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, passkeyPolicy auth.PasskeyPolicy, authTTL time.Duration, tools []*config.ToolConfig, services ...*wingsession.Service) {
+	ctx, cancel := context.WithCancel(ctx)
+	var workers sync.WaitGroup
+	defer workers.Wait()
+	defer cancel()
 	sessions := &wingsession.Service{Config: cfg}
 	if len(services) > 0 {
 		sessions = services[0]
@@ -1746,13 +1751,15 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
 	defer sessionCancel()
 	if reclaimCWD != "" {
-		go watchPreviewFile(sessionCtx, reclaimCWD, sessionID, &mu, &gcm, write)
+		workers.Go(func() { watchPreviewFile(sessionCtx, reclaimCWD, sessionID, &mu, &gcm, write) })
 	}
 	browserRequestsPath := filepath.Join(eggDir, "browser-requests")
-	go watchBrowserRequests(sessionCtx, browserRequestsPath, sessionID, browserRequestOffset(browserRequestsPath), write)
+	workers.Go(func() {
+		watchBrowserRequests(sessionCtx, browserRequestsPath, sessionID, browserRequestOffset(browserRequestsPath), write)
+	})
 
 	// Read output from egg -> encrypt -> send to relay
-	go func() {
+	workers.Go(func() {
 		var lastHadBell bool
 		for {
 			msg, err := stream.Recv()
@@ -1793,10 +1800,10 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				return
 			}
 		}
-	}()
+	})
 
 	// Process input from browser
-	go func() {
+	workers.Go(func() {
 		defer releaseBrowserClient(sessionID, ec)
 		pendingAuth := newPendingReattachAuths()
 		defer pendingAuth.close()
@@ -1940,7 +1947,9 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 							sendReplayChunkedTagged(sessionID, attach.ViewerID, replay.Output, spectatorGCM, write)
 						}
 					}
+					workers.Add(1)
 					go func(viewerID string, g cipher.AEAD, stream pb.Egg_SessionClient, cancel context.CancelFunc) {
+						defer workers.Done()
 						defer cancel()
 						defer browserViewers.Delete(sessionID + ":" + viewerID)
 						for {
@@ -2018,7 +2027,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					}
 				}
 
-				go func() {
+				workers.Go(func() {
 					var lastHadBell bool
 					for {
 						msg, err := newStream.Recv()
@@ -2060,7 +2069,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 							return
 						}
 					}
-				}()
+				})
 
 			case ws.TypePTYInput:
 				clearAttentionCooldown(sessionID)
@@ -2136,7 +2145,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				return
 			}
 		}
-	}()
+	})
 
 	<-sessionCtx.Done()
 }
