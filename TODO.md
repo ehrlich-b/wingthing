@@ -215,10 +215,10 @@ account management, org settings, audit display.
 
 - [ ] Split into `renderWings.js`, `renderSessions.js`, `renderAccount.js`,
   `renderOrg.js`, `renderAudit.js`
-- [ ] Fix event listener leaks in sidebar re-renders — `renderSidebar()` calls
-  `addEventListener` on every tab without removing old listeners, so after N
-  re-renders each tab has N click handlers. Use event delegation on the
-  container instead
+- [x] Investigated repeated sidebar listeners: `innerHTML` replaces the tab nodes;
+  100 bounded render/remove cycles retain one action per click, not N handlers.
+- [ ] Prevent retained or reattached sidebar tabs from opening deleted sessions;
+  the browser-state fixture reproduces this stale dispatch on the base.
 - [x] Investigated the session switching guard: `swept` means confirmed by the
   latest wing inventory sweep. The guard intentionally refuses cached sessions after
   a wing goes offline; tests cover the reconciliation state. Rename the field in a
