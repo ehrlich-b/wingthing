@@ -412,7 +412,7 @@ func buildTools() []Tool {
 				"agent":           stringProperty("Supported agent name, such as codex or claude"),
 				"model":           stringProperty("Provider model name, such as gpt-5.6-terra or opus"),
 				"cwd":             stringProperty("Working directory; defaults to the MCP server's current directory"),
-				"label":           stringProperty("Short human-readable purpose recorded with the run"),
+				"label":           map[string]any{"type": "string", "maxLength": 200, "description": "Optional free-form display label, separate from the session slug; whitespace is collapsed and control characters are removed"},
 				"timeout_seconds": map[string]any{"type": "integer", "minimum": 10, "maximum": 7200, "default": 900, "description": "Provider process deadline"},
 			}, "prompt", "agent"), Annotations: modelCall,
 			Grant: "agent.run", Surfaces: both, AuditTargetKeys: []string{"run_id"},
