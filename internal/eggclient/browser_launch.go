@@ -24,12 +24,54 @@ func BrowserEggIdentity(wc *config.WingConfig, start ws.PTYStart, home string, s
 // PrepareBrowserLaunch is shared by fresh PTYs and browser forks. Configured
 // roots, rather than writable subdirectories, determine browser launch policy.
 func PrepareBrowserLaunch(wc *config.WingConfig, start *ws.PTYStart, home string, sharedHost bool, wingDefault *egg.EggConfig) (*egg.EggConfig, EggIdentity, error) {
+	return prepareSessionLaunch(wc, start, home, sharedHost, wingDefault, true)
+}
+
+// PrepareMCPLaunch permits existing subdirectories within the caller's paths,
+// while retaining the covering configured root's sandbox policy.
+func PrepareMCPLaunch(wc *config.WingConfig, start *ws.PTYStart, home string, sharedHost bool, wingDefault *egg.EggConfig) (*egg.EggConfig, EggIdentity, error) {
+	return prepareSessionLaunch(wc, start, home, sharedHost, wingDefault, false)
+}
+
+func prepareSessionLaunch(wc *config.WingConfig, start *ws.PTYStart, home string, sharedHost bool, wingDefault *egg.EggConfig, browser bool) (*egg.EggConfig, EggIdentity, error) {
 	if wc.IsAdmin(start.Email) && wingpolicy.IsMemberRole(start.OrgRole) {
 		start.OrgRole = "admin"
 	}
 	identity := BrowserEggIdentity(wc, *start, home, sharedHost)
 	if wingpolicy.IsMemberRole(start.OrgRole) && len(identity.AllowedPaths) == 0 {
 		return nil, identity, errors.New("no accessible folders on this machine")
+	}
+	if !browser {
+		if start.CWD == "" && len(identity.AllowedPaths) > 0 {
+			start.CWD = identity.AllowedPaths[0]
+		}
+		cwd := start.CWD
+		if cwd == "" {
+			var err error
+			cwd, err = os.Getwd()
+			if err != nil {
+				return nil, identity, fmt.Errorf("resolve working directory: %w", err)
+			}
+		}
+		cwd, err := filepath.Abs(cwd)
+		if err != nil {
+			return nil, identity, fmt.Errorf("resolve working directory: %w", err)
+		}
+		// CanonicalSessionPath falls back to the spelling on resolution failure;
+		// require successful resolution before using it for admission.
+		resolved, err := filepath.EvalSymlinks(cwd)
+		if err != nil {
+			return nil, identity, fmt.Errorf("working directory %q: %w", cwd, err)
+		}
+		cwd = wingpolicy.CanonicalSessionPath(resolved)
+		info, err := os.Stat(cwd)
+		if err != nil {
+			return nil, identity, fmt.Errorf("working directory %q: %w", cwd, err)
+		}
+		if !info.IsDir() {
+			return nil, identity, fmt.Errorf("working directory %q is not a directory", cwd)
+		}
+		start.CWD = cwd
 	}
 	if identity.UserID != "" && (identity.SharedHost || identity.OrgWing) {
 		if start.CWD == "" && len(identity.AllowedPaths) > 0 {
@@ -39,15 +81,50 @@ func PrepareBrowserLaunch(wc *config.WingConfig, start *ws.PTYStart, home string
 		cfg, err := LoadRoostEggConfig(start.CWD, roots, identity.AllowedPaths, wingpolicy.IsMemberRole(start.OrgRole), wingDefault)
 		return cfg, identity, err
 	}
-	if len(identity.AllowedPaths) > 0 && !wingpolicy.IsExactPath(wingpolicy.CanonicalSessionPath(start.CWD), identity.AllowedPaths) {
+	if browser && len(identity.AllowedPaths) > 0 && !wingpolicy.IsExactPath(wingpolicy.CanonicalSessionPath(start.CWD), identity.AllowedPaths) {
 		start.CWD = identity.AllowedPaths[0]
 	}
+	policyCWD := start.CWD
+	if !browser && len(identity.AllowedPaths) > 0 {
+		if !wingpolicy.IsUnderPaths(start.CWD, identity.AllowedPaths) {
+			return nil, identity, errors.New("working directory is outside current launch paths")
+		}
+		// Explicit nested roots retain their existing independent policy. A
+		// writable child that is not a configured root cannot select egg.yaml.
+		selected := ""
+		for _, root := range identity.AllowedPaths {
+			if wingpolicy.IsUnderPaths(start.CWD, []string{root}) && len(root) > len(selected) {
+				selected = root
+			}
+		}
+		policyCWD = selected
+	}
 	if wingpolicy.IsMemberRole(start.OrgRole) && len(wc.Paths) > 0 {
-		if _, err := os.Stat(filepath.Join(start.CWD, "egg.yaml")); os.IsNotExist(err) {
-			return nil, identity, fmt.Errorf("no egg.yaml in %s — ask the wing owner to add a sandbox config", start.CWD)
+		if _, err := os.Stat(filepath.Join(policyCWD, "egg.yaml")); os.IsNotExist(err) {
+			return nil, identity, fmt.Errorf("no egg.yaml in %s — ask the wing owner to add a sandbox config", policyCWD)
 		}
 	}
-	return egg.DiscoverEggConfig(start.CWD, wingDefault), identity, nil
+	cfg := egg.DiscoverEggConfig(policyCWD, wingDefault)
+	if policyCWD != start.CWD {
+		// Relative grants and denies must mean the same paths as a launch at
+		// the root; rebasing a deny onto the child could weaken that policy.
+		copyCfg := *cfg
+		copyCfg.FS = append([]string(nil), cfg.FS...)
+		for i, rule := range copyCfg.FS {
+			mode, path, hasMode := strings.Cut(rule, ":")
+			if !hasMode {
+				path = rule
+			}
+			if !filepath.IsAbs(path) && !strings.HasPrefix(path, "~") {
+				copyCfg.FS[i] = filepath.Join(policyCWD, path)
+				if hasMode {
+					copyCfg.FS[i] = mode + ":" + copyCfg.FS[i]
+				}
+			}
+		}
+		cfg = &copyCfg
+	}
+	return cfg, identity, nil
 }
 
 // LoadRoostEggConfig discovers only the administrator-configured root's policy,
