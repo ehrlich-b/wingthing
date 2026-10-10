@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
@@ -41,6 +42,10 @@ func wingRunStatus(r *wingsession.Run) map[string]any {
 }
 
 func (s *Server) toolAgentRun(arguments json.RawMessage) (map[string]any, error) {
+	return s.toolAgentRunTask(arguments, nil)
+}
+
+func (s *Server) toolAgentRunTask(arguments json.RawMessage, task *control.MCPTaskParams) (map[string]any, error) {
 	var args struct {
 		Prompt         string `json:"prompt"`
 		Agent          string `json:"agent"`
@@ -53,7 +58,7 @@ func (s *Server) toolAgentRun(arguments json.RawMessage) (map[string]any, error)
 	if err := decodeStrict(arguments, &args); err != nil {
 		return nil, err
 	}
-	return s.wingSubmitRun(wingsession.RunRequest{Prompt: args.Prompt, Agent: args.Agent, Model: args.Model, CWD: args.CWD, Label: args.Label, TimeoutSeconds: args.TimeoutSeconds, RequestKey: args.RequestKey})
+	return s.wingSubmitRun(wingsession.RunRequest{Prompt: args.Prompt, Agent: args.Agent, Model: args.Model, CWD: args.CWD, Label: args.Label, TimeoutSeconds: args.TimeoutSeconds, RequestKey: args.RequestKey, MCPTask: task})
 }
 
 func (s *Server) wingSubmitRun(request wingsession.RunRequest) (map[string]any, error) {
