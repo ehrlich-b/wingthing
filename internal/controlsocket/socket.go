@@ -385,11 +385,15 @@ func (c *Client) Call(ctx context.Context, tool string, arguments json.RawMessag
 }
 
 func (c *Client) cancelRequest(id string) {
-	// The write slot is normally free while awaiting a result. Cancellation is
-	// best effort if another request is currently writing or the peer is gone.
+	// Forward cancellation even if another request is writing, with a bounded
+	// cleanup deadline independent of the already cancelled caller context.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 	select {
 	case c.writeSlot <- struct{}{}:
-	default:
+	case <-c.done:
+		return
+	case <-ctx.Done():
 		return
 	}
 	defer func() { <-c.writeSlot }()

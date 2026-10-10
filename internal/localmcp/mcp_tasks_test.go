@@ -10,11 +10,14 @@ import (
 	"reflect"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
+	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 )
 
 func newTaskWingFixture(t *testing.T) *runWingFixture {
@@ -247,6 +250,81 @@ func TestMCPTaskCancelStopsRunAndFreezesResult(t *testing.T) {
 	}
 }
 
+func TestMCPTaskGrantsAndPathIsolation(t *testing.T) {
+	f := newTaskWingFixture(t)
+	id := startTask(t, f, "grants")
+	<-f.submitted
+	denied := &Server{Version: "test", Cfg: f.server.Cfg, Sessions: f.service, Principal: f.server.Principal, identity: f.server.identity, Grants: map[string]bool{}}
+	for _, method := range []string{"tasks/get", "tasks/result", "tasks/list", "tasks/cancel"} {
+		params := map[string]any{"taskId": id}
+		if method == "tasks/list" {
+			params = map[string]any{}
+		}
+		response := taskRPC(t, denied.handle, method, params)
+		if response.Error == nil || response.Error.Code != -32602 {
+			t.Fatalf("%s bypassed grants: %+v", method, response)
+		}
+	}
+	response := taskRPC(t, denied.handle, "tools/call", map[string]any{"name": "agent_run", "arguments": map[string]any{"prompt": "denied"}, "task": map[string]any{}})
+	if response.Error == nil {
+		t.Fatal("task admission bypassed grant")
+	}
+	denied.Grants = nil
+	denied.enforcePathBounds = true
+	denied.allowedPaths = []string{filepath.Join(f.server.Cfg.Dir, "other")}
+	response = taskRPC(t, denied.handle, "tasks/get", map[string]any{"taskId": id})
+	if response.Error == nil {
+		t.Fatal("path-bound caller read outside its paths")
+	}
+	tasks := taskData(t, taskRPC(t, denied.handle, "tasks/list", map[string]any{}))["tasks"].([]any)
+	if len(tasks) != 0 {
+		t.Fatalf("path-bound list leaked tasks: %v", tasks)
+	}
+}
+
+func TestMCPTaskCancellationRecoversStopIntentAfterWingRestart(t *testing.T) {
+	f := newTaskWingFixture(t)
+	id := startTask(t, f, "cancel-restart")
+	<-f.submitted
+	if err := f.service.RunManager.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.service.RunManager = nil
+	stop := f.service.RunBackend.Stop
+	entered := make(chan struct{}, 8)
+	f.service.RunBackend.Stop = func(ctx context.Context, _ *config.Config, _ eggclient.LocalSession, _ string) (egg.RunTurnResult, error) {
+		entered <- struct{}{}
+		<-ctx.Done()
+		return egg.RunTurnResult{}, ctx.Err()
+	}
+	if err := f.service.StartRuns(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cancelled := taskData(t, taskRPC(t, f.server.handle, "tasks/cancel", map[string]any{"taskId": id}))
+	if cancelled["status"] != "cancelled" {
+		t.Fatalf("cancel: %v", cancelled)
+	}
+	<-entered // The wing exits before its stop RPC can acknowledge termination.
+	before := taskData(t, taskRPC(t, f.server.handle, "tasks/result", map[string]any{"taskId": id}))
+	if err := f.service.RunManager.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.service.RunManager = nil
+	f.service.RunBackend.Stop = stop
+	if err := f.service.StartRuns(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	f.wait(t, id)
+	run, err := f.service.RunManager.Get(f.server.sessionAuthority(), id)
+	if err != nil || run.Result.Status != "stopped" {
+		t.Fatalf("restart lost stop intent: %v %v", run, err)
+	}
+	after := taskData(t, taskRPC(t, f.server.handle, "tasks/result", map[string]any{"taskId": id}))
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("restart changed cancelled result: %v %v", before, after)
+	}
+}
+
 func TestMCPTaskStdioRequestCancellationAndWingRestart(t *testing.T) {
 	f := newTaskWingFixture(t)
 	id := startTask(t, f, "reconnect")
@@ -327,5 +405,56 @@ func TestMCPTaskStdioRequestCancellationAndWingRestart(t *testing.T) {
 	data := taskData(t, taskRPC(t, proxy.handle, "tasks/result", map[string]any{"taskId": id}))
 	if data["structuredContent"].(map[string]any)["output"] != "survived client exit and wing restart" {
 		t.Fatalf("restart result: %v", data)
+	}
+}
+
+func TestMCPTasksDirectConnectorRoutesTwoWings(t *testing.T) {
+	tunnel := newDirectConnectorTestTunnel(t)
+	fixtures := map[string]*runWingFixture{}
+	for wingID, wing := range tunnel.wings {
+		f := newTaskWingFixture(t)
+		f.server.Principal = roostSessionPrincipal("owner-user")
+		f.server.identity.UserID = "owner-user"
+		wing.cfg = f.server.Cfg
+		wing.admission.Sessions = f.service
+		fixtures[wingID] = f
+	}
+	connector := &ConnectMCPServer{Version: "test", Actor: "fixture", Tunnel: tunnel, Timeout: 10 * time.Second}
+	defer connector.Close()
+	ids := map[string]string{}
+	for _, wingID := range []string{"home", "office"} {
+		data := taskData(t, taskRPC(t, connector.handle, "tools/call", map[string]any{"name": "agent_run", "arguments": map[string]any{"wing_id": wingID, "agent": "codex", "prompt": "direct task", "cwd": fixtures[wingID].server.Cfg.Dir}, "task": map[string]any{}}))
+		id := data["task"].(map[string]any)["taskId"].(string)
+		owner, runID, err := control.SplitTaskID(id)
+		if err != nil || owner != wingID || <-fixtures[wingID].submitted != runID {
+			t.Fatalf("wrong direct owner: %s %v", id, err)
+		}
+		ids[wingID] = id
+		get := taskData(t, taskRPC(t, connector.handle, "tasks/get", map[string]any{"taskId": id}))
+		if get["status"] != "working" {
+			t.Fatalf("direct task: %v", get)
+		}
+	}
+	list := taskData(t, taskRPC(t, connector.handle, "tasks/list", map[string]any{}))
+	if len(list["tasks"].([]any)) != 2 {
+		t.Fatalf("direct task inventory: %v", list)
+	}
+	_, homeRun, _ := control.SplitTaskID(ids["home"])
+	fixtures["home"].finish(t, homeRun, "direct final Ω🙂", "")
+	fixtures["home"].wait(t, homeRun)
+	result := taskData(t, taskRPC(t, connector.handle, "tasks/result", map[string]any{"taskId": ids["home"]}))
+	plain := taskData(t, taskRPC(t, connector.handle, "tools/call", map[string]any{"name": "agent_result", "arguments": map[string]any{"wing_id": "home", "run_id": homeRun}}))
+	delete(result, "_meta")
+	if !reflect.DeepEqual(result, plain) {
+		t.Fatalf("direct result parity: %v vs %v", result, plain)
+	}
+	cancelled := taskData(t, taskRPC(t, connector.handle, "tasks/cancel", map[string]any{"taskId": ids["office"]}))
+	if cancelled["status"] != "cancelled" || cancelled["taskId"] != ids["office"] {
+		t.Fatalf("direct cancellation: %v", cancelled)
+	}
+	_, officeRun, _ := control.SplitTaskID(ids["office"])
+	fixtures["office"].wait(t, officeRun)
+	if response := taskRPC(t, connector.handle, "tasks/cancel", map[string]any{"taskId": ids["office"]}); response.Error == nil || response.Error.Code != -32602 {
+		t.Fatalf("direct protocol error lost: %+v", response)
 	}
 }

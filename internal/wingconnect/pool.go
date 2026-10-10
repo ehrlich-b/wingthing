@@ -452,6 +452,11 @@ func (p *Pool) Call(ctx context.Context, wingID, name string, args json.RawMessa
 			return data, denied, callErr
 		}
 		err = callErr
+		if name == control.MCPTaskResult && ctx.Err() != nil {
+			// The transport forwards request cancellation. Retain this shared
+			// connection and its other observers when just one wait ends.
+			return data, denied, ctx.Err()
+		}
 		_ = conn.Close()
 		if !retry || ctx.Err() != nil {
 			break

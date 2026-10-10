@@ -143,6 +143,52 @@ func TestRememberedPoolLiveReloadDropAndBackoffReconnect(t *testing.T) {
 		t.Fatal("removed wing still routes")
 	}
 }
+
+func TestRememberedTaskResultUsesRequestLifetimeAndKeepsConnection(t *testing.T) {
+	h := testssh.New(t)
+	entered, stopped := make(chan struct{}), make(chan struct{})
+	one, socket := fakeWing(t, h, "one", "wing-one", func(ctx context.Context, request control.DirectRequest) control.DirectResponse {
+		if request.Tool == control.MCPTaskResult {
+			close(entered)
+			<-ctx.Done()
+			close(stopped)
+		}
+		return control.DirectResponse{Version: control.ContractVersion, ID: request.ID, Result: map[string]any{"tool": request.Tool}}
+	})
+	defer socket.Close()
+	state := filepath.Join(h.Root, "registry")
+	if err := config.SaveRemotes(state, map[string]config.Remote{"one": one}); err != nil {
+		t.Fatal(err)
+	}
+	p, changes, _ := newTestPool(t, h, state)
+	waitEntries(t, p, changes, func(rows []map[string]any) bool { return rows[0]["online"] == true })
+	<-h.Started
+	// An already expired ordinary call timeout cannot shorten tasks/result.
+	// Synchronize with the receiving handler, never elapsed time or sleeps.
+	p.opts.CallTimeout = -time.Second
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := p.Call(ctx, "wing-one", control.MCPTaskResult, json.RawMessage(`{"taskId":"run"}`))
+		done <- err
+	}()
+	<-entered
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("wait cancellation: %v", err)
+	}
+	<-stopped
+	p.opts.CallTimeout = time.Minute
+	data, denied, err := p.Call(t.Context(), "wing-one", "terminal_list", json.RawMessage(`{}`))
+	if err != nil || denied || data["tool"] != "terminal_list" {
+		t.Fatalf("connection unusable: %v %v", data, err)
+	}
+	select {
+	case forward := <-h.Started:
+		t.Fatalf("one cancelled observer reconnected %s", forward.Host)
+	default:
+	}
+}
 func TestRememberedPoolHostAndWingIdentityChangesFailClosed(t *testing.T) {
 	h := testssh.New(t)
 	one, s := fakeWing(t, h, "one", "wing-one", nil)

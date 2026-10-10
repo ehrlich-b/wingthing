@@ -77,6 +77,16 @@ func relatedTask(id string) map[string]any {
 	return map[string]any{control.MCPRelatedTask: map[string]any{"taskId": id}}
 }
 
+func mcpRequestKey(raw json.RawMessage) string {
+	// Equivalent JSON spellings of a string ID select the same observer.
+	var id string
+	if json.Unmarshal(raw, &id) == nil {
+		wire, _ := json.Marshal(id)
+		return string(wire)
+	}
+	return string(raw)
+}
+
 // handleMCPTaskRequest translates native MCP envelopes, leaving execution and
 // authorization in the wing even when this stdio process exits.
 func handleMCPTaskRequest(ctx context.Context, request localMCPRequest, caller taskCaller, aggregate bool) localMCPResponse {
