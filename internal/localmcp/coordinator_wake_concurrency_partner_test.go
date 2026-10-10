@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -671,6 +672,13 @@ func TestOpusWakeRecoveryDuplicateImportsDedupeAndDistinctEventsWakeInOrder(t *t
 // (uncommitted or committed-but-unacknowledged) is recovered by replayable
 // read pagination and revision CAS; reads never write acknowledgement state.
 func TestOpusWakeRecoveryLostCheckpointAckReplaysPagesAndRejectsStaleWriters(t *testing.T) {
+	// Keep the 300ms prompt deadline, but exclude scheduler and disk latency
+	// from it. This case tests checkpoint recovery, not receipt timeout; the
+	// real store, prompt reservations, and concurrent CAS writers still run.
+	synctest.Test(t, testOpusWakeRecoveryLostCheckpointAck)
+}
+
+func testOpusWakeRecoveryLostCheckpointAck(t *testing.T) {
 	h := newOpusWakeHarness(t)
 	db := h.open(t)
 	root, child, parent := h.root(t, db, "root", "working", "completed", "needs_input", "working", "completed")
