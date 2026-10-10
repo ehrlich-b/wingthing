@@ -455,6 +455,7 @@ func buildTools() []Tool {
 			InputSchema: objectSchema(map[string]any{
 				"run_id": stringProperty("Wingthing agent run ID"),
 				"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+				"cursor": map[string]any{"type": "integer", "minimum": 0, "description": "Replay older events before this cursor"},
 			}, "run_id"), Annotations: readOnly,
 			Grant: "agent.read", Surfaces: both, AuditTargetKeys: []string{"run_id"},
 		},

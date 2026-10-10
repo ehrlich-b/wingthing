@@ -1596,6 +1596,9 @@ func agentRunStatusData(task *store.Task) map[string]any {
 }
 
 func (s *Server) toolAgentStatus(arguments json.RawMessage) (map[string]any, error) {
+	if s.Sessions != nil && s.Sessions.RunManager != nil {
+		return s.wingAgentStatus(arguments)
+	}
 	var args struct {
 		RunID string `json:"run_id"`
 	}
@@ -1694,6 +1697,9 @@ func (s *Server) AgentWaitAny(ctx context.Context, arguments json.RawMessage) (m
 }
 
 func (s *Server) toolAgentWaitAny(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {
+	if s.Sessions != nil && s.Sessions.RunManager != nil {
+		return s.wingAgentWaitAny(ctx, arguments)
+	}
 	var args struct {
 		RunIDs         []string `json:"run_ids"`
 		TimeoutSeconds float64  `json:"timeout_seconds"`
@@ -1851,6 +1857,9 @@ func (s *Server) toolAgentResult(arguments json.RawMessage) (map[string]any, err
 }
 
 func (s *Server) toolAgentEvents(arguments json.RawMessage) (map[string]any, error) {
+	if s.Sessions != nil && s.Sessions.RunManager != nil {
+		return s.wingAgentEvents(arguments)
+	}
 	var args struct {
 		RunID string `json:"run_id"`
 		Limit int    `json:"limit"`
@@ -1895,6 +1904,9 @@ func (s *Server) toolAgentEvents(arguments json.RawMessage) (map[string]any, err
 }
 
 func (s *Server) toolAgentSteer(arguments json.RawMessage) (map[string]any, error) {
+	if s.Sessions != nil && s.Sessions.RunManager != nil {
+		return s.wingAgentSteer(arguments)
+	}
 	var args struct {
 		RunID  string `json:"run_id"`
 		Prompt string `json:"prompt"`
@@ -1941,6 +1953,9 @@ func agentSteerPrompt(parentRequest, parentResult, parentError, direction string
 }
 
 func (s *Server) toolAgentStop(arguments json.RawMessage) (map[string]any, error) {
+	if s.Sessions != nil && s.Sessions.RunManager != nil {
+		return s.wingAgentStop(arguments)
+	}
 	var args struct {
 		RunID string `json:"run_id"`
 	}

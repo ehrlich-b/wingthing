@@ -41,7 +41,7 @@ type runWingFixture struct {
 func newRunWingFixture(t *testing.T, s *Server) *runWingFixture {
 	t.Helper()
 	if s == nil {
-		s = &Server{Cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, Principal: "owner", Logs: io.Discard}
+		s = &Server{Version: "test", Cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, Principal: "owner", Logs: io.Discard}
 	}
 	s = testWingServer(t, s)
 	f := &runWingFixture{server: s, service: s.Sessions, eggs: map[string]*fixtureRunEgg{}, submitted: make(chan string, 64), spawned: make(chan wingsession.StartOptions, 64), launches: make(chan *wingsession.Launch, 64)}
@@ -318,4 +318,115 @@ func TestMCPStartedAgentSurvivesHostExit(t *testing.T) {
 	if err != nil || denied || data["output"] != "survived client exit" {
 		t.Fatalf("reconnected: %v %v", data, err)
 	}
+}
+
+func TestStopAndQueuedSteerSurviveReconnect(t *testing.T) {
+	f := newRunWingFixture(t, nil)
+	parent := f.admit(t, "original request")
+	<-f.submitted
+	queued, err := f.server.toolAgentSteer(json.RawMessage(`{"run_id":"` + parent + `","prompt":"new direction","model":"sonnet"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := queued["run_id"].(string)
+	reconnected := *f.server
+	stopped, err := reconnected.toolAgentStop(runArgs(parent))
+	if err != nil || stopped["status"] != "stopped" || stopped["stopped"] != true {
+		t.Fatalf("stop: %v %v", stopped, err)
+	}
+	for _, id := range []string{parent, child} {
+		result, err := reconnected.toolAgentResult(runArgs(id))
+		if err != nil || result["status"] != "stopped" || result["ready"] != true {
+			t.Fatalf("reconnect result: %v %v", result, err)
+		}
+	}
+	repeated, err := reconnected.toolAgentStop(runArgs(parent))
+	if err != nil || repeated["finished_at"] != stopped["finished_at"] {
+		t.Fatalf("non-idempotent stop: %v %v", repeated, err)
+	}
+	select {
+	case id := <-f.submitted:
+		t.Fatalf("cancelled follow-up executed: %s", id)
+	default:
+	}
+	stranger := reconnected
+	stranger.Principal = "stranger"
+	if _, err := stranger.toolAgentStop(runArgs(parent)); err == nil {
+		t.Fatal("foreign stop accepted")
+	}
+}
+
+func TestQueuedSteerReceivesParentOutcomeAndModelOverride(t *testing.T) {
+	f := newRunWingFixture(t, nil)
+	parent := f.admit(t, "original request")
+	<-f.submitted
+	follow, err := f.server.toolAgentSteer(json.RawMessage(`{"run_id":"` + parent + `","prompt":"fix remaining issue","model":"sonnet"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := follow["run_id"].(string)
+	select {
+	case id := <-f.submitted:
+		t.Fatalf("active parent did not gate followup: %s", id)
+	default:
+	}
+	f.finish(t, parent, "partial Ω result", agent.ProviderError)
+	if id := <-f.submitted; id != child {
+		t.Fatalf("submitted wrong followup: %s", id)
+	}
+	f.mu.Lock()
+	e := f.eggs[child]
+	f.mu.Unlock()
+	e.mu.Lock()
+	prompt := e.prompt
+	e.mu.Unlock()
+	if !strings.Contains(prompt, "Prior request:\noriginal request") || !strings.Contains(prompt, "Prior result:\npartial Ω result") || !strings.Contains(prompt, "New direction:\nfix remaining issue") || !strings.Contains(prompt, "Prior error:\nEgg run turn ended: provider_error.") {
+		t.Fatalf("followup context: %q", prompt)
+	}
+	<-f.spawned
+	opts := <-f.spawned
+	if !reflect.DeepEqual(opts.Egg.AgentArgs, []string{"--model", "sonnet"}) || opts.SessionID == follow["session_id"] && opts.SessionID == "" {
+		t.Fatalf("followup model: %+v", opts)
+	}
+	f.finish(t, child, "fixed", "")
+	f.wait(t, child)
+	events, err := f.server.toolAgentEvents(json.RawMessage(`{"run_id":"` + child + `","limit":2}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := events["events"].([]map[string]any)
+	if len(page) != 2 || page[0]["event"] != "done" {
+		t.Fatalf("events order: %v", events)
+	}
+	cursor := events["next_cursor"].(int64)
+	wire, _ := json.Marshal(map[string]any{"run_id": child, "limit": 2, "cursor": cursor})
+	older, err := f.server.toolAgentEvents(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range older["events"].([]map[string]any) {
+		if entry["cursor"].(int64) >= cursor {
+			t.Fatal("cursor replay repeated newer event")
+		}
+	}
+}
+
+func TestWingWaitAnyPreservesFinishedPendingAndHiddenErrors(t *testing.T) {
+	f := newRunWingFixture(t, nil)
+	a := f.admit(t, "a")
+	b := f.admit(t, "b")
+	<-f.submitted
+	<-f.submitted
+	f.finish(t, b, "done", "")
+	f.wait(t, b)
+	wire, _ := json.Marshal(map[string]any{"run_ids": []string{a, b, "missing", b}})
+	data, err := f.server.toolAgentWaitAny(t.Context(), wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(data["finished"], []map[string]any{{"run_id": b, "status": "done"}}) || !reflect.DeepEqual(data["pending"], []string{a}) || len(data["errors"].([]map[string]any)) != 1 {
+		t.Fatalf("wait-any: %v", data)
+	}
+	f.finish(t, a, "done", "")
+	f.wait(t, a)
 }
