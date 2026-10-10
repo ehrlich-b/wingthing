@@ -188,3 +188,29 @@ owned processes/endpoints have gone and resolving the failure, an operator may
 archive `runner-state.json` outside the log directory; keep the receipts. A
 legacy failed cleanup receipt still refuses admission, so archive that receipt
 alongside the state only after resolution. Never delete unrelated or live state.
+
+## Offline package fixtures
+
+```sh
+python3 -B -m unittest discover -s scripts/dogfood -p 'test_*.py' -v
+bash -n scripts/dogfood/run.sh scripts/dogfood/canary.sh
+```
+
+`test_forge_package.py` runs a checkout-local fake canary and captures fake
+systemctl arguments. It covers success, nonzero exit, shortened watchdog cleanup,
+real concurrent wrappers, stale locks/state, retained cleanup failures, receipt
+rotation, missing binaries, quoted paths, immutable preparation epochs, operator
+edit refusal, resource environment, expiry and bounded status parsing. The CLI's
+12-minute watchdog is unchanged; only the test API shortens it. Fixtures live
+under this clone's `.scratch`, and failing tests retain their paths for diagnosis.
+No fixture enables a timer or contacts a provider or host. The canary layout test
+also checks private state placement and Darwin's socket path budget.
+
+Run the separate full `make -j1 check` gate on a host that permits its process
+inventory and native socket fixtures. A passing package fixture suite or
+`make -j1 ops ACTION=build` is not a passing full gate. Keep full-suite failures
+visible and return them to their product/CI owner; do not suppress tests to
+promote this installation. Staged cache documentation is not repository product
+documentation, but the current docs gate walks `.scratch` too. A denied `ps`,
+long test socket path, or nested sandbox restriction remains an acceptance
+blocker, even if this canary's supported fixture checks complete successfully.
