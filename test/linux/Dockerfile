@@ -5,6 +5,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # creation via Go's SysProcAttr.UidMappings. Root still exercises the full
 # sandbox codepath (namespace + seccomp + deny mounts + write isolation).
 COPY wt /usr/local/bin/wt
+COPY wt /root/wt-fixture
+ENV WT_TEST_BINARY=/root/wt-fixture
 COPY mock-agent /usr/local/bin/claude
 COPY run-tests /root/run-tests
 COPY sandbox-tests /root/sandbox-tests

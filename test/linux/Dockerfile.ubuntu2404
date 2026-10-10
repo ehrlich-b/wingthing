@@ -1,6 +1,6 @@
 FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates procps strace curl unzip && rm -rf /var/lib/apt/lists/*
+    ca-certificates procps strace curl unzip python3 && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 22 LTS (Claude Code runtime)
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
@@ -27,6 +27,8 @@ COPY mock-agent /usr/local/bin/claude
 COPY mock-agent /usr/local/bin/mock-agent
 
 COPY wt /usr/local/bin/wt
+COPY wt /root/wt-fixture
+ENV WT_TEST_BINARY=/root/wt-fixture
 COPY run-tests /root/run-tests
 COPY sandbox-tests /root/sandbox-tests
 COPY wt-tests /root/wt-tests
