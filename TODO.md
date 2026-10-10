@@ -226,8 +226,9 @@ account management, org settings, audit display.
 
 ### JS: Async correctness
 
-- [ ] `data.js` `probeWing()` dedup — `_probeInflight` is deleted in `.finally()`
-  before callers resolve, creating a race window for duplicate probes
+- [x] `probeWing()` immediate fulfillment/rejection/retry already deduplicates;
+  guard stale results across disconnect, replacement identity and account changes,
+  and invalidate old probes on wing lifecycle events before probing again.
 - [ ] `bytesToB64()` in `helpers.js` uses O(n²) string concatenation in a loop
   on every encrypt/decrypt — use `String.fromCharCode.apply(null, bytes)` or
   typed array approach

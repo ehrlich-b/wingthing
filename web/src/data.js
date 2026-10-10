@@ -137,19 +137,38 @@ function dismissCryptoToast() {
 // Tunnel probe — populates wing metadata or sets tunnel_error
 // Deduplicate: if a probe is already in-flight for this wing, return the same promise
 
-var _probeInflight = {};
+var _probeInflight = new Map();
 
-export function probeWing(w) {
-    if (_probeInflight[w.wing_id]) return _probeInflight[w.wing_id];
-    _probeInflight[w.wing_id] = _probeWingInner(w).finally(function() {
-        delete _probeInflight[w.wing_id];
-    });
-    return _probeInflight[w.wing_id];
+// Invalidate the result without changing transport ownership. A late response
+// or rejection must not edit a reconnected wing or a replacement account.
+export function cancelWingProbe(wingId) {
+    _probeInflight.delete(wingId);
 }
 
-async function _probeWingInner(w) {
+function currentWingProbe(w, probe) {
+    return _probeInflight.get(w.wing_id) === probe && w.online !== false &&
+        S.wingsData.find(function(wing) { return wing.wing_id === w.wing_id; }) === w &&
+        w.public_key === probe.publicKey && S.currentUser === probe.user;
+}
+
+export function probeWing(w) {
+    if (w.online === false || S.wingsData.find(function(wing) { return wing.wing_id === w.wing_id; }) !== w) {
+        return Promise.resolve();
+    }
+    var existing = _probeInflight.get(w.wing_id);
+    if (existing && currentWingProbe(w, existing)) return existing.promise;
+    var probe = { publicKey: w.public_key, user: S.currentUser, promise: null };
+    _probeInflight.set(w.wing_id, probe);
+    probe.promise = _probeWingInner(w, probe).finally(function() {
+        if (_probeInflight.get(w.wing_id) === probe) _probeInflight.delete(w.wing_id);
+    });
+    return probe.promise;
+}
+
+async function _probeWingInner(w, probe) {
     try {
         var data = await sendTunnelRequest(w.wing_id, { type: 'wing.info' }, { skipPasskey: true });
+        if (!currentWingProbe(w, probe)) return;
         w.hostname = data.hostname || w.hostname;
         w.platform = data.platform || w.platform;
         w.version = data.version || w.version;
@@ -165,6 +184,7 @@ async function _probeWingInner(w) {
         w.passkey_enrolled = !!data.passkey_enrolled;
         delete w.tunnel_error;
     } catch (e) {
+        if (!currentWingProbe(w, probe)) return;
         var msg = e.message || '';
         if (msg.indexOf('not_allowed') !== -1) {
             w.tunnel_error = 'not_allowed';
@@ -276,6 +296,7 @@ async function _loadHomeInner() {
             if (aw.owner) w.owner = aw.owner;
         } else {
             w.online = false;
+            cancelWingProbe(w.wing_id);
         }
     });
 
