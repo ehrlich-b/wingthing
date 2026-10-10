@@ -25,12 +25,8 @@ func TestPreviewInputLeaseAcrossAttachments(t *testing.T) {
 	if binary == "" {
 		t.Fatal("run make test-integ")
 	}
-	root, err := os.MkdirTemp("/tmp", "wt-lease-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
-	home, stateDir, work := filepath.Join(root, "home"), filepath.Join(root, "state"), filepath.Join(root, "work")
+	root := shortIntegrationRoot(t)
+	home, stateDir, work := filepath.Join(root, "home"), filepath.Join(root, "s"), filepath.Join(root, "work")
 	for _, dir := range []string{home, work} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			t.Fatal(err)

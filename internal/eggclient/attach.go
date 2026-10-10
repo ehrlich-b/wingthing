@@ -71,12 +71,12 @@ func AttachLocal(ctx context.Context, cfg *config.Config, sessionID string) (boo
 }
 
 func AttachLocalOptions(ctx context.Context, cfg *config.Config, sessionID string, options egg.AttachOptions) (bool, error) {
-	return attachLocalIO(ctx, cfg, sessionID, os.Stdin, os.Stdout, options)
+	return AttachLocalIO(ctx, cfg, sessionID, os.Stdin, os.Stdout, options)
 }
 
 // The attachment owns its stream lifetime, not the session process. Detaching
 // or losing this connection cancels only this client and leaves the egg alive.
-func attachLocalIO(ctx context.Context, cfg *config.Config, sessionID string, input io.Reader, output io.Writer, options egg.AttachOptions) (bool, error) {
+func AttachLocalIO(ctx context.Context, cfg *config.Config, sessionID string, input io.Reader, output io.Writer, options egg.AttachOptions) (bool, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	resolved, ec, err := OpenLocalEgg(ctx, cfg, sessionID)

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"syscall"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
@@ -24,7 +26,7 @@ func attachCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "attach [session]",
 		Short: "Attach this terminal to a running egg session",
-		Long: "Attach the current terminal through a running wing to a persistent egg session. " +
+		Long: "Attach the current terminal to a persistent egg session, through the wing when one is running. " +
 			"Use NAME:SESSION for a configured SSH remote, or a plain SESSION for a local session. " +
 			"Use --remote with an SSH host from ~/.ssh/config to attach without opening the web app.\n\n" +
 			"Detach without stopping the session with Ctrl+B, then Q. Send a literal Ctrl+B with Ctrl+B twice.",
@@ -69,27 +71,14 @@ func attachCmd() *cobra.Command {
 					Args: remoteArgs, AllocateTTY: streams.StdinTTY && streams.StdoutTTY,
 				}, streams)
 			}
+			clientName := os.Getenv("WT_MCP_CLIENT")
 			if sessionID == "" {
-				if !selectFlag {
-					result, err := localmcp.CallLocalWingTool(cmd.Context(), dir, os.Getenv("WT_MCP_CLIENT"), "terminal_list", json.RawMessage(`{}`))
-					if err != nil {
-						return err
-					}
-					data, _ := json.Marshal(result["sessions"])
-					var sessions []eggclient.LocalSession
-					if err := json.Unmarshal(data, &sessions); err != nil {
-						return err
-					}
-					return writeLocalSessions(cmd.OutOrStdout(), sessions, jsonFlag)
-				}
-				result, listErr := localmcp.CallLocalWingTool(cmd.Context(), dir, os.Getenv("WT_MCP_CLIENT"), "terminal_list", json.RawMessage(`{}`))
-				if listErr != nil {
-					return listErr
-				}
-				data, _ := json.Marshal(result["sessions"])
-				var sessions []eggclient.LocalSession
-				if err := json.Unmarshal(data, &sessions); err != nil {
+				sessions, err := attachSessions(cmd.Context(), dir, clientName)
+				if err != nil {
 					return err
+				}
+				if !selectFlag {
+					return writeLocalSessions(cmd.OutOrStdout(), sessions, jsonFlag)
 				}
 				selected, selectErr := selectSession(sessions)
 				if selectErr != nil {
@@ -98,9 +87,14 @@ func attachCmd() *cobra.Command {
 				sessionID = selected.ID
 			}
 
-			detached, err := localmcp.AttachWingIO(cmd.Context(), dir, os.Getenv("WT_MCP_CLIENT"), sessionID, cmd.InOrStdin(), cmd.OutOrStdout(), egg.AttachOptions{ReadOnly: readOnlyFlag, Takeover: takeoverFlag})
+			options := egg.AttachOptions{ReadOnly: readOnlyFlag, Takeover: takeoverFlag}
+			detached, err := localmcp.AttachWingIO(cmd.Context(), dir, clientName, sessionID, cmd.InOrStdin(), cmd.OutOrStdout(), options)
+			if standaloneAttachAvailable(err, clientName) {
+				options.Claim, options.Owner = !readOnlyFlag, "cli"
+				detached, err = eggclient.AttachLocalIO(cmd.Context(), &config.Config{Dir: dir}, sessionID, cmd.InOrStdin(), cmd.OutOrStdout(), options)
+			}
 			if detached {
-				fmt.Fprintf(os.Stderr, "\r\n[detached from %s]\r\n", sessionID)
+				fmt.Fprintf(cmd.ErrOrStderr(), "\r\n[detached from %s]\r\n", sessionID)
 			}
 			return err
 		},
@@ -112,4 +106,28 @@ func attachCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&takeoverFlag, "takeover", false, "explicitly take input control from another attachment (preview)")
 	cmd.MarkFlagsMutuallyExclusive("read-only", "takeover")
 	return cmd
+}
+
+// Standalone terminals predate wing control and survive without a daemon.
+// A wing's policy/handshake refusal must never fall back to direct egg access,
+// and a named client explicitly selects the wing's authority contract.
+func standaloneAttachAvailable(err error, clientName string) bool {
+	return clientName == "" && (errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED))
+}
+
+func attachSessions(ctx context.Context, dir, clientName string) ([]eggclient.LocalSession, error) {
+	result, err := localmcp.CallLocalWingTool(ctx, dir, clientName, "terminal_list", json.RawMessage(`{}`))
+	if standaloneAttachAvailable(err, clientName) {
+		return eggclient.DiscoverActiveSessions(ctx, &config.Config{Dir: dir})
+	}
+	if err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(result["sessions"])
+	if err != nil {
+		return nil, err
+	}
+	var sessions []eggclient.LocalSession
+	err = json.Unmarshal(data, &sessions)
+	return sessions, err
 }

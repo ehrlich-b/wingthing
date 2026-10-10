@@ -34,12 +34,8 @@ func TestRemoteCLIReattachesExactPersistentSession(t *testing.T) {
 
 func remoteCLIReattachJourney(t *testing.T, binary string) {
 	t.Helper()
-	fixture, err := os.MkdirTemp("/tmp", "wt-remote-integ-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(fixture) })
-	remoteState := filepath.Join(fixture, "remote")
+	fixture := shortIntegrationRoot(t)
+	remoteState := filepath.Join(fixture, "r")
 	localState := filepath.Join(fixture, "local-must-stay-absent")
 	remoteHome := filepath.Join(fixture, "home")
 	workspace := filepath.Join(fixture, "work with spaces")
