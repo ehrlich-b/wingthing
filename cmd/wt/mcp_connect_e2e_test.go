@@ -53,6 +53,15 @@ func TestBuiltWTConnectRememberedSSHRunSurvivesDrop(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!"+python+"\n"+fakeRunCodex), 0700); err != nil {
 		t.Fatal(err)
 	}
+	// The remote PATH keeps an old wt for another pipeline; only the explicitly
+	// selected fixture build understands the read-only inspect handshake.
+	if err := os.WriteFile(filepath.Join(bin, "wt"), []byte("#!/bin/sh\necho 'Error: unknown flag: --client' >&2\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	remoteBinary := filepath.Join(bin, "wt dev")
+	if err := os.Symlink(binary, remoteBinary); err != nil {
+		t.Fatal(err)
+	}
 	gatePath := filepath.Join(h.Root, "completion-gate")
 	if err := unix.Mkfifo(gatePath, 0600); err != nil {
 		t.Fatal(err)
@@ -60,7 +69,7 @@ func TestBuiltWTConnectRememberedSSHRunSurvivesDrop(t *testing.T) {
 	path := bin + string(os.PathListSeparator) + h.Root + string(os.PathListSeparator) + os.Getenv("PATH")
 	work := config.CanonicalProviderPath(h.Root)
 	environment := func(state string) []string {
-		return []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + path, "SHELL=/bin/sh", "WT_FAKE_SSH_ROOT=" + h.Root, "WT_FAKE_SSH_WT=" + binary}
+		return []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + path, "SHELL=/bin/sh", "WT_FAKE_SSH_ROOT=" + h.Root, "WT_FAKE_SSH_EXECUTE=1"}
 	}
 	startWing := func(state string) {
 		t.Helper()
@@ -119,11 +128,21 @@ func TestBuiltWTConnectRememberedSSHRunSurvivesDrop(t *testing.T) {
 	add := exec.Command(binary, "mcp", "connect", "add", "forge", "--ssh", "forge", "--wingthing-dir", remoteState)
 	add.Env = environment(localState)
 	add.Dir = work
+	if output, err := add.CombinedOutput(); err == nil || !strings.Contains(string(output), "remote wt is too old for this build") || !strings.Contains(string(output), "--wt-binary") {
+		t.Fatalf("old PATH binary diagnostic: %v\n%s", err, output)
+	}
+	registry, err := config.LoadRemotes(localState)
+	if err != nil || len(registry) != 0 {
+		t.Fatalf("failed verification wrote registry: %v %v", registry, err)
+	}
+	add = exec.Command(binary, "mcp", "connect", "add", "forge", "--ssh", "forge", "--wingthing-dir", remoteState, "--wt-binary", remoteBinary)
+	add.Env = environment(localState)
+	add.Dir = work
 	if output, err := add.CombinedOutput(); err != nil {
 		t.Fatalf("built add: %v\n%s", err, output)
 	}
-	registry, err := config.LoadRemotes(localState)
-	if err != nil || registry["forge"].WingID != meta.WingID || registry["forge"].WingthingDir != meta.WingthingDir {
+	registry, err = config.LoadRemotes(localState)
+	if err != nil || registry["forge"].WingID != meta.WingID || registry["forge"].WingthingDir != meta.WingthingDir || registry["forge"].WTBinary != remoteBinary {
 		t.Fatalf("built registry: %v %v", registry, err)
 	}
 	process := exec.Command(binary, "mcp", "connect", "--unsandboxed")

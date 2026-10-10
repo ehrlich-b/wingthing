@@ -54,12 +54,12 @@ func remoteCmd() *cobra.Command {
 				return err
 			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			if _, err := fmt.Fprintln(w, "NAME\tSSH_TARGET\tWINGTHING_DIR"); err != nil {
+			if _, err := fmt.Fprintln(w, "NAME\tSSH_TARGET\tWINGTHING_DIR\tWT_BINARY"); err != nil {
 				return err
 			}
 			for _, name := range eggclient.SortedRemoteNames(remotes) {
 				remote := remotes[name]
-				if _, err := fmt.Fprintf(w, "%s\t%s\t%s\n", name, remote.SSHTarget, remote.WingthingDir); err != nil {
+				if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", name, remote.SSHTarget, remote.WingthingDir, remote.Binary()); err != nil {
 					return err
 				}
 			}

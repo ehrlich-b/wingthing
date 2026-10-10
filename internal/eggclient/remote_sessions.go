@@ -63,7 +63,7 @@ func (b *remoteSessionBuffer) Write(p []byte) (int, error) {
 func QueryRemoteSessions(localVersion string, ctx context.Context, name string, remote config.Remote, streams remotepkg.IO) ([]LocalSession, error) {
 	ctx, cancel := context.WithTimeout(ctx, RemoteSessionTimeout)
 	defer cancel()
-	invocation := remotepkg.Invocation{Target: remote.SSHTarget, Binary: config.BinaryName(), State: remote.WingthingDir}
+	invocation := remotepkg.Invocation{Target: remote.SSHTarget, Binary: remote.Binary(), State: remote.WingthingDir}
 	stdout := remoteSessionBuffer{limit: remoteSessionStdoutLimit, stream: "stdout", cancel: cancel}
 	stderr := remoteSessionBuffer{limit: remoteSessionStderrLimit, stream: "stderr", cancel: cancel}
 	streams.In, streams.Out, streams.ErrOut = nil, &stdout, &stderr

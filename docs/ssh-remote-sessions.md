@@ -15,6 +15,26 @@ wt mcp connect
 # Later: wt mcp connect rm forge
 ```
 
+If the compatible binary is outside the remote PATH, or PATH still selects an
+older `wt`, name the executable when adding the wing:
+
+```sh
+wt mcp connect add forge --ssh forge --wingthing-dir '~/my-wing-state' \
+  --wt-binary /home/me/bin/wt-dev
+```
+
+`--wt-binary` accepts an absolute remote path (spaces are allowed when quoted)
+or a bare command name resolved on the remote PATH. Relative paths, `~/`, shell
+metacharacters and control characters are rejected. It defaults to `wt` on
+PATH (`wt-preview` for a preview client), is saved as optional `wt_binary` in
+`remotes.yaml`, and appears in `connect ls`. Saved entries without the field
+keep the PATH default. The selected binary performs verification and is also
+used for remembered session listing and attachment. Reconnects verify the
+pinned wing through its forwarded control socket without running a binary.
+An inspect usage error reports that the remote `wt` is too old for this build
+and suggests `--wt-binary`. The global `--remote-binary` option belongs to
+`--remote HOST` commands; use `--wt-binary` with `mcp connect add`.
+
 Configure your MCP client to run `wt mcp connect`. It exposes the common tool
 catalog for the local wing and remembered wings without a Wingthing account.
 Call `wing_list`, then pass the selected stable `wing_id` to each tool, including

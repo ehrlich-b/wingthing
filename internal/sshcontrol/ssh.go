@@ -100,8 +100,12 @@ func (b *cappedBuffer) String() string {
 	defer b.mu.Unlock()
 	return strings.TrimSpace(b.b.String())
 }
-func (t Transport) Inspect(ctx context.Context, host, dir, client string) (config.Remote, error) {
+func (t Transport) Inspect(ctx context.Context, host, dir, binary, client string) (config.Remote, error) {
 	if err := config.ValidateSSHTarget(host); err != nil {
+		return config.Remote{}, err
+	}
+	r := config.Remote{SSHTarget: host, WTBinary: binary}
+	if err := config.ValidateWTBinary(r.Binary()); err != nil {
 		return config.Remote{}, err
 	}
 	if dir != "" && !(strings.HasPrefix(dir, "/") || strings.HasPrefix(dir, "~/")) {
@@ -110,7 +114,7 @@ func (t Transport) Inspect(ctx context.Context, host, dir, client string) (confi
 	if strings.ContainsAny(dir, "\x00\r\n") {
 		return config.Remote{}, errors.New("invalid wingthing-dir")
 	}
-	args := append(t.options(), "--", host, "wt mcp inspect")
+	args := append(t.options(), "--", host, quote(r.Binary())+" mcp inspect")
 	args[len(args)-1] += " --client " + quote(client)
 	if dir != "" {
 		args[len(args)-1] += " --wingthing-dir " + quote(dir)
@@ -121,7 +125,13 @@ func (t Transport) Inspect(ctx context.Context, host, dir, client string) (confi
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return config.Remote{}, fmt.Errorf("verify remote wing: %w: %s", err, stderr.String())
+		diagnostic := stderr.String()
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() != 255 &&
+			(strings.Contains(diagnostic, "unknown flag") || strings.Contains(diagnostic, "unknown command") || strings.Contains(diagnostic, "flag provided but not defined")) {
+			return config.Remote{}, fmt.Errorf("verify remote wing: remote wt is too old for this build; select a compatible binary with --wt-binary PATH: %w: %s", err, diagnostic)
+		}
+		return config.Remote{}, fmt.Errorf("verify remote wing: %w: %s", err, diagnostic)
 	}
 	var m Metadata
 	d := json.NewDecoder(strings.NewReader(stdout.String()))
@@ -135,7 +145,7 @@ func (t Transport) Inspect(ctx context.Context, host, dir, client string) (confi
 	if m.Version != control.ContractVersion {
 		return config.Remote{}, errors.New("incompatible remote control version; upgrade wt and restart the remote wing")
 	}
-	r := config.Remote{SSHTarget: host, WingthingDir: m.WingthingDir, WingID: m.WingID, ControlSocket: m.ControlSocket, ControlVersion: m.Version}
+	r.WingthingDir, r.WingID, r.ControlSocket, r.ControlVersion = m.WingthingDir, m.WingID, m.ControlSocket, m.Version
 	// Reuse registry validation before trusting any remote-supplied path.
 	if m.WingID == "" || !strings.HasPrefix(m.WingthingDir, "/") || !strings.HasPrefix(m.ControlSocket, "/") || strings.ContainsAny(m.WingthingDir+m.ControlSocket+m.WingID, "\x00\r\n") || strings.ContainsAny(m.ControlSocket+m.WingID, ":") {
 		return config.Remote{}, errors.New("invalid remote wing metadata")
