@@ -79,6 +79,85 @@ func localSocketPolicyFixture(t *testing.T) (*wingsession.Service, *config.WingC
 	return service, wc
 }
 
+func TestLocalSocketSubdirectoryLaunchesRetainClientIsolation(t *testing.T) {
+	service, wc := localSocketPolicyFixture(t)
+	home, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	work := config.CanonicalProviderPath(filepath.Join(home, "work"))
+	child := filepath.Join(work, "batch")
+	if err := os.MkdirAll(child, 0700); err != nil {
+		t.Fatal(err)
+	}
+	service.Home = home
+	wc.Paths = config.PathList{{Path: work}}
+	admission := NewMCPAdmissionState()
+	owner, err := resolveLocalWingClient("test", service, "owner", admission, controlsocket.Hello{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newRunWingFixture(t, owner)
+	if err := os.WriteFile("state/fixture.token", []byte("fixture-token"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	spawn := service.Spawn
+	service.Spawn = func(launch *wingsession.Launch, opts wingsession.StartOptions) (*egg.Client, error) {
+		if _, err := spawn(launch, opts); err != nil {
+			return nil, err
+		}
+		return egg.Dial("state/fixture.sock", "state/fixture.token")
+	}
+	listener, err := ListenLocalWingControl(t.Context(), "test", service, "owner", admission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	for _, clientName := range []string{"", "named"} {
+		client, err := controlsocket.Dial(t.Context(), "state", controlsocket.Hello{Client: clientName})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer client.Close()
+		for _, tool := range []string{"terminal_start", "agent_start", "agent_run"} {
+			args, _ := json.Marshal(map[string]any{"cwd": child})
+			if tool == "agent_start" {
+				args, _ = json.Marshal(map[string]any{"cwd": child, "agent": "claude"})
+			}
+			if tool == "agent_run" {
+				args, _ = json.Marshal(map[string]any{"cwd": child, "agent": "claude", "prompt": "fixture request"})
+			}
+			data, denied, err := client.Call(t.Context(), tool, args)
+			if err != nil || denied || data["cwd"] != child {
+				t.Fatalf("%s/%s subdirectory launch: %v, denied=%v, %v", clientName, tool, data, denied, err)
+			}
+			launch, opts := <-f.launches, <-f.spawned
+			if launch.CWD != child || opts.Egg.Principal != client.Welcome.Principal {
+				t.Fatalf("spawn lost cwd or principal: %+v, %+v", launch, opts)
+			}
+			session := eggclient.LocalSession{ID: opts.SessionID, CWD: child, Principal: opts.Egg.Principal}
+			if owner.ownsSession(session) != (clientName == "") {
+				t.Fatal("default client crossed named-client boundary")
+			}
+			named, err := resolveLocalWingClient("test", service, "owner", admission, controlsocket.Hello{Client: "named"})
+			if err != nil || named.ownsSession(session) != (clientName == "named") {
+				t.Fatalf("named-client ownership changed: %v", err)
+			}
+			if tool == "agent_run" {
+				id := data["run_id"].(string)
+				if <-f.submitted != id {
+					t.Fatal("wrong run submitted")
+				}
+				f.finish(t, id, "done", "")
+				if err := service.RunManager.Wait(t.Context(), wingsession.Authority{UserID: "owner", Principal: client.Welcome.Principal}, []string{id}); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+}
+
 func TestLocalWingRenameConflictPreservesSentinel(t *testing.T) {
 	service, wc := localSocketPolicyFixture(t)
 	workspace, err := os.Getwd()

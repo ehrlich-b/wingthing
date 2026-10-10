@@ -529,7 +529,7 @@ func TestRoostContinuationUsesRoleRootPolicy(t *testing.T) {
 	}
 }
 
-func TestPersonalMCPLaunchUsesWebPathPolicy(t *testing.T) {
+func TestPersonalMCPSubdirectoryUsesRootPathPolicy(t *testing.T) {
 	home := config.CanonicalProviderPath(t.TempDir())
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
@@ -541,13 +541,20 @@ func TestPersonalMCPLaunchUsesWebPathPolicy(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace, "egg.yaml"), []byte("base: none\nnetwork: [workspace.example]\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	root := filepath.Dir(workspace)
+	if err := os.WriteFile(filepath.Join(root, "egg.yaml"), []byte("base: none\nfs: [deny:/, rw:., deny:./private]\nnetwork: [root.example]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := config.SaveWingConfig(cfg.Dir, &config.WingConfig{Paths: config.PathList{{Path: filepath.Dir(workspace)}}}); err != nil {
 		t.Fatal(err)
 	}
 	server := testNativeServer(t, "test", cfg, false, NewMCPAdmissionState(), mcppkg.Principal{UserID: "owner"}, []string{filepath.Dir(workspace)})
 	policy, err := server.loadLaunchConfig(workspace)
-	if err == nil || !strings.Contains(err.Error(), "current launch paths") {
-		t.Fatalf("personal MCP accepted a CWD that web redirects: %#v, %v", policy, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server.sessionLaunch.CWD != workspace || !slices.Equal(policy.Network.Domains, []string{"root.example"}) || !slices.Equal(policy.FS, []string{"deny:/", "rw:" + root, "deny:" + filepath.Join(root, "private")}) {
+		t.Fatalf("personal MCP lost root policy or subdirectory cwd: %+v, %+v", server.sessionLaunch, policy)
 	}
 }
 

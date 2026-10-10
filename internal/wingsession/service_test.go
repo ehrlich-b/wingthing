@@ -5,13 +5,70 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
+
+func TestMCPLaunchCanonicalSubdirectoriesAndBounds(t *testing.T) {
+	home := wingpolicy.CanonicalSessionPath(t.TempDir())
+	t.Setenv("HOME", home)
+	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
+	root, child, outside := filepath.Join(home, "work"), filepath.Join(home, "work", "child"), filepath.Join(home, "outside")
+	sibling := root + "-other"
+	for _, dir := range []string{child, outside, sibling} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, target := range map[string]string{"alias": child, "escape": outside} {
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "file"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	wc := &config.WingConfig{Paths: config.PathList{{Path: root}}}
+	s := &Service{Home: home, Policy: func() Policy { return Policy{Wing: wc, Egg: egg.DefaultEggConfig()} }}
+	a := Authority{UserID: "alice", Role: "owner", Principal: UserPrincipal("alice"), AllowedPaths: []string{root}, EnforcePaths: true}
+	for _, cwd := range []string{child, filepath.Join(root, "alias")} {
+		launch, err := s.PrepareLaunch(a, cwd)
+		if err != nil || launch.CWD != child {
+			t.Fatalf("subdirectory %q: %+v, %v", cwd, launch, err)
+		}
+	}
+	for _, tt := range []struct{ name, cwd, errorText string }{
+		{"traversal", root + string(filepath.Separator) + "../outside", "outside"},
+		{"symlink escape", filepath.Join(root, "escape"), "outside"},
+		{"nonexistent", filepath.Join(root, "missing"), "no such file"},
+		{"file", filepath.Join(root, "file"), "not a directory"},
+		{"sibling prefix", sibling, "outside"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := s.PrepareLaunch(a, tt.cwd); err == nil || !strings.Contains(err.Error(), tt.errorText) {
+				t.Fatalf("launch %q error = %v, want %q", tt.cwd, err, tt.errorText)
+			}
+		})
+	}
+	a.AllowedPaths = []string{outside}
+	if _, err := s.PrepareLaunch(a, child); err == nil || !strings.Contains(err.Error(), "this user's wing paths") {
+		t.Fatalf("authority bounds ignored: %v", err)
+	}
+	a.AllowedPaths = nil
+	if _, err := s.PrepareLaunch(a, child); err == nil {
+		t.Fatal("empty enforced grant admitted")
+	}
+	web, err := s.PrepareLaunch(Authority{UserID: "alice", Role: "owner", Browser: true}, child)
+	if err != nil || web.CWD != root {
+		t.Fatalf("browser exact-root behavior changed: %+v, %v", web, err)
+	}
+}
 
 func TestLaunchUsesOnePolicyForWebAndMCP(t *testing.T) {
 	root := config.CanonicalProviderPath(t.TempDir())

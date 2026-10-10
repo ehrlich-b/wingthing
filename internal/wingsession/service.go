@@ -104,7 +104,11 @@ func (s *Service) prepareLaunch(p Policy, a Authority, cwd string) (*Launch, err
 		}
 	}
 	start := ws.PTYStart{CWD: cwd, UserID: a.UserID, Email: a.Email, OrgRole: a.Role, DisplayName: a.DisplayName}
-	cfg, identity, err := eggclient.PrepareBrowserLaunch(p.Wing, &start, s.Home, s.SharedHost || a.SealedFS, p.Egg)
+	prepare := eggclient.PrepareMCPLaunch
+	if a.Browser {
+		prepare = eggclient.PrepareBrowserLaunch
+	}
+	cfg, identity, err := prepare(p.Wing, &start, s.Home, s.SharedHost || a.SealedFS, p.Egg)
 	if err != nil {
 		return nil, err
 	}
@@ -113,9 +117,6 @@ func (s *Service) prepareLaunch(p Policy, a Authority, cwd string) (*Launch, err
 	identity.SharedHost = identity.SharedHost || a.SealedFS
 	if a.EnforcePaths && (len(a.AllowedPaths) == 0 || !wingpolicy.IsUnderPaths(wingpolicy.CanonicalSessionPath(start.CWD), a.AllowedPaths)) {
 		return nil, errors.New("working directory is outside this user's wing paths")
-	}
-	if !a.Browser && cwd != "" && wingpolicy.CanonicalSessionPath(start.CWD) != wingpolicy.CanonicalSessionPath(cwd) {
-		return nil, errors.New("working directory is outside current launch paths")
 	}
 	if a.Unsandboxed {
 		cfg = egg.UnsandboxedEggConfig()

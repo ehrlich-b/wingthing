@@ -17,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/fsnotify/fsnotify"
 	"golang.org/x/sys/unix"
 )
 
@@ -79,6 +80,10 @@ func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
 	t.Cleanup(func() { _ = os.Remove(alias) })
 	state := filepath.Join(alias, "s")
 	work := config.CanonicalProviderPath(fixture)
+	childWork := filepath.Join(work, "runs", "batch")
+	if err := os.MkdirAll(childWork, 0700); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", state)
 	t.Setenv("WT_MCP_CLIENT", "")
@@ -188,7 +193,7 @@ func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
 	call("wingthing_capabilities", map[string]any{})
 	directory := call("wing_list", map[string]any{})
 	wingID := directory["wings"].([]any)[0].(map[string]any)["wing_id"].(string)
-	shell := call("terminal_start", map[string]any{"command": []string{"/bin/sh"}, "cwd": work})["session"].(string)
+	shell := call("terminal_start", map[string]any{"command": []string{"/bin/sh"}, "cwd": childWork})["session"].(string)
 	// Always stop actual fixture eggs, even when a later assertion fails.
 	var sessions = []string{shell}
 	var runs []string
@@ -207,17 +212,46 @@ func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
 			_ = eggclient.KillOrphanEggContext(ctx, cfg, id)
 		}
 	})
-	call("terminal_send", map[string]any{"session": shell, "input": "printf 'local-shell-ready\\n'", "enter": true})
-	call("terminal_wait", map[string]any{"session": shell, "contains": "local-shell-ready", "timeout_seconds": 10})
+	call("terminal_send", map[string]any{"session": shell, "input": "printf 'fixture-cwd=%s\\n' \"$PWD\"", "enter": true})
+	call("terminal_wait", map[string]any{"session": shell, "contains": "fixture-cwd=" + childWork, "timeout_seconds": 10})
 	listed := call("terminal_list", map[string]any{})
 	if len(listed["sessions"].([]any)) != 1 {
 		t.Fatalf("shell not listed: %v", listed)
 	}
+	// Kill acknowledges the shell's exit before the egg finishes shutdown.
+	// Wait for its endpoint cleanup before testing the restart inventory.
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watcher.Close()
+	shellDir := filepath.Join(state, "eggs", shell)
+	if err := watcher.Add(shellDir); err != nil {
+		t.Fatal(err)
+	}
 	call("terminal_stop", map[string]any{"session": shell})
-	run := call("agent_run", map[string]any{"prompt": "local request", "agent": "codex", "model": "fixture-model", "cwd": work, "timeout_seconds": 30})
+	for {
+		if _, err := os.Stat(filepath.Join(shellDir, "egg.pid")); os.IsNotExist(err) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-watcher.Events:
+		case err := <-watcher.Errors:
+			t.Fatal(err)
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		}
+	}
+	_ = watcher.Close()
+	run := call("agent_run", map[string]any{"prompt": "local request", "agent": "codex", "model": "fixture-model", "cwd": childWork, "timeout_seconds": 30})
 	id, session := run["run_id"].(string), run["session_id"].(string)
 	sessions = append(sessions, session)
 	runs = append(runs, id)
+	if run["cwd"] != childWork {
+		t.Fatalf("run lost subdirectory cwd: %v", run)
+	}
 	if run["wing_id"] != wingID {
 		t.Fatalf("run did not retain local wing identity: %v", run)
 	}
@@ -239,6 +273,10 @@ func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer gate.Close()
+	meta, err := os.ReadFile(filepath.Join(state, "eggs", session, "egg.meta"))
+	if err != nil || !strings.Contains(string(meta), "\ncwd="+childWork+"\n") {
+		t.Fatalf("fake agent egg lost subdirectory cwd: %s, %v", meta, err)
+	}
 	ownerBefore := eggclient.ReadEggOwner(filepath.Join(state, "eggs", session))
 	if ownerBefore == "" {
 		t.Fatal("running egg has no local owner")
