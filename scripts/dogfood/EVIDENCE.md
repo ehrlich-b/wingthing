@@ -150,3 +150,28 @@ The third slot has `fold=1`; all four UTC slot identities remain distinct. The
 independent ended-epoch oracle agrees on four completed point samples, and a
 later report does not add slots. UTC `Z` and `+00:00` spellings canonicalize to
 the same identity; local offsets and naive civil timestamps are refused.
+
+## Conservative legacy import
+
+Take an immutable snapshot of at most 24 old raw receipts, and create a separate
+private output directory. The importer writes a new ledger under the output's
+lock and refuses an existing output, a changed deadline, missing attribution,
+corrupt JSON or more than 24 receipts. It never edits input receipts or repairs
+a partial tail. Complete retained receipts preserve exact digest/outcomes;
+partial records with attributable starts retain unknown completion/cleanup.
+
+```sh
+python3 -B scripts/dogfood/ledger.py import-legacy \
+  --logs /ABSOLUTE/IMMUTABLE/24-RECEIPT-SNAPSHOT \
+  --out /ABSOLUTE/NEW/PRIVATE/OUTPUT/epoch-ledger.ndjson \
+  --epoch UTC-START --until UTC-EXPIRY --host HOST-METADATA-ID
+```
+
+The legacy origin makes every absent due slot unknown, never green or known
+missing. A 448-slot comparison retains 24 complete legacy points and 424 unknown
+slots; the separate complete new-epoch fixture has 448 complete points. The
+independent oracle agrees with both, and input bytes and mtimes stay intact.
+Neither fixture reconstructs genuine older host evidence. Duplicate receipt
+content contributes no new unique slot; partial legacy cleanup still holds
+future admission. A runner adding a ledger to old finite state also preserves
+that state's epoch/deadline even if all raw history has disappeared.
