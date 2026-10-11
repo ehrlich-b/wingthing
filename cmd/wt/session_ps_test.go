@@ -16,7 +16,7 @@ import (
 
 func TestSessionPSLocalFormatGolden(t *testing.T) {
 	// Taken from the format before configured remotes (204bce9^).
-	// STATUS/status is the sole deliberate addition for the agent-status feature.
+	// Status and optional native lifecycle metadata are additive to the existing format.
 	const human = "NAME    ID             KIND     PROCESS  STATUS   ISOLATION  READERS  UPTIME  IDLE  CWD\n" +
 		"review  local-session  command  /bin/sh  unknown  unknown    0        0s      0s    /tmp/work\n"
 	const jsonGolden = `[
@@ -25,6 +25,9 @@ func TestSessionPSLocalFormatGolden(t *testing.T) {
     "name": "review",
     "kind": "command",
     "status": "unknown",
+    "state": "unknown",
+    "state_source": "unsupported",
+    "state_reason": "Native lifecycle evidence is missing or hooks are disabled; status is unknown.",
     "command": "/bin/sh",
     "cwd": "/tmp/work",
     "pid": %d,
