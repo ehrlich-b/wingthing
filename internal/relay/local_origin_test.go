@@ -107,6 +107,7 @@ func TestLocalModeRejectsCrossOriginBrowserMutations(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		host      string
+		path      string
 		origin    string
 		fetchSite string
 		tls       bool
@@ -118,10 +119,23 @@ func TestLocalModeRejectsCrossOriginBrowserMutations(t *testing.T) {
 		{name: "same HTTP origin", host: "localhost:8080", origin: "http://localhost:8080", want: http.StatusNotFound},
 		{name: "same HTTPS origin", host: "localhost:8443", origin: "https://localhost:8443", tls: true, want: http.StatusNotFound},
 		{name: "default HTTP port", host: "localhost", origin: "http://localhost", want: http.StatusNotFound},
+		{name: "null claim origin", host: "localhost:8080", path: "/auth/claim", origin: "null", fetchSite: "same-origin", want: http.StatusBadRequest},
+		{name: "null origin without fetch site", host: "localhost:8080", origin: "null", want: http.StatusForbidden},
+		{name: "cross-site null origin", host: "localhost:8080", origin: "null", fetchSite: "cross-site", want: http.StatusForbidden},
+		{name: "same-site null origin", host: "localhost:8080", origin: "null", fetchSite: "same-site", want: http.StatusForbidden},
+		{name: "none null origin", host: "localhost:8080", origin: "null", fetchSite: "none", want: http.StatusForbidden},
+		{name: "noncanonical same-origin null origin", host: "localhost:8080", origin: "null", fetchSite: "Same-Origin", want: http.StatusForbidden},
+		{name: "padded same-origin null origin", host: "localhost:8080", origin: "null", fetchSite: " same-origin ", want: http.StatusForbidden},
+		{name: "null consent origin", host: "localhost:8080", path: "/oauth/authorize", origin: "null", fetchSite: "same-origin", want: http.StatusNotFound},
+		{name: "cross origin with same-origin fetch site", host: "localhost:8080", origin: "https://attacker.example", fetchSite: "same-origin", want: http.StatusForbidden},
 		{name: "native client without browser headers", host: "127.0.0.1:8080", want: http.StatusNotFound},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "http://"+test.host+"/not-a-route", nil)
+			path := test.path
+			if path == "" {
+				path = "/not-a-route"
+			}
+			req := httptest.NewRequest(http.MethodPost, "http://"+test.host+path, nil)
 			req.Host = test.host
 			if test.origin != "" {
 				req.Header.Set("Origin", test.origin)
@@ -156,9 +170,18 @@ func TestHostedModeRejectsSiblingOriginMutations(t *testing.T) {
 		{name: "app origin", origin: "https://app.wingthing.example", want: http.StatusNotFound},
 		{name: "base origin", origin: "https://wingthing.example", want: http.StatusNotFound},
 		{name: "sibling origin", origin: "https://attacker.wingthing.example", want: http.StatusForbidden},
+		{name: "cross origin with same-origin fetch site", origin: "https://attacker.example", fetchSite: "same-origin", want: http.StatusForbidden},
 		{name: "cross site without origin", fetchSite: "cross-site", want: http.StatusForbidden},
+		{name: "null claim origin", path: "/auth/claim", origin: "null", fetchSite: "same-origin", want: http.StatusBadRequest},
+		{name: "null origin without fetch site", origin: "null", want: http.StatusForbidden},
+		{name: "same-site null origin", origin: "null", fetchSite: "same-site", want: http.StatusForbidden},
+		{name: "none null origin", origin: "null", fetchSite: "none", want: http.StatusForbidden},
+		{name: "noncanonical same-origin null origin", origin: "null", fetchSite: "Same-Origin", want: http.StatusForbidden},
+		{name: "padded same-origin null origin", origin: "null", fetchSite: " same-origin ", want: http.StatusForbidden},
 		{name: "null consent origin", path: "/oauth/authorize", origin: "null", fetchSite: "same-origin", want: http.StatusNotFound},
-		{name: "null origin outside consent", path: "/api/not-a-route", origin: "null", fetchSite: "same-origin", want: http.StatusForbidden},
+		{name: "null origin outside consent", path: "/api/not-a-route", origin: "null", fetchSite: "same-origin", want: http.StatusNotFound},
+		{name: "null consent origin without fetch site", path: "/oauth/authorize", origin: "null", want: http.StatusForbidden},
+		{name: "same-site null consent origin", path: "/oauth/authorize", origin: "null", fetchSite: "same-site", want: http.StatusForbidden},
 		{name: "cross-site null consent origin", path: "/oauth/authorize", origin: "null", fetchSite: "cross-site", want: http.StatusForbidden},
 		{name: "native client", want: http.StatusNotFound},
 	}
@@ -176,6 +199,59 @@ func TestHostedModeRejectsSiblingOriginMutations(t *testing.T) {
 			server.ServeHTTP(recorder, request)
 			if recorder.Code != test.want {
 				t.Fatalf("status = %d, want %d", recorder.Code, test.want)
+			}
+		})
+	}
+}
+
+func TestDeviceClaimAcceptsSameOriginNullOrigin(t *testing.T) {
+	for _, mode := range []struct {
+		name    string
+		baseURL string
+		local   bool
+	}{
+		{name: "hosted", baseURL: "https://wingthing.example"},
+		{name: "local", baseURL: "http://localhost:8080", local: true},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			store := testStore(t)
+			mustTest(t, store.CreateUser("claim-user"))
+			mustTest(t, store.CreateSession("claim-session", "claim-user", time.Now().Add(time.Hour)))
+			mustTest(t, store.CreateDeviceCode("device-grant", "ABCDEF", "claim-device", time.Now().Add(time.Hour)))
+			server := NewServer(store, ServerConfig{BaseURL: mode.baseURL})
+			server.LocalMode = mode.local
+			if mode.local {
+				server.SetLocalUser(&User{ID: "claim-user"})
+			}
+			sessionCookie := &http.Cookie{Name: sessionCookieNameForChannel(), Value: "claim-session"}
+
+			page := httptest.NewRequest(http.MethodGet, mode.baseURL+"/auth/claim?code=ABCDEF", nil)
+			page.AddCookie(sessionCookie)
+			pageResponse := httptest.NewRecorder()
+			server.ServeHTTP(pageResponse, page)
+			if pageResponse.Code != http.StatusOK || !strings.Contains(pageResponse.Body.String(), `action="/auth/claim"`) {
+				t.Fatalf("claim page status = %d, body = %s", pageResponse.Code, pageResponse.Body.String())
+			}
+			if got := pageResponse.Header().Get("Referrer-Policy"); got != "no-referrer" {
+				t.Fatalf("claim page Referrer-Policy = %q, want no-referrer", got)
+			}
+
+			request := httptest.NewRequest(http.MethodPost, mode.baseURL+"/auth/claim", strings.NewReader("user_code=ABCDEF"))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			request.Header.Set("Origin", "null")
+			request.Header.Set("Sec-Fetch-Site", "same-origin")
+			request.AddCookie(sessionCookie)
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != http.StatusSeeOther {
+				t.Fatalf("claim status = %d, body = %s", response.Code, response.Body.String())
+			}
+			deviceCode, err := store.GetDeviceCodeByUserCode("ABCDEF")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if deviceCode == nil || !deviceCode.Claimed {
+				t.Fatalf("device code was not claimed: %#v", deviceCode)
 			}
 		})
 	}
