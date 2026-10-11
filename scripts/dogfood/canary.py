@@ -9,13 +9,14 @@ import json
 import os
 import pathlib
 import queue
+import secrets
 import shutil
 import signal
 import socket
 import stat
+import string
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 
@@ -26,6 +27,22 @@ TIMEOUT = 45
 def require(condition, message):
     if not condition:
         raise RuntimeError(message)
+
+
+def fixture_root(scratch, platform=sys.platform):
+    """Allocate private state within the native Unix socket path budget."""
+    suffix = "/s/eggs/" + "f" * 16 + "/egg.sock"
+    limit = 103 if platform == "darwin" else 107
+    budget = min(8, limit - len((str(scratch) + "/" + suffix).encode()))
+    require(budget >= 3, "checkout path leaves fewer than three fixture-name bytes in the socket budget")
+    for _ in range(128):
+        root = scratch / "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(budget))
+        try:
+            root.mkdir(mode=0o700)
+            return root
+        except FileExistsError:
+            continue
+    raise RuntimeError("fixture namespace occupied; preserve existing state and choose a shorter checkout path")
 
 
 def wait_for(predicate, description, timeout=TIMEOUT):
@@ -144,9 +161,7 @@ class Canary:
         self.egg_pids = set()
         scratch = REPO / ".scratch"
         scratch.mkdir(mode=0o700, exist_ok=True)
-        # Eight random characters leave this long clone's egg socket at Darwin's
-        # 103-byte limit; an extra prefix would exceed it. Keep all state local.
-        self.root = pathlib.Path(tempfile.mkdtemp(prefix="", dir=scratch))
+        self.root = fixture_root(scratch)
         # Seatbelt denies HOME writes, then reopens the workspace, TMPDIR and
         # provider profile directories. State must be a sibling of those roots
         # inside HOME; an ordinary temp directory outside HOME is writable too.
