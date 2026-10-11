@@ -86,7 +86,7 @@ func TestFakeCodexDoesNotAnnounceReadinessAtEmptyStartup(t *testing.T) {
 		t.Fatalf("native fake setup: %v", err)
 	}
 	cmd := exec.Command("nice", append([]string{"-n", "15", python, "-c", fakeRunCodex}, args...)...)
-	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}
+	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + os.Getenv("TMPDIR"), "PYTHONDONTWRITEBYTECODE=1"}
 	terminal, err := pty.Start(cmd)
 	if err != nil {
 		t.Fatal(err)
@@ -224,7 +224,7 @@ func testBuiltWTStdioWingEggFakeCodexTimeout(t *testing.T, modal, nativeTask boo
 			args = append(args, "--initial-run="+string(wire))
 		}
 		child := exec.Command(binary, args...)
-		child.Env = []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH")}
+		child.Env = []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + os.Getenv("TMPDIR"), "PYTHONDONTWRITEBYTECODE=1"}
 		child.Stdout = io.Discard
 		logs, err := child.StderrPipe()
 		if err != nil {
@@ -285,7 +285,7 @@ func testBuiltWTStdioWingEggFakeCodexTimeout(t *testing.T, modal, nativeTask boo
 	}
 	defer func() { listener.Close() }()
 	process := exec.Command(binary, "mcp", "stdio", "--unsandboxed")
-	process.Env = []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH")}
+	process.Env = []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + os.Getenv("TMPDIR"), "PYTHONDONTWRITEBYTECODE=1"}
 	process.Stderr = os.Stderr
 	input, err := process.StdinPipe()
 	if err != nil {
@@ -421,7 +421,7 @@ func testBuiltWTStdioWingEggFakeCodexTimeout(t *testing.T, modal, nativeTask boo
 	var restartedDecoder *json.Decoder
 	if nativeTask {
 		process = exec.Command(binary, "mcp", "stdio", "--unsandboxed")
-		process.Env = []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH")}
+		process.Env = []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + os.Getenv("TMPDIR"), "PYTHONDONTWRITEBYTECODE=1"}
 		process.Stderr = os.Stderr
 		input, err = process.StdinPipe()
 		if err != nil {

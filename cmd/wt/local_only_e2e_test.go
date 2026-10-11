@@ -82,7 +82,7 @@ func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
 	if err := config.SaveWingConfig(state, &config.WingConfig{AllowUnsandboxed: true, Roost: "http://127.0.0.1:1"}); err != nil {
 		t.Fatal(err)
 	}
-	environment := []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH"), "SHELL=/bin/sh"}
+	environment := []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH"), "SHELL=/bin/sh", "TMPDIR=" + os.Getenv("TMPDIR"), "PYTHONDONTWRITEBYTECODE=1"}
 	var wingProcesses []*exec.Cmd
 	var wingExits []chan error
 	startWing := func() {

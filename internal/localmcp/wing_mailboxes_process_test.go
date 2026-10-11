@@ -163,7 +163,7 @@ func builtScopedParentProtocol(t *testing.T, exitParent bool) {
 	var mu sync.Mutex
 	var eggs []*mailboxProcess
 	env := func(state string) []string {
-		return []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + path, "SHELL=/bin/sh", "WT_FAKE_SSH_ROOT=" + h.Root}
+		return []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + path, "SHELL=/bin/sh", "TMPDIR=" + os.Getenv("TMPDIR"), "PYTHONDONTWRITEBYTECODE=1", "WT_FAKE_SSH_ROOT=" + h.Root}
 	}
 	newWing := func(state, workspace string) *wingsession.Service {
 		t.Helper()

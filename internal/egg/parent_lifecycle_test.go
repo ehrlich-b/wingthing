@@ -1,9 +1,14 @@
 package egg
 
 import (
+	"bufio"
+	"context"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -81,4 +86,70 @@ func TestParentLifecycleExitedCodexAndDelayedResult(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestParentLifecycleStopJoinsDisposableChild(t *testing.T) {
+	fixture := newRunFixture(t)
+	// Only shell builtins execute, so this known child has no descendants.
+	// Its stdin command and Wait receipt distinguish Stop from worker exit
+	// without pretending that a denied host process inventory succeeded.
+	child := exec.Command("/bin/sh", "-c", `printf 'ready\n'; IFS= read -r command; test "$command" = stop`)
+	child.Dir = fixture.home
+	child.Env = []string{"HOME=" + fixture.home, "PATH=/usr/bin:/bin", "TMPDIR=" + os.Getenv("TMPDIR")}
+	input, err := child.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := child.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan struct{})
+	var waitErr error
+	go func() { waitErr = child.Wait(); close(exited) }()
+	t.Cleanup(func() { _ = input.Close(); _ = child.Process.Kill(); <-exited })
+	line, err := bufio.NewReader(output).ReadString('\n')
+	if err != nil || line != "ready\n" {
+		t.Fatalf("disposable child readiness: %q %v", line, err)
+	}
+	fixture.runtime.backend.Done = exited
+	var stops atomic.Int32
+	fixture.runtime.backend.Kill = func() ([]RunDescendant, error) {
+		stops.Add(1)
+		if _, err := io.WriteString(input, "stop\n"); err != nil {
+			return nil, err
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		select {
+		case <-exited:
+			return nil, waitErr
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if _, err := fixture.runtime.submit(fixture.request); err != nil {
+		t.Fatal(err)
+	}
+	<-fixture.sent
+	first, err := fixture.runtime.stop(fixture.request.RunID)
+	if err != nil || first.Status != "stopped" || first.ContainmentError != "" || len(first.SurvivingDescendants) != 0 {
+		t.Fatalf("Stop did not join the disposable child: %+v %v", first, err)
+	}
+	fixture.runtime.awaitProcessExit()
+	if waitErr != nil || child.ProcessState == nil || !child.ProcessState.Success() {
+		t.Fatalf("worker exit unaccounted: %v %v", child.ProcessState, waitErr)
+	}
+	second, err := fixture.runtime.stop(fixture.request.RunID)
+	if err != nil || !reflect.DeepEqual(first, second) || stops.Load() != 1 {
+		t.Fatalf("Stop repeated its effect: %+v %v calls=%d", second, err, stops.Load())
+	}
+	durable, err := ReadRunTurnResult(fixture.runtime.dir, fixture.request.RunID)
+	if err != nil || !reflect.DeepEqual(first, durable) {
+		t.Fatalf("Stop lost its terminal receipt: %+v %v", durable, err)
+	}
+	t.Logf("run=%s child_pid=%d stop_requests=1 joined_children=1 descendants=0 terminal=%s", first.RunID, child.Process.Pid, durable.Status)
 }

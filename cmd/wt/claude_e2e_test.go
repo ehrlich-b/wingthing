@@ -165,7 +165,7 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool) {
 	remoteState := testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))
 	path := bin + string(os.PathListSeparator) + h.Root + string(os.PathListSeparator) + os.Getenv("PATH")
 	environment := func(state string) []string {
-		return []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + path, "SHELL=/bin/sh", "WT_FAKE_SSH_ROOT=" + h.Root, "WT_FAKE_SSH_EXECUTE=1"}
+		return []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + path, "SHELL=/bin/sh", "TMPDIR=" + os.Getenv("TMPDIR"), "PYTHONDONTWRITEBYTECODE=1", "WT_FAKE_SSH_ROOT=" + h.Root, "WT_FAKE_SSH_EXECUTE=1"}
 	}
 	startWing := func(state, workspace string) *sliceCProcess {
 		t.Helper()
