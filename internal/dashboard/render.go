@@ -75,6 +75,9 @@ func age(seconds int64) string {
 
 func rowText(r row, width int, seconds int64) string {
 	status := statusLetter(r.Status)
+	if r.attention == "unread" {
+		status += "*"
+	}
 
 	// All columns remain available at 40 cells. Smaller terminals truncate the
 	// compact row; the status and name are always the first visible fields.
@@ -114,11 +117,16 @@ func render(s *state, width, height int, now time.Time) string {
 	total := 0
 	names := s.machineNames()
 	attention := 0
-	for _, machine := range s.machines {
+	unread := 0
+	for name, machine := range s.machines {
 		for _, session := range machine.sessions {
 			counts[statusLetter(session.Status)]++
 			total++
-			if needsAttention(session.Status) {
+			attentionKind := s.sessionRow(name, session).attention
+			if attentionKind == "unread" {
+				unread++
+			}
+			if needsAttention(attentionKind) {
 				attention++
 			}
 		}
@@ -132,7 +140,7 @@ func render(s *state, width, height int, now time.Time) string {
 	}
 	header := []string{
 		fmt.Sprintf("wt | %d sessions | %d machines", total, len(names)),
-		fmt.Sprintf("B:%d W:%d I:%d D:%d E:%d F:%d ?:%d | [%s] !:%d", counts["B"], counts["W"], counts["I"], counts["D"], counts["E"], counts["F"], counts["?"], scope, attention),
+		fmt.Sprintf("B:%d W:%d I:%d D:%d E:%d F:%d ?:%d U:%d | [%s] !:%d bell:%s", counts["B"], counts["W"], counts["I"], counts["D"], counts["E"], counts["F"], counts["?"], unread, scope, attention, s.bellSetting()),
 	}
 	var body []viewLine
 	selectedLine := 0
@@ -185,9 +193,9 @@ func render(s *state, width, height int, now time.Time) string {
 		}
 	}
 	footer := []string{"arrows/j/k move  Enter attach  n new  r rename  x stop",
-		"/ filter  ! attention  m machines  i details  ? help  R refresh  q/Ctrl-C quit"}
+		"/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit"}
 	if width < 75 {
-		footer = []string{"Enter attach n new r rename x stop", "/ filter ! attention m i ? R q quit"}
+		footer = []string{"Enter attach n new r rename x stop", "/ filter ! attention b bell m i ? R q"}
 	}
 	if s.mode == machinePicker {
 		body = []viewLine{{text: "Machines (Enter selects)"}}
@@ -330,13 +338,16 @@ func overlayLines(s *state, now time.Time) []string {
 			"arrows or j/k: move; Enter: attach",
 			"n: new on selected machine; r: rename; x: confirm stop",
 			"/: filter machine, name, ID, agent, cwd or status",
-			"!: attention only (blocked or failed)",
+			"!: attention only (native blocked, unread response or failed)",
+			"b: bell " + s.bellSetting() + " (off by default; this dashboard only)",
+			"Attached: Ctrl+B then q returns here; Ctrl+B twice sends Ctrl+B.",
+			"Leaving wt keeps sessions running.",
 			"m: All, local, or a saved machine (including empty/offline)",
 			"i: full details; R: refresh; q or Ctrl-C: quit",
 			"W working  B blocked  I idle  D done  E exited  F failed  ? unknown",
+			"* unread foreground response; U counts unread. Details/attach acknowledge that response.",
+			"Blocked clears on native evidence; unknown: missing evidence or disabled hooks.",
 			"Connection/freshness is separate from session status; stale means a retained query result.",
-			"Attached: Ctrl+B then q returns here; Ctrl+B twice sends Ctrl+B.",
-			"Leaving wt keeps sessions running.",
 			"Remote setup: wt remote add NAME SSH_TARGET; wt remote list",
 			"Esc/Enter: back; j/k or PageUp/PageDown: scroll",
 		}
@@ -357,8 +368,14 @@ func overlayLines(s *state, now time.Time) []string {
 	}
 	lines := []string{"Details: " + r.key(), "Name: " + r.name(), "Status: " + r.Status,
 		"Machine: " + r.machine + "  " + connection(m, now), "Cwd: " + r.CWD,
+		"Attention: " + r.attention,
+		fmt.Sprintf("Lifecycle source: %s  State cursor: %d", lifecycleSource(r.StateSource), r.StateCursor),
+		"Reason: " + lifecycleDescription(r),
 		"Agent/kind: " + agent + " / " + r.Kind, "Age: " + age(elapsed), "Isolation: " + isolation,
 		fmt.Sprintf("Readers: %d  Writer: %s  Owner: %s  Epoch: %d", r.Readers, r.WriterID, r.WriterOwner, r.InputEpoch),
+	}
+	if r.completion > 0 {
+		lines = append(lines, fmt.Sprintf("Completion cursor shown: %d", r.completion))
 	}
 	if r.machine == "local" {
 		lines = append(lines, "Route: local; state: "+s.localDir)
@@ -378,4 +395,41 @@ func overlayLines(s *state, now time.Time) []string {
 	}
 	lines = append(lines, "Controls: Enter attach; r rename; x confirm stop; n new", "Attach: wt attach -- "+ref)
 	return lines
+}
+
+func lifecycleSource(source string) string {
+	switch source {
+	case "claude_hook", "codex_hook", "egg_process", "native_import", "unsupported":
+		return source
+	default:
+		return "not reported"
+	}
+}
+
+// Remote optional metadata is presentation input too: render descriptions
+// from an allowlist instead of forwarding any provider-supplied reason.
+func lifecycleDescription(r row) string {
+	if r.attention == "unknown" {
+		return "Native lifecycle evidence is missing, unknown or hooks are disabled; no screen inference."
+	}
+	if r.CompletionCursor > 0 || r.attention == "unread" {
+		return "Foreground response completed; provider or descendants may continue."
+	}
+	if r.StateSource == "" && r.State == "" {
+		return "Older inventory reports " + r.attention + "; lifecycle source and cursor are not reported."
+	}
+	switch r.State {
+	case "needs_input":
+		return "Native provider requested input; acknowledgement does not clear blocking."
+	case "working", "starting":
+		return "Native provider is working."
+	case "idle":
+		return "Native provider is idle."
+	case "completed":
+		return "Native provider session ended; descendant success is not certified."
+	case "failed", "stopped":
+		return "Native evidence reports a failure or stop."
+	default:
+		return "Native lifecycle evidence is unavailable."
+	}
 }

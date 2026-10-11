@@ -3,6 +3,7 @@ package eggclient
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 
@@ -234,6 +235,72 @@ func TestDiscoverActiveSessionsInventoryLegacyAgentFallback(t *testing.T) {
 	rows, err := DiscoverActiveSessions(t.Context(), cfg)
 	if err != nil || len(rows) != 20 || rows[0].Agent != "claude" || rows[0].Status != "working" {
 		t.Fatalf("legacy agent fallback: %+v, %v", rows, err)
+	}
+}
+
+func TestDiscoverActiveSessionsNativeAttentionMetadata(t *testing.T) {
+	cfg, _, _, _ := inventorySessionsFixture(t, 20)
+	home := filepath.Dir(cfg.Dir)
+	dir := filepath.Join(cfg.Dir, "eggs", "s00")
+	if err := os.WriteFile(filepath.Join(dir, "lifecycle.jsonl"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	spool := filepath.Join(home, ".claude", "wingthing-events", "s00")
+	if err := os.MkdirAll(spool, 0700); err != nil {
+		t.Fatal(err)
+	}
+	const private = "PRIVATE_PROMPT_TRANSCRIPT_TOKEN_ERROR"
+	for n, phase := range []struct {
+		hook, state, status string
+		completion          bool
+	}{
+		{"SessionStart", "idle", "idle", false},
+		{"UserPromptSubmit", "working", "working", false},
+		{"PermissionRequest", "needs_input", "blocked", false},
+		{"Stop", "completed", "idle", true},
+		{"UserPromptSubmit", "working", "working", false},
+		{"Notification", "idle", "idle", false},
+		{"Stop", "idle", "idle", true},
+		{"SessionEnd", "completed", "done", false},
+	} {
+		payload := map[string]any{"hook_event_name": phase.hook, "session_id": "fixture", "prompt": private, "error": private, "token": private}
+		if phase.hook == "Notification" {
+			payload["notification_type"] = "idle_prompt"
+		}
+		if n == 6 {
+			payload["background_tasks"] = []string{"private-background"}
+		}
+		data, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(spool, fmt.Sprintf("seq.%020d.json", n+1)), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		rows, err := DiscoverActiveSessions(t.Context(), cfg)
+		if err != nil || len(rows) != 20 {
+			t.Fatalf("native phase %s: %v", phase.hook, err)
+		}
+		r := rows[0]
+		if r.State != phase.state || r.Status != phase.status || r.StateSource != "claude_hook" || r.StateCursor != int64(n+1) || (r.CompletionCursor > 0) != phase.completion {
+			t.Fatalf("native phase %s: %+v", phase.hook, r)
+		}
+		encoded, err := json.Marshal(r)
+		if err != nil || strings.Contains(string(encoded), private) || strings.Contains(string(encoded), "private-background") {
+			t.Fatalf("inventory exposed native content: %s %v", encoded, err)
+		}
+		var legacy struct{ ID, Status string }
+		if err := json.Unmarshal(encoded, &legacy); err != nil || legacy.ID != "s00" || legacy.Status != phase.status {
+			t.Fatalf("additive JSON broke a legacy consumer: %+v %v", legacy, err)
+		}
+	}
+	// A live provider and a responsive status RPC supply no lifecycle evidence.
+	if err := os.WriteFile(filepath.Join(cfg.Dir, "eggs", "s01", "lifecycle.jsonl"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := DiscoverActiveSessions(t.Context(), cfg)
+	if err != nil || rows[1].Status != "unknown" || rows[1].State != "unknown" || rows[1].CompletionCursor != 0 {
+		t.Fatalf("disabled hooks inferred completion: %+v %v", rows, err)
 	}
 }
 

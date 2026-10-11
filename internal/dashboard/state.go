@@ -20,7 +20,10 @@ type machine struct {
 
 type row struct {
 	eggclient.LocalSession
-	machine string
+	machine    string
+	identity   attentionIdentity
+	attention  string
+	completion int64
 }
 
 func (r row) key() string { return r.machine + ":" + r.ID }
@@ -64,29 +67,43 @@ type action struct {
 }
 
 type state struct {
-	machines      map[string]machine
-	selected      string
-	filter        string
-	mode          mode
-	input         string
-	previous      string
-	target        row
-	agent         string
-	defaultAgent  string
-	defaultCWD    string
-	message       string
-	busy          bool
-	machineFilter string
-	attentionOnly bool
-	picker        int
-	overlayOffset int
-	overlayLimit  int
-	refresh       bool
-	localDir      string
-	remotes       map[string]config.Remote
+	machines          map[string]machine
+	selected          string
+	filter            string
+	mode              mode
+	input             string
+	previous          string
+	target            row
+	agent             string
+	defaultAgent      string
+	defaultCWD        string
+	message           string
+	busy              bool
+	machineFilter     string
+	attentionOnly     bool
+	picker            int
+	overlayOffset     int
+	overlayLimit      int
+	refresh           bool
+	localDir          string
+	remotes           map[string]config.Remote
+	attention         map[attentionIdentity]attentionRecord
+	attentionProfiles map[string]attentionProfile
+	attached          *attentionIdentity
+	bell              bool
+	pendingBells      int
 }
 
-func needsAttention(status string) bool { return status == "blocked" || status == "failed" }
+func needsAttention(attention string) bool {
+	return attention == "blocked" || attention == "unread" || attention == "failed"
+}
+
+func (s *state) sessionRow(name string, session eggclient.LocalSession) row {
+	r := row{LocalSession: session, machine: name, identity: s.attentionIdentity(name, session.ID)}
+	r.completion = s.attention[r.identity].completion
+	r.attention = s.attentionFor(r)
+	return r
+}
 
 func (s *state) machineNames() []string {
 	names := make([]string, 0, len(s.machines))
@@ -111,17 +128,17 @@ func (s *state) rows() []row {
 			continue
 		}
 		for _, session := range machine.sessions {
-			if s.attentionOnly && !needsAttention(session.Status) {
+			r := s.sessionRow(name, session)
+			if s.attentionOnly && !needsAttention(r.attention) {
 				continue
 			}
-			r := row{LocalSession: session, machine: name}
 			if query != "" && !strings.Contains(strings.ToLower(strings.Join([]string{
-				name, session.ID, session.Name, session.Agent, session.Command, session.CWD, session.Status,
+				name, session.ID, session.Name, session.Agent, session.Command, session.CWD, session.Status, r.attention,
 			}, " ")), query) {
 				continue
 			}
 			rows = append(rows, r)
-			if needsAttention(session.Status) {
+			if needsAttention(r.attention) {
 				blocked[name+"\x00"+r.project()] = true
 			}
 		}
@@ -141,8 +158,8 @@ func (s *state) rows() []row {
 			}
 			return left.project() < right.project()
 		}
-		if needsAttention(left.Status) != needsAttention(right.Status) {
-			return needsAttention(left.Status)
+		if needsAttention(left.attention) != needsAttention(right.attention) {
+			return needsAttention(left.attention)
 		}
 		if left.name() != right.name() {
 			return left.name() < right.name()
@@ -166,6 +183,7 @@ func (s *state) selection() (row, bool) {
 }
 
 func (s *state) reconcile() {
+	s.observeAttention()
 	if r, ok := s.selection(); ok {
 		s.selected = r.key()
 	} else {
@@ -311,12 +329,16 @@ func (s *state) handle(key string) (act *action, quit bool) {
 	case "i":
 		if r, ok := s.selection(); ok {
 			s.target, s.mode, s.overlayOffset = r, details, 0
+			s.acknowledge(r)
 		}
 	case "?":
 		s.mode, s.overlayOffset = help, 0
 	case "!":
 		s.attentionOnly = !s.attentionOnly
 		s.reconcile()
+	case "b":
+		s.bell = !s.bell
+		s.message = "Bell " + s.bellSetting() + " for this dashboard"
 	case "R":
 		s.refresh = true
 	case "/":

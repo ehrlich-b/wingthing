@@ -153,15 +153,39 @@ func TestDashboardFreshnessDetailsHelpAndAttention(t *testing.T) {
 	}
 	drive(s, "\x1b?")
 	text = render(s, 80, 24, now)
-	for _, want := range []string{"Ctrl+B then q", "Ctrl+B twice", "B blocked", "F failed", "wt remote add", "keeps sessions running"} {
+	for _, want := range []string{"Ctrl+B then q", "Ctrl+B twice", "B blocked", "F failed", "wt remote add", "keeps sessions running", "unread", "b: bell off", "disabled hooks"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("help missing %q", want)
 		}
 	}
-	for _, unsupported := range []string{"v observe", "t take control", "h recent", "unread"} {
+	for _, unsupported := range []string{"v observe", "t take control", "h recent"} {
 		if strings.Contains(text, unsupported) {
 			t.Errorf("unsupported control %q", unsupported)
 		}
+	}
+}
+
+func TestDashboardUnreadAndContentFreeLifecycleDetails(t *testing.T) {
+	s := &state{machines: map[string]machine{"local": {}}}
+	attentionApply(s, "local", attentionSession("working", 1, 0))
+	r := attentionSession("completed", 2, 2)
+	r.StateReason = "PRIVATE_TRANSCRIPT_TOKEN\x1b]52;payload\a"
+	attentionApply(s, "local", r)
+	for _, dimensions := range [][2]int{{80, 24}, {40, 12}} {
+		text := strings.Join(renderedLines(t, render(s, dimensions[0], dimensions[1], time.Now()), dimensions[0], dimensions[1]), "\n")
+		if !strings.Contains(text, "I* agent") || !strings.Contains(text, "U:1") || strings.Contains(text, "PRIVATE") {
+			t.Fatalf("unread/status projection: %s", text)
+		}
+	}
+	drive(s, "i")
+	text := render(s, 100, 24, time.Now())
+	for _, want := range []string{"Status: idle", "Attention: unread", "codex_hook", "State cursor: 2", "Foreground response completed", "descendants may continue"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("details missing %q", want)
+		}
+	}
+	if strings.Contains(text, "PRIVATE") || strings.Contains(s.message, "PRIVATE") {
+		t.Fatal("native reason leaked provider content")
 	}
 }
 
