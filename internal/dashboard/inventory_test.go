@@ -3,12 +3,14 @@ package dashboard
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
 func TestDashboardInventorySlowRemoteDoesNotBlockLocal(t *testing.T) {
@@ -102,5 +104,115 @@ func TestDashboardInventoryPanicBecomesDiagnostic(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("panic lost the pending inventory result")
+	}
+}
+
+func TestDashboardInventoryBackoffAndExplicitRefresh(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	inv := newInventory(func(context.Context, string) ([]eggclient.LocalSession, error) { return nil, errors.New("offline") })
+	defer func() { cancel(); inv.workers.Wait() }()
+	now := time.Unix(100, 0)
+	// Workers report real completion time; only the event-loop clock is fake.
+	s := &state{machines: map[string]machine{"work": {}}}
+	for _, delay := range []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 30 * time.Second, 30 * time.Second} {
+		inv.forceRefresh(ctx, s)
+		result := receive(t, inv.results)
+		inv.workers.Wait()
+		inv.now = func() time.Time { return now }
+		inv.apply(s, result)
+		if got := inv.nextQuery["work"].Sub(now); got != delay {
+			t.Fatalf("backoff = %s, want %s", got, delay)
+		}
+		inv.refresh(ctx, s)
+		if inv.inFlight["work"] {
+			t.Fatal("automatic query bypassed failure backoff")
+		}
+		now = now.Add(delay)
+	}
+	inv.apply(s, inventoryResult{name: "work", sessions: []eggclient.LocalSession{session("ok", "ok", "/src", "unknown")}, updated: now})
+	if inv.failures["work"] != 0 || !inv.nextQuery["work"].IsZero() {
+		t.Fatal("recovery did not reset backoff")
+	}
+	inv.refresh(ctx, s)
+	if !inv.inFlight["work"] {
+		t.Fatal("healthy machine remained backed off")
+	}
+}
+
+func TestDashboardInventoryCoalescesBusyRefreshAndJoins(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	started := make(chan struct{}, 4)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	inv := newInventory(func(ctx context.Context, _ string) ([]eggclient.LocalSession, error) {
+		calls.Add(1)
+		started <- struct{}{}
+		select {
+		case <-release:
+			return nil, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+	defer func() { cancel(); inv.workers.Wait() }()
+	s := &state{machines: map[string]machine{"local": {}}}
+	inv.refresh(ctx, s)
+	receive(t, started)
+	for range 20 {
+		inv.forceRefresh(ctx, s)
+	}
+	if calls.Load() != 1 {
+		t.Fatal("busy refresh overlapped queries")
+	}
+	release <- struct{}{}
+	if !inv.apply(s, receive(t, inv.results)) {
+		t.Fatal("busy R was lost")
+	}
+	inv.start(ctx, s, "local")
+	receive(t, started)
+	if calls.Load() != 2 || inv.pending["local"] {
+		t.Fatal("explicit refreshes were not coalesced")
+	}
+	cancel()
+	joined := make(chan struct{})
+	go func() { inv.workers.Wait(); close(joined) }()
+	receive(t, joined)
+	inv.forceRefresh(ctx, s)
+	if calls.Load() != 2 {
+		t.Fatal("refresh launched after cancellation")
+	}
+}
+
+func TestDashboardInventoryQuitWaitsForQueryReaders(t *testing.T) {
+	input, writer := pipeInput(t)
+	started, canceled, reaped := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	inv := newInventory(func(ctx context.Context, _ string) ([]eggclient.LocalSession, error) {
+		close(started)
+		<-ctx.Done()
+		close(canceled)
+		<-reaped
+		return nil, ctx.Err()
+	})
+	var restored atomic.Int32
+	finished := make(chan error, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	defer close(reaped)
+	go func() {
+		finished <- run(ctx, &state{machines: map[string]machine{"local": {}}}, inv, nil, fakeTerminal(io.Discard, &restored), remotepkg.IO{In: input, Out: io.Discard}, nil, nil)
+	}()
+	receive(t, started)
+	if _, err := writer.Write([]byte("q")); err != nil {
+		t.Fatal(err)
+	}
+	receive(t, canceled)
+	select {
+	case <-finished:
+		t.Fatal("quit returned before inventory reader joined")
+	default:
+	}
+	reaped <- struct{}{}
+	if err := receive(t, finished); err != nil || restored.Load() != 1 {
+		t.Fatalf("quit cleanup: %v, restores=%d", err, restored.Load())
 	}
 }

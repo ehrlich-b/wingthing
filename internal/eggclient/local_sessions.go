@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 
 	"time"
@@ -33,7 +34,10 @@ const (
 	// separately pressed Enter. Writing both in one PTY frame can leave the
 	// text in the editor instead of submitting it. Preserve the terminal-send
 	// contract by separating Enter from a non-empty text write.
-	sessionEnterDelay = 50 * time.Millisecond
+	sessionEnterDelay     = 50 * time.Millisecond
+	localInventoryWorkers = 8
+	localInventoryTimeout = time.Second
+	localStatusTimeout    = 750 * time.Millisecond
 )
 
 var ErrSessionNameInUse = control.ErrSessionNameInUse
@@ -61,38 +65,82 @@ type LocalSession struct {
 }
 
 func DiscoverActiveSessions(ctx context.Context, cfg *config.Config) ([]LocalSession, error) {
+	ctx, cancel := context.WithTimeout(ctx, localInventoryTimeout)
+	defer cancel()
 	sessions, err := DiscoverSessionRefs(cfg)
 	if err != nil {
 		return nil, err
 	}
 	for i := range sessions {
-		session := &sessions[i]
-		session.Status = "unknown"
-		dir := filepath.Join(cfg.Dir, "eggs", session.ID)
-		ec, dialErr := egg.Dial(filepath.Join(dir, "egg.sock"), filepath.Join(dir, "egg.token"))
-		if dialErr == nil {
-			statusCtx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
-			st, statusErr := ec.Status(statusCtx)
-			cancel()
-			_ = ec.Close()
-			if statusErr == nil {
-				session.Readers = st.Readers
-				session.WriterID, session.WriterOwner, session.InputEpoch = st.WriterId, st.WriterOwner, st.InputEpoch
-				session.UptimeSecs = st.UptimeSeconds
-				session.IdleSecs = st.IdleSeconds
-				session.BufferBytes = st.BufferBytes
-				session.TotalWritten = st.TotalWritten
-				if session.Agent == "" {
-					session.Agent = st.Agent
+		sessions[i].Status = "unknown"
+	}
+	// Workers own distinct rows. Cancellation stops admission, retains every
+	// metadata identity, and joins the workers/clients before returning.
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	for range min(localInventoryWorkers, len(sessions)) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for i := range jobs {
+				if ctx.Err() != nil {
+					return
 				}
+				enrichLocalSession(ctx, cfg, &sessions[i])
+			}
+		}()
+	}
+admit:
+	for i := range sessions {
+		select {
+		case jobs <- i:
+		case <-ctx.Done():
+			break admit
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	sortLocalSessions(sessions)
+	return sessions, nil
+}
+
+func enrichLocalSession(ctx context.Context, cfg *config.Config, session *LocalSession) {
+	// Keep the journal's existing nonblocking lock and one-event display page.
+	// Its filesystem/import work is not context-aware; do not detach it from
+	// the joined worker or infer idle when evidence is unavailable.
+	if view, err := tryLifecycleViewForSession(cfg, *session); err == nil {
+		session.Status = view.Status
+	}
+	metadataAgent := session.Agent
+	if ctx.Err() != nil {
+		return
+	}
+	dir := filepath.Join(cfg.Dir, "eggs", session.ID)
+	ec, dialErr := egg.Dial(filepath.Join(dir, "egg.sock"), filepath.Join(dir, "egg.token"))
+	if dialErr == nil {
+		statusCtx, cancel := context.WithTimeout(ctx, localStatusTimeout)
+		st, statusErr := ec.Status(statusCtx)
+		cancel()
+		_ = ec.Close()
+		if statusErr == nil {
+			session.Readers = st.Readers
+			session.WriterID, session.WriterOwner, session.InputEpoch = st.WriterId, st.WriterOwner, st.InputEpoch
+			session.UptimeSecs = st.UptimeSeconds
+			session.IdleSecs = st.IdleSeconds
+			session.BufferBytes = st.BufferBytes
+			session.TotalWritten = st.TotalWritten
+			if session.Agent == "" {
+				session.Agent = st.Agent
 			}
 		}
+	}
+	// Legacy metadata may omit the provider. Preserve the RPC agent fallback
+	// before projecting its native hook adapter, within the remaining budget.
+	if metadataAgent == "" && session.Agent != "" && ctx.Err() == nil {
 		if view, err := tryLifecycleViewForSession(cfg, *session); err == nil {
 			session.Status = view.Status
 		}
 	}
-	sortLocalSessions(sessions)
-	return sessions, nil
 }
 
 // discoverSessionRefs reads only process and metadata files. Resolution stays

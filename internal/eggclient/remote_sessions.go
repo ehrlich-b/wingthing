@@ -79,16 +79,25 @@ func QueryRemoteSessions(localVersion string, ctx context.Context, name string, 
 		}
 		return err
 	}
-	invocation.Args = []string{"--version"}
-	if err := run(); err != nil {
-		return nil, remoteQueryError(name, err, stderr.buffer.String())
+	// A compatible response already carries its version. Only old/malformed
+	// receivers need a separate version query for an actionable diagnostic.
+	mismatch := func(remoteVersion, contract, detail string) error {
+		if remoteVersion == "" {
+			remoteVersion = "unknown"
+			if ctx.Err() == nil && stdout.overflow == nil && stderr.overflow == nil {
+				stdout.buffer.Reset()
+				stderr.buffer.Reset()
+				invocation.Args = []string{"--version"}
+				if err := run(); err != nil {
+					return remoteQueryError(name, err, stderr.buffer.String())
+				}
+				if value := strings.TrimSpace(stdout.buffer.String()); value != "" {
+					remoteVersion = value
+				}
+			}
+		}
+		return remoteInventoryMismatch(localVersion, name, remoteVersion, contract, detail)
 	}
-	remoteVersion := strings.TrimSpace(stdout.buffer.String())
-	if remoteVersion == "" {
-		remoteVersion = "unknown"
-	}
-	stdout.buffer.Reset()
-	stderr.buffer.Reset()
 	// The receiver skips its registry entirely, so this never recursively fans
 	// out to that machine's configured remotes (even a cycle back to this one).
 	invocation.Args = []string{"session", "ps", "--json", "--remote-inventory"}
@@ -100,14 +109,15 @@ func QueryRemoteSessions(localVersion string, ctx context.Context, name string, 
 		}
 		diagnostic := strings.TrimSpace(stderr.buffer.String())
 		if strings.Contains(diagnostic, "unknown flag") || strings.Contains(diagnostic, "unknown command") || strings.Contains(diagnostic, "flag provided but not defined") {
-			return nil, remoteInventoryMismatch(localVersion, name, remoteVersion, "unsupported", diagnostic)
+			return nil, mismatch("", "unsupported", diagnostic)
 		}
 		return nil, remoteQueryError(name, err, diagnostic)
 	}
 	var inventory RemoteSessionInventory
 	if err := json.Unmarshal(stdout.buffer.Bytes(), &inventory); err != nil {
-		return nil, remoteInventoryMismatch(localVersion, name, remoteVersion, "unsupported", "invalid session ps --json inventory")
+		return nil, mismatch("", "unsupported", "invalid session ps --json inventory")
 	}
+	remoteVersion := ""
 	if inventory.Version != "" {
 		remoteVersion = config.BinaryName() + " version " + inventory.Version
 	}
@@ -116,7 +126,7 @@ func QueryRemoteSessions(localVersion string, ctx context.Context, name string, 
 		if contract == "" {
 			contract = "unsupported"
 		}
-		return nil, remoteInventoryMismatch(localVersion, name, remoteVersion, contract, "session inventory contract is incompatible")
+		return nil, mismatch(remoteVersion, contract, "session inventory contract is incompatible")
 	}
 	return inventory.Sessions, nil
 }
