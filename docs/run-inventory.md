@@ -77,3 +77,34 @@ agent_result. It reads result once for terminal rows and never waits on them.
 Bounded or failed scans return errors; the consumer does not infer absence from
 an incomplete page. Native CLI/socket/SSH and actual unattended-provider
 acceptance require coordinator execution outside the worker.
+
+## Local gate receipt (2026-10-11)
+
+Pinned source: `2c3688f1f59cee08713d77476a917d7bc4bf7867`; no fresh upstream,
+W7 lifecycle repair, installed runtime, provider or network operation was used.
+Plugin contract read from committed `e8a2b526a28927f78f10dbd238c3737537ac9def`.
+Go 1.26.9 and module/build caches were privately copied offline into this clone.
+
+| Package | Artifact and independent result | Gate |
+|---|---|---|
+| 1: contract | Field/authority table above; prompt/output/transcript/config/usage excluded | PASS |
+| 2: durable enumeration | Store read transaction, authorization before LIMIT, UTC timestamp + full-ID ordering, two partial indexes; 250 runs / 3 pages with no loss/duplicates | PASS |
+| 3: adapters | Independent serialized local/direct/socket-authority/remembered-SSH pool requests return the same three IDs; no native transport opened | PASS |
+| 4: restart/cursors | Unacknowledged original key recovered without resubmission; committed store reopen, live terminal transition, encrypted foreign/stale/filter cursor rejection, missing/corrupt state errors | PASS |
+| 5: first consumer | Four real fixture IDs / two pages / four status + three result calls; one each completed, running, interrupted and unavailable output; cleanup unknown for all four | PASS |
+| 6: bounds/compatibility | Full store/control unit tests; nonzero inventory tests; affected race tests; Mac arm64 + Linux amd64 compilation; indexed query-plan proof; old peers remain explicit failures | PASS |
+| 7: restrictive two-wing policies | Identical local `same-id` retains two wing-qualified keys; live grants, owner/user/cwd and receiving socket scope checked before one-row pages; foreign cursor rejected | PASS (race) |
+| 8: retention/removed sessions | Five retained records, four discovered; expired native MCP task remains an ordinary run; two pages / four statuses / four one-shot results; no removed session/output reconstruction or run lifecycle writes | PASS (race) |
+
+Core verification produced 126 unit test/subtest passes and 33 race test/subtest
+passes. The two ordered continuations each added one nonzero race test pass.
+The new command tests execute Cobra and API seams in process, not built CLI
+acceptance. The earlier toolchain mismatch and incomplete remembered-wing
+fixture were repaired; their scratch logs are retained as failed attempts.
+
+Native built CLI, real socket/SSH acceptance and an actual unattended run after
+client restart are **REQUIRED-UNRUN**: the worker must not start those transports,
+process fixtures or providers. Local implementation/fixture readiness is complete;
+product acceptance remains externally pending. The general repository check/gate
+profiles include prohibited native/browser/provider/network portions and were
+not substituted for this row's safe focused gates.

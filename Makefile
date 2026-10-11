@@ -269,3 +269,11 @@ test-run-inventory-race: | web/dist
 
 build-run-inventory-linux: | web/dist
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -p 2 -buildvcs=false -o .scratch/wt-inventory-linux ./cmd/wt
+
+.PHONY: test-run-inventory-retention
+test-run-inventory-retention: | web/dist
+	$(GO) test -race -p 2 -json -count=1 ./internal/localmcp -run '^TestRunInventoryReopenRetentionRemovedSessionsAndFiniteConsumer$$' -timeout=5m
+
+.PHONY: vet-run-inventory
+vet-run-inventory:
+	$(GO) vet -p 2 ./internal/store ./internal/control ./internal/wingsession ./internal/localmcp ./internal/runinventory ./cmd/wt
