@@ -22,7 +22,7 @@ def connected_iphones(document):
             continue
         if connection.get("pairingState") != "paired":
             continue
-        if connection.get("transportType", "").lower() not in {"local", "usb"}:
+        if connection.get("transportType", "").lower() not in {"local", "usb", "wired"}:
             continue
         result.append((device["identifier"], hardware.get("udid", ""),
                        properties.get("name", "iPhone"), properties.get("developerModeStatus", "unknown")))
