@@ -14,7 +14,12 @@ import (
 
 func inventoryFixture(t *testing.T, s *Store, id, owner, user, cwd, status, key string, at time.Time) *AgentRun {
 	t.Helper()
-	record, _ := json.Marshal(map[string]any{"run_id": id, "session_id": "s-" + id, "agent": "codex", "model": "model", "cwd": cwd, "phase": "running", "prompt": "SECRET PROMPT", "launch": map[string]any{"Authority": map[string]any{"Principal": owner, "UserID": user}}, "result": map[string]any{"status": status, "text": "SECRET OUTPUT"}})
+	phase := "observing"
+	end := time.Time{}
+	if status == "done" || status == "failed" || status == "timeout" || status == "stopped" {
+		phase, end = "terminal", at
+	}
+	record, _ := json.Marshal(map[string]any{"run_id": id, "session_id": "s-" + id, "idempotency_key": key, "agent": "codex", "model": "model", "cwd": cwd, "isolation": "none", "timeout_seconds": 0, "created_at": at, "phase": phase, "prompt": "SECRET PROMPT", "launch": map[string]any{"Authority": map[string]any{"Principal": owner, "UserID": user}}, "result": map[string]any{"status": status, "text": "SECRET OUTPUT", "started_at": time.Time{}, "ended_at": end}})
 	task := &Task{ID: id, Principal: owner, CWD: cwd, Agent: "codex", Model: "model", Status: status, RunAt: at, CreatedAt: at}
 	r, _, err := s.AdmitAgentRun(&AgentRun{ID: id, SessionID: "s-" + id, Principal: owner, RequestKey: key, SpecHash: id, Record: record}, task)
 	if err != nil {
@@ -85,7 +90,7 @@ func TestRunInventoryRetentionLegacyAndExactKey(t *testing.T) {
 	inventoryFixture(t, s, "old-done", "owner", "user", "/work", "done", "old-key", now.Add(-60*24*time.Hour))
 	inventoryFixture(t, s, "recent", "owner", "user", "/work", "done", "recent-key", now)
 	for _, id := range []string{"legacy-missing", "legacy-output"} {
-		if err := s.CreateTask(&Task{ID: id, Type: "agent_run", Principal: "default", CWD: "/work", Status: "done", RunAt: now}); err != nil {
+		if err := s.CreateTask(&Task{ID: id, Type: "agent_run", Agent: "claude", Principal: "default", CWD: "/work", Status: "done", RunAt: now}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -131,7 +136,27 @@ func TestRunInventoryTransitionStaleAnchorAndReadFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.DB().Exec("UPDATE tasks SET status='done',finished_at=? WHERE id='b'", now.Format(timeFmt)); err != nil {
+	row, err := s.GetAgentRun("b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]any
+	if err = json.Unmarshal(row.Record, &record); err != nil {
+		t.Fatal(err)
+	}
+	record["phase"] = "terminal"
+	result := record["result"].(map[string]any)
+	result["status"], result["ended_at"] = "done", now
+	row.Record, err = json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.GetTask("b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Status, task.FinishedAt = "done", &now
+	if err = s.SaveAgentRun(row, task, "completed", ""); err != nil {
 		t.Fatal(err)
 	}
 	q.Continuing = true
@@ -272,7 +297,7 @@ func TestRunInventoryBoundedHistorySkipsArchivedContentAndHandlesLegacyTimes(t *
 	if _, err := s.DB().Exec("UPDATE agent_runs SET record='corrupt archived content' WHERE id='archived'"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateTask(&Task{ID: "sqlite-time", Type: "agent_run", Principal: "owner", Status: "done", CWD: "/work", RunAt: now}); err != nil {
+	if err := s.CreateTask(&Task{ID: "sqlite-time", Type: "agent_run", Agent: "claude", Principal: "owner", Status: "done", CWD: "/work", RunAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	q := RunInventoryQuery{Scope: RunInventoryScope{Principal: "owner", UserID: "user"}, Limit: 100, TerminalSince: now.Add(-time.Hour)}

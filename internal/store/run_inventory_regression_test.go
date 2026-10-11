@@ -26,7 +26,7 @@ func TestRunInventoryRegressionPartialLegacyTimeMustNotDisappear(t *testing.T) {
 			}
 			defer s.Close()
 			now := time.Now().UTC()
-			if e = s.CreateTask(&Task{ID: "legacy", Type: "agent_run", Principal: "reader", Status: "done", RunAt: now}); e != nil {
+			if e = s.CreateTask(&Task{ID: "legacy", Type: "agent_run", Agent: "claude", Principal: "reader", CWD: "/work", Status: "done", RunAt: now}); e != nil {
 				t.Fatal(e)
 			}
 			// Nullable creation time is a valid schema state; invalid finish text can
@@ -70,7 +70,7 @@ func TestRunInventoryDeniedMalformedMetadataDoesNotBlockDiscovery(t *testing.T) 
 					t.Fatal(err)
 				}
 			case "legacy-time":
-				if err := s.CreateTask(&Task{ID: "denied", Type: "agent_run", Principal: "reader", CWD: "/forbidden", Status: "done", RunAt: now}); err != nil {
+				if err := s.CreateTask(&Task{ID: "denied", Type: "agent_run", Agent: "claude", Principal: "reader", CWD: "/forbidden", Status: "done", RunAt: now}); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := s.DB().Exec("UPDATE tasks SET created_at=NULL WHERE id='denied'"); err != nil {

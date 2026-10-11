@@ -37,6 +37,24 @@ Legacy tasks are discoverable without inventing a session ID. Missing or corrupt
 authorized inventory state is an error, never a successfully completed empty
 list. Known user/path denials exclude partial records before integrity checks;
 unknown authority fails closed. Invalid retention dates cannot prove expiration.
+Modern terminal runs require a usable finish-time projection; a missing finish
+cannot fall back to creation time and silently expire a recent completion.
+Genuine tasks-only legacy records retain their creation-time fallback.
+
+For retained candidates, integrity checks cover every consumed projection:
+run/session IDs, type,
+principal/user/cwd authority, agent/model/label/isolation, status/phase,
+parent/retry key, creation/start/finish times, timeout, failure classification,
+cleanup indicators and output availability. Required fields, JSON types and
+modern record/projection consistency are checked before filtering or pagination.
+Unavailable evidence returns `discovery is incomplete`, including a lost retry
+key in an ordinary scan. An exact-key scan validates the owner's admissions
+independently of the key filter, so a missing or inconsistent key cannot establish
+absence. Deliberately omitted optional members still mean their writer-defined
+zero values; unstarted/unfinished times and unkeyed/unparented admissions remain
+valid. Missing legacy output stays explicitly `unavailable`, and absent cleanup
+evidence stays `unknown`. Fixed store timestamp formats are required; numeric
+Julian dates, date-only values and relative dates cannot act as durable evidence.
 
 ## Pages and compatibility
 
@@ -62,8 +80,13 @@ type/status and finish time; they do not change run, task, result or usage data.
 To detect lost task-projection owners, routine discovery also walks the existing
 `agent_runs` principal index and checks that owner's task metadata. This required
 owner-history metadata pass has cost proportional to that owner's modern
-admissions; expired JSON and output remain unread. Unknown retention dates use
-the recent-history index's NULL range. No additional schema migration is needed.
+admissions; routine scans leave known expired JSON and output unread. Unknown
+retention dates use the recent-history index's NULL range plus an owner-scoped
+format check. Exact-key reconciliation additionally validates metadata for that
+owner's archived admissions before applying the key filter, using the existing
+principal and active/recent indexes. This owner-history cost is necessary to
+distinguish an unavailable key projection from established absence. No additional
+schema migration is needed.
 The API caps pages at 200, cursor bytes at 4096 and key bytes at 200. It selects
 only metadata from durable JSON, not full records into application memory.
 
@@ -123,3 +146,12 @@ process fixtures or providers. Local implementation/fixture readiness is complet
 product acceptance remains externally pending. The general repository check/gate
 profiles include prohibited native/browser/provider/network portions and were
 not substituted for this row's safe focused gates.
+
+Round-3 projection repair: both independent finish-time and retry-key probes fail
+on archived `8809114` source and pass with this change. Final safe gates pass:
+204 store/control, 53 focused inventory and 164 race test/subtest executions,
+without skips; repository-wide `go vet`, Linux amd64 compilation and diff checks
+also pass. Regression coverage includes unavailable metadata, key absence,
+legacy unknowns and known denied records. Serialized MCP recovery stops after
+one incomplete list call and never polls a run. Logs and baseline reproductions
+remain in `.scratch/revision-3`; external acceptance remains REQUIRED-UNRUN.

@@ -24,7 +24,7 @@ func TestRunInventoryReopenRetentionRemovedSessionsAndFiniteConsumer(t *testing.
 		commitInventoryRun(t, db, "expired-task", principal, "wing-user", cfg.Dir, "done", "task retention does not delete run", now.Add(-time.Minute), &wingsession.MCPTaskRecord{RetentionMillis: &zero})
 		commitInventoryRun(t, db, "interrupted", principal, "wing-user", cfg.Dir, "failed", "", now.Add(-time.Minute), nil)
 		commitInventoryRun(t, db, "outside-retention", principal, "wing-user", cfg.Dir, "done", "cold history", now.Add(-60*24*time.Hour), nil)
-		if err := db.CreateTask(&store.Task{ID: "legacy-output-unavailable", Type: "agent_run", Principal: principal, CWD: cfg.Dir, RunAt: now, Status: "done"}); err != nil {
+		if err := db.CreateTask(&store.Task{ID: "legacy-output-unavailable", Type: "agent_run", Agent: "claude", Principal: principal, CWD: cfg.Dir, RunAt: now, Status: "done"}); err != nil {
 			t.Fatal(err)
 		}
 		dir := filepath.Join(cfg.Dir, "eggs", "session-recent-output")

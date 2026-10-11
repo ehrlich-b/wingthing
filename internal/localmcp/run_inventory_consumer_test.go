@@ -27,7 +27,7 @@ func TestRunInventoryConsumerDiscoversRealFixtureIDsAndResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = db.CreateTask(&store.Task{ID: "legacy-unavailable", Type: "agent_run", Principal: "owner", Status: "done", CWD: f.server.Cfg.Dir, RunAt: time.Now()})
+	err = db.CreateTask(&store.Task{ID: "legacy-unavailable", Type: "agent_run", Agent: "claude", Principal: "owner", Status: "done", CWD: f.server.Cfg.Dir, RunAt: time.Now()})
 	db.Close()
 	if err != nil {
 		t.Fatal(err)
