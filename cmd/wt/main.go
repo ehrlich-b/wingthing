@@ -97,6 +97,7 @@ func newRootCommand() *cobra.Command {
 
 	root.AddCommand(
 		runCmd(),
+		runInspectCmd(),
 		startCmd(),
 		stopCmd(),
 		timelineCmd(),

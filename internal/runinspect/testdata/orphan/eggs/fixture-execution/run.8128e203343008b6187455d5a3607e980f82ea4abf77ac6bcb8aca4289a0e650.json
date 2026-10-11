@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "spec_hash": "fixture-egg-spec",
+  "result": {
+    "run_id": "fixture-orphan",
+    "session_id": "fixture-execution",
+    "status": "done",
+    "text": "ORIGINAL-FIXTURE-PROVIDER-SENTINEL: exact retained result Ω",
+    "provider_session_id": "fixture-thread",
+    "turn_id": "fixture-turn",
+    "started_at": "2026-10-10T11:59:00Z",
+    "ended_at": "2026-10-10T12:00:00Z",
+    "deadline": "2026-10-10T12:01:00Z"
+  }
+}

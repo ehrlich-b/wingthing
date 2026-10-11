@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := check
-.PHONY: check gate test-parent-lifecycle-offline test-parent-lifecycle-protocol test-parent-lifecycle-protocol-race test-parent-lifecycle-built test-run-recovery test-run-recovery-race test-run-load test-run-load-full test-run-canary e2e-linux e2e-web e2e-mac release deploy ops proto web serve clean
+.PHONY: check gate test-parent-lifecycle-offline test-parent-lifecycle-protocol test-parent-lifecycle-protocol-race test-parent-lifecycle-built test-run-inspect test-run-inspect-race test-run-inspect-roundtrip test-run-recovery test-run-recovery-race test-run-load test-run-load-full test-run-canary e2e-linux e2e-web e2e-mac release deploy ops proto web serve clean
 
 GO ?= nice -n 15 go
 NODE ?= nice -n 15 node
@@ -110,6 +110,25 @@ web:
 	cd web && for f in src/chat-view.js src/conversation-view.js src/parent-dot.js; do $(NODE) --check $$f || exit 1; done
 	cd web && $(NPM) test
 	cd web && $(NPM) run build
+
+# Hash-verified offline snapshots; no socket, daemon or provider is opened.
+test-run-inspect: | web/dist
+	$(GO) test -p 2 ./internal/runinspect -run '^TestRunInspect' -v -count=1 -parallel=2 -timeout=2m
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 ./cmd/wt -run '^(TestRunInspect.*|TestDashboardNoTTYHelpUnchanged)$$' -v -count=1 -parallel=2 -timeout=2m
+
+test-run-inspect-race: | web/dist
+	$(GO) test -p 2 -race ./internal/runinspect -run '^TestRunInspect' -v -count=1 -parallel=2 -timeout=2m
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -race ./cmd/wt -run '^(TestRunInspect.*|TestDashboardNoTTYHelpUnchanged)$$' -v -count=1 -parallel=2 -timeout=2m
+
+# Fixture-only serializer adapters are excluded from the ordinary built CLI.
+# Every invocation writes fresh, retained tiny artifacts below this scratch root.
+test-run-inspect-roundtrip: | web/dist
+	$(GO) test -p 2 $(INSPECT_TEST_FLAGS) ./internal/store -run '^(TestConversationDeliveryReplayAndCheckpointCAS|TestConversationLineageReplayAndResumePersist)$$' -v -count=1 -parallel=2 -timeout=2m
+	@mkdir -p "$(CURDIR)/.scratch/runinspect-roundtrip"
+	$(stable-build)
+	WT_INSPECT_FIXTURE_ROOT="$(CURDIR)/.scratch/runinspect-roundtrip" WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -tags runinspectfixture $(INSPECT_TEST_FLAGS) ./internal/runinspect ./cmd/wt -run '^TestRunInspectRoundTrip' -v -count=1 -parallel=2 -timeout=3m
 
 # Finite, offline native-provider fixtures; no live provider or remote launches.
 test-parent-lifecycle-protocol: | web/dist

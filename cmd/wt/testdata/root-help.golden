@@ -29,6 +29,7 @@ Available Commands:
   retry        Retry a failed task
   roost        Run relay + wing in a single process (self-hosted mode)
   run          Run a prompt or skill
+  run-inspect  Explain a completed offline state snapshot without contacting a wing
   sandbox      Run an agent in a sandboxed session
   schedule     Manage recurring tasks
   session      Inspect and automate persistent terminal sessions
