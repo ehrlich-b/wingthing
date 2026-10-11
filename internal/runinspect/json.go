@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
-// Duplicate keys are ambiguous evidence. encoding/json alone keeps the last
+// Duplicate keys, including case aliases, are ambiguous evidence. encoding/json
+// matches struct fields using Unicode simple folding and keeps the last
 // value, which would silently pick an identity or ownership winner.
 func uniqueJSON(data []byte) error {
 	if !utf8.Valid(data) {
@@ -35,6 +38,7 @@ func uniqueJSON(data []byte) error {
 						return err
 					}
 					name, ok := key.(string)
+					name = foldedJSONKey(name)
 					if !ok || seen[name] {
 						return errors.New("ambiguous object keys")
 					}
@@ -70,6 +74,20 @@ func uniqueJSON(data []byte) error {
 		return errors.New("record has trailing data")
 	}
 	return nil
+}
+
+// Use the same equivalence as encoding/json (including K/kelvin and S/long S),
+// while preserving legitimate single capitalized writer fields like Authority.
+func foldedJSONKey(name string) string {
+	return strings.Map(func(r rune) rune {
+		minimum := r
+		for next := unicode.SimpleFold(r); next != r; next = unicode.SimpleFold(next) {
+			if next < minimum {
+				minimum = next
+			}
+		}
+		return minimum
+	}, name)
 }
 
 func decodeRecord(data []byte, target any) error {

@@ -63,6 +63,16 @@ func RenderText(w io.Writer, report *Report) error {
 		if err := write("Legacy task %s: %s; execution identity unavailable\n", quote(task.ID), task.Diagnosis); err != nil {
 			return err
 		}
+		for _, issue := range task.Issues {
+			if err := write("  issue=%s ids=%s\n", issue.Code, quoteList(issue.IDs)); err != nil {
+				return err
+			}
+			for _, ref := range issue.Sources {
+				if err := write("    source: %s %s %s\n", quote(ref.Path), quote(ref.Record), quote(ref.Field)); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	for _, c := range report.Conversations {
 		if err := write("Conversation %s checkpoint=%s\n", quote(c.ID), c.Checkpoint.State); err != nil {

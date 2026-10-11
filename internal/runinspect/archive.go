@@ -94,6 +94,14 @@ func (report *Report) archives(s *snapshot, r *records) error {
 				}
 			}
 			if archive.State == "complete_bound_archive" {
+				state, refs, err := archiveEggBinding(s, prefix, archive.Agent, archive.ProviderSessionID, meta["cwd"])
+				if err != nil {
+					return err
+				}
+				archive.Sources = append(archive.Sources, refs...)
+				if state != "" {
+					archive.State = state
+				}
 				for _, e := range r.eggs {
 					if e.valid && e.Result.SessionID == session && e.Result.ProviderSessionID != "" && e.Result.ProviderSessionID != archive.ProviderSessionID {
 						archive.State = "receipt_identity_conflict"
@@ -114,6 +122,71 @@ func (report *Report) archives(s *snapshot, r *records) error {
 		report.Archives = append(report.Archives, archive)
 	}
 	return nil
+}
+
+// Read only the supplied bytes. Runtime binding helpers open writable lifecycle
+// journals, so they must never be invoked by the inspector. Match the restore
+// rule: the launch ID or a persisted provider SessionStart can bind the archive.
+func archiveEggBinding(s *snapshot, prefix, agent, id, cwd string) (string, []Ref, error) {
+	path := prefix + "egg.meta"
+	if _, exists := s.files[path]; !exists {
+		return "", nil, nil // Legacy archives have no launch metadata.
+	}
+	refs := []Ref{{Path: path}}
+	data, err := s.read(path)
+	if err != nil {
+		return "", refs, err
+	}
+	meta, ok := metadata(data)
+	launch := meta["provider_session_id"]
+	if !ok || len(data) > 64<<10 || (meta["agent"] != "" && meta["agent"] != agent) || (meta["cwd"] != "" && meta["cwd"] != cwd) || (launch != "" && !archiveProviderID(launch)) {
+		return "invalid_egg_metadata", refs, nil
+	}
+	if launch == "" || launch == id {
+		return "", refs, nil
+	}
+	path = prefix + "lifecycle.jsonl"
+	if _, exists := s.files[path]; !exists {
+		return "egg_binding_conflict", refs, nil
+	}
+	refs = append(refs, Ref{Path: path})
+	data, err = s.read(path)
+	if err != nil {
+		return "", refs, err
+	}
+	bound := false
+	var sequence int64
+	for _, line := range bytes.SplitAfter(data, []byte{'\n'}) {
+		if len(line) == 0 {
+			continue
+		}
+		// A partial append cannot establish a new binding. Unlike runtime
+		// recovery, inspection neither truncates it nor creates a lock file.
+		if line[len(line)-1] != '\n' {
+			return "partial_lifecycle_binding", refs, nil
+		}
+		var event struct {
+			Sequence   int64  `json:"sequence"`
+			Source     string `json:"source"`
+			Type       string `json:"type"`
+			ProviderID string `json:"provider_session_id"`
+		}
+		sequence++
+		if len(line) > 1<<20 || decodeRecord(line, &event) != nil || event.Sequence != sequence {
+			return "invalid_lifecycle_binding", refs, nil
+		}
+		if event.Source == agent+"_hook" && event.Type == "session_ready" && event.ProviderID == id && archiveProviderID(id) {
+			bound = true
+		}
+	}
+	if bound {
+		return "", refs, nil
+	}
+	return "egg_binding_conflict", refs, nil
+}
+
+func archiveProviderID(id string) bool {
+	return id != "" && id != "." && id != ".." && !strings.ContainsAny(id, "/\x00\r\n") && len(id) <= 240
 }
 
 func archiveIdentity(data []byte, agent, id string) string {
