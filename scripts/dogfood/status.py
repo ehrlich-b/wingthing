@@ -3,6 +3,7 @@
 import argparse
 import datetime
 import fcntl
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -123,7 +124,8 @@ def report(logs, now):
     epoch_evidence = None
     ledger_path = logs / LEDGER_NAME
     if ledger_path.exists() or ledger_path.is_symlink():
-        epoch_evidence = consume(read_ledger(ledger_path), now)
+        view = read_ledger(ledger_path)
+        epoch_evidence = consume(view, now)
         if epoch_evidence["epoch"]:
             frozen = epoch_evidence["epoch"]
             if epoch and (timestamp(epoch) != frozen["epoch"] or timestamp(until) != frozen["until"]):
@@ -134,6 +136,14 @@ def report(logs, now):
         if epoch_evidence["attention_required"]:
             diagnostics.append("whole finite epoch has failure, missing, unavailable or unknown evidence")
         diagnostics.extend(epoch_evidence["diagnostics"])
+        receipts = {attempt["receipt"]: view["results"].get(key) for key, attempt in view["attempts"].items()}
+        for path in paths:
+            metadata = receipts.get(path.name)
+            if metadata is None:
+                diagnostics.append("retained raw receipt has no complete ledger result: " + path.name)
+            elif not path.is_symlink() and path.stat().st_size <= 256 * 1024:
+                if metadata["receipt_sha256"] != hashlib.sha256(path.read_bytes()).hexdigest():
+                    diagnostics.append("retained raw receipt differs from ledger metadata: " + path.name)
     platform = runner.get("platform")
     if not isinstance(platform, str):
         platform = None
@@ -186,7 +196,8 @@ def report(logs, now):
             "schedule": {"interval_seconds": INTERVAL_SECONDS, "slack_seconds": SLACK_SECONDS,
                          "epoch": timestamp(epoch) if epoch else None, "until": timestamp(until) if until else None,
                          "expired": bool(until and now >= until), "gaps": gap_report,
-                         "history_limit": "Only retained receipts and the persisted epoch are inspected."},
+                         "history_limit": ("Whole immutable epoch metadata and newest 24 raw receipts; pre-ledger gaps remain unknown."
+                                           if epoch_evidence else "Only retained receipts and the persisted epoch are inspected.")},
             "checks": checks, "required_unavailable": required_unavailable,
             "optional_unavailable": optional_skips, "unsupported": unsupported,
             "last_cleanup": cleanup, "diagnostics": diagnostics,

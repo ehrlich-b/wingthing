@@ -118,8 +118,10 @@ def run_once(repo=REPO, arguments=None, timeout_seconds=12 * 60, cleanup_seconds
         except (OSError, ValueError, TypeError) as error:
             return refuse(str(error))
         if expired:
-            return refuse("finite epoch expired; no new canary started", 1 if previous.get("previous_failure") else 3,
-                          epoch=epoch, until=until, previous_failure=previous.get("previous_failure", False))
+            prior_failed = previous.get("previous_failure", False) or bool(ledger_view and any(
+                result["runner_status"] == "fail" for result in ledger_view["results"].values()))
+            return refuse("finite epoch expired; no new canary started", 1 if prior_failed else 3,
+                          epoch=epoch, until=until, previous_failure=prior_failed)
 
         stamp = now.strftime("%Y%m%dT%H%M%S.%fZ")
         receipt = logs / (stamp + ".jsonl")

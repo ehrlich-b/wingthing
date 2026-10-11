@@ -38,7 +38,8 @@ are unchanged. This harness's fixture runs request the documented trusted outer
 boundary for deterministic provider tests; they do not establish OS confinement.
 
 Logs live in `.scratch/dogfood-logs`: at most 24 JSONL receipts of 256 KiB each,
-plus one lock and one atomic runner-state file. A nonblocking lock avoids overlap, and a 12-minute watchdog
+plus one lock, one atomic runner-state file and, for finite runs, one immutable
+epoch metadata ledger of at most 4 MiB. A nonblocking lock avoids overlap, and a 12-minute watchdog
 allows one minute for cleanup. Diagnostics in each error are capped at 4 KiB;
 process output is continuously drained into bounded tails. Cleanup stops every
 private egg endpoint, closes adapters/forwards and wings, and removes fixture
@@ -169,8 +170,11 @@ Mac sandbox skip and unavailable descendant inventory produce exit 1. The report
 shows the last complete run, newest attempt, last cleanup, exact binary SHA-256,
 Git commit and a SHA-256 of tracked checkout bytes at run start. Those are
 independent identities, not a claim of reproducible binary build provenance.
-Only the newest 24 receipts are read; older history is unknown, and a persisted
-epoch exposes initial scheduling gaps. Expectations stop at the fixed expiry.
+Only the newest 24 raw receipts are read. Finite runs also consume the whole
+epoch's bounded metadata, including rotated failures and exact identities.
+Pre-ledger history without retained receipts remains unknown. Expectations stop
+at the fixed expiry. See [EVIDENCE.md](EVIDENCE.md) for slot definitions, limits,
+restart behavior, offline replay and outside-host acceptance.
 
 The generated environment supplies `WT_DOGFOOD_EPOCH` and `WT_DOGFOOD_UNTIL` in
 UTC. Restarting the user manager cannot change these values. At or after expiry,
@@ -179,13 +183,17 @@ the generated service), or 1 if earlier failure/cleanup evidence remains. An
 in-flight run may finish its bounded cleanup after expiry. A manual wrapper
 without either variable runs once; a partial finite environment is refused.
 An overlapping invocation is a skip only when no earlier failure is retained.
+The ledger freezes host, start, expiry and cadence. Omitting or changing the
+finite environment cannot bypass it. A full ledger refuses before a new canary
+or raw-receipt rotation; it never prunes metadata or extends the schedule.
 
 `runner-state.json` is atomically replaced under the file lock and retains the
 latest result through receipt rotation. Cleanup failure, unknown cleanup after
 interruption, and unreadable state refuse further runs. Preserve and inspect the
 named receipt and retained fixture before restarting. After verifying that all
 owned processes/endpoints have gone and resolving the failure, an operator may
-archive `runner-state.json` outside the log directory; keep the receipts. A
+archive the state and finite ledger outside the log directory and use a fresh
+explicit epoch; keep the receipts and original ledger. A
 legacy failed cleanup receipt still refuses admission, so archive that receipt
 alongside the state only after resolution. Never delete unrelated or live state.
 
@@ -204,7 +212,11 @@ edit refusal, resource environment, expiry and bounded status parsing. The CLI's
 12-minute watchdog is unchanged; only the test API shortens it. Fixtures live
 under this clone's `.scratch`, and failing tests retain their paths for diagnosis.
 No fixture enables a timer or contacts a provider or host. The canary layout test
-also checks private state placement and Darwin's socket path budget.
+also checks private state placement and Darwin's socket path budget. Fixture
+directory names adapt to the checkout's byte length and refuse paths leaving
+fewer than three name bytes; this geometry check is not native socket acceptance.
+The epoch probes cover full-history consumption, interrupted/damaged writes,
+hard caps, changed builds, repeated civil time and conservative legacy import.
 
 Run the separate full `make -j1 check` gate on a host that permits its process
 inventory and native socket fixtures. A passing package fixture suite or

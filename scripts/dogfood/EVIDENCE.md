@@ -55,3 +55,87 @@ completed attempts across four slots, one failed slot, one skipped slot, one
 unknown slot and two fixture-success slots. Successful point coverage is 2/8,
 or 25%. These literal expectations are independent of the consumer's counting
 code and model a sleeping host without any real-time sleep.
+
+## Persistence and restart
+
+`epoch-ledger.ndjson` begins with a canonical header, then attempt and result
+records. Each record carries a sequence number, the preceding SHA-256 and its
+own SHA-256 over canonical JSON. This detects torn writes, edits, reordered
+records and duplicates; it is integrity checking, not an authenticity signature.
+The existing nonblocking `run.lock` protects header creation, admission,
+appends, runner state and rotation. Creation uses an fsynced private temporary
+file and a no-clobber link; appends and atomic runner-state replacement are
+fsynced. One maximum-size result record is reserved before an attempt starts.
+
+A durable start precedes rotation and state creation. A durable result precedes
+marking runner state complete. The result joins the start by attempt ID and the
+raw receipt by filename/SHA-256. Rotation refuses an unrepresented or edited
+raw receipt. Status reports also compare retained raw bytes with metadata.
+Readers retain a verified prefix on a torn/invalid tail, mark integrity FAIL,
+and mark unobserved slots unknown. Writers refuse the whole damaged ledger.
+No reader or wrapper repairs a tail, retries an interrupted attempt, overwrites
+an earlier result or starts a new schedule. A missing state/raw receipt cannot
+clear a pending start or failed cleanup already retained in the ledger.
+
+A verified cleanup after a bounded watchdog failure permits the operator's
+next ordinary invocation under the existing runner semantics. That invocation
+is a separate attempt; the failed slot remains failed. Expiry returns 1 when
+any retained runner failure remains, even if the last receipt passed, and never
+starts new work. An unresolved cleanup/interruption holds admission regardless
+of expiry. Resolve owned endpoints/processes outside the worker before any
+operator reconciliation; preserve the original ledger and receipts.
+
+## Finite offline acceptance packet
+
+The metadata-only replay creates 448 slots for each of two hosts (896 host
+slots), representing 14 days at 45-minute cadence. It models missing/late runs,
+a failed retry, interrupted completion, required skips, unknown identity,
+changed builds and a terminal failed cleanup. It invokes no canary or provider,
+and every generated packet is labeled `synthetic_fixture_only: true`.
+
+From a checkout with clone-local offline caches and temporary directories:
+
+```sh
+python3 -B scripts/dogfood/rehearse_epoch.py --out "$PWD/.scratch/epoch-replay"
+python3 -B scripts/dogfood/epoch_oracle.py \
+  --ledger .scratch/epoch-replay/forge-fixture/epoch-ledger.ndjson \
+  --ledger .scratch/epoch-replay/mac-fixture/epoch-ledger.ndjson \
+  --now 2026-10-24T00:00:00Z
+python3 -B scripts/dogfood/ledger.py report \
+  --logs .scratch/epoch-replay/mac-fixture --now 2026-10-24T00:00:00Z
+python3 -B -m unittest discover -s scripts/dogfood -p 'test_*.py' -v
+bash -n scripts/dogfood/run.sh scripts/dogfood/canary.sh
+git diff --check
+```
+
+The ledger report intentionally returns 1 for this failure-bearing example.
+`epoch_oracle.py` imports no ledger/runner/status code and independently checks
+hash chains, UTC slot arithmetic, identity joins and ended-epoch counts. Its
+successful exit validates arithmetic, not product acceptance. Every host/build
+keeps its own cohort and failures; successful points on one host cannot cover
+the other's missing slots. Replay generation refuses existing output, including
+operator edits; unchanged inputs produce byte-identical ledger/packet files.
+
+For one final inspection of a genuine ended epoch, supply its fixed expiry as
+`--now` and read `status.py --logs /ABSOLUTE/PRIVATE/LOGS --now UTC --json` or
+`ledger.py report` once. Preserve the original manifest, ledger, runner-state
+and retained raw receipts and compute their digests before any reconciliation.
+No polling agent is required. Raw cleanup failures remain under the existing
+hold; other rotated failures retain check/exit/cleanup and identity metadata.
+
+Outside-worker observations remain REQUIRED-UNRUN until returned:
+
+- Native checkout-built canary on an isolated host: raw receipts, exact binary
+  and tracked-source identities, private descendant/PID/endpoint inventory,
+  cleanup result and retained fixture paths for failures.
+- Actual finite job disconnect, recovery and Stop receipts on the candidate
+  runtime, with qualified resource identities and native final status.
+- Existing finite job behavior across disconnect/manager recovery: original
+  epoch/end/cadence, actual timer times and service result, including expiry.
+- Genuine unattended use over the fixed epoch; fixture examples cannot supply
+  its absent intervals or receipts.
+
+This row installs/activates no service or timer, changes no installed runtime
+and performs no production or live-provider operation. Full browser, loopback,
+built-CLI and native-process acceptance cannot run in the worker. Compilation,
+fake systemctl calls and socket-path geometry do not pass those gates.

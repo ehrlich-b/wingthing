@@ -81,7 +81,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from contracts import CHECKS, LOG_COUNT, STATUSES, read_receipt, receipt_complete
+from contracts import CHECKS, LOG_COUNT, STATUSES, read_json, read_receipt, receipt_complete
 
 IDENTITY_KEYS = {"source_commit", "source_sha256", "binary_sha256"}
 ATTEMPT_KEYS = {"kind", "attempt_id", "receipt", "started_at", "slot"} | IDENTITY_KEYS
@@ -304,6 +304,13 @@ def ensure_epoch(logs, epoch, until, host):
             raise ValueError("existing epoch is immutable; cannot change host, start, end or cadence")
         return view
     legacy = bool(list(logs.glob("*.jsonl")))
+    state_path = logs / "runner-state.json"
+    if state_path.exists():
+        state = read_json(state_path)
+        if state.get("epoch") or state.get("until"):
+            if (plan(state.get("epoch"), state.get("until")) != plan(epoch, until)):
+                raise ValueError("existing finite runner epoch is immutable; cannot extend legacy evidence")
+            legacy = True
     header = epoch_header(epoch, until, host, "legacy-import" if legacy else "new")
     create_ledger(path, header, retained_records(logs, header) if legacy else [])
     return checked(path)
