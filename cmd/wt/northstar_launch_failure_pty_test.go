@@ -59,6 +59,26 @@ func launchFailureDashboard(t *testing.T, f *northstarFixture, binary, cwd strin
 	return h
 }
 
+func launchFailureSessionCount(t *testing.T, state string) int {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(state, "eggs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, entry := range entries {
+		// Resume reservations retain lock files in eggs; only directories are
+		// launch attempts, including failed attempts without a live egg PID.
+		if entry.IsDir() {
+			if !ws.ValidSessionID(entry.Name()) {
+				t.Fatalf("unexpected session directory: %s", entry.Name())
+			}
+			count++
+		}
+	}
+	return count
+}
+
 // Both runnable paths use a kernel PTY and the built wt. The transport fixture
 // executes production policy selection/preparation but cannot stand in for the
 // separately required native confinement journey below.
@@ -330,16 +350,14 @@ exec /bin/sh -c "$1"
 		h.expect("native denial", 0, "admission/policy", "provider executable", selected, "Doctor launch-plan")
 		coldPTYExit(t, h, true)
 		launchFailureNoSecrets(t, h, f.local)
-		entries, _ := os.ReadDir(filepath.Join(f.local, "eggs"))
-		if len(entries) != 1 {
-			t.Fatalf("native launch count: %d", len(entries))
+		if count := launchFailureSessionCount(t, f.local); count != 1 {
+			t.Fatalf("native launch count: %d", count)
 		}
 		dashboard := launchFailureDashboard(t, f, binary, nested)
 		dashboard.exit("q")
 		launchFailureNoSecrets(t, dashboard, f.local)
-		entries, _ = os.ReadDir(filepath.Join(f.local, "eggs"))
-		if len(entries) != 2 {
-			t.Fatalf("native dashboard launch count: %d", len(entries))
+		if count := launchFailureSessionCount(t, f.local); count != 2 {
+			t.Fatalf("native dashboard launch count: %d", count)
 		}
 		if ids := coldSessionIDs(t, f); len(ids) != 0 {
 			t.Fatalf("denial left live eggs: %v", ids)
