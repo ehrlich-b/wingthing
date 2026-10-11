@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := check
-.PHONY: check gate test-run-recovery test-run-recovery-race test-run-load test-run-load-full test-run-canary e2e-linux e2e-web e2e-mac release deploy ops proto web serve clean
+.PHONY: check gate test-parent-lifecycle-offline test-parent-lifecycle-protocol test-parent-lifecycle-protocol-race test-parent-lifecycle-built test-run-recovery test-run-recovery-race test-run-load test-run-load-full test-run-canary e2e-linux e2e-web e2e-mac release deploy ops proto web serve clean
 
 GO ?= nice -n 15 go
 NODE ?= nice -n 15 node
@@ -19,6 +19,43 @@ RACE_BASE ?= HEAD~1
 RACE_PACKAGES ?=
 RUN_RECOVERY_PACKAGES ?= ./internal/wingsession ./internal/localmcp ./internal/wingconnect ./internal/egg
 RUN_RECOVERY_TESTS ?= ^(TestRunRecovery.*|TestMCPTaskCancellationRecoversStopIntentAfterWingRestart|TestStopIntentAndQueuedCancellationSurviveWingRestart|TestLostRunSubmissionAcknowledgementDoesNotResendAfterRestart|TestRememberedPool(LostAdmissionReconcilesOriginalKey|UnreconciledAdmissionReportsOriginalKey)|TestProviderFailureContentAbsentFromLifecycleAndArchive)$$
+PARENT_LIFECYCLE_ROOT := $(CURDIR)/.scratch/parent-lifecycle
+PARENT_LIFECYCLE_PATH ?= /opt/homebrew/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+PARENT_LIFECYCLE_PACKAGES := ./internal/testprovider ./internal/egg ./internal/localmcp ./cmd/wt
+PARENT_LIFECYCLE_PROTOCOL_NAMES := TestParentLifecycle.*|TestHostMailbox.*|TestScopedParentLocalAndSSHChildrenSurviveReconnect|TestRunTurnSurvivesClientDisconnect|TestRunTurnRPCAuthenticatesEveryOperationAndStrictlyDecodes|TestRunTurnStopIsIdempotentAndDisarmsDeadline|TestCodexStopHookAloneNeverCompletesRun|TestCodexRunIDReplayAndConflictingInput|TestRunRecovery.*|TestLostRunSubmissionAcknowledgementDoesNotResendAfterRestart|TestSocketPath.*|TestAttachStandaloneEggRetainsDaemonlessContract
+PARENT_LIFECYCLE_BUILT_NAMES := TestBuiltWTStdioWingEggFakeCodex(Result|TaskResult|UnboundedResult)|TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult
+PARENT_LIFECYCLE_NATIVE_NAMES := TestBuiltClientScopedParentFakeProvidersSurviveDisconnect|TestBuiltWTClaudeScopedMailboxTwoLocalOnlyWings|TestUnboundedStopKillsProcessGroupAndReportsSurvivors
+# Only this clone's disposable home, state and staged caches are visible to the
+# gate. Drop ambient provider credentials and account/relay selectors entirely.
+PARENT_LIFECYCLE_ENV = env -i PATH="$(PARENT_LIFECYCLE_PATH)" HOME="$(PARENT_LIFECYCLE_ROOT)/home" \
+	TMPDIR="$(CURDIR)/.scratch/t" GOTMPDIR="$(CURDIR)/.scratch/t" \
+	GOCACHE="$(CURDIR)/.scratch/gocache" GOMODCACHE="$(CURDIR)/.scratch/modcache" GOPATH="$(CURDIR)/.scratch/gopath" \
+	GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-p=2 GOMAXPROCS=2 LEAN_NUM_THREADS=2 \
+	npm_config_offline=true npm_config_cache="$(CURDIR)/.scratch/npm" PYTHONDONTWRITEBYTECODE=1 \
+	CLANG_MODULE_CACHE_PATH="$(CURDIR)/.scratch/clang-cache"
+
+define parent-lifecycle-prepare
+mkdir -p "$(PARENT_LIFECYCLE_ROOT)/home" "$(PARENT_LIFECYCLE_ROOT)/logs" \
+	"$(CURDIR)/.scratch/t" "$(CURDIR)/.scratch/gocache" "$(CURDIR)/.scratch/modcache" "$(CURDIR)/.scratch/npm"
+endef
+
+# Fresh JSON logs plus a checked receipt: a missing test/package or any skip is
+# a failed gate. The receipt binds the source tree, log and optional wt binary.
+define parent-lifecycle-test
+@set -eu; $(parent-lifecycle-prepare); \
+	log=$$(mktemp "$(PARENT_LIFECYCLE_ROOT)/logs/$(1).XXXXXX"); result=0; \
+	source_head=$$(git rev-parse HEAD); source_diff=$$(git diff HEAD -- . ':!.scratch' | shasum -a 256 | cut -d ' ' -f 1); \
+	$(PARENT_LIFECYCLE_ENV) $(if $(4),WT_TEST_BINARY="$(PARENT_LIFECYCLE_ROOT)/wt") \
+		$(GO) test -p 1 -parallel=2 -json $(2) -run '^($(3))$$' -count=1 -timeout=5m $(5) > "$$log" 2>&1 || result=$$?; \
+	if [ "$$source_head" != "$$(git rev-parse HEAD)" ] || [ "$$source_diff" != "$$(git diff HEAD -- . ':!.scratch' | shasum -a 256 | cut -d ' ' -f 1)" ]; then \
+		echo 'Source changed during the lifecycle gate' >&2; result=1; fi; \
+	$(PARENT_LIFECYCLE_ENV) python3 scripts/check-parent-lifecycle.py "$$log" \
+		--profile $(1) --packages $(2) --source "$$source_head" --diff-sha "$$source_diff" \
+		--gate-exit "$$result" \
+		--go-version "$$($(PARENT_LIFECYCLE_ENV) $(GO) version)" \
+		$(if $(4),--binary "$(PARENT_LIFECYCLE_ROOT)/wt") || result=1; \
+	exit "$$result"
+endef
 
 HOST_ARCH := $(shell uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
 HOST_OS := $(shell uname -s | tr '[:upper:]' '[:lower:]')
@@ -75,6 +112,27 @@ web:
 	cd web && $(NPM) run build
 
 # Finite, offline native-provider fixtures; no live provider or remote launches.
+test-parent-lifecycle-protocol: | web/dist
+	$(call parent-lifecycle-test,protocol,$(PARENT_LIFECYCLE_PACKAGES),$(PARENT_LIFECYCLE_PROTOCOL_NAMES),,)
+
+test-parent-lifecycle-protocol-race: | web/dist
+	$(call parent-lifecycle-test,protocol-race,$(PARENT_LIFECYCLE_PACKAGES),$(PARENT_LIFECYCLE_PROTOCOL_NAMES),,-race)
+
+# These protocol fixtures use an explicit trusted outer process boundary and
+# Unix IPC. The two native parent tests below retain actual sandbox enforcement.
+test-parent-lifecycle-built: | web/dist
+	@$(parent-lifecycle-prepare)
+	$(PARENT_LIFECYCLE_ENV) $(GO) build -p 2 -buildvcs=false -ldflags "-X main.version=parent-lifecycle.$(VERSION)" -o "$(PARENT_LIFECYCLE_ROOT)/wt" ./cmd/wt
+	$(call parent-lifecycle-test,built,./cmd/wt,$(PARENT_LIFECYCLE_BUILT_NAMES),binary,)
+
+# Complete ordinary-host acceptance, including both original parent-exit modes,
+# native proxy binding and /bin/ps descendant inventory. Do not substitute the
+# protocol target when reporting this gate; restricted workers leave it unrun.
+test-parent-lifecycle-offline: | web/dist
+	@$(parent-lifecycle-prepare)
+	$(PARENT_LIFECYCLE_ENV) $(GO) build -p 2 -buildvcs=false -ldflags "-X main.version=parent-lifecycle.$(VERSION)" -o "$(PARENT_LIFECYCLE_ROOT)/wt" ./cmd/wt
+	$(call parent-lifecycle-test,offline,$(PARENT_LIFECYCLE_PACKAGES),$(PARENT_LIFECYCLE_PROTOCOL_NAMES)|$(PARENT_LIFECYCLE_BUILT_NAMES)|$(PARENT_LIFECYCLE_NATIVE_NAMES),binary,)
+
 test-run-recovery: | web/dist
 	$(GO) test -p 2 $(RUN_RECOVERY_PACKAGES) -run '$(RUN_RECOVERY_TESTS)' -count=$(COUNT) -timeout=5m
 
