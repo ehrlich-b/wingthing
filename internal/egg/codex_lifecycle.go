@@ -88,6 +88,16 @@ func CodexLifecycleVersionSupported(output string) bool {
 	return supported
 }
 
+// CodexVersionFromSavedOutput returns only the parsed numeric version, never
+// arbitrary saved output that could contain a prompt or credential.
+func CodexVersionFromSavedOutput(output string) (string, bool) {
+	version, ok := parseCodexVersion(output)
+	if !ok {
+		return "", false
+	}
+	return fmt.Sprintf("%d.%d.%d", version[0], version[1], version[2]), true
+}
+
 func parseCodexVersion(output string) ([3]uint64, bool) {
 	fields := strings.Fields(output)
 	if len(fields) != 2 || fields[0] != "codex-cli" {

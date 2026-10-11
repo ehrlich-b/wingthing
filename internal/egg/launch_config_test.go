@@ -1,6 +1,7 @@
 package egg
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -73,12 +74,19 @@ func TestLaunchConfigProvenanceMasksDuplicatesMissingAndCycles(t *testing.T) {
 	dir := t.TempDir()
 	parent := launchPolicyFile(t, dir, "parent.yaml", "base: none\nfs: [deny:./blocked]\nnetwork: {domains: [one.example], agent_domains: none}\n")
 	child := launchPolicyFile(t, dir, "child.yaml", "base: {name: ./parent.yaml, network: ./parent.yaml}\nfs: [deny:./blocked]\n")
+	if _, _, err := ResolveLaunchConfig(child, "", dir); err == nil || !strings.Contains(err.Error(), "repeated base") {
+		t.Fatalf("duplicate base preflight mismatch: %v", err)
+	}
+	if _, err := ResolveEggConfig(child); err == nil {
+		t.Fatal("baseline runtime no longer refuses duplicate references; update the planner contract")
+	}
+	child = launchPolicyFile(t, dir, "child.yaml", "base: ./parent.yaml\nfs: [deny:./blocked]\n")
 	cfg, rules, err := ResolveLaunchConfig(child, "", dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(cfg.FS) != 2 {
-		t.Fatalf("duplicate parent declaration lost: %v", cfg.FS)
+		t.Fatalf("duplicate denial lost: %v", cfg.FS)
 	}
 	sources := map[string]bool{}
 	for _, rule := range rules {
@@ -127,5 +135,51 @@ func TestLaunchCommandPreviewDoesNotPrepareState(t *testing.T) {
 	live = codexStartupArgs(live, dir)
 	if !reflect.DeepEqual(args[1:], live) {
 		t.Fatalf("preview/runtime argv differ\n%v\n%v", args[1:], live)
+	}
+}
+
+func TestLaunchConfigPolicyAliasUsesRuntimeRelativeBaseDirectory(t *testing.T) {
+	dir := t.TempDir()
+	elsewhere := filepath.Join(dir, "elsewhere")
+	if err := os.Mkdir(elsewhere, 0700); err != nil {
+		t.Fatal(err)
+	}
+	source := launchPolicyFile(t, elsewhere, "source.yaml", "base: ./parent.yaml\n")
+	launchPolicyFile(t, dir, "parent.yaml", "base: none\nfs: [deny:./chosen]\n")
+	launchPolicyFile(t, elsewhere, "parent.yaml", "base: none\nfs: [deny:./wrong]\n")
+	alias := filepath.Join(dir, "alias.yaml")
+	if err := os.Symlink(source, alias); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := ResolveLaunchConfig(alias, "", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := ResolveEggConfig(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("aliased policy/runtime mismatch: %v / %v", got.FS, want.FS)
+	}
+}
+
+func TestLaunchConfigResolutionBudgetFailsBeforeUnboundedTraversal(t *testing.T) {
+	dir := t.TempDir()
+	for _, chain := range []string{"a", "b", "c", "d"} {
+		for level := 0; level < 8; level++ {
+			body := "base: none\nfs: [rw:./]\n"
+			if level < 7 {
+				body = fmt.Sprintf("base: ./%s%d.yaml\n", chain, level+1)
+			}
+			launchPolicyFile(t, dir, fmt.Sprintf("%s%d.yaml", chain, level), body)
+		}
+	}
+	path := launchPolicyFile(t, dir, "root.yaml", "base: {name: ./a0.yaml, fs: ./b0.yaml, network: ./c0.yaml, env: ./d0.yaml}\n")
+	if _, err := ResolveEggConfig(path); err != nil {
+		t.Fatalf("production fixture should resolve: %v", err)
+	}
+	if _, _, err := ResolveLaunchConfig(path, "", dir); err == nil || !strings.Contains(err.Error(), "32 file reads") {
+		t.Fatalf("missing bounded traversal: %v", err)
 	}
 }

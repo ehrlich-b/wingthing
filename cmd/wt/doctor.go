@@ -138,6 +138,7 @@ func doctorCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&fixFlag, "fix", false, "auto-fix detected issues (may require sudo)")
+	cmd.AddCommand(doctorLaunchPlanCmd())
 	return cmd
 }
 

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/ehrlich-b/wingthing/internal/egg"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -273,7 +274,7 @@ func TestLaunchPlanExportNeverContainsPromptOrToken(t *testing.T) {
 	}
 	req.CredentialPaths = []string{credential}
 	evidence(t, &req, "codex-cli 0.159.3", prompt+"\n"+token+"\n --dangerously-bypass-approvals-and-sandbox\n -c, --config\n --no-daemon\n", false)
-	policy(t, &req, "agent_settings: {codex: '"+token+"'}\n")
+	policy(t, &req, "agent_settings: {codex: '"+token+"'}\nenv: ['OPENAI_API_KEY="+token+"']\n")
 	report, err := Inspect(req)
 	if err != nil {
 		t.Fatal(err)
@@ -324,5 +325,229 @@ func TestLaunchPlanBoundedStrictSavedInput(t *testing.T) {
 		if _, err := Inspect(req); err == nil || strings.Contains(err.Error(), "SENTINEL") {
 			t.Fatalf("unsafe input handling: %v", err)
 		}
+	}
+}
+
+func TestLaunchPlanProviderOverrideAndCredentialDenial(t *testing.T) {
+	req, _ := setup(t)
+	req.ProviderURL = "https://api.disposable.example/v1?token=SENTINEL_URL_TOKEN"
+	credential := filepath.Join(req.Home, "denied", "auth.json")
+	if err := os.MkdirAll(filepath.Dir(credential), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(credential, []byte("SENTINEL_FILE_TOKEN"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	req.CredentialPaths = []string{credential}
+	policy(t, &req, "fs: [deny:~/denied]\nnetwork: {agent_domains: none}\n")
+	report, err := Inspect(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasGate(t, report, "credential.policy", Fail, "deny")
+	if !reflect.DeepEqual(report.Domains, []string{"api.disposable.example"}) {
+		t.Fatalf("provider routing: %v", report.Domains)
+	}
+	derived := false
+	for _, rule := range report.PolicyRules {
+		if rule.Rule == "api.disposable.example" && strings.Contains(rule.Source, "derived") {
+			derived = true
+		}
+	}
+	if !derived {
+		t.Fatal("provider-derived provenance missing")
+	}
+	var wire bytes.Buffer
+	if err := WriteJSON(&wire, report); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(wire.String(), "SENTINEL") {
+		t.Fatal("URL query or credential content exported")
+	}
+}
+func TestLaunchPlanPolicyProvenanceMatrix(t *testing.T) {
+	for _, tc := range []struct {
+		name, child     string
+		denied, missing bool
+		sourceCount     int
+	}{
+		{"inherited", "base: ./parent.yaml\n", true, false, 1},
+		{"duplicate-child", "base: ./parent.yaml\nfs: [deny:./blocked]\n", true, false, 2},
+		{"section-reuse", "base: {name: ./parent.yaml, fs: ./parent.yaml}\n", false, true, 0},
+		{"masked", "base: {name: ./parent.yaml, fs: none}\nfs: [rw:./]\n", false, false, 0},
+		{"override", "base: ./parent.yaml\nfs: [rw:./blocked]\n", false, false, 0},
+		{"missing", "base: ./missing.yaml\n", false, true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := setup(t)
+			base := req.CWD
+			work := filepath.Join(base, "blocked")
+			if err := os.Mkdir(work, 0700); err != nil {
+				t.Fatal(err)
+			}
+			parent := filepath.Join(base, "parent.yaml")
+			if err := os.WriteFile(parent, []byte("base: none\nfs: [rw:./, deny:./blocked]\nnetwork: {agent_domains: none}\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			policy(t, &req, tc.child)
+			req.CWD = work
+			// FS declarations are rooted at the launch CWD; parent denial must name
+			// the required path rather than its parent policy file directory.
+			if err := os.WriteFile(parent, []byte("base: none\nfs: [rw:./, deny:"+work+"]\nnetwork: {agent_domains: none}\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if tc.name == "duplicate-child" {
+				if err := os.WriteFile(req.PolicyPath, []byte("base: ./parent.yaml\nfs: [deny:"+work+"]\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.name == "override" {
+				if err := os.WriteFile(req.PolicyPath, []byte("base: ./parent.yaml\nfs: [rw:"+work+"]\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			report, err := Inspect(req)
+			if tc.missing {
+				if err == nil {
+					t.Fatal("missing base used defaults")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			sources := map[string]bool{}
+			for _, rule := range report.PolicyRules {
+				if rule.Rule == "deny:"+work {
+					sources[rule.Source] = true
+				}
+			}
+			if len(sources) != tc.sourceCount {
+				t.Fatalf("sources=%v expected %d", sources, tc.sourceCount)
+			}
+			if tc.denied {
+				gate := hasGate(t, report, "workspace.write", Fail, "deny")
+				if !strings.Contains(gate.Source, parent) {
+					t.Fatal("parent source missing")
+				}
+			} else {
+				for _, gate := range report.Gates {
+					if gate.Code == "workspace.write" && gate.Status == Fail {
+						t.Fatal("masked/overridden denial still applies")
+					}
+				}
+			}
+		})
+	}
+}
+func TestLaunchPlanDenyWriteDirectoryPlatformDifference(t *testing.T) {
+	for _, host := range []string{"linux", "darwin"} {
+		t.Run(host, func(t *testing.T) {
+			req, caps := setup(t)
+			caps.OS = host
+			req.CapabilitiesPath = writeFixture(t, req.CWD, "facts.json", caps)
+			policy(t, &req, "fs: [deny-write:~/.codex]\n")
+			req.ProviderStateDir = filepath.Join(req.Home, ".codex", "child")
+			report, err := Inspect(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if host == "linux" {
+				hasGate(t, report, "provider_state.write", Fail, "deny-write")
+			} else {
+				for _, gate := range report.Gates {
+					if gate.Code == "provider_state.write" && gate.Status == Fail {
+						t.Fatal("Mac literal deny-write was broadened")
+					}
+				}
+			}
+		})
+	}
+}
+func TestLaunchPlanLinuxRootDenyRequiresNativeMountEvidence(t *testing.T) {
+	req, _ := setup(t)
+	policy(t, &req, "base: none\nfs: [deny:/, rw:./]\nnetwork: {agent_domains: none}\n")
+	report, err := Inspect(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasGate(t, report, "workspace.write", Unrun, "mount exceptions")
+}
+
+func TestLaunchPlanHelpProseAndMalformedVersionRemainUnverified(t *testing.T) {
+	req, _ := setup(t)
+	req.Route = "agent_run"
+	evidence(t, &req, "SENTINEL_VERSION_TEXT", "Unsupported option: --dangerously-bypass-approvals-and-sandbox\n -c, --config <KEY=VALUE>\n", false)
+	report, err := Inspect(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasGate(t, report, "provider.version", Unrun, "unrecognized")
+	hasGate(t, report, "route.agent_run", Unrun, "requires bound")
+	hasGate(t, report, "provider.option", Unrun, "--dangerously-bypass-approvals-and-sandbox")
+	hasGate(t, report, "provider.option", Pass, "-c")
+	var wire bytes.Buffer
+	if err := WriteJSON(&wire, report); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(wire.String(), "SENTINEL") {
+		t.Fatal("raw malformed version exported")
+	}
+}
+
+func TestLaunchPlanPinnedAdapterOracleAndTwoVersionExports(t *testing.T) {
+	data, err := os.ReadFile("testdata/codex-command-oracle.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var oracle struct {
+		SourceBase   string `json:"source_base"`
+		PlanningRoot string `json:"planning_root"`
+		Records      []struct {
+			VersionOutput string   `json:"version_output"`
+			Argv          []string `json:"argv"`
+			NativeRun     bool     `json:"native_run"`
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(data, &oracle); err != nil {
+		t.Fatal(err)
+	}
+	if oracle.SourceBase != "2c3688f1f59cee08713d77476a917d7bc4bf7867" || len(oracle.Records) != 2 {
+		t.Fatal("unexpected independent oracle pin/count")
+	}
+	for _, record := range oracle.Records {
+		t.Run(record.VersionOutput, func(t *testing.T) {
+			req, _ := setup(t)
+			req.Route = "agent_run"
+			evidence(t, &req, record.VersionOutput, "SENTINEL_PROMPT_FROM_HELP\nSENTINEL_TOKEN_FROM_HELP\n", false)
+			report, err := Inspect(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			actual, native, err := egg.LaunchCommandPreview("codex", oracle.PlanningRoot, filepath.Join(oracle.PlanningRoot, "home"), record.VersionOutput, true)
+			if err != nil || native != record.NativeRun {
+				t.Fatalf("native builder compatibility mismatch: %v", err)
+			}
+			for i, arg := range actual {
+				actual[i] = strings.ReplaceAll(arg, oracle.PlanningRoot, "<ROOT>")
+			}
+			if !reflect.DeepEqual(actual, record.Argv) {
+				t.Fatalf("planner diverged from pinned adapter argv for %s", record.VersionOutput)
+			}
+			expectedStatus := Fail
+			if record.NativeRun {
+				expectedStatus = Pass
+			}
+			hasGate(t, report, "route.agent_run", expectedStatus, "")
+			for _, write := range []func(*bytes.Buffer) error{func(b *bytes.Buffer) error { return WriteJSON(b, report) }, func(b *bytes.Buffer) error { return Render(b, report) }} {
+				var output bytes.Buffer
+				if err := write(&output); err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(output.String(), "SENTINEL") {
+					t.Fatal("two-version export retained raw help/prompt/token")
+				}
+			}
+		})
 	}
 }

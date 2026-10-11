@@ -255,3 +255,25 @@ clean:
 	rm -f wt wt-preview
 	rm -rf dist/ dist-preview/
 	rm -f test/linux/wt test/linux/mock-agent test/linux/run-tests test/linux/sandbox-tests test/linux/wt-tests test/web/wt test/web/claude
+
+# Bounded offline launch-plan gates: no built CLI execution, provider, listener,
+# native sandbox, browser, installs, or global cache access.
+.PHONY: test-launch-plan test-launch-plan-contract vet-launch-plan build-launch-plan
+test-launch-plan:
+	$(GO) test -p 2 ./internal/agent ./internal/config
+	$(GO) test -p 2 ./internal/egg -run 'LaunchConfig|LaunchCommand|CodexLifecycle(Args|Supported|Skips|Native)|CodexRunArgs|MergeEggConfig' -count=1
+	$(GO) test -p 2 ./internal/launchplan ./internal/fsutil -count=1
+
+test-launch-plan-contract: | web/dist
+	$(GO) test -p 2 ./cmd/wt -run 'Doctor.*Launch|LaunchPlan' -count=1
+
+vet-launch-plan: | web/dist
+	$(GO) vet -p 2 ./cmd/wt ./internal/agent ./internal/config ./internal/egg ./internal/launchplan ./internal/fsutil
+
+build-launch-plan: | web/dist
+	$(GO) build -p 2 -buildvcs=false -o .scratch/wt-launch-plan ./cmd/wt
+
+# Coordinator-only: invokes native sandbox children and disposable loopback.
+.PHONY: accept-launch-plan-native
+accept-launch-plan-native:
+	python3 -B scripts/launch-plan-native-gate.py --go '$(shell command -v go)'

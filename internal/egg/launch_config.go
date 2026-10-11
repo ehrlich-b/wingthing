@@ -4,9 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/ehrlich-b/wingthing/internal/fsutil"
 )
 
 // PolicyRuleSource describes effective declared rules, including inherited
@@ -38,7 +39,7 @@ func ResolveLaunchConfig(path, basesDir, home string) (*EggConfig, []PolicyRuleS
 	if !filepath.IsAbs(path) || basesDir != "" && !filepath.IsAbs(basesDir) {
 		return nil, nil, errors.New("absolute policy and bases paths required")
 	}
-	resolver := launchConfigResolver{bases: basesDir, home: home, active: map[string]bool{}}
+	resolver := launchConfigResolver{bases: basesDir, home: home, active: map[string]bool{}, visited: map[string]bool{}}
 	result, err := resolver.resolve(path, 0)
 	return result.cfg, result.rules, err
 }
@@ -46,6 +47,8 @@ func ResolveLaunchConfig(path, basesDir, home string) (*EggConfig, []PolicyRuleS
 type launchConfigResolver struct {
 	bases, home string
 	active      map[string]bool
+	visited     map[string]bool
+	reads       int
 }
 
 func (r *launchConfigResolver) basePath(name, dir string) (string, error) {
@@ -65,6 +68,10 @@ func (r *launchConfigResolver) basePath(name, dir string) (string, error) {
 }
 func (r *launchConfigResolver) resolve(path string, depth int) (explicitPolicy, error) {
 	var zero explicitPolicy
+	r.reads++
+	if r.reads > 32 {
+		return zero, errors.New("policy resolution exceeds 32 file reads")
+	}
 	if depth > maxBaseDepth {
 		return zero, errors.New("egg config base chain too deep")
 	}
@@ -75,9 +82,17 @@ func (r *launchConfigResolver) resolve(path string, depth int) (explicitPolicy, 
 	if r.active[real] {
 		return zero, errors.New("egg config circular base reference")
 	}
+	// Production resolution retains visited lexical paths for its whole walk.
+	// Preserve its repeated-reference refusal rather than promising a plan that
+	// the launch resolver would reject. Canonical active paths detect real cycles.
+	lexical := filepath.Clean(path)
+	if r.visited[lexical] {
+		return zero, errors.New("runtime policy resolver rejects repeated base references")
+	}
+	r.visited[lexical] = true
 	r.active[real] = true
 	defer delete(r.active, real)
-	file, err := os.Open(real)
+	file, err := fsutil.OpenBoundedRegular(real, 64<<10)
 	if err != nil {
 		return zero, errors.New("policy file cannot be opened")
 	}
@@ -104,7 +119,7 @@ func (r *launchConfigResolver) resolve(path string, depth int) (explicitPolicy, 
 	parent := explicitPolicy{cfg: DefaultEggConfig()}
 	parent.rules = configRuleSources(parent.cfg, "built-in defaults")
 	if child.Base.Name != "" {
-		path, err := r.basePath(child.Base.Name, filepath.Dir(real))
+		path, err := r.basePath(child.Base.Name, filepath.Dir(path))
 		if err != nil {
 			return zero, err
 		}
@@ -119,7 +134,7 @@ func (r *launchConfigResolver) resolve(path string, depth int) (explicitPolicy, 
 		}
 		replacement := explicitPolicy{cfg: &EggConfig{}}
 		if mask.name != "none" {
-			path, err := r.basePath(mask.name, filepath.Dir(real))
+			path, err := r.basePath(mask.name, filepath.Dir(path))
 			if err != nil {
 				return zero, err
 			}
@@ -180,6 +195,10 @@ func configRuleSources(cfg *EggConfig, source string) []PolicyRuleSource {
 		result = append(result, PolicyRuleSource{"network", "mode=" + cfg.Network.Mode, source})
 	}
 	for _, entry := range cfg.Env {
+		if strings.ContainsAny(entry, "=:\t\r\n ") {
+			result = append(result, PolicyRuleSource{"env_invalid", "[selector contents redacted]", source})
+			continue
+		}
 		result = append(result, PolicyRuleSource{"env", entry, source})
 	}
 	return result
