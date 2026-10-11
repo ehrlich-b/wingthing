@@ -313,3 +313,30 @@ clean:
 	rm -f wt wt-preview
 	rm -rf dist/ dist-preview/
 	rm -f test/linux/wt test/linux/mock-agent test/linux/run-tests test/linux/sandbox-tests test/linux/wt-tests test/web/wt test/web/claude
+
+# Offline metadata inventory gates: no daemon, browser, provider or listener.
+RUN_INVENTORY_TESTS ?= RunInventory|AgentList|ServerLiteralsSetVersion|Dashboard|RootHelp
+.PHONY: test-run-inventory-store test-run-inventory test-run-inventory-race build-run-inventory-linux
+test-run-inventory-store: | web/dist
+	$(GO) test -p 2 -json -count=1 ./internal/store ./internal/control
+
+test-run-inventory: | web/dist
+	$(GO) test -p 2 -json -count=1 ./internal/localmcp ./internal/wingsession ./internal/runinventory ./cmd/wt -run '$(RUN_INVENTORY_TESTS)' -timeout=5m
+
+test-run-inventory-race: | web/dist
+	$(GO) test -race -p 2 -json -count=1 ./internal/store ./internal/wingsession ./internal/localmcp ./internal/runinventory ./cmd/wt -run '$(RUN_INVENTORY_TESTS)' -timeout=5m
+
+build-run-inventory-linux: | web/dist
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -p 2 -buildvcs=false -o .scratch/wt-inventory-linux ./cmd/wt
+
+.PHONY: test-run-inventory-retention
+test-run-inventory-retention: | web/dist
+	$(GO) test -race -p 2 -json -count=1 ./internal/localmcp -run '^TestRunInventoryReopenRetentionRemovedSessionsAndFiniteConsumer$$' -timeout=5m
+
+.PHONY: vet-run-inventory
+vet-run-inventory:
+	$(GO) vet -p 2 ./...
+
+.PHONY: test-run-inventory-fixture-safety
+test-run-inventory-fixture-safety: | web/dist
+	$(GO) test -race -p 2 -json -count=1 ./internal/localmcp -run '^Test(AgentListSerializedAdaptersReturnSameDurableIdentities|AgentListGrantBoundsAndUnsupportedErrors|RunInventoryTwoWingsIdenticalIDsRespectLiveOwnerAndPathPolicies)$$' -timeout=5m

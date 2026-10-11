@@ -13,7 +13,7 @@ func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 		"sandbox_explain",
 		"terminal_list", "terminal_read", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "terminal_wait",
 		"session_fork", "terminal_start", "agent_start",
-		"agent_run", "agent_status", "agent_wait", "agent_wait_any", "agent_result",
+		"agent_run", "agent_list", "agent_status", "agent_wait", "agent_wait_any", "agent_result",
 		"agent_events", "agent_steer", "agent_stop",
 		"terminal_rename", "terminal_stop",
 		"conversation_bootstrap", "conversation_list", "conversation_read", "conversation_checkpoint", "conversation_wake",
@@ -24,7 +24,7 @@ func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 		"sandbox_explain",
 		"terminal_list", "terminal_read", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "terminal_wait",
 		"session_fork", "terminal_start", "agent_start",
-		"agent_run", "agent_status", "agent_wait", "agent_wait_any", "agent_result",
+		"agent_run", "agent_list", "agent_status", "agent_wait", "agent_wait_any", "agent_result",
 		"agent_events", "agent_steer", "agent_stop",
 		"terminal_rename", "terminal_stop",
 		"conversation_bootstrap", "conversation_list", "conversation_read", "conversation_checkpoint", "conversation_wake",
@@ -329,4 +329,21 @@ func toolNames(tools []Tool) []string {
 		names[index] = tool.Name
 	}
 	return names
+}
+
+func TestAgentListContractReadOnlyAndQualified(t *testing.T) {
+	tool, ok := Lookup("agent_list")
+	if !ok || tool.Grant != "agent.read" || tool.Authority != AuthorityWing || tool.Annotations["readOnlyHint"] != true || tool.Annotations["openWorldHint"] != false || tool.AuditArguments != AuditArgumentsDigest || len(tool.AuditTargetKeys) != 0 {
+		t.Fatalf("inventory authority/annotations: %+v", tool)
+	}
+	props := tool.InputSchema["properties"].(map[string]any)
+	if props["limit"].(map[string]any)["maximum"] != 200 || props["idempotency_key"] == nil || props["terminal_window_seconds"] == nil || len(props) != 4 {
+		t.Fatalf("inventory fields: %+v", props)
+	}
+	original := map[string]any{"runs": []any{map[string]any{"run_id": "same-id"}}}
+	result := QualifyResult("wing-one", original)
+	row := result["runs"].([]any)[0].(map[string]any)
+	if row["wing_id"] != "wing-one" || original["runs"].([]any)[0].(map[string]any)["wing_id"] != nil {
+		t.Fatalf("mutable/unqualified resource: %+v", result)
+	}
 }

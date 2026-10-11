@@ -95,7 +95,7 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"terminal_list", "terminal_start", "terminal_rename", "agent_start", "agent_run", "agent_status",
+		"terminal_list", "terminal_start", "terminal_rename", "agent_start", "agent_run", "agent_list", "agent_status",
 		"agent_wait", "agent_wait_any", "agent_result", "agent_events", "agent_steer", "agent_stop",
 		"sandbox_explain",
 	} {

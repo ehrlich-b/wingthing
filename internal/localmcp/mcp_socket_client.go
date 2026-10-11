@@ -34,6 +34,7 @@ type localWingProxy struct {
 	version        string
 	client         *controlsocket.Client
 	onForwardError func(error)
+	forwardTool    func(context.Context, string, json.RawMessage) (map[string]any, bool, error)
 }
 
 func (s *localWingProxy) handle(ctx context.Context, request localMCPRequest) (localMCPResponse, bool) {
@@ -108,12 +109,12 @@ func (s *localWingProxy) handle(ctx context.Context, request localMCPRequest) (l
 			}
 			call.Arguments = arguments
 			request.Params, _ = json.Marshal(call)
-			return handleMCPTaskRequest(ctx, request, s.client.Call, s.aggregate), len(request.ID) > 0
+			return handleMCPTaskRequest(ctx, request, s.forward, s.aggregate), len(request.ID) > 0
 		}
 		var data map[string]any
 		isError := false
 		if err == nil {
-			data, isError, err = s.client.Call(ctx, call.Name, arguments)
+			data, isError, err = s.forward(ctx, call.Name, arguments)
 			if err != nil && s.onForwardError != nil {
 				s.onForwardError(err)
 			}
@@ -125,7 +126,7 @@ func (s *localWingProxy) handle(ctx context.Context, request localMCPRequest) (l
 		response.Result = localMCPToolResult(data, isError)
 	case "tasks/get", "tasks/result", "tasks/list", "tasks/cancel":
 		if s.protocol.tasksEnabled() {
-			return handleMCPTaskRequest(ctx, request, s.client.Call, s.aggregate), len(request.ID) > 0
+			return handleMCPTaskRequest(ctx, request, s.forward, s.aggregate), len(request.ID) > 0
 		}
 		response.Error = &localMCPError{Code: -32601, Message: "tasks require MCP 2025-11-25"}
 	default:
@@ -176,7 +177,19 @@ func CallLocalWingTool(ctx context.Context, dir, clientName, name string, argume
 		return nil, err
 	}
 	if isError {
+		if err := control.ToolError(result); err != nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf("%v", result["error"])
 	}
 	return result, nil
+}
+
+// forward is the same operation seam used by both ordinary and task calls.
+// In-memory transport fixtures can substitute it without opening a socket.
+func (s *localWingProxy) forward(ctx context.Context, name string, args json.RawMessage) (map[string]any, bool, error) {
+	if s.forwardTool != nil {
+		return s.forwardTool(ctx, name, args)
+	}
+	return s.client.Call(ctx, name, args)
 }
