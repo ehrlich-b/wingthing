@@ -1,15 +1,10 @@
-# Native iOS foundation draft
+# Native Wingthing iOS client
 
-This is a native SwiftUI conversation client with an encrypted Foundation/CryptoKit adapter and a reviewable iOS project. A fresh install sends no request before configuration. Home offers an optional hosted preset; selecting it does not connect or create an account. The client uses an explicitly pinned HTTPS relay Home. See [PHONE.md](../../PHONE.md) and [GO-LIVE.md](../../GO-LIVE.md) for the faster Safari route, current protocol gaps and signing steps.
+The default native SwiftUI flow opens **Scan to pair**, pairs Bryan's iPhone with EhrlichMac's main wing using `wt pair`, and shows that machine's existing sessions. Forge is a separate pairing. LAN/Bonjour and tailnet work without a Wingthing account; the optional hosted relay remains encrypted to the scanned wing key. Both the terminal and phone must approve the same four emoji. Per-wing device keys/credentials use Secure Enclave and device-only Keychain storage; the phone does not restore an old account connection on startup.
 
-For today's native phone installation, use [IOS-INSTALL.md](../../IOS-INSTALL.md)
-and `scripts/install_phone.sh`. It provisions/installs only when Bryan runs it,
-then prepares a separate Mac wing through the hosted Home and privately hands
-off the already supported setup link. The current standard validation gates
-still hit the nested manifest sandbox refusal; supplemental checks pass 125
-core tests, the UI typecheck, Release guard, simulator and unsigned device builds.
+Use [IOS-INSTALL.md](../../IOS-INSTALL.md), [STORYBOARD.html](../../docs/pairing/STORYBOARD.html) and [PROTOCOL.md](../../docs/pairing/PROTOCOL.md). The installer connect step runs `wt pair` against the normal main wing. The hidden paste-link fallback uses the same pairing checks. **Existing Home setup** separately preserves the older account-based conversation adapter described below.
 
-October 11 verification: the compatible bounded-history fix from `wingthing-mobile-next-20261010` is reused here. Each UI reading action is limited to 100 pages / 10 seconds, with an explicit continuation cursor. The clone-local validation helper was also reused. Its core gate fails before compilation because SwiftPM manifest sandboxing is denied (`sandbox_apply: Operation not permitted`); all pass counts below describe historical milestones, not a pass on this branch. Signed-phone and live-provider acceptance remain open.
+October 11 QR validation: 133 Swift tests (including real Go SPAKE2/device proof interoperability), mocked installer checks and an unsigned simulator build pass. Invocation-local manifest sandbox flags are needed in this managed environment; no global Xcode or signing setting changed. Actual camera, Local Network permission, Secure Enclave/Keychain on Bryan's phone and cellular acceptance remain required. Counts below describe earlier conversation milestones.
 
 ## Implemented slice
 
@@ -18,7 +13,7 @@ inventory and Home settings. It does not select or launch a conversation until
 the user taps a row. `make simulator-first-connection-check` verifies this
 journey against an encrypted synthetic peer at the largest system text size,
 including the unfiltered accessibility audit and zero launch/input/Stop counters.
-The default unconfigured app still starts empty.
+The default unconfigured app opens the QR scanner.
 
 **New conversation** can create the first parent on an already authorized
 personal home. The form reads the pinned computer's existing `wing.info`
@@ -60,7 +55,7 @@ physical-phone home still require live acceptance.
 - Whole-task Stop requires the exactly bound capability and receipt adapter; main lacks the corresponding `conversation_stop` server operation and capability, so real native Stop is unavailable. The synthetic client uses this adapter from the stable composer action or Details. Confirmation captures the displayed execution, which must still match before creating an intent. Its receipt separates a signal request from observed provider termination; leaving the screen or disconnecting sends no Stop.
 - Optional `coordinator_context` observations decode without inventing HomeRoostID or owner epoch. Logical DotID, executor WingID, and a future HomeRoostID remain separate. Local saved input is not a durable coordinator inbox receipt, acceptance, or processing claim.
 
-The `Home` form connects only to a home the user configures: the user enters the home address, account ID, executor WingID, pinned public key, and an access token they already hold, then explicitly connects. The app never obtains, mints, or refreshes a token, and no vendor account is required for a user-owned compatible Home. Native pairing, QR scanning, and sign-in are unavailable. `Disconnect` drops the client and forgets the token; saved tasks and transcripts stay readable offline, marked as possibly out of date. `Reconnect` re-runs the read-only identity checks against the same configured home and never resends locally saved pending input. Verified bearers persist in non-synchronizing, device-only, when-unlocked Keychain items scoped to origin/account/wing/key; tunnel private keys remain in memory. Disconnect forgets the saved and attempted Home credentials. Relaunch can restore a configured Home, but no enrollment flow is implemented. Product UI contains no fixture agents.
+The `Home` form connects only to a home the user configures: the user enters the home address, account ID, executor WingID, pinned public key, and an access token they already hold, then explicitly connects. The app never obtains, mints, or refreshes a token, and no vendor account is required for a user-owned compatible Home. QR device pairing is the default flow; this hidden Home form is the older existing-account fallback and never performs phone sign-in. `Disconnect` drops the client and forgets the token; saved tasks and transcripts stay readable offline, marked as possibly out of date. `Reconnect` re-runs the read-only identity checks against the same configured home and never resends locally saved pending input. Verified bearers persist in non-synchronizing, device-only, when-unlocked Keychain items scoped to origin/account/wing/key; tunnel private keys remain in memory. Disconnect forgets the saved and attempted Home credentials. Relaunch can restore a configured Home, while device pairings use their independent machine-scoped enrollment flow. Product UI contains no fixture agents.
 
 ## Verification on this Mac
 

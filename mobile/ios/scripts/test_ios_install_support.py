@@ -134,26 +134,35 @@ fi''',
             for _ in range(2):
                 result = subprocess.run(command, env=environment, text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            # Exercise private handoff too, with HTTP verification covered above.
-            source = root / "private-link"
-            source.write_text(link()); source.chmod(0o600)
-            environment.update(WT_IOS_SETUP_LINK_FILE=str(source), REAL_PYTHON=sys.executable,
-                               MOCK_CLIPBOARD=str(root / "clipboard"))
-            for name, body in {
-                "python3": 'if [[ ${2:-} == verify ]]; then exit 0; fi\nexec "$REAL_PYTHON" "$@"',
-                "pbcopy": 'cat >"$MOCK_CLIPBOARD"',
-            }.items():
-                path = mockbin / name
-                path.write_text("#!/bin/bash\nset -euo pipefail\n" + body + "\n"); path.chmod(0o755)
+            # The connect step uses the main wing and never shares an account bearer.
+            wing = root / "main-wing"; wing.mkdir(); (wing / "phone-control.json").write_text('{}')
+            fake_go = mockbin / "fake-go"
+            fake_go.write_text("""#!/bin/bash
+set -euo pipefail
+while [[ $# -gt 0 ]]; do
+ if [[ $1 == -o ]]; then target=$2; break; fi
+ shift
+done
+cat >"$target" <<'SH'
+#!/bin/bash
+printf '%s\\n' "$*" >>"$MOCK_PAIR_CALLS"
+if [[ $1 == wing && $2 == status ]]; then printf 'wing daemon is running (pid 123)\\n'; fi
+if [[ $1 == pair ]]; then printf 'Scan this with the Wingthing app\\n'; fi
+SH
+chmod 700 "$target"
+""")
+            fake_go.chmod(0o755)
+            environment.update(WT_IOS_GO=str(fake_go), WT_IOS_WING_DIR=str(wing), MOCK_PAIR_CALLS=str(root / "pair-calls"))
+            environment.pop("WT_IOS_SETUP_LINK_FILE", None)
             result = subprocess.run(command[:-1] + ["--connect-only"], env=environment, text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertNotIn(FIELDS["token"], result.stdout + result.stderr)
-            self.assertEqual((root / "clipboard").read_text(), link())
+            self.assertIn("wing status", (root / "pair-calls").read_text())
+            self.assertIn("pair", (root / "pair-calls").read_text())
+            self.assertNotIn("login", (root / "pair-calls").read_text())
+            self.assertNotIn("phone link", (root / "pair-calls").read_text())
             self.assertFalse((root / "state/setup-link").exists())
-            self.assertFalse((root / "state/identity-link").exists())
             calls = (root / "calls").read_text()
-            self.assertNotIn(FIELDS["token"], calls)
-            self.assertIn("--payload-url wingthing://home?", calls)
+            self.assertNotIn("--payload-url", calls)
             for expected in ["generic/platform=iOS", "DEVELOPMENT_TEAM=TESTTEAM01", "CODE_SIGNING_ALLOWED=YES",
                              "-allowProvisioningUpdates", "-allowProvisioningDeviceRegistration",
                              "device install app --device phone-one", "device process launch --device phone-one"]:

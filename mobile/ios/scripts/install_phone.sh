@@ -16,7 +16,7 @@ MODE=${1:-all}
 case "$MODE" in
   --help)
     printf '%s\n' 'Usage: wt-ios-install [--install-only|--connect-only|--clear-clipboard]' \
-      'See IOS-INSTALL.md for signing/device/Home overrides and one-time human steps.'
+      'See IOS-INSTALL.md for signing/device/main-wing overrides and one-time human steps.'
     exit 0 ;;
   --clear-clipboard) pbcopy </dev/null; exit 0 ;;
   all|--install-only|--connect-only) ;;
@@ -129,86 +129,33 @@ fi
 if ! xcrun devicectl device process launch --device "$DEVICE" --timeout 60 "$BUNDLE" >"$STATE/launch.log" 2>&1; then
   die "App is installed but could not launch. Unlock it, enable Developer Mode, trust Developer App in VPN & Device Management if asked, then rerun with --connect-only. See $STATE/launch.log privately."
 fi
-[[ $MODE != --install-only ]] || { printf 'Native Wingthing installed and launched. Rerun with --connect-only for Home setup.\n'; exit 0; }
+[[ $MODE != --install-only ]] || { printf 'Native Wingthing installed and launched. Rerun with --connect-only to scan the main wing QR.\n'; exit 0; }
 
-step '6/7 Connect a compatible HTTPS Home'
-if [[ -n ${WT_IOS_SETUP_LINK_FILE:-} ]]; then
-  # An existing Mac/forge/self-hosted Home: no login/start/config changes.
-  python3 "$SUPPORT" validate "$WT_IOS_SETUP_LINK_FILE" || die 'Setup file must be owned by you, mode 600, and contain a valid HTTPS Home link with an existing token.'
-  cp "$WT_IOS_SETUP_LINK_FILE" "$STATE/setup-link"
-else
-  GO=${WT_IOS_GO:-$HOME/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.9.darwin-arm64/bin/go}
-  [[ -x $GO ]] || die 'Go 1.26.9 is missing; set WT_IOS_GO to its executable.'
-  need claude
-  need install
-  WING=$HOME/.wingthing-ios-phone-20261011
-  WORK=$HOME/phone-native-work-20261011
-  BIN=$HOME/.local/bin/wt-ios-phone-20261011
-  printf '%s\n' 'Home: https://wingthing.ai; executor: a separate personal Mac wing.' \
-    "Workspace: $WORK (tools read ro:/, write only this workspace; tool network: none)." \
-    'Hosted access needs existing account entitlement. Complete the Wingthing browser approval if it opens.'
-  mkdir -p "$CLONE/.scratch/bin" "$HOME/.local/bin"
-  [[ ! -L $BIN ]] || die 'Managed wing executable is a symlink.'
-  (cd "$CLONE" && taskpolicy -b nice -n 15 env GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off \
-    GOMAXPROCS=2 GOCACHE="$CLONE/.scratch/go-build" GOMODCACHE="$CLONE/.scratch/gomod" \
-    "$GO" build -p 2 -ldflags '-X github.com/ehrlich-b/wingthing/internal/config.ReleaseChannel=stable' \
-    -o .scratch/bin/wt-ios-install ./cmd/wt) >"$STATE/wing-build.log" 2>&1 \
-    || die "Wing build failed; inspect $STATE/wing-build.log. Seed the clone Go cache if dependencies are missing."
-  if ! cmp -s "$CLONE/.scratch/bin/wt-ios-install" "$BIN"; then install -m 700 "$CLONE/.scratch/bin/wt-ios-install" "$BIN"; fi
-  python3 - "$WING" "$WORK" <<'PY'
-import json, pathlib, sys
-wing, work = map(pathlib.Path, sys.argv[1:])
-marker = 'wt-ios-install-v1\n'
-policies = {wing: {'wing.yaml': 'roost: https://wingthing.ai\nlabel: bryans-native-phone\npaths: [' + json.dumps(str(work)) + ']\nconversations: enabled\nhosted_relay: allow\nlocked: false\nallow_keys: []\n'},
-            work: {'egg.yaml': 'fs: ["ro:/", "rw:./"]\nnetwork: none\n'}}
-for directory, files in policies.items():
-    if directory.is_symlink(): raise SystemExit('STOP: Managed wing/workspace is a symlink.')
-    if directory.exists():
-        tag = directory / '.wt-ios-install-owner'
-        if tag.is_symlink() or not tag.is_file() or tag.read_text() != marker:
-            raise SystemExit('STOP: Existing wing/workspace is unrecognized; it will not be overwritten.')
-        for name, text in files.items():
-            p = directory / name
-            if p.is_symlink() or not p.is_file() or p.read_text() != text:
-                raise SystemExit('STOP: Managed wing/workspace policy changed; inspect it instead of overwriting.')
-for directory, files in policies.items():
-    if directory.exists(): continue
-    directory.mkdir(mode=0o700)
-    for name, text in files.items():
-        p = directory / name
-        p.write_text(text); p.chmod(0o600)
-    (directory / '.wt-ios-install-owner').write_text(marker)
-PY
-  # Clear relay/process overrides without changing the normal provider login.
-  WT=(env -u WT_NODE_ROLE -u WT_APP_HOST -u WT_WS_HOST -u WT_BASE_URL \
-    -u WINGTHING_PREVIEW_DIR -u WT_ROOST_ALLOWED_EMAILS WINGTHING_DIR="$WING" "$BIN")
-  "${WT[@]}" login --roost https://wingthing.ai >"$STATE/wing-login.log" 2>&1 \
-    || die "Wingthing login failed; inspect $STATE/wing-login.log privately and rerun."
-  "${WT[@]}" wing status >"$STATE/wing-status.log" 2>&1 || die 'Managed wing status is invalid; inspect it.'
-  if ! grep -q '^wing daemon is running ' "$STATE/wing-status.log"; then
-    "${WT[@]}" wing start --roost https://wingthing.ai --egg-config "$WORK/egg.yaml" >"$STATE/wing-start.log" 2>&1 \
-      || die "Managed wing startup failed; inspect $STATE/wing-start.log."
-  fi
-  "${WT[@]}" phone link >"$STATE/setup-link" 2>"$STATE/link.log" \
-    || die "Home link creation failed; inspect $STATE/link.log privately."
+step "6/7 Connect to this Mac's main wing"
+[[ -z ${WT_IOS_SETUP_LINK_FILE:-} ]] || die "The QR flow pairs with the main wing. For an old Home link, use the app's hidden Existing Home setup fallback."
+GO=${WT_IOS_GO:-$HOME/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.9.darwin-arm64/bin/go}
+[[ -x $GO ]] || die 'Go 1.26.9 is missing; set WT_IOS_GO to its executable.'
+WING=${WT_IOS_WING_DIR:-${WINGTHING_DIR:-$HOME/.wingthing}}
+BIN=$STATE/wt-pair
+printf '%s\n' "Pairing target: this Mac’s main wing in $WING (the same one wt and the dashboard use)." \
+  'Same Wi-Fi: no account needed. Away from home: run wt login once on this Mac; the phone never logs in.'
+mkdir -p "$CLONE/.scratch/bin"
+(cd "$CLONE" && taskpolicy -b nice -n 15 env CGO_ENABLED=1 GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off \
+  GOMAXPROCS=2 GOCACHE="$CLONE/.scratch/go-cache" GOMODCACHE="$CLONE/.scratch/go-mod" \
+  "$GO" build -p 2 -ldflags '-X github.com/ehrlich-b/wingthing/internal/config.ReleaseChannel=stable' \
+  -o .scratch/bin/wt-ios-pair ./cmd/wt) >"$STATE/wing-build.log" 2>&1 \
+  || die "Wing build failed; inspect $STATE/wing-build.log. Seed the clone Go cache if dependencies are missing."
+install -m 700 "$CLONE/.scratch/bin/wt-ios-pair" "$BIN"
+WT=(env -u WINGTHING_PREVIEW_DIR WINGTHING_DIR="$WING" "$BIN")
+"${WT[@]}" wing status >"$STATE/wing-status.log" 2>&1 || die 'Main wing status is invalid; inspect it.'
+if ! grep -q '^wing daemon is running ' "$STATE/wing-status.log"; then
+  "${WT[@]}" wing start --local-only >"$STATE/wing-start.log" 2>&1 \
+    || die "Main wing startup failed; inspect $STATE/wing-start.log."
 fi
-chmod 600 "$STATE/setup-link"
-printf '%s\n' 'Checking HTTPS health, bearer account and the pinned online wing (up to 60 seconds).'
-python3 "$SUPPORT" verify "$STATE/setup-link" \
-  || die 'Home/account/wing could not be verified. Check network, wing availability, hosted entitlement and its lock/passkey policy. The app remains installed; rerun --connect-only after resolving it.'
-
-step '7/7 Prefill Home and hand off the credential privately'
-python3 "$SUPPORT" identity "$STATE/setup-link" >"$STATE/identity-link"
-# Only public identity travels in devicectl arguments/logs; token stays in clipboard.
-if ! xcrun devicectl device process launch --device "$DEVICE" --timeout 60 \
-  --payload-url "$(cat "$STATE/identity-link")" "$BUNDLE" >"$STATE/home-launch.log" 2>&1; then
-  printf '%s\n' 'Open Wingthing on the phone and tap Connect a home (or Home settings).'
-fi
-pbcopy <"$STATE/setup-link"
-printf '%s\n' 'Private setup link copied to the Mac clipboard; no token or credential URL is printed.' \
-  'On iPhone: Home > Paste setup link (allow paste) > Connect. Wait for Online, then open a conversation.' \
-  'Universal Clipboard needs the same Apple Account, Wi-Fi/Bluetooth and Handoff on both devices.' \
-  'Without Handoff: open the private device_token.yaml locally and enter its bearer in Home; see IOS-INSTALL.md.' \
-  'Keep the executor Mac awake/online. Nothing sends a prompt until you explicitly send/create on the phone.' \
-  'Native whole-conversation Stop, pairing/QR scanning, token refresh and push remain unavailable.' \
-  'After pasting, run wt-ios-install --clear-clipboard or copy unrelated text to replace the private link.'
+# An existing daemon must already run the pairing-capable binary. Do not replace
+# or restart a running main wing while its sessions may be in use.
+[[ -f $WING/phone-control.json ]] || die 'Your running main wing needs the pairing-capable binary. Update/restart that wing yourself, preserving this same state directory, then rerun --connect-only.'
+step '7/7 Scan this with the Wingthing app'
+printf '%s\n' 'Open Wingthing → Scan to pair. Scan this QR, compare all four emoji, confirm on the phone, then press Enter here.' \
+  'Keep this Mac awake. The QR expires in five minutes. Ctrl-C cancels. No phone account or browser handoff.'
+"${WT[@]}" pair || die 'Pairing did not finish. Press Enter for a new QR or rerun --connect-only.'
