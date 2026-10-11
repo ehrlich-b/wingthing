@@ -253,6 +253,28 @@ func TestAttachRemoteUnknownOutcomePrintsExactReconnectOnlyOnStderr(t *testing.T
 	}
 }
 
+func TestGenericRemoteAttachUnknownOutcomePreservesPinnedRoute(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("WINGTHING_DIR", state)
+	t.Setenv("WINGTHING_PREVIEW_DIR", "")
+	ssh := writeFakeRemoteSSH(t, "exit 255\n")
+	var output, diagnostic bytes.Buffer
+	args := []string{"--remote", "fixture-host", "--remote-binary", "/custom binary/wt", "--remote-state", "/saved state", "attach", "--takeover", "--", "full-id"}
+	err := executeCLI(t.Context(), args, remotepkg.IO{In: strings.NewReader(""), Out: &output, ErrOut: &diagnostic, SSHPath: ssh})
+	var exit *cmdutil.CommandExitError
+	if !errors.As(err, &exit) || exit.Code != 255 || output.Len() != 0 {
+		t.Fatal(output.String(), err)
+	}
+	for _, want := range []string{"Connection to fixture-host ended", "session outcome unknown", "'--remote' 'fixture-host'", "'--remote-binary' '/custom binary/wt'", "'--remote-state' '/saved state'", "'attach' '--' 'full-id'"} {
+		if !strings.Contains(diagnostic.String(), want) {
+			t.Fatalf("missing %q: %s", want, diagnostic.String())
+		}
+	}
+	if strings.Contains(diagnostic.String(), "'--takeover'") {
+		t.Fatal("failure advice repeats takeover")
+	}
+}
+
 func TestGenericRemoteAttachAfterDelimiterRequestsTTY(t *testing.T) {
 	ssh := writeFakeRemoteSSH(t, "printf '%s\\n' \"$@\"\n")
 	for _, test := range []struct {
