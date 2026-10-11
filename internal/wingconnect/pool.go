@@ -236,14 +236,7 @@ func (e *entry) run() {
 			case <-e.ctx.Done():
 			case <-conn.Done():
 			}
-			_ = conn.Close()
-			e.mu.Lock()
-			if e.connection == conn {
-				e.connection = nil
-				e.lastError = "SSH wing control disconnected"
-				e.signal()
-			}
-			e.mu.Unlock()
+			e.disconnect(conn)
 		}
 		if e.ctx.Err() != nil {
 			return
@@ -260,6 +253,19 @@ func (e *entry) run() {
 		timer.Stop()
 		backoff = min(60*time.Second, backoff*2)
 	}
+}
+func (e *entry) disconnect(conn Connection) {
+	// Remove a failed transport before closing it: Close may return before
+	// Done is signaled, and a retry must not reacquire that same connection.
+	// Only detach that exact connection; never evict a newer replacement.
+	e.mu.Lock()
+	if e.connection == conn {
+		e.connection = nil
+		e.lastError = "SSH wing control disconnected"
+		e.signal()
+	}
+	e.mu.Unlock()
+	_ = conn.Close()
 }
 func (e *entry) acquire(ctx context.Context) (Connection, error) {
 	e.mu.Lock()
@@ -305,18 +311,6 @@ func (e *entry) acquire(ctx context.Context) (Connection, error) {
 	}
 }
 
-func (e *entry) discard(conn Connection) {
-	// Call can observe transport failure before the Done notifier runs. Detach
-	// that exact connection before retrying; never evict a newer replacement.
-	e.mu.Lock()
-	if e.connection == conn {
-		e.connection = nil
-		e.lastError = "SSH wing control disconnected"
-		e.signal()
-	}
-	e.mu.Unlock()
-	_ = conn.Close()
-}
 func (p *Pool) Entries() ([]map[string]any, string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -470,7 +464,7 @@ func (p *Pool) Call(ctx context.Context, wingID, name string, args json.RawMessa
 			// connection and its other observers when just one wait ends.
 			return data, denied, ctx.Err()
 		}
-		e.discard(conn)
+		e.disconnect(conn)
 		if !retry || ctx.Err() != nil {
 			break
 		}

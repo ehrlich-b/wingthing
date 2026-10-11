@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -260,8 +261,9 @@ func rememberedPoolLostAdmission(t *testing.T, tool, key string) {
 		mu.Unlock()
 		if first {
 			close(admitted)
-			// Do not publish the first receipt until its transport is gone.
-			// Releasing alongside Drop can race a successful acknowledgement.
+			// Drop requests asynchronous fixture exit. Keep the response held
+			// until the receiving connection observes EOF, so the acknowledgement
+			// cannot win the race with the forward's shutdown.
 			<-ctx.Done()
 		}
 		return control.DirectResponse{Version: control.ContractVersion, ID: r.ID, Result: map[string]any{"run_id": "single-run", "session_id": id}}
@@ -310,6 +312,77 @@ func rememberedPoolLostAdmission(t *testing.T, tool, key string) {
 		t.Fatalf("duplicated admission: %v calls=%d", keys, calls)
 	}
 }
+
+type fixtureConnection struct {
+	done      chan struct{}
+	call      func(context.Context, string, json.RawMessage) (map[string]any, bool, error)
+	close     func()
+	closeOnce sync.Once
+}
+
+func (c *fixtureConnection) Call(ctx context.Context, name string, args json.RawMessage) (map[string]any, bool, error) {
+	return c.call(ctx, name, args)
+}
+func (c *fixtureConnection) Done() <-chan struct{} { return c.done }
+func (c *fixtureConnection) Close() error {
+	c.closeOnce.Do(c.close)
+	return nil
+}
+
+func TestRememberedPoolRetryDoesNotReuseClosingConnection(t *testing.T) {
+	state := t.TempDir()
+	remote := config.Remote{SSHTarget: "one", WingID: "wing-one", WingthingDir: "/state", ControlSocket: "/control.sock", ControlVersion: control.ContractVersion}
+	if err := config.SaveRemotes(state, map[string]config.Remote{"one": remote}); err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan struct{})
+	var calls, dials atomic.Int32
+	broken := &fixtureConnection{done: make(chan struct{}), close: func() { close(closed) }, call: func(context.Context, string, json.RawMessage) (map[string]any, bool, error) {
+		calls.Add(1)
+		return nil, false, &controlsocket.TransportError{Err: errors.New("lost acknowledgement")}
+	}}
+	healthy := &fixtureConnection{done: make(chan struct{})}
+	healthy.close = func() { close(healthy.done) }
+	healthy.call = func(_ context.Context, _ string, args json.RawMessage) (map[string]any, bool, error) {
+		if string(args) != `{"idempotency_key":"original","prompt":"request"}` {
+			t.Errorf("retry changed admission arguments: %s", args)
+		}
+		return map[string]any{"session_id": "single-egg"}, false, nil
+	}
+	changes := make(chan struct{}, 64)
+	p, err := New(t.Context(), Options{Dir: state, Dial: func(context.Context, config.Remote, controlsocket.Hello) (Connection, error) {
+		if dials.Add(1) == 1 {
+			return broken, nil
+		}
+		return healthy, nil
+	}, OnChange: func() { changes <- struct{}{} }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { p.Close() })
+	var finish sync.Once
+	finishClose := func() { finish.Do(func() { close(broken.done) }) }
+	t.Cleanup(finishClose)
+	waitEntries(t, p, changes, func(rows []map[string]any) bool { return rows[0]["online"] == true })
+	result := make(chan error, 1)
+	go func() {
+		data, denied, err := p.Call(t.Context(), remote.WingID, "agent_run", json.RawMessage(`{"prompt":"request","idempotency_key":"original"}`))
+		if err == nil && (denied || data["session_id"] != "single-egg" || data["idempotency_key"] != "original") {
+			err = fmt.Errorf("retry lost admission: %v", data)
+		}
+		result <- err
+	}()
+	<-closed // Close has returned, but its asynchronous Done signal is held.
+	rows, _ := p.Entries()
+	if rows[0]["online"] != false {
+		t.Error("closing transport remained available to callers")
+	}
+	finishClose()
+	if err := <-result; err != nil || calls.Load() != 1 {
+		t.Fatalf("reused closing transport: calls=%d error=%v", calls.Load(), err)
+	}
+}
+
 func TestRememberedPoolBackoffBoundsAndDemandRetry(t *testing.T) {
 	h := testssh.New(t)
 	r := config.Remote{SSHTarget: "one", WingID: "wing", WingthingDir: "/state", ControlSocket: "/s", ControlVersion: control.ContractVersion}
