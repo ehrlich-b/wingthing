@@ -573,11 +573,13 @@ func northstarReturnSpawnNative(t *testing.T, f *northstarFixture, binary, id st
 	provider := filepath.Join(f.work, id+"-provider.py")
 	northstarWrite(t, provider, `import os, tty, sys
 tty.setraw(0)
+# Enter the provider screen before publishing either required visible marker.
+os.write(1, b'\x1b[?1000h\x1b[?1006h\x1b[?2004h\x1b[?1049h\x1b[?25l')
 try:
     with open(os.path.join(os.environ['RETURN_PROTECTED_HOME'], 'mailbox', 'forbidden'), 'w') as f: f.write('bad')
     os.write(1, b'PROTECTION_BROKEN\r\n')
 except PermissionError: os.write(1, b'PROTECTED_OK\r\n')
-os.write(1, b'\x1b[?1000h\x1b[?1006h\x1b[?2004h\x1b[?1049h\x1b[?25lNATIVE_RETURN_READY\r\n')
+os.write(1, b'NATIVE_RETURN_READY\r\n')
 while True:
     b = os.read(0, 1)
     if b == b'N': sys.exit(17)
