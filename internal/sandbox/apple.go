@@ -106,7 +106,10 @@ func buildProfile(cfg Config) string {
 	}
 
 	// Resolve the SSH directory once for the deny exceptions emitted below.
-	sshDir, _ := os.UserHomeDir()
+	sshDir := cfg.HostHome
+	if sshDir == "" {
+		sshDir, _ = os.UserHomeDir()
+	}
 	if sshDir != "" {
 		sshDir, _ = canonicalSandboxPath(filepath.Join(sshDir, ".ssh"))
 	}
@@ -125,7 +128,10 @@ func buildProfile(cfg Config) string {
 		}
 	}
 	if hasWritableMounts {
-		home, _ := os.UserHomeDir()
+		home := cfg.HostHome
+		if home == "" {
+			home, _ = os.UserHomeDir()
+		}
 		if home != "" {
 			home, _ = canonicalSandboxPath(home)
 		}
@@ -233,6 +239,9 @@ func buildCheckedProfile(cfg Config) (string, error) {
 		return "", err
 	}
 	profile := buildProfile(cfg)
+	if err := checkRequiredWriteDirs(profile, cfg.RequiredWriteDirs); err != nil {
+		return "", err
+	}
 	if len(cfg.ProtectedWriteTargets) == 0 {
 		return profile, nil
 	}
@@ -256,29 +265,7 @@ func buildCheckedProfile(cfg Config) (string, error) {
 // resolving their longest existing ancestor and appending the missing suffix.
 // This matters on macOS, where /var and /tmp are symlinks into /private.
 func canonicalSandboxPath(path string) (string, error) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	abs = filepath.Clean(abs)
-	if real, err := filepath.EvalSymlinks(abs); err == nil {
-		return filepath.Clean(real), nil
-	}
-
-	current := abs
-	var suffix []string
-	for {
-		parent := filepath.Dir(current)
-		if parent == current {
-			return abs, nil
-		}
-		suffix = append([]string{filepath.Base(current)}, suffix...)
-		current = parent
-		if real, err := filepath.EvalSymlinks(current); err == nil {
-			parts := append([]string{filepath.Clean(real)}, suffix...)
-			return filepath.Join(parts...), nil
-		}
-	}
+	return CanonicalPath(path)
 }
 
 // containsDenyPath checks if a resolved path is in the deny list (resolving symlinks).

@@ -1,0 +1,60 @@
+{
+  "source_base": "2c3688f1f59cee08713d77476a917d7bc4bf7867",
+  "source_kind": "pinned argument builders with only two MkdirAll blocks disabled; synthetic version scenarios, not installed-provider recordings",
+  "planning_root": "/wave8-planner-fixture",
+  "records": [
+    {
+      "argv": [
+        "codex",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-c",
+        "check_for_update_on_startup=false",
+        "-c",
+        "notice={hide_full_access_warning=true,hide_gpt5_1_migration_prompt=true,\"hide_gpt-5.1-codex-max_migration_prompt\"=true,hide_rate_limit_model_nudge=true,hide_world_writable_warning=true,external_config_migration_prompts={home=true,projects={\"<ROOT>\"=true}}}",
+        "-c",
+        "projects={\"<ROOT>\"={trust_level=\"trusted\"}}"
+      ],
+      "native_run": false,
+      "version_output": "codex-cli 0.147.0"
+    },
+    {
+      "argv": [
+        "codex",
+        "--no-daemon",
+        "-c",
+        "notify=[\"/bin/sh\",\"-c\",\"printf '%s\\\\n' \\\"$1\\\" | (umask 077; wt_hook_dir='<ROOT>/home/.codex/wingthing-run-notify/launch-plan'; wt_hook_file=$(mktemp \\\"$wt_hook_dir/event.XXXXXX\\\") || exit 0; cat > \\\"$wt_hook_file\\\" || exit 0; while :; do wt_hook_seq=$(LC_ALL=C ls \\\"$wt_hook_dir\\\" 2>/dev/null | sed -n 's/^seq\\\\.\\\\([0-9]\\\\{20\\\\}\\\\)\\\\.json$/\\\\1/p' | tail -n 1); wt_hook_seq=$(printf '%020d' \\\"$(expr \\\"${wt_hook_seq:-0}\\\" + 1)\\\"); ln \\\"$wt_hook_file\\\" \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" 2>/dev/null && { rm -f \\\"$wt_hook_file\\\"; exit 0; }; [ -e \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" ] || break; done; mv \\\"$wt_hook_file\\\" \\\"$wt_hook_file.json\\\"; exit 0)\",\"wt-codex-notify\"]",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-c",
+        "hooks.SessionStart=[{hooks=[{type=\"command\",command=\"umask 077; wt_hook_dir='<ROOT>/home/.codex/wingthing-events/launch-plan'; wt_hook_file=$(mktemp \\\"$wt_hook_dir/event.XXXXXX\\\") || exit 0; cat > \\\"$wt_hook_file\\\" || exit 0; while :; do wt_hook_seq=$(LC_ALL=C ls \\\"$wt_hook_dir\\\" 2>/dev/null | sed -n 's/^seq\\\\.\\\\([0-9]\\\\{20\\\\}\\\\)\\\\.json$/\\\\1/p' | tail -n 1); wt_hook_seq=$(printf '%020d' \\\"$(expr \\\"${wt_hook_seq:-0}\\\" + 1)\\\"); ln \\\"$wt_hook_file\\\" \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" 2>/dev/null && { rm -f \\\"$wt_hook_file\\\"; exit 0; }; [ -e \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" ] || break; done; mv \\\"$wt_hook_file\\\" \\\"$wt_hook_file.json\\\"; exit 0\",timeout=3}]}]",
+        "-c",
+        "hooks.UserPromptSubmit=[{hooks=[{type=\"command\",command=\"umask 077; wt_hook_dir='<ROOT>/home/.codex/wingthing-events/launch-plan'; wt_hook_file=$(mktemp \\\"$wt_hook_dir/event.XXXXXX\\\") || exit 0; cat > \\\"$wt_hook_file\\\" || exit 0; while :; do wt_hook_seq=$(LC_ALL=C ls \\\"$wt_hook_dir\\\" 2>/dev/null | sed -n 's/^seq\\\\.\\\\([0-9]\\\\{20\\\\}\\\\)\\\\.json$/\\\\1/p' | tail -n 1); wt_hook_seq=$(printf '%020d' \\\"$(expr \\\"${wt_hook_seq:-0}\\\" + 1)\\\"); ln \\\"$wt_hook_file\\\" \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" 2>/dev/null && { rm -f \\\"$wt_hook_file\\\"; exit 0; }; [ -e \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" ] || break; done; mv \\\"$wt_hook_file\\\" \\\"$wt_hook_file.json\\\"; exit 0\",timeout=3}]}]",
+        "-c",
+        "hooks.PreToolUse=[{hooks=[{type=\"command\",command=\"umask 077; wt_hook_dir='<ROOT>/home/.codex/wingthing-events/launch-plan'; wt_hook_file=$(mktemp \\\"$wt_hook_dir/event.XXXXXX\\\") || exit 0; cat > \\\"$wt_hook_file\\\" || exit 0; while :; do wt_hook_seq=$(LC_ALL=C ls \\\"$wt_hook_dir\\\" 2>/dev/null | sed -n 's/^seq\\\\.\\\\([0-9]\\\\{20\\\\}\\\\)\\\\.json$/\\\\1/p' | tail -n 1); wt_hook_seq=$(printf '%020d' \\\"$(expr \\\"${wt_hook_seq:-0}\\\" + 1)\\\"); ln \\\"$wt_hook_file\\\" \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" 2>/dev/null && { rm -f \\\"$wt_hook_file\\\"; exit 0; }; [ -e \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" ] || break; done; mv \\\"$wt_hook_file\\\" \\\"$wt_hook_file.json\\\"; exit 0\",timeout=3}]}]",
+        "-c",
+        "hooks.PermissionRequest=[{hooks=[{type=\"command\",command=\"umask 077; wt_hook_dir='<ROOT>/home/.codex/wingthing-events/launch-plan'; wt_hook_file=$(mktemp \\\"$wt_hook_dir/event.XXXXXX\\\") || exit 0; cat > \\\"$wt_hook_file\\\" || exit 0; while :; do wt_hook_seq=$(LC_ALL=C ls \\\"$wt_hook_dir\\\" 2>/dev/null | sed -n 's/^seq\\\\.\\\\([0-9]\\\\{20\\\\}\\\\)\\\\.json$/\\\\1/p' | tail -n 1); wt_hook_seq=$(printf '%020d' \\\"$(expr \\\"${wt_hook_seq:-0}\\\" + 1)\\\"); ln \\\"$wt_hook_file\\\" \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" 2>/dev/null && { rm -f \\\"$wt_hook_file\\\"; exit 0; }; [ -e \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" ] || break; done; mv \\\"$wt_hook_file\\\" \\\"$wt_hook_file.json\\\"; exit 0\",timeout=3}]}]",
+        "-c",
+        "hooks.PostToolUse=[{hooks=[{type=\"command\",command=\"umask 077; wt_hook_dir='<ROOT>/home/.codex/wingthing-events/launch-plan'; wt_hook_file=$(mktemp \\\"$wt_hook_dir/event.XXXXXX\\\") || exit 0; cat > \\\"$wt_hook_file\\\" || exit 0; while :; do wt_hook_seq=$(LC_ALL=C ls \\\"$wt_hook_dir\\\" 2>/dev/null | sed -n 's/^seq\\\\.\\\\([0-9]\\\\{20\\\\}\\\\)\\\\.json$/\\\\1/p' | tail -n 1); wt_hook_seq=$(printf '%020d' \\\"$(expr \\\"${wt_hook_seq:-0}\\\" + 1)\\\"); ln \\\"$wt_hook_file\\\" \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" 2>/dev/null && { rm -f \\\"$wt_hook_file\\\"; exit 0; }; [ -e \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" ] || break; done; mv \\\"$wt_hook_file\\\" \\\"$wt_hook_file.json\\\"; exit 0\",timeout=3}]}]",
+        "-c",
+        "hooks.PreCompact=[{hooks=[{type=\"command\",command=\"umask 077; wt_hook_dir='<ROOT>/home/.codex/wingthing-events/launch-plan'; wt_hook_file=$(mktemp \\\"$wt_hook_dir/event.XXXXXX\\\") || exit 0; cat > \\\"$wt_hook_file\\\" || exit 0; while :; do wt_hook_seq=$(LC_ALL=C ls \\\"$wt_hook_dir\\\" 2>/dev/null | sed -n 's/^seq\\\\.\\\\([0-9]\\\\{20\\\\}\\\\)\\\\.json$/\\\\1/p' | tail -n 1); wt_hook_seq=$(printf '%020d' \\\"$(expr \\\"${wt_hook_seq:-0}\\\" + 1)\\\"); ln \\\"$wt_hook_file\\\" \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" 2>/dev/null && { rm -f \\\"$wt_hook_file\\\"; exit 0; }; [ -e \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" ] || break; done; mv \\\"$wt_hook_file\\\" \\\"$wt_hook_file.json\\\"; exit 0\",timeout=3}]}]",
+        "-c",
+        "hooks.PostCompact=[{hooks=[{type=\"command\",command=\"umask 077; wt_hook_dir='<ROOT>/home/.codex/wingthing-events/launch-plan'; wt_hook_file=$(mktemp \\\"$wt_hook_dir/event.XXXXXX\\\") || exit 0; cat > \\\"$wt_hook_file\\\" || exit 0; while :; do wt_hook_seq=$(LC_ALL=C ls \\\"$wt_hook_dir\\\" 2>/dev/null | sed -n 's/^seq\\\\.\\\\([0-9]\\\\{20\\\\}\\\\)\\\\.json$/\\\\1/p' | tail -n 1); wt_hook_seq=$(printf '%020d' \\\"$(expr \\\"${wt_hook_seq:-0}\\\" + 1)\\\"); ln \\\"$wt_hook_file\\\" \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" 2>/dev/null && { rm -f \\\"$wt_hook_file\\\"; exit 0; }; [ -e \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" ] || break; done; mv \\\"$wt_hook_file\\\" \\\"$wt_hook_file.json\\\"; exit 0\",timeout=3}]}]",
+        "-c",
+        "hooks.Stop=[{hooks=[{type=\"command\",command=\"umask 077; wt_hook_dir='<ROOT>/home/.codex/wingthing-events/launch-plan'; wt_hook_file=$(mktemp \\\"$wt_hook_dir/event.XXXXXX\\\") || exit 0; cat > \\\"$wt_hook_file\\\" || exit 0; while :; do wt_hook_seq=$(LC_ALL=C ls \\\"$wt_hook_dir\\\" 2>/dev/null | sed -n 's/^seq\\\\.\\\\([0-9]\\\\{20\\\\}\\\\)\\\\.json$/\\\\1/p' | tail -n 1); wt_hook_seq=$(printf '%020d' \\\"$(expr \\\"${wt_hook_seq:-0}\\\" + 1)\\\"); ln \\\"$wt_hook_file\\\" \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" 2>/dev/null && { rm -f \\\"$wt_hook_file\\\"; exit 0; }; [ -e \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" ] || break; done; mv \\\"$wt_hook_file\\\" \\\"$wt_hook_file.json\\\"; exit 0\",timeout=3}]}]",
+        "-c",
+        "hooks.Interrupt=[{hooks=[{type=\"command\",command=\"umask 077; wt_hook_dir='<ROOT>/home/.codex/wingthing-events/launch-plan'; wt_hook_file=$(mktemp \\\"$wt_hook_dir/event.XXXXXX\\\") || exit 0; cat > \\\"$wt_hook_file\\\" || exit 0; while :; do wt_hook_seq=$(LC_ALL=C ls \\\"$wt_hook_dir\\\" 2>/dev/null | sed -n 's/^seq\\\\.\\\\([0-9]\\\\{20\\\\}\\\\)\\\\.json$/\\\\1/p' | tail -n 1); wt_hook_seq=$(printf '%020d' \\\"$(expr \\\"${wt_hook_seq:-0}\\\" + 1)\\\"); ln \\\"$wt_hook_file\\\" \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" 2>/dev/null && { rm -f \\\"$wt_hook_file\\\"; exit 0; }; [ -e \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" ] || break; done; mv \\\"$wt_hook_file\\\" \\\"$wt_hook_file.json\\\"; exit 0\",timeout=3}]}]",
+        "-c",
+        "hooks.SessionEnd=[{hooks=[{type=\"command\",command=\"umask 077; wt_hook_dir='<ROOT>/home/.codex/wingthing-events/launch-plan'; wt_hook_file=$(mktemp \\\"$wt_hook_dir/event.XXXXXX\\\") || exit 0; cat > \\\"$wt_hook_file\\\" || exit 0; while :; do wt_hook_seq=$(LC_ALL=C ls \\\"$wt_hook_dir\\\" 2>/dev/null | sed -n 's/^seq\\\\.\\\\([0-9]\\\\{20\\\\}\\\\)\\\\.json$/\\\\1/p' | tail -n 1); wt_hook_seq=$(printf '%020d' \\\"$(expr \\\"${wt_hook_seq:-0}\\\" + 1)\\\"); ln \\\"$wt_hook_file\\\" \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" 2>/dev/null && { rm -f \\\"$wt_hook_file\\\"; exit 0; }; [ -e \\\"$wt_hook_dir/seq.$wt_hook_seq.json\\\" ] || break; done; mv \\\"$wt_hook_file\\\" \\\"$wt_hook_file.json\\\"; exit 0\",timeout=3}]}]",
+        "-c",
+        "hooks.state={\"/<session-flags>/config.toml:session_start:0:0\"={trusted_hash=\"sha256:21db1ee50322e1373dfe413b2cff76f72424de999adc62c4643e1f082f747696\"},\"/<session-flags>/config.toml:user_prompt_submit:0:0\"={trusted_hash=\"sha256:83f4987c442acaa2a04d9a430879407b107b622e849baf45a0dae348aefebd89\"},\"/<session-flags>/config.toml:pre_tool_use:0:0\"={trusted_hash=\"sha256:4110df7bd43882211781611589a9dfb4dceeff5c2f7b476336acfcf27694c31c\"},\"/<session-flags>/config.toml:permission_request:0:0\"={trusted_hash=\"sha256:a3f4ce0a8c5084913117c0122e11439dbafb32e8d56220028750c3ab747784d1\"},\"/<session-flags>/config.toml:post_tool_use:0:0\"={trusted_hash=\"sha256:f0a77e1c526e19aac424e12070f25315e67874b64db575dbb7da729e3869c8e7\"},\"/<session-flags>/config.toml:pre_compact:0:0\"={trusted_hash=\"sha256:11be2868873e7ef5513ff7471ee698afc92aeb6d4b2c5b8a17bdd3ab9584f4e7\"},\"/<session-flags>/config.toml:post_compact:0:0\"={trusted_hash=\"sha256:58393594f5b8c575c8b239062bda98c9b035b52cbef1ebd74d2e4a879c123ae1\"},\"/<session-flags>/config.toml:stop:0:0\"={trusted_hash=\"sha256:1db7714bd0bbddad8bf5f590861c8f9b06574187eab5beae8e5dee508a8115a0\"},\"/<session-flags>/config.toml:interrupt:0:0\"={trusted_hash=\"sha256:c5f46d0500f57fcb3f8526ba556fc2c0d0c1eeda4340f5034295e2705093b89e\"},\"/<session-flags>/config.toml:session_end:0:0\"={trusted_hash=\"sha256:2176199c372e512cc1b9cab3870b13e7c0aa3ad18c843de05e134aa76bf55a3f\"}}",
+        "-c",
+        "check_for_update_on_startup=false",
+        "-c",
+        "notice={hide_full_access_warning=true,hide_gpt5_1_migration_prompt=true,\"hide_gpt-5.1-codex-max_migration_prompt\"=true,hide_rate_limit_model_nudge=true,hide_world_writable_warning=true,external_config_migration_prompts={home=true,projects={\"<ROOT>\"=true}}}",
+        "-c",
+        "projects={\"<ROOT>\"={trust_level=\"trusted\"}}"
+      ],
+      "native_run": true,
+      "version_output": "codex-cli 0.159.3"
+    }
+  ]
+}

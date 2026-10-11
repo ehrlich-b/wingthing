@@ -80,6 +80,10 @@ type writeRule struct {
 // emits; any other rule that could affect writes is an error so a future
 // profile change cannot silently bypass the protected-target check.
 func parseWriteRules(profile string) ([]writeRule, error) {
+	return parseFileRules(profile, "file-write")
+}
+
+func parseFileRules(profile, operation string) ([]writeRule, error) {
 	var rules []writeRule
 	for _, raw := range strings.Split(profile, "\n") {
 		line := strings.TrimSpace(raw)
@@ -104,7 +108,7 @@ func parseWriteRules(profile string) ([]writeRule, error) {
 		}
 		affectsWrite := false
 		for _, op := range ops {
-			if op == "default" || op == "file" || op == "file*" || strings.HasPrefix(op, "file-write") {
+			if op == "default" || op == "file" || op == "file*" || strings.HasPrefix(op, operation) {
 				affectsWrite = true
 			}
 		}

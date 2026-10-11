@@ -340,3 +340,30 @@ vet-run-inventory:
 .PHONY: test-run-inventory-fixture-safety
 test-run-inventory-fixture-safety: | web/dist
 	$(GO) test -race -p 2 -json -count=1 ./internal/localmcp -run '^Test(AgentListSerializedAdaptersReturnSameDurableIdentities|AgentListGrantBoundsAndUnsupportedErrors|RunInventoryTwoWingsIdenticalIDsRespectLiveOwnerAndPathPolicies)$$' -timeout=5m
+
+# Bounded offline launch-plan gates: no built CLI execution, provider, listener,
+# native sandbox, browser, installs, or global cache access.
+.PHONY: test-launch-plan test-launch-plan-contract vet-launch-plan build-launch-plan test-launch-plan-parity
+test-launch-plan: test-launch-plan-parity
+	$(GO) test -p 2 ./internal/agent ./internal/config
+	$(GO) test -p 2 ./internal/egg -run 'LaunchConfig|LaunchCommand|LaunchPreparation|LaunchState|CodexLifecycle(Args|Supported|Skips|Native)|CodexRunArgs|MergeEggConfig|ResolveEggConfig|DiscoverEggConfig|SectionMask|BaseField|BuildEnv|ParseFSRules|ToSandboxConfig|ResolvePolicy|ProviderURLGuardrails|InferLocalPorts|DefaultEggConfig|UnsandboxedEggConfig|WildcardNetwork|TaskYAML' -count=1
+	$(GO) test -p 2 ./internal/launchplan ./internal/fsutil -count=1
+
+# Pure differential oracles: no native sandbox, provider execution or listener.
+test-launch-plan-parity:
+	$(GO) test -p 2 ./internal/sandbox -run '^(TestReview|TestLaunchPlan|TestLaunchPreparation|TestBuildProfile|TestCanonicalSandboxPath)' -count=1
+	$(GO) test -p 2 ./internal/eggclient -run '^TestMCP(SubdirectoryRetainsRootPolicy|LaunchPreservesExplicitNestedRootPolicy)$$' -count=1
+
+test-launch-plan-contract: | web/dist
+	$(GO) test -p 2 ./cmd/wt -run 'Doctor.*Launch|LaunchPlan' -count=1
+
+vet-launch-plan: | web/dist
+	$(GO) vet -p 2 ./...
+
+build-launch-plan: | web/dist
+	$(GO) build -p 2 -buildvcs=false -o .scratch/wt-launch-plan ./cmd/wt
+
+# Coordinator-only: invokes native sandbox children and disposable loopback.
+.PHONY: accept-launch-plan-native
+accept-launch-plan-native:
+	python3 -B scripts/launch-plan-native-gate.py --go '$(shell command -v go)'

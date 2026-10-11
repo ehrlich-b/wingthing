@@ -591,100 +591,53 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	}
 	log.Printf("egg: command binary: %s", binPath)
 
-	// Build environment: always use rc.Env (caller filtered via BuildEnvMap).
-	// Merge agent profile required vars + essentials from host env if missing.
-	profile := Profile(rc.Agent)
-	envMap := make(map[string]string, len(rc.Env))
-	for k, v := range rc.Env {
-		envMap[k] = v
-	}
-	// Merge required env vars from agent profile
-	if !rc.SkipHostAgentEnv {
-		for _, k := range profile.EnvVars {
-			if _, ok := envMap[k]; !ok {
-				if v := os.Getenv(k); v != "" {
-					envMap[k] = v
-				}
-			}
-		}
-		// Merge platform-specific env vars (e.g. macOS Keychain access for Claude)
-		for _, k := range profile.PlatformEnv {
-			if _, ok := envMap[k]; !ok {
-				if v := os.Getenv(k); v != "" {
-					envMap[k] = v
-				}
-			}
-		}
-	}
-	// Agent-forced env defaults (e.g. CLAUDE_CODE_DISABLE_MOUSE). Host/config still wins.
-	for k, v := range profile.SetEnv {
-		if _, ok := envMap[k]; !ok {
-			envMap[k] = v
-		}
-	}
-	// Ensure essentials are present
-	for _, k := range []string{"HOME", "PATH", "TERM"} {
-		if _, ok := envMap[k]; !ok {
-			if v := os.Getenv(k); v != "" {
-				envMap[k] = v
-			}
-		}
-	}
-	// Default TERM for headless services (systemd has no terminal)
-	if envMap["TERM"] == "" {
-		envMap["TERM"] = "xterm-256color"
-	}
-	if envMap["GOTRACEBACK"] == "" {
-		envMap["GOTRACEBACK"] = "all"
-	}
-	// Agent terminals should not get interleaved git credential prompts. Human
-	// shell/command sessions retain ordinary terminal behavior.
-	if rc.Kind == "agent" {
-		if _, ok := envMap["GIT_TERMINAL_PROMPT"]; !ok {
-			envMap["GIT_TERMINAL_PROMPT"] = "0"
-		}
-	}
-	// Per-user home override for relay sessions
-	if rc.UserHome != "" {
-		envMap["HOME"] = rc.UserHome
-	}
+	// Caller selection and profile reinjection are shared with preparation.
+	envMap := LaunchEnvironment(rc, rc.Env, os.Environ())
 	// Prepend ~/.local/bin to PATH so agents like Claude Code find their
 	// native installation and don't warn about missing PATH entries.
 	home := envMap["HOME"]
 	lifecycleSettingsPath := ""
-	prepareLifecycle := func(policy *sandbox.Config) error {
-		if rc.Agent != "claude" || len(rc.Command) != 0 || rc.ProviderSessionID == "" {
-			return nil
-		}
-		var err error
-		args, err = prepareClaudeLifecycleArgs(args, home, s.dir, rc.ProviderSessionID, rc.CWD, policy)
-		if err != nil {
-			return fmt.Errorf("prepare native lifecycle hooks: %w", err)
-		}
-		lifecycleSettingsPath = args[providerOptionsEnd(args)-1]
-		return nil
-	}
 	defer func() {
 		if lifecycleSettingsPath != "" {
 			_ = os.Remove(lifecycleSettingsPath)
 		}
 	}()
-	codexRun := false
-	if rc.Agent == "codex" && len(rc.Command) == 0 && codexLifecycleSupported(binPath) {
-		args, codexRun, err = CodexRunArgs(args, home, filepath.Base(s.dir))
+	hostHome, _ := os.UserHomeDir()
+	browserRequestsPath, shimDir := "", ""
+	if !rc.OmitBrowserBridge {
+		browserRequestsPath = filepath.Join(s.dir, "browser-requests")
+		shimDir = filepath.Join(s.dir, "shims")
+	}
+	toolBinary := ""
+	if rc.ToolSocketPath != "" && len(rc.ToolNames) > 0 {
+		toolBinary, err = os.Executable()
 		if err != nil {
-			return fmt.Errorf("prepare Codex lifecycle hooks: %w", err)
+			return fmt.Errorf("locate wt binary for sandbox mounts: %w", err)
+		}
+		if resolved, err := filepath.EvalSymlinks(toolBinary); err == nil {
+			toolBinary = resolved
 		}
 	}
-	if rc.Agent == "codex" && len(rc.Command) == 0 {
-		args = codexStartupArgs(args, rc.CWD)
-	}
-	if rc.InitialRun != nil {
-		if !nativeRunSupported(rc.Kind, rc.Agent, rc.Command, codexRun) || rc.Agent != "codex" || rc.ResumeSessionID != "" || providerOptionsEnd(args) != len(args) {
-			return errors.New("initial run requires a fresh native Codex TUI without a positional prompt")
+	previewClaudeOSHome := ""
+	if config.Channel() == "preview" && runtime.GOOS == "darwin" && rc.Agent == "claude" && len(rc.Command) == 0 {
+		previewClaudeOSHome, err = ApplyPreviewClaudeOSContext(envMap, rc.UserHome)
+		if err != nil {
+			return err
 		}
-		args = append(args, "--", rc.InitialRun.Prompt)
 	}
+	prepared, err := PrepareLaunch(rc, LaunchPreparationOptions{
+		Binary: binPath, Home: home, HostHome: hostHome, EggDir: s.dir,
+		ProviderURL: envMap["WT_PROVIDER_BASE_URL"], BrowserRequestsPath: browserRequestsPath,
+		ToolBinary: toolBinary, PreviewClaudeOSHome: previewClaudeOSHome, Environment: envMap,
+		CodexCapability: InstalledCodexCapability{},
+	}, NativeLaunchState())
+	lifecycleSettingsPath = prepared.LifecycleSettingsPath
+	if err != nil {
+		return err
+	}
+	args = prepared.Args
+	envMap = prepared.Environment
+	codexRun := prepared.CodexRun
 	if home != "" {
 		localBin := filepath.Join(home, ".local", "bin")
 		if p, ok := envMap["PATH"]; ok {
@@ -703,16 +656,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		}
 	}()
 
-	// Resolve declared, agent-profile, and provider-derived domains through the
-	// same policy path used by `wt egg explain`.
-	networkPolicy, err := ResolvePolicyWithProvider(&EggConfig{
-		Network: NetworkField{Domains: rc.Network, LocalPorts: rc.LocalPorts, Mode: rc.NetworkMode, AgentDomains: rc.AgentDomains},
-	}, rc.Agent, envMap["HOME"], envMap["WT_PROVIDER_BASE_URL"])
-	if err != nil {
-		return err
-	}
+	networkPolicy := prepared.Policy
 	mergedDomains := networkPolicy.Domains
-	netNeed := sandbox.NetworkNeedFromDomains(mergedDomains)
+	netNeed := prepared.Sandbox.NetworkNeed
 
 	// A sandboxed Linux process has no route except the inherited relay. Proxy
 	// setup therefore fails closed instead of degrading to advisory env vars.
@@ -743,10 +689,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	// tokens, and control sockets remain outside its writable mount set.
 	// OmitBrowserBridge drops the whole optional bridge (file, shim, env, PATH
 	// entry and mount) instead of granting any write exception.
-	browserRequestsPath, shimDir := "", ""
 	if !rc.OmitBrowserBridge {
-		browserRequestsPath = filepath.Join(s.dir, "browser-requests")
-		shimDir = filepath.Join(s.dir, "shims")
 		if err := installBrowserBridge(envMap, s.dir, browserRequestsPath, shimDir); err != nil {
 			return err
 		}
@@ -781,16 +724,6 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		}
 	}
 
-	// Native hooks, snapshots, history and mounts still use rc.UserHome. Only
-	// macOS Claude's final subprocess receives its real OS-user HOME so the
-	// system Keychain can resolve the existing user-domain preference context.
-	previewClaudeOSHome := ""
-	if config.Channel() == "preview" && runtime.GOOS == "darwin" && rc.Agent == "claude" && len(rc.Command) == 0 {
-		previewClaudeOSHome, err = ApplyPreviewClaudeOSContext(envMap, rc.UserHome)
-		if err != nil {
-			return err
-		}
-	}
 	// Build envSlice AFTER proxy and OS-context setup.
 	var envSlice []string
 	for k, v := range envMap {
@@ -804,117 +737,11 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	var cmd *exec.Cmd
 
 	if hasSandbox {
-		home, _ := os.UserHomeDir()
-		// Use per-user home for ~ expansion when set, so FS rules like
-		// rw:~/.cache resolve to the per-user home, not the host home.
-		fsHome := home
-		if rc.UserHome != "" {
-			fsHome = rc.UserHome
-		}
-		mounts, deny, denyWrite := ParseFSRules(rc.FS, fsHome)
-		if browserRequestsPath != "" {
-			mounts = append(mounts, sandbox.Mount{
-				Source: browserRequestsPath,
-				Target: browserRequestsPath,
-			})
-		}
-
-		// Auto-inject agent binary install root so sandbox can find it.
-		if home != "" && len(mounts) > 0 {
-			realBin := binPath
-			if resolved, err := filepath.EvalSymlinks(binPath); err == nil {
-				realBin = resolved
-			}
-			binDir := filepath.Dir(realBin)
-			if strings.HasPrefix(binDir, home+string(filepath.Separator)) {
-				root := installRoot(binDir, home)
-				mounts = append(mounts, sandbox.Mount{Source: root, Target: root, ReadOnly: true})
-			}
-		}
-
-		// Auto-inject agent profile write dirs.
-		// Use per-user home for agent config dirs when set.
-		profileHome := home
-		if rc.UserHome != "" {
-			profileHome = rc.UserHome
-		}
-		if profileHome != "" && len(mounts) > 0 {
-			for _, d := range profile.WriteRegex {
-				abs := filepath.Join(profileHome, d)
-				if err := os.MkdirAll(abs, 0o700); err != nil {
-					return fmt.Errorf("create agent profile directory %s: %w", abs, err)
-				}
-				mounts = append(mounts, sandbox.Mount{Source: abs, Target: abs, UseRegex: true})
-			}
-			for _, d := range profile.WriteDirs {
-				abs := filepath.Join(profileHome, d)
-				if err := os.MkdirAll(abs, 0o700); err != nil {
-					return fmt.Errorf("create agent profile directory %s: %w", abs, err)
-				}
-				mounts = append(mounts, sandbox.Mount{Source: abs, Target: abs})
-			}
-		}
-
-		// Mount wt binary dir and .tools dir for tool shim access in jail mode.
-		// Only .tools is mounted — the rest of the session dir (audit logs, chat
-		// data) stays invisible to the sandboxed agent.
-		if rc.ToolSocketPath != "" && len(rc.ToolNames) > 0 {
-			wtBin, err := os.Executable()
-			if err != nil {
-				return fmt.Errorf("locate wt binary for sandbox mounts: %w", err)
-			}
-			if resolved, err := filepath.EvalSymlinks(wtBin); err == nil {
-				wtBin = resolved
-			}
-			wtDir := filepath.Dir(wtBin)
-			toolsDir := filepath.Dir(rc.ToolSocketPath)
-			mounts = append(mounts, sandbox.Mount{Source: wtDir, Target: wtDir, ReadOnly: true})
-			mounts = append(mounts, sandbox.Mount{Source: toolsDir, Target: toolsDir, ReadOnly: true})
-		}
-
-		proxyPort := 0
+		sbCfg := prepared.Sandbox
 		if domainProxy != nil {
-			proxyPort = domainProxy.Port()
+			sbCfg.ProxyPort = domainProxy.Port()
 		}
-
-		allowSockets := sandboxAllowedSockets(rc.ToolSocketPath, envMap)
-		if previewClaudeOSHome != "" {
-			protected, err := GuardPreviewClaudeMounts(mounts, previewClaudeOSHome)
-			if err != nil {
-				return err
-			}
-			deny = append(deny, protected...)
-		}
-
-		sbCfg := sandbox.Config{
-			Mounts:       mounts,
-			Deny:         deny,
-			DenyWrite:    denyWrite,
-			DenyRename:   denyRenamePaths(rc.FS, fsHome),
-			NetworkNeed:  netNeed,
-			NetworkMode:  networkPolicy.Mode,
-			Domains:      mergedDomains,
-			ProxyPort:    proxyPort,
-			LocalPorts:   append([]int(nil), networkPolicy.LocalPorts...),
-			CPULimit:     rc.CPULimit,
-			MemLimit:     rc.MemLimit,
-			MaxFDs:       rc.MaxFDs,
-			PidLimit:     rc.PidLimit,
-			SessionID:    sessionID,
-			UserHome:     rc.UserHome,
-			Trace:        rc.Trace,
-			AllowSockets: allowSockets,
-			// Enforced against the final emitted policy inside sandbox.New.
-			ProtectedWriteTargets: append([]string(nil), rc.ProtectedWriteTargets...),
-			RoostPolicyPaths:      append([]string(nil), rc.RoostPolicyPaths...),
-		}
-
-		if err := prepareLifecycle(&sbCfg); err != nil {
-			return err
-		}
-		if lifecycleSettingsPath != "" {
-			sbCfg.Mounts = append(sbCfg.Mounts, sandbox.Mount{Source: lifecycleSettingsPath, Target: lifecycleSettingsPath, ReadOnly: true})
-		}
+		sbCfg.AllowSockets = sandboxAllowedSockets(rc.ToolSocketPath, envMap)
 		configSnap = SnapshotAgentConfig(rc.Agent, rc.UserHome, &sbCfg)
 		sb, err = sandbox.New(sbCfg)
 		if err != nil {
@@ -932,9 +759,6 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			cmd.Dir = rc.CWD
 		}
 	} else {
-		if err := prepareLifecycle(nil); err != nil {
-			return err
-		}
 		configSnap = SnapshotAgentConfig(rc.Agent, rc.UserHome)
 		log.Printf("SECURITY: egg runs in outer-boundary mode with the full authority of the local OS user; Wingthing filesystem, network, syscall, and resource isolation is disabled")
 		cmd = exec.CommandContext(context.Background(), binPath, args...)

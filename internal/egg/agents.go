@@ -6,6 +6,8 @@ import "runtime"
 // The sandbox merges these into the egg config automatically so users
 // don't need to know agent internals (e.g. where Claude stores config).
 type AgentProfile struct {
+	StateHomeEnv  string            // provider-supported state directory override variable
+	ProviderHost  string            // default destination when no explicit provider URL is selected
 	Domains       []string          // network domains needed (empty = no network)
 	EnvVars       []string          // required env var names (merged from host)
 	SetEnv        map[string]string // env vars forced to a default (host/config still wins)
@@ -50,6 +52,8 @@ var agentProfiles = map[string]AgentProfile{
 		SessionIDFlag: "--session-id",
 	},
 	"codex": {
+		StateHomeEnv: "CODEX_HOME",
+		ProviderHost: "api.openai.com",
 		Domains:      []string{"api.openai.com", "*.openai.com", "chatgpt.com", "*.chatgpt.com", "localhost", "127.0.0.1"},
 		EnvVars:      []string{"OPENAI_API_KEY", "CODEX_HOME", "WT_PROVIDER_BASE_URL"},
 		WriteDirs:    []string{".codex"},
@@ -65,8 +69,9 @@ var agentProfiles = map[string]AgentProfile{
 		ResumeFlag:   "--resume",
 	},
 	"ollama": {
-		Domains:   []string{"localhost"},
-		WriteDirs: []string{".ollama"},
+		ProviderHost: "localhost",
+		Domains:      []string{"localhost"},
+		WriteDirs:    []string{".ollama"},
 	},
 	"gemini": {
 		Domains:    []string{"*.googleapis.com", "*.google.com", "*.googleusercontent.com", "generativelanguage.googleapis.com", "localhost", "127.0.0.1"},
@@ -76,6 +81,7 @@ var agentProfiles = map[string]AgentProfile{
 		ResumeFlag: "--resume",
 	},
 	"hermes": {
+		StateHomeEnv: "HERMES_HOME",
 		// Hermes is provider- and tool-gateway-agnostic. Its configured target
 		// may be any cloud or local OpenAI-compatible endpoint, so a fixed list
 		// would create a false security boundary. The capability is explicit.
