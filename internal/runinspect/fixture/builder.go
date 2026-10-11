@@ -285,3 +285,20 @@ func WriteManifest(path string) error {
 	_, writeErr := file.Write(append(wire, '\n'))
 	return errors.Join(writeErr, file.Close())
 }
+
+// RebindArchive imports a real SessionStart hook through CaptureSessionHistory;
+// the old egg metadata remains as launch provenance while the journal records
+// the native provider identity now used by the archive.
+func (b *Builder) RebindArchive(session, launch, native string) {
+	b.t.Helper()
+	b.Write("eggs/"+session+"/egg.meta", []byte("agent=claude\nprovider_session_id="+launch+"\ncwd=/fixture\n"))
+	home := filepath.Join(b.Workspace, "provider-"+filepath.Base(b.Path)+"-"+session)
+	spool := filepath.Join(home, ".claude", "wingthing-events", session)
+	b.must(os.MkdirAll(spool, 0700))
+	hook, err := json.Marshal(map[string]string{"session_id": native, "hook_event_name": "SessionStart"})
+	b.must(err)
+	hookPath := filepath.Join(spool, "seq.00000000000000000001.json")
+	b.must(os.WriteFile(hookPath, hook, 0600))
+	b.must(os.Chtimes(hookPath, CapturedAt, CapturedAt))
+	b.must(egg.CaptureSessionHistory("claude", "/fixture", filepath.Join(b.Path, "eggs", session), home, time.Time{}, native))
+}

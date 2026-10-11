@@ -88,6 +88,7 @@ test-run-inspect-race: | web/dist
 # Fixture-only serializer adapters are excluded from the ordinary built CLI.
 # Every invocation writes fresh, retained tiny artifacts below this scratch root.
 test-run-inspect-roundtrip: | web/dist
+	$(GO) test -p 2 $(INSPECT_TEST_FLAGS) ./internal/store -run '^(TestConversationDeliveryReplayAndCheckpointCAS|TestConversationLineageReplayAndResumePersist)$$' -v -count=1 -parallel=2 -timeout=2m
 	@mkdir -p "$(CURDIR)/.scratch/runinspect-roundtrip"
 	$(stable-build)
 	WT_INSPECT_FIXTURE_ROOT="$(CURDIR)/.scratch/runinspect-roundtrip" WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -tags runinspectfixture $(INSPECT_TEST_FLAGS) ./internal/runinspect ./cmd/wt -run '^TestRunInspectRoundTrip' -v -count=1 -parallel=2 -timeout=3m

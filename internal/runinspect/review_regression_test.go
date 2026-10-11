@@ -148,3 +148,28 @@ func TestRunInspectReviewArchiveLifecycleBinding(t *testing.T) {
 		})
 	}
 }
+
+func TestRunInspectPartialEggPathPreventsResume(t *testing.T) {
+	workspace, path := fixture(t, func(db *sql.DB, path string) {
+		addWing(t, db, "run", "execution", "", "terminal", "timeout", str("partial"))
+		addEgg(t, path, "run", "execution", "timeout", str("partial"))
+		if err := os.WriteFile(filepath.Join(path, outputPath("execution", "run")), []byte(`{"version":1,"result":`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		sqlExec(t, db, "INSERT INTO conversations VALUES ('logical','owner','logical','','execution','intent',1,1)")
+		sqlExec(t, db, "INSERT INTO conversation_executions VALUES ('execution','logical')")
+		sqlExec(t, db, "INSERT INTO conversation_events VALUES (1,'logical','logical','execution')")
+		addArchive(t, path, "execution", "native-thread")
+	})
+	report, err := Inspect(t.Context(), path, Options{WorkspaceRoot: workspace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := report.Runs[0]
+	if run.Diagnosis != "timeout" || run.EvidenceState != "incomplete" || hasAction(run, "manual_resume_eligible") || len(run.Issues) != 1 || run.Issues[0].Code != "partial_or_unsupported_egg_record" {
+		t.Fatalf("partial artifact conclusion: %+v", run)
+	}
+	if run.Issues[0].Sources[0].Path != outputPath("execution", "run") {
+		t.Fatal("lost deterministic artifact reference")
+	}
+}

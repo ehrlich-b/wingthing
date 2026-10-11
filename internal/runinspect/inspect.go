@@ -124,6 +124,7 @@ func (run *Run) issue(code string, ids []string, refs ...Ref) {
 func (report *Report) graph(r *records, opts Options) {
 	byID := map[string][]wingRow{}
 	byEgg := map[string][]eggRecord{}
+	byArtifact := map[string][]string{}
 	legacy := map[string]legacyRow{}
 	for _, task := range r.legacy {
 		legacy[task.id] = task
@@ -132,11 +133,23 @@ func (report *Report) graph(r *records, opts Options) {
 	for _, w := range r.wings {
 		byID[w.id] = append(byID[w.id], w)
 		ids[w.id] = true
+		byArtifact[outputPath(w.session, w.id)] = append(byArtifact[outputPath(w.session, w.id)], w.id)
 	}
 	for _, e := range r.eggs {
 		if e.Result.RunID != "" {
 			byEgg[e.Result.RunID] = append(byEgg[e.Result.RunID], e)
 			ids[e.Result.RunID] = true
+		}
+		// Invalid JSON may have no usable embedded IDs, or may name another
+		// run. The exact deterministic artifact path still supplies evidence
+		// of a corrupt receipt for a known wing run. Attach the issue without
+		// trusting its content or treating it as an acknowledged result.
+		if !e.valid {
+			for _, id := range byArtifact[e.source.Path] {
+				if id != e.Result.RunID {
+					byEgg[id] = append(byEgg[id], e)
+				}
+			}
 		}
 	}
 	order := make([]string, 0, len(ids))
@@ -203,7 +216,7 @@ func (report *Report) graph(r *records, opts Options) {
 					run.Output = append(run.Output, output(e.Result.Text, refField(e.source, "result.text"), opts.PreviewBytes))
 				}
 			}
-			if w != nil && e != nil && (w.session != e.Result.SessionID) {
+			if w != nil && e != nil && e.Result.SessionID != "" && w.session != e.Result.SessionID {
 				run.issue("run_execution_conflict", []string{id, w.session, e.Result.SessionID}, w.source, e.source)
 			}
 			if w != nil && e != nil && w.valid && e.valid {
