@@ -97,14 +97,17 @@ func inventoryScopeSQL(s RunInventoryScope) (string, []any) {
 		owner = "(t.principal=? OR t.principal IN ('','default'))"
 	}
 	// The immutable durable authority is checked as well as its task projection.
-	owner += " AND (a.id IS NULL OR ((json_extract(a.record,'$.launch.Authority.Principal')=?"
+	// Invalid JSON can belong to a denied path. Authorization must remain safe
+	// even when the record was excluded from the integrity check.
+	record := "CASE WHEN json_valid(a.record) THEN a.record ELSE '{}' END"
+	owner += " AND (a.id IS NULL OR ((json_extract(" + record + ",'$.launch.Authority.Principal')=?"
 	args = append(args, s.Principal)
 	if s.LegacyLocalDefault {
-		owner += " OR json_extract(a.record,'$.launch.Authority.Principal') IN ('','default')"
+		owner += " OR json_extract(" + record + ",'$.launch.Authority.Principal') IN ('','default')"
 	}
 	owner += ")"
 	if s.UserID != "" {
-		owner += " AND json_extract(a.record,'$.launch.Authority.UserID')=?"
+		owner += " AND json_extract(" + record + ",'$.launch.Authority.UserID')=?"
 		args = append(args, s.UserID)
 	}
 	owner += "))"
@@ -113,7 +116,41 @@ func inventoryScopeSQL(s RunInventoryScope) (string, []any) {
 		if s.AllowedPaths == nil {
 			paths = []byte("[]")
 		}
-		owner += " AND wt_inventory_path_allowed(COALESCE(json_extract(a.record,'$.cwd'),t.cwd),?)=1"
+		owner += " AND wt_inventory_path_allowed(COALESCE(json_extract(" + record + ",'$.cwd'),t.cwd),?)=1"
+		args = append(args, string(paths))
+	}
+	return owner, args
+}
+
+// Integrity checks must include uncertain authority, but a known denial must
+// exclude the record before any defect can affect the caller's inventory.
+func inventoryIntegrityScopeSQL(s RunInventoryScope) (string, []any) {
+	legacy := "(t.principal=?)"
+	if s.LegacyLocalDefault {
+		legacy = "(t.principal=? OR t.principal IN ('','default'))"
+	}
+	args := []any{s.Principal, s.Principal}
+	principal := "(json_extract(a.record,'$.launch.Authority.Principal') IS NULL OR json_extract(a.record,'$.launch.Authority.Principal')=?"
+	if s.LegacyLocalDefault {
+		principal += " OR json_extract(a.record,'$.launch.Authority.Principal') IN ('','default')"
+	}
+	principal += ")"
+	if s.UserID != "" {
+		principal += " AND (json_extract(a.record,'$.launch.Authority.UserID') IS NULL OR json_extract(a.record,'$.launch.Authority.UserID')=?)"
+		args = append(args, s.UserID)
+	}
+	owner := "CASE WHEN a.id IS NULL THEN " + legacy + " WHEN json_valid(a.record)=0 THEN 1 ELSE " + principal + " END"
+	if s.EnforcePaths {
+		paths, _ := json.Marshal(s.AllowedPaths)
+		if s.AllowedPaths == nil {
+			paths = []byte("[]")
+		}
+		cwd := "COALESCE(json_extract(CASE WHEN json_valid(a.record) THEN a.record ELSE '{}' END,'$.cwd'),t.cwd)"
+		pathScope := "wt_inventory_path_allowed(" + cwd + ",?)=1"
+		if len(s.AllowedPaths) > 0 {
+			pathScope = "(" + cwd + " IS NULL OR " + pathScope + ")"
+		}
+		owner += " AND " + pathScope
 		args = append(args, string(paths))
 	}
 	return owner, args
@@ -131,23 +168,29 @@ func (s *Store) ListRunInventory(ctx context.Context, q RunInventoryQuery) (RunI
 	scope, scopeArgs := inventoryScopeSQL(q.Scope)
 	prefix, from, candidateArgs := inventorySelection(q)
 	args := append(candidateArgs, scopeArgs...)
-	eligible := scope
+	eligible := scope + " AND t.type='agent_run'"
 
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return page, err
 	}
 	defer tx.Rollback()
-	// Fail closed on corrupt candidate records rather than silently omitting an
-	// admitted ID. The task projection's principal is the prefilter authority.
+	// Candidates include unavailable projections and unknown retention dates.
+	// Check available authority first: a denied corrupt row is not observable.
 	var corrupt int
-	integrity := `SELECT count(*)` + from + `a.id IS NOT NULL AND CASE WHEN json_valid(a.record)=0 THEN 1 ELSE
+	integrityScope, integrityArgs := inventoryIntegrityScopeSQL(q.Scope)
+	integrity := `SELECT count(*)` + from + `(` + integrityScope + `) AND (
+ t.id IS NULL OR t.type!='agent_run' OR t.status NOT IN ('pending','running','done','failed','timeout','stopped')
+ OR strftime('%Y-%m-%dT%H:%M:%SZ',t.created_at) IS NULL
+ OR (t.status IN ('done','failed','timeout','stopped') AND t.finished_at IS NOT NULL AND julianday(t.finished_at) IS NULL)
+ OR (a.id IS NOT NULL AND CASE WHEN json_valid(a.record)=0 THEN 1 ELSE
  json_extract(a.record,'$.run_id') IS NULL OR json_extract(a.record,'$.run_id')!=t.id
  OR json_extract(a.record,'$.session_id') IS NULL OR json_extract(a.record,'$.session_id')!=a.session_id
  OR json_extract(a.record,'$.launch.Authority.Principal') IS NULL
  OR json_extract(a.record,'$.launch.Authority.Principal')!=a.principal
- OR json_extract(a.record,'$.launch.Authority.UserID') IS NULL END`
-	if err = tx.QueryRowContext(ctx, prefix+integrity, candidateArgs...).Scan(&corrupt); err != nil {
+ OR t.principal!=a.principal
+ OR json_extract(a.record,'$.launch.Authority.UserID') IS NULL END))`
+	if err = tx.QueryRowContext(ctx, prefix+integrity, append(append([]any{}, candidateArgs...), integrityArgs...)...).Scan(&corrupt); err != nil {
 		return page, err
 	}
 	if corrupt != 0 {
@@ -237,8 +280,10 @@ func (s *Store) ListRunInventory(ctx context.Context, q RunInventoryQuery) (RunI
 	return page, nil
 }
 
-// Candidates contain IDs only. The partial indexes constrain work to active
-// rows and the fixed recent-terminal window, before any durable JSON is read.
+// Candidates contain IDs only. Task indexes constrain active/recent history,
+// including NULL date evidence. An additional principal-indexed metadata scan
+// reconciles modern admissions independently of their task projection. It must
+// inspect that owner's projection dates, but reads no expired durable JSON.
 func inventorySelection(q RunInventoryQuery) (string, string, []any) {
 	owner := "principal=?"
 	if q.Scope.LegacyLocalDefault {
@@ -251,8 +296,14 @@ func inventorySelection(q RunInventoryQuery) (string, string, []any) {
 		args = append(args, q.RequestKey)
 	} else {
 		candidates = "SELECT id FROM tasks INDEXED BY idx_tasks_run_inventory_active WHERE type='agent_run' AND status NOT IN ('done','failed','timeout','stopped') AND " + owner
-		candidates += " UNION ALL SELECT id FROM tasks INDEXED BY idx_tasks_run_inventory_recent WHERE type='agent_run' AND status IN ('done','failed','timeout','stopped') AND " + owner + " AND julianday(COALESCE(finished_at,created_at))>=julianday(?)"
-		args = append(args, q.Scope.Principal, q.TerminalSince.UTC().Format(timeFmt))
+		candidates += " UNION SELECT id FROM tasks INDEXED BY idx_tasks_run_inventory_recent WHERE type='agent_run' AND status IN ('done','failed','timeout','stopped') AND " + owner + " AND julianday(COALESCE(finished_at,created_at))>=julianday(?)"
+		candidates += " UNION SELECT id FROM tasks INDEXED BY idx_tasks_run_inventory_recent WHERE type='agent_run' AND status IN ('done','failed','timeout','stopped') AND " + owner + " AND julianday(COALESCE(finished_at,created_at)) IS NULL"
+		durableOwner := "a.principal=?"
+		if q.Scope.LegacyLocalDefault {
+			durableOwner = "(a.principal=? OR a.principal IN ('','default'))"
+		}
+		candidates += " UNION SELECT a.id FROM agent_runs a LEFT JOIN tasks t ON t.id=a.id WHERE " + durableOwner + " AND (t.id IS NULL OR t.type!='agent_run' OR t.status NOT IN ('done','failed','timeout','stopped') OR julianday(COALESCE(t.finished_at,t.created_at)) IS NULL OR julianday(COALESCE(t.finished_at,t.created_at))>=julianday(?))"
+		args = append(args, q.Scope.Principal, q.TerminalSince.UTC().Format(timeFmt), q.Scope.Principal, q.Scope.Principal, q.TerminalSince.UTC().Format(timeFmt))
 	}
-	return "WITH inventory_candidates AS (" + candidates + ") ", " FROM inventory_candidates c JOIN tasks t ON t.id=c.id LEFT JOIN agent_runs a ON a.id=t.id WHERE t.type='agent_run' AND ", args
+	return "WITH inventory_candidates AS (" + candidates + ") ", " FROM inventory_candidates c LEFT JOIN tasks t ON t.id=c.id LEFT JOIN agent_runs a ON a.id=c.id WHERE ", args
 }

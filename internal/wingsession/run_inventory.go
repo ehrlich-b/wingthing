@@ -72,12 +72,20 @@ func (m *Runs) listInventoryAt(ctx context.Context, a Authority, req RunInventor
 	}
 	paths := append([]string{}, a.AllowedPaths...)
 	sort.Strings(paths)
+	statePath, err := filepath.Abs(m.service.Config.DBPath())
+	if err != nil {
+		return out, err
+	}
+	statePath, err = filepath.EvalSymlinks(statePath)
+	if err != nil {
+		return out, err
+	}
 	scopeData, _ := json.Marshal(struct {
 		State, WingID, Principal, UserID, Key string
 		Enforce, Legacy                       bool
 		Paths                                 []string
 		Window                                int
-	}{filepath.Clean(m.service.Config.DBPath()), wingID, a.Principal, a.UserID, req.RequestKey, a.EnforcePaths, a.LegacyLocalDefault, paths, req.TerminalWindowSeconds})
+	}{statePath, wingID, a.Principal, a.UserID, req.RequestKey, a.EnforcePaths, a.LegacyLocalDefault, paths, req.TerminalWindowSeconds})
 	scopeHash := sha256.Sum256(scopeData)
 	scope := hex.EncodeToString(scopeHash[:])
 	aead, err := m.inventoryCipher()

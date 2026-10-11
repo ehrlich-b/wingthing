@@ -221,6 +221,7 @@ func TestRunInventoryQueryPlanUsesBoundedHistoryIndexes(t *testing.T) {
 	}
 	defer rows.Close()
 	details := ""
+	durableOwnerIndex := false
 	for rows.Next() {
 		var id, parent, unused int
 		var detail string
@@ -228,6 +229,9 @@ func TestRunInventoryQueryPlanUsesBoundedHistoryIndexes(t *testing.T) {
 			t.Fatal(err)
 		}
 		details += detail + "\n"
+		if strings.Contains(detail, "SEARCH a USING INDEX ") && strings.Contains(detail, "(principal=?)") {
+			durableOwnerIndex = true
+		}
 	}
 	if err = rows.Err(); err != nil {
 		t.Fatal(err)
@@ -239,6 +243,9 @@ func TestRunInventoryQueryPlanUsesBoundedHistoryIndexes(t *testing.T) {
 	}
 	if strings.Contains(details, "SCAN tasks") {
 		t.Fatalf("unbounded task history: %s", details)
+	}
+	if !durableOwnerIndex || !strings.Contains(details, "idx_tasks_run_inventory_recent (principal=? AND <expr>=?)") {
+		t.Fatalf("missing indexed durable-owner or unknown-time search: %s", details)
 	}
 	t.Log(details)
 }

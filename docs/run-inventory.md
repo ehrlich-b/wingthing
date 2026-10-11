@@ -34,7 +34,9 @@ MCP task retention does not erase the underlying run.
 Deleted egg/session records do not delete the committed run. Inventory performs
 no egg probes, output reconstruction, lifecycle reconciliation or worker launch.
 Legacy tasks are discoverable without inventing a session ID. Missing or corrupt
-inventory state is an error, never a successfully completed empty list.
+authorized inventory state is an error, never a successfully completed empty
+list. Known user/path denials exclude partial records before integrity checks;
+unknown authority fails closed. Invalid retention dates cannot prove expiration.
 
 ## Pages and compatibility
 
@@ -47,14 +49,21 @@ Concurrent archival can remove rows; a scan is not a globally atomic fleet view.
 
 Cursors are authenticated encrypted opaque tokens using a domain-separated key
 from the existing wing identity. They bind wing/state directory, user, principal,
-path policy, exact key filter and history window. They survive a daemon/client
-restart with the same committed store/key, expire after 24 hours, and fail closed
+path policy, exact key filter and history window. The state path resolves parent
+symlinks, so aliases of the same database share scope while different physical
+state directories stay separate. Cursors survive a daemon/client restart with
+the same committed store/key, expire after 24 hours, and fail closed
 when malformed, foreign, policy-changed, or their continuation anchor is removed.
 Restart a failed scan; retain previously known IDs as stale, not deleted.
 
 Two additive SQLite indexes are justified: the baseline has no owner/history
 index for legacy tasks. They bound routine history selection by principal,
 type/status and finish time; they do not change run, task, result or usage data.
+To detect lost task-projection owners, routine discovery also walks the existing
+`agent_runs` principal index and checks that owner's task metadata. This required
+owner-history metadata pass has cost proportional to that owner's modern
+admissions; expired JSON and output remain unread. Unknown retention dates use
+the recent-history index's NULL range. No additional schema migration is needed.
 The API caps pages at 200, cursor bytes at 4096 and key bytes at 200. It selects
 only metadata from durable JSON, not full records into application memory.
 
@@ -74,6 +83,8 @@ wt agent recover --json --client codex --max-pages 20
 
 `recover` starts without IDs, uses agent_list then existing agent_status and
 agent_result. It reads result once for terminal rows and never waits on them.
+Classification uses that validated terminal receipt's status and failure kind;
+a frozen MCP cancellation stays interrupted even if the underlying run finishes.
 Bounded or failed scans return errors; the consumer does not infer absence from
 an incomplete page. Native CLI/socket/SSH and actual unattended-provider
 acceptance require coordinator execution outside the worker.

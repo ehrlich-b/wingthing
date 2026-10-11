@@ -78,3 +78,54 @@ func TestRunInventoryConsumerEmptyAndReadErrorsAreDistinct(t *testing.T) {
 		t.Fatalf("missing != done: %+v %v %v", out, err, calls)
 	}
 }
+
+func TestRunInventoryConsumerUsesTerminalReceiptLifecycle(t *testing.T) {
+	for _, test := range []struct {
+		name, status, failure, wantState string
+		wantReadError                    bool
+	}{
+		{"cancelled", "stopped", "stopped", "interrupted", false},
+		{"stopped-kind", "done", "stopped", "interrupted", false},
+		{"unknown-outcome", "failed", "unknown_outcome", "interrupted", false},
+		{"provider-exit", "failed", "provider_exit", "interrupted", false},
+		{"other-failure", "failed", "auth_failed", "terminal_other", false},
+		{"failed", "failed", "", "terminal_other", false},
+		{"missing-lifecycle", "", "", "unavailable_output", true},
+		{"nonterminal", "running", "", "unavailable_output", true},
+		{"completed", "done", "", "completed", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			call := func(_ context.Context, name string, _ json.RawMessage) (map[string]any, error) {
+				switch name {
+				case "agent_list":
+					return map[string]any{"wing_id": "wing", "snapshot_revision": "snapshot", "count": 1, "runs": []any{map[string]any{"wing_id": "wing", "run_id": "run", "cleanup": "unknown", "output_availability": "available"}}}, nil
+				case "agent_status":
+					return map[string]any{"run_id": "run", "status": "done"}, nil
+				case "agent_result":
+					return map[string]any{"run_id": "run", "ready": true, "status": test.status, "failure_kind": test.failure, "output": "receipt output"}, nil
+				default:
+					t.Fatalf("unexpected operation: %s", name)
+					return nil, nil
+				}
+			}
+			out, err := Recover(t.Context(), call, Options{})
+			if err != nil || !out.Complete || out.Counts.Total != 1 || len(out.Runs) != 1 {
+				t.Fatalf("recovery: %+v %v", out, err)
+			}
+			r := out.Runs[0]
+			if r.State != test.wantState || (r.ReadError != "") != test.wantReadError {
+				t.Fatalf("receipt lifecycle was ignored: %+v", out)
+			}
+			if test.wantState == "completed" {
+				if out.Counts.Completed != 1 || r.Output != "receipt output" {
+					t.Fatalf("successful receipt was lost: %+v", out)
+				}
+			} else if out.Counts.Completed != 0 || r.Output != "" {
+				t.Fatalf("unsuccessful receipt reported completion: %+v", out)
+			}
+			if !test.wantReadError && r.Status != test.status {
+				t.Fatalf("result status was lost: %+v", r)
+			}
+		})
+	}
+}

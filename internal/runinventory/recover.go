@@ -74,6 +74,10 @@ type runState struct {
 	Output      *string `json:"output"`
 }
 
+func (s runState) terminal() bool {
+	return s.Status == "done" || s.Status == "failed" || s.Status == "timeout" || s.Status == "stopped"
+}
+
 func decode(data map[string]any, out any) error {
 	if data == nil {
 		return errors.New("missing control response")
@@ -188,8 +192,7 @@ func Recover(ctx context.Context, call Call, opts Options) (Recovery, error) {
 			result.Counts.UnavailableRun++
 		} else {
 			r.Status = state.Status
-			terminal := state.Status == "done" || state.Status == "failed" || state.Status == "timeout" || state.Status == "stopped"
-			if !terminal {
+			if !state.terminal() {
 				if state.Status == "pending" || state.Status == "running" {
 					r.State = "running"
 					result.Counts.Running++
@@ -208,10 +211,23 @@ func Recover(ctx context.Context, call Call, opts Options) (Recovery, error) {
 				if readErr == nil && (outcome.ID != row.ID || outcome.WingID != "" && outcome.WingID != row.WingID || !outcome.Ready) {
 					readErr = errors.New("result identity or readiness mismatch")
 				}
+				if readErr == nil && !outcome.terminal() {
+					readErr = errors.New("result has no terminal lifecycle")
+				}
+				// The returned result is the caller-visible terminal receipt. MCP
+				// cancellation can freeze it before the underlying run finishes,
+				// so its lifecycle takes precedence over an earlier status read.
+				if readErr == nil {
+					state = outcome
+					r.Status = outcome.Status
+				}
 				switch {
-				case state.FailureKind == "unknown_outcome" || state.FailureKind == "provider_exit" || state.Status == "stopped":
+				case state.FailureKind == "unknown_outcome" || state.FailureKind == "provider_exit" || state.FailureKind == "stopped" || state.Status == "stopped":
 					r.State = "interrupted"
 					result.Counts.Interrupted++
+				case state.FailureKind != "":
+					r.State = "terminal_other"
+					result.Counts.TerminalOther++
 				case state.Status == "done" && (readErr != nil || outcome.Output == nil || row.OutputAvailability == "unavailable"):
 					r.State = "unavailable_output"
 					result.Counts.UnavailableOutput++
