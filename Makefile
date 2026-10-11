@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := check
-.PHONY: check gate test-run-recovery test-run-recovery-race test-run-load test-run-load-full test-run-canary e2e-linux e2e-web e2e-mac release deploy ops proto web serve clean
+.PHONY: check gate test-run-inspect test-run-inspect-race test-run-recovery test-run-recovery-race test-run-load test-run-load-full test-run-canary e2e-linux e2e-web e2e-mac release deploy ops proto web serve clean
 
 GO ?= nice -n 15 go
 NODE ?= nice -n 15 node
@@ -73,6 +73,13 @@ web:
 	cd web && for f in src/chat-view.js src/conversation-view.js src/parent-dot.js; do $(NODE) --check $$f || exit 1; done
 	cd web && $(NPM) test
 	cd web && $(NPM) run build
+
+# Hash-verified offline snapshots; no socket, daemon or provider is opened.
+test-run-inspect: | web/dist
+	$(GO) test -p 2 ./internal/runinspect -run '^TestRunInspect' -count=1 -parallel=2 -timeout=2m
+
+test-run-inspect-race: | web/dist
+	$(GO) test -p 2 -race ./internal/runinspect -run '^TestRunInspect' -count=1 -parallel=2 -timeout=2m
 
 # Finite, offline native-provider fixtures; no live provider or remote launches.
 test-run-recovery: | web/dist
