@@ -20,6 +20,7 @@ import (
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
 	"github.com/ehrlich-b/wingthing/internal/wing"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"google.golang.org/grpc"
@@ -64,28 +65,11 @@ func TestStdioStartedSessionSurvivesClientExitAndIsWebVisible(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(scratch, 0700); err != nil {
-		t.Fatal(err)
-	}
 	root := t.TempDir()
-	alias, err := os.MkdirTemp(scratch, "m")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(root, alias); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(alias) })
+	state := testprovider.ShortStateDir(t, scratch)
 	t.Chdir(root)
-	state := filepath.Join(alias, "s")
 	t.Setenv("WINGTHING_DIR", state)
 	t.Setenv("WT_MCP_CLIENT", "")
-	if err := os.Mkdir(state, 0700); err != nil {
-		t.Fatal(err)
-	}
 	work := config.CanonicalProviderPath(root)
 	cfg := &config.Config{Dir: state, WingID: "fixture-wing", DefaultAgent: "claude"}
 	wc := &config.WingConfig{WingID: cfg.WingID, Paths: config.PathList{{Path: work}}}

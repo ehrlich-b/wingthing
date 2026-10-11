@@ -19,6 +19,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -85,7 +86,7 @@ func TestAttachStandaloneEggRetainsDaemonlessContract(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = os.RemoveAll(root) })
-			state := filepath.Join(root, "s")
+			state := testprovider.ShortStateDir(t, scratch)
 			t.Setenv("HOME", filepath.Join(root, "home"))
 			t.Setenv("WINGTHING_DIR", state)
 			t.Setenv("WINGTHING_PREVIEW_DIR", "")

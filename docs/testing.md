@@ -10,6 +10,10 @@ disagree about which sessions exist.
 | Command | Coverage and prerequisites |
 | --- | --- |
 | `make check` | All untagged Go tests, including Android wire contract and every former focused unit selection; web syntax/Node unit tests, Vite and host binary build. Go and Node/npm; no provider or Docker requirement. |
+| `make test-parent-lifecycle-protocol` | Finite regular-file, in-memory RPC and fake-SSH Unix IPC fixtures for admission, lost acknowledgements, reconnect, scoped messages, delayed native results and an explicitly joined disposable Stop child. No TCP binding or provider call. |
+| `make test-parent-lifecycle-protocol-race` | The same selection with the Go race detector, once. |
+| `make test-parent-lifecycle-built` | Four built-wt fake-Codex fixtures using Unix IPC and the existing explicit outer-boundary test seam, including client exit and local-only wing restart. No native sandbox claim. |
+| `make test-parent-lifecycle-offline` | Complete parent lifecycle acceptance: the protocol and built selections, both parent-exit modes of the original scoped-parent test, native protected parent sandbox, and descendant containment. Ordinary macOS host required; no real provider, account, relay or installed wt. |
 | `make gate` | Default `integration compat static` profiles below. Built stable/preview binaries use temporary fixture state. |
 | `make gate GATE=integration` | Tagged `e2e` protocol, Codex-native and lifecycle-order fixtures; packaged preview channel isolation, fake-provider onboarding and reader-drain proof; on Linux, fake-SSH remote isolation with sandboxed host eggs. No vendor/model login. |
 | `make gate GATE=compat` | Real configured-baseline and candidate binaries: migrations, CLI/flag surface, task-state round trip, both gateway/wing upgrade orders, PTY startup and rollback reopen. Defaults to `v0.144.1` and `v0.147.0`; `WT_COMPAT_BASELINE_REF` selects one override. Tags must exist locally; pins are not automatically the previous release. |
@@ -39,6 +43,69 @@ Tag-only or other-platform directories stay in their integration/E2E lanes. Set 
 for local work. CI uses the PR base or previous push commit. `RACE_PACKAGES=./...`
 requests the full repository and remains mandatory in the release workflow.
 `GOVULNCHECK_VERSION` pins the scanner, while advisory databases remain current.
+
+## Isolated parent lifecycle acceptance
+
+Use a staged Go toolchain matching `go.mod` (select it with `GO`) and stage this
+checkout's modules in `.scratch/modcache` before running the lifecycle targets.
+On macOS prefix the selected make command with `taskpolicy -b nice -n 15` and use
+`-j1`. These targets discard ambient credentials and state selectors, select a
+disposable HOME, and put writable caches, temporary files and the built receiver
+inside this checkout's `.scratch`. They seed the existing placeholder `web/dist`
+prerequisite instead of installing npm dependencies. Every child receiver uses
+the explicitly built fixture; fake providers precede any installed provider on
+the fixture PATH.
+
+`testprovider.ShortStateDir` reserves address space for the full 16-character
+runtime ID, rather than relying on a decimal temporary suffix and an additional
+state component. The physical state directory also keeps the canonical control
+socket inside the clone. The standalone fixture's recorded 104-byte address is
+rejected by Darwin's 103-byte limit and accepted by Linux's 107-byte limit.
+An unusually long checkout that cannot fit a private fixture directory fails
+before creating state; use a shorter clone path for ordinary-host acceptance.
+
+Keep these observations separate when diagnosing a parent disconnect:
+
+| Observation | What it establishes |
+| --- | --- |
+| Broker journal `dispatching`, with the original mailbox request ID/key | The mutation was claimed durably; its effect or acknowledgement may still be unknown. |
+| Wing run admission and protected parent child ledger | The wing owns the logical job and its qualified wing/run/session receipt. A new caller key would create different work. |
+| Native `SessionStart` and `UserPromptSubmit`, then the child's own completion-gate marker | The provider accepted that turn and is held before its completed-result notification. Process existence alone does not establish readiness. |
+| `host-ready.json` false with `parent execution ended` | The real broker observed parent egg exit. Viewer exit alone is insufficient. The protocol fixture models this publication explicitly. |
+| Exact native completion notification and terminal run artifact | The original turn's result is durable. Admission and mailbox response delivery alone do not establish completion. |
+| Stop command, worker `Wait` receipt, and descendant inventory | Stop was delivered, the tracked process exited, and any remaining descendants are accounted for. These are distinct checks. |
+
+The forward/backend test barriers leave production ordering intact. They test
+before admission, after admission before acknowledgement, and after
+acknowledgement; recovery retains the original request key and one provider
+submission. Native-result tests hold the exit scan explicitly: a flushed result
+can complete the original job, while a notification after terminal failure
+cannot rewrite it. The disposable Stop fixture runs shell builtins only and
+joins its one known child, which has no descendants.
+
+Each target writes a fresh Go JSON log and a `.receipt.json` beside it under
+`.scratch/parent-lifecycle/logs`. Receipts record the full source HEAD, tracked
+diff digest, Go version, platform, test/package counts and log digest. Built
+receipts also record the exact `wt` path and SHA-256. Preserve both files for
+review; any skip, missing required test, zero-test package or failed package
+fails acceptance. Check `git diff --check` independently.
+
+Restricted workers must leave the complete offline target REQUIRED-UNRUN when
+they cannot bind the native parent proxy's loopback endpoint or execute
+`/bin/ps`. The latter makes the process-group containment fixture report an
+unverified inventory, even if its Stop result is terminal. Do not turn that
+fixture failure or a nested-Seatbelt skip into a passing containment claim.
+Linux test-package cross-compilation establishes build portability only.
+
+For a later authorized real finite-job canary, retain the source/binary identity,
+provider version, isolated state/workspace, original parent and child PID/start
+identity, wing/run/session IDs and caller key. Observe native turn admission
+before disconnecting only the disposable client or parent. Confirm the original
+child remains working, reconnect through a fresh observer using the original
+qualified receipt, and retain the exact terminal output and expected job
+artifact. Verify Stop, worker exit and descendant disposition for that same
+fixture tree. Fake-provider acceptance does not establish unattended real-model
+success; provider use and this ordinary-host canary are separate operator gates.
 
 ## Shared-roost Claude settings regressions
 

@@ -18,8 +18,8 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/sshcontrol"
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
 	"github.com/ehrlich-b/wingthing/internal/testssh"
-	"golang.org/x/sys/unix"
 )
 
 func TestBuiltWTConnectRememberedSSHRunSurvivesDrop(t *testing.T) {
@@ -42,25 +42,16 @@ func testBuiltWTConnectRememberedSSHRun(t *testing.T, nativeTask bool) {
 		t.Fatal(err)
 	}
 	home, bin := filepath.Join(h.Root, "home"), filepath.Join(h.Root, "bin")
-	// Preserve short egg socket spellings while all data stays in this fixture.
-	alias, err := os.MkdirTemp(filepath.Join(repo, ".scratch"), "c")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(h.Root, alias); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(alias) })
-	localState, remoteState := filepath.Join(alias, "l"), filepath.Join(alias, "r")
-	for _, dir := range []string{home, bin, localState, remoteState} {
+	// Inspection returns canonical addresses: a short alias of a long physical
+	// state directory cannot make the remote egg's socket fit on Darwin.
+	localState := testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))
+	remoteState := testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))
+	for _, dir := range []string{home, bin} {
 		if err := os.Mkdir(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!"+python+"\n"+fakeRunCodex), 0700); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!"+python+"\n"+testprovider.Codex), 0700); err != nil {
 		t.Fatal(err)
 	}
 	// The remote PATH keeps an old wt for another pipeline; only the explicitly
@@ -72,14 +63,11 @@ func testBuiltWTConnectRememberedSSHRun(t *testing.T, nativeTask bool) {
 	if err := os.Symlink(binary, remoteBinary); err != nil {
 		t.Fatal(err)
 	}
-	gatePath := filepath.Join(h.Root, "completion-gate")
-	if err := unix.Mkfifo(gatePath, 0600); err != nil {
-		t.Fatal(err)
-	}
+	gate := testprovider.NewCompletionGate(t, h.Root)
 	path := bin + string(os.PathListSeparator) + h.Root + string(os.PathListSeparator) + os.Getenv("PATH")
 	work := config.CanonicalProviderPath(h.Root)
 	environment := func(state string) []string {
-		return []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + path, "SHELL=/bin/sh", "WT_FAKE_SSH_ROOT=" + h.Root, "WT_FAKE_SSH_EXECUTE=1"}
+		return []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + path, "SHELL=/bin/sh", "TMPDIR=" + os.Getenv("TMPDIR"), "PYTHONDONTWRITEBYTECODE=1", "WT_FAKE_SSH_ROOT=" + h.Root, "WT_FAKE_SSH_EXECUTE=1"}
 	}
 	startWing := func(state string) {
 		t.Helper()
@@ -260,11 +248,11 @@ func testBuiltWTConnectRememberedSSHRun(t *testing.T, nativeTask bool) {
 	}
 	// Pair with the provider's FIFO after native prompt submission, keeping the
 	// run alive across the forced transport drop without timing assertions.
-	gate, err := os.OpenFile(gatePath, os.O_WRONLY, 0600)
-	if err != nil {
+	readyCtx, readyCancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer readyCancel()
+	if err := gate.WaitReady(readyCtx); err != nil {
 		t.Fatal(err)
 	}
-	defer gate.Close()
 	forward := <-h.Started
 	h.Offline(t, "forge", true)
 	forward.Drop()
@@ -309,10 +297,9 @@ func testBuiltWTConnectRememberedSSHRun(t *testing.T, nativeTask bool) {
 	if retry["run_id"] != id || retry["session_id"] != session {
 		t.Fatalf("retry launched twice: %v", retry)
 	}
-	if _, err := gate.Write([]byte{1}); err != nil {
+	if err := gate.Release(); err != nil {
 		t.Fatal(err)
 	}
-	_ = gate.Close()
 	waited := call("agent_wait", map[string]any{"wing_id": meta.WingID, "run_id": id, "timeout_seconds": 30})
 	if waited["status"] != "done" {
 		t.Fatalf("remote completion: %v", waited)
