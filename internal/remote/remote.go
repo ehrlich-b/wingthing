@@ -287,7 +287,7 @@ func ValidateRemoteCommand(args []string) error {
 			return fmt.Errorf("%s subcommand %q is not available over SSH", command, args[1])
 		}
 		return nil
-	case "terminal", "new", "attach", "channel", "help", "--help", "-h", "--version":
+	case "claude", "terminal", "new", "attach", "channel", "help", "--help", "-h", "--version":
 		return nil
 	case "session":
 		if len(args) == 1 || remoteSessionCommand(args[1]) {
@@ -295,7 +295,7 @@ func ValidateRemoteCommand(args []string) error {
 		}
 		return fmt.Errorf("session subcommand %q is not available over SSH; supported subcommands: list, ps, active, read, send, wait, rename, kill, and stop", args[1])
 	}
-	return fmt.Errorf("command %q is not available over SSH; supported commands: egg, terminal, attach, session, and channel", command)
+	return fmt.Errorf("command %q is not available over SSH; supported commands: claude, egg, terminal, attach, session, and channel", command)
 }
 
 func remoteSessionCommand(command string) bool {
@@ -310,6 +310,10 @@ func remoteSessionCommand(command string) bool {
 func remoteCommandNeedsTTY(args []string) bool {
 	command := args[0]
 	switch command {
+	case "claude":
+		// Claude always attaches its scoped parent. Provider flags after --
+		// cannot turn this transport into a detached or JSON launch.
+		return true
 	case "terminal", "new":
 		return !BoolFlagBeforeDash(args[1:], "detach", "d") && !BoolFlagBeforeDash(args[1:], "json", "")
 	case "attach":

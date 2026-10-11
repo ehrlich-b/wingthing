@@ -34,6 +34,9 @@ func TestDashboardActionRoutes(t *testing.T) {
 		{"remote shell-looking cwd", action{kind: newCWD, row: row{machine: "work"}, cwd: "/src/$(touch canary); it's a project"}, append(append([]string{}, remotePrefix...), "terminal", "--cwd", "/src/$(touch canary); it's a project")},
 		{"local stop", action{kind: confirmStop, row: row{machine: "local", LocalSession: session("one", "name", "/src", "idle")}}, []string{"session", "kill", "--", "one"}},
 		{"remote new", action{kind: newCWD, row: row{machine: "work"}, agent: "codex", cwd: "/project space"}, append(append([]string{}, remotePrefix...), "egg", "codex", "--cwd", "/project space")},
+		{"local Claude parent", action{kind: newCWD, row: row{machine: "local"}, agent: "claude", cwd: "/project space"}, []string{"claude", "--cwd", "/project space"}},
+		{"remote Claude parent", action{kind: newCWD, row: row{machine: "work"}, agent: "claude", cwd: "../remote project space"}, append(append([]string{}, remotePrefix...), "claude", "--cwd", "../remote project space")},
+		{"remote Claude routing-looking cwd", action{kind: newCWD, row: row{machine: "work"}, agent: "claude", cwd: "--remote-state"}, append(append([]string{}, remotePrefix...), "claude", "--cwd", "--remote-state")},
 		{"local shell", action{kind: newCWD, row: row{machine: "local"}, cwd: "/src"}, []string{"terminal", "--cwd", "/src"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
