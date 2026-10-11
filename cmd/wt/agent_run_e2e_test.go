@@ -24,6 +24,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
 	"github.com/ehrlich-b/wingthing/internal/wing"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"golang.org/x/sys/unix"
@@ -161,8 +162,7 @@ func testBuiltWTStdioWingEggFakeCodexTimeout(t *testing.T, modal, nativeTask boo
 	}
 	home := filepath.Join(fixture, "home")
 	bin := filepath.Join(fixture, "bin")
-	stateReal := filepath.Join(fixture, "s")
-	for _, dir := range []string{home, bin, stateReal} {
+	for _, dir := range []string{home, bin} {
 		if err := os.Mkdir(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -179,18 +179,7 @@ func testBuiltWTStdioWingEggFakeCodexTimeout(t *testing.T, modal, nativeTask boo
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}
-	alias, err := os.MkdirTemp(scratch, "e")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(fixture, alias); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Remove(alias) })
-	state := filepath.Join(alias, "s")
+	state := testprovider.ShortStateDir(t, scratch)
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", state)
 	t.Setenv("WT_MCP_CLIENT", "")

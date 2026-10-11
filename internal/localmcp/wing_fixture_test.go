@@ -13,6 +13,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
@@ -137,26 +138,7 @@ func shortWingTestState(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(scratch, 0700); err != nil {
-		t.Fatal(err)
-	}
-	root := t.TempDir()
-	alias, err := os.MkdirTemp(scratch, "m")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(root, alias); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(alias) })
-	state := filepath.Join(alias, "s")
-	if err := os.Mkdir(state, 0700); err != nil {
-		t.Fatal(err)
-	}
-	return state
+	return testprovider.ShortStateDir(t, scratch)
 }
 
 func testBrowserControl(t *testing.T, version string, ctx context.Context, cfg *config.Config, wc *config.WingConfig, req ws.TunnelRequest, operation string, arguments json.RawMessage, home string, shared bool, launchConfig ...BrowserLaunchConfig) (map[string]any, error) {

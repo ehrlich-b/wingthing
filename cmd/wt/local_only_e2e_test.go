@@ -17,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
 	"github.com/fsnotify/fsnotify"
 	"golang.org/x/sys/unix"
 )
@@ -49,7 +50,7 @@ func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	home, bin := filepath.Join(fixture, "home"), filepath.Join(fixture, "bin")
-	for _, dir := range []string{home, bin, filepath.Join(fixture, "s")} {
+	for _, dir := range []string{home, bin} {
 		if err := os.Mkdir(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -61,24 +62,13 @@ func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
 	if err := unix.Mkfifo(gatePath, 0600); err != nil {
 		t.Fatal(err)
 	}
-	// The egg Unix sockets need a short spelling on Darwin. State and provider
-	// homes remain disposable; no installed wt or real wing is used.
+	// State and provider homes remain disposable; reserve the full runtime ID
+	// width in Darwin's egg socket address, even in a long checkout path.
 	scratch := filepath.Join(repo, ".scratch")
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}
-	alias, err := os.MkdirTemp(scratch, "l")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(fixture, alias); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(alias) })
-	state := filepath.Join(alias, "s")
+	state := testprovider.ShortStateDir(t, scratch)
 	work := config.CanonicalProviderPath(fixture)
 	childWork := filepath.Join(work, "runs", "batch")
 	if err := os.MkdirAll(childWork, 0700); err != nil {
