@@ -38,19 +38,36 @@ type Hello struct {
 const NativeTerminalCapability = "native-terminal-v1"
 
 type Welcome struct {
-	Capabilities  []string        `json:"capabilities,omitempty"`
-	Isolation     string          `json:"isolation,omitempty"`
-	RemoteAllowed bool            `json:"remote_allowed,omitempty"`
-	Version       string          `json:"version"`
-	WingID        string          `json:"wing_id"`
-	Principal     string          `json:"principal,omitempty"`
-	Actor         string          `json:"actor,omitempty"`
-	Grants        map[string]bool `json:"grants"`
-	Tools         map[string]bool `json:"tools,omitempty"`
-	Error         string          `json:"error,omitempty"`
+	LaunchDiagnostic *control.LaunchDiagnostic `json:"launch_diagnostic,omitempty"`
+	Capabilities     []string                  `json:"capabilities,omitempty"`
+	Isolation        string                    `json:"isolation,omitempty"`
+	RemoteAllowed    bool                      `json:"remote_allowed,omitempty"`
+	Version          string                    `json:"version"`
+	WingID           string                    `json:"wing_id"`
+	Principal        string                    `json:"principal,omitempty"`
+	Actor            string                    `json:"actor,omitempty"`
+	Grants           map[string]bool           `json:"grants"`
+	Tools            map[string]bool           `json:"tools,omitempty"`
+	Error            string                    `json:"error,omitempty"`
 }
 type Handler func(context.Context, control.DirectRequest) control.DirectResponse
 type Bind func(Hello) (Welcome, Handler, error)
+
+// AdmissionError distinguishes an authoritative hello refusal from a failed
+// connection while preserving the legacy text for non-launch callers.
+type AdmissionError struct {
+	Err        error
+	Diagnostic *control.LaunchDiagnostic
+}
+
+func (e *AdmissionError) Error() string { return e.Err.Error() }
+func (e *AdmissionError) Unwrap() error { return e.Err }
+func (e *AdmissionError) LaunchDiagnostic() control.LaunchDiagnostic {
+	if e.Diagnostic != nil {
+		return e.Diagnostic.Bounded()
+	}
+	return control.LaunchDiagnostic{Stage: "admission/policy", Reason: "policy_refused"}
+}
 
 type Server struct {
 	listener  *net.UnixListener
@@ -183,6 +200,9 @@ func serve(ctx context.Context, conn *net.UnixConn, wingID string, bind Bind, at
 	resolved, handler, err := bind(hello)
 	if err != nil {
 		welcome.Error = err.Error()
+		if d, ok := control.LaunchDiagnosticOf(err); ok {
+			welcome.LaunchDiagnostic = &d
+		}
 	} else {
 		welcome = resolved
 		welcome.Version = control.ContractVersion
@@ -324,7 +344,7 @@ func DialPath(ctx context.Context, path string, hello Hello) (*Client, error) {
 		return nil, err
 	}
 	if welcome.Error != "" {
-		return nil, errors.New(welcome.Error)
+		return nil, &AdmissionError{Err: errors.New(welcome.Error), Diagnostic: welcome.LaunchDiagnostic}
 	}
 	if welcome.Version != control.ContractVersion || welcome.WingID == "" || hello.WingID != "" && welcome.WingID != hello.WingID {
 		return nil, errors.New("incompatible local wing handshake; upgrade wt and restart the wing")

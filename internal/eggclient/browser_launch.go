@@ -105,6 +105,7 @@ func prepareSessionLaunch(wc *config.WingConfig, start *ws.PTYStart, home string
 		}
 	}
 	cfg := egg.DiscoverEggConfig(policyCWD, wingDefault)
+	cfg = egg.WithLaunchPolicyBase(cfg, policyCWD)
 	if policyCWD != start.CWD {
 		// Relative grants and denies must mean the same paths as a launch at
 		// the root; rebasing a deny onto the child could weaken that policy.
@@ -172,6 +173,7 @@ func LoadRoostEggConfig(cwd string, roots, allowedRoots []string, member bool, w
 		}
 		return nil, err
 	}
+	cfg.LaunchPolicy = egg.CaptureLaunchPolicy(cfg, path, root)
 	for i, rule := range cfg.FS {
 		mode, path, hasMode := strings.Cut(rule, ":")
 		if !hasMode {

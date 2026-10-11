@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -96,7 +97,7 @@ func TestClaudeCWDAndProviderArgsUseOneScopedAdmission(t *testing.T) {
 			cmd.SetIn(bytes.NewReader(nil))
 			cmd.SetOut(new(bytes.Buffer))
 			cmd.SetErr(new(bytes.Buffer))
-			if err := cmd.ExecuteContext(t.Context()); err == nil || err.Error() != refusal {
+			if err := cmd.ExecuteContext(t.Context()); err == nil || errors.Unwrap(err) == nil || errors.Unwrap(err).Error() != refusal || !strings.Contains(err.Error(), "admission/policy") || strings.Contains(err.Error(), refusal) {
 				t.Fatalf("admission error changed: %v", err)
 			}
 			launch := <-requests
@@ -141,7 +142,7 @@ func TestClaudeCWDRefusalsRetainWingPolicy(t *testing.T) {
 			cmd := newRootCommand()
 			cmd.SetArgs([]string{"claude", "--cwd", test.cwd})
 			cmd.SetErr(new(bytes.Buffer))
-			if err := cmd.ExecuteContext(t.Context()); err == nil || !strings.Contains(err.Error(), test.errorText) {
+			if err := cmd.ExecuteContext(t.Context()); err == nil || errors.Unwrap(err) == nil || !strings.Contains(errors.Unwrap(err).Error(), test.errorText) || !strings.Contains(err.Error(), "admission/policy") {
 				t.Fatalf("cwd refusal changed: %v", err)
 			}
 		})

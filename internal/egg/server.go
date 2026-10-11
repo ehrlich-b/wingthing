@@ -105,8 +105,9 @@ type Session struct {
 
 // RunConfig holds everything needed to start a single egg session.
 type RunConfig struct {
-	Agent string
-	Kind  string
+	LaunchPolicy *LaunchPolicySelection
+	Agent        string
+	Kind         string
 	// Command replaces the agent entirely; AgentArgs extends the agent's own
 	// invocation and keeps the session an agent session. They are alternatives.
 	Command      []string
@@ -513,6 +514,13 @@ func NewServer(dir string) (*Server, error) {
 
 // RunSession is the core lifecycle: create sandbox, start agent in PTY, serve gRPC, exit when done.
 func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
+	stage, reason := "admission/policy", "preparation_failed"
+	var launch PreparedLaunch
+	defer func() {
+		if runErr != nil && rc.Agent == "claude" && rc.LaunchPolicy != nil {
+			runErr = ProjectLaunchFailure(runErr, rc.LaunchPolicy, launch, stage, reason)
+		}
+	}()
 	if err := ValidateSocketPath(filepath.Join(s.dir, "egg.sock")); err != nil {
 		return err
 	}
@@ -559,6 +567,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	}
 	if hasSandbox {
 		if ok, help := sandbox.CheckCapability(); !ok {
+			stage, reason = "provider startup", "sandbox_unavailable"
 			return fmt.Errorf("sandbox not available: %s\nrun: wt doctor --fix", help)
 		}
 	}
@@ -608,15 +617,29 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			return err
 		}
 	}
+	var requirements *LaunchRequirements
+	if rc.LaunchPolicy != nil {
+		requirements = &LaunchRequirements{PolicySource: rc.LaunchPolicy.Path, PolicyBase: rc.LaunchPolicy.Base, Rules: rc.LaunchPolicy.Rules}
+	}
 	prepared, err := PrepareLaunch(rc, LaunchPreparationOptions{
 		Binary: binPath, Home: home, HostHome: hostHome, EggDir: s.dir,
 		ProviderURL: envMap["WT_PROVIDER_BASE_URL"], BrowserRequestsPath: browserRequestsPath,
 		ToolBinary: toolBinary, PreviewClaudeOSHome: previewClaudeOSHome, Environment: envMap,
 		CodexCapability: InstalledCodexCapability{},
+		Requirements:    requirements,
 	}, NativeLaunchState())
+	launch = prepared
 	lifecycleSettingsPath = prepared.LifecycleSettingsPath
 	if err != nil {
 		return err
+	}
+	// Consume the checks from this preparation; do not assess or launch twice.
+	if rc.Agent == "claude" {
+		for _, check := range prepared.Checks {
+			if check.Status == LaunchFail && launchFailureReason(check.Code) != "" {
+				return errors.New("configured policy blocks prepared launch")
+			}
+		}
 	}
 	args = prepared.Args
 	envMap = prepared.Environment
@@ -716,6 +739,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	sessionID := filepath.Base(s.dir)
 
 	// Build sandbox and command
+	stage, reason = "provider startup", "provider_failed"
 	var sb sandbox.Sandbox
 	var cmd *exec.Cmd
 

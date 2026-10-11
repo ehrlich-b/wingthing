@@ -178,17 +178,18 @@ func (b BaseField) HasMasks() bool {
 
 // EggConfig holds the sandbox and environment configuration for egg sessions.
 type EggConfig struct {
-	Base                       BaseField         `yaml:"base,omitempty"`
-	FS                         []string          `yaml:"fs"`
-	RoostPolicyPaths           []string          `yaml:"-"` // runtime-only configured root policy files
-	Network                    NetworkField      `yaml:"network"`
-	Env                        EnvField          `yaml:"env,omitempty"`
-	Resources                  EggResources      `yaml:"resources"`
-	Shell                      string            `yaml:"shell"`
-	DangerouslySkipPermissions bool              `yaml:"dangerously_skip_permissions"`
-	Audit                      bool              `yaml:"audit"`
-	Trace                      bool              `yaml:"trace"`
-	AgentSettings              map[string]string `yaml:"agent_settings,omitempty"` // agent name -> settings file path
+	LaunchPolicy               *LaunchPolicySelection `yaml:"-"` // captured at resolution, never rediscovered for diagnostics
+	Base                       BaseField              `yaml:"base,omitempty"`
+	FS                         []string               `yaml:"fs"`
+	RoostPolicyPaths           []string               `yaml:"-"` // runtime-only configured root policy files
+	Network                    NetworkField           `yaml:"network"`
+	Env                        EnvField               `yaml:"env,omitempty"`
+	Resources                  EggResources           `yaml:"resources"`
+	Shell                      string                 `yaml:"shell"`
+	DangerouslySkipPermissions bool                   `yaml:"dangerously_skip_permissions"`
+	Audit                      bool                   `yaml:"audit"`
+	Trace                      bool                   `yaml:"trace"`
+	AgentSettings              map[string]string      `yaml:"agent_settings,omitempty"` // agent name -> settings file path
 }
 
 // EggResources configures resource limits for sandboxed processes.
@@ -231,8 +232,9 @@ func DefaultEggConfig() *EggConfig {
 	}
 	fs = append(fs, "deny-write:./egg.yaml")
 	return &EggConfig{
-		FS:  fs,
-		Env: EnvField{"HOME", "PATH", "TERM", "LANG", "USER"},
+		LaunchPolicy: &LaunchPolicySelection{Origin: "built-in defaults"},
+		FS:           fs,
+		Env:          EnvField{"HOME", "PATH", "TERM", "LANG", "USER"},
 	}
 }
 
@@ -346,9 +348,16 @@ const maxBaseDepth = 10
 // a fully merged config. If base is empty, merges on top of DefaultEggConfig.
 // If base is "none", returns the config as-is (empty slate).
 func ResolveEggConfig(path string) (*EggConfig, error) {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
 	home, _ := os.UserHomeDir()
 	resolver := configResolver{home: home, runtime: true, active: map[string]bool{}, visited: map[string]bool{}}
 	result, err := resolver.resolve(path, 0)
+	if err == nil {
+		result.cfg.LaunchPolicy = &LaunchPolicySelection{Origin: "selected policy", Path: filepath.Clean(path), Base: filepath.Dir(path), Rules: result.rules}
+	}
 	return result.cfg, err
 }
 

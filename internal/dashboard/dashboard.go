@@ -217,7 +217,7 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 				return err
 			}
 			if actionErr != nil {
-				s.message = actionErr.Error()
+				s.message = qualifyLaunchAction(actionErr, act.row.machine).Error()
 			}
 			if ctx.Err() != nil {
 				return nil

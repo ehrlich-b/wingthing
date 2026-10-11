@@ -13,6 +13,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/egg"
@@ -20,6 +21,27 @@ import (
 )
 
 const claudeWingStartupTimeout = 10 * time.Second
+
+type claudeStartupFailure struct {
+	cause      error
+	diagnostic control.LaunchDiagnostic
+}
+
+func (e *claudeStartupFailure) Error() string                              { return e.cause.Error() }
+func (e *claudeStartupFailure) Unwrap() error                              { return e.cause }
+func (e *claudeStartupFailure) LaunchDiagnostic() control.LaunchDiagnostic { return e.diagnostic }
+
+func claudeStartupError(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// A socket deadline can wake before context's timer goroutine is scheduled.
+	// Report the elapsed startup deadline rather than a misleading handshake loss.
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
 
 func missingClaudeWing(err error) bool {
 	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED)
@@ -32,11 +54,11 @@ func ensureClaudeWing(ctx context.Context, dir, clientName string) (*controlsock
 	startup, cancel := context.WithTimeout(ctx, claudeWingStartupTimeout)
 	defer cancel()
 	client, err := controlsocket.Dial(startup, dir, controlsocket.Hello{Client: clientName})
-	if startup.Err() != nil {
+	if startupErr := claudeStartupError(startup); startupErr != nil {
 		if client != nil {
 			_ = client.Close()
 		}
-		return nil, startup.Err()
+		return nil, startupErr
 	}
 	if err == nil || clientName != "" || !missingClaudeWing(err) {
 		return client, err
@@ -73,7 +95,7 @@ func ensureClaudeWing(ctx context.Context, dir, clientName string) (*controlsock
 	}
 	if policyPath != "" {
 		if _, err := egg.ResolveEggConfig(policyPath); err != nil {
-			return nil, fmt.Errorf("load wing isolation policy: %w", err)
+			return nil, control.WithLaunchDiagnostic(err, control.LaunchDiagnostic{Stage: "connect/startup", Reason: "preparation_failed", PolicyOrigin: "selected policy", PolicyPath: policyPath})
 		}
 	}
 	lock, err := daemonctl.AcquireDaemonLifecycleLockContext(startup)
@@ -82,12 +104,12 @@ func ensureClaudeWing(ctx context.Context, dir, clientName string) (*controlsock
 	}
 	// Another caller may have completed startup while we waited for the lock.
 	client, err = controlsocket.Dial(startup, dir, controlsocket.Hello{})
-	if startup.Err() != nil {
+	if startupErr := claudeStartupError(startup); startupErr != nil {
 		cmdutil.CloseWithLog("daemon lifecycle lock", lock)
 		if client != nil {
 			_ = client.Close()
 		}
-		return nil, startup.Err()
+		return nil, startupErr
 	}
 	if err == nil || !missingClaudeWing(err) {
 		cmdutil.CloseWithLog("daemon lifecycle lock", lock)
@@ -131,7 +153,11 @@ func ensureClaudeWing(ctx context.Context, dir, clientName string) (*controlsock
 			}
 			cmdutil.CloseWithLog("daemon lifecycle lock", lock)
 		}
-		return fmt.Errorf("wing daemon exited before readiness; inspect %s", daemonctl.WingLogPath())
+		origin := "built-in defaults"
+		if policyPath != "" {
+			origin = "selected policy"
+		}
+		return &claudeStartupFailure{cause: fmt.Errorf("wing daemon exited before readiness; inspect %s", daemonctl.WingLogPath()), diagnostic: control.LaunchDiagnostic{Stage: "connect/startup", Reason: "startup_exited", PolicyOrigin: origin, PolicyPath: policyPath}}
 	}
 	for {
 		client, err = controlsocket.Dial(startup, dir, controlsocket.Hello{})
