@@ -163,9 +163,14 @@ func (report *Report) graph(r *records, opts Options) {
 				if !w.valid {
 					run.issue("partial_run_record", []string{id}, w.source)
 				} else {
+					if !w.revisionKnown {
+						run.issue("run_revision_unavailable", []string{id}, refField(w.source, "revision"))
+					} else if w.revision < 1 {
+						run.issue("invalid_run_revision", []string{id}, refField(w.source, "revision"))
+					}
 					run.Phase = knownPhase(w.record.Phase)
 					run.WingStatus = knownStatus(w.record.Result.Status)
-					if w.record.ID != w.id || w.record.SessionID != w.session || w.record.Result.RunID != w.id || w.record.Result.SessionID != w.session || w.record.Launch.Authority.Principal != w.principal || w.revision < 1 {
+					if w.record.ID != w.id || w.record.SessionID != w.session || w.record.Result.RunID != w.id || w.record.Result.SessionID != w.session || w.record.Launch.Authority.Principal != w.principal {
 						run.issue("wing_identity_or_owner_conflict", []string{w.id, w.record.ID, w.session, w.record.SessionID, w.record.Result.RunID, w.record.Result.SessionID}, w.source)
 					}
 					run.Output = append(run.Output, output(w.record.Result.Text, refField(w.source, "result.text"), opts.PreviewBytes))

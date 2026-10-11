@@ -176,3 +176,70 @@ func TestRunInspectTerminalAndAdmissionMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestRunInspectBoundedPreviewAndContentIsolation(t *testing.T) {
+	const secret = "PRIVATE-PROVIDER-SENTINEL"
+	text := "\x1b[31m\n\x00\u202eΩ" + secret
+	workspace, path := fixture(t, func(db *sql.DB, path string) {
+		addWing(t, db, "run", "execution", "", "terminal", "done", &text)
+		addEgg(t, path, "run", "execution", "done", &text)
+		sqlExec(t, db, "UPDATE agent_runs SET record=json_set(record,'$.prompt',?,'$.result.error',?,'$.label',?)", secret, secret, secret)
+	})
+	for _, limit := range []int{0, 1, 9, 4096} {
+		report, err := Inspect(t.Context(), path, Options{WorkspaceRoot: workspace, PreviewBytes: limit})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var human bytes.Buffer
+		if err := RenderText(&human, report); err != nil {
+			t.Fatal(err)
+		}
+		if strings.ContainsAny(human.String(), "\x1b\x00\u202e") {
+			t.Fatal("raw controls reached human renderer")
+		}
+		for _, out := range report.Runs[0].Output {
+			n := limit
+			if n > len(text) {
+				n = len(text)
+			}
+			if out.Bytes != int64(len(text)) || out.OmittedBytes != int64(len(text)-n) {
+				t.Fatalf("omitted byte accounting: %+v", out)
+			}
+			if limit == 0 && out.Preview != "" {
+				t.Fatal("implicit content preview")
+			}
+		}
+		wire, _ := json.Marshal(report)
+		if limit == 0 && (strings.Contains(string(wire), secret) || strings.Contains(human.String(), secret)) {
+			t.Fatal("provider content entered metadata summary")
+		}
+		if limit == 4096 && !strings.Contains(human.String(), "untrusted output preview: ") {
+			t.Fatal("preview lost its data boundary")
+		}
+	}
+	for _, limit := range []int{-1, 4097} {
+		if _, err := Inspect(t.Context(), path, Options{WorkspaceRoot: workspace, PreviewBytes: limit}); err == nil {
+			t.Fatal("unbounded preview accepted")
+		}
+	}
+}
+
+func TestRunInspectOlderSchemaRetainsUnknowns(t *testing.T) {
+	workspace, path := fixture(t, func(db *sql.DB, path string) {
+		sqlExec(t, db, "DROP TABLE conversations; CREATE TABLE conversations (id TEXT,owner_id TEXT,root_id TEXT,parent_id TEXT,session_id TEXT,checkpoint TEXT)")
+		sqlExec(t, db, "INSERT INTO conversations VALUES ('logical','owner','logical','','execution','old private intent')")
+		sqlExec(t, db, "INSERT INTO conversation_executions VALUES ('execution','logical')")
+		addWing(t, db, "run", "execution", "", "terminal", "failed", str("old result"))
+		addArchive(t, path, "execution", "native-thread")
+	})
+	report, err := Inspect(t.Context(), path, Options{WorkspaceRoot: workspace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Conversations) != 1 || report.Conversations[0].Checkpoint.State != "unknown" || report.Conversations[0].Checkpoint.Revision != nil || report.Conversations[0].Checkpoint.AcknowledgedCursor != nil {
+		t.Fatalf("older schema guessed a fence: %+v", report.Conversations)
+	}
+	if len(report.Runs) != 1 || report.Runs[0].Diagnosis != "failed" || hasAction(report.Runs[0], "manual_resume_eligible") {
+		t.Fatalf("older state discarded or promoted: %+v", report.Runs)
+	}
+}

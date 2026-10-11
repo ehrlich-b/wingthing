@@ -312,6 +312,7 @@ func runCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noRun, "no-run", false, "Submit task without running it")
 	cmd.Flags().BoolVar(&unsandboxed, "unsandboxed", false, "trust the host boundary; run with the full authority of the local OS user")
 	cmd.MarkFlagsMutuallyExclusive("config", "unsandboxed")
+	cmd.AddCommand(runInspectCmd())
 	return cmd
 }
 

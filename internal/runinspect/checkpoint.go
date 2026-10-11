@@ -31,7 +31,10 @@ func (report *Report) checkpoints(s *snapshot, r *records) error {
 			continue
 		}
 		cp := Checkpoint{State: "unknown", Revision: row.revision, AcknowledgedCursor: row.delivered, Content: output(&row.checkpoint, refField(row.source, "checkpoint"), 0)}
-		if row.revision != nil && row.delivered != nil && *row.revision >= 0 && *row.delivered >= 0 && r.tables["conversation_events"] {
+		if !row.checkpointKnown {
+			cp.Content = output(nil, refField(row.source, "checkpoint"), 0)
+		}
+		if row.checkpointKnown && row.revision != nil && row.delivered != nil && *row.revision >= 0 && *row.delivered >= 0 && r.tables["conversation_events"] {
 			var head, pending int64
 			for _, event := range r.events {
 				if event.root == row.root {

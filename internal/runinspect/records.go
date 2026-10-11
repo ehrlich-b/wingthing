@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -41,6 +43,7 @@ type wingRecord struct {
 }
 
 type wingRow struct {
+	revisionKnown                bool
 	id, session, principal, spec string
 	revision                     int64
 	raw                          string
@@ -58,6 +61,7 @@ type eggRecord struct {
 }
 
 type conversationRow struct {
+	checkpointKnown                              bool
 	id, owner, root, parent, session, checkpoint string
 	revision, delivered                          *int64
 	source                                       Ref
@@ -101,7 +105,15 @@ func (s *snapshot) database(ctx context.Context, r *records) {
 		r.issue("wing_database_absent", ref)
 		return
 	}
-	uri := (&url.URL{Scheme: "file", Path: filepath.Join(s.path, ref.Path)}).String() + "?mode=ro&immutable=1&_pragma=query_only(1)&_pragma=temp_store(2)"
+	file, err := s.root.Open(ref.Path)
+	if err != nil {
+		r.issue("wing_database_unreadable", ref)
+		return
+	}
+	defer file.Close()
+	// Retain the rooted descriptor so path replacement cannot redirect SQLite
+	// to another state directory after manifest verification.
+	uri := (&url.URL{Scheme: "file", Path: filepath.Join("/dev/fd", fmt.Sprint(file.Fd()))}).String() + "?mode=ro&immutable=1&_pragma=query_only(1)&_pragma=temp_store(2)"
 	db, err := sql.Open("sqlite", uri)
 	if err != nil {
 		r.issue("wing_database_unreadable", ref)
@@ -136,12 +148,44 @@ func (s *snapshot) database(ctx context.Context, r *records) {
 			r.tables[table] = false
 		}
 	}
-	read("agent_runs", `SELECT id,session_id,principal,spec_hash,revision,record FROM agent_runs ORDER BY id`, func(rows *sql.Rows) error {
+	columns := func(table string) map[string]bool {
+		out := map[string]bool{}
+		rows, err := db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+		if err != nil {
+			return out
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var index, notnull, primary int
+			var name, typ string
+			var defaultValue any
+			if rows.Scan(&index, &name, &typ, &notnull, &defaultValue, &primary) == nil {
+				out[name] = true
+			}
+		}
+		return out
+	}
+	projection := func(table string, required []string, optional []struct{ name, fallback string }) (string, map[string]bool) {
+		cols := columns(table)
+		selected := append([]string{}, required...)
+		for _, field := range optional {
+			if cols[field.name] {
+				selected = append(selected, field.name)
+			} else {
+				selected = append(selected, field.fallback)
+				r.issue("older_schema_field_unavailable", Ref{Path: "wt.db", Record: table, Field: field.name})
+			}
+		}
+		return "SELECT " + strings.Join(selected, ",") + " FROM " + table, cols
+	}
+	wingQuery, wingColumns := projection("agent_runs", []string{"id", "session_id", "principal", "spec_hash", "record"}, []struct{ name, fallback string }{{"revision", "0"}})
+	read("agent_runs", wingQuery+" ORDER BY id", func(rows *sql.Rows) error {
 		var row wingRow
-		if err := rows.Scan(&row.id, &row.session, &row.principal, &row.spec, &row.revision, &row.raw); err != nil {
+		if err := rows.Scan(&row.id, &row.session, &row.principal, &row.spec, &row.raw, &row.revision); err != nil {
 			return err
 		}
 		row.source = Ref{Path: "wt.db", Record: "agent_runs:" + row.id}
+		row.revisionKnown = wingColumns["revision"]
 		row.valid = json.Unmarshal([]byte(row.raw), &row.record) == nil && row.record.ID != "" && row.record.SessionID != ""
 		if !row.valid {
 			r.issue("partial_run_record", row.source, row.id)
@@ -149,12 +193,14 @@ func (s *snapshot) database(ctx context.Context, r *records) {
 		r.wings = append(r.wings, row)
 		return nil
 	})
-	read("conversations", `SELECT id,owner_id,root_id,parent_id,session_id,checkpoint,revision,delivered_cursor FROM conversations ORDER BY id`, func(rows *sql.Rows) error {
+	conversationQuery, conversationColumns := projection("conversations", []string{"id", "owner_id", "session_id"}, []struct{ name, fallback string }{{"root_id", "''"}, {"parent_id", "''"}, {"checkpoint", "''"}, {"revision", "NULL"}, {"delivered_cursor", "NULL"}})
+	read("conversations", conversationQuery+" ORDER BY id", func(rows *sql.Rows) error {
 		var c conversationRow
-		if err := rows.Scan(&c.id, &c.owner, &c.root, &c.parent, &c.session, &c.checkpoint, &c.revision, &c.delivered); err != nil {
+		if err := rows.Scan(&c.id, &c.owner, &c.session, &c.root, &c.parent, &c.checkpoint, &c.revision, &c.delivered); err != nil {
 			return err
 		}
 		c.source = Ref{Path: "wt.db", Record: "conversations:" + c.id}
+		c.checkpointKnown = conversationColumns["checkpoint"]
 		r.conversations = append(r.conversations, c)
 		return nil
 	})

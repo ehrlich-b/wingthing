@@ -77,9 +77,13 @@ web:
 # Hash-verified offline snapshots; no socket, daemon or provider is opened.
 test-run-inspect: | web/dist
 	$(GO) test -p 2 ./internal/runinspect -run '^TestRunInspect' -count=1 -parallel=2 -timeout=2m
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 ./cmd/wt -run '^TestRunInspect' -count=1 -parallel=2 -timeout=2m
 
 test-run-inspect-race: | web/dist
 	$(GO) test -p 2 -race ./internal/runinspect -run '^TestRunInspect' -count=1 -parallel=2 -timeout=2m
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -race ./cmd/wt -run '^TestRunInspect' -count=1 -parallel=2 -timeout=2m
 
 # Finite, offline native-provider fixtures; no live provider or remote launches.
 test-run-recovery: | web/dist

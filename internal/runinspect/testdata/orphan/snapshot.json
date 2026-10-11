@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "kind": "fixture",
+  "completed": true,
+  "captured_at": "2026-10-10T12:00:00Z",
+  "files": [
+    {
+      "path": "eggs/fixture-execution/run.8128e203343008b6187455d5a3607e980f82ea4abf77ac6bcb8aca4289a0e650.json",
+      "bytes": 439,
+      "sha256": "8787ca70a26afb9c6e640e89c44b3a90bfe3ee5778c239d2169951b0c3e60f3f"
+    },
+    {
+      "path": "records.sql",
+      "bytes": 1196,
+      "sha256": "6801d17743896887785de4bfe03148fb8d13bbf4471eeea070fa6032392ce79b"
+    },
+    {
+      "path": "wt.db",
+      "bytes": 32768,
+      "sha256": "4219f128b1776c7b294202b271abaeb6b64c9c07103bac1949099de2990a5087"
+    }
+  ]
+}

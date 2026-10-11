@@ -186,7 +186,7 @@ func (report *Report) finalizeEvidence() {
 		run.EvidenceState = "consistent"
 		for _, issue := range run.Issues {
 			switch issue.Code {
-			case "missing_parent", "partial_run_record", "partial_or_unsupported_egg_record", "execution_conversation_unavailable":
+			case "missing_parent", "run_revision_unavailable", "partial_run_record", "partial_or_unsupported_egg_record", "execution_conversation_unavailable":
 				if run.EvidenceState == "consistent" {
 					run.EvidenceState = "incomplete"
 				}
