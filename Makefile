@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := check
-.PHONY: check gate test-run-inspect test-run-inspect-race test-run-recovery test-run-recovery-race test-run-load test-run-load-full test-run-canary e2e-linux e2e-web e2e-mac release deploy ops proto web serve clean
+.PHONY: check gate test-run-inspect test-run-inspect-race test-run-inspect-roundtrip test-run-recovery test-run-recovery-race test-run-load test-run-load-full test-run-canary e2e-linux e2e-web e2e-mac release deploy ops proto web serve clean
 
 GO ?= nice -n 15 go
 NODE ?= nice -n 15 node
@@ -84,6 +84,13 @@ test-run-inspect-race: | web/dist
 	$(GO) test -p 2 -race ./internal/runinspect -run '^TestRunInspect' -v -count=1 -parallel=2 -timeout=2m
 	$(stable-build)
 	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -race ./cmd/wt -run '^(TestRunInspect.*|TestDashboardNoTTYHelpUnchanged)$$' -v -count=1 -parallel=2 -timeout=2m
+
+# Fixture-only serializer adapters are excluded from the ordinary built CLI.
+# Every invocation writes fresh, retained tiny artifacts below this scratch root.
+test-run-inspect-roundtrip: | web/dist
+	@mkdir -p "$(CURDIR)/.scratch/runinspect-roundtrip"
+	$(stable-build)
+	WT_INSPECT_FIXTURE_ROOT="$(CURDIR)/.scratch/runinspect-roundtrip" WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -tags runinspectfixture $(INSPECT_TEST_FLAGS) ./internal/runinspect ./cmd/wt -run '^TestRunInspectRoundTrip' -v -count=1 -parallel=2 -timeout=3m
 
 # Finite, offline native-provider fixtures; no live provider or remote launches.
 test-run-recovery: | web/dist
