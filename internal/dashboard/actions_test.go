@@ -231,8 +231,14 @@ func TestDashboardRemoteMutationValidatesSameCurrentProfile(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if strings.Count(string(data), "'session' 'ps'") != 2 || strings.Count(string(data), "'/opt/custom wt'") != 4 {
-					t.Fatalf("validation query lost exact route: %s", data)
+				// Each mutation validates with one inventory query. Compare the
+				// full route so state/channel drift or an extra version probe fails.
+				state := remotepkg.ShellQuote(remoteState)
+				want := "WINGTHING_DIR=" + state + " WINGTHING_PREVIEW_DIR=" + state +
+					" '/opt/custom wt' '--expected-channel' " + remotepkg.ShellQuote(config.Channel()) +
+					" 'session' 'ps' '--json' '--remote-inventory'\n"
+				if string(data) != want+want {
+					t.Fatalf("validation query lost exact route: got %q, want %q", data, want+want)
 				}
 			}
 		})
