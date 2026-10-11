@@ -44,6 +44,7 @@ public enum HomeConnectionPhase: Equatable, Sendable {
     @Published public private(set) var parentTranscript = TranscriptState()
     @Published public private(set) var phase = HomeConnectionPhase.notConfigured
     @Published public private(set) var busy = false
+    @Published public private(set) var historyReadNotice: String?
     @Published public private(set) var pending: PendingInput?
     @Published public private(set) var pendingContinuation: PendingContinuation?
     @Published public private(set) var continuationNotice: String?
@@ -81,10 +82,14 @@ public enum HomeConnectionPhase: Equatable, Sendable {
     private let cacheDirectory: URL?
     private let credentialStore: (any HomeCredentialStore)?
     private var homesToForget: [HomeProfile] = []
+    private let historyBudget: HistoryReadBudget
+    private let historyClock: any HistoryReadClock
 
     // Empty/default app performs no network, file, or credential action.
-    public init(cacheDirectory: URL? = nil, credentialStore: (any HomeCredentialStore)? = nil) {
+    public init(cacheDirectory: URL? = nil, credentialStore: (any HomeCredentialStore)? = nil,
+                historyBudget: HistoryReadBudget = HistoryReadBudget(), historyClock: any HistoryReadClock = ContinuousHistoryReadClock()) {
         self.cacheDirectory = cacheDirectory; self.credentialStore = credentialStore
+        self.historyBudget = historyBudget; self.historyClock = historyClock
     }
 
     public func receiveHomeSetupLink(_ text: String) {
@@ -474,6 +479,12 @@ public enum HomeConnectionPhase: Equatable, Sendable {
     }
 
     public func openParent() async { if let parent { await open(parent.reference) } }
+    public var historyNeedsContinue: Bool { historyReadNotice != nil || transcript.hasUnreadHistory }
+    public var canContinueReading: Bool { historyNeedsContinue && connected && !busy && selected != nil }
+    public func continueReading() async {
+        guard canContinueReading, let selected else { return }
+        await open(selected)
+    }
     public func open(_ reference: ConversationReference, expectedExecution: ExecutionReference? = nil) async {
         guard let profile, let store else { return }
         rememberDraft()
@@ -494,8 +505,21 @@ public enum HomeConnectionPhase: Equatable, Sendable {
             // new one: keep its draft, transcript cursor, and known binding.
             let observed = task.lifecycle?.providerSessionID ?? expectedExecution?.providerSessionID
             let continuing = execution.map { $0.conversation == reference && $0.sessionID == task.conversation.sessionID && (observed == nil || $0.providerSessionID == nil || $0.providerSessionID == observed) } ?? false
-            let target = ExecutionReference(conversation: reference, sessionID: task.conversation.sessionID, providerSessionID: observed ?? (continuing ? execution?.providerSessionID : nil))
-            if !continuing { transcript = TranscriptState(); presentDraft(""); pendingStop = nil }
+            var target = ExecutionReference(conversation: reference, sessionID: task.conversation.sessionID, providerSessionID: observed ?? (continuing ? execution?.providerSessionID : nil))
+            if !continuing {
+                let cached = try await store.cached(reference)
+                guard requested == generation else { return }
+                transcript = TranscriptState(); presentDraft(""); pendingStop = nil
+                // Resume only a snapshot of this exact session/provider. A new
+                // execution must begin at zero and cannot borrow its draft.
+                if let cached, let lifecycle = cached.transcript.lifecycle,
+                   lifecycle.sessionID == target.sessionID,
+                   target.providerSessionID == nil || target.providerSessionID == lifecycle.providerSessionID {
+                    transcript = cached.transcript
+                    target = ExecutionReference(conversation: reference, sessionID: target.sessionID, providerSessionID: lifecycle.providerSessionID)
+                }
+            }
+            historyReadNotice = nil
             selected = reference; execution = target; tasks = view.tasks; treeObservedAt = Date()
             let rootID = task.conversation.rootConversationID
             if let root = view.tasks.first(where: { $0.conversation.conversationID == rootID && $0.conversation.wingID == reference.wingID && $0.conversation.isRoot }), let rootRef = self.reference(for: root.conversation) {
@@ -510,20 +534,48 @@ public enum HomeConnectionPhase: Equatable, Sendable {
             }
             if let issue = task.lifecycleError { throw ClientError.response(issue) }
             var bound = target
+            try await restoreExecutionState(bound, store: store, requested: requested, restoreDraft: !continuing)
+            guard requested == generation else { return }
+            let deadline = historyClock.elapsed + historyBudget.timeLimit
+            var pages = 0
             repeat {
                 try Task.checkCancellation()
+                guard pages < historyBudget.maxPages else {
+                    historyReadNotice = "More history is available. Continue reading to load the next part."
+                    break
+                }
+                guard historyClock.elapsed < deadline else {
+                    historyReadNotice = "Reading paused to keep your phone responsive. Continue reading when you're ready."
+                    break
+                }
                 let after = transcript.cursor
-                let observation = try await client.observe(bound, after: after)
+                guard let observation = try await historyBudget.observe(client, execution: bound, after: after, deadline: deadline, clock: historyClock) else {
+                    try Task.checkCancellation()
+                    guard requested == generation else { return }
+                    historyReadNotice = "Reading paused to keep your phone responsive. Continue reading when you're ready."
+                    break
+                }
                 try Task.checkCancellation()
                 guard requested == generation, selected == reference, execution == bound else { return }
                 let lifecycle = observation.lifecycle
                 guard lifecycle.cursor >= after, lifecycle.headCursor.map({ lifecycle.cursor <= $0 }) ?? true else { throw ClientError.response("Session history cursor moved backwards.") }
+                let previous = bound
                 bound = ExecutionReference(conversation: reference, sessionID: target.sessionID, providerSessionID: lifecycle.providerSessionID)
                 execution = bound
                 try transcript.apply(lifecycle, target: bound); phase = .online
+                pages += 1
                 stopCapability = epoch == readEpoch && observation.stopCapability?.covers(bound) == true ? observation.stopCapability : nil
                 continuationAvailability = epoch == readEpoch ? observation.continuation : nil
                 continuationObservedAt = continuationAvailability == nil ? nil : Date()
+                if previous != bound {
+                    try await restoreExecutionState(bound, store: store, requested: requested, restoreDraft: !continuing)
+                }
+                guard requested == generation, execution == bound else { return }
+                if parent?.reference == reference { parentTranscript = transcript }
+                // Persist every accepted page before requesting another. A
+                // cancelled/disconnected drain retains the last exact cursor.
+                try await store.cache(CachedConversation(reference: reference, tasks: view.tasks, transcript: transcript))
+                guard requested == generation, execution == bound else { return }
                 if lifecycle.hasMore != true { break }
                 if lifecycle.cursor == after {
                     // A pending journal can advertise more while already at head.
@@ -531,19 +583,13 @@ public enum HomeConnectionPhase: Equatable, Sendable {
                     break
                 }
             } while true
-            pendingContinuation = try await store.continuation(for: reference, unfinishedOnly: true)
-            pending = await store.pending(for: bound)
-            if pending?.delivery == .nativeReceiptObserved || pending?.delivery == .definitelyNotSent { pending = nil }
-            if pending != nil { unsentDrafts.removeValue(forKey: bound) }
-            if !continuing {
-                let savedDraft = try localViews?.draft(for: bound)
-                presentDraft(pending?.input ?? unsentDrafts[bound] ?? savedDraft ?? "")
-            }
-            pendingStop = await store.pendingStop(for: bound)
-            try await store.cache(CachedConversation(reference: reference, tasks: view.tasks, transcript: transcript))
         } catch {
             guard requested == generation else { return }
-            if error is CancellationError { busy = false; return }
+            if error is CancellationError {
+                historyReadNotice = "Reading paused. Continue reading when you're ready."
+                stopCapability = nil; continuationAvailability = nil; continuationObservedAt = nil
+                busy = false; return
+            }
             stopCapability = nil
             continuationAvailability = nil; continuationObservedAt = nil
             transcript.markUnavailable(); parentTranscript.markUnavailable(); phase = classify(error); self.error = error.localizedDescription
@@ -557,7 +603,7 @@ public enum HomeConnectionPhase: Equatable, Sendable {
     }
 
     public func pollTranscript() async {
-        guard connected, !busy, let client, let execution else { return }
+        guard connected, !busy, !historyNeedsContinue, let client, let execution else { return }
         let requested = generation, epoch = readEpoch
         do {
             let observation = try await client.observe(execution, after: transcript.cursor)
@@ -590,6 +636,21 @@ public enum HomeConnectionPhase: Equatable, Sendable {
             stopCapability = nil
             continuationAvailability = nil; continuationObservedAt = nil
             transcript.markUnavailable(); phase = classify(error); self.error = error.localizedDescription
+        }
+    }
+
+    private func restoreExecutionState(_ bound: ExecutionReference, store: LocalConversationStore, requested: UUID, restoreDraft: Bool) async throws {
+        let continuation = try await store.continuation(for: bound.conversation, unfinishedOnly: true)
+        let input = await store.pending(for: bound)
+        let stop = await store.pendingStop(for: bound)
+        guard requested == generation, execution == bound else { return }
+        pendingContinuation = continuation
+        pending = input?.delivery == .nativeReceiptObserved || input?.delivery == .definitelyNotSent ? nil : input
+        pendingStop = stop
+        if pending != nil { unsentDrafts.removeValue(forKey: bound) }
+        if restoreDraft {
+            let savedDraft = try localViews?.draft(for: bound)
+            presentDraft(pending?.input ?? unsentDrafts[bound] ?? savedDraft ?? "")
         }
     }
 
@@ -718,6 +779,7 @@ public enum HomeConnectionPhase: Equatable, Sendable {
         let cached = try? await store.cached(reference)
         guard requested == generation, let cached else { return }
         tasks = cached.tasks; transcript = cached.transcript; selected = reference; execution = nil; pending = nil
+        historyReadNotice = nil
         presentDraft("") // No exact live binding is available for this saved selection.
         stopCapability = nil; pendingStop = nil
         continuationAvailability = nil; continuationObservedAt = nil; continuationNotice = nil
@@ -763,6 +825,7 @@ public enum HomeConnectionPhase: Equatable, Sendable {
         let released = client
         client = nil; store = nil; localViews = nil; readingPositions.removeAll(); localSaveError = nil; profile = nil; parent = nil; roots = []; tasks = []; selected = nil; execution = nil
         transcript = TranscriptState(); parentTranscript = TranscriptState(); pending = nil; draft = ""; treeObservedAt = nil
+        historyReadNotice = nil
         unsentDrafts.removeAll()
         stopCapability = nil; pendingStop = nil; pendingContinuation = nil; continuationNotice = nil; continuationAvailability = nil; continuationObservedAt = nil; stopFlight = nil; readEpoch = UUID()
         error = nil; busy = false; phase = .notConfigured

@@ -261,6 +261,18 @@ private struct ConversationScreen: View {
                 }
             }.foregroundStyle(palette.foreground).padding(.horizontal, 12).frame(minHeight: 56).padding(.bottom, 10)
 
+            if model.historyNeedsContinue {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(model.historyReadNotice ?? "More history is available. Continue reading to load the next part.")
+                        .font(.footnote).fixedSize(horizontal: false, vertical: true)
+                    Button("Continue reading") { Task { await model.continueReading() } }
+                        .frame(minHeight: 44).disabled(!model.canContinueReading)
+                        .accessibilityIdentifier("continue-reading-history")
+                    if !model.connected { Text("Reconnect to read more.").font(.footnote) }
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20)
+                    .padding(.bottom, 8).accessibilityIdentifier("history-reading-state")
+            }
+
             GeometryReader { geometry in
                 #if os(iOS)
                 let expected = model.execution
