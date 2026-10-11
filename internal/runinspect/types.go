@@ -75,9 +75,14 @@ type Checkpoint struct {
 }
 
 type Archive struct {
-	SessionID string `json:"session_id"`
-	State     string `json:"state"`
-	Sources   []Ref  `json:"sources"`
+	Agent             string `json:"agent,omitempty"`
+	ProviderSessionID string `json:"provider_session_id,omitempty"`
+	CompressedBytes   int64  `json:"compressed_bytes"`
+	DecodedBytes      int64  `json:"decoded_bytes"`
+	RotationPending   bool   `json:"rotation_pending"`
+	SessionID         string `json:"session_id"`
+	State             string `json:"state"`
+	Sources           []Ref  `json:"sources"`
 }
 
 type Run struct {
@@ -110,13 +115,14 @@ type Conversation struct {
 }
 
 type Report struct {
-	Version                  int            `json:"version"`
-	CapturedAt               time.Time      `json:"captured_at"`
-	InputFiles               []File         `json:"input_files"`
-	Runs                     []Run          `json:"runs"`
-	Conversations            []Conversation `json:"conversations"`
-	Archives                 []Archive      `json:"archives"`
-	Edges                    []Edge         `json:"edges"`
-	Issues                   []Issue        `json:"issues"`
-	RequiredHostObservations []string       `json:"required_host_observations"`
+	CheckpointAttempts       []CheckpointAttempt `json:"checkpoint_attempts"`
+	Version                  int                 `json:"version"`
+	CapturedAt               time.Time           `json:"captured_at"`
+	InputFiles               []File              `json:"input_files"`
+	Runs                     []Run               `json:"runs"`
+	Conversations            []Conversation      `json:"conversations"`
+	Archives                 []Archive           `json:"archives"`
+	Edges                    []Edge              `json:"edges"`
+	Issues                   []Issue             `json:"issues"`
+	RequiredHostObservations []string            `json:"required_host_observations"`
 }

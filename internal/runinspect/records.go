@@ -27,6 +27,8 @@ type resultRecord struct {
 }
 
 type wingRecord struct {
+	Agent     string `json:"agent"`
+	CWD       string `json:"cwd"`
 	ID        string `json:"run_id"`
 	SessionID string `json:"session_id"`
 	ParentID  string `json:"parent_id"`
@@ -121,14 +123,17 @@ func (s *snapshot) database(ctx context.Context, r *records) {
 			count++
 			if count > 10000 {
 				r.issue("table_row_limit", ref)
+				r.tables[table] = false
 				return
 			}
 			if scan(rows) != nil {
 				r.issue("partial_database_record", ref)
+				r.tables[table] = false
 			}
 		}
 		if rows.Err() != nil {
 			r.issue("table_read_incomplete", ref)
+			r.tables[table] = false
 		}
 	}
 	read("agent_runs", `SELECT id,session_id,principal,spec_hash,revision,record FROM agent_runs ORDER BY id`, func(rows *sql.Rows) error {

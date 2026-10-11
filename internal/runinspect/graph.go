@@ -197,8 +197,13 @@ func (report *Report) finalizeEvidence() {
 		if run.EvidenceState == "inconsistent" {
 			run.Diagnosis = "inconsistent_evidence"
 		}
-		if run.EvidenceState != "consistent" {
-			run.Actions = append(run.Actions, Action{Kind: "missing_evidence", Basis: run.Sources, Requires: []string{"Resolve the cited graph or record gaps before any manual recovery."}})
+		run.Actions = []Action{{Kind: "inspect", Basis: run.Sources, Requires: []string{"Review the cited records and snapshot capture time."}}}
+		if run.Diagnosis == "running_at_snapshot" && run.EvidenceState == "consistent" {
+			run.Actions = append(run.Actions, Action{Kind: "wait_for_known_completion", Basis: run.Sources, Requires: []string{"Verify the same execution is still alive on the host; a snapshot cannot establish current liveness."}})
 		}
+		if run.EvidenceState != "consistent" || run.Diagnosis == "missing_evidence" || run.Diagnosis == "admitted_outcome_unknown" || run.Diagnosis == "completed_output_unavailable" {
+			run.Actions = append(run.Actions, Action{Kind: "missing_evidence", Basis: run.Sources, Requires: []string{"Resolve the cited graph, receipt or output gaps before any manual recovery."}})
+		}
+
 	}
 }

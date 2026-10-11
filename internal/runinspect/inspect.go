@@ -56,6 +56,13 @@ func Inspect(ctx context.Context, path string, opts Options) (*Report, error) {
 	report.graph(&r, opts)
 	report.identityGraph(&r)
 	report.finalizeEvidence()
+	if err := report.checkpoints(s, &r); err != nil {
+		return nil, err
+	}
+	if err := report.archives(s, &r); err != nil {
+		return nil, err
+	}
+	report.recommendations()
 	if err := s.verify(ctx); err != nil {
 		return nil, err
 	}
@@ -216,13 +223,6 @@ func (report *Report) graph(r *records, opts Options) {
 			report.diagnose(&run, w, e, r)
 		}
 
-		run.Actions = append(run.Actions, Action{Kind: "inspect", Basis: run.Sources, Requires: []string{"Review the cited records and snapshot capture time."}})
-		if run.Diagnosis == "running_at_snapshot" {
-			run.Actions = append(run.Actions, Action{Kind: "wait_for_known_completion", Basis: run.Sources, Requires: []string{"Verify the same execution is still alive on the host; a snapshot cannot establish current liveness."}})
-		}
-		if run.Diagnosis == "missing_evidence" || run.Diagnosis == "admitted_outcome_unknown" || run.Diagnosis == "inconsistent_evidence" {
-			run.Actions = append(run.Actions, Action{Kind: "missing_evidence", Basis: run.Sources, Requires: []string{"Obtain the missing or conflicting exact-identity records before choosing a recovery action."}})
-		}
 		report.Runs = append(report.Runs, run)
 	}
 }
