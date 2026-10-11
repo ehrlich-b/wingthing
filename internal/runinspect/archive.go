@@ -6,6 +6,8 @@ import (
 	"io"
 	"sort"
 	"strings"
+
+	"github.com/ehrlich-b/wingthing/internal/egg"
 )
 
 const maxArchiveDecodedBytes = 32 << 20
@@ -166,17 +168,14 @@ func archiveEggBinding(s *snapshot, prefix, agent, id, cwd string) (string, []Re
 		if line[len(line)-1] != '\n' {
 			return "partial_lifecycle_binding", refs, nil
 		}
-		var event struct {
-			Sequence   int64  `json:"sequence"`
-			Source     string `json:"source"`
-			Type       string `json:"type"`
-			ProviderID string `json:"provider_session_id"`
-		}
+		// Restoration decodes the entire event before accepting any binding.
+		// Reuse its schema without opening its writable journal or lock file.
+		var event egg.SessionEvent
 		sequence++
 		if len(line) > 1<<20 || decodeRecord(line, &event) != nil || event.Sequence != sequence {
 			return "invalid_lifecycle_binding", refs, nil
 		}
-		if event.Source == agent+"_hook" && event.Type == "session_ready" && event.ProviderID == id && archiveProviderID(id) {
+		if event.Source == agent+"_hook" && event.Type == "session_ready" && event.ProviderSessionID == id && archiveProviderID(id) {
 			bound = true
 		}
 	}

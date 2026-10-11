@@ -115,7 +115,7 @@ func openSnapshot(ctx context.Context, path string, opts Options) (*snapshot, er
 	if len(data) > 1<<20 {
 		return nil, errors.New("snapshot manifest exceeds limit")
 	}
-	if uniqueJSON(data) != nil {
+	if uniqueJSON(data, &s.manifest) != nil {
 		return nil, errors.New("invalid or ambiguous snapshot manifest")
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))

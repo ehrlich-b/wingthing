@@ -5,24 +5,28 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 )
 
-// Duplicate keys, including case aliases, are ambiguous evidence. encoding/json
-// matches struct fields using Unicode simple folding and keeps the last
-// value, which would silently pick an identity or ownership winner.
-func uniqueJSON(data []byte) error {
+// Exact duplicate keys are always ambiguous. Case aliases are ambiguous only
+// when they decode into the same struct field: maps and uninterpreted native
+// payloads retain JSON's case-sensitive keys. A nil target checks exact keys.
+func uniqueJSON(data []byte, target any) error {
 	if !utf8.Valid(data) {
 		return errors.New("invalid UTF-8 record")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
-	var value func(int) error
-	value = func(depth int) error {
+	var value func(int, reflect.Type) error
+	value = func(depth int, typ reflect.Type) error {
 		if depth > 128 {
 			return errors.New("record nesting exceeds limit")
+		}
+		for typ != nil && typ.Kind() == reflect.Pointer {
+			typ = typ.Elem()
 		}
 		token, err := decoder.Token()
 		if err != nil {
@@ -32,18 +36,33 @@ func uniqueJSON(data []byte) error {
 			switch delim {
 			case '{':
 				seen := map[string]bool{}
+				seenFields := map[string]bool{}
+				exact, folded := jsonObjectFields(typ)
 				for decoder.More() {
 					key, err := decoder.Token()
 					if err != nil {
 						return err
 					}
 					name, ok := key.(string)
-					name = foldedJSONKey(name)
 					if !ok || seen[name] {
 						return errors.New("ambiguous object keys")
 					}
 					seen[name] = true
-					if err := value(depth + 1); err != nil {
+					var child reflect.Type
+					field, known := exact[name]
+					if !known {
+						field, known = folded[foldedJSONKey(name)]
+					}
+					if known {
+						if seenFields[field.Name] {
+							return errors.New("ambiguous struct field aliases")
+						}
+						seenFields[field.Name] = true
+						child = field.Type
+					} else if typ != nil && typ.Kind() == reflect.Map {
+						child = typ.Elem()
+					}
+					if err := value(depth+1, child); err != nil {
 						return err
 					}
 				}
@@ -52,8 +71,12 @@ func uniqueJSON(data []byte) error {
 					return errors.New("invalid object")
 				}
 			case '[':
+				var child reflect.Type
+				if typ != nil && (typ.Kind() == reflect.Slice || typ.Kind() == reflect.Array) {
+					child = typ.Elem()
+				}
 				for decoder.More() {
-					if err := value(depth + 1); err != nil {
+					if err := value(depth+1, child); err != nil {
 						return err
 					}
 				}
@@ -67,13 +90,39 @@ func uniqueJSON(data []byte) error {
 		}
 		return nil
 	}
-	if err := value(0); err != nil {
+	if err := value(0, reflect.TypeOf(target)); err != nil {
 		return err
 	}
 	if _, err := decoder.Token(); err != io.EOF {
 		return errors.New("record has trailing data")
 	}
 	return nil
+}
+
+// Inspector projections and SessionEvent use explicit, non-embedded fields.
+// Prefer an exact tag/name before the first folded match, as encoding/json does.
+func jsonObjectFields(typ reflect.Type) (exact, folded map[string]reflect.StructField) {
+	if typ == nil || typ.Kind() != reflect.Struct {
+		return nil, nil
+	}
+	exact = map[string]reflect.StructField{}
+	folded = map[string]reflect.StructField{}
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if field.PkgPath != "" || name == "-" {
+			continue
+		}
+		if name == "" {
+			name = field.Name
+		}
+		exact[name] = field
+		key := foldedJSONKey(name)
+		if _, exists := folded[key]; !exists {
+			folded[key] = field
+		}
+	}
+	return exact, folded
 }
 
 // Use the same equivalence as encoding/json (including K/kelvin and S/long S),
@@ -91,7 +140,7 @@ func foldedJSONKey(name string) string {
 }
 
 func decodeRecord(data []byte, target any) error {
-	if err := uniqueJSON(data); err != nil {
+	if err := uniqueJSON(data, target); err != nil {
 		return err
 	}
 	return json.Unmarshal(data, target)

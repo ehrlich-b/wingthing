@@ -105,12 +105,20 @@ func TestRunInspectReviewHumanLegacyIssues(t *testing.T) {
 }
 
 func TestRunInspectReviewCaseAliasesUseJSONFolding(t *testing.T) {
-	for _, data := range []string{`{"spec_hash":"a","Spec_Hash":"b"}`, `{"kind":"fixture","\u212aind":"completed_copy"}`, `{"status":"done","\u017ftatus":"failed"}`, `{"outer":{"Principal":"a","principal":"b"}}`} {
-		if uniqueJSON([]byte(data)) == nil {
-			t.Fatalf("accepted case aliases: %s", data)
+	for _, test := range []struct {
+		data   string
+		target any
+	}{
+		{`{"spec_hash":"a","Spec_Hash":"b"}`, &wingRecord{}},
+		{`{"kind":"fixture","\u212aind":"completed_copy"}`, &Manifest{}},
+		{`{"status":"done","\u017ftatus":"failed"}`, &resultRecord{}},
+		{`{"launch":{"Authority":{"Principal":"a","principal":"b"}}}`, &wingRecord{}},
+	} {
+		if decodeRecord([]byte(test.data), test.target) == nil {
+			t.Fatalf("accepted case aliases: %s", test.data)
 		}
 	}
-	if err := uniqueJSON([]byte(`{"launch":{"Authority":{"Principal":"owner","UserID":"owner"}}}`)); err != nil {
+	if err := decodeRecord([]byte(`{"launch":{"Authority":{"Principal":"owner","UserID":"owner"}}}`), &wingRecord{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -131,6 +139,53 @@ func TestRunInspectReviewArchiveLifecycleBinding(t *testing.T) {
 					t.Fatal(err)
 				}
 				if err := os.WriteFile(filepath.Join(dir, "lifecycle.jsonl"), []byte(test.journal), 0600); err != nil {
+					t.Fatal(err)
+				}
+			})
+			before := fingerprints(t, path)
+			report, err := Inspect(t.Context(), path, Options{WorkspaceRoot: workspace})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if report.Archives[0].State != test.state {
+				t.Fatalf("archive=%s, want %s", report.Archives[0].State, test.state)
+			}
+			if !reflect.DeepEqual(before, fingerprints(t, path)) {
+				t.Fatal("binding inspection changed evidence")
+			}
+		})
+	}
+}
+
+func TestRunInspectReviewLifecycleFullSchema(t *testing.T) {
+	const binding = `{"sequence":1,"source":"claude_hook","type":"session_ready","provider_session_id":"native-thread"}` + "\n"
+	for _, test := range []struct {
+		name, extra, state string
+	}{
+		{"state", `"state":42`, "invalid_lifecycle_binding"},
+		{"role", `"role":42`, "invalid_lifecycle_binding"},
+		{"text", `"text":42`, "invalid_lifecycle_binding"},
+		{"timestamp", `"timestamp":42`, "invalid_lifecycle_binding"},
+		{"reason", `"reason":42`, "invalid_lifecycle_binding"},
+		{"truncated", `"truncated":"yes"`, "invalid_lifecycle_binding"},
+		{"original_bytes", `"original_bytes":"42"`, "invalid_lifecycle_binding"},
+		{"exit_code", `"exit_code":"42"`, "invalid_lifecycle_binding"},
+		{"source_key", `"source_key":42`, "invalid_lifecycle_binding"},
+		{"source_offset", `"source_offset":"42"`, "invalid_lifecycle_binding"},
+		{"native_raw_keys", `"raw":{"FOO":"upper","foo":"lower"}`, "complete_bound_archive"},
+		{"unknown_payload_keys", `"unknown":{"FOO":"upper","foo":"lower"}`, "complete_bound_archive"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			workspace, path := fixture(t, func(db *sql.DB, path string) {
+				addArchive(t, path, "execution", "native-thread")
+				dir := filepath.Join(path, "eggs", "execution")
+				if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=claude\nprovider_session_id=launch-thread\ncwd=/fixture\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				// A valid first event cannot bypass a later invalid event: restore
+				// validates the entire journal before considering any binding.
+				journal := binding + `{"sequence":2,"source":"egg_process","type":"session_exit",` + test.extra + "}\n"
+				if err := os.WriteFile(filepath.Join(dir, "lifecycle.jsonl"), []byte(journal), 0600); err != nil {
 					t.Fatal(err)
 				}
 			})
