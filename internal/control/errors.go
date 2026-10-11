@@ -50,7 +50,7 @@ func (d LaunchDiagnostic) Bounded() LaunchDiagnostic {
 		d.Stage = "admission/policy"
 	}
 	switch d.Reason {
-	case "connection_unavailable", "startup_failed", "startup_exited", "admission_unknown", "policy_refused", "invalid_workspace", "session_name_in_use", "executable_denied", "provider_home_denied", "workspace_denied", "provider_config_denied", "network_denied", "preparation_failed", "provider_failed", "attach_failed", "sandbox_unavailable", "authentication_required", "client_required", "client_not_configured":
+	case "connection_unavailable", "startup_failed", "startup_exited", "canceled", "admission_unknown", "policy_refused", "invalid_workspace", "session_name_in_use", "executable_denied", "provider_home_denied", "workspace_denied", "provider_config_denied", "network_denied", "preparation_failed", "provider_failed", "attach_failed", "sandbox_unavailable", "authentication_required", "client_required", "client_not_configured":
 	default:
 		d.Reason = "policy_refused"
 	}
@@ -268,6 +268,8 @@ func launchReason(reason string) string {
 		return "wing did not become ready"
 	case "startup_exited":
 		return "wing daemon exited before readiness"
+	case "canceled":
+		return "context canceled"
 	case "admission_unknown":
 		return "admission acknowledgement was lost"
 	case "invalid_workspace":

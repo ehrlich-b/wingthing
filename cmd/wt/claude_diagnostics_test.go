@@ -60,6 +60,10 @@ func TestClaudeLaunchDiagnosticTransport(t *testing.T) {
 }
 
 func TestClaudeLaunchDiagnosticBoundsAndPhases(t *testing.T) {
+	canceled := diagnoseClaudeFailure(errors.Join(context.Canceled, errors.New(launchSecret)), "connect/startup", "startup_failed", "")
+	if !errors.Is(canceled, context.Canceled) || !strings.Contains(canceled.Error(), "context canceled") || strings.Contains(canceled.Error(), launchSecret) {
+		t.Fatalf("unsafe/incorrect cancellation diagnostic: %v", canceled)
+	}
 	for _, tc := range []struct{ stage, reason, session, want string }{
 		{"connect/startup", "startup_failed", "", "wt wing start --local-only"},
 		{"admission/policy", "admission_unknown", "", "Inspect wt ls"},

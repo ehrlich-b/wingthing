@@ -141,6 +141,9 @@ func diagnoseClaudeFailure(err error, stage, reason, session string) error {
 	if !ok {
 		d = control.LaunchDiagnostic{Stage: stage, Reason: reason}
 	}
+	if errors.Is(err, context.Canceled) {
+		d.Reason = "canceled"
+	}
 	if errors.Is(err, control.ErrSessionNameInUse) {
 		d.Reason = "session_name_in_use"
 	}
