@@ -1,6 +1,7 @@
 package daemonctl
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -175,6 +176,49 @@ func TestDaemonLifecycleLockSerializesCompetingOperations(t *testing.T) {
 		t.Fatalf("lock was not released on close: %v", err)
 	}
 	_ = reopened.Close()
+}
+
+func TestDaemonLifecycleContextWaitsAndCancels(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	alias := filepath.Join(root, "alias")
+	if err := os.Mkdir(real, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, alias); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", alias)
+	path := filepath.Join(alias, "daemon.lock")
+	first, err := AcquireDaemonLifecycleLockAt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() {
+		file, err := AcquireDaemonLifecycleLockAtContext(ctx, path)
+		if file != nil {
+			_ = file.Close()
+		}
+		result <- err
+	}()
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("blocked acquisition ignored cancellation: %v", err)
+	}
+	if _, err := AcquireDaemonLifecycleLockAtContext(t.Context(), filepath.Join(root, "absent", "lock")); err == nil || errors.Is(err, ErrDaemonLifecycleBusy) {
+		t.Fatalf("open failure incorrectly retried: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	file, err := AcquireDaemonLifecycleLockAtContext(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = file.Close()
 }
 
 func infoMode(info os.FileInfo) os.FileMode {

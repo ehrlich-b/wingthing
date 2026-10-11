@@ -23,7 +23,7 @@ func TestClaudeWithoutWingFailsWithGuidance(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	t.Setenv("HOME", root)
 	t.Setenv("WINGTHING_DIR", filepath.Join(root, "absent"))
-	t.Setenv("WT_MCP_CLIENT", "")
+	t.Setenv("WT_MCP_CLIENT", "named-client")
 	cmd := newRootCommand()
 	cmd.SetArgs([]string{"claude", "--name", "weekend", "--", "--model", "fake"})
 	cmd.SetIn(bytes.NewReader(nil))

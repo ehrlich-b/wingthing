@@ -2,6 +2,7 @@ package daemonctl
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -252,11 +253,43 @@ func AcquireDaemonLifecycleLockAt(path string) (*os.File, error) {
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = file.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-			return nil, fmt.Errorf("another daemon start/stop is already in progress")
+			return nil, ErrDaemonLifecycleBusy
 		}
 		return nil, fmt.Errorf("lock daemon lifecycle: %w", err)
 	}
 	return file, nil
+}
+
+var ErrDaemonLifecycleBusy = errors.New("another daemon start/stop is already in progress")
+
+// AcquireDaemonLifecycleLockContext lets implicit startup callers join an
+// existing lifecycle operation without nesting locks or ignoring cancellation.
+// Explicit start/stop commands retain their nonblocking lock behavior.
+func AcquireDaemonLifecycleLockContext(ctx context.Context) (*os.File, error) {
+	dir, err := daemonStateDir()
+	if err != nil {
+		return nil, fmt.Errorf("select daemon state: %w", err)
+	}
+	return AcquireDaemonLifecycleLockAtContext(ctx, filepath.Join(dir, "daemon.lock"))
+}
+
+func AcquireDaemonLifecycleLockAtContext(ctx context.Context, path string) (*os.File, error) {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		file, err := AcquireDaemonLifecycleLockAt(path)
+		if !errors.Is(err, ErrDaemonLifecycleBusy) {
+			return file, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // abandonStartedDaemon terminates and reaps a child whose startup could not be
