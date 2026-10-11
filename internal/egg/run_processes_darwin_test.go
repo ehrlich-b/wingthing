@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -169,6 +170,25 @@ func TestSessionGroupPermissionErrorWithLiveMembers(t *testing.T) {
 	}
 }
 
+func TestSessionTerminationReportsLiveMembersAtDeadline(t *testing.T) {
+	// Observe our live group without signalling it. A reaped leader is not
+	// sufficient for success if any other group member can still run.
+	done := make(chan struct{})
+	close(done)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- waitSessionTermination(ctx, done, syscall.Getpgrp()) }()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "live group members=true") {
+			t.Fatalf("live group at termination deadline: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("live group inventory ignored the termination deadline")
+	}
+}
+
 func TestSessionGroupExitStates(t *testing.T) {
 	// Native reproductions return SRUN (2), P_LP64|P_CONTROLT|P_EXEC|P_WEXIT
 	// (0x6006) for the exiting Go MCP child. Keep this regression deterministic
@@ -182,6 +202,7 @@ func TestSessionGroupExitStates(t *testing.T) {
 		{"zombie", []unix.ExternProc{{P_stat: 5}}, false},
 		{"exiting_runnable_mcp", []unix.ExternProc{{P_stat: 2, P_flag: 0x6006}}, false},
 		{"exiting_sleeping", []unix.ExternProc{{P_stat: 3, P_flag: 0x2000}}, false},
+		{"exiting_stopped", []unix.ExternProc{{P_stat: 4, P_flag: 0x2000}}, false},
 		{"zombie_and_exiting", []unix.ExternProc{{P_stat: 5}, {P_stat: 2, P_flag: 0x6006}}, false},
 		{"runnable", []unix.ExternProc{{P_stat: 2}}, true},
 		{"sleeping", []unix.ExternProc{{P_stat: 3}}, true},
@@ -202,5 +223,22 @@ func TestSessionGroupExitStates(t *testing.T) {
 				t.Fatalf("live group members = %t, want %t", got, test.live)
 			}
 		})
+	}
+}
+
+func TestProcessSnapshotExcludesTerminatedDarwinMembers(t *testing.T) {
+	members := []unix.KinfoProc{
+		{Proc: unix.ExternProc{P_pid: 11, P_stat: 2, P_flag: 0x6006}},
+		{Proc: unix.ExternProc{P_pid: 12, P_stat: 5}},
+		{Proc: unix.ExternProc{P_pid: 13, P_stat: 4, P_flag: 0x2000}},
+		{Proc: unix.ExternProc{P_pid: 14, P_stat: 3, P_starttime: unix.Timeval{Sec: 123, Usec: 456}}, Eproc: unix.Eproc{Ppid: 10, Pgid: 14}},
+	}
+	snapshot := darwinProcessSnapshot(members)
+	if len(snapshot) != 1 || snapshot[14].RunDescendant != (RunDescendant{PID: 14, ParentPID: 10, ProcessGroupID: 14}) {
+		t.Fatalf("live descendant snapshot: %+v", snapshot)
+	}
+	members[3].Proc.P_starttime.Usec++
+	if next := darwinProcessSnapshot(members); next[14].start == snapshot[14].start {
+		t.Fatal("snapshot did not distinguish a reused PID's start time")
 	}
 }

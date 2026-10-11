@@ -1,6 +1,7 @@
 package egg
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"syscall"
@@ -8,10 +9,50 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func sessionProcessGroupAlive(_ context.Context, pgid int) (bool, error) {
+	members, err := unix.SysctlKinfoProcSlice("kern.proc.pgrp", pgid)
+	if err != nil {
+		return false, fmt.Errorf("inspect session process group: %w", err)
+	}
+	return sessionGroupHasLiveMembers(members), nil
+}
+
 const (
 	processStateZombie = 5      // SZOMB in sys/proc.h
 	processFlagExiting = 0x2000 // P_WEXIT in sys/proc.h
 )
+
+func processSnapshotContext(ctx context.Context) (map[int]observedProcess, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// ps's state column loses P_WEXIT and can label exiting processes SRUN.
+	// Use the same kernel exit states as the group termination check, retaining
+	// only identity fields and the start time needed to reject PID reuse.
+	members, err := unix.SysctlKinfoProcSlice("kern.proc.all")
+	if err != nil {
+		return nil, fmt.Errorf("process descendant inventory unavailable: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return darwinProcessSnapshot(members), nil
+}
+
+func darwinProcessSnapshot(members []unix.KinfoProc) map[int]observedProcess {
+	out := make(map[int]observedProcess, len(members))
+	for _, member := range members {
+		if !sessionProcessLive(member.Proc) {
+			continue
+		}
+		pid := int(member.Proc.P_pid)
+		out[pid] = observedProcess{
+			RunDescendant: RunDescendant{pid, int(member.Eproc.Ppid), int(member.Eproc.Pgid)},
+			start:         fmt.Sprintf("%d.%06d", member.Proc.P_starttime.Sec, member.Proc.P_starttime.Usec),
+		}
+	}
+	return out
+}
 
 func sessionGroupSignalError(pgid int, signalErr error) error {
 	if !errors.Is(signalErr, syscall.EPERM) {
@@ -37,9 +78,13 @@ func sessionGroupSignalError(pgid int, signalErr error) error {
 
 func sessionGroupHasLiveMembers(members []unix.KinfoProc) bool {
 	for _, member := range members {
-		if member.Proc.P_stat != processStateZombie && member.Proc.P_flag&processFlagExiting == 0 {
+		if sessionProcessLive(member.Proc) {
 			return true
 		}
 	}
 	return false
+}
+
+func sessionProcessLive(process unix.ExternProc) bool {
+	return process.P_stat != processStateZombie && process.P_flag&processFlagExiting == 0
 }
