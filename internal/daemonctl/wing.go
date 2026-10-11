@@ -14,9 +14,23 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 )
 
-// restartWingDaemonIfRunning stops the running wing daemon and starts a new one
-// with the same args so it picks up the new auth token.
-func RestartWingDaemonIfRunning() error {
+// RestartWingDaemonIfRunning preserves the running wing's transport choice.
+func RestartWingDaemonIfRunning() error { return restartWingDaemonIfRunning(false) }
+
+// RestartWingDaemonAfterLogin enables the relay explicitly requested by wt login.
+// Existing state, key, roost and session configuration remain the same.
+func RestartWingDaemonAfterLogin() error { return restartWingDaemonIfRunning(true) }
+
+func relayArgsAfterLogin(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg != "--local-only" && !strings.HasPrefix(arg, "--local-only=") {
+			out = append(out, arg)
+		}
+	}
+	return out
+}
+func restartWingDaemonIfRunning(enableRelay bool) error {
 	lifecycleLock, lockErr := AcquireDaemonLifecycleLock()
 	if lockErr != nil {
 		return lockErr
@@ -39,6 +53,10 @@ func RestartWingDaemonIfRunning() error {
 	savedArgs, err := ParseSavedDaemonArgs(argsData, WingDaemon)
 	if err != nil {
 		return fmt.Errorf("can't use wing.args (stop and restart manually: wt stop && wt start): %w", err)
+	}
+
+	if enableRelay {
+		savedArgs = relayArgsAfterLogin(savedArgs)
 	}
 
 	// Stop the old daemon
