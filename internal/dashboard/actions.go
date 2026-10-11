@@ -57,7 +57,14 @@ func runCommand(ctx context.Context, args []string, streams remotepkg.IO) error 
 		})
 	}
 	if !claude {
-		return command.Run()
+		var diagnostic actionDiagnostic
+		if streams.ErrOut != nil {
+			command.Stderr = io.MultiWriter(streams.ErrOut, &diagnostic)
+		}
+		if err := command.Run(); err != nil {
+			return fmt.Errorf("%w; Enter retries through fresh resolution. %s", err, diagnostic.text)
+		}
+		return nil
 	}
 	reader, writer, err := os.Pipe()
 	if err != nil {
@@ -76,6 +83,23 @@ func runCommand(ctx context.Context, args []string, streams remotepkg.IO) error 
 		return &launchActionError{cause: err, diagnostic: d.Bounded()}
 	}
 	return err
+}
+
+// Retain only a small tail of attach diagnostics for the restored navigator.
+// Terminal/provider output continues directly to its original destination.
+type actionDiagnostic struct{ text string }
+
+func (d *actionDiagnostic) Write(data []byte) (int, error) {
+	const limit = 4096
+	n := len(data)
+	if len(data) > limit {
+		data = data[len(data)-limit:]
+	}
+	d.text += string(data)
+	if len(d.text) > limit {
+		d.text = d.text[len(d.text)-limit:]
+	}
+	return n, nil
 }
 
 func qualifyLaunchAction(err error, machine string) error {
@@ -165,7 +189,14 @@ func actionArgs(act action, remotes map[string]config.Remote) ([]string, error) 
 		if act.row.machine != "local" {
 			ref = act.row.machine + ":" + ref
 		}
-		return []string{"attach", "--", ref}, nil
+		args := []string{"attach"}
+		if act.readOnly {
+			args = append(args, "--read-only")
+		}
+		if act.takeover {
+			args = append(args, "--takeover")
+		}
+		return append(args, "--", ref), nil
 	}
 	var args []string
 	if act.row.machine != "local" {
