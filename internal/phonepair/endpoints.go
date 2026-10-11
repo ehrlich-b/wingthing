@@ -29,9 +29,6 @@ func directEndpoints(port int) []string {
 	if len(hosts) > 3 {
 		hosts = hosts[:3]
 	}
-	if len(hosts) == 0 {
-		hosts = append(hosts, "127.0.0.1")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	binary, e := exec.LookPath("tailscale")
@@ -39,9 +36,18 @@ func directEndpoints(port int) []string {
 		binary = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 	}
 	data, e := exec.CommandContext(ctx, binary, "status", "--json").Output()
-	if e == nil && len(data) <= 1<<20 {
-		hosts = append(hosts, tailnetHosts(data)...)
+	if e != nil || len(data) > 1<<20 {
+		data = nil
 	}
+	return directEndpointURLs(port, hosts, data)
+}
+
+func directEndpointURLs(port int, lan []string, tailnetStatus []byte) []string {
+	hosts := append([]string(nil), lan...)
+	if len(hosts) == 0 {
+		hosts = append(hosts, "127.0.0.1")
+	}
+	hosts = append(hosts, tailnetHosts(tailnetStatus)...)
 	var endpoints []string
 	seen := map[string]bool{}
 	for _, host := range hosts {

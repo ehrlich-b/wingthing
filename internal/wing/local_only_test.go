@@ -1,9 +1,11 @@
 package wing
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,8 +16,11 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
+	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/pake"
+	"github.com/ehrlich-b/wingthing/internal/phonepair"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
@@ -122,6 +127,14 @@ func localOnlyCall(t *testing.T, client *controlsocket.Client, tool string, argu
 }
 
 func TestLocalOnlyWingBootsWithoutTokens(t *testing.T) {
+	testWingBootsWithoutTokens(t, true)
+}
+
+func TestDefaultWingBootsWithoutAccountOrRelay(t *testing.T) {
+	testWingBootsWithoutTokens(t, false)
+}
+
+func testWingBootsWithoutTokens(t *testing.T, forceLocalOnly bool) {
 	state, home, work := localOnlyState(t)
 	// A configured relay is deliberately unusable, and no token exists.
 	if err := os.MkdirAll(state, 0700); err != nil {
@@ -130,7 +143,37 @@ func TestLocalOnlyWingBootsWithoutTokens(t *testing.T) {
 	if err := config.SaveWingConfig(state, &config.WingConfig{Roost: "http://127.0.0.1:1"}); err != nil {
 		t.Fatal(err)
 	}
-	runtime := startLocalOnlyRuntime(t, home, work, "", EntryOptions{LocalOnly: true, RelayState: func(string, error) { t.Error("local-only wing attempted relay connectivity") }}, nil)
+	runtime := startLocalOnlyRuntime(t, home, work, "", EntryOptions{LocalOnly: forceLocalOnly, RelayState: func(string, error) { t.Error("accountless wing attempted relay connectivity") }}, nil)
+	status, err := daemonctl.ReadWingStatus()
+	if err != nil || status.RoostURL != "" {
+		t.Fatalf("accountless wing advertised a relay: %+v %v", status, err)
+	}
+	if pake.Available {
+		data, err := os.ReadFile(filepath.Join(state, "phone-control.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var control phonepair.Control
+		if err := json.Unmarshal(data, &control); err != nil {
+			t.Fatal(err)
+		}
+		req, err := http.NewRequestWithContext(t.Context(), "POST", fmt.Sprintf("http://127.0.0.1:%d/admin", control.Port), bytes.NewBufferString(`{"Op":"create"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+control.Token)
+		client := &http.Client{Transport: &http.Transport{Proxy: nil}}
+		defer client.CloseIdleConnections()
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var q phonepair.Invitation
+		if err := json.NewDecoder(resp.Body).Decode(&q); err != nil || resp.StatusCode != http.StatusOK || q.Relay != "" || q.WingID != runtime.service.Config.WingID || q.Secret == "" {
+			t.Fatalf("no-account invitation: %+v error=%v", q, err)
+		}
+	}
 	client := localOnlyClient(t, state, controlsocket.Hello{})
 	owner, err := config.EnsureLocalOwner(state, "")
 	if err != nil {

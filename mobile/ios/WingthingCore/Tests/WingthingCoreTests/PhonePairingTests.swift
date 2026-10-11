@@ -114,6 +114,7 @@ private final class PairingPeer {
     func nativePAKEAndDeviceProofTalkToRealGoWing() async throws {
         let peer = try PairingPeer(binary: ProcessInfo.processInfo.environment["WT_PAIRING_TEST_PEER"]!)
         let start = try peer.line(); let q = try PairingInvitation(link: start["link"]!.string!)
+        #expect(q.relay == nil)
         let enrollment = try PhoneEnrollment(invitation: q, signingKey: PhoneSigningKey(useEnclave: false))
         try await enrollment.start(); #expect(enrollment.emoji != nil)
         #expect(try await enrollment.confirm(emoji: enrollment.emoji!) == nil)
@@ -121,6 +122,7 @@ private final class PairingPeer {
         let paired = try await enrollment.status(); #expect(paired != nil)
         let (wing, secret) = paired!
         #expect(wing.name == "EhrlichMac"); #expect(wing.wingID == "fixture-main-wing")
+        #expect(wing.relay == nil)
         let client = PhoneConnection(wing: wing, secret: secret)
         try await client.connect()
         async let firstList = client.sessions()

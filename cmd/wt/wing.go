@@ -30,7 +30,7 @@ func wingCmd() *cobra.Command {
 		Use:     "daemon",
 		Aliases: []string{"wing"},
 		Short:   "Run this machine’s wing, locally or through a relay",
-		Long:    "Runs this machine’s wing and local control socket.\nUse 'wt wing start --local-only' without an account or relay.",
+		Long:    "Runs this machine’s wing and local control socket.\nWithout registration, 'wt wing start' defaults to local-only; no account or relay is needed.",
 	}
 
 	cmd.AddCommand(wingStartCmd())
@@ -63,7 +63,7 @@ func wingStartCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the wing runtime and local control socket",
-		Long:  "Start a wing and its local MCP control socket. Use --local-only to run without login, a roost or any relay connection. Runs as a background daemon by default. Use --foreground for debugging.",
+		Long:  "Start a wing and its local MCP control socket. Without registration, local-only is the default. Use --local-only to keep an already registered wing off the relay. Runs as a background daemon by default. Use --foreground for debugging.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if localOnlyFlag && (localFlag || roostFlag != "" || orgFlag != "") {
 				return fmt.Errorf("--local-only cannot be combined with --local, --roost or --org")
@@ -138,8 +138,14 @@ func wingStartCmd() *cobra.Command {
 				startupErr := fmt.Errorf("wing daemon exited before readiness; inspect %s", daemonctl.WingLogPath())
 				return errors.Join(startupErr, cmdutil.RemoveFiles(daemonctl.WingPidPath(), daemonctl.WingArgsPath(), daemonctl.WingStatusPath()))
 			case "local":
+				if status, err := daemonctl.ReadWingStatus(); err == nil && status.RoostURL == "" {
+					localOnlyFlag = true
+				}
 				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
 				fmt.Println("  local control: ready")
+				if localOnlyFlag {
+					fmt.Println("  Local network only. That's fine; nothing else needed.")
+				}
 			case "auth_failed":
 				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
 				fmt.Println("  relay: authentication rejected; local control remains available")
@@ -168,7 +174,7 @@ func wingStartCmd() *cobra.Command {
 			fmt.Printf("  log: %s\n", daemonctl.WingLogPath())
 			fmt.Println()
 			if localOnlyFlag {
-				fmt.Println("use wt mcp stdio with this WINGTHING_DIR to control the wing")
+				fmt.Println("use wt pair to connect your phone, or wt mcp stdio to control the wing")
 			} else if cfgLoaded, cfgErr := config.Load(); cfgErr == nil {
 				browserURL := wingpolicy.RoostBrowserURL(wingpolicy.ResolveWingRelayHTTPURL(cfgLoaded, roostFlag, localFlag))
 				fmt.Printf("open %s for wing status and direct-agent setup\n", browserURL)
