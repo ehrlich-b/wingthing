@@ -778,6 +778,8 @@ func oauthDecide(t *testing.T, base, rid, session, action string) string {
 	form := url.Values{"rid": {rid}, "action": {action}}
 	req, _ := http.NewRequest("POST", base+"/oauth/authorize", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "null")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	req.AddCookie(&http.Cookie{Name: "wt_session", Value: session})
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)

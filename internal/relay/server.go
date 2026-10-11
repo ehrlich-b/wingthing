@@ -579,6 +579,11 @@ func localBrowserMutationAllowed(r *http.Request) bool {
 		// for unsafe methods and are checked below.
 		return true
 	}
+	// Referrer-Policy: no-referrer makes browser form POSTs send Origin: null.
+	// Only browser-controlled fetch metadata can establish same-origin here.
+	if origin == "null" {
+		return r.Header.Get("Sec-Fetch-Site") == "same-origin"
+	}
 	parsed, err := url.Parse(origin)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" {
 		return false
@@ -606,12 +611,10 @@ func (s *Server) hostedBrowserMutationAllowed(r *http.Request) bool {
 		// CLI, wing, OAuth, and MCP clients do not send browser Origin metadata.
 		return true
 	}
-	// The consent document is served with Referrer-Policy: no-referrer. Chromium
-	// therefore serializes the same-origin form POST's Origin as "null". This
-	// one route is still protected by Sec-Fetch-Site above and by its
-	// authenticated, user-bound, single-use authorization request ID.
-	if origin == "null" && r.Method == http.MethodPost && r.URL.Path == "/oauth/authorize" {
-		return true
+	// Referrer-Policy: no-referrer makes browser form POSTs send Origin: null.
+	// Only browser-controlled fetch metadata can establish same-origin here.
+	if origin == "null" {
+		return r.Header.Get("Sec-Fetch-Site") == "same-origin"
 	}
 	parsed, err := url.Parse(origin)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil ||
