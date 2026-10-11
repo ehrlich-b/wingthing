@@ -115,7 +115,7 @@ export function onChatSnapshot(listener) {
 
 export function chatSnapshot() { return snapshot; }
 export function stopChatExecution() { return reader ? reader.stopExecution() : Promise.resolve(false); }
-export function refreshChat() { if (reader) reader.refresh(); }
+export function refreshChat() { return reader ? reader.refresh() : Promise.resolve(); }
 
 // target: { sessionId, wingId, conversationId?, providerSessionId? }. Opening
 // never prompts, checks receipts, checkpoints, or attaches a terminal writer.

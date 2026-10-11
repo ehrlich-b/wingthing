@@ -5,7 +5,7 @@ import { initTerminal, sendPTYInput } from './terminal.js';
 import { showHome, showTerminal, showCanvas, switchToSession, navigateToWingDetail, navigateToAccount, deleteSession } from './nav.js';
 import { initCanvas, isCanvasActive, canvasSpawnAtCenter, toggleCanvasMode } from './canvas.js';
 import { setCanvasLaunchCallback } from './palette.js';
-import { initChatView } from './chat-view.js';
+import { initChatView, refreshChat } from './chat-view.js';
 import { detachPTY, disconnectPTY, retryReconnect, attachPTY, handlePTYPasskey } from './pty.js';
 import { showPalette, hidePalette, cyclePaletteAgent, cyclePaletteWing, navigatePalette, tabCompletePalette, launchFromPalette, debouncedDirList, isDirListPending } from './palette.js';
 import { connectAppWS } from './dashboard.js';
@@ -21,6 +21,7 @@ import { sessionRoute, parseSessionRoute } from './session-route.js';
 import { restoreConversationRoute } from './conversation-view.js';
 import { initParentDot } from './parent-dot.js';
 import { conversationViewport } from './mobile-viewport.js';
+import { createForegroundRefresh } from './phone-refresh.js';
 
 function denyBrowserRelayView() {
     history.replaceState({ view: 'home' }, '', location.pathname);
@@ -39,10 +40,29 @@ async function init() {
             return;
         }
         S.currentUser = await resp.json();
+        document.getElementById('phone-access-link').hidden = resp.headers.get('X-Wingthing-Phone-Gateway') !== '1';
         scopeBrowserStateToUser(S.currentUser.id);
         loadTunnelAuthTokens();
         DOM.userInfo.textContent = S.currentUser.display_name || 'user';
     } catch (e) { loginRedirect(); return; }
+
+    var refreshPhone = createForegroundRefresh(async function() {
+        await loadHome();
+        if (DOM.terminalSection.classList.contains('chat-active')) await refreshChat();
+    }, function() { return document.visibilityState === 'visible'; });
+    function refreshOnReturn() { refreshPhone().catch(function() { /* Existing status remains unknown until a successful read. */ }); }
+    document.addEventListener('visibilitychange', refreshOnReturn);
+    window.addEventListener('pageshow', refreshOnReturn);
+    window.addEventListener('online', refreshOnReturn);
+    document.getElementById('phone-refresh').addEventListener('click', async function() {
+        var button = document.getElementById('phone-refresh');
+        var status = document.getElementById('phone-refresh-status');
+        button.disabled = true;
+        status.textContent = 'Checking agents…';
+        try { await refreshPhone(); status.textContent = 'Refresh requested. Agent status below shows the latest evidence.'; }
+        catch (e) { status.textContent = 'Could not refresh. Reconnect and try again.'; }
+        finally { button.disabled = false; }
+    });
 
     if (S.currentUser.relay_allowed === false && DOM.directAgentSetup) {
         DOM.directAgentSetup.style.display = '';
