@@ -17,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
@@ -49,6 +50,9 @@ func committedInventoryServer(t *testing.T, wingID string, seed func(*store.Stor
 
 func commitInventoryRun(t *testing.T, db *store.Store, id, principal, user, cwd, status, output string, at time.Time, task *wingsession.MCPTaskRecord) {
 	t.Helper()
+	// Real MCP admission canonicalizes cwd in PrepareMCPLaunch before storing
+	// the run. Preserve that invariant when seeding terminal records directly.
+	cwd = wingpolicy.CanonicalSessionPath(cwd)
 	run := wingsession.Run{ID: id, SessionID: "session-" + id, Agent: "codex", CWD: cwd, CreatedAt: at, Phase: "terminal", Launch: wingsession.RunLaunch{Authority: wingsession.Authority{Principal: principal, UserID: user}}, Result: egg.RunTurnResult{RunID: id, SessionID: "session-" + id, Status: status, Text: output, EndedAt: at}, MCPTask: task}
 	if status == "failed" {
 		run.Result.FailureKind = agent.UnknownOutcome
@@ -73,15 +77,21 @@ func TestRunInventoryTwoWingsIdenticalIDsRespectLiveOwnerAndPathPolicies(t *test
 			if err := os.MkdirAll(allowed, 0700); err != nil {
 				t.Fatal(err)
 			}
+			// Exercise a path alias even when TMPDIR has no symlink (unlike
+			// macOS's /var -> /private/var default).
+			alias := filepath.Join(cfg.Dir, "allowed-alias")
+			if err := os.Symlink(allowed, alias); err != nil {
+				t.Fatal(err)
+			}
 			principal := wingsession.UserPrincipal("wing-user")
 			at := time.Now().UTC()
-			commitInventoryRun(t, db, "same-id", principal, "wing-user", allowed, "done", "owned result", at, nil)
-			commitInventoryRun(t, db, "next-owned", principal, "wing-user", allowed, "done", "next result", at, nil)
-			commitInventoryRun(t, db, "0-foreign-owner", "other", "wing-user", allowed, "done", "SECRET OWNER", at, nil)
-			commitInventoryRun(t, db, "0-foreign-user", principal, "other-user", allowed, "done", "SECRET USER", at, nil)
+			commitInventoryRun(t, db, "same-id", principal, "wing-user", alias, "done", "owned result", at, nil)
+			commitInventoryRun(t, db, "next-owned", principal, "wing-user", alias, "done", "next result", at, nil)
+			commitInventoryRun(t, db, "0-foreign-owner", "other", "wing-user", alias, "done", "SECRET OWNER", at, nil)
+			commitInventoryRun(t, db, "0-foreign-user", principal, "other-user", alias, "done", "SECRET USER", at, nil)
 			commitInventoryRun(t, db, "0-foreign-cwd", principal, "wing-user", filepath.Join(cfg.Dir, "outside"), "done", "SECRET PATH", at, nil)
 		})
-		path := filepath.Join(s.Cfg.Dir, "allowed")
+		path := filepath.Join(s.Cfg.Dir, "allowed-alias")
 		wc.Paths = config.PathList{{Path: path, Members: []string{"member@example.test"}}}
 		wc.DirectMCP = &config.DirectMCPConfig{AllowGrants: []string{"agent.read"}}
 		identity := webrtcpkg.PeerIdentity{UserID: "wing-user", Email: "member@example.test", OrgRole: "member"}
@@ -132,13 +142,17 @@ func TestRunInventoryTwoWingsIdenticalIDsRespectLiveOwnerAndPathPolicies(t *test
 		if len(second.Runs) != 1 || second.Runs[0].ID != "same-id" || second.Runs[0].Wing != wingID {
 			t.Fatalf("identity collision: %v", data)
 		}
+		if run, err := s.Sessions.RunManager.Get(direct.sessionAuthority(), second.Runs[0].ID); err != nil || run.CWD != policy.allowedPaths[0] {
+			t.Fatalf("inventory and known-ID path authorization differ: %+v %v", run, err)
+		}
 		keys[second.Runs[0].Wing+"/"+second.Runs[0].ID] = true
 		// The receiving socket scope and client-owner mapping reproduce the same
 		// restriction without granting inventory to a legacy scoped mailbox.
 		if err = os.WriteFile(filepath.Join(s.Cfg.Dir, "clients.yaml"), []byte("clients:\n  reader:\n    owner: default\n    grants: [agent.read]\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		scope, _ := json.Marshal(wingCallScope{Paths: []string{path}, Tools: []string{"agent_list"}, MaxSessions: 1, MaxSpawnsPerHour: 1})
+		// Mailbox scopes carry canonical paths captured from the resolved policy.
+		scope, _ := json.Marshal(wingCallScope{Paths: policy.allowedPaths, Tools: []string{"agent_list"}, MaxSessions: 1, MaxSpawnsPerHour: 1})
 		local, err := resolveLocalWingClient("fixture", s.Sessions, "wing-user", NewMCPAdmissionState(), controlsocket.Hello{Client: "reader", Scope: string(scope)})
 		if err != nil {
 			t.Fatal(err)

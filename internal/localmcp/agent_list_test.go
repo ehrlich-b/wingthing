@@ -156,7 +156,7 @@ func TestAgentListSerializedAdaptersReturnSameDurableIdentities(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = p.Close() })
 	remembered := &rememberedWings{wingID: "coordinator", pools: map[controlsocket.Hello]*wingconnect.Pool{hello: p}, ctx: t.Context()}
-	coordinator := &Server{Cfg: &config.Config{Dir: dir}, Logs: io.Discard, Grants: map[string]bool{"agent.read": true}}
+	coordinator := &Server{Version: f.server.Version, Cfg: &config.Config{Dir: dir}, Logs: io.Discard, Grants: map[string]bool{"agent.read": true}}
 	response := remembered.dispatch(t.Context(), coordinator, hello, control.DirectRequest{Version: control.ContractVersion, ID: "ssh-shape", Tool: "agent_list", Arguments: json.RawMessage(`{"wing_id":"fixture-wing"}`)})
 	if err = response.Err(); err != nil || response.IsError || !reflect.DeepEqual(inventoryIDs(t, response.Result), expected) {
 		t.Fatalf("remembered: %+v %v", response, err)
@@ -172,7 +172,7 @@ func TestAgentListSerializedAdaptersReturnSameDurableIdentities(t *testing.T) {
 
 func TestAgentListGrantBoundsAndUnsupportedErrors(t *testing.T) {
 	f := prepareListFixture(t)
-	restricted := &Server{Cfg: f.server.Cfg, Logs: f.server.Logs, Sessions: f.service, Principal: f.server.Principal,
+	restricted := &Server{Version: f.server.Version, Cfg: f.server.Cfg, Logs: f.server.Logs, Sessions: f.service, Principal: f.server.Principal,
 		identity: f.server.identity, Grants: map[string]bool{"terminal.read": true}}
 	data, denied, rpc := restricted.callTool(t.Context(), "agent_list", json.RawMessage(`{}`))
 	if !denied || rpc != nil || data["runs"] != nil {

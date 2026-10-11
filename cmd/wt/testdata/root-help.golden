@@ -5,7 +5,7 @@ Usage:
   wt [command]
 
 Available Commands:
-  agent        Manage agent adapters
+  agent        Manage agent adapters and durable runs
   attach       Attach this terminal to a running egg session
   channel      Show executable channel, isolated state, and update feed
   claude       Start and attach to a wing-owned Claude parent with scoped MCP
