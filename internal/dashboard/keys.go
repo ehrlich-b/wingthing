@@ -32,6 +32,15 @@ func (d *keyDecoder) feed(input []byte) []string {
 					keys = append(keys, key)
 				}
 			}
+			if d.pending[1] == '[' && d.pending[end] == '~' {
+				if key := map[string]string{"5": "pageup", "6": "pagedown", "1": "home", "4": "end"}[string(d.pending[2:end])]; key != "" {
+					keys = append(keys, key)
+				}
+			} else if end == 2 {
+				if key := map[byte]string{'H': "home", 'F': "end"}[d.pending[end]]; key != "" {
+					keys = append(keys, key)
+				}
+			}
 			d.pending = d.pending[end+1:]
 			continue
 		}
