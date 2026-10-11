@@ -10,6 +10,7 @@ import shlex
 import sys
 
 from contracts import timestamp, utc
+from ledger import plan
 
 HERE = Path(__file__).resolve().parent
 
@@ -111,6 +112,7 @@ def prepare(repo, out, until):
                           "".join("export " + k + "=" + shlex.quote(v) + "\n" for k, v in environment.items()),
              "install.sh": script("install", repo), "remove.sh": script("remove", repo)}
     manifest = {"schema": 1, "repo": str(repo), "epoch": timestamp(epoch), "until": timestamp(end),
+                "evidence_contract": plan(timestamp(epoch), timestamp(end)),
                 "files": {name: hashlib.sha256(data.encode()).hexdigest() for name, data in files.items()}}
     if old_manifest is not None:
         if old_manifest != manifest:

@@ -1,5 +1,6 @@
 """Offline functional fixtures for the finite forge package, never installed wt."""
 import fcntl
+import datetime
 import importlib.util
 import json
 import os
@@ -57,6 +58,7 @@ class ForgeFixture(unittest.TestCase):
         self.scripts.mkdir(parents=True)
         shutil.copyfile(HERE / "run.py", self.scripts / "run.py")
         shutil.copyfile(HERE / "contracts.py", self.scripts / "contracts.py")
+        shutil.copyfile(HERE / "ledger.py", self.scripts / "ledger.py")
         fake = self.scripts / "canary.sh"
         fake.write_text(FAKE_CANARY.replace("#!/usr/bin/env python3", "#!" + sys.executable))
         fake.chmod(0o700)
@@ -231,8 +233,11 @@ class PackageFixture(ForgeFixture):
         (self.repo / "wt").write_text("#!/bin/sh\nexit 99\n")
         (self.repo / "wt").chmod(0o700)
         self.package = self.root / "package with spaces"
+        self.until = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=2)).replace(
+            microsecond=0).isoformat().replace("+00:00", "Z")
 
-    def prepare(self, until="2099-01-01T00:00:00Z"):
+    def prepare(self, until=None):
+        until = until or self.until
         return subprocess.run([sys.executable, "-B", str(HERE / "prepare-forge.py"),
                                "--repo", str(self.repo), "--out", str(self.package),
                                "--until", until], capture_output=True, text=True, timeout=5)
@@ -253,7 +258,7 @@ class PreparationTests(PackageFixture):
         self.assertEqual(subprocess.run(["bash", "-n", str(self.package / "remove.sh")]).returncode, 0)
         env = subprocess.run(["bash", "-c", 'source "$1"; printf "%s\\n" "$WT_DOGFOOD_REPO" "$WT_DOGFOOD_UNTIL"',
                               "fixture", str(self.package / "forge.env")], capture_output=True, text=True)
-        self.assertEqual(env.stdout.splitlines(), [str(self.repo), "2099-01-01T00:00:00Z"])
+        self.assertEqual(env.stdout.splitlines(), [str(self.repo), manifest["until"]])
         service = (self.package / "wingthing-dogfood.service").read_text()
         self.assertIn('$${WT_DOGFOOD_REPO}', service)
         self.assertIn("UMask=0077", service)
@@ -507,7 +512,8 @@ with open(os.environ['FIXTURE_SYSTEMCTL_CAPTURE'], 'a') as stream:
         self.assertIn("Persistent=false", timer)
         environment.update(WT_DOGFOOD_EPOCH="2000-01-01T00:00:00Z", WT_DOGFOOD_UNTIL="2000-01-02T00:00:00Z")
         result = subprocess.run(argv, env=environment, capture_output=True, text=True, timeout=5)
-        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("immutable", result.stdout)
         self.assertEqual((self.repo / "invocations").read_text().splitlines(), ["success"])
 
     def test_actual_concurrent_wrapper_never_starts_second_canary(self):

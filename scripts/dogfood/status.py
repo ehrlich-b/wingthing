@@ -10,6 +10,7 @@ import sys
 
 from contracts import (CHECKS, INTERVAL_SECONDS, LOG_COUNT, MAILBOX, OPTIONAL,
                        SLACK_SECONDS, STATUSES, read_json, read_receipt, timestamp, utc)
+from ledger import LEDGER_NAME, consume, read_ledger
 
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -119,6 +120,20 @@ def report(logs, now):
     except (ValueError, TypeError) as error:
         diagnostics.append(str(error))
     gap_report = gaps(starts, now, epoch, until)
+    epoch_evidence = None
+    ledger_path = logs / LEDGER_NAME
+    if ledger_path.exists() or ledger_path.is_symlink():
+        epoch_evidence = consume(read_ledger(ledger_path), now)
+        if epoch_evidence["epoch"]:
+            frozen = epoch_evidence["epoch"]
+            if epoch and (timestamp(epoch) != frozen["epoch"] or timestamp(until) != frozen["until"]):
+                diagnostics.append("runner state and immutable ledger disagree on epoch")
+            epoch, until = utc(frozen["epoch"]), utc(frozen["until"])
+            gap_report = [{"kind": "missing-slot", "slot": slot["slot"], "after": slot["planned_at"],
+                           "missing_expected_runs": 1} for slot in epoch_evidence["slots"] if slot["status"] == "missing"]
+        if epoch_evidence["attention_required"]:
+            diagnostics.append("whole finite epoch has failure, missing, unavailable or unknown evidence")
+        diagnostics.extend(epoch_evidence["diagnostics"])
     platform = runner.get("platform")
     if not isinstance(platform, str):
         platform = None
@@ -175,6 +190,7 @@ def report(logs, now):
             "checks": checks, "required_unavailable": required_unavailable,
             "optional_unavailable": optional_skips, "unsupported": unsupported,
             "last_cleanup": cleanup, "diagnostics": diagnostics,
+            "epoch_evidence": epoch_evidence,
             "source_identity_scope": "tracked checkout bytes at run start; binary identity is independent",
             "required_unrun": ["real Linux/systemd acceptance", "real provider acceptance"]}, code
 
@@ -195,6 +211,8 @@ def main():
         print(result["overall"])
         print("Last complete run: " + str(result["last_complete_run"]))
         print("Gaps: " + str(result["schedule"]["gaps"]))
+        if result["epoch_evidence"]:
+            print("Whole epoch: " + str(result["epoch_evidence"]["counts"]))
         print("Required unavailable: " + ", ".join(result["required_unavailable"]))
         print("Optional unavailable: " + ", ".join(result["optional_unavailable"]))
         print("Unsupported: " + ", ".join(result["unsupported"]))

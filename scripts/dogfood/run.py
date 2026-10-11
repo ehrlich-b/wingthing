@@ -3,11 +3,13 @@
 import collections
 import datetime
 import fcntl
+import hashlib
 import json
 import os
 import pathlib
 import queue
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -15,6 +17,8 @@ import tempfile
 import time
 
 from contracts import CHECKS, LOG_COUNT, LOG_LIMIT, STATUSES, read_json, read_receipt, source_identity, timestamp, utc
+from ledger import (LEDGER_NAME, append_record, begin_record, checked, cleanup_hold,
+                    ensure_epoch, result_record, rotation_ready, _sync_directory)
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 
@@ -26,13 +30,21 @@ def save_state(logs, state):
         with os.fdopen(descriptor, "w") as output:
             json.dump(state, output)
             output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
         temporary.replace(logs / "runner-state.json")
+        _sync_directory(logs)
     finally:
         temporary.unlink(missing_ok=True)
 
 
 def history(logs):
     """Recover legacy evidence too; a lock never supersedes a completed failure."""
+    ledger_path = logs / LEDGER_NAME
+    if ledger_path.exists() or ledger_path.is_symlink():
+        hold = cleanup_hold(checked(ledger_path))
+        if hold:
+            return hold
     state_file = logs / "runner-state.json"
     if state_file.exists():
         state = read_json(state_file)
@@ -94,15 +106,50 @@ def run_once(repo=REPO, arguments=None, timeout_seconds=12 * 60, cleanup_seconds
         if unresolved:
             return refuse("unresolved previous cleanup or interrupted runner; inspect retained state before continuing",
                           previous_receipt=previous.get("receipt"), expired=expired)
+        ledger_view = None
+        ledger_path = logs / LEDGER_NAME
+        try:
+            if ledger_path.exists() and not epoch:
+                raise ValueError("existing finite ledger requires its original epoch environment")
+            if epoch and (not expired or ledger_path.exists()):
+                ledger_view = ensure_epoch(logs, epoch, until, socket.gethostname())
+                if cleanup_hold(ledger_view):
+                    raise ValueError("unresolved previous cleanup in imported ledger")
+        except (OSError, ValueError, TypeError) as error:
+            return refuse(str(error))
         if expired:
             return refuse("finite epoch expired; no new canary started", 1 if previous.get("previous_failure") else 3,
                           epoch=epoch, until=until, previous_failure=previous.get("previous_failure", False))
 
         stamp = now.strftime("%Y%m%dT%H%M%S.%fZ")
         receipt = logs / (stamp + ".jsonl")
-        for stale in sorted(logs.glob("*.jsonl"))[:-(LOG_COUNT - 1)]:
-            stale.unlink()
         identity = source_identity(repo)
+        attempt = None
+        stale_receipts = sorted(logs.glob("*.jsonl"))[:-(LOG_COUNT - 1)]
+        try:
+            if ledger_view:
+                rotation_ready(ledger_path, stale_receipts)
+                binary = repo / "wt"
+                for index, argument in enumerate(arguments):
+                    if argument == "--wt" and index + 1 < len(arguments):
+                        binary = pathlib.Path(arguments[index + 1])
+                    elif argument.startswith("--wt="):
+                        binary = pathlib.Path(argument.split("=", 1)[1])
+                binary = binary.resolve()
+                binary_hash = None
+                if binary.is_file() and binary.is_relative_to(repo.resolve()):
+                    with binary.open("rb") as stream:
+                        digest = hashlib.sha256()
+                        for chunk in iter(lambda: stream.read(65536), b""):
+                            digest.update(chunk)
+                        binary_hash = digest.hexdigest()
+                attempt = begin_record(ledger_view["header"], stamp, receipt.name, timestamp(now),
+                                       dict(identity, binary_sha256=binary_hash))
+                append_record(ledger_path, attempt, reserve_result=True)
+            for stale in stale_receipts:
+                stale.unlink()
+        except (OSError, ValueError) as error:
+            return refuse(str(error))
         state = {"schema": 1, "phase": "running", "started_at": timestamp(now), "receipt": str(receipt),
                  "epoch": epoch, "until": until, "previous_failure": previous.get("previous_failure", False),
                  "cleanup_status": "unknown", **identity}
@@ -265,6 +312,14 @@ def run_once(repo=REPO, arguments=None, timeout_seconds=12 * 60, cleanup_seconds
                       "exit_code": code, "checks": count, "receipt": str(receipt), "cleanup_status": cleanup,
                       "epoch": epoch, "until": until, "binary_sha256": next(iter(binary_hashes), None), **identity}
             emit(runner)
+            output.flush()
+            os.fsync(output.fileno())
+        if attempt:
+            try:
+                append_record(ledger_path, result_record(attempt, read_receipt(receipt),
+                              hashlib.sha256(receipt.read_bytes()).hexdigest(), finished))
+            except (OSError, ValueError, TypeError) as error:
+                return refuse("result persistence failed; running state retained: " + str(error))
         state.update(phase="complete", finished_at=finished, previous_failure=failed,
                      cleanup_status=cleanup, runner_status=runner["status"])
         save_state(logs, state)

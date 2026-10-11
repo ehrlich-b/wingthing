@@ -50,6 +50,18 @@ def read_receipt(path):
     return records
 
 
+def receipt_complete(records):
+    if not records or records[-1].get("check") != "runner":
+        return False
+    checks = [record.get("check") for record in records[:-1]]
+    runner = records[-1]
+    return (all(isinstance(check, str) for check in checks) and
+            len(checks) == len(CHECKS) and set(checks) == set(CHECKS) and
+            runner.get("checks") == len(CHECKS) and runner.get("status") in ("pass", "fail") and
+            all(record.get("status") in STATUSES and
+                {"check", "status", "latency_ms", "error"} <= record.keys() for record in records))
+
+
 def source_identity(repo):
     """Hash tracked checkout bytes, without executing a binary or contacting Git remotes."""
     def git(*args):
