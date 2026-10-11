@@ -9,6 +9,7 @@ from pathlib import Path
 
 PROTOCOL_TESTS = (
     "TestParentLifecycleFixtureSocketPaths",
+    "TestParentLifecycleScopedFixtureProtection",
     "TestParentLifecycleAdmissionDisconnectBoundaries",
     "TestParentLifecycleAdmissionDisconnectBoundaries/before_admission",
     "TestParentLifecycleAdmissionDisconnectBoundaries/after_admission_before_ack",

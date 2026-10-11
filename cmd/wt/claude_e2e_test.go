@@ -122,11 +122,12 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	home := filepath.Join(h.Root, "home")
+	home, localState, remoteState := testprovider.ScopedHomeDirs(t, filepath.Join(repo, ".scratch"))
 	bin := filepath.Join(home, "bin")
 	work := filepath.Join(home, "work")
 	remoteWork := filepath.Join(home, "remote-work")
-	for _, dir := range []string{home, bin, work, remoteWork} {
+	tmp := filepath.Join(home, "t")
+	for _, dir := range []string{bin, work, remoteWork, tmp} {
 		if err := os.Mkdir(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -159,16 +160,21 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool) {
 	}
 	localGate := testprovider.NewCompletionGate(t, work)
 	remoteGate := testprovider.NewCompletionGate(t, remoteWork)
-	// Physical state stays outside the writable workspace, with enough address
-	// space for full runtime IDs on Darwin; control sockets stay here too.
-	localState := testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))
-	remoteState := testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))
+	// State is protected by the same HOME deny root as both workspaces, while
+	// each physical egg socket still fits a full runtime ID on Darwin.
+	policy, err := testprovider.ScopedHomePolicy(home).YAML()
+	if err != nil {
+		t.Fatal(err)
+	}
 	path := bin + string(os.PathListSeparator) + h.Root + string(os.PathListSeparator) + os.Getenv("PATH")
 	environment := func(state string) []string {
-		return []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + path, "SHELL=/bin/sh", "TMPDIR=" + os.Getenv("TMPDIR"), "PYTHONDONTWRITEBYTECODE=1", "WT_FAKE_SSH_ROOT=" + h.Root, "WT_FAKE_SSH_EXECUTE=1"}
+		return []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + path, "SHELL=/bin/sh", "TMPDIR=" + tmp, "PYTHONDONTWRITEBYTECODE=1", "WT_FAKE_SSH_ROOT=" + h.Root, "WT_FAKE_SSH_EXECUTE=1"}
 	}
 	startWing := func(state, workspace string) *sliceCProcess {
 		t.Helper()
+		if err := os.WriteFile(filepath.Join(state, "egg.yaml"), []byte(policy), 0600); err != nil {
+			t.Fatal(err)
+		}
 		if err := config.SaveWingConfig(state, &config.WingConfig{Roost: "http://127.0.0.1:1"}); err != nil {
 			t.Fatal(err)
 		}

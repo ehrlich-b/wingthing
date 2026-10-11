@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
+	"github.com/ehrlich-b/wingthing/internal/egg"
 )
 
 // ShortStateDir creates disposable clone-local state that fits Darwin's Unix
@@ -26,11 +27,45 @@ func ShortStateDir(t *testing.T, scratch string) string {
 }
 
 func shortStateDir(scratch string) (string, error) {
+	return shortFixtureDir(scratch, "")
+}
+
+// ScopedHomeDirs keeps both wings' protected state under the provider's HOME
+// write-deny root, alongside (not inside) its writable workspaces and TMPDIR.
+// Reserve a one-byte state component before choosing the physical HOME name.
+func ScopedHomeDirs(t *testing.T, scratch string) (home, localState, remoteState string) {
+	t.Helper()
+	home, err := shortFixtureDir(scratch, "l")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	localState, remoteState = filepath.Join(home, "l"), filepath.Join(home, "r")
+	for _, dir := range []string{localState, remoteState} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return home, localState, remoteState
+}
+
+// ScopedHomePolicy retains the default sandbox and pins the clone-local HOME
+// and its ancestors so a provider cannot rename the protected fixture tree.
+func ScopedHomePolicy(home string) *egg.EggConfig {
+	policy := egg.DefaultEggConfig()
+	policy.Base.Name = "none"
+	for dir := home; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+		policy.FS = append(policy.FS, "deny-write:"+dir)
+	}
+	return policy
+}
+
+func shortFixtureDir(scratch, stateChild string) (string, error) {
 	// Reserve the actual routing ID width and the egg endpoint suffix. Keep
 	// Linux fixtures within the same limit so CI exercises the Mac layout.
-	nameBytes := 103 - len(filepath.Join(scratch, "eggs", cmdutil.NewRuntimeID(), "egg.sock")) - 1
-	if nameBytes < 2 {
-		return "", fmt.Errorf("fixture checkout path %q leaves fewer than two bytes for clone-local state; use a shorter checkout path", scratch)
+	nameBytes := 103 - len(filepath.Join(scratch, stateChild, "eggs", cmdutil.NewRuntimeID(), "egg.sock")) - 1
+	if nameBytes < 1 {
+		return "", fmt.Errorf("fixture checkout path %q leaves no bytes for clone-local state; use a shorter checkout path", scratch)
 	}
 	if nameBytes > 10 {
 		nameBytes = 10

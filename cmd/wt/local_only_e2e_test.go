@@ -338,7 +338,7 @@ func TestBuiltWTLocalOnlyDaemonBootsWithoutTokens(t *testing.T) {
 	if err := os.Mkdir(home, 0700); err != nil {
 		t.Fatal(err)
 	}
-	environment := []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=/bin:/usr/bin"}
+	environment := []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=/bin:/usr/bin", "TMPDIR=" + os.Getenv("TMPDIR")}
 	start := exec.CommandContext(t.Context(), binary, "wing", "start", "--local-only", "--paths", home)
 	start.Env = environment
 	output, err := start.CombinedOutput()
