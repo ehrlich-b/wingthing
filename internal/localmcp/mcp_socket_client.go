@@ -174,6 +174,9 @@ func CallLocalWingTool(ctx context.Context, dir, clientName, name string, argume
 	defer client.Close()
 	result, isError, err := client.Call(ctx, name, arguments)
 	if err != nil {
+		if structured := control.ToolError(result); structured != nil {
+			return nil, structured
+		}
 		return nil, err
 	}
 	if isError {

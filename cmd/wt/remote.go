@@ -32,6 +32,9 @@ func executeCLI(ctx context.Context, args []string, streams remotepkg.IO) error 
 			return err
 		}
 		if remote {
+			if len(invocation.Args) > 0 && invocation.Args[0] == "claude" {
+				return runRemoteClaude(ctx, invocation, streams)
+			}
 			return remotepkg.RunRemoteInvocation(ctx, invocation, streams)
 		}
 	}

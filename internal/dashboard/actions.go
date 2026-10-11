@@ -2,8 +2,10 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
@@ -46,14 +49,53 @@ func runCommand(ctx context.Context, args []string, streams remotepkg.IO) error 
 	if err != nil {
 		return err
 	}
+	claude := len(args) > 0 && args[0] == "claude" || len(args) >= 3 && args[len(args)-3] == "claude" && args[len(args)-2] == "--cwd"
 	command := cliCommand(ctx, executable, args, streams)
 	if streams.In == nil {
 		return runActionProcess(ctx, command.Start, command.Wait, func(sig syscall.Signal) error {
 			return syscall.Kill(-command.Process.Pid, sig)
 		})
 	}
-	return command.Run()
+	if !claude {
+		return command.Run()
+	}
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	defer writer.Close()
+	command.ExtraFiles = []*os.File{writer}
+	command.Env = append(os.Environ(), "WT_LAUNCH_DIAGNOSTIC_FD=3")
+	err = command.Run()
+	_ = writer.Close()
+	_ = reader.SetReadDeadline(time.Now().Add(time.Second))
+	wire, readErr := io.ReadAll(io.LimitReader(reader, 4097))
+	var d control.LaunchDiagnostic
+	if err != nil && readErr == nil && len(wire) <= 4096 && len(wire) > 0 && json.Unmarshal(wire, &d) == nil {
+		return &launchActionError{cause: err, diagnostic: d.Bounded()}
+	}
+	return err
 }
+
+func qualifyLaunchAction(err error, machine string) error {
+	var failure *launchActionError
+	if machine != "local" && errors.As(err, &failure) && failure.diagnostic.Session != "" {
+		copyFailure := *failure
+		copyFailure.diagnostic.Session = machine + ":" + copyFailure.diagnostic.Session
+		copyFailure.diagnostic = copyFailure.diagnostic.Bounded()
+		return &copyFailure
+	}
+	return err
+}
+
+type launchActionError struct {
+	cause      error
+	diagnostic control.LaunchDiagnostic
+}
+
+func (e *launchActionError) Error() string { return control.FormatLaunchDiagnostic(e.diagnostic) }
+func (e *launchActionError) Unwrap() error { return e.cause }
 
 func cliCommand(ctx context.Context, executable string, args []string, streams remotepkg.IO) *exec.Cmd {
 	if streams.In == nil && len(args) > 0 && args[0] == "--remote" {

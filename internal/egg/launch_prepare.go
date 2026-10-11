@@ -52,6 +52,7 @@ type PreparedLaunch struct {
 	Transport             string
 	Checks                []LaunchCheck
 	Environment           map[string]string
+	FailureReason         string // fixed classifier for a failed preparation step
 }
 
 // PrepareLaunch is the production preparation boundary, shared by Server.RunSession
@@ -179,6 +180,7 @@ func PrepareLaunch(rc RunConfig, opts LaunchPreparationOptions, state LaunchStat
 	out.Args = args
 	for _, dir := range out.ProfileDirs {
 		if err := state.MkdirAll(dir); err != nil {
+			out.FailureReason = "provider_home_denied"
 			return out, fmt.Errorf("create agent profile directory %s: %w", dir, err)
 		}
 	}
@@ -190,6 +192,11 @@ func PrepareLaunch(rc RunConfig, opts LaunchPreparationOptions, state LaunchStat
 		var deferred bool
 		out.Args, deferred, err = state.ClaudeSettings(args, opts.Home, opts.EggDir, rc.ProviderSessionID, rc.CWD, policy)
 		if err != nil {
+			out.FailureReason = "provider_config_denied"
+			var refusal *settingsPolicyFailure
+			if errors.As(err, &refusal) {
+				out.readCheck("provider_config.policy", refusal.path, "provider config", opts, runtime.GOOS)
+			}
 			return out, fmt.Errorf("prepare native lifecycle hooks: %w", err)
 		}
 		if deferred {

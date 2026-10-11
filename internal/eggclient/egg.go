@@ -22,8 +22,10 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/fsutil"
 
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
@@ -737,7 +739,17 @@ func effectiveSpawnProviderSession(agentName string, opts SpawnEggOpts) (string,
 }
 
 // spawnEgg starts a per-session egg child process and returns a connected client.
-func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte, trace bool, identity EggIdentity, idleTimeout time.Duration, opts ...SpawnEggOpts) (*egg.Client, error) {
+func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte, trace bool, identity EggIdentity, idleTimeout time.Duration, opts ...SpawnEggOpts) (client *egg.Client, spawnErr error) {
+	stage, reason := "admission/policy", "preparation_failed"
+	defer func() {
+		if _, projected := control.LaunchDiagnosticOf(spawnErr); spawnErr != nil && agentName == "claude" && !projected {
+			var policy *egg.LaunchPolicySelection
+			if eggCfg != nil {
+				policy = eggCfg.LaunchPolicy
+			}
+			spawnErr = egg.ProjectLaunchFailure(spawnErr, policy, egg.PreparedLaunch{}, stage, reason)
+		}
+	}()
 	if err := ValidateSessionID(sessionID); err != nil {
 		return nil, err
 	}
@@ -811,6 +823,7 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// error instead of a silent 5s timeout.
 	if !outerBoundary {
 		if ok, help := sandbox.CheckCapability(); !ok {
+			stage, reason = "provider startup", "sandbox_unavailable"
 			return nil, fmt.Errorf("sandbox not available: %s\nrun: wt doctor --fix", help)
 		}
 	}
@@ -842,6 +855,15 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		"--cwd", cwd,
 		"--rows", strconv.Itoa(int(rows)),
 		"--cols", strconv.Itoa(int(cols)),
+	}
+	if eggCfg.LaunchPolicy != nil {
+		selection, err := json.Marshal(eggCfg.LaunchPolicy)
+		if err != nil {
+			return nil, err
+		}
+		if len(selection) <= 64<<10 {
+			args = append(args, "--launch-policy="+string(selection))
+		}
 	}
 	if outerBoundary {
 		args = append(args, "--outer-boundary")
@@ -1245,6 +1267,7 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		cmdutil.CloseWithLog("egg log", logFile)
 		return nil, fmt.Errorf("start egg: %w", err)
 	}
+	stage, reason = "provider startup", "provider_failed"
 	providerProcessStarted = true
 	if err := logFile.Close(); err != nil {
 		daemonctl.AbandonStartedDaemon(child)
@@ -1266,6 +1289,14 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	daemonctl.AbandonStartedDaemon(child)
 	providerProcessStarted = false
 	failure := errors.New("egg did not start within 5s")
+	if file, err := fsutil.OpenBoundedRegular(filepath.Join(dir, "launch.failed.json"), 4096); err == nil {
+		var d control.LaunchDiagnostic
+		decodeErr := json.NewDecoder(io.LimitReader(file, 4097)).Decode(&d)
+		_ = file.Close()
+		if decodeErr == nil {
+			failure = control.WithLaunchDiagnostic(failure, d)
+		}
+	}
 	diagnostic, diagnosticErr := PreserveEggFailure(dir, failure)
 	if diagnosticErr != nil {
 		return nil, fmt.Errorf("%w (diagnostic preservation failed: %v; startup log %s)", failure, diagnosticErr, logPath)

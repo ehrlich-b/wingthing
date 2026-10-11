@@ -131,7 +131,7 @@ func resolveLocalWingClient(version string, sessions *wingsession.Service, owner
 		return captured, nil
 	}
 	if policy.Wing.Locked || len(wingpolicy.PasskeysForSubject(policy.Keys, ownerUserID)) > 0 {
-		return nil, errors.New("passkey authentication is required; MCP passkey ceremony is unavailable")
+		return nil, &localWingAdmissionFailure{cause: errors.New("passkey authentication is required; MCP passkey ceremony is unavailable"), diagnostic: control.LaunchDiagnostic{Stage: "admission/policy", Reason: "authentication_required", PolicyOrigin: "captured runtime policy"}}
 	}
 	principal := strings.TrimSpace(hello.Client)
 	explicitClient := principal != ""
@@ -146,11 +146,11 @@ func resolveLocalWingClient(version string, sessions *wingsession.Service, owner
 		return nil, err
 	}
 	if clients.RequireClient && !explicitClient {
-		return nil, errors.New("clients.yaml requires an explicit MCP client; pass --client or WT_MCP_CLIENT")
+		return nil, &localWingAdmissionFailure{cause: errors.New("clients.yaml requires an explicit MCP client; pass --client or WT_MCP_CLIENT"), diagnostic: control.LaunchDiagnostic{Stage: "admission/policy", Reason: "client_required", PolicyOrigin: "selected policy", PolicyPath: filepath.Join(sessions.Config.Dir, "clients.yaml")}}
 	}
 	client, configured := clients.Clients[principal]
 	if (clients.RequireClient || len(clients.Clients) > 0) && !configured {
-		return nil, fmt.Errorf("MCP client %q is not configured in clients.yaml", principal)
+		return nil, &localWingAdmissionFailure{cause: fmt.Errorf("MCP client %q is not configured in clients.yaml", principal), diagnostic: control.LaunchDiagnostic{Stage: "admission/policy", Reason: "client_not_configured", PolicyOrigin: "selected policy", PolicyPath: filepath.Join(sessions.Config.Dir, "clients.yaml")}}
 	}
 	owner := principal
 	if configured && strings.TrimSpace(client.Owner) != "" {
@@ -212,3 +212,12 @@ func resolveLocalWingClient(version string, sessions *wingsession.Service, owner
 	}
 	return server, nil
 }
+
+type localWingAdmissionFailure struct {
+	cause      error
+	diagnostic control.LaunchDiagnostic
+}
+
+func (e *localWingAdmissionFailure) Error() string                              { return e.cause.Error() }
+func (e *localWingAdmissionFailure) Unwrap() error                              { return e.cause }
+func (e *localWingAdmissionFailure) LaunchDiagnostic() control.LaunchDiagnostic { return e.diagnostic }

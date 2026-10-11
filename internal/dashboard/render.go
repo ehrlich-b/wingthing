@@ -247,7 +247,9 @@ func render(s *state, width, height int, now time.Time) string {
 			footer[0] = "y stop  Enter/Esc cancel  Ctrl-C quit"
 		}
 	} else if message != "" {
-		footer = append(footer, message)
+		// Keep the existing sanitization while making bounded launch metadata
+		// readable in the message area at ordinary terminal widths.
+		footer = append(footer, wrap(message, width)...)
 	}
 	if s.mode > navigate && s.mode < machinePicker && s.message != "" {
 		footer = append(footer, s.message)

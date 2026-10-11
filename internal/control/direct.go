@@ -36,14 +36,14 @@ func (r DirectResponse) Err() error {
 		return &MCPTaskError{Code: r.RPCErrorCode, Message: r.Error}
 	}
 	if r.Error != "" {
-		return DecodeError(r.ErrorKind, r.Error)
+		return restoreLaunchDiagnostic(DecodeError(r.ErrorKind, r.Error), r.Result)
 	}
 	if !r.IsError {
 		return nil
 	}
 	if r.ErrorKind != "" {
 		message, _ := r.Result["error"].(string)
-		return DecodeError(r.ErrorKind, message)
+		return restoreLaunchDiagnostic(DecodeError(r.ErrorKind, message), r.Result)
 	}
 	return ToolError(r.Result)
 }

@@ -21,6 +21,29 @@ type PolicyRuleSource struct {
 	Source  string `json:"source"`
 }
 
+// LaunchPolicySelection travels with the selected config, including inherited
+// rule sources. It is private preparation input, not a diagnostic export.
+type LaunchPolicySelection struct {
+	Origin string             `json:"origin"`
+	Path   string             `json:"path,omitempty"`
+	Base   string             `json:"base,omitempty"`
+	Rules  []PolicyRuleSource `json:"rules,omitempty"`
+}
+
+func CaptureLaunchPolicy(cfg *EggConfig, path, base string) *LaunchPolicySelection {
+	return &LaunchPolicySelection{Origin: "selected policy", Path: path, Base: base, Rules: configRuleSources(cfg, path)}
+}
+
+func WithLaunchPolicyBase(cfg *EggConfig, base string) *EggConfig {
+	copyCfg := *cfg
+	if cfg.LaunchPolicy != nil {
+		selection := *cfg.LaunchPolicy
+		selection.Base = base
+		copyCfg.LaunchPolicy = &selection
+	}
+	return &copyCfg
+}
+
 type explicitPolicy struct {
 	cfg   *EggConfig
 	rules []PolicyRuleSource
@@ -44,6 +67,9 @@ func ResolveLaunchConfig(path, basesDir, home string) (*EggConfig, []PolicyRuleS
 	}
 	resolver := configResolver{bases: basesDir, home: home, active: map[string]bool{}, visited: map[string]bool{}}
 	result, err := resolver.resolve(path, 0)
+	if err == nil {
+		result.cfg.LaunchPolicy = &LaunchPolicySelection{Origin: "selected policy", Path: filepath.Clean(path), Base: filepath.Dir(path), Rules: result.rules}
+	}
 	return result.cfg, result.rules, err
 }
 

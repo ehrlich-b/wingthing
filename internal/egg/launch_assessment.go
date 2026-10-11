@@ -7,8 +7,52 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 )
+
+func launchFailureReason(code string) string {
+	switch code {
+	case "executable.policy":
+		return "executable_denied"
+	case "provider_home.write", "provider_home.scope", "home.scope", "provider_state.write":
+		return "provider_home_denied"
+	case "workspace.write":
+		return "workspace_denied"
+	case "credential.policy", "credential.scope", "provider_config.policy":
+		return "provider_config_denied"
+	case "network.provider", "network.parent":
+		return "network_denied"
+	}
+	return ""
+}
+
+// settingsPolicyFailure preserves the lifecycle builder's existing error text
+// while exposing only the denied identity to the shared policy evaluator.
+type settingsPolicyFailure struct{ path string }
+
+func (*settingsPolicyFailure) Error() string {
+	return "settings file is outside the session filesystem policy"
+}
+
+// ProjectLaunchFailure consumes the existing preparation checks without a
+// second assessor, filesystem discovery, provider probe, or raw error parsing.
+func ProjectLaunchFailure(err error, policy *LaunchPolicySelection, prepared PreparedLaunch, stage, reason string) error {
+	d := control.LaunchDiagnostic{Stage: stage, Reason: reason}
+	if prepared.FailureReason != "" {
+		d.Reason = prepared.FailureReason
+	}
+	if policy != nil {
+		d.PolicyOrigin, d.PolicyPath = policy.Origin, policy.Path
+	}
+	for _, check := range prepared.Checks {
+		if classified := launchFailureReason(check.Code); check.Status == LaunchFail && classified != "" {
+			d.Stage, d.Reason, d.PolicySource = "admission/policy", classified, check.Source
+			break
+		}
+	}
+	return control.WithLaunchDiagnostic(err, d)
+}
 
 const (
 	LaunchPass  = "PASS"
@@ -89,6 +133,7 @@ type LaunchRequirements struct {
 	Rules                                      []PolicyRuleSource
 	Evidence                                   *LaunchProviderEvidence
 	EvidenceBound, VersionKnown                bool
+	policyHome                                 string
 }
 
 type LaunchCheck struct {
@@ -107,6 +152,13 @@ func (p *PreparedLaunch) assess(rc RunConfig, opts LaunchPreparationOptions, sta
 	req := LaunchRequirements{}
 	if opts.Requirements != nil {
 		req = *opts.Requirements
+	}
+	req.policyHome = opts.HostHome
+	if rc.UserHome != "" {
+		req.policyHome = rc.UserHome
+	}
+	if req.PolicyBase == "" {
+		req.PolicyBase = rc.CWD
 	}
 	if rc.Agent != "" {
 		p.check("authentication", LaunchUnrun, "credential path availability does not prove provider authentication", "no credential contents or login probe", "use the separately authorized disposable provider canary")
@@ -243,7 +295,11 @@ func (p *PreparedLaunch) readCheck(code, path, label string, opts LaunchPreparat
 	source := "final sandbox read policy"
 	if opts.Requirements != nil && check.DenialPath != "" {
 		req := opts.Requirements
-		source = PolicyDenialSources("deny:", check.DenialPath, req.Rules, req.PolicyBase, opts.Home)
+		policyHome := opts.HostHome
+		if p.Sandbox.UserHome != "" {
+			policyHome = p.Sandbox.UserHome
+		}
+		source = PolicyDenialSources("deny:", check.DenialPath, req.Rules, req.PolicyBase, policyHome)
 	}
 	if !check.Verified {
 		p.check(code, LaunchUnrun, check.Reason, source, "verify actual platform rules under the preserved boundary")
@@ -278,7 +334,7 @@ func (p *PreparedLaunch) writeCheck(code, path string, state LaunchState, fact L
 		check = sandbox.CheckDirectoryWrites(p.Sandbox, path, goos)
 	}
 	if check.DenialPath != "" {
-		source = PolicyDenialSources(check.DenialKind+":", check.DenialPath, req.Rules, req.PolicyBase, p.Sandbox.UserHome)
+		source = PolicyDenialSources(check.DenialKind+":", check.DenialPath, req.Rules, req.PolicyBase, req.policyHome)
 	}
 	if !check.Verified {
 		p.check(code, LaunchUnrun, check.Reason, source, "verify actual platform rules under the preserved boundary")
