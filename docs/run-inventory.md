@@ -98,9 +98,13 @@ Go 1.26.9 and module/build caches were privately copied offline into this clone.
 
 Core verification produced 126 unit test/subtest passes and 33 race test/subtest
 passes. The two ordered continuations each added one nonzero race test pass.
+Vet then caught three fixture-only copies of a Server containing mutexes. Explicit
+server construction repaired them; the three affected race tests and affected
+package vet passed (38 race pass executions total).
 The new command tests execute Cobra and API seams in process, not built CLI
 acceptance. The earlier toolchain mismatch and incomplete remembered-wing
-fixture were repaired; their scratch logs are retained as failed attempts.
+fixture were repaired; all three failed attempts (including vet) remain in scratch
+logs. No FAIL gate remains.
 
 Native built CLI, real socket/SSH acceptance and an actual unattended run after
 client restart are **REQUIRED-UNRUN**: the worker must not start those transports,

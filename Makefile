@@ -277,3 +277,7 @@ test-run-inventory-retention: | web/dist
 .PHONY: vet-run-inventory
 vet-run-inventory:
 	$(GO) vet -p 2 ./internal/store ./internal/control ./internal/wingsession ./internal/localmcp ./internal/runinventory ./cmd/wt
+
+.PHONY: test-run-inventory-fixture-safety
+test-run-inventory-fixture-safety: | web/dist
+	$(GO) test -race -p 2 -json -count=1 ./internal/localmcp -run '^Test(AgentListSerializedAdaptersReturnSameDurableIdentities|AgentListGrantBoundsAndUnsupportedErrors|RunInventoryTwoWingsIdenticalIDsRespectLiveOwnerAndPathPolicies)$$' -timeout=5m

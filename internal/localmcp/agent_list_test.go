@@ -117,10 +117,10 @@ func TestAgentListSerializedAdaptersReturnSameDurableIdentities(t *testing.T) {
 	if got := inventoryIDs(t, data); !reflect.DeepEqual(got, expected) {
 		t.Fatalf("local: %v", got)
 	}
-	direct := *f.server
-	direct.Surface = control.SurfaceDirectMCP
-	direct.Grants = map[string]bool{"agent.read": true}
-	data, denied, err := serializedInventoryCall(t, &direct, "agent_list", json.RawMessage(`{}`))
+	direct := &Server{Version: f.server.Version, Cfg: f.server.Cfg, Logs: f.server.Logs, Sessions: f.service,
+		Principal: f.server.Principal, Surface: control.SurfaceDirectMCP, Grants: map[string]bool{"agent.read": true},
+		identity: f.server.identity, sessionRole: f.server.sessionRole}
+	data, denied, err := serializedInventoryCall(t, direct, "agent_list", json.RawMessage(`{}`))
 	if err != nil || denied || !reflect.DeepEqual(inventoryIDs(t, data), expected) {
 		t.Fatalf("direct: %v %v", data, err)
 	}
@@ -172,8 +172,8 @@ func TestAgentListSerializedAdaptersReturnSameDurableIdentities(t *testing.T) {
 
 func TestAgentListGrantBoundsAndUnsupportedErrors(t *testing.T) {
 	f := prepareListFixture(t)
-	restricted := *f.server
-	restricted.Grants = map[string]bool{"terminal.read": true}
+	restricted := &Server{Cfg: f.server.Cfg, Logs: f.server.Logs, Sessions: f.service, Principal: f.server.Principal,
+		identity: f.server.identity, Grants: map[string]bool{"terminal.read": true}}
 	data, denied, rpc := restricted.callTool(t.Context(), "agent_list", json.RawMessage(`{}`))
 	if !denied || rpc != nil || data["runs"] != nil {
 		t.Fatalf("grant bypass: %v %v", data, rpc)

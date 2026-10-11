@@ -89,13 +89,10 @@ func TestRunInventoryTwoWingsIdenticalIDsRespectLiveOwnerAndPathPolicies(t *test
 		if err != nil {
 			t.Fatal(err)
 		}
-		direct := *s
-		direct.Surface = control.SurfaceDirectMCP
-		direct.Grants = policy.grants
-		direct.allowedPaths = policy.allowedPaths
-		direct.enforcePathBounds = policy.enforcePathBounds
-		direct.identity = policy.identity
-		data, denied, err := serializedInventoryCall(t, &direct, "agent_list", json.RawMessage(`{"limit":1}`))
+		direct := &Server{Version: s.Version, Cfg: s.Cfg, Logs: s.Logs, Sessions: s.Sessions, Principal: s.Principal,
+			Surface: control.SurfaceDirectMCP, Grants: policy.grants, allowedPaths: policy.allowedPaths,
+			enforcePathBounds: policy.enforcePathBounds, identity: policy.identity, sessionRole: policy.role}
+		data, denied, err := serializedInventoryCall(t, direct, "agent_list", json.RawMessage(`{"limit":1}`))
 		if err != nil || denied || data["count"] != float64(1) {
 			t.Fatalf("restrictive first page: %v %v", data, err)
 		}
@@ -113,14 +110,14 @@ func TestRunInventoryTwoWingsIdenticalIDsRespectLiveOwnerAndPathPolicies(t *test
 		}
 		if foreignCursor != "" {
 			args, _ := json.Marshal(map[string]any{"cursor": foreignCursor})
-			_, denied, err = serializedInventoryCall(t, &direct, "agent_list", args)
+			_, denied, err = serializedInventoryCall(t, direct, "agent_list", args)
 			if !denied || err == nil {
 				t.Fatal("other wing's cursor accepted")
 			}
 		}
 		foreignCursor = first.Cursor
 		args, _ := json.Marshal(map[string]any{"cursor": first.Cursor, "limit": 1})
-		data, denied, err = serializedInventoryCall(t, &direct, "agent_list", args)
+		data, denied, err = serializedInventoryCall(t, direct, "agent_list", args)
 		if err != nil || denied {
 			t.Fatalf("restrictive continuation: %v %v", data, err)
 		}
@@ -156,7 +153,7 @@ func TestRunInventoryTwoWingsIdenticalIDsRespectLiveOwnerAndPathPolicies(t *test
 			t.Fatal(err)
 		}
 		direct.Grants = revoked.grants
-		_, denied, _ = serializedInventoryCall(t, &direct, "agent_list", json.RawMessage(`{}`))
+		_, denied, _ = serializedInventoryCall(t, direct, "agent_list", json.RawMessage(`{}`))
 		if !denied {
 			t.Fatal("revoked read grant retained")
 		}
