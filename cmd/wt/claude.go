@@ -30,17 +30,34 @@ func claudeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := localmcp.CallLocalWingTool(cmd.Context(), dir, os.Getenv("WT_MCP_CLIENT"), "agent_start", wire)
+			stopProgress := claudeStartupProgress(cmd.ErrOrStderr())
+			clientName := os.Getenv("WT_MCP_CLIENT")
+			client, err := ensureClaudeWing(cmd.Context(), dir, clientName)
+			if err != nil {
+				stopProgress()
+				return err
+			}
+			// Send the original request ID exactly once. A lost acknowledgement
+			// has unknown admission and must never cause a second launch.
+			result, isError, err := client.Call(cmd.Context(), "agent_start", wire)
+			_ = client.Close()
+			stopProgress()
 			if err != nil {
 				return err
+			}
+			if isError {
+				return fmt.Errorf("%v", result["error"])
 			}
 			session, _ := result["session"].(string)
 			if session == "" {
 				return fmt.Errorf("wing did not return a parent session: %v", result)
 			}
-			detached, err := localmcp.AttachWingIO(cmd.Context(), dir, os.Getenv("WT_MCP_CLIENT"), session, cmd.InOrStdin(), cmd.OutOrStdout(), egg.AttachOptions{})
+			detached, err := localmcp.AttachWingIO(cmd.Context(), dir, clientName, session, cmd.InOrStdin(), cmd.OutOrStdout(), egg.AttachOptions{})
 			if detached {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "\r\n[detached from %s; reattach with wt attach %s]\r\n", session, session)
+			}
+			if err != nil {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "\r\n[session %s admitted; reattach with wt attach %s]\r\n", session, session)
 			}
 			return err
 		},

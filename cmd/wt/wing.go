@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -84,11 +85,6 @@ func wingStartCmd() *cobra.Command {
 				return fmt.Errorf("inspect daemon state: %w", err)
 			}
 
-			exe, err := os.Executable()
-			if err != nil {
-				return err
-			}
-
 			// Build args for foreground child
 			var childArgs []string
 			childArgs = append(childArgs, "wing", "start", "--foreground")
@@ -129,43 +125,9 @@ func wingStartCmd() *cobra.Command {
 				childArgs = append(childArgs, "--raw-replay")
 			}
 
-			// Remove stale status from previous run
-			if err := cmdutil.RemoveIfExists(daemonctl.WingStatusPath()); err != nil {
-				return fmt.Errorf("remove stale wing status: %w", err)
-			}
-
-			if err := daemonctl.RotateLog(daemonctl.WingLogPath()); err != nil {
+			child, err := startBackgroundWing(childArgs)
+			if err != nil {
 				return err
-			}
-			logFile, err := os.OpenFile(daemonctl.WingLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-			if err != nil {
-				return fmt.Errorf("open log: %w", err)
-			}
-
-			home, err := os.UserHomeDir()
-			if err != nil {
-				cmdutil.CloseWithLog("wing log", logFile)
-				return fmt.Errorf("resolve user home: %w", err)
-			}
-
-			child := exec.Command(exe, childArgs...)
-			child.Dir = home
-			child.Stdout = logFile
-			child.Stderr = logFile
-			child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-
-			if err := child.Start(); err != nil {
-				cmdutil.CloseWithLog("wing log", logFile)
-				return fmt.Errorf("start daemon: %w", err)
-			}
-			if err := logFile.Close(); err != nil {
-				daemonctl.AbandonStartedDaemon(child)
-				return fmt.Errorf("close wing log: %w", err)
-			}
-
-			if err := daemonctl.WriteDaemonMetadata(daemonctl.WingPidPath(), daemonctl.WingArgsPath(), child.Process.Pid, childArgs); err != nil {
-				daemonctl.AbandonStartedDaemon(child)
-				return fmt.Errorf("start daemon: %w", err)
 			}
 
 			// Wait for daemon to report initial connection state
@@ -237,6 +199,69 @@ func wingStartCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&rawReplayFlag, "raw-replay", false, "use raw replay buffer for reconnect instead of VTerm snapshot")
 
 	return cmd
+}
+
+// startBackgroundWing commits one detached child to the selected state. Its
+// caller must already hold the daemon lifecycle lock and verify no daemon is
+// running. Readiness belongs to the caller; this helper never acquires a lock.
+func startBackgroundWing(childArgs []string) (*exec.Cmd, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	state, err := config.StateDir()
+	if err != nil {
+		return nil, err
+	}
+	state, err = filepath.Abs(state)
+	if err != nil {
+		return nil, err
+	}
+	// Remove stale status from previous run
+	if err := cmdutil.RemoveIfExists(daemonctl.WingStatusPath()); err != nil {
+		return nil, fmt.Errorf("remove stale wing status: %w", err)
+	}
+
+	if err := daemonctl.RotateLog(daemonctl.WingLogPath()); err != nil {
+		return nil, err
+	}
+	logFile, err := os.OpenFile(daemonctl.WingLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("open log: %w", err)
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		cmdutil.CloseWithLog("wing log", logFile)
+		return nil, fmt.Errorf("resolve user home: %w", err)
+	}
+
+	child := exec.Command(exe, childArgs...)
+	child.Dir = home
+	// A relative selector belongs to the caller's cwd, not the detached
+	// child's HOME. Pin both channel selectors before changing directories.
+	child.Env = append(os.Environ(), "WINGTHING_DIR="+state)
+	if config.Channel() == "preview" {
+		child.Env = append(child.Env, "WINGTHING_PREVIEW_DIR="+state)
+	}
+	child.Stdout = logFile
+	child.Stderr = logFile
+	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+
+	if err := child.Start(); err != nil {
+		cmdutil.CloseWithLog("wing log", logFile)
+		return nil, fmt.Errorf("start daemon: %w", err)
+	}
+	if err := logFile.Close(); err != nil {
+		daemonctl.AbandonStartedDaemon(child)
+		return nil, fmt.Errorf("close wing log: %w", err)
+	}
+
+	if err := daemonctl.WriteDaemonMetadata(daemonctl.WingPidPath(), daemonctl.WingArgsPath(), child.Process.Pid, childArgs); err != nil {
+		daemonctl.AbandonStartedDaemon(child)
+		return nil, fmt.Errorf("start daemon: %w", err)
+	}
+	return child, nil
 }
 
 func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local, vte, localOnly bool) error {
