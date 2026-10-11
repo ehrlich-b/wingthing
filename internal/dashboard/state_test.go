@@ -10,7 +10,11 @@ import (
 )
 
 func session(id, name, cwd, status string) eggclient.LocalSession {
-	return eggclient.LocalSession{ID: id, Name: name, CWD: cwd, Status: status, Agent: "codex", UptimeSecs: 120}
+	state := status
+	if status == "blocked" {
+		state = "needs_input"
+	}
+	return eggclient.LocalSession{ID: id, Name: name, CWD: cwd, Status: status, State: state, StateSource: "codex_hook", StateCursor: 1, Agent: "codex", UptimeSecs: 120}
 }
 
 func fixture() *state {

@@ -97,6 +97,11 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 	inv.refresh(ctx, s)
 	for {
 		if !suspended {
+			if bells := s.takeBells(); bells != "" {
+				if _, err := io.WriteString(streams.Out, bells); err != nil {
+					return err
+				}
+			}
 			width, height := terminal.size()
 			if s.mode == details || s.mode == help {
 				lineCount := 0
@@ -210,7 +215,14 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			if err := terminal.leave(); err != nil {
 				return err
 			}
+			if act.attach {
+				s.attached = &act.row.identity
+			}
 			actionErr = command(ctx, args, streams)
+			if act.attach && actionErr == nil {
+				s.acknowledge(act.row)
+			}
+			s.attached = nil
 			// The child may exit or be killed after changing termios. Restore
 			// our saved state before re-entering raw mode or returning on SIGTERM.
 			if err := terminal.leave(); err != nil {

@@ -44,24 +44,29 @@ var ErrSessionNameInUse = control.ErrSessionNameInUse
 
 type LocalSession struct {
 	ConversationLink
-	ID           string `json:"id"`
-	Name         string `json:"name,omitempty"`
-	Principal    string `json:"principal,omitempty"`
-	Kind         string `json:"kind"`
-	Agent        string `json:"agent,omitempty"`
-	Status       string `json:"status"`
-	Command      string `json:"command,omitempty"`
-	CWD          string `json:"cwd,omitempty"`
-	Isolation    string `json:"isolation,omitempty"`
-	PID          int    `json:"pid"`
-	Readers      int32  `json:"readers"`
-	WriterID     string `json:"writer_id,omitempty"`
-	WriterOwner  string `json:"writer_owner,omitempty"`
-	InputEpoch   uint64 `json:"input_epoch,omitempty"`
-	UptimeSecs   int64  `json:"uptime_seconds"`
-	IdleSecs     int64  `json:"idle_seconds"`
-	BufferBytes  int64  `json:"buffer_bytes"`
-	TotalWritten int64  `json:"total_written"`
+	ID               string `json:"id"`
+	Name             string `json:"name,omitempty"`
+	Principal        string `json:"principal,omitempty"`
+	Kind             string `json:"kind"`
+	Agent            string `json:"agent,omitempty"`
+	Status           string `json:"status"`
+	State            string `json:"state,omitempty"`
+	StateSource      string `json:"state_source,omitempty"`
+	StateCursor      int64  `json:"state_cursor,omitempty"`
+	StateReason      string `json:"state_reason,omitempty"`
+	CompletionCursor int64  `json:"completion_cursor,omitempty"`
+	Command          string `json:"command,omitempty"`
+	CWD              string `json:"cwd,omitempty"`
+	Isolation        string `json:"isolation,omitempty"`
+	PID              int    `json:"pid"`
+	Readers          int32  `json:"readers"`
+	WriterID         string `json:"writer_id,omitempty"`
+	WriterOwner      string `json:"writer_owner,omitempty"`
+	InputEpoch       uint64 `json:"input_epoch,omitempty"`
+	UptimeSecs       int64  `json:"uptime_seconds"`
+	IdleSecs         int64  `json:"idle_seconds"`
+	BufferBytes      int64  `json:"buffer_bytes"`
+	TotalWritten     int64  `json:"total_written"`
 }
 
 func DiscoverActiveSessions(ctx context.Context, cfg *config.Config) ([]LocalSession, error) {
@@ -109,7 +114,7 @@ func enrichLocalSession(ctx context.Context, cfg *config.Config, session *LocalS
 	// Its filesystem/import work is not context-aware; do not detach it from
 	// the joined worker or infer idle when evidence is unavailable.
 	if view, err := tryLifecycleViewForSession(cfg, *session); err == nil {
-		session.Status = view.Status
+		projectSessionLifecycle(session, view)
 	}
 	metadataAgent := session.Agent
 	if ctx.Err() != nil {
@@ -138,8 +143,53 @@ func enrichLocalSession(ctx context.Context, cfg *config.Config, session *LocalS
 	// before projecting its native hook adapter, within the remaining budget.
 	if metadataAgent == "" && session.Agent != "" && ctx.Err() == nil {
 		if view, err := tryLifecycleViewForSession(cfg, *session); err == nil {
-			session.Status = view.Status
+			projectSessionLifecycle(session, view)
 		}
+	}
+}
+
+// Inventory keeps only structured, content-free evidence from its existing
+// lifecycle read. Never copy Reason, Events, Text, Raw or provider identifiers.
+func projectSessionLifecycle(session *LocalSession, view egg.SessionView) {
+	session.Status, session.StateCursor = view.Status, view.StateCursor
+	session.State, session.StateSource = "unknown", "unsupported"
+	session.StateReason = "Native lifecycle evidence is missing or hooks are disabled; status is unknown."
+	session.CompletionCursor = 0
+	switch view.StateSource {
+	case "claude_hook", "codex_hook", "egg_process", "native_import":
+		session.StateSource = view.StateSource
+	}
+	switch view.State {
+	case "starting", "working", "needs_input", "idle", "completed", "failed", "stopped", "unknown":
+		session.State = view.State
+	}
+	if session.StateSource == "unsupported" {
+		session.State = "unknown"
+		return
+	}
+	switch session.State {
+	case "needs_input":
+		session.StateReason = "Native provider requested input."
+	case "working", "starting":
+		session.StateReason = "Native provider is working."
+	case "idle":
+		session.StateReason = "Native provider is idle."
+	case "completed":
+		session.StateReason = "Native provider session ended; this does not certify descendant success."
+	case "failed", "stopped":
+		session.StateReason = "Native evidence reports a failure or stop."
+	case "unknown":
+		session.StateReason = "Native lifecycle evidence is unknown; no screen inference is used."
+	}
+	// SessionView exposes the state cursor but not the event type. These are
+	// the adapter's fixed reasons for turn_completed (including background
+	// work), distinct from SessionEnd, idle notifications and interruptions.
+	// They are matched, never forwarded; arbitrary provider reasons stay private.
+	native := session.StateSource == "claude_hook" || session.StateSource == "codex_hook"
+	if native && view.StateCursor > 0 && ((view.State == "completed" && view.Reason == "native Stop observed for foreground response; other Stop hooks or later prompts may continue the conversation") ||
+		(view.State == "idle" && view.Reason == "foreground response ended with background tasks pending")) {
+		session.CompletionCursor = view.StateCursor
+		session.StateReason = "Foreground response completed; provider or descendants may continue."
 	}
 }
 
