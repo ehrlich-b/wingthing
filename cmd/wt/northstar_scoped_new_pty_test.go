@@ -36,7 +36,12 @@ assert inherited['model']=='fake-parent' and inherited['effortLevel']=='high' an
 
 func scopedNewNativeFixture(t *testing.T, f *northstarFixture, state, cwd string) string {
 	t.Helper()
-	key := filepath.Join(f.home, "fixture-ssh-key")
+	// Match the default policy's protected SSH root; HOME itself is readable.
+	sshDir := filepath.Join(f.home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(sshDir, "fixture-ssh-key")
 	northstarWrite(t, key, "fake key; not a credential", 0600)
 	controlPath, err := controlsocket.Path(state)
 	if err != nil {
