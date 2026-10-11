@@ -146,15 +146,7 @@ func testBuiltWTStdioWingEggFakeCodexTimeout(t *testing.T, modal, nativeTask boo
 	}
 	// Linux test images carry this checkout's built fixture, without Go or
 	// source. Otherwise build it directly, without requiring make.
-	binary := os.Getenv("WT_TEST_BINARY")
-	if binary == "" {
-		binary = filepath.Join(fixture, "wt")
-		build := exec.Command("nice", "-n", "15", "go", "build", "-p", "2", "-buildvcs=false", "-o", binary, "./cmd/wt")
-		build.Dir = repo
-		if output, err := build.CombinedOutput(); err != nil {
-			t.Fatalf("build fixture wt: %v\n%s", err, output)
-		}
-	}
+	binary := localOnlyFixtureBinary(t, repo, fixture)
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Fatal(err)
@@ -175,21 +167,7 @@ func testBuiltWTStdioWingEggFakeCodexTimeout(t *testing.T, modal, nativeTask boo
 	if err := os.WriteFile(provider, []byte("#!"+python+"\n"+fakeRunCodex), 0700); err != nil {
 		t.Fatal(err)
 	}
-	scratch := filepath.Join(repo, ".scratch")
-	if err := os.MkdirAll(scratch, 0700); err != nil {
-		t.Fatal(err)
-	}
-	alias, err := os.MkdirTemp(scratch, "e")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(fixture, alias); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Remove(alias) })
+	alias := shortFixtureAlias(t, fixture)
 	state := filepath.Join(alias, "s")
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", state)

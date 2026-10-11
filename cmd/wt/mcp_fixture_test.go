@@ -15,28 +15,31 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
+// Create a symlinked parent inside each fixture without depending on the
+// checkout's path length or macOS's /var spelling. Egg addresses use this
+// short alias; state and provider data remain in the test-owned target.
+func shortFixtureAlias(t *testing.T, target string) string {
+	t.Helper()
+	root, err := os.MkdirTemp("/tmp", "wt-cli-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	alias := filepath.Join(root, "a")
+	if err := os.Symlink(target, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := egg.ValidateSocketPath(filepath.Join(alias, "s", "eggs", "0123456789abcdef", "egg.sock")); err != nil {
+		t.Fatal(err)
+	}
+	return alias
+}
+
 // CLI parity fixtures address the wing adapter instead of inventing a runtime
 // in the stdio process. The alias keeps Darwin Unix addresses within the limit.
 func testWingTool(t *testing.T, cfg *config.Config, owner string) func(context.Context, string, json.RawMessage) (map[string]any, error) {
 	t.Helper()
-	scratch, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(scratch, 0700); err != nil {
-		t.Fatal(err)
-	}
-	alias, err := os.MkdirTemp(scratch, "m")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.Symlink(filepath.Dir(cfg.Dir), alias); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(alias) })
+	alias := shortFixtureAlias(t, filepath.Dir(cfg.Dir))
 	copyCfg := *cfg
 	copyCfg.Dir = filepath.Join(alias, filepath.Base(cfg.Dir))
 	copyCfg.WingID = "fixture-wing"
