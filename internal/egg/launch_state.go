@@ -15,6 +15,9 @@ import (
 // It copies directory-entry metadata only, never provider files or credentials.
 type LaunchState interface {
 	MkdirAll(string) error
+	// DirectoryLayout checks supplemental write requirements without creating
+	// paths in selected state. Both effects use the same metadata mirror.
+	DirectoryLayout(string) error
 	ProviderSpool(home, relative string) error
 	ClaudeSettings(args []string, home, eggDir, providerID, cwd string, policy *sandbox.Config) (argv []string, deferred bool, err error)
 }
@@ -24,6 +27,19 @@ type nativeLaunchState struct{}
 func NativeLaunchState() LaunchState { return nativeLaunchState{} }
 
 func (nativeLaunchState) MkdirAll(path string) error { return os.MkdirAll(path, 0700) }
+
+func (nativeLaunchState) DirectoryLayout(path string) error {
+	root, err := os.MkdirTemp("", "wt-launch-directory-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(root)
+	mirror, err := NewDryLaunchState(root)
+	if err != nil {
+		return err
+	}
+	return mirror.MkdirAll(path)
+}
 
 func pinProviderDirectory(home, relative string) error {
 	root, err := openProviderHome(home)
@@ -151,6 +167,8 @@ func (s *dryLaunchState) MkdirAll(path string) error {
 	}
 	return s.originalError(os.MkdirAll(s.mapped(path), 0700))
 }
+
+func (s *dryLaunchState) DirectoryLayout(path string) error { return s.MkdirAll(path) }
 
 func (s *dryLaunchState) ProviderSpool(home, relative string) error {
 	if err := s.MkdirAll(filepath.Join(home, relative)); err != nil {

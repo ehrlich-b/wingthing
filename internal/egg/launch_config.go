@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ehrlich-b/wingthing/internal/fsutil"
+	"github.com/ehrlich-b/wingthing/internal/sandbox"
 )
 
 // PolicyRuleSource describes effective declared rules, including inherited
@@ -241,4 +242,30 @@ func configRuleSources(cfg *EggConfig, source string) []PolicyRuleSource {
 		result = append(result, PolicyRuleSource{"env", entry, source})
 	}
 	return result
+}
+
+// PolicyDenialSources attributes a resolved denial using the shared path expansion.
+func PolicyDenialSources(prefix, deny string, rules []PolicyRuleSource, cwd, home string) string {
+	var sources []string
+	for _, rule := range rules {
+		path, ok := strings.CutPrefix(rule.Rule, prefix)
+		if rule.Section != "fs" || !ok {
+			continue
+		}
+		if path == "~" {
+			path = home
+		} else if strings.HasPrefix(path, "~/") {
+			path = filepath.Join(home, path[2:])
+		} else if !filepath.IsAbs(path) {
+			path = filepath.Join(cwd, path)
+		}
+		real, err := sandbox.CanonicalPath(path)
+		if err == nil && real == deny && !containsExact(sources, rule.Source) {
+			sources = append(sources, rule.Source)
+		}
+	}
+	if len(sources) == 0 {
+		return "effective policy"
+	}
+	return strings.Join(sources, ", ")
 }

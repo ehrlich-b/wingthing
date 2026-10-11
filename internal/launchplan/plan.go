@@ -11,54 +11,30 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/fsutil"
-	"github.com/ehrlich-b/wingthing/internal/sandbox"
 )
 
 const (
-	Pass  = "PASS"
-	Fail  = "FAIL"
-	Unrun = "REQUIRED-UNRUN"
+	Pass  = egg.LaunchPass
+	Fail  = egg.LaunchFail
+	Unrun = egg.LaunchUnrun
 )
 
-// Fact states are declarations from a captured input, never native probes.
-// Empty/unknown stays unknown, even when every other fixture is green.
-type Fact string
+// Shared preparation owns capability, compatibility and policy decisions.
+type Fact = egg.LaunchFact
 
 const (
-	Unknown     Fact = "unknown"
-	Supported   Fact = "supported"
-	Unsupported Fact = "unsupported"
+	Unknown     = egg.FactUnknown
+	Supported   = egg.FactSupported
+	Unsupported = egg.FactUnsupported
 )
 
-type Capabilities struct {
-	OS                   string `json:"os"`
-	Network              string `json:"network"` // unknown, none, proxy-only, full
-	WorkspaceWritable    Fact   `json:"workspace_writable"`
-	ProviderHomeWritable Fact   `json:"provider_home_writable"`
-	NativeSandbox        Fact   `json:"native_sandbox"`
-	ParentSandbox        string `json:"parent_sandbox"` // unknown, none, sandboxed, scoped
-	UserBus              Fact   `json:"user_bus"`
-	RequiresUserBus      bool   `json:"requires_user_bus"`
-	ElanHome             string `json:"elan_home,omitempty"` // explicit inherited path only
-	ElanHomeWritable     Fact   `json:"elan_home_writable"`
-	RawSocketsRequired   bool   `json:"raw_sockets_required"`
-}
-
-// ProviderEvidence is saved version/help output from the selected executable.
-// A digest binds it to today's executable, but still does not prove authentication,
-// hooks, a provider tool call, or OS confinement. Help is never exported.
-type ProviderEvidence struct {
-	BinarySHA256  string `json:"binary_sha256"`
-	VersionOutput string `json:"version_output"`
-	HelpOutput    string `json:"help_output"`
-	CompleteHelp  bool   `json:"complete_help"`
-}
+type Capabilities = egg.LaunchCapabilities
+type ProviderEvidence = egg.LaunchProviderEvidence
 
 type Request struct {
 	Route            string
@@ -80,13 +56,7 @@ type Request struct {
 	Unattended       bool
 }
 
-type Gate struct {
-	Code       string `json:"code"`
-	Status     string `json:"status"`
-	Reason     string `json:"reason"`
-	Source     string `json:"source"`
-	Correction string `json:"correction,omitempty"`
-}
+type Gate = egg.LaunchCheck
 type PathEvidence struct {
 	Path      string `json:"path"`               // cleaned display path, retaining aliases
 	Resolved  string `json:"resolved,omitempty"` // canonical identity for filesystem checks
@@ -122,39 +92,12 @@ type Report struct {
 }
 
 func (r *Report) gate(code, status, reason, source, correction string) {
-	r.Gates = append(r.Gates, Gate{code, status, reason, source, correction})
+	r.Gates = append(r.Gates, Gate{Code: code, Status: status, Reason: reason, Source: source, Correction: correction})
 	if status == Fail {
 		r.Readiness = "blocked"
 	} else if status == Unrun && r.Readiness != "blocked" {
 		r.Readiness = "unverified"
 	}
-}
-func validFact(value Fact) bool {
-	return value == "" || value == Unknown || value == Supported || value == Unsupported
-}
-func (c Capabilities) validate() error {
-	if c.OS != "darwin" && c.OS != "linux" {
-		return errors.New("capabilities os must be darwin or linux")
-	}
-	for _, value := range []Fact{c.WorkspaceWritable, c.ProviderHomeWritable, c.NativeSandbox, c.UserBus, c.ElanHomeWritable} {
-		if !validFact(value) {
-			return errors.New("invalid capability state")
-		}
-	}
-	switch c.Network {
-	case "", "unknown", "none", "proxy-only", "full":
-	default:
-		return errors.New("invalid capability network")
-	}
-	switch c.ParentSandbox {
-	case "", "unknown", "none", "sandboxed", "scoped":
-	default:
-		return errors.New("invalid parent sandbox")
-	}
-	if c.ElanHome != "" && !filepath.IsAbs(c.ElanHome) {
-		return errors.New("inherited elan_home must be absolute")
-	}
-	return nil
 }
 
 // Inspect reads only named policy/evidence inputs and path metadata. Required
@@ -202,15 +145,6 @@ func Inspect(req Request) (Report, error) {
 	} else {
 		report.gate("cwd", Pass, "cwd directory exists; writability is assessed separately", "path metadata", "")
 	}
-	homeRoot, err := canonical(req.AllowedHomeRoot)
-	if err != nil {
-		return report, errors.New("allowed home root cannot be resolved")
-	}
-	if !within(report.Home.Resolved, homeRoot) {
-		report.gate("home.scope", Fail, "provider home resolves outside the explicitly allowed scope", "explicit allowed_home_root + canonical paths", "select a disposable provider home within the allowed scope; do not copy ambient credentials")
-	} else {
-		report.gate("home.scope", Pass, "provider home is within the declared scope", "explicit allowed_home_root + canonical paths", "")
-	}
 	if report.Executable.Available {
 		info, err := os.Stat(report.Executable.Resolved)
 		if err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 {
@@ -232,16 +166,10 @@ func Inspect(req Request) (Report, error) {
 		}
 		entry := inspectPath(path, "explicit credential path; stat only")
 		report.Credentials = append(report.Credentials, entry)
-		if !within(entry.Resolved, report.Home.Resolved) {
-			report.gate("credential.scope", Fail, "credential path resolves outside the selected provider home", "canonical credential path", "select authentication already provisioned inside the declared disposable home")
-		}
 		info, err := os.Stat(entry.Resolved)
 		if err != nil || !info.Mode().IsRegular() {
 			report.gate("credential.path", Unrun, "declared credential file is absent or not regular; no contents read", "path metadata", "provision disposable authentication separately if required")
 		}
-	}
-	if req.Agent != "" {
-		report.gate("authentication", Unrun, "credential path availability does not prove provider authentication", "no credential contents or login probe", "use the separately authorized disposable provider canary")
 	}
 	mergeHome := req.MergeHome
 	mergeSource := "explicit merge_home"
@@ -274,11 +202,6 @@ func Inspect(req Request) (Report, error) {
 		return report, err
 	}
 	report.PolicyRules = rules
-	for _, rule := range rules {
-		if rule.Section == "env_invalid" {
-			report.gate("environment.selector", Unrun, "environment selector contains value-like text; provenance redacted; runtime selects literal variable names", rule.Source, "review variable-name selectors locally without exporting credential values")
-		}
-	}
 	report.PolicySource = req.PolicyPath
 	if req.PolicyPath == "" {
 		report.PolicySource = "built-in defaults (explicit selection)"
@@ -290,7 +213,7 @@ func Inspect(req Request) (Report, error) {
 		if err != nil {
 			return report, err
 		}
-		if err = caps.validate(); err != nil {
+		if err = caps.Validate(); err != nil {
 			return report, err
 		}
 		capSource = "declared capability facts sha256:" + report.CapabilitiesSHA256
@@ -338,7 +261,8 @@ func Inspect(req Request) (Report, error) {
 	}
 	rc := egg.RunConfig{
 		Agent: req.Agent, CWD: report.CWD.Resolved, UserHome: req.Home, SkipHostAgentEnv: true,
-		FS: resolved.FS, Network: resolved.Network.Domains, LocalPorts: resolved.Network.LocalPorts,
+		OuterBoundary: !egg.RequiresSandbox(cfg, req.Agent),
+		FS:            resolved.FS, Network: resolved.Network.Domains, LocalPorts: resolved.Network.LocalPorts,
 		NetworkMode: resolved.Network.Mode, AgentDomains: resolved.Network.AgentDomains,
 		DangerouslySkipPermissions: req.Unattended || cfg.DangerouslySkipPermissions,
 		ProviderSessionID:          "launch-plan", OmitBrowserBridge: true,
@@ -352,6 +276,14 @@ func Inspect(req Request) (Report, error) {
 		Binary: report.Executable.Resolved, Home: req.Home, HostHome: mergeHome,
 		EggDir: filepath.Join(root, "launch-plan"), ProviderURL: req.ProviderURL,
 		CodexCapability: egg.SavedCodexCapability(version), Platform: caps.OS,
+		EnvironmentConfig: cfg,
+		Requirements: &egg.LaunchRequirements{
+			Route: req.Route, AllowedHomeRoot: req.AllowedHomeRoot,
+			CredentialPaths: req.CredentialPaths, ProviderStateDir: req.ProviderStateDir,
+			Capabilities: &caps, CapabilitySource: capSource, PolicySource: report.PolicySource,
+			Rules: rules, PolicyBase: report.PolicyBase.Resolved,
+			Evidence: &saved, EvidenceBound: evidenceBound, VersionKnown: version != "",
+		},
 	}, state)
 	policy := prepared.Policy
 	if policy.Agent != req.Agent {
@@ -366,35 +298,13 @@ func Inspect(req Request) (Report, error) {
 		report.gate("provider.preparation.deferred", Unrun, deferred+" requires native acceptance", "egg.PrepareLaunch effects boundary", "verify this step in disposable native acceptance")
 	}
 	report.Provenance["preparation"] = "same egg.PrepareLaunch as Server.RunSession; metadata mirror; no source writes or credential copies"
-	// Resolve injected profile mounts as well as declared rules with the native
-	// profile builder's canonicalizer, after all profile drilling has happened.
-	for i := range policy.Mounts {
-		policy.Mounts[i].Source, err = sandbox.CanonicalPath(policy.Mounts[i].Source)
-		if err != nil {
-			return report, errors.New("policy mount path cannot be resolved")
-		}
-	}
-	for _, paths := range [][]string{policy.Deny, policy.DenyWrite} {
-		for i := range paths {
-			paths[i], err = sandbox.CanonicalPath(paths[i])
-			if err != nil {
-				return report, errors.New("policy denial path cannot be resolved")
-			}
-		}
-	}
-	for _, denied := range policy.Deny {
-		if within(report.Executable.Resolved, denied) && denied != "/" {
-			report.gate("executable.policy", Fail, "effective deny rule blocks the selected executable", denialSources("deny:", denied, rules, report.PolicyBase.Resolved, report.Home.Resolved), "select an executable allowed by the configured policy")
-		}
-		for _, credential := range report.Credentials {
-			if within(credential.Resolved, denied) && denied != "/" {
-				report.gate("credential.policy", Fail, "effective deny rule blocks the declared credential path", denialSources("deny:", denied, rules, report.PolicyBase.Resolved, report.Home.Resolved), "select separately provisioned authentication within the allowed scope")
-			}
-		}
+	// Render preparation's decisions without deriving policy in the consumer.
+	for _, check := range prepared.Checks {
+		report.gate(check.Code, check.Status, check.Reason, check.Source, check.Correction)
 	}
 	report.Domains = policy.Domains
 	report.LocalPorts = policy.LocalPorts
-	report.Network = transport(policy.NetworkNeed, caps.OS, prepared.Sandboxed)
+	report.Network = prepared.Transport
 	for _, hole := range policy.Drilled {
 		report.PolicyRules = append(report.PolicyRules, egg.PolicyRuleSource{Section: hole.Kind, Rule: hole.Value, Source: "agent profile: " + hole.Agent})
 	}
@@ -404,67 +314,6 @@ func Inspect(req Request) (Report, error) {
 	for _, hole := range policy.Suppressed {
 		report.PolicyRules = append(report.PolicyRules, egg.PolicyRuleSource{Section: "suppressed_" + hole.Kind, Rule: hole.Value, Source: hole.Reason})
 	}
-	if prepared.NetworkFailure != "" {
-		report.gate("network.provider", Fail, prepared.NetworkFailure, "runtime preparation + enforcing proxy matcher", "review declared domains while preserving the isolation boundary")
-	}
-	if caps.Network == "none" && report.Network != "none" {
-		report.gate("network.parent", Fail, "outer network-none policy prevents provider traffic even when egg policy allows it", capSource, "run the disposable acceptance under a parent that permits the configured provider proxy")
-	}
-	if caps.Network == "" || caps.Network == "unknown" {
-		report.gate("network.parent", Unrun, "effective outer network capability is unknown", capSource, "capture the parent network policy outside the worker")
-	}
-	if caps.RawSocketsRequired && (report.Network != "full" || caps.Network == "proxy-only") {
-		report.gate("network.raw_sockets", Fail, "required raw sockets cannot use the planned proxy or TCP relay", capSource+" + effective transport", "use a provider/tool transport compatible with the configured proxy boundary")
-	}
-	if len(policy.LocalPorts) > 0 {
-		report.gate("network.loopback", Unrun, "declared host-loopback TCP forwards require native relay verification", "effective local_ports", "verify the precise declared ports with disposable native acceptance")
-	}
-	report.pathWriteGate("workspace.write", report.CWD.Resolved, prepared.Sandbox, state, caps.WorkspaceWritable, capSource, rules, caps.OS)
-	for _, dir := range prepared.ProfileDirs {
-		path, err := sandbox.CanonicalPath(dir)
-		if err != nil {
-			return report, errors.New("provider state path cannot be resolved")
-		}
-		if !within(path, homeRoot) {
-			report.gate("provider_home.scope", Fail, "required provider state resolves outside allowed scope", "runtime prepared profile directory + explicit allowed_home_root", "select a disposable state directory inside the configured scope")
-		}
-		report.pathWriteGate("provider_home.write", path, prepared.Sandbox, state, caps.ProviderHomeWritable, capSource, rules, caps.OS)
-	}
-	if req.ProviderStateDir != "" {
-		if !filepath.IsAbs(req.ProviderStateDir) {
-			return report, errors.New("provider state dir must be absolute")
-		}
-		overridePath, err := sandbox.CanonicalPath(req.ProviderStateDir)
-		if err != nil {
-			return report, errors.New("provider state dir cannot be resolved")
-		}
-		if !within(overridePath, homeRoot) {
-			report.gate("provider_home.scope", Fail, "explicit provider state override resolves outside allowed scope", "explicit provider_state_dir", "select an existing disposable state directory inside the configured scope")
-		}
-		report.pathWriteGate("provider_state.write", overridePath, prepared.Sandbox, state, caps.ProviderHomeWritable, capSource, rules, caps.OS)
-	}
-	if caps.ElanHome != "" {
-		selected := cfg.SelectEnv(req.Home, []string{"ELAN_HOME=" + caps.ElanHome})
-		if len(selected) == 0 && !contains(egg.Profile(req.Agent).EnvVars, "ELAN_HOME") {
-			report.gate("environment.elan_home.filtered", Pass, "declared inherited ELAN_HOME is discarded by the launch environment selection", report.PolicySource, "")
-		} else {
-			path, err := canonical(caps.ElanHome)
-			if err != nil {
-				return report, errors.New("inherited elan_home cannot be resolved")
-			}
-			report.pathWriteGate("environment.elan_home", path, prepared.Sandbox, state, caps.ElanHomeWritable, capSource, rules, caps.OS)
-		}
-	}
-	if caps.OS == "linux" && caps.ParentSandbox == "scoped" {
-		report.gate("parent.scoped", Fail, "Linux scoped parent enforcement is unsupported", capSource, "retain the existing supported parent boundary; do not downgrade isolation")
-	}
-	sandboxRequired := prepared.Sandboxed
-	if sandboxRequired {
-		report.factGate("sandbox.native", caps.NativeSandbox, "native egg confinement has not been verified", "declared host cannot create the required egg sandbox", capSource, "run the isolated native sandbox gate outside the worker")
-	}
-	if caps.RequiresUserBus {
-		report.factGate("user_bus", caps.UserBus, "this requested launch requires a user bus but its availability is unknown", "requested bus-dependent mode has no user bus", capSource, "use an explicitly available bus for that mode")
-	}
 	if req.Route == "terminal_start" {
 		report.ProviderArgv = []string{report.Executable.Resolved}
 		report.ArgvScope = "exact command executable; no agent auto-drilling, prompt, or passthrough arguments"
@@ -473,143 +322,17 @@ func Inspect(req Request) (Report, error) {
 			return report, nil
 		}
 		argv := append([]string{report.Executable.Resolved}, prepared.Args...)
-		native := prepared.NativeRun
 		argv[0] = report.Executable.Resolved
 		report.ProviderArgv = argv
-		if req.Agent == "codex" && !contains(argv, "--dangerously-bypass-approvals-and-sandbox") && (sandboxRequired || caps.ParentSandbox == "sandboxed" || caps.ParentSandbox == "scoped") {
-			report.gate("sandbox.nested", Fail, "planned Codex invocation retains an inner sandbox inside a declared outer sandbox", "runtime adapter argv + declared parent boundary", "review the supported unattended egg route under the existing boundary; planner does not change flags")
-		}
 		report.ArgvScope = "runtime adapter arguments; disposable identity launch-plan; prompt excluded"
 		if req.Agent == "claude" {
 			report.ArgvScope += "; generated lifecycle settings/session IDs are deferred to launch"
-			report.gate("provider.lifecycle_argv", Unrun, "Claude lifecycle settings require launch-time generation; base argv only", "runtime Claude lifecycle builder", "verify generated lifecycle settings in disposable native acceptance")
 		}
-		if req.Route == "agent_run" {
-			if req.Agent == "codex" && version == "" {
-				report.gate("route.agent_run", Unrun, "Codex native run compatibility requires bound version evidence", "runtime Codex version parser", "")
-			} else if !native {
-				reason := "this adapter has no native supervised run contract"
-				if req.Agent == "codex" {
-					reason = "saved Codex version does not support the native hooks required by agent_run"
-				}
-				report.gate("route.agent_run", Fail, reason, "runtime nativeRunSupported", "use agent_start or separately select a verified compatible installed executable")
-			} else {
-				report.gate("route.agent_run", Pass, "runtime adapter declares native run support for the supplied version evidence", "runtime nativeRunSupported; fixture compatibility only", "")
-			}
-		}
-		checkOptions(&report, argv, saved, evidenceBound)
+
 	}
 	return report, nil
 }
 
-func (r *Report) factGate(code string, fact Fact, unknown, denied, source, correction string) {
-	switch fact {
-	case Supported:
-		r.gate(code, Pass, "declared capability supported; native behavior remains external acceptance", source, "")
-	case Unsupported:
-		r.gate(code, Fail, denied, source, correction)
-	default:
-		r.gate(code, Unrun, unknown, source, correction)
-	}
-}
-func (r *Report) pathWriteGate(code, path string, policy sandbox.Config, state egg.LaunchState, fact Fact, source string, rules []egg.PolicyRuleSource, goos string) {
-	if err := state.MkdirAll(path); err != nil {
-		r.gate(code, Fail, "required directory cannot be prepared: "+err.Error(), "runtime preparation in disposable state", "select a valid disposable directory layout")
-		return
-	}
-	check := sandbox.CheckDirectoryWrites(policy, path, goos)
-	if check.DenialPath != "" {
-		source = denialSources(check.DenialKind+":", check.DenialPath, rules, r.PolicyBase.Resolved, r.Home.Resolved)
-	}
-	if !check.Verified {
-		r.gate(code, Unrun, check.Reason, source, "verify actual platform rules under the preserved boundary")
-		return
-	}
-	if !check.Allowed {
-		r.gate(code, Fail, check.Reason, source, "select an allowed disposable path; do not auto-widen policy")
-		return
-	}
-	r.factGate(code, fact, "outer filesystem writability is unknown for required path: "+path, "outer read-only filesystem prevents required writes: "+path, source, "select a writable disposable path within the existing allowed scope")
-}
-func denialSources(prefix, deny string, rules []egg.PolicyRuleSource, cwd, home string) string {
-	var sources []string
-	for _, rule := range rules {
-		path, ok := strings.CutPrefix(rule.Rule, prefix)
-		if rule.Section != "fs" || !ok {
-			continue
-		}
-		if path == "~" {
-			path = home
-		} else if strings.HasPrefix(path, "~/") {
-			path = filepath.Join(home, path[2:])
-		} else if !filepath.IsAbs(path) {
-			path = filepath.Join(cwd, path)
-		}
-		real, err := canonical(path)
-		if err == nil && real == deny && !contains(sources, rule.Source) {
-			sources = append(sources, rule.Source)
-		}
-	}
-	if len(sources) == 0 {
-		return "effective policy"
-	}
-	return strings.Join(sources, ", ")
-}
-func transport(need sandbox.NetworkNeed, goos string, sandboxed bool) string {
-	if !sandboxed {
-		return "full"
-	}
-	switch need {
-	case sandbox.NetworkNone:
-		return "none"
-	case sandbox.NetworkLocal:
-		return "loopback-tcp"
-	case sandbox.NetworkFull:
-		if goos == "darwin" {
-			return "full"
-		}
-		return "proxy-only"
-	default:
-		return "proxy-only"
-	}
-}
-
-var optionRE = regexp.MustCompile(`^(--[a-zA-Z][a-zA-Z0-9-]*|-[a-zA-Z])$`)
-
-func checkOptions(report *Report, argv []string, saved ProviderEvidence, bound bool) {
-	options := map[string]bool{}
-	for _, line := range strings.Split(saved.HelpOutput, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "-") {
-			continue
-		}
-		for _, token := range strings.Fields(line) {
-			flag, _, _ := strings.Cut(strings.TrimSuffix(token, ","), "=")
-			if !optionRE.MatchString(flag) {
-				break
-			}
-			options[flag] = true
-		}
-	}
-	seen := map[string]bool{}
-	for _, arg := range argv[1:] {
-		if !strings.HasPrefix(arg, "-") {
-			continue
-		}
-		flag, _, _ := strings.Cut(arg, "=")
-		if flag == "--" || seen[flag] {
-			continue
-		}
-		seen[flag] = true
-		status, reason := Unrun, "planned option has no bound saved help evidence: "+flag
-		if bound && options[flag] {
-			status, reason = Pass, "planned option appears in bound saved help: "+flag
-		} else if bound && saved.CompleteHelp {
-			status, reason = Fail, "planned option is absent from complete bound saved help: "+flag
-		}
-		report.gate("provider.option", status, reason, "runtime argv + saved help", "capture help for the same executable and route; do not change sandbox flags automatically")
-	}
-}
 func contains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -747,7 +470,7 @@ func Render(w io.Writer, report Report) error {
 	}
 	for _, arg := range argv {
 		flag, _, _ := strings.Cut(arg, "=")
-		if optionRE.MatchString(flag) && !contains(flags, flag) {
+		if egg.IsLaunchOption(flag) && !contains(flags, flag) {
 			flags = append(flags, flag)
 		}
 	}

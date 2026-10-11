@@ -138,3 +138,72 @@ func TestLaunchPreparationDefersClaudeSettingsOnly(t *testing.T) {
 		t.Fatal("dry preparation changed original HOME")
 	}
 }
+
+func TestLaunchPreparationEnvironmentSelectionParity(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		skip     bool
+		selected map[string]string
+	}{
+		{"profile reinjection", false, map[string]string{"OPENAI_API_KEY": "CALLER_KEY"}},
+		{"isolated home", true, map[string]string{}},
+		{"empty caller value wins", false, map[string]string{"CODEX_HOME": ""}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			rc := RunConfig{Agent: "codex", Kind: "agent", UserHome: home, SkipHostAgentEnv: tc.skip}
+			inherited := []string{"OPENAI_API_KEY=HOST_KEY", "CODEX_HOME=" + filepath.Join(home, "alternate"), "ELAN_HOME=" + filepath.Join(home, ".elan"), "HOME=/host/home", "PATH=/host/bin", "TERM="}
+			env := LaunchEnvironment(rc, tc.selected, inherited)
+			if env["HOME"] != home || env["PATH"] != "/host/bin" || env["TERM"] != "xterm-256color" || env["GIT_TERMINAL_PROMPT"] != "0" {
+				t.Fatalf("runtime essentials changed: %#v", env)
+			}
+			if env["ELAN_HOME"] != "" {
+				t.Fatal("unselected non-profile environment was reinjected")
+			}
+			if tc.skip {
+				if env["OPENAI_API_KEY"] != "" || env["CODEX_HOME"] != "" {
+					t.Fatal("shared-host launch inherited host credentials/state")
+				}
+			} else if tc.name == "empty caller value wins" {
+				if env["CODEX_HOME"] != "" || env["OPENAI_API_KEY"] != "HOST_KEY" {
+					t.Fatal("caller precedence changed")
+				}
+			} else if env["OPENAI_API_KEY"] != "CALLER_KEY" || env["CODEX_HOME"] != filepath.Join(home, "alternate") {
+				t.Fatal("profile reinjection changed")
+			}
+			rc.CWD, rc.OuterBoundary = home, true
+			state, err := NewDryLaunchState(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepared, err := PrepareLaunch(rc, LaunchPreparationOptions{Home: home, HostHome: home, Environment: tc.selected, InheritedEnvironment: inherited, CodexCapability: SavedCodexCapability("")}, state)
+			if err != nil || !reflect.DeepEqual(prepared.Environment, env) {
+				t.Fatalf("preparation/runtime environment mismatch: %v / %#v / %#v", err, prepared.Environment, env)
+			}
+		})
+	}
+}
+
+func TestLaunchPreparationSupplementalLayoutDoesNotCreateState(t *testing.T) {
+	home := t.TempDir()
+	override := filepath.Join(home, "override")
+	elan := filepath.Join(home, ".elan")
+	rc := RunConfig{Agent: "codex", CWD: home, UserHome: home, OuterBoundary: true}
+	opts := LaunchPreparationOptions{
+		Home: home, HostHome: home, Environment: map[string]string{"ELAN_HOME": elan},
+		CodexCapability: SavedCodexCapability(""),
+		Requirements:    &LaunchRequirements{ProviderStateDir: override},
+	}
+	prepared, err := PrepareLaunch(rc, opts, NativeLaunchState())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Environment["CODEX_HOME"] != override {
+		t.Fatal("provider override not forwarded")
+	}
+	for _, path := range []string{override, elan} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("supplemental diagnosis created original state: %s / %v", path, err)
+		}
+	}
+}

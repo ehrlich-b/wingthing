@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -59,4 +60,71 @@ func validateDeclaredCallbackDirs(cfg Config, platform string) error {
 		}
 	}
 	return nil
+}
+
+// LaunchTransport describes the actual sandbox backend route without probing it.
+func LaunchTransport(need NetworkNeed, goos string, sandboxed bool) string {
+	if !sandboxed {
+		return "full"
+	}
+	switch need {
+	case NetworkNone:
+		return "none"
+	case NetworkLocal:
+		return "loopback-tcp"
+	case NetworkFull:
+		if goos == "darwin" {
+			return "full"
+		}
+		return "proxy-only"
+	default:
+		return "proxy-only"
+	}
+}
+
+// CheckFileReads uses the emitted Mac profile, including its ordered exceptions.
+// Linux mount exceptions and known_hosts copying require native verification;
+// metadata admission does not read file contents to prove them.
+func CheckFileReads(cfg Config, path, platform string) DirectoryWriteCheck {
+	path, err := CanonicalPath(path)
+	if err != nil {
+		return DirectoryWriteCheck{Reason: "read path cannot be resolved"}
+	}
+	if platform == "darwin" {
+		return checkSeatbeltFileReads(cfg, path)
+	}
+	if platform != "linux" {
+		return DirectoryWriteCheck{Reason: "unknown platform read policy"}
+	}
+	for _, denied := range cfg.Deny {
+		denied, err = CanonicalPath(denied)
+		if err != nil {
+			return DirectoryWriteCheck{Reason: "denial path cannot be resolved"}
+		}
+		if !pathWithin(path, denied) {
+			continue
+		}
+		if denied == "/" {
+			return DirectoryWriteCheck{Reason: "Linux root-deny policy requires native verification of its mount exceptions", DenialKind: "deny", DenialPath: denied}
+		}
+		home := cfg.UserHome
+		if home == "" {
+			home = cfg.HostHome
+		}
+		sshDir, _ := CanonicalPath(filepath.Join(home, ".ssh"))
+		if denied == sshDir && path == filepath.Join(sshDir, "known_hosts") {
+			explicit := false
+			for _, entry := range cfg.Deny {
+				entry, _ = CanonicalPath(entry)
+				if entry == path {
+					explicit = true
+				}
+			}
+			if !explicit {
+				return DirectoryWriteCheck{Reason: "Linux known_hosts preservation requires native verification without reading credential contents", DenialKind: "deny", DenialPath: denied}
+			}
+		}
+		return DirectoryWriteCheck{Verified: true, Reason: "effective deny rule masks the required path: " + path, DenialKind: "deny", DenialPath: denied}
+	}
+	return DirectoryWriteCheck{Allowed: true, Verified: true}
 }

@@ -31,6 +31,11 @@ type LaunchPreparationOptions struct {
 	// A different saved platform can describe capabilities, but this process
 	// cannot execute that platform's final policy builder.
 	Platform string
+	// EnvironmentConfig selects from an explicit snapshot when the caller has
+	// not already selected Environment. Production can pass its selected map.
+	EnvironmentConfig    *EggConfig
+	InheritedEnvironment []string
+	Requirements         *LaunchRequirements
 }
 
 type PreparedLaunch struct {
@@ -44,6 +49,9 @@ type PreparedLaunch struct {
 	Deferred              []string
 	ProviderHost          string
 	NetworkFailure        string
+	Transport             string
+	Checks                []LaunchCheck
+	Environment           map[string]string
 }
 
 // PrepareLaunch is the production preparation boundary, shared by Server.RunSession
@@ -64,6 +72,35 @@ func PrepareLaunch(rc RunConfig, opts LaunchPreparationOptions, state LaunchStat
 			rc.Kind = "command"
 		}
 	}
+	selected := opts.Environment
+	inherited := append([]string(nil), opts.InheritedEnvironment...)
+	if opts.Requirements != nil && opts.Requirements.Capabilities != nil {
+		if path := opts.Requirements.Capabilities.ElanHome; path != "" {
+			inherited = append(inherited, "ELAN_HOME="+path)
+		}
+	}
+	if opts.EnvironmentConfig != nil {
+		selected = map[string]string{}
+		for _, entry := range opts.EnvironmentConfig.SelectEnv(opts.Home, inherited) {
+			k, v, ok := strings.Cut(entry, "=")
+			if ok {
+				selected[k] = v
+			}
+		}
+	}
+	out.Environment = LaunchEnvironment(rc, selected, inherited)
+	if opts.Requirements != nil && opts.Requirements.ProviderStateDir != "" {
+		if !filepath.IsAbs(opts.Requirements.ProviderStateDir) {
+			return out, errors.New("provider state dir must be absolute")
+		}
+		if key := Profile(rc.Agent).StateHomeEnv; key != "" {
+			out.Environment[key] = opts.Requirements.ProviderStateDir
+			out.Deferred = append(out.Deferred, "installed provider honoring its declared state-home environment override")
+		} else {
+			out.Deferred = append(out.Deferred, "provider profile has no state-home environment override contract")
+		}
+	}
+	opts.Environment = out.Environment
 	fsHome := opts.HostHome
 	if rc.UserHome != "" {
 		fsHome = rc.UserHome
@@ -84,8 +121,8 @@ func PrepareLaunch(rc RunConfig, opts LaunchPreparationOptions, state LaunchStat
 	}
 	if rc.Agent != "" && !rc.OuterBoundary {
 		out.NetworkFailure = policy.providerNetworkFailure(out.ProviderHost)
-		if out.ProviderHost == "" && policy.NetworkNeed == sandbox.NetworkHTTPS && policy.Mode != "observe" {
-			out.Deferred = append(out.Deferred, "provider destination absent from the runtime profile; proxy reachability")
+		if out.ProviderHost == "" && out.NetworkFailure == "" && (policy.NetworkNeed == sandbox.NetworkNone || policy.NetworkNeed == sandbox.NetworkLocal || policy.NetworkNeed == sandbox.NetworkHTTPS && policy.Mode != "observe") {
+			out.Deferred = append(out.Deferred, "provider destination absent from the runtime profile; restricted transport reachability")
 		}
 	}
 	out.Sandbox = sandbox.Config{
@@ -97,6 +134,7 @@ func PrepareLaunch(rc RunConfig, opts LaunchPreparationOptions, state LaunchStat
 		ProtectedWriteTargets: append([]string(nil), rc.ProtectedWriteTargets...),
 		RoostPolicyPaths:      append([]string(nil), rc.RoostPolicyPaths...),
 	}
+	defer func() { out.assess(rc, opts, state, err == nil) }()
 	if !rc.OuterBoundary {
 		if opts.HostHome != "" && len(out.Sandbox.Mounts) > 0 {
 			binDir := filepath.Dir(opts.Binary)
@@ -156,6 +194,7 @@ func PrepareLaunch(rc RunConfig, opts LaunchPreparationOptions, state LaunchStat
 		}
 		if deferred {
 			out.Deferred = append(out.Deferred, "Claude lifecycle settings merge and file generation")
+			out.check("provider.lifecycle_argv", LaunchUnrun, "Claude lifecycle settings require launch-time generation; base argv only", "runtime Claude lifecycle builder", "verify generated lifecycle settings in disposable native acceptance")
 		} else {
 			out.LifecycleSettingsPath = out.Args[providerOptionsEnd(out.Args)-1]
 			out.Sandbox.Mounts = append(out.Sandbox.Mounts, sandbox.Mount{Source: out.LifecycleSettingsPath, Target: out.LifecycleSettingsPath, ReadOnly: true})

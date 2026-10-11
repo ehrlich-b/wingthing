@@ -13,3 +13,7 @@ func ValidateLaunchPreparation(cfg Config) (bool, error) {
 }
 
 func checkSeatbeltDirectoryWrites(Config, string) error { return nil }
+
+func checkSeatbeltFileReads(Config, string) DirectoryWriteCheck {
+	return DirectoryWriteCheck{Reason: "final Mac read policy requires the Mac policy builder"}
+}

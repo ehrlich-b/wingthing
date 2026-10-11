@@ -591,63 +591,8 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	}
 	log.Printf("egg: command binary: %s", binPath)
 
-	// Build environment: always use rc.Env (caller filtered via BuildEnvMap).
-	// Merge agent profile required vars + essentials from host env if missing.
-	profile := Profile(rc.Agent)
-	envMap := make(map[string]string, len(rc.Env))
-	for k, v := range rc.Env {
-		envMap[k] = v
-	}
-	// Merge required env vars from agent profile
-	if !rc.SkipHostAgentEnv {
-		for _, k := range profile.EnvVars {
-			if _, ok := envMap[k]; !ok {
-				if v := os.Getenv(k); v != "" {
-					envMap[k] = v
-				}
-			}
-		}
-		// Merge platform-specific env vars (e.g. macOS Keychain access for Claude)
-		for _, k := range profile.PlatformEnv {
-			if _, ok := envMap[k]; !ok {
-				if v := os.Getenv(k); v != "" {
-					envMap[k] = v
-				}
-			}
-		}
-	}
-	// Agent-forced env defaults (e.g. CLAUDE_CODE_DISABLE_MOUSE). Host/config still wins.
-	for k, v := range profile.SetEnv {
-		if _, ok := envMap[k]; !ok {
-			envMap[k] = v
-		}
-	}
-	// Ensure essentials are present
-	for _, k := range []string{"HOME", "PATH", "TERM"} {
-		if _, ok := envMap[k]; !ok {
-			if v := os.Getenv(k); v != "" {
-				envMap[k] = v
-			}
-		}
-	}
-	// Default TERM for headless services (systemd has no terminal)
-	if envMap["TERM"] == "" {
-		envMap["TERM"] = "xterm-256color"
-	}
-	if envMap["GOTRACEBACK"] == "" {
-		envMap["GOTRACEBACK"] = "all"
-	}
-	// Agent terminals should not get interleaved git credential prompts. Human
-	// shell/command sessions retain ordinary terminal behavior.
-	if rc.Kind == "agent" {
-		if _, ok := envMap["GIT_TERMINAL_PROMPT"]; !ok {
-			envMap["GIT_TERMINAL_PROMPT"] = "0"
-		}
-	}
-	// Per-user home override for relay sessions
-	if rc.UserHome != "" {
-		envMap["HOME"] = rc.UserHome
-	}
+	// Caller selection and profile reinjection are shared with preparation.
+	envMap := LaunchEnvironment(rc, rc.Env, os.Environ())
 	// Prepend ~/.local/bin to PATH so agents like Claude Code find their
 	// native installation and don't warn about missing PATH entries.
 	home := envMap["HOME"]
@@ -691,6 +636,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		return err
 	}
 	args = prepared.Args
+	envMap = prepared.Environment
 	codexRun := prepared.CodexRun
 	if home != "" {
 		localBin := filepath.Join(home, ".local", "bin")
