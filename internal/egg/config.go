@@ -470,10 +470,17 @@ func applySectionMasks(parent *EggConfig, masks BaseField, configDir string,
 // - shell: child wins if non-empty
 // - dangerously_skip_permissions: OR
 func MergeEggConfig(parent, child *EggConfig) *EggConfig {
+	home, _ := os.UserHomeDir()
+	return mergeEggConfigForHome(parent, child, home)
+}
+
+// mergeEggConfigForHome lets the read-only planner use explicit HOME without
+// consulting the process environment. Runtime merging retains its old behavior.
+func mergeEggConfigForHome(parent, child *EggConfig, home string) *EggConfig {
 	merged := &EggConfig{}
 
 	// FS: append child to parent, with deny override logic
-	merged.FS = mergeFS(parent.FS, child.FS)
+	merged.FS = mergeFSForHome(parent.FS, child.FS, home)
 
 	// Network: union domains with wildcard short-circuit; mapping-only options
 	// follow child-wins, matching how Resources merge.
@@ -524,6 +531,10 @@ func MergeEggConfig(parent, child *EggConfig) *EggConfig {
 // drops deny:P from parent (normalized path comparison).
 func mergeFS(parent, child []string) []string {
 	home, _ := os.UserHomeDir()
+	return mergeFSForHome(parent, child, home)
+}
+
+func mergeFSForHome(parent, child []string, home string) []string {
 
 	// Collect child access paths (ro/rw) for deny override
 	childAccess := make(map[string]bool)
