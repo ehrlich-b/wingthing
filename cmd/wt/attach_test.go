@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -19,6 +20,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -194,5 +196,61 @@ func TestAttachStandaloneEggRetainsDaemonlessContract(t *testing.T) {
 				t.Fatal("refused or detached clients sent input or bypassed wing policy")
 			}
 		})
+	}
+}
+
+func TestGenericRemoteAttachAfterDelimiterRequestsTTY(t *testing.T) {
+	ssh := writeFakeRemoteSSH(t, "printf '%s\\n' \"$@\"\n")
+	for _, test := range []struct {
+		args        []string
+		interactive bool
+		mode        string
+	}{
+		{[]string{"attach", "--", "full-session-id"}, true, "-t"},
+		{[]string{"attach", "--read-only", "--", "--takeover"}, true, "-t"},
+		{[]string{"attach", "--", "full-session-id"}, false, "-T"},
+		{[]string{"attach"}, true, "-T"},
+		{[]string{"attach", "--json"}, true, "-T"},
+	} {
+		var out bytes.Buffer
+		args := append([]string{"--remote", "fixture-host", "--remote-binary", "/opt/wt builds/wt-dev", "--remote-state", "/saved state"}, test.args...)
+		err := executeCLI(t.Context(), args, remotepkg.IO{In: strings.NewReader(""), Out: &out, ErrOut: io.Discard, StdinTTY: test.interactive, StdoutTTY: test.interactive, SSHPath: ssh})
+		want := test.mode + "\nfixture-host\nWINGTHING_DIR='/saved state' WINGTHING_PREVIEW_DIR='/saved state' '/opt/wt builds/wt-dev' '--expected-channel' 'stable'"
+		for _, arg := range test.args {
+			want += " " + remotepkg.ShellQuote(arg)
+		}
+		want += "\n"
+		if err != nil || out.String() != want {
+			t.Fatalf("generic attach %q: %q, %v; want %q", test.args, out.String(), err, want)
+		}
+	}
+}
+
+func TestRemoteBatchInvocationPreservesArgvAndTTYPolicy(t *testing.T) {
+	for _, test := range []struct {
+		args, want []string
+		tty, batch bool
+	}{
+		{[]string{"--remote-batch", "attach", "--", "full-id"}, []string{"attach", "--", "full-id"}, false, true},
+		{[]string{"--remote-batch=false", "attach", "--", "full-id"}, []string{"attach", "--", "full-id"}, true, false},
+		{[]string{"attach", "--", "--remote-batch"}, []string{"attach", "--", "--remote-batch"}, true, false},
+		{[]string{"--remote-batch", "terminal", "--name", "--remote-state", "--json"}, []string{"terminal", "--name", "--remote-state", "--json"}, false, true},
+		{[]string{"terminal", "--name", "--remote-batch", "--json"}, []string{"terminal", "--name", "--remote-batch", "--json"}, false, false},
+		{[]string{"--remote-batch"}, []string{"_remote", "enter", "--json"}, false, true},
+	} {
+		argv := append([]string{"--remote", "fixture-host"}, test.args...)
+		route, remote, err := remotepkg.ParseRemoteInvocation(argv, true, newRootCommand)
+		if err != nil || !remote || route.AllocateTTY != test.tty || route.NonInteractive != test.batch || !reflect.DeepEqual(route.Args, test.want) {
+			t.Fatalf("%q => %+v remote=%v err=%v; want %q tty=%v batch=%v", argv, route, remote, err, test.want, test.tty, test.batch)
+		}
+	}
+	if _, _, err := remotepkg.ParseRemoteInvocation([]string{"--remote", "fixture-host", "--remote-batch=invalid", "attach"}, true, newRootCommand); err == nil {
+		t.Fatal("invalid batch bool accepted")
+	}
+	if _, _, err := remotepkg.ParseRemoteInvocation([]string{"--remote-batch", "attach"}, true, newRootCommand); err == nil {
+		t.Fatal("batch accepted without remote")
+	}
+	if _, _, err := remotepkg.ParseRemoteInvocation([]string{"--remote", "fixture-host", "claude"}, true, newRootCommand); err == nil {
+		t.Fatal("remote command allowlist widened")
 	}
 }

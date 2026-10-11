@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
@@ -36,6 +37,11 @@ func backgroundCommand(ctx context.Context, command commandRunner, args []string
 // Use a child for the existing attach/spawn paths. Their input goroutines live
 // only as long as the child, including when the agent exits without a detach.
 func runCommand(ctx context.Context, args []string, streams remotepkg.IO) error {
+	if streams.In == nil {
+		if err := validateRemoteAction(ctx, args, streams); err != nil {
+			return err
+		}
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return err
@@ -50,6 +56,9 @@ func runCommand(ctx context.Context, args []string, streams remotepkg.IO) error 
 }
 
 func cliCommand(ctx context.Context, executable string, args []string, streams remotepkg.IO) *exec.Cmd {
+	if streams.In == nil && len(args) > 0 && args[0] == "--remote" {
+		args = append([]string{"--remote-batch"}, args...)
+	}
 	command := exec.Command(executable, args...)
 	if streams.In == nil {
 		// Background actions isolate the CLI, SSH, and transport descendants.
@@ -122,10 +131,7 @@ func actionArgs(act action, remotes map[string]config.Remote) ([]string, error) 
 		if !exists {
 			return nil, fmt.Errorf("unknown remote %q", act.row.machine)
 		}
-		args = append(args, "--remote", remote.SSHTarget)
-		if remote.WingthingDir != "" {
-			args = append(args, "--remote-state", remote.WingthingDir)
-		}
+		args = remotepkg.ProfileArgs(remote)
 	}
 	switch act.kind {
 	case rename:
@@ -145,4 +151,48 @@ func actionArgs(act action, remotes map[string]config.Remote) ([]string, error) 
 		return nil, fmt.Errorf("unknown dashboard action")
 	}
 	return args, nil
+}
+
+// Dashboard argv has a canonical literal transport prefix. Recheck its saved
+// profile and the full ID immediately before every remote rename/stop, so even
+// retained rows cannot fall through to a display name or colliding local ID.
+func validateRemoteAction(ctx context.Context, args []string, streams remotepkg.IO) error {
+	if len(args) == 0 || args[0] != "--remote" {
+		return nil
+	}
+	route := config.Remote{}
+	i := 0
+	for i+1 < len(args) {
+		switch args[i] {
+		case "--remote":
+			route.SSHTarget = args[i+1]
+		case "--remote-binary":
+			route.WTBinary = args[i+1]
+		case "--remote-state":
+			route.WingthingDir = args[i+1]
+		default:
+			goto command
+		}
+		i += 2
+	}
+command:
+	if len(args[i:]) < 4 || args[i] != "session" || (args[i+1] != "rename" && args[i+1] != "kill") || args[i+2] != "--" {
+		return nil
+	}
+	id := args[i+3]
+	dir, err := config.StateDir()
+	if err != nil {
+		return fmt.Errorf("cannot validate remote session: %w", err)
+	}
+	profiles, err := config.LoadRemotes(dir)
+	if err != nil {
+		return fmt.Errorf("cannot validate remote session: %w", err)
+	}
+	for _, name := range eggclient.SortedRemoteNames(profiles) {
+		current := profiles[name]
+		if current.SSHTarget == route.SSHTarget && current.Binary() == route.Binary() && current.WingthingDir == route.WingthingDir {
+			return eggclient.ValidateRemoteSession(ctx, name, current, id, streams)
+		}
+	}
+	return fmt.Errorf("cannot validate remote session %s on %s: saved profile changed or was removed; reopen wt before acting", id, route.SSHTarget)
 }

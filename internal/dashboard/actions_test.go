@@ -2,8 +2,11 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"syscall"
@@ -11,12 +14,14 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
 )
 
 func TestDashboardActionRoutes(t *testing.T) {
-	remotes := map[string]config.Remote{"work": {SSHTarget: "me@host", WingthingDir: "/state with space"}}
-	remotePrefix := []string{"--remote", "me@host", "--remote-state", "/state with space"}
+	remotes := map[string]config.Remote{"work": {SSHTarget: "me@host", WTBinary: "/opt/wt builds/wt-dev", WingthingDir: "/state with space"}}
+	remotePrefix := []string{"--remote", "me@host", "--remote-binary", "/opt/wt builds/wt-dev", "--remote-state", "/state with space"}
 	for _, test := range []struct {
 		name string
 		act  action
@@ -25,6 +30,8 @@ func TestDashboardActionRoutes(t *testing.T) {
 		{"local attach", action{row: row{machine: "local", LocalSession: session("one", "name", "/src", "idle")}, attach: true}, []string{"attach", "--", "one"}},
 		{"remote attach", action{row: row{machine: "work", LocalSession: session("one", "name", "/src", "idle")}, attach: true}, []string{"attach", "--", "work:one"}},
 		{"remote rename", action{kind: rename, row: row{machine: "work", LocalSession: session("one", "name", "/src", "idle")}, name: "renamed"}, append(append([]string{}, remotePrefix...), "session", "rename", "--", "one", "renamed")},
+		{"remote stop", action{kind: confirmStop, row: row{machine: "work", LocalSession: session("full-session-id", "name", "/src", "idle")}}, append(append([]string{}, remotePrefix...), "session", "kill", "--", "full-session-id")},
+		{"remote shell-looking cwd", action{kind: newCWD, row: row{machine: "work"}, cwd: "/src/$(touch canary); it's a project"}, append(append([]string{}, remotePrefix...), "terminal", "--cwd", "/src/$(touch canary); it's a project")},
 		{"local stop", action{kind: confirmStop, row: row{machine: "local", LocalSession: session("one", "name", "/src", "idle")}}, []string{"session", "kill", "--", "one"}},
 		{"remote new", action{kind: newCWD, row: row{machine: "work"}, agent: "codex", cwd: "/project space"}, append(append([]string{}, remotePrefix...), "egg", "codex", "--cwd", "/project space")},
 		{"local shell", action{kind: newCWD, row: row{machine: "local"}, cwd: "/src"}, []string{"terminal", "--cwd", "/src"}},
@@ -59,11 +66,16 @@ func TestDashboardBackgroundTimeoutReportsUncertainRemoteOutcome(t *testing.T) {
 		if remote {
 			args = append([]string{"--remote", "me@host"}, args...)
 		}
+		calls := 0
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 		err := backgroundCommand(ctx, func(context.Context, []string, remotepkg.IO) error {
+			calls++
 			return errors.New("signal: killed")
 		}, args, remotepkg.IO{})
 		cancel()
+		if calls != 1 {
+			t.Fatalf("mutation dispatched %d times after uncertain timeout", calls)
+		}
 		if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "timed out") {
 			t.Fatalf("timeout reported as %v", err)
 		}
@@ -134,11 +146,98 @@ func TestDashboardActionProcessSkipsCanceledStartAndHandlesExit(t *testing.T) {
 
 func TestDashboardCLIIsolatesBackgroundButKeepsAttachForeground(t *testing.T) {
 	background := cliCommand(context.Background(), "fake-wt", []string{"--remote", "host", "session", "rename"}, remotepkg.IO{Out: io.Discard})
+	if !reflect.DeepEqual(background.Args, []string{"fake-wt", "--remote-batch", "--remote", "host", "session", "rename"}) {
+		t.Fatalf("background did not opt into batch SSH: %q", background.Args)
+	}
 	if background.SysProcAttr == nil || !background.SysProcAttr.Setpgid || background.Cancel != nil {
 		t.Fatal("background action does not own its process group and cancellation")
 	}
 	attach := cliCommand(context.Background(), "fake-wt", []string{"attach", "--", "one"}, remotepkg.IO{In: strings.NewReader(""), Out: io.Discard})
 	if attach.SysProcAttr != nil || attach.Cancel == nil {
 		t.Fatal("attachment cannot read in the foreground or be canceled")
+	}
+}
+
+func TestDashboardRemoteMutationValidatesSameCurrentProfile(t *testing.T) {
+	scratch, err := filepath.Abs("../../.scratch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, state, remoteState := testprovider.ScopedHomeDirs(t, scratch)
+	root := t.TempDir()
+	real, alias := filepath.Join(root, "tmp-real"), filepath.Join(root, "tmp-alias")
+	if err := os.Mkdir(real, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, alias); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", alias)
+	t.Setenv("HOME", home)
+	t.Setenv("WINGTHING_DIR", state)
+	profile := config.Remote{SSHTarget: "fixture-forge", WTBinary: "/opt/custom wt", WingthingDir: remoteState}
+	log := filepath.Join(home, "ssh-routes")
+	ssh := filepath.Join(alias, "ssh")
+	data, err := json.Marshal(eggclient.RemoteSessionInventory{Version: "fixture", ContractVersion: eggclient.RemoteSessionContractVersion, Sessions: []eggclient.LocalSession{{ID: "full-id", PID: 42}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\n[ \"$1\" = -T ] && [ \"$2\" = -o ] && [ \"$3\" = BatchMode=yes ] && [ \"$4\" = fixture-forge ] || exit 91\n" +
+		"printf '%s\\n' \"$5\" >> " + remotepkg.ShellQuote(log) + "\ncase \"$5\" in\n" +
+		"*\"'--version'\"*) echo 'wt version fixture' ;;\n" +
+		"*\"'session' 'ps' '--json' '--remote-inventory'\"*) printf '%s\\n' " + remotepkg.ShellQuote(string(data)) + " ;;\n*) exit 92 ;; esac\n"
+	if err := os.WriteFile(ssh, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name          string
+		current       config.Remote
+		present, fail bool
+	}{
+		{"same route", profile, true, false},
+		{"target changed", config.Remote{SSHTarget: "other-peer", WTBinary: profile.WTBinary, WingthingDir: remoteState}, true, true},
+		{"binary changed", config.Remote{SSHTarget: profile.SSHTarget, WTBinary: "/opt/another wt", WingthingDir: remoteState}, true, true},
+		{"state changed", config.Remote{SSHTarget: profile.SSHTarget, WTBinary: profile.WTBinary, WingthingDir: "/another state"}, true, true},
+		{"removed", config.Remote{}, false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_ = os.Remove(log)
+			profiles := map[string]config.Remote{}
+			if test.present {
+				profiles["forge"] = test.current
+			}
+			if err := config.SaveRemotes(state, profiles); err != nil {
+				t.Fatal(err)
+			}
+			for _, mutation := range []string{"rename", "kill"} {
+				args := append(remotepkg.ProfileArgs(profile), "session", mutation, "--", "full-id")
+				if mutation == "rename" {
+					args = append(args, "new-name")
+				}
+				err := validateRemoteAction(t.Context(), args, remotepkg.IO{SSHPath: ssh})
+				if (err != nil) != test.fail {
+					t.Fatalf("guard %s: %v", mutation, err)
+				}
+				if test.fail && !strings.Contains(err.Error(), "saved profile changed or was removed") {
+					t.Fatal(err)
+				}
+			}
+			if test.fail {
+				if _, err := os.Stat(log); !os.IsNotExist(err) {
+					t.Fatal("changed saved profile was contacted")
+				}
+			} else {
+				data, err := os.ReadFile(log)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Count(string(data), "'session' 'ps'") != 2 || strings.Count(string(data), "'/opt/custom wt'") != 4 {
+					t.Fatalf("validation query lost exact route: %s", data)
+				}
+			}
+		})
+	}
+	if err := validateRemoteAction(t.Context(), []string{"session", "kill", "--", "local-id"}, remotepkg.IO{SSHPath: "/must-not-run"}); err != nil {
+		t.Fatal(err)
 	}
 }

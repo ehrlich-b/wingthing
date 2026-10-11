@@ -22,6 +22,10 @@ func TestRemoteTTYPolicy(t *testing.T) {
 		want bool
 	}{
 		{[]string{"attach", "work"}, true},
+		{[]string{"attach", "--", "full-id"}, true},
+		{[]string{"attach", "--read-only", "--", "--select"}, true},
+		{[]string{"attach", "--json", "--", "full-id"}, false},
+		{[]string{"attach", "--"}, false},
 		{[]string{"attach", "--select"}, true},
 		{[]string{"attach", "--select=false"}, false},
 		{[]string{"attach", "--json"}, false},
@@ -302,5 +306,58 @@ func TestRemoteDisconnectPreserves255AndDoesNotSuggestRelaunch(t *testing.T) {
 	}
 	if stderr.String() != "Connection closed\n" {
 		t.Fatalf("SSH diagnostic was not preserved: %q", stderr.String())
+	}
+}
+
+func TestRemoteNonInteractiveOptionUsesOnlyBatchMode(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "tmp-real")
+	alias := filepath.Join(root, "tmp-alias")
+	if err := os.Mkdir(real, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, alias); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", alias)
+	ssh := filepath.Join(alias, "ssh")
+	if err := os.WriteFile(ssh, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, batch := range []bool{false, true} {
+		var output bytes.Buffer
+		err := RunRemoteInvocation(t.Context(), Invocation{Target: "fixture-host", Binary: "wt", Args: []string{"attach", "--", "full-id"}, AllocateTTY: true, NonInteractive: batch}, IO{Out: &output, ErrOut: io.Discard, SSHPath: ssh})
+		want := "-t\nfixture-host\n'wt' 'attach' '--' 'full-id'\n"
+		if batch {
+			want = "-T\n-o\nBatchMode=yes\nfixture-host\n'wt' 'attach' '--' 'full-id'\n"
+		}
+		if err != nil || output.String() != want {
+			t.Fatalf("batch=%v ssh argv=%q %v; want %q", batch, output.String(), err, want)
+		}
+	}
+}
+
+func TestRemoteSavedProfileRouteKeepsLiteralPathsAndChannel(t *testing.T) {
+	old := config.ReleaseChannel
+	config.ReleaseChannel = "preview"
+	t.Cleanup(func() { config.ReleaseChannel = old })
+	for _, profile := range []config.Remote{
+		{SSHTarget: "user@fixture", WingthingDir: "/state it's literal"},
+		{SSHTarget: "fixture", WTBinary: "/opt/wt builds/wt-dev", WingthingDir: "/state/$literal"},
+	} {
+		argv := ProfileArgs(profile)
+		want := []string{"--remote", profile.SSHTarget, "--remote-binary", profile.Binary(), "--remote-state", profile.WingthingDir}
+		if !reflect.DeepEqual(argv, want) {
+			t.Fatalf("profile argv=%q want=%q", argv, want)
+		}
+		args := []string{"attach", "--", "full-id"}
+		invocation := ProfileInvocation(profile, args)
+		args[2] = "must-not-alias"
+		if invocation.Target != profile.SSHTarget || invocation.Binary != profile.Binary() || invocation.State != profile.WingthingDir || invocation.Args[2] != "full-id" {
+			t.Fatalf("profile route=%+v", invocation)
+		}
+	}
+	if got := ProfileArgs(config.Remote{SSHTarget: "fixture"}); !reflect.DeepEqual(got, []string{"--remote", "fixture", "--remote-binary", "wt-preview"}) {
+		t.Fatal(got)
 	}
 }

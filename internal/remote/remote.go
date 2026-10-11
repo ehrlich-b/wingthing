@@ -26,6 +26,25 @@ type Invocation struct {
 	State       string
 	Args        []string
 	AllocateTTY bool
+	// NonInteractive prevents SSH from prompting via /dev/tty in background work.
+	NonInteractive bool
+}
+
+// ProfileInvocation preserves the saved host, executable and remote state. The
+// receiving binary still applies the channel guard and attachment authorization.
+func ProfileInvocation(profile config.Remote, args []string) Invocation {
+	return Invocation{Target: profile.SSHTarget, Binary: profile.Binary(), State: profile.WingthingDir, Args: append([]string(nil), args...)}
+}
+
+// ProfileArgs is literal local CLI argv; RunRemoteInvocation alone quotes it for
+// the receiving POSIX shell. Labels and remote paths never become shell source.
+func ProfileArgs(profile config.Remote) []string {
+	route := ProfileInvocation(profile, nil)
+	args := []string{"--remote", route.Target, "--remote-binary", route.Binary}
+	if route.State != "" {
+		args = append(args, "--remote-state", route.State)
+	}
+	return args
 }
 
 type IO struct {
@@ -48,7 +67,13 @@ func ProcessIO() IO {
 
 func ParseRemoteInvocation(argv []string, interactive bool, newRootCommand func() *cobra.Command) (Invocation, bool, error) {
 	invocation := Invocation{Binary: config.BinaryName()}
-	command, _, _ := newRootCommand().Find(argv)
+	root := newRootCommand()
+	// Cobra Find must know this transport flag is boolean; otherwise it can
+	// consume the following command and lose that command's flag-value rules.
+	if root.PersistentFlags().Lookup("remote-batch") == nil {
+		root.PersistentFlags().Bool("remote-batch", false, "internal background SSH mode")
+	}
+	command, _, _ := root.Find(argv)
 	args := make([]string, 0, len(argv))
 	transportSeen := false
 	stateSeen := false
@@ -57,6 +82,21 @@ func ParseRemoteInvocation(argv []string, interactive bool, newRootCommand func(
 		if arg == "--" {
 			args = append(args, argv[i:]...)
 			break
+		}
+
+		// Internal transport option used by background dashboard children. It is
+		// stripped before dispatch, including when Cobra never parses the root flags.
+		if arg == "--remote-batch" || strings.HasPrefix(arg, "--remote-batch=") {
+			transportSeen = true
+			invocation.NonInteractive = true
+			if raw, ok := strings.CutPrefix(arg, "--remote-batch="); ok {
+				parsed, err := strconv.ParseBool(raw)
+				if err != nil {
+					return Invocation{}, false, fmt.Errorf("--remote-batch: %w", err)
+				}
+				invocation.NonInteractive = parsed
+			}
+			continue
 		}
 
 		name, value, inline, matched := remoteTransportFlag(arg)
@@ -115,6 +155,7 @@ func ParseRemoteInvocation(argv []string, interactive bool, newRootCommand func(
 			return Invocation{}, false, err
 		}
 	}
+	interactive = interactive && !invocation.NonInteractive
 	bareEntry := len(args) == 0 || remoteJSONOnly(args)
 	if invocation.CWD != "" && !bareEntry {
 		return Invocation{}, false, errors.New("--remote-cwd is only valid with bare 'wt --remote HOST'; use the command's --cwd flag for launches")
@@ -275,7 +316,17 @@ func remoteCommandNeedsTTY(args []string) bool {
 		if BoolFlagBeforeDash(args[1:], "json", "") {
 			return false
 		}
-		return BoolFlagBeforeDash(args[1:], "select", "s") || firstPositionalBeforeDash(args[1:]) != ""
+		if BoolFlagBeforeDash(args[1:], "select", "s") || firstPositionalBeforeDash(args[1:]) != "" {
+			return true
+		}
+		// Attach owns its positional target after --; unlike provider argv, even
+		// a target beginning with '-' is a literal session reference here.
+		for i, arg := range args[1:] {
+			if arg == "--" {
+				return i+2 < len(args) && args[i+2] != ""
+			}
+		}
+		return false
 	case "egg", "sandbox":
 		if BoolFlagBeforeDash(args[1:], "detach", "d") || BoolFlagBeforeDash(args[1:], "json", "") {
 			return false
@@ -379,8 +430,11 @@ func RunRemoteInvocation(ctx context.Context, invocation Invocation, streams IO)
 		command = "WINGTHING_DIR=" + state + " WINGTHING_PREVIEW_DIR=" + state + " " + command
 	}
 	sshArgs := []string{"-T"}
-	if invocation.AllocateTTY {
+	if invocation.AllocateTTY && !invocation.NonInteractive {
 		sshArgs[0] = "-t"
+	}
+	if invocation.NonInteractive {
+		sshArgs = append(sshArgs, "-o", "BatchMode=yes")
 	}
 	sshArgs = append(sshArgs, invocation.Target, command)
 	sshPath := streams.SSHPath
