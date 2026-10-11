@@ -2,15 +2,274 @@ package eggclient
 
 import (
 	"bytes"
+	"context"
+	"fmt"
+	"net"
 
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/egg"
+	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"google.golang.org/grpc"
 )
+
+type inventoryStatusFixture struct {
+	pb.UnimplementedEggServer
+	slow                bool
+	active, peak, calls *atomic.Int32
+}
+
+func (f inventoryStatusFixture) Status(ctx context.Context, _ *pb.StatusRequest) (*pb.StatusResponse, error) {
+	f.calls.Add(1)
+	n := f.active.Add(1)
+	defer f.active.Add(-1)
+	for old := f.peak.Load(); n > old; old = f.peak.Load() {
+		if f.peak.CompareAndSwap(old, n) {
+			break
+		}
+	}
+	if f.slow {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return &pb.StatusResponse{Readers: 3, Agent: "claude", TotalWritten: 99}, nil
+}
+
+func inventorySessionsFixture(t *testing.T, slowFrom int) (*config.Config, *atomic.Int32, *atomic.Int32, *atomic.Int32) {
+	t.Helper()
+	// These fixtures use short explicit IDs; validate the canonical socket
+	// below rather than reserving the unrelated full runtime ID width.
+	home, state, _ := testprovider.ScopedHomeDirs(t, "../../.scratch")
+	home, _ = filepath.Abs(home)
+	state, _ = filepath.Abs(state)
+	real, alias := filepath.Join(home, "t"), filepath.Join(home, "a")
+	if err := os.Mkdir(real, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, alias); err != nil {
+		t.Fatal(err)
+	}
+	child := exec.CommandContext(t.Context(), "/bin/cat")
+	child.Env = []string{"HOME=" + home, "TMPDIR=" + alias}
+	input, err := child.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = input.Close(); _ = child.Wait() })
+	t.Setenv("HOME", home)
+	active, peak, calls := new(atomic.Int32), new(atomic.Int32), new(atomic.Int32)
+	for n := range 20 {
+		dir := filepath.Join(state, "eggs", fmt.Sprintf("s%02d", n))
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		for file, value := range map[string]string{
+			"egg.pid": strconv.Itoa(child.Process.Pid), "egg.token": "fixture",
+			"egg.meta":        "kind=agent\nagent=claude\nprovider_home=" + home + "\ncwd=" + alias + "\n",
+			"lifecycle.jsonl": "{\"sequence\":1,\"type\":\"session_ready\",\"source\":\"claude_hook\",\"state\":\"working\"}\n",
+		} {
+			if err := os.WriteFile(filepath.Join(dir, file), []byte(value), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		path := filepath.Join(dir, "egg.sock")
+		canonical, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, candidate := range []string{path, filepath.Join(canonical, "egg.sock")} {
+			if len([]byte(candidate)) > 103 {
+				t.Fatalf("socket exceeds 103 bytes: %s", candidate)
+			}
+		}
+		listener, err := net.Listen("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rpc := grpc.NewServer()
+		pb.RegisterEggServer(rpc, inventoryStatusFixture{slow: n >= slowFrom, active: active, peak: peak, calls: calls})
+		done := make(chan struct{})
+		go func() { defer close(done); _ = rpc.Serve(listener) }()
+		t.Cleanup(func() { rpc.Stop(); _ = listener.Close(); <-done })
+	}
+	return &config.Config{Dir: state}, active, peak, calls
+}
+
+func TestDiscoverActiveSessionsInventoryFixturePhases(t *testing.T) {
+	cfg, _, peak, calls := inventorySessionsFixture(t, 12)
+	start := time.Now()
+	refs, err := DiscoverSessionRefs(cfg)
+	metadata := time.Since(start)
+	if err != nil || len(refs) != 20 {
+		t.Fatalf("metadata: %d, %v", len(refs), err)
+	}
+	start = time.Now()
+	for _, ref := range refs {
+		if _, err := tryLifecycleViewForSession(cfg, ref); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lifecycle := time.Since(start)
+	start = time.Now()
+	rows, err := DiscoverActiveSessions(t.Context(), cfg)
+	if err != nil || len(rows) != 20 {
+		t.Fatalf("inventory: %d, %v", len(rows), err)
+	}
+	for n, row := range rows {
+		if row.ID != fmt.Sprintf("s%02d", n) || row.PID <= 0 {
+			t.Fatalf("lost identity/sort: %+v", row)
+		}
+	}
+	t.Logf("20-entry fixture: metadata=%s lifecycle=%s enriched_inventory=%s status_calls=%d peak_status=%d", metadata, lifecycle, time.Since(start), calls.Load(), peak.Load())
+}
+
+func TestDiscoverActiveSessionsInventoryCanceledRetainsMetadata(t *testing.T) {
+	cfg, _, _, calls := inventorySessionsFixture(t, 0)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	rows, err := DiscoverActiveSessions(ctx, cfg)
+	if err != nil || len(rows) != 20 {
+		t.Fatalf("canceled inventory lost metadata: %d, %v", len(rows), err)
+	}
+	for _, row := range rows {
+		if row.Status != "unknown" {
+			t.Fatalf("canceled enrichment reported evidence: %+v", row)
+		}
+	}
+	if calls.Load() != 0 {
+		t.Fatal("canceled inventory launched probes")
+	}
+}
+
+// Exercise the real RPC separately so phase measurements do not infer health
+// from lifecycle state or from an absent socket.
+func TestDiscoverActiveSessionsInventoryStatusFixture(t *testing.T) {
+	cfg, _, _, _ := inventorySessionsFixture(t, 20)
+	dir := filepath.Join(cfg.Dir, "eggs", "s00")
+	client, err := egg.Dial(filepath.Join(dir, "egg.sock"), filepath.Join(dir, "egg.token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	st, err := client.Status(ctx)
+	if err != nil || st.Readers != 3 {
+		t.Fatalf("fixture status: %v, %v", st, err)
+	}
+}
+
+func TestDiscoverActiveSessionsInventoryDeadlineAndWorkerCap(t *testing.T) {
+	cfg, active, peak, calls := inventorySessionsFixture(t, 0)
+	// Missing native evidence remains unknown even with a live process.
+	for n := range 20 {
+		if err := os.Remove(filepath.Join(cfg.Dir, "eggs", fmt.Sprintf("s%02d", n), "lifecycle.jsonl")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start := time.Now()
+	rows, err := DiscoverActiveSessions(t.Context(), cfg)
+	if err != nil || len(rows) != 20 {
+		t.Fatalf("deadline dropped metadata: %d, %v", len(rows), err)
+	}
+	// Correctness allows scheduling slack; the 1s target is recorded separately.
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("aggregate deadline unbounded: %s", elapsed)
+	}
+	if peak.Load() > 8 || peak.Load() < 2 || calls.Load() >= 20 {
+		t.Fatalf("worker cap/admission: peak=%d calls=%d", peak.Load(), calls.Load())
+	}
+	for _, row := range rows {
+		if row.Status != "unknown" || row.Readers != 0 {
+			t.Fatalf("invented enrichment: %+v", row)
+		}
+	}
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for active.Load() != 0 {
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			t.Fatal("status readers were not canceled")
+		}
+	}
+	t.Logf("all-stalled inventory=%s peak_status=%d admitted=%d retained=%d", time.Since(start), peak.Load(), calls.Load(), len(rows))
+}
+
+func TestDiscoverActiveSessionsInventoryLegacyAgentFallback(t *testing.T) {
+	cfg, _, _, _ := inventorySessionsFixture(t, 20)
+	dir := filepath.Join(cfg.Dir, "eggs", "s00")
+	home := filepath.Dir(cfg.Dir)
+	if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("kind=agent\nprovider_home="+home+"\ncwd="+home+"/a\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "lifecycle.jsonl"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	spool := filepath.Join(home, ".claude", "wingthing-events", "s00")
+	if err := os.MkdirAll(spool, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(spool, "seq.00000000000000000001.json"), []byte(`{"session_id":"fixture","hook_event_name":"SessionStart"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(spool, "seq.00000000000000000002.json"), []byte(`{"session_id":"fixture","hook_event_name":"UserPromptSubmit"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := DiscoverActiveSessions(t.Context(), cfg)
+	if err != nil || len(rows) != 20 || rows[0].Agent != "claude" || rows[0].Status != "working" {
+		t.Fatalf("legacy agent fallback: %+v, %v", rows, err)
+	}
+}
+
+func TestDiscoverActiveSessionsInventoryLifecycleResidual(t *testing.T) {
+	cfg, _, _, _ := inventorySessionsFixture(t, 20)
+	const eventsPerSession = 4000
+	var journal strings.Builder
+	for n := range eventsPerSession {
+		fmt.Fprintf(&journal, "{\"sequence\":%d,\"type\":\"session_ready\",\"source\":\"claude_hook\",\"state\":\"working\"}\n", n+1)
+	}
+	for n := range 20 {
+		if err := os.WriteFile(filepath.Join(cfg.Dir, "eggs", fmt.Sprintf("s%02d", n), "lifecycle.jsonl"), []byte(journal.String()), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start := time.Now()
+	refs, err := DiscoverSessionRefs(cfg)
+	metadata := time.Since(start)
+	if err != nil || len(refs) != 20 {
+		t.Fatalf("metadata: %d, %v", len(refs), err)
+	}
+	start = time.Now()
+	for _, ref := range refs {
+		view, err := tryLifecycleViewForSession(cfg, ref)
+		if err != nil || view.HeadCursor != eventsPerSession || len(view.Events) != 1 || view.Status != "working" {
+			t.Fatalf("one-event projection lost native evidence: %+v, %v", view, err)
+		}
+	}
+	projection := time.Since(start)
+	start = time.Now()
+	rows, err := DiscoverActiveSessions(t.Context(), cfg)
+	if err != nil || len(rows) != 20 {
+		t.Fatalf("residual cost dropped metadata: %d, %v", len(rows), err)
+	}
+	t.Logf("RESIDUAL synchronous journal projection: sessions=20 events/session=%d bytes/session=%d metadata=%s sequential_projection=%s bounded_inventory=%s; display page=1, existing full-journal reads cannot be canceled", eventsPerSession, journal.Len(), metadata, projection, time.Since(start))
+}
 
 func TestSessionInputChunksSeparatesEnterFromPastedText(t *testing.T) {
 	tests := []struct {

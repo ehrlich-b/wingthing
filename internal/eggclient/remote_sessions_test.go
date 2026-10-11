@@ -15,6 +15,7 @@ import (
 	"io"
 
 	"testing"
+	"time"
 )
 
 func TestRemoteSessionBufferBoundsLargeWrites(t *testing.T) {
@@ -29,6 +30,58 @@ func TestRemoteSessionBufferBoundsLargeWrites(t *testing.T) {
 	}
 	if n, err := buffer.Write(input); n != 0 || err == nil || buffer.buffer.Len() != buffer.limit {
 		t.Fatalf("write after overflow = %d, %v; length = %d", n, err, buffer.buffer.Len())
+	}
+}
+
+func TestRemoteSessionInventoryFirstCompatibilityAndCancellation(t *testing.T) {
+	for _, test := range []struct {
+		name, response, want string
+		calls                int
+	}{
+		{"compatible", "printf '%s' '{\"version\":\"fixture\",\"contract_version\":\"v1\",\"sessions\":[]}'", "", 1},
+		{"different contract", "printf '%s' '{\"version\":\"old\",\"contract_version\":\"v2\",\"sessions\":[]}'", "remote wt version old", 1},
+		{"old receiver", "echo 'unknown flag: --remote-inventory' >&2; exit 1", "remote wt version old", 2},
+		{"invalid JSON", "echo '[]'", "invalid session ps", 2},
+		{"offline", "exit 255", "status 255", 1},
+		{"canceled", "exec /bin/sleep 30", "deadline exceeded", 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			real, alias := filepath.Join(root, "tmp-real"), filepath.Join(root, "tmp-alias")
+			if err := os.Mkdir(real, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(real, alias); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("TMPDIR", alias)
+			log, ssh := filepath.Join(root, "calls"), filepath.Join(alias, "ssh")
+			script := "#!/bin/sh\n[ \"$1\" = -T ] && [ \"$2\" = -o ] && [ \"$3\" = BatchMode=yes ] || exit 90\nprintf '%s\\n' \"$5\" >> " + remotepkg.ShellQuote(log) + "\ncase \"$5\" in *\"'--version'\"*) echo 'wt version old' ;; *) " + test.response + " ;; esac\n"
+			if err := os.WriteFile(ssh, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+			defer cancel()
+			rows, err := QueryRemoteSessions("fixture-local", ctx, "fixture", config.Remote{SSHTarget: "fixture-only"}, remotepkg.IO{SSHPath: ssh})
+			if test.want == "" {
+				if err != nil || rows == nil {
+					t.Fatalf("compatible inventory: %v, %v", rows, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("diagnostic = %v, want %q", err, test.want)
+			}
+			data, readErr := os.ReadFile(log)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			commands := strings.Split(strings.TrimSpace(string(data)), "\n")
+			if len(commands) != test.calls || !strings.Contains(commands[0], "'--remote-inventory'") {
+				t.Fatalf("inventory-first subprocesses: %q", commands)
+			}
+			if test.calls == 2 && !strings.Contains(commands[1], "'--version'") {
+				t.Fatal("missing compatibility diagnostic")
+			}
+		})
 	}
 }
 
@@ -48,11 +101,9 @@ func TestRemoteSessionFreshIdentityUsesExactBatchRoute(t *testing.T) {
 		{"empty ID", "", []LocalSession{{ID: "", PID: 42}}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			scratch, err := filepath.Abs("../../.scratch")
-			if err != nil {
-				t.Fatal(err)
-			}
-			home, _, state := testprovider.ScopedHomeDirs(t, scratch)
+			home, _, state := testprovider.ScopedHomeDirs(t, "../../.scratch")
+			home, _ = filepath.Abs(home)
+			state, _ = filepath.Abs(state)
 			root := t.TempDir()
 			real, alias := filepath.Join(root, "tmp-real"), filepath.Join(root, "tmp-alias")
 			if err := os.Mkdir(real, 0700); err != nil {
@@ -92,7 +143,8 @@ func TestRemoteSessionFreshIdentityUsesExactBatchRoute(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if strings.Count(string(route), "BatchMode=yes") != 2 || strings.Count(string(route), remotepkg.ShellQuote(binary)) != 2 || !strings.Contains(string(route), "'session' 'ps' '--json' '--remote-inventory'") {
+			t.Logf("SSH subprocesses per validation: %d", strings.Count(string(route), "BatchMode=yes"))
+			if strings.Count(string(route), "BatchMode=yes") != 1 || strings.Count(string(route), remotepkg.ShellQuote(binary)) != 1 || !strings.Contains(string(route), "'session' 'ps' '--json' '--remote-inventory'") {
 				t.Fatalf("inventory lost literal/batch route: %s", route)
 			}
 		})

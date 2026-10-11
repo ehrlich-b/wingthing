@@ -59,7 +59,7 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 	s.remotes = remotes
 	ctx, cancel := context.WithCancel(ctx)
 	var actions sync.WaitGroup
-	defer func() { cancel(); actions.Wait() }()
+	defer func() { cancel(); actions.Wait(); inv.workers.Wait() }()
 	defer func() { err = errors.Join(err, terminal.leave()) }()
 	if err := terminal.enter(); err != nil {
 		return err
@@ -138,7 +138,9 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			}
 			continue
 		case result := <-inv.results:
-			inv.apply(s, result)
+			if inv.apply(s, result) {
+				inv.start(ctx, s, result.name)
+			}
 			continue
 		case <-ticker.C:
 			inv.refresh(ctx, s)
@@ -170,7 +172,7 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			act, quit := s.handle(key)
 			if s.refresh {
 				s.refresh = false
-				inv.refresh(ctx, s)
+				inv.forceRefresh(ctx, s)
 			}
 			if quit {
 				return nil
