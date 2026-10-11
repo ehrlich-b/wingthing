@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -137,19 +138,90 @@ func northstarBuild(t *testing.T, f *northstarFixture, channel string) string {
 		args = append(args, "-ldflags", "-X github.com/ehrlich-b/wingthing/internal/config.ReleaseChannel=preview")
 	}
 	args = append(args, "./cmd/wt")
-	build := exec.CommandContext(t.Context(), "nice", args...)
+	build := exec.Command("nice", args...)
 	if runtime.GOOS == "darwin" {
-		build = exec.CommandContext(t.Context(), "taskpolicy", append([]string{"-b", "nice"}, args...)...)
+		build = exec.Command("taskpolicy", append([]string{"-b", "nice"}, args...)...)
 	}
 	build.Dir = f.repo
 	// Build caches are clone-local even when the coordinator invokes go without
 	// cache selectors; child application env stays separate from the build env.
 	build.Env = append(os.Environ(), "GOCACHE="+filepath.Join(f.repo, ".scratch", "northstar", "go-build"),
 		"GOMODCACHE="+filepath.Join(f.repo, ".scratch", "northstar", "go-mod"))
-	if output, err := build.CombinedOutput(); err != nil {
+	// t.Context is cancelled during cleanup, not before the test timeout
+	// alarm. Give this nested build its own deadline so it cannot consume the
+	// entire acceptance budget or strand compiler children after a timeout.
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	if output, err := northstarBuildOutput(ctx, build); err != nil {
 		t.Fatalf("build actual wt: %v\n%s", err, output)
 	}
 	return binary
+}
+
+type northstarBuildLog struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (log *northstarBuildLog) Write(data []byte) (int, error) {
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	return log.buffer.Write(data)
+}
+
+func (log *northstarBuildLog) snapshot() []byte {
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	return bytes.Clone(log.buffer.Bytes())
+}
+
+func northstarBuildOutput(ctx context.Context, build *exec.Cmd) ([]byte, error) {
+	var log northstarBuildLog
+	build.Stdout, build.Stderr = &log, &log
+	build.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// A compiler descendant may keep an output pipe open after the Go process
+	// exits. Bound that copy too, independently of the process exit wait.
+	build.WaitDelay = time.Second
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := build.Start(); err != nil {
+		return nil, err
+	}
+	done := make(chan error, 1)
+	go func() { done <- build.Wait() }()
+	signalGroup := func(signal syscall.Signal) error {
+		err := syscall.Kill(-build.Process.Pid, signal)
+		if errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+		return err
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			err = errors.Join(err, signalGroup(syscall.SIGKILL))
+		}
+		return log.snapshot(), err
+	case <-ctx.Done():
+	}
+	err := errors.Join(ctx.Err(), signalGroup(syscall.SIGTERM))
+	grace := time.NewTimer(time.Second)
+	defer grace.Stop()
+	select {
+	case waitErr := <-done:
+		return log.snapshot(), errors.Join(err, waitErr, signalGroup(syscall.SIGKILL))
+	case <-grace.C:
+	}
+	err = errors.Join(err, signalGroup(syscall.SIGKILL))
+	join := time.NewTimer(2 * time.Second)
+	defer join.Stop()
+	select {
+	case waitErr := <-done:
+		return log.snapshot(), errors.Join(err, waitErr)
+	case <-join.C:
+		return log.snapshot(), errors.Join(err, errors.New("build child was not reaped after SIGKILL"))
+	}
 }
 
 func northstarSocket(t *testing.T, path string) string {

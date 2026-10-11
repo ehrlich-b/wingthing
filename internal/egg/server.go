@@ -1523,17 +1523,21 @@ func (s *Server) Kill(ctx context.Context, req *pb.KillRequest) (*pb.KillRespons
 	return &pb.KillResponse{}, nil
 }
 
-// terminateSession does not report success until the child has actually
-// exited. Interactive shells commonly ignore SIGTERM, so a fire-and-forget
-// signal makes `wt session kill` lie while the egg and its session remain
-// discoverable. Give cooperative processes a grace period, then force the
-// process down and wait for the normal cmd.Wait cleanup path to complete.
+const sessionKillWait = 2 * time.Second
+
+// Give cooperative processes a grace period, then kill the entire owned group.
+// Cancellation also escalates: it must not strand a TERM-ignoring provider.
+// Even callers without a deadline get a bounded wait for cmd.Wait and group
+// termination; a stuck reaper or surviving member is an error, never success.
 func terminateSession(ctx context.Context, sess *Session, grace time.Duration) error {
 	if sess == nil || sess.cmd == nil || sess.cmd.Process == nil {
 		return nil
 	}
 
-	if err := signalSessionGroup(sess, syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	// Capture ownership while the leader is still present. Its descendants
+	// keep the same group after Wait reaps the leader.
+	pgid := sessionOwnedGroupID(sess)
+	if err := signalSessionGroup(sess, pgid, syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return fmt.Errorf("signal: %w", err)
 	}
 
@@ -1541,20 +1545,47 @@ func terminateSession(ctx context.Context, sess *Session, grace time.Duration) e
 	defer timer.Stop()
 	select {
 	case <-sess.done:
-		return signalSessionGroup(sess, syscall.SIGKILL)
 	case <-ctx.Done():
-		return ctx.Err()
 	case <-timer.C:
 	}
 
-	if err := signalSessionGroup(sess, syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		return fmt.Errorf("kill after %s grace period: %w", grace, err)
+	if err := signalSessionGroup(sess, pgid, syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return errors.Join(ctx.Err(), fmt.Errorf("kill after %s grace period: %w", grace, err))
 	}
-	select {
-	case <-sess.done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	// Reaping must continue even if the RPC context was cancelled. The normal
+	// cmd.Wait goroutine owns the child; never call Wait a second time here.
+	waitCtx, cancel := context.WithTimeout(context.Background(), sessionKillWait)
+	defer cancel()
+	waitErr := waitSessionTermination(waitCtx, sess.done, pgid)
+	return errors.Join(ctx.Err(), waitErr)
+}
+
+func waitSessionTermination(ctx context.Context, done <-chan struct{}, pgid int) error {
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		reaped := false
+		select {
+		case <-done:
+			reaped = true
+		default:
+		}
+		live := false
+		if pgid != 0 {
+			var err error
+			live, err = sessionProcessGroupAlive(ctx, pgid)
+			if err != nil {
+				return err
+			}
+		}
+		if reaped && !live {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("session did not terminate after SIGKILL (child reaped=%t, live group members=%t): %w", reaped, live, ctx.Err())
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -2109,21 +2140,9 @@ func (s *Server) idleWatchdog(sess *Session) {
 		idle := sess.idleDuration()
 		if idle > sess.idleTimeout {
 			log.Printf("egg: idle timeout (%s idle, limit %s) — terminating", idle.Round(time.Second), sess.idleTimeout)
-			if sess.cmd != nil && sess.cmd.Process != nil {
-				if err := sess.cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
-					log.Printf("egg: signal idle session: %v", err)
-				}
-				select {
-				case <-sess.done:
-					return
-				case <-time.After(5 * time.Second):
-					if err := sess.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-						log.Printf("egg: kill idle session: %v", err)
-					}
-				}
+			if err := terminateSession(context.Background(), sess, 5*time.Second); err != nil {
+				log.Printf("egg: terminate idle session: %v", err)
 			}
-			// Wait for normal cleanup path (cmd.Wait -> close(done) -> gRPC stop)
-			<-sess.done
 			return
 		}
 	}
