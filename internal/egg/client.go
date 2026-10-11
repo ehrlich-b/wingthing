@@ -82,12 +82,15 @@ func (c *Client) AttachSession(ctx context.Context, sessionID string) (pb.Egg_Se
 }
 
 type AttachOptions struct {
-	ReadOnly bool
-	Takeover bool
-	Claim    bool
-	Owner    string
-	Rows     uint32
-	Cols     uint32
+	// NativeTerminal requests canonical mouse modes after explicit discovery.
+	// While tracking is active, selection uses the emulator's selection modifier.
+	NativeTerminal bool
+	ReadOnly       bool
+	Takeover       bool
+	Claim          bool
+	Owner          string
+	Rows           uint32
+	Cols           uint32
 }
 
 // AttachSessionWithOptions confirms the initial snapshot before returning.
@@ -107,6 +110,14 @@ func (c *Client) AttachSessionWithOptions(ctx context.Context, sessionID string,
 			return nil, err
 		}
 	}
+	native := false
+	if options.NativeTerminal {
+		capabilities, err := c.Status(ctx)
+		if err != nil && status.Code(err) != codes.Unimplemented {
+			return nil, fmt.Errorf("discover terminal presentation: %w", err)
+		}
+		native = capabilities.GetNativeTerminal()
+	}
 	stream, err := c.client.Session(c.authCtx(ctx))
 	if err != nil {
 		return nil, err
@@ -115,7 +126,7 @@ func (c *Client) AttachSessionWithOptions(ctx context.Context, sessionID string,
 	if err := stream.Send(&pb.SessionMsg{
 		SessionId:     sessionID,
 		Payload:       &pb.SessionMsg_Attach{Attach: true},
-		AttachOptions: &pb.AttachOptions{ReadOnly: options.ReadOnly, Takeover: options.Takeover, Claim: options.Claim, Owner: options.Owner, Rows: options.Rows, Cols: options.Cols},
+		AttachOptions: &pb.AttachOptions{ReadOnly: options.ReadOnly, Takeover: options.Takeover, Claim: options.Claim, Owner: options.Owner, Rows: options.Rows, Cols: options.Cols, NativeTerminal: native},
 	}); err != nil {
 		return nil, fmt.Errorf("send attach: %w", err)
 	}

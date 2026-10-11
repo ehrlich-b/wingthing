@@ -23,6 +23,7 @@ type VTerm struct {
 	sbLen      int      // current count (≤ len(scrollback))
 
 	mu           sync.Mutex
+	modes        terminalModes
 	altScreen    bool
 	cursorHidden bool
 	cols, rows   int
@@ -104,6 +105,7 @@ func NewVTerm(cols, rows int) *VTerm {
 func (v *VTerm) Write(p []byte) (int, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	v.modes.write(p)
 	return v.emu.Write(p)
 }
 
@@ -156,6 +158,11 @@ func (v *VTerm) Snapshot() []byte {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
+	// An unfinished string or oversized CSI cannot be reconstructed by the
+	// rendered grid. The caller falls back to canonical replay in that case.
+	if v.modes.decoder.state == escapeString || v.modes.decoder.state == escapeStringEnd || v.modes.decoder.state == escapeLongCSI {
+		return nil
+	}
 	var buf strings.Builder
 
 	// Section 1: Scrollback lines (oldest-first from ring)
@@ -173,6 +180,9 @@ func (v *VTerm) Snapshot() []byte {
 		}
 	}
 
+	// Restore alternate screen only after pushing normal-screen history.
+	buf.Write(v.modes.restore())
+
 	// Section 3: Reset styles + home cursor + grid repaint
 	buf.WriteString("\x1b[m\x1b[H")
 	buf.WriteString(v.emu.Render())
@@ -188,6 +198,7 @@ func (v *VTerm) Snapshot() []byte {
 		buf.WriteString("\x1b[?25h")
 	}
 
+	buf.Write(v.modes.decoder.pending)
 	return []byte(buf.String())
 }
 

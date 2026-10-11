@@ -34,7 +34,11 @@ type Hello struct {
 	// It never supplies identity or grants greater authority than the peer UID.
 	Scope string `json:"scope,omitempty"`
 }
+
+const NativeTerminalCapability = "native-terminal-v1"
+
 type Welcome struct {
+	Capabilities  []string        `json:"capabilities,omitempty"`
 	Isolation     string          `json:"isolation,omitempty"`
 	RemoteAllowed bool            `json:"remote_allowed,omitempty"`
 	Version       string          `json:"version"`
@@ -183,6 +187,9 @@ func serve(ctx context.Context, conn *net.UnixConn, wingID string, bind Bind, at
 		welcome = resolved
 		welcome.Version = control.ContractVersion
 		welcome.WingID = wingID
+		if len(attachments) == 1 {
+			welcome.Capabilities = append(welcome.Capabilities, NativeTerminalCapability)
+		}
 	}
 	if encoder.Encode(welcome) != nil || err != nil {
 		return

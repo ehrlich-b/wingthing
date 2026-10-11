@@ -162,9 +162,10 @@ type replayBuffer struct {
 	notify       chan struct{} // closed+replaced on Write to wake readers
 	advanced     chan struct{} // closed+replaced when a reader advances (unblocks writer)
 	readers      []*readerCursor
-	trimPreamble []byte // mode sequences to re-inject after trim
+	trimPreamble []byte // snapshot-only preamble after raw buffer trim
 	cursorRow    int    // last known absolute cursor row (1-based)
 	cursorCol    int    // last known absolute cursor col (1-based)
+	modes        terminalModes
 }
 
 type replayStats struct {
@@ -237,6 +238,7 @@ func (r *replayBuffer) Write(p []byte) {
 		r.buf = append(r.buf, p...)
 
 		if len(r.buf) <= maxReplaySize {
+			r.modes.write(p)
 			// Under limit — just wake readers and return.
 			ch := r.notify
 			r.notify = make(chan struct{})
@@ -251,15 +253,14 @@ func (r *replayBuffer) Write(p []byte) {
 		// Search forward from the excess offset for the nearest frame boundary.
 		cut := findSafeCut(r.buf, excess)
 
-		// Re-inject agent's mode preamble + cursor position so replays
-		// start with correct terminal state after trim.
-		preamble := r.buildTrimPreamble()
+		// Canonical offsets count provider bytes only. Reconnect preambles
+		// belong to the snapshot, never to the raw replay buffer.
 
 		if len(r.readers) == 0 {
 			// No readers — trim freely at the safe cut point.
-			remaining := append(preamble, r.buf[cut:]...)
-			r.buf = append(r.buf[:0], remaining...)
-			r.trimmed += int64(cut) - int64(len(preamble))
+			r.buf = append(r.buf[:0], r.buf[cut:]...)
+			r.trimmed += int64(cut)
+			r.modes.write(p)
 			ch := r.notify
 			r.notify = make(chan struct{})
 			r.mu.Unlock()
@@ -278,9 +279,9 @@ func (r *replayBuffer) Write(p []byte) {
 		canTrim := int(minOff - r.trimmed)
 		if canTrim >= cut {
 			// Slowest reader is ahead of our safe cut — trim and go.
-			remaining := append(preamble, r.buf[cut:]...)
-			r.buf = append(r.buf[:0], remaining...)
-			r.trimmed += int64(cut) - int64(len(preamble))
+			r.buf = append(r.buf[:0], r.buf[cut:]...)
+			r.trimmed += int64(cut)
+			r.modes.write(p)
 			ch := r.notify
 			r.notify = make(chan struct{})
 			r.mu.Unlock()
@@ -308,6 +309,19 @@ func (r *replayBuffer) Snapshot() ([]byte, int64) {
 	cp := make([]byte, len(r.buf))
 	copy(cp, r.buf)
 	return cp, r.trimmed + int64(len(r.buf))
+}
+
+// AttachmentSnapshot restores presentation without moving the raw replay cursor.
+func (r *replayBuffer) AttachmentSnapshot() ([]byte, int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var snapshot []byte
+	if r.trimmed > 0 {
+		snapshot = r.buildTrimPreamble()
+		snapshot = append(snapshot, r.modes.restoreSelected(alternateMode)...)
+	}
+	snapshot = append(snapshot, r.buf...)
+	return r.modes.replaySnapshot(snapshot), r.trimmed + int64(len(r.buf))
 }
 
 // WritePosition returns the absolute end offset without copying the buffer.
@@ -495,37 +509,6 @@ func NewServer(dir string) (*Server, error) {
 		token:          fmt.Sprintf("%x", tokenBytes),
 		exclusiveInput: config.Channel() == "preview",
 	}, nil
-}
-
-// Mouse-tracking enables the browser terminal must never see. Claude turns mouse
-// reporting on so the wheel reaches it, but if xterm.js also enters mouse mode it stops
-// doing local selection and drag-to-copy dies — there is no DECSET that reports the
-// wheel without also capturing buttons. So we swallow the enable: the agent believes
-// mouse is on and parses the SGR wheel events terminal.js synthesizes, while the
-// terminal never captures the mouse and selection keeps working. Disables pass through.
-var mouseTrackingEnables = [][]byte{
-	[]byte("\x1b[?1000h"), []byte("\x1b[?1002h"), []byte("\x1b[?1003h"),
-	[]byte("\x1b[?1005h"), []byte("\x1b[?1006h"), []byte("\x1b[?1015h"), []byte("\x1b[?1016h"),
-}
-
-// Private OSC left in place of the enable so the browser terminal knows the agent will
-// parse mouse input even though xterm never entered mouse mode — it sends SGR wheel
-// events when it sees this and falls back to arrow keys when it doesn't. xterm discards
-// OSCs it has no handler for, so anything else rendering this stream is unaffected.
-var mouseTrackingMarker = []byte("\x1b]7771;1\x07")
-
-func stripMouseTracking(data []byte) []byte {
-	found := false
-	for _, seq := range mouseTrackingEnables {
-		if bytes.Contains(data, seq) {
-			data = bytes.ReplaceAll(data, seq, nil)
-			found = true
-		}
-	}
-	if found {
-		data = append(data, mouseTrackingMarker...)
-	}
-	return data
 }
 
 // RunSession is the core lifecycle: create sandbox, start agent in PTY, serve gRPC, exit when done.
@@ -1558,16 +1541,10 @@ func (s *Server) readPTY(sess *Session) {
 			}
 			data := make([]byte, n)
 			copy(data, buf[:n])
-			data = stripMouseTracking(data)
 			sess.replay.Write(data)
 			sess.mu.Lock()
 			sess.lastOutput = time.Now()
 			sess.mu.Unlock()
-			offset := sess.replay.WritePosition()
-			select {
-			case sess.vtermCh <- vtermMsg{data: data, offset: offset}:
-			default:
-			}
 			if debugFile != nil {
 				if _, err := debugFile.Write(data); err != nil {
 					log.Printf("egg: write PTY debug file: %v", err)
@@ -1575,6 +1552,12 @@ func (s *Server) readPTY(sess *Session) {
 				}
 			}
 			sess.writeAuditFrame(0, data)
+			offset := sess.replay.WritePosition()
+			select {
+			case sess.vtermCh <- vtermMsg{data: data, offset: offset}:
+			case <-sess.done:
+				return
+			}
 		}
 		if err != nil {
 			// Close auditor on PTY exit
@@ -1826,7 +1809,7 @@ func (s *Server) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusR
 		RenderedConfig: sess.RenderedConfig,
 		IdleSeconds:    idleSec,
 		WriterId:       lease.WriterId, WriterOwner: lease.WriterOwner, InputEpoch: lease.InputEpoch,
-		ProcessPid: int32(sess.PID),
+		ProcessPid: int32(sess.PID), NativeTerminal: true,
 	}, nil
 }
 
@@ -1878,7 +1861,19 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 			return err
 		}
 	}
+	// Retain the raw buffer during snapshot/fence acquisition and transmission.
+	// Registering only after Send would let unattached output trim the gap.
+	cursor := sess.replay.Register(0)
+	defer sess.replay.Unregister(cursor)
 	var startOffset int64
+	native := msg.AttachOptions.GetNativeTerminal()
+	var browser browserPresentation
+	present := func(data []byte) []byte {
+		if native {
+			return data
+		}
+		return browser.write(data)
+	}
 
 	if msg.GetAttach() {
 		// Full replay as first message, then cursor starts after snapshot.
@@ -1891,25 +1886,28 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 				case result := <-fenceCh:
 					snapshot = result.Snapshot
 					startOffset = result.Offset
+					if snapshot == nil {
+						snapshot, startOffset = sess.replay.AttachmentSnapshot()
+					}
 				case <-sess.done:
-					snapshot, startOffset = sess.replay.Snapshot()
+					snapshot, startOffset = sess.replay.AttachmentSnapshot()
 				case <-time.After(5 * time.Second):
 					log.Printf("egg: vterm fence timeout, falling back to replay")
-					snapshot, startOffset = sess.replay.Snapshot()
+					snapshot, startOffset = sess.replay.AttachmentSnapshot()
 				}
 			case <-sess.done:
-				snapshot, startOffset = sess.replay.Snapshot()
+				snapshot, startOffset = sess.replay.AttachmentSnapshot()
 			case <-time.After(5 * time.Second):
 				log.Printf("egg: vterm fence enqueue timeout, falling back to replay")
-				snapshot, startOffset = sess.replay.Snapshot()
+				snapshot, startOffset = sess.replay.AttachmentSnapshot()
 			}
 		} else {
-			snapshot, startOffset = sess.replay.Snapshot()
+			snapshot, startOffset = sess.replay.AttachmentSnapshot()
 		}
 		if err := stream.Send(&pb.SessionMsg{
 			SessionId:      sessionID,
 			AttachmentInfo: s.inputLease.info(attachment),
-			Payload:        &pb.SessionMsg_Output{Output: snapshot},
+			Payload:        &pb.SessionMsg_Output{Output: present(snapshot)},
 		}); err != nil {
 			return err
 		}
@@ -1918,9 +1916,12 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 		_, startOffset = sess.replay.Snapshot()
 	}
 
-	// Register cursor so the buffer knows our position (enables backpressure).
-	cursor := sess.replay.Register(startOffset)
-	defer sess.replay.Unregister(cursor)
+	sess.replay.mu.Lock()
+	cursor.offset = startOffset
+	advanced := sess.replay.advanced
+	sess.replay.advanced = make(chan struct{})
+	sess.replay.mu.Unlock()
+	close(advanced)
 
 	// Output goroutine: cursor-based reads from the replay buffer.
 	// Every byte arrives in exact PTY order — no channel, no drops.
@@ -1930,7 +1931,7 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 			if data != nil {
 				if err := stream.Send(&pb.SessionMsg{
 					SessionId: sessionID,
-					Payload:   &pb.SessionMsg_Output{Output: data},
+					Payload:   &pb.SessionMsg_Output{Output: present(data)},
 				}); err != nil {
 					return
 				}
@@ -1944,9 +1945,16 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 				if data, _ := sess.replay.ReadAfter(cursor); data != nil {
 					if err := stream.Send(&pb.SessionMsg{
 						SessionId: sessionID,
-						Payload:   &pb.SessionMsg_Output{Output: data},
+						Payload:   &pb.SessionMsg_Output{Output: present(data)},
 					}); err != nil {
 						return
+					}
+				}
+				if !native {
+					if tail := browser.finish(); len(tail) > 0 {
+						if err := stream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Output{Output: tail}}); err != nil {
+							return
+						}
 					}
 				}
 				sess.mu.Lock()
