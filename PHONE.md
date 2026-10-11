@@ -1,5 +1,9 @@
 # Wingthing on Bryan's iPhone — 2026-10-11
 
+For the **actual native iOS app**, start with [IOS-INSTALL.md](IOS-INSTALL.md).
+Its installer handles signing/install/launch and the hosted Home setup when
+Bryan runs it. The Safari instructions below remain a separate access path.
+
 Baseline: this isolated clone, `2c3688f`, branch
 `codex/wingthing-phone-20261011`. No push, deployment, public exposure, Apple
 signing, production mutation, or real agent control is authorized or performed.

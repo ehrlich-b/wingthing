@@ -2,6 +2,13 @@
 
 This is a native SwiftUI conversation client with an encrypted Foundation/CryptoKit adapter and a reviewable iOS project. A fresh install sends no request before configuration. Home offers an optional hosted preset; selecting it does not connect or create an account. The client uses an explicitly pinned HTTPS relay Home. See [PHONE.md](../../PHONE.md) and [GO-LIVE.md](../../GO-LIVE.md) for the faster Safari route, current protocol gaps and signing steps.
 
+For today's native phone installation, use [IOS-INSTALL.md](../../IOS-INSTALL.md)
+and `scripts/install_phone.sh`. It provisions/installs only when Bryan runs it,
+then prepares a separate Mac wing through the hosted Home and privately hands
+off the already supported setup link. The current standard validation gates
+still hit the nested manifest sandbox refusal; supplemental checks pass 125
+core tests, the UI typecheck, Release guard, simulator and unsigned device builds.
+
 October 11 verification: the compatible bounded-history fix from `wingthing-mobile-next-20261010` is reused here. Each UI reading action is limited to 100 pages / 10 seconds, with an explicit continuation cursor. The clone-local validation helper was also reused. Its core gate fails before compilation because SwiftPM manifest sandboxing is denied (`sandbox_apply: Operation not permitted`); all pass counts below describe historical milestones, not a pass on this branch. Signed-phone and live-provider acceptance remain open.
 
 ## Implemented slice
