@@ -29,6 +29,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
 	"github.com/ehrlich-b/wingthing/internal/tunnel"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
@@ -166,32 +167,19 @@ func newSessionTransportFixture(t *testing.T) *sessionTransportFixture {
 	if err := os.Mkdir(work, 0700); err != nil {
 		t.Fatal(err)
 	}
-	// Short alias keeps Darwin's Unix socket path within sockaddr_un. All state
-	// lives in t.TempDir; the checkout alias is removed with the fixture.
+	// Reserve the full runtime ID width within Darwin's Unix socket limit.
+	// State is physical so provider readers can pin directories with O_NOFOLLOW.
 	scratch, err := filepath.Abs("../../.scratch")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.MkdirAll(scratch, 0700); err != nil {
+	state := testprovider.ShortStateDir(t, scratch)
+	t.Setenv("WINGTHING_DIR", state)
+	cfg := &config.Config{Dir: state, WingID: "fixture-wing", DefaultAgent: "claude"}
+	if _, err = auth.EnsureKeyPair(state); err != nil {
 		t.Fatal(err)
 	}
-	alias, err := os.MkdirTemp(scratch, "s")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.Symlink(home, alias); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(alias) })
-	t.Setenv("WINGTHING_DIR", alias)
-	cfg := &config.Config{Dir: alias, WingID: "fixture-wing", DefaultAgent: "claude"}
-	if _, err = auth.EnsureKeyPair(alias); err != nil {
-		t.Fatal(err)
-	}
-	wingKey, err := auth.LoadPrivateKey(alias)
+	wingKey, err := auth.LoadPrivateKey(state)
 	if err != nil {
 		t.Fatal(err)
 	}

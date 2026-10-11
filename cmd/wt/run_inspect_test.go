@@ -32,18 +32,27 @@ func inspectTree(t *testing.T, path string) map[string]string {
 	return out
 }
 
-func inspectBinaryFixture(t *testing.T) (string, string, string) {
+func inspectSnapshotFixture(t *testing.T) (string, string) {
 	t.Helper()
-	binary := os.Getenv("WT_TEST_BINARY")
-	if binary == "" {
-		t.Fatal("WT_TEST_BINARY is required; run make test-run-inspect")
-	}
 	workspace := t.TempDir()
 	snapshot := filepath.Join(workspace, "snapshot")
 	source := filepath.Join("..", "..", "internal", "runinspect", "testdata", "orphan")
 	if err := os.CopyFS(snapshot, os.DirFS(source)); err != nil {
 		t.Fatal(err)
 	}
+	return workspace, snapshot
+}
+
+func inspectBinaryFixture(t *testing.T) (string, string, string) {
+	t.Helper()
+	repo, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Make targets may supply a binary; ordinary go test builds the current
+	// source in separate disposable state, outside the inspected workspace.
+	binary := localOnlyFixtureBinary(t, repo, t.TempDir())
+	workspace, snapshot := inspectSnapshotFixture(t)
 	return binary, workspace, snapshot
 }
 

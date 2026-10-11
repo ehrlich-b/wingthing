@@ -70,7 +70,7 @@ func (c *inspectReplacedDirectoryContext) Err() error {
 }
 
 func TestRunInspectR3ReplacedOutputDirectory(t *testing.T) {
-	_, workspace, snapshot := inspectBinaryFixture(t)
+	workspace, snapshot := inspectSnapshotFixture(t)
 	destination := filepath.Join(workspace, "out")
 	if err := os.Mkdir(destination, 0700); err != nil {
 		t.Fatal(err)
