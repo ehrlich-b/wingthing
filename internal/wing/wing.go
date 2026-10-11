@@ -815,6 +815,20 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	}
 	var wingToolsMu sync.Mutex
 
+	// An embedded roost's in-memory credential never overwrites the operator's
+	// independent device_token.yaml registration.
+	// A personal wing without registration defaults to a wholly local runtime.
+	// Embedded roosts and explicit local/org enrollment retain their own paths.
+	var tok *auth.DeviceToken
+	if !options.LocalOnly {
+		tok, err = wingConnectionToken(cfg.Dir, local, tokenOverride)
+		if tok == nil && !sharedHost && orgFlag == "" && !local && tokenOverride == nil {
+			options.LocalOnly = true
+		} else if err != nil {
+			log.Printf("relay credential unavailable: %v; local runtime will remain available", err)
+		}
+	}
+
 	// Resolve roost URL
 	roostURL := ""
 	if !options.LocalOnly {
@@ -832,16 +846,6 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		wsURL = strings.TrimRight(wsURL, "/") + "/ws/wing"
 	}
 
-	// An all-in-one roost passes its embedded service credential in memory. It
-	// must not overwrite device_token.yaml: that file may hold the operator's
-	// independent wingthing.ai identity for standalone wings on this machine.
-	var tok *auth.DeviceToken
-	if !options.LocalOnly {
-		tok, err = wingConnectionToken(cfg.Dir, local, tokenOverride)
-		if err != nil {
-			log.Printf("relay credential unavailable: %v; local runtime will remain available", err)
-		}
-	}
 	var localOwner *config.LocalOwner
 	if !sharedHost && orgFlag == "" {
 		legacyOwner := ""

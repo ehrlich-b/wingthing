@@ -6,9 +6,31 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestDirectEndpointPreferenceWithoutAccount(t *testing.T) {
+	status := []byte(`{"BackendState":"Running","Self":{"TailscaleIPs":["100.91.2.3"],"DNSName":"EhrlichMac.fixture.ts.net."}}`)
+	for _, tc := range []struct {
+		name   string
+		lan    []string
+		status []byte
+		want   []string
+	}{
+		{"lan then tailnet IP and MagicDNS", []string{"192.168.1.40", "10.0.0.2", "192.168.1.40"}, status, []string{"http://192.168.1.40:6078", "http://10.0.0.2:6078", "http://100.91.2.3:6078", "http://ehrlichmac.fixture.ts.net:6078"}},
+		{"no tailscale installed", []string{"192.168.1.40"}, nil, []string{"http://192.168.1.40:6078"}},
+		{"stopped tailnet", []string{"192.168.1.40"}, []byte(`{"BackendState":"Stopped","Self":{"TailscaleIPs":["100.91.2.3"]}}`), []string{"http://192.168.1.40:6078"}},
+		{"tailnet without wifi", nil, status, []string{"http://127.0.0.1:6078", "http://100.91.2.3:6078", "http://ehrlichmac.fixture.ts.net:6078"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := directEndpointURLs(6078, tc.lan, tc.status); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("direct routes = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
 
 func TestPhoneTailnetEndpointsAndCompactInvitation(t *testing.T) {
 	hosts := tailnetHosts([]byte(`{"BackendState":"Running","Self":{"TailscaleIPs":["fd7a:115c:a1e0::1","100.91.2.3"],"DNSName":"ehrlichmac.fixture.ts.net."}}`))

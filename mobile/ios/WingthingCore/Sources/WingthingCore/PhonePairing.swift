@@ -170,13 +170,19 @@ private final class PairingNoRedirect: NSObject, URLSessionTaskDelegate, @unchec
 }
 public actor URLSessionPhoneWire: PhoneWire {
     private let session: URLSession
+    private var directExchange: (@Sendable (URLRequest) async throws -> (Data, URLResponse))?
+    private var relayExchange: (@Sendable (JSONValue, URL, String) async throws -> JSONValue)?
+    private var discover: @Sendable (String, String) async -> URL? = { wingID, key in
+        let lookup = await PhoneBonjourLookup(wingID: wingID, key: key)
+        return await lookup.resolve()
+    }
     private var socket: URLSessionWebSocketTask?
     private var remoteSelected = false
     private var endpoints: [URL] = []
     private var selectedDirect: URL?
     public func configure(endpoints: [URL]) async { self.endpoints = endpoints; selectedDirect = nil; remoteSelected = false }
     public static func isTailnet(_ url: URL) -> Bool {
-        guard let host = url.host else { return false }; if host.hasSuffix(".ts.net") { return true }
+        guard let host = url.host?.lowercased() else { return false }; if host.hasSuffix(".ts.net") { return true }
         let octets = host.split(separator: ".").compactMap { Int($0) }
         return octets.count == 4 && octets[0] == 100 && (64...127).contains(octets[1])
     }
@@ -186,10 +192,18 @@ public actor URLSessionPhoneWire: PhoneWire {
     }
     private var tail: Task<Void, Never>?
     private let carrierIdentity = TunnelIdentity()
-    public init() {
+    private static func makeSession() -> URLSession {
         let c = URLSessionConfiguration.ephemeral; c.httpCookieStorage = nil; c.httpShouldSetCookies = false; c.connectionProxyDictionary = [:]; c.urlCredentialStorage = nil
         c.timeoutIntervalForRequest = 4; c.timeoutIntervalForResource = 10
-        session = URLSession(configuration: c, delegate: PairingNoRedirect(), delegateQueue: nil)
+        return URLSession(configuration: c, delegate: PairingNoRedirect(), delegateQueue: nil)
+    }
+    public init() { session = Self.makeSession() }
+    // Exercise carrier selection without opening real LAN, Bonjour or relay routes.
+    init(directExchange: @escaping @Sendable (URLRequest) async throws -> (Data, URLResponse),
+         discover: @escaping @Sendable (String, String) async -> URL?,
+         relayExchange: (@Sendable (JSONValue, URL, String) async throws -> JSONValue)? = nil) {
+        session = Self.makeSession(); self.directExchange = directExchange
+        self.discover = discover; self.relayExchange = relayExchange
     }
     deinit { session.invalidateAndCancel() }
     public func request(_ value: JSONValue, local: URL, relay: URL?, wingID: String, wingKey: String) async throws -> JSONValue {
@@ -210,8 +224,8 @@ public actor URLSessionPhoneWire: PhoneWire {
         if !remoteSelected {
             let ordered = Self.orderedDirect(local, endpoints: endpoints)
             let lan = ordered.filter { !Self.isTailnet($0) }, tailnet = ordered.filter(Self.isTailnet)
-            var candidates = selectedDirect.map { [$0] } ?? lan
-            var discovered = selectedDirect != nil
+            var candidates = mayChangeCarrier ? lan : selectedDirect.map { [$0] } ?? lan
+            var discovered = false
             var attempted: Set<URL> = []
             var lastError: Error = URLError(.cannotConnectToHost)
             while true {
@@ -220,7 +234,9 @@ public actor URLSessionPhoneWire: PhoneWire {
                     let url = origin.appendingPathComponent("phone")
                     var request = URLRequest(url: url); request.httpMethod = "POST"; request.httpBody = try JSONEncoder().encode(value); request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     do {
-                        let (data, response) = try await session.data(for: request)
+                        let (data, response): (Data, URLResponse)
+                        if let directExchange { (data, response) = try await directExchange(request) }
+                        else { (data, response) = try await session.data(for: request) }
                         guard let http = response as? HTTPURLResponse, http.statusCode == 200, http.url == url, data.count <= 256 << 10 else { throw PairingError.protocolFailure }
                         let reply = try JSONDecoder().decode(JSONValue.self, from: data); selectedDirect = origin; return reply
                     } catch let error as URLError {
@@ -231,8 +247,7 @@ public actor URLSessionPhoneWire: PhoneWire {
                 guard mayChangeCarrier else { throw lastError }
                 if !discovered {
                     discovered = true
-                    let lookup = await PhoneBonjourLookup(wingID: wingID, key: wingKey)
-                    let found = await lookup.resolve()
+                    let found = await discover(wingID, wingKey)
                     candidates = (found.map { [$0] } ?? []) + tailnet
                     continue
                 }
@@ -241,6 +256,7 @@ public actor URLSessionPhoneWire: PhoneWire {
             }
         }
         guard let relay else { throw PairingError.unreachable(wingID) }
+        if let relayExchange { return try await relayExchange(value, relay, wingID) }
         var parts = URLComponents(url: relay.appendingPathComponent("ws/phone"), resolvingAgainstBaseURL: false)!
         parts.scheme = "wss"; parts.queryItems = [URLQueryItem(name: "wing_id", value: wingID)]
         guard let url = parts.url else { throw PairingError.invalidQR }
