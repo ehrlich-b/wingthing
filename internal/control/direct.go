@@ -81,7 +81,7 @@ func SplitWingTarget(arguments json.RawMessage) (string, json.RawMessage, error)
 // as well, so retaining one object outside its response cannot lose its wing.
 func QualifyResult(wingID string, result map[string]any) map[string]any {
 	qualified := cloneResultMap(result)
-	for _, key := range []string{"sessions", "messages", "message"} {
+	for _, key := range []string{"sessions", "messages", "message", "runs"} {
 		qualifyNestedResources(wingID, qualified[key])
 	}
 	qualified["wing_id"] = wingID

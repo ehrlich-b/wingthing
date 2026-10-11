@@ -12,6 +12,8 @@ import (
 type ErrorKind string
 
 const (
+	ErrorInvalidArgument  ErrorKind = "invalid_argument"
+	ErrorUnsupported      ErrorKind = "unsupported"
 	ErrorSessionNameInUse ErrorKind = "session_name_in_use"
 	ErrorNotFound         ErrorKind = "not_found"
 	ErrorNoRows           ErrorKind = "no_rows"
@@ -27,6 +29,8 @@ var knownErrors = []struct {
 	err  error
 }{
 	{ErrorSessionNameInUse, ErrSessionNameInUse},
+	{ErrorInvalidArgument, fs.ErrInvalid},
+	{ErrorUnsupported, errors.ErrUnsupported},
 	{ErrorNotFound, fs.ErrNotExist},
 	{ErrorNoRows, sql.ErrNoRows},
 	{ErrorCanceled, context.Canceled},

@@ -330,6 +330,7 @@ func (s *Server) handleDirectRequest(ctx context.Context, request control.Direct
 	localDirectory := request.Tool == "wing_list" && s.controlSurface() == control.SurfaceLocalMCP
 	if request.Version != control.ContractVersion || request.ID == "" || !known || tool.Authority != control.AuthorityWing && !localDirectory || !tool.Supports(s.controlSurface()) {
 		response.Error = fmt.Sprintf("unsupported %s control operation %q; upgrade wt and the wing", request.Version, request.Tool)
+		response.ErrorKind = control.ErrorUnsupported
 		return response
 	}
 	arguments := request.Arguments
