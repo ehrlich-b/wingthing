@@ -4,6 +4,7 @@ package sandbox
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,7 +26,7 @@ const jailAgentInitArg = "_jail_agent_init"
 const jailAgentDropArg = "_jail_agent_drop"
 const policyPinWalkArg = "_policy_pin_walk"
 
-// The sealed jail runs the agent through two nested user-namespace stages so it
+// Every Linux sandbox runs the agent through two nested user-namespace stages so it
 // can both swap /proc AND run unprivileged:
 //
 //	_deny_init  -> clones _jail_agent_init into a new PID+user+mount namespace,
@@ -64,6 +65,18 @@ func jailAgentInit(uidStr, gidStr string, command []string) {
 	if len(command) == 0 || command[0] == "" {
 		log.Fatal("_jail_agent_init: missing command")
 	}
+	// The wrapper sends its verified mount policy through an inherited pipe.
+	// Recheck it after swapping procfs: a policy mask under /proc must never
+	// silently disappear beneath the new mount. Close the pipe before dropping
+	// privileges so no control descriptor reaches the command.
+	policy := os.NewFile(3, "sandbox-mount-policy")
+	var expected []expectedMount
+	if err := json.NewDecoder(policy).Decode(&expected); err != nil {
+		failEnforcement("read sandbox mount policy", "inherited pipe", err)
+	}
+	if err := policy.Close(); err != nil {
+		failEnforcement("close sandbox mount policy", "inherited pipe", err)
+	}
 	// Detaching the host procfs is preferred, but a kernel may refuse it when
 	// the bound tree carries locked host submounts (binfmt_misc on 5.15).
 	// Mounting the PID-namespace procfs on top is equally sound: the host
@@ -79,6 +92,9 @@ func jailAgentInit(uidStr, gidStr string, command []string) {
 	}
 	if err := verifyPrivateProcfs(); err != nil {
 		failEnforcement("verify PID-namespace procfs", "/proc/self/status", err)
+	}
+	if err := verifyExpectedMounts(expected); err != nil {
+		failEnforcement("verify filesystem policy after procfs swap", "/proc/self/mountinfo", err)
 	}
 
 	// Drop to the real nonzero uid before the agent runs. We cannot
@@ -465,13 +481,8 @@ func DenyInit(args []string) {
 		failEnforcement("apply resource limits", "agent process", err)
 	}
 
-	// Install seccomp after mounts. Jail mode delegates this to the PID-namespace
-	// init, which must replace the temporarily visible host procfs first.
-	if !jailMode {
-		if err := installSeccomp(); err != nil {
-			failEnforcement("install seccomp", "agent process", err)
-		}
-	}
+	// The drop stage installs seccomp after the PID-namespace init swaps procfs.
+	// Installing it here would prevent that init from mounting its private /proc.
 
 	// Spawn agent with CLONE_NEWPID (PID isolation) + CLONE_NEWUSER (UID drop).
 	// The wrapper is NOT in a PID namespace (parent strips CLONE_NEWPID for it),
@@ -486,26 +497,33 @@ func DenyInit(args []string) {
 		log.Printf("_deny_init: binary %s mode=%s size=%d", binPath, info.Mode(), info.Size())
 	}
 
-	cmd := exec.Command(binPath, cmdArgs[1:]...)
-	if jailMode {
-		// /proc/self/exe remains executable after pivot_root even when the wt
-		// binary's original host path is outside the jail allowlist. Carry the
-		// outer wrapper's PATH resolution into the jail because syscall.Exec does
-		// not search PATH and the host-side agent binary itself is intentionally
-		// absent there.
-		resolvedCommand := append([]string{cmd.Path}, cmdArgs[1:]...)
-		initArgs := append([]string{jailAgentInitArg, strconv.Itoa(uid), strconv.Itoa(gid), "--"}, resolvedCommand...)
-		cmd = exec.Command("/proc/self/exe", initArgs...)
-	}
+	command := exec.Command(binPath, cmdArgs[1:]...)
+	// /proc/self/exe remains executable after pivot_root even when wt's host
+	// path is outside the jail allowlist. All policies need this init: exec'ing
+	// the command directly with CLONE_NEWPID leaves host procfs visible, so
+	// getpid() and /proc disagree and procps cannot look up its own process.
+	resolvedCommand := append([]string{command.Path}, cmdArgs[1:]...)
+	initArgs := append([]string{jailAgentInitArg, strconv.Itoa(uid), strconv.Itoa(gid), "--"}, resolvedCommand...)
+	cmd := exec.Command("/proc/self/exe", initArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
+	policyReader, policyWriter, err := os.Pipe()
+	if err != nil {
+		failEnforcement("create sandbox mount policy pipe", "inherited pipe", err)
+	}
+	cmd.ExtraFiles = []*os.File{policyReader}
+	policySent := make(chan error, 1)
+	go func() {
+		err := json.NewEncoder(policyWriter).Encode(expectedMounts)
+		policySent <- errors.Join(err, policyWriter.Close())
+	}()
 
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWPID,
-		// If this wrapper (_deny_init) dies, kill the PID-namespace init too. In
-		// jail mode that init is PID 1, so killing it tears down the whole jail
+		// If this wrapper (_deny_init) dies, kill the PID-namespace init too.
+		// That init is PID 1, so killing it tears down the whole sandbox
 		// namespace (agent and all descendants), so a hard-terminated session
 		// never leaves survivors running detached from the runtime.
 		Pdeathsig: syscall.SIGKILL,
@@ -517,22 +535,16 @@ func DenyInit(args []string) {
 		// every mount call fails EPERM (observed on 5.15 shared hosts; masked
 		// on root runs, which skip CLONE_NEWUSER and keep full capabilities).
 		cmd.SysProcAttr.Cloneflags |= syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS
-		// Jail mode maps the init to inner-UID 0 so it keeps CAP_SYS_ADMIN across
+		// Map the init to inner-UID 0 so it keeps CAP_SYS_ADMIN across
 		// execve and can swap /proc; _jail_agent_init then drops to the real
 		// nonzero uid via a further nested user namespace before the agent runs.
-		// Non-jail mode has no procfs swap and runs the agent directly, so it
-		// maps straight to the real uid.
-		initUID, initGID := uid, gid
-		if jailMode {
-			initUID, initGID = 0, 0
-		}
 		cmd.SysProcAttr.UidMappings = []syscall.SysProcIDMap{{
-			ContainerID: initUID,
+			ContainerID: 0,
 			HostID:      0, // 0 in our namespace = real uid on host
 			Size:        1,
 		}}
 		cmd.SysProcAttr.GidMappings = []syscall.SysProcIDMap{{
-			ContainerID: initGID,
+			ContainerID: 0,
 			HostID:      0,
 			Size:        1,
 		}}
@@ -540,6 +552,12 @@ func DenyInit(args []string) {
 
 	if err := cmd.Start(); err != nil {
 		log.Fatalf("_deny_init: start agent: %v", err)
+	}
+	if err := policyReader.Close(); err != nil {
+		failEnforcement("close wrapper mount policy reader", "inherited pipe", err)
+	}
+	if err := <-policySent; err != nil {
+		failEnforcement("send sandbox mount policy", "inherited pipe", err)
 	}
 
 	// Forward signals to child
