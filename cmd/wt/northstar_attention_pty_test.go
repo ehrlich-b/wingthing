@@ -193,10 +193,14 @@ func TestNorthstarPTYAttention(t *testing.T) {
 		h.expect("disable bell keeps visual attention", h.send("b"), "bell:off")
 		local.emit(t, "PermissionRequest")
 		northstarAttentionRefresh(t, h, "disabled bell still shows blocked", 5, "B local-agent", "U:1")
-		h.expect("attention filter excludes unknown", h.send("!"), "B local-agent", "I* forge-agent", "! attention")
-		if screen, _ := h.screen(); strings.Contains(screen, "hooks-off") {
-			t.Fatal("attention filter treated unknown as completion")
-		}
+		// The footer advertises ! attention even before the filter is applied.
+		// Inventory refreshes can redraw that old view after send, so wait for
+		// the filtered header and complete rows in the same rendered snapshot.
+		h.waitScreen("attention filter excludes unknown", h.send("!"), func(screen string) bool {
+			return strings.Contains(screen, "[All ! attention]") &&
+				strings.Contains(screen, "B local-agent") && strings.Contains(screen, "I* forge-agent") &&
+				!strings.Contains(screen, "hooks-off")
+		})
 		h.exit("q")
 		fresh := northstarStartPTY(t, f, binary, 120, 32)
 		fresh.expect("fresh instance / historical completion baseline / known blocked", 0, "B local-agent", "I forge-agent", "U:0", "bell:off")

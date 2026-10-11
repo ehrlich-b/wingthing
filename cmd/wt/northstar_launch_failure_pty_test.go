@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
@@ -123,7 +124,9 @@ func TestNorthstarPTYLaunchFailure(t *testing.T) {
 			if policy == nil || policy.Path != selected || start.CWD != nested {
 				t.Fatalf("selected config/cwd lost: %+v cwd=%s", policy, start.CWD)
 			}
-			dir := filepath.Join(f.local, "eggs", launch.RequestID)
+			// Admission request UUIDs are separate from the compact runtime IDs
+			// used for egg routing and Darwin's bounded Unix socket paths.
+			dir := filepath.Join(f.local, "eggs", cmdutil.NewRuntimeID())
 			if err := os.MkdirAll(dir, 0700); err != nil {
 				t.Fatal(err)
 			}
