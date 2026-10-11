@@ -63,7 +63,8 @@ func (b *remoteSessionBuffer) Write(p []byte) (int, error) {
 func QueryRemoteSessions(localVersion string, ctx context.Context, name string, remote config.Remote, streams remotepkg.IO) ([]LocalSession, error) {
 	ctx, cancel := context.WithTimeout(ctx, RemoteSessionTimeout)
 	defer cancel()
-	invocation := remotepkg.Invocation{Target: remote.SSHTarget, Binary: remote.Binary(), State: remote.WingthingDir}
+	invocation := remotepkg.ProfileInvocation(remote, nil)
+	invocation.NonInteractive = true
 	stdout := remoteSessionBuffer{limit: remoteSessionStdoutLimit, stream: "stdout", cancel: cancel}
 	stderr := remoteSessionBuffer{limit: remoteSessionStderrLimit, stream: "stderr", cancel: cancel}
 	streams.In, streams.Out, streams.ErrOut = nil, &stdout, &stderr
@@ -167,4 +168,25 @@ func DiscoverMachineSessions(localVersion string, ctx context.Context, cfg *conf
 		rows = append(rows, result...)
 	}
 	return rows, nil
+}
+
+// ValidateRemoteSession refuses cached names, abbreviated IDs, and inventories
+// without an active process identity. It never dispatches a mutation or retries.
+func ValidateRemoteSession(ctx context.Context, name string, remote config.Remote, id string, streams remotepkg.IO) error {
+	sessions, err := QueryRemoteSessions("dashboard", ctx, name, remote, streams)
+	if err != nil {
+		return fmt.Errorf("cannot validate remote session %s:%s; refresh before acting: %w", name, id, err)
+	}
+	matches := 0
+	fresh := false
+	for _, session := range sessions {
+		if session.ID == id {
+			matches++
+			fresh = session.PID > 0
+		}
+	}
+	if id == "" || matches != 1 || !fresh {
+		return fmt.Errorf("cannot validate remote session %s:%s: no unique fresh process identity; refresh before acting", name, id)
+	}
+	return nil
 }

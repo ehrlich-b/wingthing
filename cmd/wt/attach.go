@@ -66,10 +66,9 @@ func attachCmd() *cobra.Command {
 				}
 				remoteArgs = append(remoteArgs, "--", remoteSession)
 				streams := remotepkg.Streams(cmd.Context())
-				return remotepkg.RunRemoteInvocation(cmd.Context(), remotepkg.Invocation{
-					Target: remote.SSHTarget, Binary: remote.Binary(), State: remote.WingthingDir,
-					Args: remoteArgs, AllocateTTY: streams.StdinTTY && streams.StdoutTTY,
-				}, streams)
+				invocation := remotepkg.ProfileInvocation(remote, remoteArgs)
+				invocation.AllocateTTY = streams.StdinTTY && streams.StdoutTTY
+				return remotepkg.RunRemoteInvocation(cmd.Context(), invocation, streams)
 			}
 			clientName := os.Getenv("WT_MCP_CLIENT")
 			if sessionID == "" {

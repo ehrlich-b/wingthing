@@ -21,7 +21,7 @@ import (
 func writeFakeRemoteSSH(t *testing.T, script string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "ssh")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0700); err != nil {
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+"if [ \"$2\" = -o ] && [ \"$3\" = BatchMode=yes ]; then mode=$1; shift 3; set -- \"$mode\" \"$@\"; fi\n"+script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -63,8 +63,12 @@ func TestConfiguredRemoteCommandsRoundTrip(t *testing.T) {
 	var out bytes.Buffer
 	streams := remotepkg.IO{Out: &out, ErrOut: io.Discard, SSHPath: filepath.Join(dir, "must-not-run-ssh")}
 	run := func(args ...string) error { return executeCLI(context.Background(), args, streams) }
-	if err := run("remote", "add", "work", "me@host", "--wingthing-dir", "/home/me/state with space"); err != nil {
+	if err := run("remote", "add", "work", "me@host", "--wingthing-dir", "/home/me/state with space", "--wt-binary", "/opt/wt builds/wt-dev"); err != nil {
 		t.Fatal(err)
+	}
+	saved, err := config.LoadRemotes(dir)
+	if err != nil || saved["work"].WTBinary != "/opt/wt builds/wt-dev" || saved["work"].WingthingDir != "/home/me/state with space" {
+		t.Fatalf("saved custom binary/state: %#v %v", saved, err)
 	}
 	if err := run("remote", "add", "lab", "lab-alias"); err != nil {
 		t.Fatal(err)
@@ -75,7 +79,7 @@ func TestConfiguredRemoteCommandsRoundTrip(t *testing.T) {
 	if err := run("remote", "ls"); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"NAME", "lab-alias", "me@host", "/home/me/state with space"} {
+	for _, want := range []string{"NAME", "lab-alias", "me@host", "/home/me/state with space", "/opt/wt builds/wt-dev"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("listing missing %q: %s", want, &out)
 		}
@@ -102,6 +106,10 @@ func TestConfiguredRemoteCommandsValidateBeforeWriting(t *testing.T) {
 		{"remote", "add", "work", "host\targ"},
 		{"remote", "add", "work", "host", "--wingthing-dir", "relative"},
 		{"remote", "add", "work", "host", "--wingthing-dir="},
+		{"remote", "add", "work", "host", "--wt-binary="},
+		{"remote", "add", "work", "host", "--wt-binary", "relative/wt"},
+		{"remote", "add", "work", "host", "--wt-binary", "/opt/$(touch canary)/wt"},
+		{"remote", "add", "work", "host", "--wt-binary", "/opt/wt\n"},
 	} {
 		dir := t.TempDir()
 		t.Setenv("WINGTHING_DIR", dir)
