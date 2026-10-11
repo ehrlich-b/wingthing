@@ -580,7 +580,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		}
 	}
 
-	binPath, err := exec.LookPath(name)
+	binPath, err := resolveSessionCommandPath(name, rc.CWD)
 	if err != nil {
 		return fmt.Errorf("command %q not found: %v", name, err)
 	}
@@ -2087,6 +2087,30 @@ func sessionCommand(rc RunConfig) (string, []string) {
 		return rc.Command[0], append([]string(nil), rc.Command[1:]...)
 	}
 	return agentCommand(rc.Agent, rc.DangerouslySkipPermissions, rc.ResumeSessionID, rc.AgentArgs...)
+}
+
+// Resolve explicit relative paths in the directory the child will enter,
+// rather than the egg server's directory. Bare names retain PATH lookup.
+func resolveSessionCommandPath(name, cwd string) (string, error) {
+	if !filepath.IsAbs(name) && strings.ContainsRune(name, filepath.Separator) {
+		if cwd == "" {
+			var err error
+			cwd, err = os.Getwd()
+			if err != nil {
+				return "", err
+			}
+		} else if !filepath.IsAbs(cwd) {
+			var err error
+			cwd, err = filepath.Abs(cwd)
+			if err != nil {
+				return "", err
+			}
+		}
+		// Do not clean: link/../run.sh must traverse the symlink before '..',
+		// exactly as exec after chdir would do.
+		name = cwd + string(filepath.Separator) + name
+	}
+	return exec.LookPath(name)
 }
 
 // Recovery interceptors
