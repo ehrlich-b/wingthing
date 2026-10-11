@@ -579,6 +579,11 @@ func localBrowserMutationAllowed(r *http.Request) bool {
 		// for unsafe methods and are checked below.
 		return true
 	}
+	// OAuth consent is protected by the cross-site check above and by its
+	// authenticated, user-bound, single-use authorization request ID.
+	if origin == "null" && r.Method == http.MethodPost && r.URL.Path == "/oauth/authorize" {
+		return true
+	}
 	// Referrer-Policy: no-referrer makes browser form POSTs send Origin: null.
 	// Only browser-controlled fetch metadata can establish same-origin here.
 	if origin == "null" {
@@ -609,6 +614,11 @@ func (s *Server) hostedBrowserMutationAllowed(r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
 		// CLI, wing, OAuth, and MCP clients do not send browser Origin metadata.
+		return true
+	}
+	// OAuth consent is protected by the cross-site check above and by its
+	// authenticated, user-bound, single-use authorization request ID.
+	if origin == "null" && r.Method == http.MethodPost && r.URL.Path == "/oauth/authorize" {
 		return true
 	}
 	// Referrer-Policy: no-referrer makes browser form POSTs send Origin: null.

@@ -127,6 +127,9 @@ func TestLocalModeRejectsCrossOriginBrowserMutations(t *testing.T) {
 		{name: "noncanonical same-origin null origin", host: "localhost:8080", origin: "null", fetchSite: "Same-Origin", want: http.StatusForbidden},
 		{name: "padded same-origin null origin", host: "localhost:8080", origin: "null", fetchSite: " same-origin ", want: http.StatusForbidden},
 		{name: "null consent origin", host: "localhost:8080", path: "/oauth/authorize", origin: "null", fetchSite: "same-origin", want: http.StatusNotFound},
+		{name: "null consent origin without fetch site", host: "localhost:8080", path: "/oauth/authorize", origin: "null", want: http.StatusNotFound},
+		{name: "same-site null consent origin", host: "localhost:8080", path: "/oauth/authorize", origin: "null", fetchSite: "same-site", want: http.StatusNotFound},
+		{name: "cross-site null consent origin", host: "localhost:8080", path: "/oauth/authorize", origin: "null", fetchSite: "cross-site", want: http.StatusForbidden},
 		{name: "cross origin with same-origin fetch site", host: "localhost:8080", origin: "https://attacker.example", fetchSite: "same-origin", want: http.StatusForbidden},
 		{name: "native client without browser headers", host: "127.0.0.1:8080", want: http.StatusNotFound},
 	} {
@@ -180,8 +183,8 @@ func TestHostedModeRejectsSiblingOriginMutations(t *testing.T) {
 		{name: "padded same-origin null origin", origin: "null", fetchSite: " same-origin ", want: http.StatusForbidden},
 		{name: "null consent origin", path: "/oauth/authorize", origin: "null", fetchSite: "same-origin", want: http.StatusNotFound},
 		{name: "null origin outside consent", path: "/api/not-a-route", origin: "null", fetchSite: "same-origin", want: http.StatusNotFound},
-		{name: "null consent origin without fetch site", path: "/oauth/authorize", origin: "null", want: http.StatusForbidden},
-		{name: "same-site null consent origin", path: "/oauth/authorize", origin: "null", fetchSite: "same-site", want: http.StatusForbidden},
+		{name: "null consent origin without fetch site", path: "/oauth/authorize", origin: "null", want: http.StatusNotFound},
+		{name: "same-site null consent origin", path: "/oauth/authorize", origin: "null", fetchSite: "same-site", want: http.StatusNotFound},
 		{name: "cross-site null consent origin", path: "/oauth/authorize", origin: "null", fetchSite: "cross-site", want: http.StatusForbidden},
 		{name: "native client", want: http.StatusNotFound},
 	}
