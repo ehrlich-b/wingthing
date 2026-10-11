@@ -5,9 +5,14 @@ Writers must hold the existing run.lock. Readers never repair evidence.
 import datetime
 import hashlib
 import json
+import os
+from collections import Counter
+from pathlib import Path
 import re
+import tempfile
 
-from contracts import INTERVAL_SECONDS, SLACK_SECONDS, timestamp, utc
+from contracts import (CHECKS, INTERVAL_SECONDS, LOG_COUNT, MAILBOX, OPTIONAL, SLACK_SECONDS,
+                       STATUSES, read_json, read_receipt, receipt_complete, timestamp, utc)
 
 LEDGER_NAME = "epoch-ledger.ndjson"
 RECORD_LIMIT = 4096
@@ -77,12 +82,6 @@ def canonical(record):
     return json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
 
 # Metadata keys are closed. No free-text error/reason field can enter the ledger.
-import os
-from pathlib import Path
-import tempfile
-
-from contracts import CHECKS, LOG_COUNT, STATUSES, read_json, read_receipt, receipt_complete
-
 IDENTITY_KEYS = {"source_commit", "source_sha256", "binary_sha256"}
 ATTEMPT_KEYS = {"kind", "attempt_id", "receipt", "started_at", "slot"} | IDENTITY_KEYS
 RESULT_KEYS = {"kind", "attempt_id", "finished_at", "runner_status", "exit_code", "cleanup_status",
@@ -114,8 +113,10 @@ def validate_record(record, header, attempts, results):
     elif record.get("kind") == "result":
         if set(record) != RESULT_KEYS or record["attempt_id"] not in attempts or record["attempt_id"] in results:
             raise ValueError("orphan or duplicate result metadata")
-        if utc(record["finished_at"]) < utc(attempts[record["attempt_id"]]["started_at"]):
+        if record["finished_at"] is not None and utc(record["finished_at"]) < utc(attempts[record["attempt_id"]]["started_at"]):
             raise ValueError("completion precedes attempt")
+        if record["receipt_complete"] and record["finished_at"] is None:
+            raise ValueError("complete result requires a completion timestamp")
         if (record["runner_status"] not in ("pass", "fail", "unknown") or
                 record["cleanup_status"] not in STATUSES | {"unknown"} or
                 type(record["receipt_complete"]) is not bool or type(record["binary_consistent"]) is not bool or
@@ -213,12 +214,18 @@ def _sync_directory(directory):
 
 def create_ledger(path, header, records=()):
     """Atomic, no-clobber publication. Caller owns run.lock, including imports."""
+    if header != epoch_header(header["epoch"], header["until"], header["host"], header["origin"]):
+        raise ValueError("invalid immutable epoch header")
     attempts, results = {}, {}
     encoded, previous = _sealed(header, 0, None)
     chunks = [encoded]
+    size = len(encoded)
     for seq, record in enumerate(records, 1):
         validate_record(record, header, attempts, results)
         encoded, previous = _sealed(record, seq, previous)
+        size += len(encoded)
+        if size > TOTAL_LIMIT:
+            raise ValueError("ledger exceeds 4-MiB total cap")
         chunks.append(encoded)
         (attempts if record["kind"] == "attempt" else results)[record["attempt_id"]] = record
     data = b"".join(chunks)
@@ -264,9 +271,9 @@ def result_record(attempt, records, raw_digest, finished_at=None):
     cleanup = next((r for r in reversed(records) if r.get("check") == "cleanup"), {})
     observed = {r.get("binary_sha256") for r in records if r.get("binary_sha256")}
     binary = next(iter(observed), None) if len(observed) <= 1 else None
-    finish = finished_at or runner.get("timestamp") or attempt["started_at"]
+    finish = finished_at or runner.get("timestamp")
     inventory = cleanup.get("descendant_inventory", "unknown")
-    return {"kind": "result", "attempt_id": attempt["attempt_id"], "finished_at": timestamp(utc(finish)),
+    return {"kind": "result", "attempt_id": attempt["attempt_id"], "finished_at": timestamp(utc(finish)) if finish else None,
             "runner_status": runner.get("status") if runner.get("status") in ("pass", "fail") else "unknown",
             "exit_code": runner.get("exit_code"), "cleanup_status": cleanup.get("status", "unknown"),
             "checks": checks, "receipt_complete": receipt_complete(records), "receipt_sha256": raw_digest,
@@ -291,7 +298,8 @@ def retained_records(logs, header):
         if not start:
             raise ValueError("legacy receipt has no attributable start: " + path.name)
         attempt_id = "legacy-" + hashlib.sha256(path.name.encode()).hexdigest()
-        attempt = begin_record(header, attempt_id, path.name, start, runner)
+        # Old receipts attest the observed canary binary, not a prelaunch snapshot.
+        attempt = begin_record(header, attempt_id, path.name, start, dict(runner, binary_sha256=None))
         projected.extend([attempt, result_record(attempt, records, hashlib.sha256(path.read_bytes()).hexdigest())])
     return projected
 
@@ -333,9 +341,6 @@ def rotation_ready(path, candidates):
         result = by_name.get(receipt.name)
         if not result or result["receipt_sha256"] != hashlib.sha256(receipt.read_bytes()).hexdigest():
             raise ValueError("raw receipt lacks exact durable metadata; refusing rotation: " + receipt.name)
-
-from collections import Counter
-from contracts import MAILBOX, OPTIONAL
 
 NATIVE_CHECKS = ("mcp_stdio_agent_run_wait_result", "mcp_client_disconnect", "wing_restart_mid_run",
                  "mcp_tasks_get_result_list_cancel", "terminal_start_send_stop")
@@ -429,10 +434,8 @@ def consume(view, now):
               "late_slots": sum(slot["late"] for slot in slots),
               "duplicate_slots": sum(slot["duplicate_attempts"] > 0 for slot in slots),
               "duplicate_attempts": sum(slot["duplicate_attempts"] for slot in slots),
-              "duplicate_receipts": sum(count - 1 for count in receipt_hashes.values()),
+              "duplicate_receipts": sum(count - 1 for count in receipt_hashes.values() if count > 1),
               "unassigned_attempts": len(unassigned)}
-    # Only repeated hashes are duplicates; singleton receipts contribute zero.
-    counts["duplicate_receipts"] = sum(count - 1 for count in receipt_hashes.values() if count > 1)
     cohorts = {}
     for item in all_attempts:
         result = item["result"] or {}

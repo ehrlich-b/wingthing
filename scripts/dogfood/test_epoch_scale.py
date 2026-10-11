@@ -82,3 +82,11 @@ class EpochScaleTests(fixtures.ForgeFixture):
         corrupt.write_bytes(b"".join(chunks))
         with self.assertRaisesRegex(ValueError, "slot join"):
             epoch_oracle.inspect(corrupt, utc(rehearse_epoch.UNTIL))
+        chunks = []
+        previous = None
+        for seq, record in enumerate([dict(view["header"], epoch_id="0" * 64), *records]):
+            chunk, previous = ledger._sealed(record, seq, previous)
+            chunks.append(chunk)
+        corrupt.write_bytes(b"".join(chunks))
+        with self.assertRaisesRegex(ValueError, "epoch identity"):
+            epoch_oracle.inspect(corrupt, utc(rehearse_epoch.UNTIL))

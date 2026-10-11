@@ -46,6 +46,11 @@ def inspect(path, now):
             previous = digest
             records.append(item)
     header = records[0]
+    identity = dict(header)
+    epoch_id = identity.pop("epoch_id")
+    canonical = json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    if epoch_id != hashlib.sha256(canonical).hexdigest():
+        raise ValueError("oracle epoch identity mismatch")
     start, end = instant(header["epoch"]), instant(header["until"])
     if now < end or end <= start:
         raise ValueError("oracle only inspects an ended finite epoch")
@@ -59,6 +64,9 @@ def inspect(path, now):
         raise ValueError("oracle duplicate or unknown metadata")
     groups = {}
     hashes = {}
+    for result in outcomes.values():
+        digest = result["receipt_sha256"]
+        hashes[digest] = hashes.get(digest, 0) + 1
     unassigned = 0
     for key, attempt in attempts.items():
         actual = instant(attempt["started_at"])
@@ -87,9 +95,6 @@ def inspect(path, now):
         delay = (actual - (start + slot * cadence)).total_seconds()
         late = delay > (180 if slot == 0 else 60)
         groups.setdefault(slot, []).append((finished, failed, skipped, unknown, healthy_sample, late))
-        if result:
-            digest = result["receipt_sha256"]
-            hashes[digest] = hashes.get(digest, 0) + 1
     completed = failures = skipped_slots = unknown_slots = pass_slots = late_slots = duplicates = 0
     completed_attempts = 0
     for values in groups.values():
@@ -103,7 +108,7 @@ def inspect(path, now):
         duplicates += len(values) > 1
     absent = count - len(groups)
     legacy = header["origin"] == "legacy-import"
-    return {"host": header["host"], "epoch_id": header["epoch_id"], "all_green": False,
+    return {"host": header["host"], "epoch_id": header["epoch_id"], "origin": header["origin"], "all_green": False,
             "counts": {"planned_slots": count, "due_slots": count, "attempted": len(attempts) - unassigned,
                        "unique_slots": len(groups), "completed_attempts": completed_attempts,
                        "completed_slots": completed, "failed_slots": failures, "skipped_slots": skipped_slots,
@@ -122,10 +127,10 @@ def main():
     args = parser.parse_args()
     try:
         reports = [inspect(path, instant(args.now)) for path in args.ledger]
-        if len({report["host"] for report in reports}) != len(reports):
-            raise ValueError("oracle expects distinct host epochs")
+        if len({(report["host"], report["epoch_id"]) for report in reports}) != len(reports):
+            raise ValueError("oracle expects distinct host/epoch identities")
         print(json.dumps({"schema": 1, "scope": "offline metadata arithmetic only", "all_green": False,
-                          "hosts": sorted(reports, key=lambda value: value["host"])}, indent=2, sort_keys=True))
+                          "hosts": sorted(reports, key=lambda value: (value["host"], value["epoch_id"]))}, indent=2, sort_keys=True))
         return 0
     except (ValueError, KeyError, OSError, TypeError) as error:
         print(str(error), file=sys.stderr)

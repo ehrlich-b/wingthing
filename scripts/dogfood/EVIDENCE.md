@@ -175,3 +175,9 @@ Neither fixture reconstructs genuine older host evidence. Duplicate receipt
 content contributes no new unique slot; partial legacy cleanup still holds
 future admission. A runner adding a ledger to old finite state also preserves
 that state's epoch/deadline even if all raw history has disappeared.
+
+Legacy receipts retain their observed binary hash but leave the prelaunch
+snapshot unknown. An incomplete legacy receipt without a runner completion
+leaves `finished_at: null`; it cannot manufacture an end timestamp from its
+start. The independent oracle verifies epoch identity as well as the digest
+chain and can compare distinct origins/epochs for the same host.

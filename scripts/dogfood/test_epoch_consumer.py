@@ -106,3 +106,17 @@ class LedgerConsumerTests(fixtures.ForgeFixture):
         self.assertTrue(all(v == "pass" for v in judgment["native_checks"].values()))
         self.assertEqual(judgment["live_checks"], {"real_codex": "skip", "remembered_ssh_connect": "skip"})
         self.assertEqual(result["judgment_scope"]["outside_host_acceptance"], "REQUIRED-UNRUN")
+
+    def test_edited_raw_receipt_cannot_borrow_original_metadata(self):
+        for slot in range(8):
+            self.add(slot)
+        report, code = status.report(self.logs, self.now)
+        self.assertEqual(code, 0)
+        before = self.path.read_bytes()
+        latest = sorted(self.logs.glob("*.jsonl"))[-1]
+        raw = latest.read_bytes()
+        latest.write_bytes(raw.replace(b"SECRET-DIAGNOSTIC", b"EDITED-DIAGNOSTIC"))
+        report, code = status.report(self.logs, self.now)
+        self.assertEqual(code, 1)
+        self.assertTrue(any("differs from ledger metadata" in value for value in report["diagnostics"]))
+        self.assertEqual(self.path.read_bytes(), before)

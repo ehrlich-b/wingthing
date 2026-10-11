@@ -1,5 +1,6 @@
 """Pure allocation probes: no native sockets or built binary execution."""
 import importlib.util
+import itertools
 from unittest import mock
 import unittest
 
@@ -19,7 +20,8 @@ class CanaryPathBudgetTests(fixtures.ForgeFixture):
         self.assertLessEqual(len(str(socket_path).encode()), 103)
         self.assertEqual(root.stat().st_mode & 0o777, 0o700)
         self.assertEqual(root.parent, scratch)
-        self.assertEqual(len(root.name), 3)
+        self.assertGreaterEqual(len(root.name), 3)
+        self.assertLessEqual(len(root.name), 8)
 
     def test_impossibly_long_path_refuses_before_state_allocation(self):
         scratch = self.root / ("x" * 100)
@@ -30,12 +32,11 @@ class CanaryPathBudgetTests(fixtures.ForgeFixture):
 
     def test_occupied_names_never_overwrite_prior_inputs(self):
         scratch = fixtures.REPO / ".scratch"
-        root = scratch / "AAA"
-        root.mkdir(mode=0o700, exist_ok=True)
+        root = canary.fixture_root(scratch, "darwin")
         self.additional_roots.append(root)
         note = root / "immutable-input"
         note.write_text("keep")
-        with mock.patch.object(canary.secrets, "choice", return_value="A"):
+        with mock.patch.object(canary.secrets, "choice", side_effect=itertools.cycle(root.name)):
             with self.assertRaisesRegex(RuntimeError, "namespace occupied"):
                 canary.fixture_root(scratch, "darwin")
         self.assertEqual(note.read_text(), "keep")

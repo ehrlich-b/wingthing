@@ -71,6 +71,8 @@ class LegacyEpochTests(fixtures.ForgeFixture):
         self.assertEqual(report["counts"]["missing_slots"], 0)
         self.assertTrue(report["attention_required"])
         self.assertFalse(report["all_green"])
+        self.assertTrue(all(attempt["binary_sha256"] is None for attempt in ledger.checked(path)["attempts"].values()))
+        self.assertTrue(all(result["binary_sha256"] == "b" * 64 for result in ledger.checked(path)["results"].values()))
         full_header = ledger.epoch_header(EPOCH, UNTIL, "legacy-mac-fixture")
         full_path = self.logs / ledger.LEDGER_NAME
         ledger.create_ledger(full_path, full_header, complete_records(full_header, range(448)))
@@ -103,6 +105,7 @@ class LegacyEpochTests(fixtures.ForgeFixture):
         self.assertEqual(report["counts"]["completed_slots"], 0)
         self.assertEqual(report["counts"]["unknown_slots"], 448)
         self.assertIsNotNone(ledger.cleanup_hold(view))
+        self.assertIsNone(next(iter(view["results"].values()))["finished_at"])
         self.assertEqual(self.snapshot(), before)
 
     def test_missing_timestamp_corrupt_tail_and_25_inputs_refuse_without_overwrite(self):
