@@ -30,7 +30,8 @@ func parentLifecycleWing(t *testing.T) *runWingFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	home := t.TempDir()
+	// Captured grants and the receiving wing compare canonical workspace paths.
+	home := config.CanonicalProviderPath(t.TempDir())
 	t.Setenv("HOME", home)
 	cfg := &config.Config{Dir: testprovider.ShortStateDir(t, scratch), WingID: "offline-wing", DefaultAgent: "claude"}
 	wc := &config.WingConfig{WingID: cfg.WingID, Paths: config.PathList{{Path: home}}}

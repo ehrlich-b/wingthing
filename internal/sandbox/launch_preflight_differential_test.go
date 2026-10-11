@@ -38,7 +38,13 @@ func putJSON(t *testing.T, path string, body any) {
 }
 func fixture(t *testing.T) (launchplan.Request, launchplan.Capabilities, string) {
 	t.Helper()
-	dir := t.TempDir()
+	// Production canonicalizes launch paths. Resolve macOS's temporary-parent
+	// aliases before deriving the oracle's paths, while individual symlink
+	// cases still create their own deliberate aliases below this root.
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	home := filepath.Join(dir, "home")
 	work := filepath.Join(home, "work")
 	tmp := filepath.Join(dir, "tmp")
