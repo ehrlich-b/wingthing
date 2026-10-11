@@ -133,6 +133,12 @@ Terminal snapshots are ANSI state. Wingthing does not infer that an agent is
 done because a string appeared on screen. Use `agent_run`, `agent_wait`, and
 `agent_result` when the caller needs semantic task state.
 
+To keep a foreground service running independently, start its own terminal with
+`wt terminal --detach --name soak -C /path/to/project -- ./supervisor.sh`.
+The client detaches while that egg keeps running. See
+[terminal commands and service lifetime](docs/terminal-lifecycle.md) for relative
+executables, toolchain environment, Linux process IDs, and host user services.
+
 ## 3. Different machines: direct remote MCP
 
 ### One known machine over SSH

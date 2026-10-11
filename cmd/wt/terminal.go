@@ -30,7 +30,10 @@ func terminalCmd() *cobra.Command {
 		Short:   "Start a persistent shell or command",
 		Long: "Start a persistent, sandboxed terminal and attach it to the current terminal. " +
 			"With no command, Wingthing starts $SHELL. Use -- before command-specific flags.\n\n" +
-			"Detach without stopping the process with Ctrl+B, then Q.",
+			"Detach without stopping the process with Ctrl+B, then Q, or start with --detach. " +
+			"Relative command paths are resolved against --cwd.\n\n" +
+			"For a long-running service, start a separate terminal with its supervisor in the foreground. " +
+			"--detach disconnects the client. On Linux, sandboxed children end when their egg's foreground command exits.",
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if traceFlag && runtime.GOOS != "linux" {
@@ -40,6 +43,7 @@ func terminalCmd() *cobra.Command {
 		},
 		Example: "  wt terminal --name work\n" +
 			"  wt terminal --name dev-server -- npm run dev\n" +
+			"  wt terminal --detach --name soak -C /path/to/project -- ./supervisor.sh\n" +
 			"  wt attach work",
 	}
 	cmd.Flags().StringVarP(&nameFlag, "name", "n", "", "human-readable session name")
