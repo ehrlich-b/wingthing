@@ -19,11 +19,12 @@ import (
 // Attachment upgrades an authenticated wing connection to an ordered terminal
 // stream. No egg socket, attachment token or host authority crosses this API.
 type Attachment struct {
-	Session  string `json:"session"`
-	ReadOnly bool   `json:"read_only,omitempty"`
-	Takeover bool   `json:"takeover,omitempty"`
-	Rows     uint32 `json:"rows,omitempty"`
-	Cols     uint32 `json:"cols,omitempty"`
+	NativeTerminal bool   `json:"native_terminal,omitempty"`
+	Session        string `json:"session"`
+	ReadOnly       bool   `json:"read_only,omitempty"`
+	Takeover       bool   `json:"takeover,omitempty"`
+	Rows           uint32 `json:"rows,omitempty"`
+	Cols           uint32 `json:"cols,omitempty"`
 }
 
 type AttachHandler func(context.Context, *SessionStream) error
@@ -102,6 +103,9 @@ func serveAttachment(ctx context.Context, conn net.Conn, scanner *bufio.Scanner,
 	if err != nil {
 		welcome.Error = err.Error()
 	}
+	// Attachment welcomes are decoded strictly by legacy clients. Discovery
+	// belongs exclusively to the ordinary control handshake.
+	welcome.Capabilities = nil
 	if encoder.Encode(welcome) != nil || err != nil {
 		return
 	}
@@ -131,6 +135,25 @@ func DialAttachment(ctx context.Context, dir string, hello Hello) (*SessionStrea
 func DialAttachmentPath(ctx context.Context, path string, hello Hello) (*SessionStream, Welcome, error) {
 	if hello.Attach == nil {
 		return nil, Welcome{}, errors.New("attachment is required")
+	}
+	if hello.Attach.NativeTerminal {
+		discovery := hello
+		discovery.Attach = nil
+		client, err := DialPath(ctx, path, discovery)
+		if err != nil {
+			return nil, Welcome{}, err
+		}
+		attachment := *hello.Attach
+		attachment.NativeTerminal = false
+		for _, capability := range client.Welcome.Capabilities {
+			if capability == NativeTerminalCapability {
+				attachment.NativeTerminal = true
+			}
+		}
+		// Pin the attachment to the wing that advertised support.
+		hello.WingID = client.Welcome.WingID
+		_ = client.Close()
+		hello.Attach = &attachment
 	}
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", path)
 	if err != nil {

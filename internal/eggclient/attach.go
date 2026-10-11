@@ -105,6 +105,12 @@ func AttachStreamIO(ctx context.Context, sessionID string, input io.Reader, outp
 	if file, ok := input.(*os.File); ok {
 		fd = int(file.Fd())
 	}
+	// Only a native terminal asks for this presentation. Browser/MCP and piped
+	// callers retain the legacy stream; each transport negotiates support.
+	if file, ok := output.(*os.File); ok && fd >= 0 && term.IsTerminal(fd) && term.IsTerminal(int(file.Fd())) {
+		options.NativeTerminal = true
+		defer func() { _, _ = output.Write(egg.NativeTerminalReset()) }()
+	}
 	if !options.ReadOnly && fd >= 0 && term.IsTerminal(fd) {
 		if cols, rows, err := term.GetSize(fd); err == nil {
 			options.Rows, options.Cols = uint32(rows), uint32(cols)
