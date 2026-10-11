@@ -139,3 +139,14 @@ This row installs/activates no service or timer, changes no installed runtime
 and performs no production or live-provider operation. Full browser, loopback,
 built-CLI and native-process acceptance cannot run in the worker. Compilation,
 fake systemctl calls and socket-path geometry do not pass those gates.
+
+## UTC and civil-time boundaries
+
+`test_epoch_boundaries.py` covers microseconds around start, cadence, slack and
+exclusive expiry, including a one-microsecond epoch and cleanup finishing after
+expiry. The repeated New York civil hour on 2026-11-01 maps the UTC slots
+05:00, 05:45, 06:30 and 07:15 to 01:00 EDT, 01:45 EDT, 01:30 EST and 02:15 EST.
+The third slot has `fold=1`; all four UTC slot identities remain distinct. The
+independent ended-epoch oracle agrees on four completed point samples, and a
+later report does not add slots. UTC `Z` and `+00:00` spellings canonicalize to
+the same identity; local offsets and naive civil timestamps are refused.
