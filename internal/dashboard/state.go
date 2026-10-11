@@ -56,9 +56,14 @@ const (
 	machinePicker
 	details
 	help
+	runFilter
+	runDetails
+	runResult
+	runAttach
 )
 
 type action struct {
+	run      runRow
 	kind     mode
 	row      row
 	agent    string
@@ -70,6 +75,8 @@ type action struct {
 }
 
 type state struct {
+	recent            bool
+	runs              *runHistory
 	machines          map[string]machine
 	selected          string
 	filter            string
@@ -211,6 +218,9 @@ func (s *state) handle(key string) (act *action, quit bool) {
 	if key == "ctrl-c" {
 		return nil, true
 	}
+	if s.recent && s.mode != help {
+		return s.runHandle(key)
+	}
 	if s.mode == machinePicker {
 		switch key {
 		case "escape", "q", "m":
@@ -317,6 +327,10 @@ func (s *state) handle(key string) (act *action, quit bool) {
 		return nil, false
 	}
 	switch key {
+	case "h":
+		s.recent = true
+		h := s.history()
+		h.requested, h.next = true, false
 	case "q":
 		return nil, true
 	case "up", "left", "k":

@@ -193,9 +193,12 @@ func render(s *state, width, height int, now time.Time) string {
 		}
 	}
 	footer := []string{"arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop",
-		"/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit"}
+		"/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent"}
 	if width < 75 {
-		footer = []string{"Enter attach v view t take n r x stop", "/ filter ! attention b bell m i ? R q"}
+		footer = []string{"Enter attach v view t take n r x stop", "/ filter ! attention b bell m i ? R q h"}
+	}
+	if s.recent {
+		header, body, selectedLine, footer = s.runView(now)
 	}
 	if s.mode == machinePicker {
 		body = []viewLine{{text: "Machines (Enter selects)"}}
@@ -213,7 +216,7 @@ func render(s *state, width, height int, now time.Time) string {
 			body = append(body, viewLine{text: prefix + text, selected: i == s.picker})
 		}
 		footer = []string{"j/k move  Enter select  Esc cancel"}
-	} else if s.mode == help || s.mode == details {
+	} else if s.mode == help || s.mode == details || s.mode == runDetails || s.mode == runResult {
 		body = nil
 		for _, line := range overlayLines(s, now) {
 			for _, wrapped := range wrap(line, width) {
@@ -240,10 +243,10 @@ func render(s *state, width, height int, now time.Time) string {
 	case confirmTakeover:
 		message = "Take input control of " + s.target.key() + " from " + s.target.WriterOwner + "? [y/N]"
 	}
-	if s.mode == help || s.mode == details || s.mode == machinePicker {
+	if s.mode == help || s.mode == details || s.mode == runDetails || s.mode == runResult || s.mode == machinePicker {
 		message = ""
 	}
-	if s.mode != navigate && s.mode != help && s.mode != details && s.mode != machinePicker {
+	if s.mode != navigate && s.mode != help && s.mode != details && s.mode != machinePicker && s.mode != runFilter && s.mode != runDetails && s.mode != runResult {
 		footer = []string{"Enter accept  Esc cancel  Ctrl-C quit", message}
 		if s.mode == confirmStop {
 			footer[0] = "y stop  Enter/Esc cancel  Ctrl-C quit"
@@ -273,7 +276,7 @@ func render(s *state, width, height int, now time.Time) string {
 	header = header[:min(len(header), height-len(footer))]
 	bodyHeight := max(0, height-len(header)-len(footer))
 	start := max(0, min(selectedLine-bodyHeight/2, len(body)-bodyHeight))
-	if s.mode == details || s.mode == help {
+	if s.mode == details || s.mode == help || s.mode == runDetails || s.mode == runResult {
 		start = min(s.overlayOffset, max(0, len(body)-bodyHeight))
 	}
 	lines := make([]viewLine, 0, height)
@@ -339,6 +342,9 @@ func wrap(text string, width int) []string {
 }
 
 func overlayLines(s *state, now time.Time) []string {
+	if s.mode == runDetails || s.mode == runResult {
+		return s.runOverlay()
+	}
 	if s.mode == help {
 		return []string{
 			"Help / status legend",
@@ -358,6 +364,7 @@ func overlayLines(s *state, now time.Time) []string {
 			"Blocked clears on native evidence; unknown: missing evidence or disabled hooks.",
 			"Connection/freshness is separate from session status; stale means a retained query result.",
 			"Remote setup: wt remote add NAME SSH_TARGET; wt remote list",
+			"h: recent runs; / filter; N: next page; o: bounded result",
 			"Esc/Enter: back; j/k or PageUp/PageDown: scroll",
 		}
 	}

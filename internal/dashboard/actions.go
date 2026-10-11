@@ -184,6 +184,9 @@ func runActionProcess(ctx context.Context, start, wait func() error, signalGroup
 }
 
 func actionArgs(act action, remotes map[string]config.Remote) ([]string, error) {
+	if act.kind == runAttach {
+		return runAttachArgs(act.run), nil
+	}
 	if act.attach {
 		ref := act.row.ID
 		if act.row.machine != "local" {

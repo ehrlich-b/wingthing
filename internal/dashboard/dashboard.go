@@ -59,7 +59,8 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 	s.remotes = remotes
 	ctx, cancel := context.WithCancel(ctx)
 	var actions sync.WaitGroup
-	defer func() { cancel(); actions.Wait(); inv.workers.Wait() }()
+	history := s.history()
+	defer func() { cancel(); actions.Wait(); inv.workers.Wait(); history.workers.Wait() }()
 	defer func() { err = errors.Join(err, terminal.leave()) }()
 	if err := terminal.enter(); err != nil {
 		return err
@@ -103,7 +104,7 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 				}
 			}
 			width, height := terminal.size()
-			if s.mode == details || s.mode == help {
+			if s.mode == details || s.mode == help || s.mode == runDetails || s.mode == runResult {
 				lineCount := 0
 				for _, line := range overlayLines(s, time.Now()) {
 					lineCount += len(wrap(line, max(1, width)))
@@ -140,6 +141,17 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 					inputEvents, suspended = input.events, false
 					inv.refresh(ctx, s)
 				}
+			}
+			continue
+		case result := <-history.results:
+			if result.target != nil && s.mode != runResult {
+				history.loading = false
+				history.content = nil
+			} else {
+				history.apply(result)
+			}
+			if history.requested && s.recent && s.mode == navigate {
+				history.request(ctx, s.localDir, remotes, nil)
 			}
 			continue
 		case result := <-inv.results:
@@ -179,11 +191,27 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 				s.refresh = false
 				inv.forceRefresh(ctx, s)
 			}
+			if history.requested && !history.loading {
+				history.request(ctx, s.localDir, remotes, nil)
+			}
 			if quit {
 				return nil
 			}
 			if act == nil {
 				continue
+			}
+			if act.kind == runResult {
+				r := act.run
+				history.request(ctx, s.localDir, remotes, &r)
+				continue
+			}
+			if act.kind == runAttach {
+				if err := verifyRunAttach(ctx, s.localDir, act.run); err != nil {
+					s.mode, s.message, history.target = runDetails, err.Error(), act.run
+					history.target.live = false
+					history.pages[act.run.WingID] = staleRunPage(history.pages[act.run.WingID], err)
+					continue
+				}
 			}
 			args, actionErr := actionArgs(*act, remotes)
 			if actionErr != nil {
@@ -215,11 +243,11 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			if err := terminal.leave(); err != nil {
 				return err
 			}
-			if act.attach {
+			if act.attach && act.kind != runAttach {
 				s.attached = &act.row.identity
 			}
 			actionErr = command(ctx, args, streams)
-			if act.attach && actionErr == nil {
+			if act.attach && act.kind != runAttach && actionErr == nil {
 				s.acknowledge(act.row)
 			}
 			s.attached = nil

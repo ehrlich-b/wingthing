@@ -275,3 +275,17 @@ func TestDashboardStopCapturesFullMachineIdentity(t *testing.T) {
 		t.Fatalf("confirmation retargeted: %#v", actions)
 	}
 }
+
+func TestRecentRunsEntryPreservesSessionState(t *testing.T) {
+	s := fixture()
+	selected, query := s.selected, s.filter
+	s.handle("h")
+	if !s.recent || !s.history().requested {
+		t.Fatal("history did not request authenticated discovery")
+	}
+	s.handle("j")
+	s.handle("h")
+	if s.recent || s.selected != selected || s.filter != query {
+		t.Fatal("session state changed")
+	}
+}

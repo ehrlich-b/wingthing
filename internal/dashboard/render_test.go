@@ -210,3 +210,11 @@ func TestDashboardDetailsWrapUnicodeAndTinyPrompts(t *testing.T) {
 		renderedLines(t, render(s, dimensions[0], dimensions[1], time.Now()), dimensions[0], dimensions[1])
 	}
 }
+
+func TestDashboardHelpAdvertisesRecentRuns(t *testing.T) {
+	s := fixture()
+	s.mode = help
+	if !strings.Contains(render(s, 120, 32, time.Now()), "h: recent runs") {
+		t.Fatal("history help missing")
+	}
+}
