@@ -25,16 +25,24 @@ private struct ConversationPalette {
 public struct WingthingRootView: View {
     @ObservedObject private var model: WingthingModel
     @Environment(\.colorScheme) private var scheme
+    @StateObject private var phonePairing = PhonePairingModel()
     @State private var showingHome = false
+    @State private var showingPhonePairing = false
     @State private var showingNew = false
     @State private var homeAfterNew = false
     @State private var conversationStates: [ConversationReference: ConversationViewState] = [:]
     public init(model: WingthingModel) { self.model = model }
+    private func openLegacyHome() {
+        showingPhonePairing = false
+        Task { await model.restoreHome(); showingHome = true }
+    }
     private var palette: ConversationPalette { .init(scheme) }
     public var body: some View {
         NavigationStack {
             Group {
-                if let selected = model.selected {
+                if showingPhonePairing {
+                    PhonePairingView(model: phonePairing, legacySetup: openLegacyHome)
+                } else if let selected = model.selected {
                     ConversationScreen(model: model, navigation: Binding(
                         get: { conversationStates[selected] ?? ConversationViewState() },
                         set: { conversationStates[selected] = $0 }
@@ -55,17 +63,7 @@ public struct WingthingRootView: View {
                             .accessibilityIdentifier("configured-conversation-list")
                     }.foregroundStyle(palette.foreground).background(palette.background.ignoresSafeArea())
                 } else {
-                    VStack(spacing: 20) {
-                        Spacer()
-                        Circle().stroke(palette.accentFill, lineWidth: 7).frame(width: 52, height: 52).accessibilityHidden(true)
-                        Text("Wingthing").font(.largeTitle.bold())
-                        Text("Your conversations, on your computer.").font(.body).multilineTextAlignment(.center)
-                        Button("Connect a home") { showingHome = true }.font(.headline).padding(16)
-                            .foregroundStyle(palette.onAccent).frame(maxWidth: .infinity)
-                            .background(palette.accentFill, in: RoundedRectangle(cornerRadius: 16))
-                        Spacer()
-                    }.padding(24).foregroundStyle(palette.foreground)
-                        .background(palette.background.ignoresSafeArea())
+                    PhonePairingView(model: phonePairing, legacySetup: openLegacyHome)
                 }
             }
             .hideConversationNavigationBar()
@@ -75,6 +73,12 @@ public struct WingthingRootView: View {
                 if homeAfterNew { homeAfterNew = false; showingHome = true }
             }) { NavigationStack { NewConversationView(model: model) } }
             .onOpenURL { url in
+                if url.scheme == "wingthing", url.host == "pair" {
+                    showingHome = false; showingPhonePairing = true
+                    Task { await phonePairing.scanAnother(); await phonePairing.scan(url.absoluteString) }
+                    return
+                }
+                showingPhonePairing = false
                 model.receiveHomeSetupLink(url.absoluteString)
                 if showingNew { homeAfterNew = true; showingNew = false }
                 else { showingHome = true }
@@ -127,7 +131,7 @@ private struct TaskInventoryView: View {
                     Label("Start with your own home", systemImage: "house.circle").font(.title3)
                     Button("Connect a home", action: onConnect).frame(minHeight: 44)
                     Text("Connect to the computer where your conversations run.").foregroundStyle(.secondary)
-                    Text("Use your existing home address and access. Pairing and sign-in aren't available yet.").font(.footnote).foregroundStyle(.secondary)
+                    Text("This fallback uses existing Home account access. Scan to pair grants access to one wing.").font(.footnote).foregroundStyle(.secondary)
                 }
             } else {
                 if !model.connected { Section { ConnectionStatusRow(phase: model.phase) } }
@@ -626,7 +630,7 @@ private struct HomeConnectionView: View {
             Section {
                 Button("Scan identity QR") {}.disabled(true)
             } footer: {
-                Text("Pairing, phone approval, and sign-in aren't available yet. Connecting creates no account or permission and contacts only the address you enter.")
+                Text("This fallback uses your existing Home account access. Use Scan to pair for phone approval and access to one machine's wing.")
             }
             if let profile = model.profile {
                 Section("Connected identity") {

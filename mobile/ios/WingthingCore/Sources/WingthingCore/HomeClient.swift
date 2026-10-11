@@ -153,7 +153,7 @@ public actor HomeClient {
     private var latestRead: [ExecutionReference: UInt64] = [:] // Keyed without provider.
     public init(profile: HomeProfile, existingBearer: String, wire: any HomeWire = URLSessionHomeWire(), identity: TunnelIdentity = TunnelIdentity(), additionalWingPins: [String: String] = [:]) throws {
         guard profile.mode == .remote else { throw ClientError.invalidConfiguration("A local preview profile never takes a credential.") }
-        guard !existingBearer.isEmpty else { throw ClientError.invalidConfiguration("An existing authorized connection is required. Native pairing and sign-in are not implemented.") }
+        guard !existingBearer.isEmpty else { throw ClientError.invalidConfiguration("This Home form requires existing account access. Use Scan to pair for wing-specific device access.") }
         try self.init(checked: profile, bearer: existingBearer, wire: wire, identity: identity, additionalWingPins: additionalWingPins)
     }
 

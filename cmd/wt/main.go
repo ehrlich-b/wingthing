@@ -112,6 +112,8 @@ func newRootCommand() *cobra.Command {
 		logoutCmd(),
 		whoamiCmd(),
 		phoneCmd(),
+		pairCmd(),
+		devicesCmd(),
 		supportCmd(),
 		embedCmd(),
 		doctorCmd(),
@@ -870,7 +872,7 @@ func loginCmd() *cobra.Command {
 			}
 
 			// If a daemon was running, restart it so it picks up the new token
-			if err := daemonctl.RestartWingDaemonIfRunning(); err != nil {
+			if err := daemonctl.RestartWingDaemonAfterLogin(); err != nil {
 				fmt.Printf("warning: failed to restart wing daemon: %v\n", err)
 			}
 			return nil

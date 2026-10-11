@@ -15,5 +15,14 @@
     </dict></array>
     <key>UILaunchScreen</key><dict/>
     <key>UIApplicationSceneManifest</key><dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>
-    <key>NSLocalNetworkUsageDescription</key><string>Connect to the home endpoint you explicitly choose on your local network.</string>
+    <key>NSCameraUsageDescription</key><string>Scan the one-time QR in your Wingthing terminal to pair with that machine.</string>
+    <key>NSAppTransportSecurity</key><dict>
+        <key>NSAllowsLocalNetworking</key><true/>
+        <key>NSExceptionDomains</key><dict><key>ts.net</key><dict>
+            <key>NSIncludesSubdomains</key><true/>
+            <key>NSExceptionAllowsInsecureHTTPLoads</key><true/>
+        </dict></dict>
+    </dict>
+    <key>NSBonjourServices</key><array><string>_wingthing-phone._tcp</string></array>
+    <key>NSLocalNetworkUsageDescription</key><string>Find and connect to the specific wing you scanned on your local network.</string>
 </dict></plist>
