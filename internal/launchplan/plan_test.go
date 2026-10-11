@@ -148,6 +148,14 @@ func TestLaunchPlanNetworkPolicyAndTransportAcrossHosts(t *testing.T) {
 }
 func TestLaunchPlanCanonicalCWDHomeOverrideMissingBinaryAndElan(t *testing.T) {
 	req, caps := setup(t)
+	// Model macOS's /var -> /private/var even when TMPDIR has no symlinks.
+	parentAlias := filepath.Join(t.TempDir(), "parent-alias")
+	if err := os.Symlink(req.CWD, parentAlias); err != nil {
+		t.Fatal(err)
+	}
+	req.CWD = parentAlias
+	req.Home = filepath.Join(parentAlias, "home")
+	req.Executable = filepath.Join(parentAlias, "provider")
 	dir := req.CWD
 	alias := filepath.Join(dir, "alias")
 	if err := os.Symlink(dir, alias); err != nil {
@@ -167,7 +175,11 @@ func TestLaunchPlanCanonicalCWDHomeOverrideMissingBinaryAndElan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.CWD.Resolved != dir {
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.CWD.Resolved != realDir || report.CWD.Path != alias || report.CWD.Path == report.CWD.Resolved {
 		t.Fatalf("cwd: %+v", report.CWD)
 	}
 	hasGate(t, report, "environment.elan_home", Fail, "read-only")
@@ -207,6 +219,50 @@ func TestLaunchPlanInheritedDenialSource(t *testing.T) {
 		t.Fatalf("denial provenance: %s", gate.Source)
 	}
 }
+
+func TestLaunchPlanSymlinkedParentPreservesDisplayPathsAndDenialSources(t *testing.T) {
+	req, _ := setup(t)
+	dir := req.CWD
+	workspace := filepath.Join(dir, "workspace")
+	if err := os.Mkdir(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "parent-alias")
+	if err := os.Symlink(dir, alias); err != nil {
+		t.Fatal(err)
+	}
+	req.CWD = filepath.Join(alias, "workspace")
+	req.Home = filepath.Join(alias, "home")
+	req.Executable = filepath.Join(alias, "provider")
+	parent := filepath.Join(alias, "parent.yaml")
+	if err := os.WriteFile(parent, []byte("base: none\nfs: [deny:./]\nnetwork: {agent_domains: none}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	req.PolicyPath = filepath.Join(alias, "child.yaml")
+	if err := os.WriteFile(req.PolicyPath, []byte("base: ./parent.yaml\nfs: [deny:./]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Inspect(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []PathEvidence{report.CWD, report.Home, report.Executable} {
+		want, err := filepath.EvalSymlinks(entry.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(entry.Path, alias+string(filepath.Separator)) || entry.Resolved != want || entry.Path == entry.Resolved || !entry.Available {
+			t.Fatalf("display path or canonical identity lost: %+v; want resolved %s", entry, want)
+		}
+	}
+	hasGate(t, report, "home.scope", Pass, "within")
+	hasGate(t, report, "executable", Pass, "present")
+	gate := hasGate(t, report, "workspace.write", Fail, "deny")
+	if gate.Source != parent+", "+req.PolicyPath || report.PolicySource != req.PolicyPath {
+		t.Fatalf("display policy paths lost: policy=%s denial=%s", report.PolicySource, gate.Source)
+	}
+}
+
 func TestLaunchPlanRoutesAndTwoProviderVersions(t *testing.T) {
 	for _, version := range []string{"codex-cli 0.147.0", "codex-cli 0.159.3"} {
 		t.Run(version, func(t *testing.T) {

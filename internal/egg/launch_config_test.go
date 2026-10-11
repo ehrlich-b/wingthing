@@ -138,6 +138,47 @@ func TestLaunchCommandPreviewDoesNotPrepareState(t *testing.T) {
 	}
 }
 
+func TestLaunchConfigSymlinkedParentPreservesDenialSourcePaths(t *testing.T) {
+	dir := t.TempDir()
+	policies := filepath.Join(dir, "policies")
+	if err := os.Mkdir(policies, 0700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(dir, "parent-alias")
+	if err := os.Symlink(policies, alias); err != nil {
+		t.Fatal(err)
+	}
+	parent := launchPolicyFile(t, alias, "parent.yaml", "base: none\nfs: [deny:./blocked]\n")
+	child := launchPolicyFile(t, alias, "child.yaml", "base: ./parent.yaml\nfs: [deny:./blocked]\n")
+	cfg, rules, err := ResolveLaunchConfig(child, "", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := ResolveEggConfig(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg, want) {
+		t.Fatalf("symlinked parent/runtime mismatch: %#v / %#v", cfg, want)
+	}
+	var sources []string
+	for _, rule := range rules {
+		if rule.Rule == "deny:./blocked" {
+			sources = append(sources, rule.Source)
+		}
+	}
+	if !reflect.DeepEqual(sources, []string{parent, child}) {
+		t.Fatalf("display denial sources lost: %v", sources)
+	}
+	cycle := launchPolicyFile(t, policies, "cycle.yaml", "base: ./cycle-alias.yaml\n")
+	if err := os.Symlink(cycle, filepath.Join(policies, "cycle-alias.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveLaunchConfig(filepath.Join(alias, "cycle.yaml"), "", dir); err == nil || !strings.Contains(err.Error(), "circular") {
+		t.Fatalf("canonical cycle detection lost: %v", err)
+	}
+}
+
 func TestLaunchConfigPolicyAliasUsesRuntimeRelativeBaseDirectory(t *testing.T) {
 	dir := t.TempDir()
 	elsewhere := filepath.Join(dir, "elsewhere")

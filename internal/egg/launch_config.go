@@ -12,6 +12,8 @@ import (
 
 // PolicyRuleSource describes effective declared rules, including inherited
 // denials. Automatic provider holes are attributed separately by ResolvePolicy.
+// Source retains the cleaned input filename for display; canonical filenames
+// are used separately for file access and cycle detection.
 type PolicyRuleSource struct {
 	Section string `json:"section"`
 	Rule    string `json:"rule"`
@@ -109,7 +111,7 @@ func (r *launchConfigResolver) resolve(path string, depth int) (explicitPolicy, 
 	if err != nil {
 		return zero, errors.New("invalid egg policy; check its YAML and network fields")
 	}
-	childRules := configRuleSources(child, real)
+	childRules := configRuleSources(child, lexical)
 	if child.Base.Name == "none" {
 		if child.Base.HasMasks() {
 			return zero, errors.New("base masks invalid with base: none")

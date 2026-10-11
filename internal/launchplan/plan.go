@@ -86,8 +86,8 @@ type Gate struct {
 	Correction string `json:"correction,omitempty"`
 }
 type PathEvidence struct {
-	Path      string `json:"path"`
-	Resolved  string `json:"resolved,omitempty"`
+	Path      string `json:"path"`               // cleaned display path, retaining aliases
+	Resolved  string `json:"resolved,omitempty"` // canonical identity for filesystem checks
 	Available bool   `json:"available"`
 	Source    string `json:"source"`
 }
