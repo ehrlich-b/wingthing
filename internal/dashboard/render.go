@@ -192,10 +192,10 @@ func render(s *state, width, height int, now time.Time) string {
 			body = append(body, viewLine{text: text})
 		}
 	}
-	footer := []string{"arrows/j/k move  Enter attach  n new  r rename  x stop",
+	footer := []string{"arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop",
 		"/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit"}
 	if width < 75 {
-		footer = []string{"Enter attach n new r rename x stop", "/ filter ! attention b bell m i ? R q"}
+		footer = []string{"Enter attach v view t take n r x stop", "/ filter ! attention b bell m i ? R q"}
 	}
 	if s.mode == machinePicker {
 		body = []viewLine{{text: "Machines (Enter selects)"}}
@@ -237,6 +237,8 @@ func render(s *state, width, height int, now time.Time) string {
 		message = "Cwd on " + s.target.machine + ": " + s.input + "_"
 	case confirmStop:
 		message = "Stop " + s.target.key() + " (" + s.target.name() + ")? [y/N]"
+	case confirmTakeover:
+		message = "Take input control of " + s.target.key() + " from " + s.target.WriterOwner + "? [y/N]"
 	}
 	if s.mode == help || s.mode == details || s.mode == machinePicker {
 		message = ""
@@ -245,6 +247,9 @@ func render(s *state, width, height int, now time.Time) string {
 		footer = []string{"Enter accept  Esc cancel  Ctrl-C quit", message}
 		if s.mode == confirmStop {
 			footer[0] = "y stop  Enter/Esc cancel  Ctrl-C quit"
+		}
+		if s.mode == confirmTakeover {
+			footer[0] = "y take control  Enter/Esc cancel  Ctrl-C quit"
 		}
 	} else if message != "" {
 		footer = append(footer, message)
@@ -336,6 +341,8 @@ func overlayLines(s *state, now time.Time) []string {
 		return []string{
 			"Help / status legend",
 			"arrows or j/k: move; Enter: attach",
+			"v: read-only (no input or resize); t: confirm preview takeover when ownership is reported",
+			"Bracketed pastes are ignored in the navigator; attached pastes pass through literally.",
 			"n: new on selected machine; r: rename; x: confirm stop",
 			"/: filter machine, name, ID, agent, cwd or status",
 			"!: attention only (native blocked, unread response or failed)",
@@ -372,7 +379,12 @@ func overlayLines(s *state, now time.Time) []string {
 		fmt.Sprintf("Lifecycle source: %s  State cursor: %d", lifecycleSource(r.StateSource), r.StateCursor),
 		"Reason: " + lifecycleDescription(r),
 		"Agent/kind: " + agent + " / " + r.Kind, "Age: " + age(elapsed), "Isolation: " + isolation,
-		fmt.Sprintf("Readers: %d  Writer: %s  Owner: %s  Epoch: %d", r.Readers, r.WriterID, r.WriterOwner, r.InputEpoch),
+		fmt.Sprintf("Readers: %d", r.Readers),
+	}
+	if takeoverAvailable(r) {
+		lines = append(lines, fmt.Sprintf("Writer: %s  Owner: %s  Epoch: %d", r.WriterID, r.WriterOwner, r.InputEpoch))
+	} else {
+		lines = append(lines, "Writer: ownership not reported for this channel; v observes without input or resize")
 	}
 	if r.completion > 0 {
 		lines = append(lines, fmt.Sprintf("Completion cursor shown: %d", r.completion))
@@ -393,7 +405,7 @@ func overlayLines(s *state, now time.Time) []string {
 	if r.machine == "local" {
 		ref = r.ID
 	}
-	lines = append(lines, "Controls: Enter attach; r rename; x confirm stop; n new", "Attach: wt attach -- "+ref)
+	lines = append(lines, "Controls: Enter attach; v view; t confirm takeover; r rename; x confirm stop; n new", "Attach: wt attach -- "+ref)
 	return lines
 }
 

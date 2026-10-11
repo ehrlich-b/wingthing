@@ -14,8 +14,10 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
@@ -187,7 +189,7 @@ func TestAttachStandaloneEggRetainsDaemonlessContract(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = wing.Close() })
-			for _, args := range [][]string{{"fixture"}, {"--json"}, {"--select"}} {
+			for _, args := range [][]string{{"fixture"}, {"--takeover", "fixture"}, {"--read-only", "fixture"}, {"--json"}, {"--select"}} {
 				if _, err := run("", args...); err == nil || !strings.Contains(err.Error(), refusal.Error()) {
 					t.Fatalf("wing refusal bypassed for %v: %v", args, err)
 				}
@@ -196,6 +198,58 @@ func TestAttachStandaloneEggRetainsDaemonlessContract(t *testing.T) {
 				t.Fatal("refused or detached clients sent input or bypassed wing policy")
 			}
 		})
+	}
+}
+
+func TestAttachReconnectPreservesExecutableStateAndProfileWithoutTakeover(t *testing.T) {
+	dir := "/state with space; $(literal)"
+	profile := config.Remote{SSHTarget: "user@fixture", WTBinary: "/custom wt/wt-preview", WingthingDir: "/remote state"}
+	args := append(remotepkg.ProfileArgs(profile), "attach", "--takeover", "--", "full-id")
+	command := attachReconnectCommand(dir, args)
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"WINGTHING_DIR=" + remotepkg.ShellQuote(dir), "WINGTHING_PREVIEW_DIR=" + remotepkg.ShellQuote(dir), remotepkg.ShellQuote(executable), "'--remote' 'user@fixture'", "'--remote-binary' '/custom wt/wt-preview'", "'--remote-state' '/remote state'", "'attach' '--' 'full-id'"} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("reconnect lost %q: %s", want, command)
+		}
+	}
+	if strings.Contains(command, "'--takeover'") {
+		t.Fatal("reconnect repeated takeover")
+	}
+	if command := attachReconnectCommand(dir, []string{"attach", "--", "--takeover"}); !strings.HasSuffix(command, "'--' '--takeover'") {
+		t.Fatal("literal session argument changed")
+	}
+	if standaloneAttachAvailable(&eggclient.AttachConnectionError{Err: syscall.ECONNREFUSED}, "") {
+		t.Fatal("established stream failure retried through standalone authority")
+	}
+}
+
+func TestAttachRemoteUnknownOutcomePrintsExactReconnectOnlyOnStderr(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("WINGTHING_DIR", state)
+	t.Setenv("WINGTHING_PREVIEW_DIR", "")
+	if err := config.SaveRemotes(state, map[string]config.Remote{"forge": {SSHTarget: "fixture-host", WTBinary: "/custom binary/wt", WingthingDir: "/saved state"}}); err != nil {
+		t.Fatal(err)
+	}
+	ssh := writeFakeRemoteSSH(t, "exit 255\n")
+	var output, diagnostic bytes.Buffer
+	err := executeCLI(t.Context(), []string{"attach", "--takeover", "forge:full-id"}, remotepkg.IO{In: strings.NewReader(""), Out: &output, ErrOut: &diagnostic, SSHPath: ssh})
+	var exit *cmdutil.CommandExitError
+	if !errors.As(err, &exit) || exit.Code != 255 || output.Len() != 0 {
+		t.Fatal(output.String(), err)
+	}
+	for _, want := range []string{"forge (fixture-host)", "session outcome unknown", "'--remote-binary' '/custom binary/wt'", "'--remote-state' '/saved state'", "'attach' '--' 'full-id'"} {
+		if !strings.Contains(diagnostic.String(), want) {
+			t.Fatalf("missing %q: %s", want, diagnostic.String())
+		}
+	}
+	if !strings.Contains(diagnostic.String(), "'attach' '--' 'forge:full-id'") {
+		t.Fatal("reconnect did not qualify the saved profile")
+	}
+	if strings.Contains(diagnostic.String(), "'--takeover'") {
+		t.Fatal("failure advice repeats takeover")
 	}
 }
 

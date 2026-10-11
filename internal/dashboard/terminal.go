@@ -9,14 +9,16 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/muesli/cancelreader"
 	"golang.org/x/term"
 )
 
 const (
-	enterScreen = "\x1b[?1049h\x1b[?25l\x1b[?7l"
-	leaveScreen = "\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l"
+	enterScreen = "\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?2004h"
 )
+
+var leaveScreen = string(egg.NativeTerminalReset()) + "\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l"
 
 type terminal interface {
 	enter() error
@@ -128,10 +130,11 @@ func readInput(ctx context.Context, input io.Reader) (*inputSession, error) {
 			}
 		}()
 		buffer := make([]byte, 256)
+		paste := &dashboardPasteInput{}
 		for {
 			n, err := reader.Read(buffer)
 			if n > 0 || err != nil {
-				event := inputEvent{data: append([]byte(nil), buffer[:n]...), err: err}
+				event := inputEvent{data: paste.filter(buffer[:n]), err: err}
 				select {
 				case events <- event:
 				case <-ctx.Done():
@@ -154,4 +157,36 @@ func readInput(ctx context.Context, input io.Reader) (*inputSession, error) {
 		})
 		return closeErr
 	}}, nil
+}
+
+// The navigator ignores bracketed pastes. Literal action keys (including Enter
+// and confirmation) inside a paste never reach the navigation state machine.
+// Marker bytes outside the paste still reach the existing escape decoder.
+type dashboardPasteInput struct {
+	paste  bool
+	marker int
+}
+
+func (p *dashboardPasteInput) filter(input []byte) []byte {
+	out := make([]byte, 0, len(input))
+	for _, b := range input {
+		marker := "\x1b[200~"
+		if p.paste {
+			marker = "\x1b[201~"
+		} else {
+			out = append(out, b)
+		}
+		if b == marker[p.marker] {
+			p.marker++
+			if p.marker == len(marker) {
+				p.paste, p.marker = !p.paste, 0
+			}
+		} else {
+			p.marker = 0
+			if b == marker[0] {
+				p.marker = 1
+			}
+		}
+	}
+	return out
 }

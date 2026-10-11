@@ -52,18 +52,21 @@ const (
 	newAgent
 	newCWD
 	confirmStop
+	confirmTakeover
 	machinePicker
 	details
 	help
 )
 
 type action struct {
-	kind   mode
-	row    row
-	agent  string
-	cwd    string
-	name   string
-	attach bool
+	kind     mode
+	row      row
+	agent    string
+	cwd      string
+	name     string
+	attach   bool
+	readOnly bool
+	takeover bool
 }
 
 type state struct {
@@ -256,10 +259,11 @@ func (s *state) handle(key string) (act *action, quit bool) {
 			s.mode, s.message = navigate, ""
 			return nil, false
 		}
-		if s.mode == confirmStop {
+		if s.mode == confirmStop || s.mode == confirmTakeover {
+			kind := s.mode
 			s.mode = navigate
 			if key == "y" || key == "Y" {
-				return &action{kind: confirmStop, row: s.target}, false
+				return &action{kind: kind, row: s.target, attach: kind == confirmTakeover, takeover: kind == confirmTakeover}, false
 			}
 			return nil, false
 		}
@@ -343,7 +347,7 @@ func (s *state) handle(key string) (act *action, quit bool) {
 		s.refresh = true
 	case "/":
 		s.mode, s.previous, s.input = filter, s.filter, s.filter
-	case "enter", "r", "x", "n":
+	case "enter", "v", "t", "r", "x", "n":
 		if s.busy {
 			return nil, false
 		}
@@ -361,6 +365,14 @@ func (s *state) handle(key string) (act *action, quit bool) {
 		switch key {
 		case "enter":
 			return &action{row: r, attach: true}, false
+		case "v":
+			return &action{row: r, attach: true, readOnly: true}, false
+		case "t":
+			if !takeoverAvailable(r) {
+				s.message = "Takeover requires preview input ownership reported by this session"
+				return nil, false
+			}
+			s.mode = confirmTakeover
 		case "r":
 			s.mode, s.input = rename, r.Name
 		case "x":
@@ -370,4 +382,8 @@ func (s *state) handle(key string) (act *action, quit bool) {
 		}
 	}
 	return nil, false
+}
+
+func takeoverAvailable(r row) bool {
+	return config.Channel() == "preview" && r.WriterID != "" && r.InputEpoch > 0
 }
