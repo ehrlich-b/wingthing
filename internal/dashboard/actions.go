@@ -141,6 +141,8 @@ func actionArgs(act action, remotes map[string]config.Remote) ([]string, error) 
 	case newCWD:
 		if act.agent == "" || act.agent == "shell" {
 			args = append(args, "terminal", "--cwd", act.cwd)
+		} else if act.agent == "claude" {
+			args = append(args, "claude", "--cwd", act.cwd)
 		} else {
 			if strings.HasPrefix(act.agent, "-") {
 				return nil, fmt.Errorf("invalid agent %q", act.agent)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
@@ -13,20 +14,27 @@ import (
 )
 
 func claudeCmd() *cobra.Command {
-	var name string
+	var name, cwd string
 	cmd := &cobra.Command{
-		Use:   "claude [--name NAME] [-- claude args]",
+		Use:   "claude [--name NAME] [--cwd DIR] [-- claude args]",
 		Short: "Start and attach to a wing-owned Claude parent with scoped MCP",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir, err := config.StateDir()
 			if err != nil {
 				return err
 			}
-			cwd, err := os.Getwd()
+			// Resolve only in the receiving CLI. SSH transports the cwd flag
+			// literally, so relative paths belong to that machine's process.
+			launchCWD := cwd
+			if launchCWD == "" {
+				launchCWD, err = os.Getwd()
+			} else {
+				launchCWD, err = filepath.Abs(launchCWD)
+			}
 			if err != nil {
 				return err
 			}
-			wire, err := json.Marshal(map[string]any{"agent": "claude", "cwd": cwd, "label": name, "args": args, "conversation_role": "parent", "request_id": uuid.NewString(), "scoped_mcp": true})
+			wire, err := json.Marshal(map[string]any{"agent": "claude", "cwd": launchCWD, "label": name, "args": args, "conversation_role": "parent", "request_id": uuid.NewString(), "scoped_mcp": true})
 			if err != nil {
 				return err
 			}
@@ -63,5 +71,6 @@ func claudeCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "persistent session name")
+	cmd.Flags().StringVar(&cwd, "cwd", "", "working directory (default: current directory)")
 	return cmd
 }

@@ -250,7 +250,7 @@ func TestRemoteBatchInvocationPreservesArgvAndTTYPolicy(t *testing.T) {
 	if _, _, err := remotepkg.ParseRemoteInvocation([]string{"--remote-batch", "attach"}, true, newRootCommand); err == nil {
 		t.Fatal("batch accepted without remote")
 	}
-	if _, _, err := remotepkg.ParseRemoteInvocation([]string{"--remote", "fixture-host", "claude"}, true, newRootCommand); err == nil {
+	if _, _, err := remotepkg.ParseRemoteInvocation([]string{"--remote", "fixture-host", "wing"}, true, newRootCommand); err == nil {
 		t.Fatal("remote command allowlist widened")
 	}
 }

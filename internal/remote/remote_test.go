@@ -41,6 +41,9 @@ func TestRemoteTTYPolicy(t *testing.T) {
 		{[]string{"terminal", "--json", "--", "sh", "-c", "echo hi"}, false},
 		{[]string{"terminal", "--json=false", "--", "sh", "-c", "echo hi"}, true},
 		{[]string{"terminal", "--", "printf", "--detach"}, true},
+		{[]string{"claude"}, true},
+		{[]string{"claude", "--cwd", "/project space", "--name", "week end"}, true},
+		{[]string{"claude", "--", "--json", "--detach", "--remote-batch"}, true},
 		{[]string{"egg", "codex", "--", "-m", "gpt-5.6-sol"}, true},
 		{[]string{"egg", "codex", "--json"}, false},
 		{[]string{"egg", "codex", "--json=false"}, true},
@@ -161,11 +164,39 @@ func TestRemoteExactArgvMarkerOnlyWrapsAgentLaunches(t *testing.T) {
 		},
 		{args: []string{"egg", "list"}, want: []string{"egg", "list"}},
 		{args: []string{"terminal", "--json"}, want: []string{"terminal", "--json"}},
+		{args: []string{"claude", "--cwd", "../project space", "--", "--remote-state", "", " \t "}, want: []string{"claude", "--cwd", "../project space", "--", "--remote-state", "", " \t "}},
 	}
 	for _, tt := range tests {
 		if got := remoteCommandArgs(tt.args); !reflect.DeepEqual(got, tt.want) {
 			t.Errorf("remoteCommandArgs(%q) = %q, want %q", tt.args, got, tt.want)
 		}
+	}
+}
+
+func TestRemoteClaudeAllowlistAndLiteralProviderArgs(t *testing.T) {
+	if err := ValidateRemoteCommand([]string{"claude", "--cwd", "../project space"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"wing", "roost", "mcp", "run"} {
+		if err := ValidateRemoteCommand([]string{command}); err == nil {
+			t.Fatalf("unrelated remote command allowed: %s", command)
+		}
+	}
+	ssh := filepath.Join(t.TempDir(), "ssh")
+	if err := os.WriteFile(ssh, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"claude", "--cwd", "../forge project space", "--name", "week end", "--", "--remote", "provider host", "--remote-cwd", "provider cwd", "--remote-state", "provider state", "--remote-batch", "--json", ""}
+	var out bytes.Buffer
+	if err := RunRemoteInvocation(t.Context(), Invocation{Target: "fixture-forge", Binary: "/opt/wt custom", Args: args, AllocateTTY: true}, IO{SSHPath: ssh, Out: &out, ErrOut: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	quoted := []string{ShellQuote("/opt/wt custom")}
+	for _, arg := range args {
+		quoted = append(quoted, ShellQuote(arg))
+	}
+	if want := "-t\nfixture-forge\n" + strings.Join(quoted, " ") + "\n"; out.String() != want {
+		t.Fatalf("Claude transport changed provider arguments: %q want %q", out.String(), want)
 	}
 }
 
