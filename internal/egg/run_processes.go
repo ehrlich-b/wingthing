@@ -148,7 +148,7 @@ func signalSessionGroup(sess *Session, signal syscall.Signal) error {
 		if errors.Is(err, syscall.ESRCH) {
 			return nil
 		}
-		return err
+		return sessionGroupSignalError(pid, err)
 	}
 	err = sess.cmd.Process.Signal(signal)
 	if errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrProcessDone) {
