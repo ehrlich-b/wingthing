@@ -31,6 +31,91 @@ type scopedNewLaunch struct {
 	ScopedMCP         bool   `json:"scoped_mcp"`
 }
 
+const scopedNewClaudeProfileCheck = `with open(os.path.join(os.environ.get('CLAUDE_CONFIG_DIR',os.path.join(os.environ['HOME'],'.claude')),'settings.json')) as f: inherited=json.load(f)
+assert inherited['model']=='fake-parent' and inherited['effortLevel']=='high' and inherited['theme']=='dark'`
+
+func scopedNewNativeFixture(t *testing.T, f *northstarFixture, state, cwd string) string {
+	t.Helper()
+	key := filepath.Join(f.home, "fixture-ssh-key")
+	northstarWrite(t, key, "fake key; not a credential", 0600)
+	controlPath, err := controlsocket.Path(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Reuse the protected-mailbox provider and its denial assertions. This
+	// topology has one wing per receiving process, with one gated child.
+	fixtureArgs, err := json.Marshal([]string{"--fixture-control", controlPath, "--fixture-state-file", filepath.Join(state, "wing.yaml"), "--fixture-ssh-key", key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.Replace(fakeScopedClaude, "assert args.count('--mcp-config')", "args += "+string(fixtureArgs)+"\nassert args.count('--mcp-config')", 1)
+	// Personal stable sessions read their existing provider profile. The
+	// agent_settings policy source applies to isolated users, not this launch.
+	script = strings.Replace(script, "assert args[args.index('--model')+1]=='fake-parent'", scopedNewClaudeProfileCheck, 1)
+	script = strings.Replace(script, "assert len(wings)==2", "assert len(wings)==1", 1)
+	script = strings.Replace(script, "'receipts':receipts,", "'cwd':os.getcwd(),'argv':args,'receipts':receipts,", 1)
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	northstarWrite(t, filepath.Join(f.bin, "claude"), "#!"+python+"\n"+script, 0700)
+	northstarWrite(t, filepath.Join(f.bin, "codex"), "#!"+python+"\n"+testprovider.Codex, 0700)
+	profile := filepath.Join(f.home, ".claude")
+	if err := os.MkdirAll(profile, 0700); err != nil {
+		t.Fatal(err)
+	}
+	northstarWrite(t, filepath.Join(profile, "settings.json"), `{"model":"fake-parent","effortLevel":"high","theme":"dark"}`, 0600)
+	yaml, err := testprovider.ScopedHomePolicy(f.home).YAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	northstarWrite(t, filepath.Join(state, "egg.yaml"), yaml, 0600)
+	if err := config.SaveWingConfig(state, &config.WingConfig{Paths: config.PathList{{Path: cwd}}, Roost: "http://127.0.0.1:1", HostedRelay: config.HostedRelayDeny}); err != nil {
+		t.Fatal(err)
+	}
+	return python
+}
+
+// Exercise the native provider's preference check even on hosts that cannot
+// apply Seatbelt. A misplaced agent_settings source must fail before native QA.
+func TestNorthstarScopedNewFixturePersonalProfile(t *testing.T) {
+	for _, machine := range []string{"local", "forge"} {
+		t.Run(machine, func(t *testing.T) {
+			f := northstarNewFixture(t)
+			state := f.local
+			if machine == "forge" {
+				state = f.remote
+			}
+			cwd := filepath.Join(f.work, machine+" project space")
+			if err := os.Mkdir(cwd, 0700); err != nil {
+				t.Fatal(err)
+			}
+			python := scopedNewNativeFixture(t, f, state, cwd)
+			check := func() ([]byte, error) {
+				cmd := exec.CommandContext(t.Context(), python, "-c", "import json, os\n"+scopedNewClaudeProfileCheck)
+				cmd.Env, cmd.Dir = f.env, cwd
+				return cmd.CombinedOutput()
+			}
+			if output, err := check(); err != nil {
+				t.Fatalf("provider could not inherit the personal fixture profile: %v\n%s", err, output)
+			}
+			// Retain the strict check: neither missing nor mismatched preferences
+			// can be mistaken for a valid provider launch.
+			settings := filepath.Join(f.home, ".claude", "settings.json")
+			northstarWrite(t, settings, `{"model":"wrong","effortLevel":"high","theme":"dark"}`, 0600)
+			if output, err := check(); err == nil || !strings.Contains(string(output), "AssertionError") {
+				t.Fatalf("provider accepted mismatched preferences: %v\n%s", err, output)
+			}
+			if err := os.Remove(settings); err != nil {
+				t.Fatal(err)
+			}
+			if output, err := check(); err == nil || !strings.Contains(string(output), "FileNotFoundError") {
+				t.Fatalf("provider accepted a missing personal profile: %v\n%s", err, output)
+			}
+		})
+	}
+}
+
 func scopedNewMachine(t *testing.T, f *northstarFixture, built, machine string) (binary, state, cwd string) {
 	t.Helper()
 	binary = coldInstallBinary(t, f, built)
@@ -206,42 +291,7 @@ func TestNorthstarPTYScopedNew(t *testing.T) {
 			receiver.local, receiver.work = state, cwd
 			receiver.env = append(append([]string{}, f.env...), "WINGTHING_DIR="+state)
 			coldCleanup(t, &receiver, binary)
-			key := filepath.Join(f.home, "fixture-ssh-key")
-			northstarWrite(t, key, "fake key; not a credential", 0600)
-			controlPath, err := controlsocket.Path(state)
-			if err != nil {
-				t.Fatal(err)
-			}
-			// Reuse the protected-mailbox provider and its denial assertions. This
-			// topology has one wing per receiving process, with one gated child.
-			fixtureArgs, err := json.Marshal([]string{"--fixture-control", controlPath, "--fixture-state-file", filepath.Join(state, "wing.yaml"), "--fixture-ssh-key", key})
-			if err != nil {
-				t.Fatal(err)
-			}
-			script := strings.Replace(fakeScopedClaude, "assert args.count('--mcp-config')", "args += "+string(fixtureArgs)+"\nassert args.count('--mcp-config')", 1)
-			// Personal Claude inherits its profile file; the fixture validates
-			// that selection instead of requiring an explicit --model override.
-			script = strings.Replace(script, "assert args[args.index('--model')+1]=='fake-parent'", "with open(os.path.join(os.environ.get('CLAUDE_CONFIG_DIR',os.path.join(os.environ['HOME'],'.claude')),'settings.json')) as f: inherited=json.load(f)\nassert inherited['model']=='fake-parent' and inherited['effortLevel']=='high' and inherited['theme']=='dark'", 1)
-			script = strings.Replace(script, "assert len(wings)==2", "assert len(wings)==1", 1)
-			script = strings.Replace(script, "'receipts':receipts,", "'cwd':os.getcwd(),'argv':args,'receipts':receipts,", 1)
-			python, err := exec.LookPath("python3")
-			if err != nil {
-				t.Fatal(err)
-			}
-			northstarWrite(t, filepath.Join(f.bin, "claude"), "#!"+python+"\n"+script, 0700)
-			northstarWrite(t, filepath.Join(f.bin, "codex"), "#!"+python+"\n"+testprovider.Codex, 0700)
-			settings := filepath.Join(f.home, "inherited-claude-settings.json")
-			northstarWrite(t, settings, `{"model":"fake-parent","effortLevel":"high","theme":"dark"}`, 0600)
-			policy := testprovider.ScopedHomePolicy(f.home)
-			policy.AgentSettings = map[string]string{"claude": settings}
-			yaml, err := policy.YAML()
-			if err != nil {
-				t.Fatal(err)
-			}
-			northstarWrite(t, filepath.Join(state, "egg.yaml"), yaml, 0600)
-			if err := config.SaveWingConfig(state, &config.WingConfig{Paths: config.PathList{{Path: cwd}}, Roost: "http://127.0.0.1:1", HostedRelay: config.HostedRelayDeny}); err != nil {
-				t.Fatal(err)
-			}
+			scopedNewNativeFixture(t, f, state, cwd)
 			coldPolicyGuard(t, &receiver)
 			gate := testprovider.NewCompletionGate(t, cwd)
 			started := time.Now()
