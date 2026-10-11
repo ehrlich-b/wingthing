@@ -160,6 +160,17 @@ func ResolvePolicyWithProvider(cfg *EggConfig, agent, home, providerURL string) 
 	return policy, nil
 }
 
+// ProviderDestination identifies the declared or default destination without
+// opening provider config or credentials. Empty means no default is declared.
+func ProviderDestination(agent, providerURL string) (string, error) {
+	profile := Profile(agent)
+	host, explicit, err := providerDomain(profile, providerURL)
+	if err != nil || explicit {
+		return host, err
+	}
+	return profile.ProviderHost, nil
+}
+
 func providerDomain(profile AgentProfile, raw string) (string, bool, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || !containsExact(profile.EnvVars, "WT_PROVIDER_BASE_URL") {

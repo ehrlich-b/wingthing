@@ -66,6 +66,8 @@ type Request struct {
 	CWD              string
 	PathBase         string // required only for relative CWD; never ambient Getwd
 	Home             string
+	MergeHome        string // host HOME used during inheritance; empty explicitly uses Home
+	PolicyBase       string // configured root for relative FS rules; empty uses proposed CWD
 	AllowedHomeRoot  string
 	Executable       string // explicit absolute path; never LookPath
 	ProviderURL      string // explicit routing metadata; only derived host is exported
@@ -105,6 +107,8 @@ type Report struct {
 	ExecutableSHA256   string                 `json:"executable_sha256,omitempty"`
 	EvidenceSHA256     string                 `json:"evidence_sha256,omitempty"`
 	CapabilitiesSHA256 string                 `json:"capabilities_sha256,omitempty"`
+	PolicyBase         PathEvidence           `json:"policy_base"`
+	MergeHome          PathEvidence           `json:"merge_home"`
 	PolicySource       string                 `json:"policy_source"`
 	PolicyRules        []egg.PolicyRuleSource `json:"policy_rules"`
 	Network            string                 `json:"network"`
@@ -159,7 +163,7 @@ func Inspect(req Request) (Report, error) {
 	report := Report{SchemaVersion: 1, ReadOnly: true, Acceptance: "externally-pending", Readiness: "ready-local", Route: req.Route, Agent: req.Agent, Provenance: map[string]string{
 		"route": "explicit request", "agent": "explicit request", "cwd": "explicit request (relative paths require path_base)",
 		"home": "explicit request", "executable": "explicit path, metadata and digest only", "credentials": "explicit paths, stat only; availability is not authentication",
-		"policy": "production parser/merge and agent profile; explicit policy or built-in defaults", "capabilities": "explicit saved facts; no native probe", "argv": "production interactive catalog and egg builders; no prompt or passthrough",
+		"policy": "shared runtime resolver and agent profile; explicit policy or built-in defaults", "capabilities": "explicit saved facts; no native probe", "argv": "production interactive catalog and egg builders; no prompt or passthrough",
 	}}
 	switch req.Route {
 	case "terminal_start", "agent_start", "agent_run":
@@ -239,7 +243,33 @@ func Inspect(req Request) (Report, error) {
 	if req.Agent != "" {
 		report.gate("authentication", Unrun, "credential path availability does not prove provider authentication", "no credential contents or login probe", "use the separately authorized disposable provider canary")
 	}
-	cfg, rules, err := egg.ResolveLaunchConfig(req.PolicyPath, req.BasesDir, req.Home)
+	mergeHome := req.MergeHome
+	mergeSource := "explicit merge_home"
+	if mergeHome == "" {
+		mergeHome = req.Home
+		mergeSource = "explicit home also selected as merge-time host HOME"
+	}
+	if !filepath.IsAbs(mergeHome) {
+		return report, errors.New("merge home must be absolute")
+	}
+	report.MergeHome = inspectPath(mergeHome, mergeSource)
+	policyBase := req.PolicyBase
+	baseSource := "explicit configured policy base"
+	if policyBase == "" {
+		policyBase = report.CWD.Resolved
+		baseSource = "proposed cwd selected as direct-launch policy base"
+	}
+	if !filepath.IsAbs(policyBase) {
+		return report, errors.New("policy base must be absolute")
+	}
+	report.PolicyBase = inspectPath(policyBase, baseSource)
+	baseInfo, baseErr := os.Stat(report.PolicyBase.Resolved)
+	if baseErr != nil || !baseInfo.IsDir() {
+		report.gate("policy.base", Fail, "policy base is unavailable or not a directory", baseSource, "select an existing configured root")
+	}
+	report.Provenance["merge_home"] = mergeSource
+	report.Provenance["policy_base"] = baseSource
+	cfg, rules, err := egg.ResolveLaunchConfig(req.PolicyPath, req.BasesDir, mergeHome)
 	if err != nil {
 		return report, err
 	}
@@ -265,38 +295,34 @@ func Inspect(req Request) (Report, error) {
 		}
 		capSource = "declared capability facts sha256:" + report.CapabilitiesSHA256
 	}
-	// Canonicalize all paths before interpreting denials, including missing leaves.
-	resolved := *cfg
-	resolved.FS = append([]string(nil), cfg.FS...)
-	for i, entry := range cfg.FS {
-		mode, path, ok := strings.Cut(entry, ":")
-		if !ok {
-			mode, path = "rw", entry
-		}
-		if path == "~" {
-			path = req.Home
-		} else if strings.HasPrefix(path, "~/") {
-			path = filepath.Join(req.Home, path[2:])
-		} else if !filepath.IsAbs(path) {
-			path = filepath.Join(report.CWD.Resolved, path)
-		}
-		real, err := canonical(path)
-		if err != nil {
-			return report, errors.New("policy filesystem path cannot be resolved")
-		}
-		resolved.FS[i] = mode + ":" + real
-	}
-	policy, err := egg.ResolvePolicyWithProvider(&resolved, req.Agent, report.Home.Resolved, req.ProviderURL)
+	resolved := egg.RebaseLaunchConfig(cfg, report.PolicyBase.Resolved)
+	policy, err := egg.ResolvePolicyWithProvider(resolved, req.Agent, report.Home.Resolved, req.ProviderURL)
 	if err != nil {
 		return report, errors.New("effective provider policy cannot be resolved")
 	}
+	// Resolve injected profile mounts as well as declared rules with the native
+	// profile builder's canonicalizer, after all profile drilling has happened.
+	for i := range policy.Mounts {
+		policy.Mounts[i].Source, err = sandbox.CanonicalPath(policy.Mounts[i].Source)
+		if err != nil {
+			return report, errors.New("policy mount path cannot be resolved")
+		}
+	}
+	for _, paths := range [][]string{policy.Deny, policy.DenyWrite} {
+		for i := range paths {
+			paths[i], err = sandbox.CanonicalPath(paths[i])
+			if err != nil {
+				return report, errors.New("policy denial path cannot be resolved")
+			}
+		}
+	}
 	for _, denied := range policy.Deny {
 		if within(report.Executable.Resolved, denied) && denied != "/" {
-			report.gate("executable.policy", Fail, "effective deny rule blocks the selected executable", denialSources("deny:", denied, rules, report.CWD.Resolved, report.Home.Resolved), "select an executable allowed by the configured policy")
+			report.gate("executable.policy", Fail, "effective deny rule blocks the selected executable", denialSources("deny:", denied, rules, report.PolicyBase.Resolved, report.Home.Resolved), "select an executable allowed by the configured policy")
 		}
 		for _, credential := range report.Credentials {
 			if within(credential.Resolved, denied) && denied != "/" {
-				report.gate("credential.policy", Fail, "effective deny rule blocks the declared credential path", denialSources("deny:", denied, rules, report.CWD.Resolved, report.Home.Resolved), "select separately provisioned authentication within the allowed scope")
+				report.gate("credential.policy", Fail, "effective deny rule blocks the declared credential path", denialSources("deny:", denied, rules, report.PolicyBase.Resolved, report.Home.Resolved), "select separately provisioned authentication within the allowed scope")
 			}
 		}
 	}
@@ -312,8 +338,21 @@ func Inspect(req Request) (Report, error) {
 	for _, hole := range policy.Suppressed {
 		report.PolicyRules = append(report.PolicyRules, egg.PolicyRuleSource{Section: "suppressed_" + hole.Kind, Rule: hole.Value, Source: hole.Reason})
 	}
-	if req.Agent != "" && policy.NetworkNeed == sandbox.NetworkNone && len(policy.LocalPorts) == 0 {
-		report.gate("network.provider", Fail, "effective policy provides no route to the selected provider", "effective policy + suppressed agent domains", "review declared domains while preserving the isolation boundary")
+	providerHost, err := egg.ProviderDestination(req.Agent, req.ProviderURL)
+	if err != nil {
+		return report, errors.New("provider destination cannot be resolved")
+	}
+	providerDenied := req.Agent != "" && policy.NetworkNeed == sandbox.NetworkNone && len(policy.LocalPorts) == 0
+	if providerHost != "" && egg.RequiresSandbox(cfg, req.Agent) {
+		switch policy.NetworkNeed {
+		case sandbox.NetworkNone, sandbox.NetworkLocal:
+			providerDenied = providerHost != "localhost" && providerHost != "127.0.0.1" && providerHost != "::1"
+		case sandbox.NetworkHTTPS:
+			providerDenied = policy.Mode != "observe" && !sandbox.DomainAllowed(policy.Domains, providerHost)
+		}
+	}
+	if providerDenied {
+		report.gate("network.provider", Fail, "effective policy provides no route to the declared/default provider destination: "+providerHost, "runtime provider destination + enforcing proxy matcher", "review declared domains while preserving the isolation boundary")
 	}
 	if caps.Network == "none" && report.Network != "none" {
 		report.gate("network.parent", Fail, "outer network-none policy prevents provider traffic even when egg policy allows it", capSource, "run the disposable acceptance under a parent that permits the configured provider proxy")
@@ -331,7 +370,7 @@ func Inspect(req Request) (Report, error) {
 	if req.Agent != "" {
 		profile := egg.Profile(req.Agent)
 		for _, dir := range append(append([]string(nil), profile.WriteRegex...), profile.WriteDirs...) {
-			path, err := canonical(filepath.Join(report.Home.Resolved, dir))
+			path, err := sandbox.CanonicalPath(filepath.Join(report.Home.Resolved, dir))
 			if err != nil {
 				return report, errors.New("provider state path cannot be resolved")
 			}
@@ -342,7 +381,7 @@ func Inspect(req Request) (Report, error) {
 		if !filepath.IsAbs(req.ProviderStateDir) {
 			return report, errors.New("provider state dir must be absolute")
 		}
-		state, err := canonical(req.ProviderStateDir)
+		state, err := sandbox.CanonicalPath(req.ProviderStateDir)
 		if err != nil {
 			return report, errors.New("provider state dir cannot be resolved")
 		}
@@ -352,13 +391,15 @@ func Inspect(req Request) (Report, error) {
 		report.pathWriteGate("provider_state.write", state, policy, caps.ProviderHomeWritable, capSource, rules, caps.OS)
 	}
 	if caps.ElanHome != "" {
-		path, err := canonical(caps.ElanHome)
-		if err != nil {
-			return report, errors.New("inherited elan_home cannot be resolved")
-		}
-		report.pathWriteGate("environment.elan_home", path, policy, caps.ElanHomeWritable, capSource, rules, caps.OS)
-		if !cfg.IsAllEnv() && !contains([]string(cfg.Env), "ELAN_HOME") {
-			report.gate("environment.elan_home.filtered", Unrun, "declared inherited ELAN_HOME is not selected by the policy environment; verify the launch environment", report.PolicySource, "set an explicit toolchain path and private matching cache for the disposable launch")
+		selected := cfg.SelectEnv(req.Home, []string{"ELAN_HOME=" + caps.ElanHome})
+		if len(selected) == 0 && !contains(egg.Profile(req.Agent).EnvVars, "ELAN_HOME") {
+			report.gate("environment.elan_home.filtered", Pass, "declared inherited ELAN_HOME is discarded by the launch environment selection", report.PolicySource, "")
+		} else {
+			path, err := canonical(caps.ElanHome)
+			if err != nil {
+				return report, errors.New("inherited elan_home cannot be resolved")
+			}
+			report.pathWriteGate("environment.elan_home", path, policy, caps.ElanHomeWritable, capSource, rules, caps.OS)
 		}
 	}
 	if caps.OS == "linux" && caps.ParentSandbox == "scoped" {
@@ -402,7 +443,8 @@ func Inspect(req Request) (Report, error) {
 	} else {
 		argv, native, err := egg.LaunchCommandPreview(req.Agent, report.CWD.Resolved, report.Home.Resolved, version, req.Unattended || cfg.DangerouslySkipPermissions)
 		if err != nil {
-			return report, err
+			report.gate("provider.preparation", Fail, "runtime launch preparation cannot use the existing directory layout: "+err.Error(), "shared runtime command preparation", "select a valid disposable directory layout")
+			return report, nil
 		}
 		argv[0] = report.Executable.Resolved
 		report.ProviderArgv = argv
@@ -441,19 +483,25 @@ func (r *Report) factGate(code string, fact Fact, unknown, denied, source, corre
 	}
 }
 func (r *Report) pathWriteGate(code, path string, policy egg.EffectivePolicy, fact Fact, source string, rules []egg.PolicyRuleSource, goos string) {
+	if err := egg.CheckLaunchDirectory(path); err != nil {
+		r.gate(code, Fail, "required directory cannot be prepared: "+err.Error(), "shared runtime directory preparation + path metadata", "select a valid disposable directory layout")
+		return
+	}
 	for _, deny := range policy.Deny {
 		if within(path, deny) {
 			if deny == "/" && goos == "linux" {
-				r.gate(code, Unrun, "Linux root-deny policy requires native verification of its mount exceptions", denialSources("deny:", deny, rules, r.CWD.Resolved, r.Home.Resolved), "verify the exact configured mounts under the same boundary")
+				r.gate(code, Unrun, "Linux root-deny policy requires native verification of its mount exceptions", denialSources("deny:", deny, rules, r.PolicyBase.Resolved, r.Home.Resolved), "verify the exact configured mounts under the same boundary")
 				return
 			}
-			r.gate(code, Fail, "effective deny rule blocks the required path: "+path, denialSources("deny:", deny, rules, r.CWD.Resolved, r.Home.Resolved), "select an allowed disposable path; do not auto-widen policy")
+			r.gate(code, Fail, "effective deny rule blocks the required path: "+path, denialSources("deny:", deny, rules, r.PolicyBase.Resolved, r.Home.Resolved), "select an allowed disposable path; do not auto-widen policy")
 			return
 		}
 	}
 	for _, deny := range policy.DenyWrite {
-		if path == deny || goos == "linux" && within(path, deny) {
-			r.gate(code, Fail, "effective deny-write rule blocks the required path: "+path, denialSources("deny-write:", deny, rules, r.CWD.Resolved, r.Home.Resolved), "select an allowed disposable path")
+		// These gates require writes inside a directory. Mac pins only the
+		// directory entry; Linux deny-write seals its descendants as well.
+		if goos == "linux" && within(path, deny) {
+			r.gate(code, Fail, "effective deny-write rule blocks the required path: "+path, denialSources("deny-write:", deny, rules, r.PolicyBase.Resolved, r.Home.Resolved), "select an allowed disposable path")
 			return
 		}
 	}
@@ -645,7 +693,11 @@ func Render(w io.Writer, report Report) error {
 		version = "unverified"
 	}
 	var flags []string
-	for _, arg := range report.ProviderArgv[1:] {
+	argv := report.ProviderArgv
+	if len(argv) > 0 {
+		argv = argv[1:]
+	}
+	for _, arg := range argv {
 		flag, _, _ := strings.Cut(arg, "=")
 		if optionRE.MatchString(flag) && !contains(flags, flag) {
 			flags = append(flags, flag)
@@ -654,7 +706,7 @@ func Render(w io.Writer, report Report) error {
 	if _, err := fmt.Fprintf(w, "Provider version: %s\nPlanned options: %s (full argv in --json)\n", version, strings.Join(flags, " ")); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "Launch plan: %s (%s)\nPolicy: %s\nCWD: %s\nExecutable: %s\nNetwork: %s\nArgv scope: %s\n", report.Readiness, report.Route, report.PolicySource, report.CWD.Resolved, report.Executable.Resolved, report.Network, report.ArgvScope); err != nil {
+	if _, err := fmt.Fprintf(w, "Launch plan: %s (%s)\nPolicy: %s\nPolicy base: %s\nMerge HOME: %s\nCWD: %s\nExecutable: %s\nNetwork: %s\nArgv scope: %s\n", report.Readiness, report.Route, report.PolicySource, report.PolicyBase.Path, report.MergeHome.Path, report.CWD.Resolved, report.Executable.Resolved, report.Network, report.ArgvScope); err != nil {
 		return err
 	}
 	for _, gate := range report.Gates {

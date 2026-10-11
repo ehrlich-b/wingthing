@@ -51,10 +51,8 @@ func codexRunArgs(args []string, home, sessionID string, prepare bool) ([]string
 		return append([]string{"--no-daemon"}, hooked...), false, nil
 	}
 	spool := codexNotifySpool(home, sessionID)
-	if prepare {
-		if err = os.MkdirAll(spool, 0700); err != nil {
-			return nil, false, err
-		}
+	if err = prepareLaunchDirectory(spool, prepare); err != nil {
+		return nil, false, err
 	}
 	command := "printf '%s\\n' \"$1\" | (" + lifecycleHookCommand(spool) + ")"
 	// notify appends its one native JSON payload after these argv, as $1.

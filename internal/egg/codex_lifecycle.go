@@ -153,10 +153,8 @@ func codexLifecycleArgs(args []string, home, sessionID string, prepare bool) ([]
 		}
 	}
 	spool := filepath.Join(home, ".codex", "wingthing-events", sessionID)
-	if prepare {
-		if err := os.MkdirAll(spool, 0700); err != nil {
-			return nil, err
-		}
+	if err := prepareLaunchDirectory(spool, prepare); err != nil {
+		return nil, err
 	}
 	command := lifecycleHookCommand(spool)
 	out := append([]string(nil), args[:optionsEnd]...)

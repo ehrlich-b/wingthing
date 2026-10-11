@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -603,6 +604,94 @@ func TestLaunchPlanPinnedAdapterOracleAndTwoVersionExports(t *testing.T) {
 				if strings.Contains(output.String(), "SENTINEL") {
 					t.Fatal("two-version export retained raw help/prompt/token")
 				}
+			}
+		})
+	}
+}
+
+func TestLaunchPlanProviderDestinationAgainstProxyPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name, network, providerURL string
+		blocked                    bool
+	}{
+		{"unrelated domain", "{domains: [unrelated.example], agent_domains: none}", "", true},
+		{"unrelated forward", "{domains: [unrelated.example], local_ports: [8765], agent_domains: none}", "", true},
+		{"local only", "{domains: [localhost], local_ports: [8765], agent_domains: none}", "", true},
+		{"exact default", "{domains: [API.OPENAI.COM.], agent_domains: none}", "", false},
+		{"wildcard default", "{domains: ['*.openai.com'], agent_domains: none}", "", false},
+		{"observe", "{domains: [unrelated.example], agent_domains: none, mode: observe}", "", false},
+		{"explicit endpoint", "{domains: [unrelated.example], agent_domains: none}", "https://api.disposable.example/v1", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := setup(t)
+			req.ProviderURL = tc.providerURL
+			policy(t, &req, "network: "+tc.network+"\n")
+			report, err := Inspect(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			live, err := egg.ResolveEggConfig(req.PolicyPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolved, err := egg.ResolvePolicyWithProvider(live, req.Agent, req.Home, req.ProviderURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			host, err := egg.ProviderDestination(req.Agent, req.ProviderURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resolved.NetworkNeed == sandbox.NetworkHTTPS {
+				denied := resolved.Mode != "observe" && !sandbox.DomainAllowed(resolved.Domains, host)
+				if denied != tc.blocked {
+					t.Fatalf("runtime proxy decision = %v, want %v", denied, tc.blocked)
+				}
+			}
+			blocked := false
+			for _, gate := range report.Gates {
+				if gate.Code == "network.provider" && gate.Status == Fail {
+					blocked = true
+				}
+			}
+			if blocked != tc.blocked {
+				t.Fatalf("preflight blocked = %v, want %v: %+v", blocked, tc.blocked, report.Gates)
+			}
+		})
+	}
+}
+
+func TestLaunchPlanDirectoryPreparationMatchesCodexRun(t *testing.T) {
+	for _, component := range []string{".codex", ".codex/wingthing-events", ".codex/wingthing-run-notify"} {
+		t.Run(component, func(t *testing.T) {
+			req, _ := setup(t)
+			req.Route = "agent_run"
+			evidence(t, &req, "codex-cli 0.159.3", " --no-daemon\n --dangerously-bypass-approvals-and-sandbox\n -c, --config\n", true)
+			path := filepath.Join(req.Home, component)
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("existing regular file"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			report, err := Inspect(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			hasGate(t, report, "provider.preparation", Fail, "directory")
+			var output bytes.Buffer
+			if err := Render(&output, report); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(output.String(), "blocked") {
+				t.Fatal(output.String())
+			}
+			if report.Readiness != "blocked" {
+				t.Fatal(report.Readiness)
+			}
+			_, _, err = egg.CodexRunArgs([]string{"--dangerously-bypass-approvals-and-sandbox"}, req.Home, "launch-plan")
+			if err == nil {
+				t.Fatal("runtime prepared spool below a regular file")
 			}
 		})
 	}

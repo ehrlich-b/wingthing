@@ -219,3 +219,54 @@ func TestDoctorLaunchPlanRejectionRedactsValues(t *testing.T) {
 		}
 	}
 }
+
+func TestDoctorLaunchPlanSeparatePolicyBaseAndMergeHome(t *testing.T) {
+	args, dir := doctorLaunchArgs(t)
+	home := filepath.Join(dir, "provider-home")
+	child := filepath.Join(dir, "private")
+	host := filepath.Join(dir, "host-home")
+	for _, path := range []string{child, host} {
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	parent := filepath.Join(dir, "parent.yaml")
+	policy := filepath.Join(dir, "egg.yaml")
+	if err := os.WriteFile(parent, []byte("base: none\nfs: [deny:~/.codex]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	body := "base: ./parent.yaml\nfs: [rw:./, deny:./private, rw:" + filepath.Join(home, ".codex") + "]\n"
+	if err := os.WriteFile(policy, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	args = append(args, "--cwd", child, "--config", policy, "--policy-base", dir, "--merge-home", host, "--json")
+	before := launchInventory(t, dir)
+	cmd := doctorCmd()
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	cmd.SetArgs(args)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var report launchplan.Report
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Readiness != "blocked" || report.PolicyBase.Path != dir || report.MergeHome.Path != host {
+		t.Fatalf("lost launch inputs: %+v", report)
+	}
+	for _, code := range []string{"workspace.write", "provider_home.write"} {
+		found := false
+		for _, gate := range report.Gates {
+			if gate.Code == code && gate.Status == launchplan.Fail {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("missing denial for %s: %+v", code, report.Gates)
+		}
+	}
+	if !reflect.DeepEqual(before, launchInventory(t, dir)) {
+		t.Fatal("explicit launch inputs caused filesystem writes")
+	}
+}

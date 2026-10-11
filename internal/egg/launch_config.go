@@ -28,8 +28,8 @@ type explicitPolicy struct {
 // ResolveLaunchConfig is an explicit, read-only alternative to discovery. Empty
 // path means built-in defaults; named bases require basesDir. It never reads a
 // wing, HOME, environment variables, or credential contents. Parsing and merging
-// use the runtime's production implementations. Relative FS rules remain rooted
-// at the proposed launch CWD, just as in the runtime.
+// use the same resolver as runtime discovery. The home argument is the merge-time
+// host HOME, independently of execution HOME.
 func ResolveLaunchConfig(path, basesDir, home string) (*EggConfig, []PolicyRuleSource, error) {
 	if !filepath.IsAbs(home) {
 		return nil, nil, errors.New("explicit absolute home required")
@@ -41,19 +41,23 @@ func ResolveLaunchConfig(path, basesDir, home string) (*EggConfig, []PolicyRuleS
 	if !filepath.IsAbs(path) || basesDir != "" && !filepath.IsAbs(basesDir) {
 		return nil, nil, errors.New("absolute policy and bases paths required")
 	}
-	resolver := launchConfigResolver{bases: basesDir, home: home, active: map[string]bool{}, visited: map[string]bool{}}
+	resolver := configResolver{bases: basesDir, home: home, active: map[string]bool{}, visited: map[string]bool{}}
 	result, err := resolver.resolve(path, 0)
 	return result.cfg, result.rules, err
 }
 
-type launchConfigResolver struct {
+type configResolver struct {
 	bases, home string
+	runtime     bool
 	active      map[string]bool
 	visited     map[string]bool
 	reads       int
 }
 
-func (r *launchConfigResolver) basePath(name, dir string) (string, error) {
+func (r *configResolver) basePath(name, dir string) (string, error) {
+	if r.runtime {
+		return resolveBasePath(name, dir), nil
+	}
 	if filepath.IsAbs(name) {
 		return name, nil
 	}
@@ -68,53 +72,47 @@ func (r *launchConfigResolver) basePath(name, dir string) (string, error) {
 	}
 	return filepath.Join(r.bases, name+".yaml"), nil
 }
-func (r *launchConfigResolver) resolve(path string, depth int) (explicitPolicy, error) {
+func (r *configResolver) resolve(path string, depth int) (explicitPolicy, error) {
 	var zero explicitPolicy
 	r.reads++
-	if r.reads > 32 {
+	if !r.runtime && r.reads > 32 {
 		return zero, errors.New("policy resolution exceeds 32 file reads")
 	}
 	if depth > maxBaseDepth {
 		return zero, errors.New("egg config base chain too deep")
 	}
-	real, err := filepath.EvalSymlinks(path)
+	path, err := filepath.Abs(path)
 	if err != nil {
-		return zero, fmt.Errorf("policy file unavailable: %s", filepath.Clean(path))
+		return zero, err
 	}
-	if r.active[real] {
-		return zero, errors.New("egg config circular base reference")
-	}
-	// Production resolution retains visited lexical paths for its whole walk.
-	// Preserve its repeated-reference refusal rather than promising a plan that
-	// the launch resolver would reject. Canonical active paths detect real cycles.
 	lexical := filepath.Clean(path)
 	if r.visited[lexical] {
-		return zero, errors.New("runtime policy resolver rejects repeated base references")
+		return zero, errors.New("egg config circular or repeated base reference: runtime policy resolver rejects repeated base references")
 	}
 	r.visited[lexical] = true
-	r.active[real] = true
-	defer delete(r.active, real)
-	file, err := fsutil.OpenBoundedRegular(real, 64<<10)
+	var child *EggConfig
+	if r.runtime {
+		child, err = LoadEggConfig(path)
+	} else {
+		var real string
+		real, err = filepath.EvalSymlinks(path)
+		if err != nil {
+			return zero, fmt.Errorf("policy file unavailable: %s", lexical)
+		}
+		if r.active[real] {
+			return zero, errors.New("egg config circular base reference")
+		}
+		r.active[real] = true
+		defer delete(r.active, real)
+		child, err = loadLaunchPolicy(real)
+	}
 	if err != nil {
-		return zero, errors.New("policy file cannot be opened")
-	}
-	defer func() { _ = file.Close() }()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Size() > 64<<10 {
-		return zero, errors.New("policy must be a regular file at most 64 KiB")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, (64<<10)+1))
-	if err != nil || len(data) > 64<<10 {
-		return zero, errors.New("policy read failed or exceeded 64 KiB")
-	}
-	child, err := LoadEggConfigFromYAML(string(data))
-	if err != nil {
-		return zero, errors.New("invalid egg policy; check its YAML and network fields")
+		return zero, err
 	}
 	childRules := configRuleSources(child, lexical)
 	if child.Base.Name == "none" {
 		if child.Base.HasMasks() {
-			return zero, errors.New("base masks invalid with base: none")
+			return zero, errors.New("base masks invalid with base: none (nothing to mask)")
 		}
 		return explicitPolicy{child, childRules}, nil
 	}
@@ -182,6 +180,45 @@ func (r *launchConfigResolver) resolve(path string, depth int) (explicitPolicy, 
 	}
 	return explicitPolicy{merged, retained}, nil
 }
+
+// loadLaunchPolicy adds bounded, regular-file reads to the shared resolver.
+func loadLaunchPolicy(path string) (*EggConfig, error) {
+	file, err := fsutil.OpenBoundedRegular(path, 64<<10)
+	if err != nil {
+		return nil, errors.New("policy file cannot be opened")
+	}
+	defer func() { _ = file.Close() }()
+	data, err := io.ReadAll(io.LimitReader(file, (64<<10)+1))
+	if err != nil || len(data) > 64<<10 {
+		return nil, errors.New("policy read failed or exceeded 64 KiB")
+	}
+	child, err := LoadEggConfigFromYAML(string(data))
+	if err != nil {
+		return nil, errors.New("invalid egg policy; check its YAML and network fields")
+	}
+	return child, nil
+}
+
+// RebaseLaunchConfig anchors relative FS grants and denials at the selected
+// configured root. It does not change the caller's config or expand execution HOME.
+func RebaseLaunchConfig(cfg *EggConfig, policyBase string) *EggConfig {
+	copyCfg := *cfg
+	copyCfg.FS = append([]string(nil), cfg.FS...)
+	for i, rule := range copyCfg.FS {
+		mode, path, hasMode := strings.Cut(rule, ":")
+		if !hasMode {
+			path = rule
+		}
+		if !filepath.IsAbs(path) && !strings.HasPrefix(path, "~") {
+			copyCfg.FS[i] = filepath.Join(policyBase, path)
+			if hasMode {
+				copyCfg.FS[i] = mode + ":" + copyCfg.FS[i]
+			}
+		}
+	}
+	return &copyCfg
+}
+
 func configRuleSources(cfg *EggConfig, source string) []PolicyRuleSource {
 	var result []PolicyRuleSource
 	for _, entry := range cfg.FS {

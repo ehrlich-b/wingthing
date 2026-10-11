@@ -15,7 +15,17 @@ workspace/global configuration. Named bases need `--bases-dir`, with no legacy
 wing fallback. Invalid/missing explicit policies fail closed. Policy traversal is bounded to
 32 file reads, ten base levels and 64 KiB per input. The production
 YAML parser and merger preserve old scalar/list/mapping network contracts,
-section masks, deny override rules and agent-profile drilling.
+section masks, deny override rules and agent-profile drilling. Discovery and
+preflight share the resolver walk. `--merge-home` names the host HOME used for
+inheritance overrides, while `--home` names the provider's execution HOME. When
+omitted, `--merge-home` explicitly selects the same value as `--home`; ambient
+HOME is never consulted. Supply the actual host HOME when these differ.
+
+For an MCP launch inside a configured root, pass `--policy-base /configured/root`
+together with that root's explicit `--config`. Relative grants and denials are
+anchored there by the same helper as `PrepareMCPLaunch`. Omitting `--policy-base`
+selects CWD for a direct launch. The JSON report records both selected inputs
+and their provenance; no live wing is discovered to infer them.
 
 ```sh
 wt doctor launch-plan --route agent_run --agent codex --unattended \
@@ -38,7 +48,9 @@ and only checks metadata/scope. Credential presence never proves authentication.
 production native-run predicate: Claude or compatible native Codex hooks;
 other adapters report a failed route even if their interactive CLI exists.
 Codex uses the existing unattended flag and the same hook/notify/startup
-builders as the egg, with filesystem preparation disabled. The disposable
+builders as the egg, with filesystem creation disabled. The same preparation
+helper checks existing required directories and ancestors, including hook and
+notify spools. A regular file in that layout blocks the plan without writes. The disposable
 `launch-plan` identity makes argv stable. Actual IDs and prompts are assigned by
 the runtime. Claude's generated lifecycle settings are explicitly deferred;
 the planner prints only its base adapter arguments and marks that gate unrun.
@@ -90,11 +102,15 @@ command's ambient HOME or environment. The planner never repairs them.
 
 | Input conflict | Diagnosis |
 | --- | --- |
-| Effective network has no provider domains/forwards | `network.provider: FAIL` |
+| Enforcing policy denies the declared/default provider destination | `network.provider: FAIL` |
 | Parent network is none but egg drills provider domains | `network.parent: FAIL` |
 | Raw sockets required under proxy/TCP relay | `network.raw_sockets: FAIL` |
 | Outer workspace or provider state is read-only | Required write gate `FAIL` |
-| Inherited ELAN_HOME has no grant, denied writes or filtered env | Toolchain path gate explains exact limitation |
+| Selected ELAN_HOME has no grant or denied writes | Toolchain path gate explains the limitation |
+| ELAN_HOME is discarded by the real environment selector | Filtering gate `PASS`; unused inherited path cannot block launch |
+| Required provider directory or ancestor is a regular file | Directory/preparation gate `FAIL` |
+| Mac deny-write pins an existing directory | Contents remain writable under their grant |
+| Provider directory is a symlink | Injected grant uses the native profile's canonical target |
 | Codex retains inner sandbox under an egg/declared parent sandbox | `sandbox.nested: FAIL` |
 | Linux scoped parent | `parent.scoped: FAIL`, regardless of positive native facts |
 | No user bus, ordinary launch | No bus requirement is invented |
@@ -108,6 +124,11 @@ rejects a repeated base path used by two sections; preflight reproduces that
 refusal rather than changing runtime resolution. Recursive cycles also fail. Denials dominate write grants, with Linux root-deny mount exceptions explicitly
 left unverified. Where platform-specific write rules
 are not established by the explicit declarations, the result stays unknown.
+Provider reachability uses the enforcing proxy's exact domain matcher, so
+unrelated domains or forwarded ports cannot mask a denial of the default Codex
+endpoint. An explicit supported provider URL replaces that destination; observe
+mode does not turn an allowlist mismatch into a blocking gate. This diagnosis
+assumes the declared/default endpoint; provider configuration is never opened.
 Linux wildcard network inside an egg remains proxy-only; Mac wildcard network
 is reported separately. Neither inference establishes live confinement.
 

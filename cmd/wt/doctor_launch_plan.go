@@ -41,6 +41,8 @@ func doctorLaunchPlanCmd() *cobra.Command {
 	flags.StringVar(&req.CWD, "cwd", "", "proposed workspace (required)")
 	flags.StringVar(&req.PathBase, "path-base", "", "absolute base for a relative cwd; never inferred")
 	flags.StringVar(&req.Home, "home", "", "explicit absolute provider HOME (required)")
+	flags.StringVar(&req.MergeHome, "merge-home", "", "absolute host HOME for inheritance; omitted explicitly uses --home")
+	flags.StringVar(&req.PolicyBase, "policy-base", "", "absolute configured root for relative FS rules; omitted uses --cwd for a direct launch")
 	flags.StringVar(&req.AllowedHomeRoot, "allowed-home-root", "", "absolute allowed provider-home scope (required)")
 	flags.StringVar(&req.Executable, "executable", "", "absolute provider/command executable (required; never run)")
 	flags.StringVar(&req.ProviderURL, "provider-url", "", "explicit provider routing URL; only derived host is exported")

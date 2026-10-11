@@ -258,17 +258,22 @@ clean:
 
 # Bounded offline launch-plan gates: no built CLI execution, provider, listener,
 # native sandbox, browser, installs, or global cache access.
-.PHONY: test-launch-plan test-launch-plan-contract vet-launch-plan build-launch-plan
-test-launch-plan:
+.PHONY: test-launch-plan test-launch-plan-contract vet-launch-plan build-launch-plan test-launch-plan-parity
+test-launch-plan: test-launch-plan-parity
 	$(GO) test -p 2 ./internal/agent ./internal/config
-	$(GO) test -p 2 ./internal/egg -run 'LaunchConfig|LaunchCommand|CodexLifecycle(Args|Supported|Skips|Native)|CodexRunArgs|MergeEggConfig' -count=1
+	$(GO) test -p 2 ./internal/egg -run 'LaunchConfig|LaunchCommand|CodexLifecycle(Args|Supported|Skips|Native)|CodexRunArgs|MergeEggConfig|ResolveEggConfig|DiscoverEggConfig|SectionMask|BaseField|BuildEnv|ParseFSRules|ToSandboxConfig|ResolvePolicy|ProviderURLGuardrails|InferLocalPorts|DefaultEggConfig|UnsandboxedEggConfig|WildcardNetwork|TaskYAML' -count=1
 	$(GO) test -p 2 ./internal/launchplan ./internal/fsutil -count=1
+
+# Pure differential oracles: no native sandbox, provider execution or listener.
+test-launch-plan-parity:
+	$(GO) test -p 2 ./internal/sandbox -run '^(TestReview|TestLaunchPlan|TestBuildProfile|TestCanonicalSandboxPath)' -count=1
+	$(GO) test -p 2 ./internal/eggclient -run '^TestMCP(SubdirectoryRetainsRootPolicy|LaunchPreservesExplicitNestedRootPolicy)$$' -count=1
 
 test-launch-plan-contract: | web/dist
 	$(GO) test -p 2 ./cmd/wt -run 'Doctor.*Launch|LaunchPlan' -count=1
 
 vet-launch-plan: | web/dist
-	$(GO) vet -p 2 ./cmd/wt ./internal/agent ./internal/config ./internal/egg ./internal/launchplan ./internal/fsutil
+	$(GO) vet -p 2 ./...
 
 build-launch-plan: | web/dist
 	$(GO) build -p 2 -buildvcs=false -o .scratch/wt-launch-plan ./cmd/wt
