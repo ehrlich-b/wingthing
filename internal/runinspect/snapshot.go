@@ -33,18 +33,18 @@ func within(parent, child string) bool {
 }
 
 // ValidateDirectory confines reads (and CLI report writes) to the explicit
-// workspace. Resolving aliases before checking containment refuses home state.
+// workspace. Ancestor aliases are resolved; aliases inside it are refused.
 func ValidateDirectory(workspace, path string) (string, error) {
 	if workspace == "" || path == "" {
 		return "", errors.New("explicit workspace and snapshot/output directory are required")
 	}
+	workspace, err := filepath.Abs(workspace)
+	if err != nil {
+		return "", err
+	}
 	base, err := filepath.EvalSymlinks(workspace)
 	if err != nil {
 		return "", errors.New("workspace is unavailable")
-	}
-	base, err = filepath.Abs(base)
-	if err != nil {
-		return "", err
 	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -54,7 +54,30 @@ func ValidateDirectory(workspace, path string) (string, error) {
 	if err != nil {
 		return "", errors.New("directory must already exist")
 	}
-	if resolved != absolute || !within(base, resolved) {
+	// Normalize the path's workspace prefix, which may use a different ancestor
+	// alias from workspace (for example /var versus /private/var on macOS).
+	// Keep the suffix lexical so a symlink inside the workspace still fails.
+	// Use the outermost match to also refuse links back to the workspace itself.
+	unaliased := absolute
+	for prefix := absolute; ; {
+		canonical, err := filepath.EvalSymlinks(prefix)
+		if err != nil {
+			return "", errors.New("directory must already exist")
+		}
+		if canonical == base {
+			rel, err := filepath.Rel(prefix, absolute)
+			if err != nil {
+				return "", err
+			}
+			unaliased = filepath.Join(base, rel)
+		}
+		parent := filepath.Dir(prefix)
+		if parent == prefix {
+			break
+		}
+		prefix = parent
+	}
+	if resolved != unaliased || !within(base, resolved) {
 		return "", errors.New("directory must be an unaliased path inside the workspace")
 	}
 	for _, part := range strings.Split(filepath.ToSlash(resolved), "/") {

@@ -151,6 +151,80 @@ func treeBytes(t *testing.T, path string) map[string]string {
 	return out
 }
 
+func TestRunInspectSymlinkedWorkspaceParent(t *testing.T) {
+	workspace, path := fixture(t, func(db *sql.DB, path string) {
+		addWing(t, db, "clean", "execution", "", "terminal", "done", str("output"))
+	})
+	workspace, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err = filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentAlias := filepath.Join(t.TempDir(), "parent-alias")
+	if err := os.Symlink(filepath.Dir(workspace), parentAlias); err != nil {
+		t.Fatal(err)
+	}
+	aliasedWorkspace := filepath.Join(parentAlias, filepath.Base(workspace))
+	aliasedPath := filepath.Join(aliasedWorkspace, "snapshot")
+	before := treeBytes(t, path)
+	want, err := Inspect(t.Context(), path, Options{WorkspaceRoot: workspace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, workspace, path string
+	}{
+		{"both_aliased", aliasedWorkspace, aliasedPath},
+		{"snapshot_aliased", workspace, aliasedPath},
+		{"workspace_aliased", aliasedWorkspace, path},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gotPath, err := ValidateDirectory(tc.workspace, tc.path)
+			if err != nil || gotPath != path {
+				t.Fatalf("canonical directory = %q, %v; want %q", gotPath, err, path)
+			}
+			got, err := Inspect(t.Context(), tc.path, Options{WorkspaceRoot: tc.workspace})
+			if err != nil || !reflect.DeepEqual(got, want) {
+				t.Fatalf("aliased parent changed inspection: %v, %+v", err, got)
+			}
+			if !reflect.DeepEqual(before, treeBytes(t, path)) {
+				t.Fatal("inspection changed snapshot bytes")
+			}
+		})
+	}
+}
+
+func TestRunInspectRejectsWorkspaceSymlinks(t *testing.T) {
+	workspace, path := fixture(t, func(db *sql.DB, path string) {})
+	_, outside := fixture(t, func(db *sql.DB, path string) {})
+	for _, tc := range []struct {
+		name, target, suffix string
+	}{
+		{"inside", path, ""},
+		{"escaping", outside, ""},
+		{"workspace_prefix", workspace, "snapshot"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			alias := filepath.Join(workspace, tc.name)
+			if err := os.Symlink(tc.target, alias); err != nil {
+				t.Fatal(err)
+			}
+			before := treeBytes(t, path)
+			outsideBefore := treeBytes(t, outside)
+			_, err := Inspect(t.Context(), filepath.Join(alias, tc.suffix), Options{WorkspaceRoot: workspace})
+			if err == nil || err.Error() != "directory must be an unaliased path inside the workspace" {
+				t.Fatalf("workspace symlink rejection = %v", err)
+			}
+			if !reflect.DeepEqual(before, treeBytes(t, path)) || !reflect.DeepEqual(outsideBefore, treeBytes(t, outside)) {
+				t.Fatal("refusal changed snapshot bytes")
+			}
+		})
+	}
+}
+
 func TestRunInspectManifestTrustBoundary(t *testing.T) {
 	for _, name := range []string{"missing", "incomplete", "mismatch", "outside", "symlink", "wal", "unlisted"} {
 		t.Run(name, func(t *testing.T) {
