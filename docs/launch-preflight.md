@@ -4,7 +4,7 @@
 is spent. It reads named policy/evidence files, stats explicit credential paths,
 and hashes the selected executable. It never invokes that executable, discovers
 a production wing, reads credential contents, logs in, fixes policy, creates
-provider directories, binds a socket, or changes daemon state.
+directories in the selected provider HOME, binds a socket, or changes daemon state.
 
 The local planner is a deliberate intermediate consumer of the existing
 policy/agent interfaces. It is not yet an MCP tool or a remote wing operation.
@@ -47,13 +47,29 @@ and only checks metadata/scope. Credential presence never proves authentication.
 `agent_start` uses the production interactive catalog. `agent_run` checks the
 production native-run predicate: Claude or compatible native Codex hooks;
 other adapters report a failed route even if their interactive CLI exists.
-Codex uses the existing unattended flag and the same hook/notify/startup
-builders as the egg, with filesystem creation disabled. The same preparation
-helper checks existing required directories and ancestors, including hook and
-notify spools. A regular file in that layout blocks the plan without writes. The disposable
-`launch-plan` identity makes argv stable. Actual IDs and prompts are assigned by
-the runtime. Claude's generated lifecycle settings are explicitly deferred;
-the planner prints only its base adapter arguments and marks that gate unrun.
+Both preflight and the real egg call `egg.PrepareLaunch`: policy resolution,
+final sandbox specification, provider argv, directory preparation and pinned
+state-reader opens share one path. Preflight runs the actual `MkdirAll` and
+`O_NOFOLLOW` opens in a throwaway mirror of selected directory-entry metadata.
+Symlink targets are rebased into that mirror, including dangling targets; file
+contents and credentials are never copied. The mirror is removed on return and
+is placed outside the inspected input trees to preserve their directory mtimes.
+Codex's actual hook/notify builders record their required spools into the sandbox
+specification. The Mac final policy builder checks those spools against its
+emitted write rules, both during preparation and again when creating a sandbox.
+Regular files, dangling links, state links refused by the native readers, and
+callback output denials block preparation. The disposable `launch-plan` identity
+makes argv stable. Actual IDs and prompts are assigned by the runtime.
+
+`LaunchState.ClaudeSettings` isolates Claude's settings merge and file generation,
+which may read credential-bearing caller settings and is deferred; the planner
+prints only its base adapter arguments and marks that gate unrun.
+`CodexCapability` isolates the installed version probe; preflight supplies saved
+digest-bound output through the production parser. Native Linux mount operations
+and a foreign platform's final policy builder remain explicitly unrun, as do
+proxy listeners, snapshots, the control endpoint, PTY and provider execution.
+The mirror establishes directory layout compatibility; host ownership, ACLs,
+read-only mounts and confinement still require the declared facts/native gates.
 
 Saved provider evidence is a bounded JSON object:
 
@@ -109,8 +125,10 @@ command's ambient HOME or environment. The planner never repairs them.
 | Selected ELAN_HOME has no grant or denied writes | Toolchain path gate explains the limitation |
 | ELAN_HOME is discarded by the real environment selector | Filtering gate `PASS`; unused inherited path cannot block launch |
 | Required provider directory or ancestor is a regular file | Directory/preparation gate `FAIL` |
+| Required provider directory or ancestor is a dangling link | Actual directory preparation `FAIL` |
 | Mac deny-write pins an existing directory | Contents remain writable under their grant |
-| Provider directory is a symlink | Injected grant uses the native profile's canonical target |
+| Codex HOME/state/spool directory is a symlink | Native pinned reader preparation `FAIL` |
+| Final policy denies a required Codex callback spool or its output | Preparation `FAIL` |
 | Codex retains inner sandbox under an egg/declared parent sandbox | `sandbox.nested: FAIL` |
 | Linux scoped parent | `parent.scoped: FAIL`, regardless of positive native facts |
 | No user bus, ordinary launch | No bus requirement is invented |

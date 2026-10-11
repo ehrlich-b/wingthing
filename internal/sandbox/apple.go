@@ -106,7 +106,10 @@ func buildProfile(cfg Config) string {
 	}
 
 	// Resolve the SSH directory once for the deny exceptions emitted below.
-	sshDir, _ := os.UserHomeDir()
+	sshDir := cfg.HostHome
+	if sshDir == "" {
+		sshDir, _ = os.UserHomeDir()
+	}
 	if sshDir != "" {
 		sshDir, _ = canonicalSandboxPath(filepath.Join(sshDir, ".ssh"))
 	}
@@ -125,7 +128,10 @@ func buildProfile(cfg Config) string {
 		}
 	}
 	if hasWritableMounts {
-		home, _ := os.UserHomeDir()
+		home := cfg.HostHome
+		if home == "" {
+			home, _ = os.UserHomeDir()
+		}
 		if home != "" {
 			home, _ = canonicalSandboxPath(home)
 		}
@@ -233,6 +239,9 @@ func buildCheckedProfile(cfg Config) (string, error) {
 		return "", err
 	}
 	profile := buildProfile(cfg)
+	if err := checkRequiredWriteDirs(profile, cfg.RequiredWriteDirs); err != nil {
+		return "", err
+	}
 	if len(cfg.ProtectedWriteTargets) == 0 {
 		return profile, nil
 	}

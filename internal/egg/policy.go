@@ -38,6 +38,7 @@ type EffectivePolicy struct {
 	Drilled     []DrilledHole
 	Derived     []DrilledHole
 	Suppressed  []DrilledHole
+	profileDirs []string // exact directories selected during mount construction
 }
 
 // ResolvePolicy merges an egg config with the named agent's profile and reports
@@ -117,13 +118,16 @@ func ResolvePolicyWithProvider(cfg *EggConfig, agent, home, providerURL string) 
 			}
 		}
 
-		if home != "" {
+		if home != "" && len(mounts) > 0 {
 			for _, dir := range append(append([]string(nil), profile.WriteRegex...), profile.WriteDirs...) {
 				path := filepath.Join(home, dir)
-				if hasMount(policy.Mounts, path) {
-					continue
+				policy.profileDirs = append(policy.profileDirs, path)
+				mount := sandbox.Mount{Source: path, Target: path, UseRegex: containsExact(profile.WriteRegex, dir)}
+				alreadyMounted := hasMount(policy.Mounts, path)
+				policy.Mounts = append(policy.Mounts, mount)
+				if alreadyMounted {
+					continue // provenance lists only automatically added grants
 				}
-				policy.Mounts = append(policy.Mounts, sandbox.Mount{Source: path, Target: path})
 				policy.Drilled = append(policy.Drilled, DrilledHole{
 					Kind:   "write_dir",
 					Value:  path,
@@ -169,6 +173,26 @@ func ProviderDestination(agent, providerURL string) (string, error) {
 		return host, err
 	}
 	return profile.ProviderHost, nil
+}
+
+// providerNetworkFailure is launch admission against the resolved transport and
+// the enforcing proxy's matcher. Preflight reports this production result.
+func (p EffectivePolicy) providerNetworkFailure(host string) string {
+	denied := p.NetworkNeed == sandbox.NetworkNone && len(p.LocalPorts) == 0
+	if host != "" {
+		switch p.NetworkNeed {
+		case sandbox.NetworkNone:
+			denied = denied || !isLoopbackDomain(host)
+		case sandbox.NetworkLocal:
+			denied = !isLoopbackDomain(host)
+		case sandbox.NetworkHTTPS:
+			denied = p.Mode != "observe" && !sandbox.DomainAllowed(p.Domains, host)
+		}
+	}
+	if denied {
+		return "effective policy provides no route to the declared/default provider destination: " + host
+	}
+	return ""
 }
 
 func providerDomain(profile AgentProfile, raw string) (string, bool, error) {

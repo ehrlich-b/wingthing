@@ -20,11 +20,11 @@ func codexNotifySpool(home, sessionID string) string {
 // group. Native notifications publish atomically through a short-lived shell
 // callback owned by Codex; no daemon, provider restart or rollout search exists.
 func CodexRunArgs(args []string, home, sessionID string) ([]string, bool, error) {
-	return codexRunArgs(args, home, sessionID, true)
+	return codexRunArgs(args, home, sessionID, NativeLaunchState())
 }
 
-func codexRunArgs(args []string, home, sessionID string, prepare bool) ([]string, bool, error) {
-	hooked, err := codexLifecycleArgs(args, home, sessionID, prepare)
+func codexRunArgs(args []string, home, sessionID string, state LaunchState) ([]string, bool, error) {
+	hooked, err := codexLifecycleArgs(args, home, sessionID, state)
 	if err != nil {
 		return nil, false, err
 	}
@@ -51,7 +51,7 @@ func codexRunArgs(args []string, home, sessionID string, prepare bool) ([]string
 		return append([]string{"--no-daemon"}, hooked...), false, nil
 	}
 	spool := codexNotifySpool(home, sessionID)
-	if err = prepareLaunchDirectory(spool, prepare); err != nil {
+	if err = state.ProviderSpool(home, filepath.Join(".codex", "wingthing-run-notify", sessionID)); err != nil {
 		return nil, false, err
 	}
 	command := "printf '%s\\n' \"$1\" | (" + lifecycleHookCommand(spool) + ")"

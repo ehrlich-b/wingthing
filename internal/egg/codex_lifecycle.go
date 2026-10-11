@@ -122,10 +122,10 @@ func parseCodexVersion(output string) ([3]uint64, bool) {
 // Only the exact generated definitions are trusted. Neither CODEX_HOME nor its
 // config, notify, existing hook sources, or global trust policy is changed.
 func CodexLifecycleArgs(args []string, home, sessionID string) ([]string, error) {
-	return codexLifecycleArgs(args, home, sessionID, true)
+	return codexLifecycleArgs(args, home, sessionID, NativeLaunchState())
 }
 
-func codexLifecycleArgs(args []string, home, sessionID string, prepare bool) ([]string, error) {
+func codexLifecycleArgs(args []string, home, sessionID string, state LaunchState) ([]string, error) {
 	if home == "" || !validLifecycleID(sessionID) {
 		return nil, errors.New("provider home and exact egg identity required for Codex hooks")
 	}
@@ -153,7 +153,7 @@ func codexLifecycleArgs(args []string, home, sessionID string, prepare bool) ([]
 		}
 	}
 	spool := filepath.Join(home, ".codex", "wingthing-events", sessionID)
-	if err := prepareLaunchDirectory(spool, prepare); err != nil {
+	if err := state.ProviderSpool(home, filepath.Join(".codex", "wingthing-events", sessionID)); err != nil {
 		return nil, err
 	}
 	command := lifecycleHookCommand(spool)

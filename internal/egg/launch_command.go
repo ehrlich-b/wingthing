@@ -1,26 +1,28 @@
 package egg
 
 import (
-	"errors"
-	"github.com/ehrlich-b/wingthing/internal/agent"
+	"os"
+	"path/filepath"
 )
 
-// LaunchCommandPreview uses the runtime builders without preparing directories,
-// hooks on disk, a PTY, or a process. Identity is a disposable planning identity;
+// LaunchCommandPreview runs real preparation in disposable mirrored state,
+// without writing the selected HOME or starting a PTY or process. Identity is a disposable planning identity;
 // no prompt, resume ID, passthrough argv, or environment values are accepted.
 func LaunchCommandPreview(agentName, cwd, home, versionOutput string, unattended bool) (args []string, nativeRun bool, err error) {
-	name, argv, ok := agent.InteractiveInvocation(agentName, unattended, "")
-	if !ok {
-		return nil, false, errors.New("unsupported agent")
+	root, err := os.MkdirTemp("", "wt-launch-preview-*")
+	if err != nil {
+		return nil, false, err
 	}
-	if agentName == "codex" {
-		if CodexLifecycleVersionSupported(versionOutput) {
-			argv, nativeRun, err = codexRunArgs(argv, home, "launch-plan", false)
-			if err != nil {
-				return nil, false, err
-			}
-		}
-		argv = codexStartupArgs(argv, cwd)
+	defer os.RemoveAll(root)
+	state, err := NewDryLaunchState(root)
+	if err != nil {
+		return nil, false, err
 	}
-	return append([]string{name}, argv...), nativeRunSupported("agent", agentName, nil, nativeRun), nil
+	rc := RunConfig{Agent: agentName, CWD: cwd, UserHome: home, OuterBoundary: true, DangerouslySkipPermissions: unattended}
+	prepared, err := PrepareLaunch(rc, LaunchPreparationOptions{Home: home, HostHome: home, EggDir: filepath.Join(root, "launch-plan"), CodexCapability: SavedCodexCapability(versionOutput)}, state)
+	if err != nil {
+		return nil, false, err
+	}
+	name, _ := sessionCommand(rc)
+	return append([]string{name}, prepared.Args...), prepared.NativeRun, nil
 }
