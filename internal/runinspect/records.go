@@ -3,13 +3,11 @@ package runinspect
 import (
 	"context"
 	"database/sql"
-	"fmt"
-	"net/url"
-	"path/filepath"
 	"strconv"
 	"strings"
 
 	_ "modernc.org/sqlite"
+	"modernc.org/sqlite/vfs"
 )
 
 // These projections deliberately omit prompts, arbitrary errors, launch config,
@@ -105,27 +103,30 @@ func (r *records) issue(code string, ref Ref, ids ...string) {
 	r.issues = append(r.issues, Issue{Code: code, IDs: ids, Sources: []Ref{ref}})
 }
 
-// No store.Open: that path migrates and changes journal mode. immutable=1 is
-// appropriate only because the completed-copy manifest refuses WAL sidecars.
-func (s *snapshot) database(ctx context.Context, r *records) {
+// No store.Open: that path migrates and changes journal mode. Serve SQLite only
+// a private verified buffer, so neither replacement nor in-place changes to the
+// supplier's database can affect queries. immutable=1 requires no WAL sidecars.
+func (s *snapshot) database(ctx context.Context, r *records) error {
 	ref := Ref{Path: "wt.db"}
 	if _, exists := s.files[ref.Path]; !exists {
 		r.issue("wing_database_absent", ref)
-		return
+		return nil
 	}
-	file, err := s.root.Open(ref.Path)
+	data, err := s.read(ref.Path)
+	if err != nil {
+		return err
+	}
+	name, image, err := vfs.New(databaseImage(data))
 	if err != nil {
 		r.issue("wing_database_unreadable", ref)
-		return
+		return nil
 	}
-	defer file.Close()
-	// Retain the rooted descriptor so path replacement cannot redirect SQLite
-	// to another state directory after manifest verification.
-	uri := (&url.URL{Scheme: "file", Path: filepath.Join("/dev/fd", fmt.Sprint(file.Fd()))}).String() + "?mode=ro&immutable=1&_pragma=query_only(1)&_pragma=temp_store(2)"
+	defer image.Close()
+	uri := "file:wt.db?vfs=" + name + "&mode=ro&immutable=1&_pragma=query_only(1)&_pragma=temp_store(2)"
 	db, err := sql.Open("sqlite", uri)
 	if err != nil {
 		r.issue("wing_database_unreadable", ref)
-		return
+		return nil
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
@@ -254,4 +255,5 @@ func (s *snapshot) database(ctx context.Context, r *records) {
 		r.wakes = append(r.wakes, w)
 		return nil
 	})
+	return nil
 }

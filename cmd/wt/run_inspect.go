@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/ehrlich-b/wingthing/internal/runinspect"
 	"github.com/spf13/cobra"
@@ -32,13 +31,19 @@ func runInspectCmd() *cobra.Command {
 				return err
 			}
 			var destination string
+			var outputRoot *os.Root
 			if outputDir != "" {
 				destination, err = runinspect.ValidateDirectory(workspace, outputDir)
 				if err != nil {
 					return err
 				}
-				if directoryContains(path, destination) || directoryContains(destination, path) {
-					return errors.New("output directory must not overlap the snapshot")
+				outputRoot, err = os.OpenRoot(destination)
+				if err != nil {
+					return errors.New("output directory is unavailable")
+				}
+				defer outputRoot.Close()
+				if err := validateInspectOutput(workspace, path, destination, outputRoot); err != nil {
+					return err
 				}
 			}
 			report, err := runinspect.Inspect(cmd.Context(), path, runinspect.Options{WorkspaceRoot: workspace, PreviewBytes: previewBytes})
@@ -62,19 +67,19 @@ func runInspectCmd() *cobra.Command {
 				_, err = io.Copy(cmd.OutOrStdout(), &buffer)
 				return err
 			}
-			root, err := os.OpenRoot(destination)
-			if err != nil {
-				return errors.New("output directory is unavailable")
+			if err := validateInspectOutput(workspace, path, destination, outputRoot); err != nil {
+				return err
 			}
-			defer root.Close()
-			file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+			// Write through the retained root, even if the pathname is replaced
+			// after this check. Reopening destination would lose the fence.
+			file, err := outputRoot.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 			if err != nil {
 				return errors.New("report destination already exists or is unavailable")
 			}
 			_, writeErr := io.Copy(file, &buffer)
 			closeErr := file.Close()
 			if writeErr != nil || closeErr != nil {
-				_ = root.Remove(name)
+				_ = outputRoot.Remove(name)
 				return errors.Join(writeErr, closeErr)
 			}
 			return nil
@@ -87,7 +92,52 @@ func runInspectCmd() *cobra.Command {
 	return cmd
 }
 
-func directoryContains(parent, child string) bool {
-	rel, err := filepath.Rel(parent, child)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+func validateInspectOutput(workspace, snapshot, destination string, root *os.Root) error {
+	if _, err := runinspect.ValidateDirectory(workspace, destination); err != nil {
+		return err
+	}
+	outputInfo, err := root.Stat(".")
+	if err != nil {
+		return err
+	}
+	current, err := os.Lstat(destination)
+	if err != nil || !current.IsDir() || !os.SameFile(outputInfo, current) {
+		return errors.New("output directory changed during inspection")
+	}
+	snapshotInfo, err := os.Stat(snapshot)
+	if err != nil {
+		return err
+	}
+	for _, pair := range []struct {
+		parent os.FileInfo
+		child  string
+	}{{snapshotInfo, destination}, {outputInfo, snapshot}} {
+		overlaps, err := directoryContains(pair.parent, pair.child)
+		if err != nil {
+			return err
+		}
+		if overlaps {
+			return errors.New("output directory must not overlap the snapshot")
+		}
+	}
+	return nil
+}
+
+// Compare each ancestor by identity, including case/spelling aliases on the
+// underlying filesystem. filepath.Rel alone only compares path strings.
+func directoryContains(parent os.FileInfo, child string) (bool, error) {
+	for {
+		info, err := os.Stat(child)
+		if err != nil {
+			return false, err
+		}
+		if os.SameFile(parent, info) {
+			return true, nil
+		}
+		next := filepath.Dir(child)
+		if next == child {
+			return false, nil
+		}
+		child = next
+	}
 }

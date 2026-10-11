@@ -15,16 +15,21 @@ const maxArchiveDecodedBytes = 32 << 20
 func metadata(data []byte) (map[string]string, bool) {
 	values := map[string]string{}
 	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
 		key, value, ok := strings.Cut(line, "=")
+		key = strings.TrimSpace(key)
 		if !ok || key == "" {
 			return nil, false
 		}
 		if _, exists := values[key]; exists {
 			return nil, false
+		}
+		// Match runtime normalization for binding fields, but preserve CWD
+		// bytes: whitespace is valid path identity, not metadata decoration.
+		if key != "cwd" {
+			value = strings.TrimSpace(value)
 		}
 		values[key] = value
 	}

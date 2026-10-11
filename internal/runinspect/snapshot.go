@@ -108,7 +108,7 @@ func openSnapshot(ctx context.Context, path string, opts Options) (*snapshot, er
 			_ = root.Close()
 		}
 	}()
-	data, err := s.read(ManifestName)
+	data, err := s.readRaw(ManifestName)
 	if err != nil {
 		return nil, errors.New("snapshot.json completed-copy manifest is required")
 	}
@@ -174,6 +174,24 @@ func (s *snapshot) regular(path string) error {
 }
 
 func (s *snapshot) read(path string) ([]byte, error) {
+	data, err := s.readRaw(path)
+	if err != nil {
+		return nil, err
+	}
+	// Bind the exact buffer consumed by every decoder to the inventory. Walks
+	// before and after decoding cannot detect a replacement restored between them.
+	if path == ManifestName {
+		if !bytes.Equal(data, s.manifestBytes) {
+			return nil, errors.New("snapshot manifest changed during inspection")
+		}
+	} else if f, exists := s.files[path]; !exists || int64(len(data)) != f.Bytes || digest(data) != f.SHA256 {
+		return nil, errors.New("snapshot bytes do not match completed-copy manifest")
+	}
+	return data, nil
+}
+
+// Only the initial manifest read may precede the hash-verified inventory.
+func (s *snapshot) readRaw(path string) ([]byte, error) {
 	if !fs.ValidPath(path) || s.regular(path) != nil {
 		return nil, errors.New("snapshot file is unavailable")
 	}
@@ -221,19 +239,8 @@ func (s *snapshot) verify(ctx context.Context) error {
 		if seen > maxFiles+1 {
 			return errors.New("snapshot file count exceeds limit")
 		}
-		data, err := s.read(path)
-		if err != nil {
+		if _, err := s.read(path); err != nil {
 			return err
-		}
-		if path == ManifestName {
-			if !bytes.Equal(data, s.manifestBytes) {
-				return errors.New("snapshot manifest changed during inspection")
-			}
-			return nil
-		}
-		f, exists := s.files[path]
-		if !exists || int64(len(data)) != f.Bytes || digest(data) != f.SHA256 {
-			return errors.New("snapshot bytes do not match completed-copy manifest")
 		}
 		return nil
 	})

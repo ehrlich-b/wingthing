@@ -12,7 +12,7 @@ import (
 )
 
 // Inspect returns a deterministic report of observed evidence, not live status.
-// A hash mismatch before or after reading fails the entire copy's trust gate.
+// Every decoded buffer is hash-verified; a mismatch fails the copy's trust gate.
 // Invalid individual records remain issues while unrelated runs are inspected.
 func Inspect(ctx context.Context, path string, opts Options) (*Report, error) {
 	if opts.PreviewBytes < 0 || opts.PreviewBytes > 4096 {
@@ -24,7 +24,9 @@ func Inspect(ctx context.Context, path string, opts Options) (*Report, error) {
 	}
 	defer s.root.Close()
 	r := records{tables: map[string]bool{}}
-	s.database(ctx, &r)
+	if err := s.database(ctx, &r); err != nil {
+		return nil, err
+	}
 	for _, path := range s.paths() {
 		parts := strings.Split(path, "/")
 		if len(parts) != 3 || parts[0] != "eggs" || !strings.HasPrefix(parts[2], "run.") || !strings.HasSuffix(parts[2], ".json") {

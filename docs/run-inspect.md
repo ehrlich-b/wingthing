@@ -32,18 +32,21 @@ omitting its WAL is insufficient. WAL, SHM and rollback-journal sidecars are
 refused. No snapshot collection command is included: collection is an operator
 operation outside this inspector's authority. Symlinks, missing/unlisted files,
 unsupported manifest versions, duplicate JSON keys (including ambiguous case aliases)
-and hash mismatches are refused. Input inventory
-and hashes are verified again before returning the report. The current bounds
+and hash mismatches are refused. Every decoded buffer is checked against its
+inventory hash; input inventory and hashes are also verified again before
+returning the report. The current bounds
 are 4,096 files, 128 MiB per file and 256 MiB in total. Table reads stop at 10,000
 rows and report incomplete evidence; archive decoding stops at 32 MiB.
 
 Paths must resolve inside the explicitly supplied workspace. Default
 `.wingthing` and `.wingthing-preview` paths and aliased directories are refused.
-SQLite is opened read-only and immutable through a retained rooted file
-descriptor (`/dev/fd`, on Unix), with query-only mode and memory-only temporary
-storage. `store.Open` and its migrations are never used. If that descriptor
-transport is unavailable, the database is reported unreadable; unrelated egg
-artifacts remain inspectable.
+SQLite reads a private hash-verified byte buffer through a read-only filesystem
+view, with immutable and query-only modes and memory-only temporary storage.
+It never reopens the supplier's database path. `store.Open` and its migrations
+are never used. Unreadable database schemas remain explicit issues; unrelated
+egg artifacts remain inspectable. Report destinations are checked for overlap
+by directory identity and retained for writing, so filesystem spelling aliases
+and replacement symlinks cannot redirect reports into the snapshot.
 
 ## Evidence and limits
 
