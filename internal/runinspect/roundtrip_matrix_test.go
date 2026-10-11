@@ -220,6 +220,9 @@ func TestRunInspectRoundTripPartialSchemasAndVersions(t *testing.T) {
 			if roundTripAction(run, "manual_resume_eligible") || len(r.Issues) == 0 {
 				t.Fatalf("unsupported evidence promoted: %+v", r)
 			}
+			if (name == "future_egg" || name == "partial_egg") && run.EggStatus != "unknown" {
+				t.Fatalf("unsupported egg status is trusted: %+v", run)
+			}
 			if name == "partial_fences" && (r.Conversations[0].Checkpoint.State != "unknown" || r.Conversations[0].Checkpoint.Revision != nil || r.Conversations[0].Checkpoint.AcknowledgedCursor != nil || run.Diagnosis != "timeout") {
 				t.Fatalf("partial schema upgraded: %+v", r)
 			}
@@ -342,5 +345,25 @@ func TestRunInspectRoundTripArchiveRebindingRestoreOracle(t *testing.T) {
 	}
 	if !reflect.DeepEqual(before, fixture.Inventory(t, b.Path)) {
 		t.Fatal("restore oracle changed inspector's input")
+	}
+}
+
+func TestRunInspectRoundTripSpacedEggMetadataRestoreOracle(t *testing.T) {
+	b, _, _ := interruptedRoundTrip(t)
+	// ParseChatMeta, used by actual restoration, trims complete metadata lines.
+	// A leading space must not hide a contradictory available launch binding.
+	b.Write("eggs/execution/egg.meta", []byte("agent=claude\n provider_session_id=foreign-thread \ncwd=/fixture\n"))
+	b.Seal()
+	copyPath := filepath.Join(b.Workspace, "restore-spaced-binding")
+	if err := os.CopyFS(copyPath, os.DirFS(filepath.Join(b.Path, "eggs/execution"))); err != nil {
+		t.Fatal(err)
+	}
+	_, err := egg.RestoreSessionHistory("claude", "/fixture", copyPath, filepath.Join(b.Workspace, "restore-home"))
+	if err == nil || !strings.Contains(err.Error(), "captured provider session ID does not match egg metadata") {
+		t.Fatalf("restore oracle: %v", err)
+	}
+	r := inspectRoundTrip(t, b, 0)
+	if r.Archives[0].State != "egg_binding_conflict" || roundTripAction(roundTripRun(t, r, "run"), "manual_resume_eligible") {
+		t.Fatal("spaced contradictory binding bypassed inspector")
 	}
 }

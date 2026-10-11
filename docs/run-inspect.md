@@ -31,7 +31,8 @@ conversation-broker artifacts as needed. Merely copying an open database while
 omitting its WAL is insufficient. WAL, SHM and rollback-journal sidecars are
 refused. No snapshot collection command is included: collection is an operator
 operation outside this inspector's authority. Symlinks, missing/unlisted files,
-unsupported manifest versions, duplicate JSON keys and hash mismatches are refused. Input inventory
+unsupported manifest versions, duplicate JSON keys (including ambiguous case aliases)
+and hash mismatches are refused. Input inventory
 and hashes are verified again before returning the report. The current bounds
 are 4,096 files, 128 MiB per file and 256 MiB in total. Table reads stop at 10,000
 rows and report incomplete evidence; archive decoding stops at 32 MiB.
@@ -56,6 +57,7 @@ artifacts remain inspectable.
 | `conversation_wake_policy.delivery_cursor` | Wake delivery only; it does not advance checkpoint acknowledgement. |
 | `conversation-brokers/SESSION/journal/REQUEST.json` | Retained checkpoint request and expected revision. A cursor covered by a later durable checkpoint does not prove which writer committed it or that a reply was delivered. |
 | `chat.meta`, `chat.jsonl.gz`, `.chat-*.tmp` | Archive identity, complete gzip checksum, transcript identity and interrupted rotation evidence. A transcript archive is separate from exact run output. |
+| `egg.meta`, `lifecycle.jsonl` | Launch provider binding or persisted SessionStart rebinding; contradictory, invalid or partial binding evidence prevents resume eligibility. No journal/lock file is created or repaired. |
 | `result.text` on a valid receipt | An exact inline output handle; missing text differs from present empty text. |
 
 Graph edges are `observed`, `absent` or `inconsistent`. Missing ancestors do not
@@ -114,3 +116,53 @@ detector on the Go test hosts. The built CLI subprocess uses the ordinary built
 binary. Canonical `test-run-recovery`, `test-run-recovery-race` and `check` retain
 their existing transport coverage and require the coordinator's ordinary host.
 No daemon restart is part of offline inspector validation.
+
+## Serializer-backed orphan example
+
+`make -j1 test-run-inspect-roundtrip` generates new finite fixtures below
+`.scratch/runinspect-roundtrip/`, using the admitted `wingsession.Run` JSON,
+`store.AdmitAgentRun`/`SaveAgentRun`, the egg run receipt writer,
+`CheckpointConversation`, the broker journal writer, and
+`CaptureSessionHistory`. The serializer adapters compile only with the
+`runinspectfixture` test tag; the inspected `wt` binary is the ordinary build.
+The builder requires a new absolute scratch destination, closes SQLite before
+inventorying it, and exclusively creates a version 1 fixture manifest. It has
+no live-state collection path. Tests retain their tiny fixtures for inspection.
+
+`TestRunInspectRoundTripCLIIsolatedWorkspaceOrphan` prints the generated orphan
+snapshot path. Replace `CASE` below with that fresh test directory name and run
+from the clone root; all inputs are disposable fixtures:
+
+```sh
+./wt run-inspect --snapshot .scratch/runinspect-roundtrip/CASE/snapshot --json
+./wt run-inspect --snapshot .scratch/runinspect-roundtrip/CASE/snapshot
+```
+
+That example serializes parent admission, child submission intent and a durable
+successful egg receipt for `orphan` / `execution-orphan`. It then deliberately
+removes the parent from the fixture database before sealing. This models an
+incomplete supplied copy; healthy current foreign keys prevent that deletion.
+The independent expectation is `completed_with_output`,
+`terminal_receipt_not_in_wing`, `evidence_state: "incomplete"`, and a
+`missing_parent` issue naming `orphan` and `missing-parent`. The successful
+receipt remains visible, output is metadata only, and resume is not eligible.
+The test executes the same snapshot in a second isolated workspace with no
+installed tools on PATH and unusable ambient state paths.
+
+An operator considering actual recovery still needs capture provenance and the
+latest same-run/same-execution durable receipts; exact host PID/process identity,
+provider thread/turn, deadline and ownership; the current conversation execution,
+revision and explicit ACK cursor; and provider resume support, policy and a
+complete archive bound to that egg. A persisted SessionStart may legitimately
+rebind the native provider ID; contradictory egg metadata or incomplete binding
+journals suppress eligibility. Wake delivery, archived transcript text and a
+lost acknowledgement never authorize resending a prompt. These observations
+must come from the actual host; the fixture command performs no recovery.
+
+The round-trip gate compares typed Go, built JSON and human issue/source/action
+inventories, checks Unicode/control previews by original byte count, verifies
+repeated and failed-output inspections preserve hashes, modes and file/directory
+mtimes, and compares two independently generated snapshots differing by one
+acknowledged event. Add `INSPECT_TEST_FLAGS=-race` to run the fixture consumer and
+its finite store oracles with the race detector. Ordinary-host recovery/check,
+real-provider and live operational acceptance remain separate coordinator gates.

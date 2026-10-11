@@ -208,10 +208,11 @@ func (report *Report) graph(r *records, opts Options) {
 				if run.SessionID == "" {
 					run.SessionID = e.Result.SessionID
 				}
-				run.EggStatus = knownStatus(e.Result.Status)
 				if !e.valid {
+					run.EggStatus = "unknown"
 					run.issue("partial_or_unsupported_egg_record", []string{id}, e.source)
 				} else {
+					run.EggStatus = knownStatus(e.Result.Status)
 					run.Receipts = append(run.Receipts, receipt(e.Result, e.source))
 					run.Output = append(run.Output, output(e.Result.Text, refField(e.source, "result.text"), opts.PreviewBytes))
 				}

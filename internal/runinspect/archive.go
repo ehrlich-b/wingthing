@@ -13,6 +13,7 @@ const maxArchiveDecodedBytes = 32 << 20
 func metadata(data []byte) (map[string]string, bool) {
 	values := map[string]string{}
 	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
@@ -69,7 +70,7 @@ func (report *Report) archives(s *snapshot, r *records) error {
 			}
 			meta, ok := metadata(data)
 			archive.Agent, archive.ProviderSessionID = meta["agent"], meta["agent_session_id"]
-			if !ok || meta["format"] != "jsonl" || archive.ProviderSessionID == "" {
+			if !ok || len(data) > 64<<10 || meta["format"] != "jsonl" || !archiveProviderID(archive.ProviderSessionID) {
 				archive.State = "invalid_metadata"
 			} else {
 				compressed, err := s.read(chatPath)
