@@ -3,10 +3,10 @@ package runinspect
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -29,13 +29,14 @@ type resultRecord struct {
 }
 
 type wingRecord struct {
-	Agent     string `json:"agent"`
-	CWD       string `json:"cwd"`
-	ID        string `json:"run_id"`
-	SessionID string `json:"session_id"`
-	ParentID  string `json:"parent_id"`
-	Phase     string `json:"phase"`
-	Cancelled bool   `json:"cancelled"`
+	SpecHash  *string `json:"spec_hash"`
+	Agent     string  `json:"agent"`
+	CWD       string  `json:"cwd"`
+	ID        string  `json:"run_id"`
+	SessionID string  `json:"session_id"`
+	ParentID  string  `json:"parent_id"`
+	Phase     string  `json:"phase"`
+	Cancelled bool    `json:"cancelled"`
 	Launch    struct {
 		Authority struct{ Principal, UserID string }
 	} `json:"launch"`
@@ -82,7 +83,14 @@ type wakeRow struct {
 	source   Ref
 }
 
+type legacyRow struct {
+	id, parent, principal, status string
+	output                        *string
+	source                        Ref
+}
+
 type records struct {
+	legacy        []legacyRow
 	wings         []wingRow
 	eggs          []eggRecord
 	conversations []conversationRow
@@ -186,7 +194,7 @@ func (s *snapshot) database(ctx context.Context, r *records) {
 		}
 		row.source = Ref{Path: "wt.db", Record: "agent_runs:" + row.id}
 		row.revisionKnown = wingColumns["revision"]
-		row.valid = json.Unmarshal([]byte(row.raw), &row.record) == nil && row.record.ID != "" && row.record.SessionID != ""
+		row.valid = decodeRecord([]byte(row.raw), &row.record) == nil && row.record.ID != "" && row.record.SessionID != ""
 		if !row.valid {
 			r.issue("partial_run_record", row.source, row.id)
 		}
@@ -218,10 +226,25 @@ func (s *snapshot) database(ctx context.Context, r *records) {
 		if err := rows.Scan(&e.sequence, &e.root, &e.conversation, &e.session); err != nil {
 			return err
 		}
-		e.source = Ref{Path: "wt.db", Record: "conversation_events", Field: "sequence"}
+		e.source = Ref{Path: "wt.db", Record: "conversation_events:" + strconv.FormatInt(e.sequence, 10), Field: "sequence"}
 		r.events = append(r.events, e)
 		return nil
 	})
+	// Historical agent_run tasks can be ancestors without an agent_runs row.
+	if cols := columns("tasks"); cols["type"] && cols["id"] {
+		legacyQuery, _ := projection("tasks", []string{"id", "status"}, []struct{ name, fallback string }{{"parent_id", "''"}, {"principal", "''"}, {"output", "NULL"}})
+		read("tasks", legacyQuery+" WHERE type='agent_run' ORDER BY id", func(rows *sql.Rows) error {
+			var task legacyRow
+			var parent sql.NullString
+			if err := rows.Scan(&task.id, &task.status, &parent, &task.principal, &task.output); err != nil {
+				return err
+			}
+			task.parent = parent.String
+			task.source = Ref{Path: "wt.db", Record: "tasks:" + task.id}
+			r.legacy = append(r.legacy, task)
+			return nil
+		})
+	}
 	read("conversation_wake_policy", `SELECT root_id,delivery_cursor FROM conversation_wake_policy ORDER BY root_id`, func(rows *sql.Rows) error {
 		var w wakeRow
 		if err := rows.Scan(&w.root, &w.delivery); err != nil {

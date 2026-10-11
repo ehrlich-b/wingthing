@@ -153,6 +153,8 @@ func TestRunInspectTerminalAndAdmissionMatrix(t *testing.T) {
 		{"failure", "failed", "failed", "terminal", "failed", str("safe partial")},
 		{"running", "running", "running", "observing", "running_at_snapshot", nil},
 		{"reservation_only", "pending", "pending", "submitting", "admitted_outcome_unknown", nil},
+		{"stale_running_observation", "running", "pending", "observing", "inconsistent_evidence", nil},
+		{"failed_wing_unknown_egg", "failed", "pending", "terminal", "failed", nil},
 		{"spawn_intent_no_egg", "pending", "", "spawning", "admitted_outcome_unknown", nil},
 		{"terminal_conflict", "failed", "done", "terminal", "inconsistent_evidence", str("safe partial")},
 	} {

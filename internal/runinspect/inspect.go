@@ -2,7 +2,6 @@ package runinspect
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -36,7 +35,7 @@ func Inspect(ctx context.Context, path string, opts Options) (*Report, error) {
 			return nil, err
 		}
 		e := eggRecord{source: Ref{Path: path}}
-		e.valid = json.Unmarshal(data, &e) == nil && e.Version == 1 && e.Result.RunID != "" && e.Result.SessionID != ""
+		e.valid = decodeRecord(data, &e) == nil && e.Version == 1 && e.Result.RunID != "" && e.Result.SessionID != ""
 		if e.Result.SessionID != parts[1] || parts[2] != fmt.Sprintf("run.%s.json", digest([]byte(e.Result.RunID))) {
 			e.valid = false
 			r.issue("egg_artifact_identity_conflict", e.source, e.Result.RunID, e.Result.SessionID, parts[1])
@@ -125,6 +124,10 @@ func (run *Run) issue(code string, ids []string, refs ...Ref) {
 func (report *Report) graph(r *records, opts Options) {
 	byID := map[string][]wingRow{}
 	byEgg := map[string][]eggRecord{}
+	legacy := map[string]legacyRow{}
+	for _, task := range r.legacy {
+		legacy[task.id] = task
+	}
 	ids := map[string]bool{}
 	for _, w := range r.wings {
 		byID[w.id] = append(byID[w.id], w)
@@ -148,10 +151,14 @@ func (report *Report) graph(r *records, opts Options) {
 			run.issue("conflicting_run_records", []string{id})
 			for _, w := range ws {
 				run.Sources = append(run.Sources, w.source)
+				run.Issues[0].IDs = append(run.Issues[0].IDs, w.session)
 			}
 			for _, e := range es {
 				run.Sources = append(run.Sources, e.source)
+				run.Issues[0].IDs = append(run.Issues[0].IDs, e.Result.SessionID)
 			}
+			run.Issues[0].Sources = append([]Ref{}, run.Sources...)
+			report.edge("run_execution", id, "", "inconsistent", run.Sources...)
 		} else {
 			var w *wingRow
 			var e *eggRecord
@@ -168,11 +175,17 @@ func (report *Report) graph(r *records, opts Options) {
 					} else if w.revision < 1 {
 						run.issue("invalid_run_revision", []string{id}, refField(w.source, "revision"))
 					}
+					if w.record.SpecHash == nil {
+						run.issue("run_spec_hash_unavailable", []string{id}, refField(w.source, "spec_hash"))
+					} else if *w.record.SpecHash != w.spec {
+						run.issue("run_spec_hash_conflict", []string{id}, refField(w.source, "spec_hash"))
+					}
 					run.Phase = knownPhase(w.record.Phase)
 					run.WingStatus = knownStatus(w.record.Result.Status)
 					if w.record.ID != w.id || w.record.SessionID != w.session || w.record.Result.RunID != w.id || w.record.Result.SessionID != w.session || w.record.Launch.Authority.Principal != w.principal {
 						run.issue("wing_identity_or_owner_conflict", []string{w.id, w.record.ID, w.session, w.record.SessionID, w.record.Result.RunID, w.record.Result.SessionID}, w.source)
 					}
+					run.Receipts = append(run.Receipts, receipt(w.record.Result, w.source))
 					run.Output = append(run.Output, output(w.record.Result.Text, refField(w.source, "result.text"), opts.PreviewBytes))
 				}
 			}
@@ -186,16 +199,25 @@ func (report *Report) graph(r *records, opts Options) {
 				if !e.valid {
 					run.issue("partial_or_unsupported_egg_record", []string{id}, e.source)
 				} else {
+					run.Receipts = append(run.Receipts, receipt(e.Result, e.source))
 					run.Output = append(run.Output, output(e.Result.Text, refField(e.source, "result.text"), opts.PreviewBytes))
 				}
 			}
 			if w != nil && e != nil && (w.session != e.Result.SessionID) {
 				run.issue("run_execution_conflict", []string{id, w.session, e.Result.SessionID}, w.source, e.source)
 			}
+			if w != nil && e != nil && w.valid && e.valid {
+				if terminal(w.record.Result.Status) && !terminal(e.Result.Status) {
+					run.issue("nonterminal_egg_after_wing_terminal", []string{id, w.session}, w.source, e.source)
+				}
+				if w.record.Result.Status == "running" && e.Result.Status == "pending" {
+					run.issue("nonterminal_receipt_regression", []string{id, w.session}, w.source, e.source)
+				}
+			}
 			if w != nil && e != nil && w.valid && e.valid && terminal(w.record.Result.Status) && terminal(e.Result.Status) {
 				a, b := w.record.Result, e.Result
 				if a.Status != b.Status || a.ProviderSessionID != b.ProviderSessionID || a.TurnID != b.TurnID || (a.Text != nil && b.Text != nil && *a.Text != *b.Text) {
-					run.issue("terminal_receipts_conflict", []string{id, w.session, e.Result.SessionID}, w.source, e.source)
+					run.issue("terminal_receipts_conflict", []string{id, w.session, e.Result.SessionID, a.ProviderSessionID, b.ProviderSessionID, a.TurnID, b.TurnID}, w.source, e.source)
 				}
 			}
 			state := "absent"
@@ -208,7 +230,7 @@ func (report *Report) graph(r *records, opts Options) {
 			report.edge("run_execution", id, run.SessionID, state, run.Sources...)
 			if run.ParentID != "" {
 				state := "observed"
-				if len(byID[run.ParentID]) == 0 && len(byEgg[run.ParentID]) == 0 {
+				if len(byID[run.ParentID]) == 0 && len(byEgg[run.ParentID]) == 0 && legacy[run.ParentID].id == "" {
 					state = "absent"
 					run.issue("missing_parent", []string{id, run.ParentID}, refField(w.source, "parent_id"))
 				}
@@ -225,14 +247,38 @@ func (report *Report) graph(r *records, opts Options) {
 			} else {
 				run.Acknowledgement = "no_terminal_acknowledgement"
 			}
-			report.diagnose(&run, w, e, r)
+			report.diagnose(&run, w, e)
 		}
 
 		report.Runs = append(report.Runs, run)
 	}
+	for _, task := range r.legacy {
+		if len(byID[task.id]) > 0 {
+			continue
+		}
+		out := output(nil, refField(task.source, "output"), opts.PreviewBytes)
+		diagnosis := "legacy_execution_unverified"
+		if task.status == "done" {
+			out = output(task.output, refField(task.source, "output"), opts.PreviewBytes)
+			diagnosis = "completed_output_unavailable"
+			if out.Available {
+				diagnosis = "completed_with_output"
+			}
+		}
+		view := LegacyTask{ID: task.id, ParentID: task.parent, Status: knownStatus(task.status), Diagnosis: diagnosis, Output: out, Source: task.source, Issues: []Issue{}}
+		if task.parent != "" {
+			state := "observed"
+			if len(byID[task.parent]) == 0 && len(byEgg[task.parent]) == 0 && legacy[task.parent].id == "" {
+				state = "absent"
+				view.Issues = append(view.Issues, Issue{Code: "missing_parent", IDs: []string{task.id, task.parent}, Sources: []Ref{task.source}})
+			}
+			report.edge("legacy_run_parent", task.id, task.parent, state, task.source)
+		}
+		report.LegacyTasks = append(report.LegacyTasks, view)
+	}
 }
 
-func (report *Report) diagnose(run *Run, w *wingRow, e *eggRecord, r *records) {
+func (report *Report) diagnose(run *Run, w *wingRow, e *eggRecord) {
 	var receipts []resultRecord
 	if w != nil && w.valid {
 		receipts = append(receipts, w.record.Result)
@@ -244,8 +290,8 @@ func (report *Report) diagnose(run *Run, w *wingRow, e *eggRecord, r *records) {
 		if terminal(receipt.Status) {
 			if receipt.Status == "done" {
 				run.Diagnosis = "completed_output_unavailable"
-				for _, out := range run.Output {
-					if out.Available {
+				for _, completed := range receipts {
+					if completed.Status == "done" && completed.Text != nil {
 						run.Diagnosis = "completed_with_output"
 					}
 				}
@@ -258,7 +304,7 @@ func (report *Report) diagnose(run *Run, w *wingRow, e *eggRecord, r *records) {
 	for _, receipt := range receipts {
 		started, startErr := time.Parse(time.RFC3339Nano, receipt.StartedAt)
 		deadline, deadlineErr := time.Parse(time.RFC3339Nano, receipt.Deadline)
-		if e != nil && e.valid && receipt.Status == "running" && startErr == nil && !started.IsZero() && deadlineErr == nil && deadline.After(report.CapturedAt) {
+		if e != nil && e.valid && e.Result.Status == "running" && receipt.Status == "running" && startErr == nil && !started.IsZero() && deadlineErr == nil && deadline.After(report.CapturedAt) {
 			run.Diagnosis = "running_at_snapshot"
 			return
 		}
@@ -272,4 +318,20 @@ func (report *Report) diagnose(run *Run, w *wingRow, e *eggRecord, r *records) {
 // embedded in provider content or launch metadata is ever opened.
 func outputPath(session, id string) string {
 	return filepath.ToSlash(filepath.Join("eggs", session, "run."+digest([]byte(id))+".json"))
+}
+
+func receipt(r resultRecord, source Ref) Receipt {
+	date := func(s string) *time.Time {
+		value, err := time.Parse(time.RFC3339Nano, s)
+		if err != nil || value.IsZero() {
+			return nil
+		}
+		return &value
+	}
+	kind := "unknown"
+	switch r.FailureKind {
+	case "", "provider_refused", "auth_failed", "rate_limited", "context_exhausted", "sandbox_denied", "provider_error", "provider_exit", "provider_not_ready", "timeout", "stopped", "unknown_outcome", "input_conflict":
+		kind = r.FailureKind
+	}
+	return Receipt{Source: source, RunID: r.RunID, SessionID: r.SessionID, Status: knownStatus(r.Status), ProviderSessionID: r.ProviderSessionID, TurnID: r.TurnID, Deadline: date(r.Deadline), StartedAt: date(r.StartedAt), EndedAt: date(r.EndedAt), FailureKind: kind}
 }

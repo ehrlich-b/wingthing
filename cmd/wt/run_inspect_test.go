@@ -60,7 +60,7 @@ func runInspectBinary(t *testing.T, binary, workspace string, args ...string) ([
 func TestRunInspectBuiltBinaryOfflineSnapshot(t *testing.T) {
 	binary, workspace, snapshot := inspectBinaryFixture(t)
 	before := inspectTree(t, workspace)
-	first, err := runInspectBinary(t, binary, workspace, "run", "inspect", "--snapshot", snapshot, "--json")
+	first, err := runInspectBinary(t, binary, workspace, "run-inspect", "--snapshot", snapshot, "--json")
 	if err != nil {
 		t.Fatalf("inspect: %v %s", err, first)
 	}
@@ -74,11 +74,11 @@ func TestRunInspectBuiltBinaryOfflineSnapshot(t *testing.T) {
 	if strings.Contains(string(first), "ORIGINAL-FIXTURE-PROVIDER-SENTINEL") {
 		t.Fatal("default JSON exposed provider content")
 	}
-	second, err := runInspectBinary(t, binary, workspace, "run", "inspect", "--snapshot", snapshot, "--json")
+	second, err := runInspectBinary(t, binary, workspace, "run-inspect", "--snapshot", snapshot, "--json")
 	if err != nil || !bytes.Equal(first, second) {
 		t.Fatal("CLI report is nondeterministic")
 	}
-	human, err := runInspectBinary(t, binary, workspace, "run", "inspect", "--snapshot", snapshot)
+	human, err := runInspectBinary(t, binary, workspace, "run-inspect", "--snapshot", snapshot)
 	if err != nil || !bytes.Contains(human, []byte("completed_with_output")) || bytes.Contains(human, []byte("ORIGINAL-FIXTURE-PROVIDER-SENTINEL")) {
 		t.Fatalf("human summary: %v %s", err, human)
 	}
@@ -90,11 +90,11 @@ func TestRunInspectBuiltBinaryOfflineSnapshot(t *testing.T) {
 func TestRunInspectBuiltBinaryOutputBoundaries(t *testing.T) {
 	binary, workspace, snapshot := inspectBinaryFixture(t)
 	for _, args := range [][]string{
-		{"run", "inspect"},
-		{"run", "inspect", "--snapshot", snapshot, "--preview-bytes", "4097"},
-		{"run", "inspect", "--snapshot", snapshot, "--output-dir", snapshot},
-		{"run", "inspect", "--snapshot", snapshot, "--output-dir", workspace},
-		{"run", "inspect", "--snapshot", snapshot, "--remote", "invalid-host"},
+		{"run-inspect"},
+		{"run-inspect", "--snapshot", snapshot, "--preview-bytes", "4097"},
+		{"run-inspect", "--snapshot", snapshot, "--output-dir", snapshot},
+		{"run-inspect", "--snapshot", snapshot, "--output-dir", workspace},
+		{"run-inspect", "--snapshot", snapshot, "--remote", "invalid-host"},
 	} {
 		before := inspectTree(t, workspace)
 		if out, err := runInspectBinary(t, binary, workspace, args...); err == nil {
@@ -109,7 +109,7 @@ func TestRunInspectBuiltBinaryOutputBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := inspectTree(t, snapshot)
-	out, err := runInspectBinary(t, binary, workspace, "run", "inspect", "--snapshot", snapshot, "--json", "--output-dir", outputDir)
+	out, err := runInspectBinary(t, binary, workspace, "run-inspect", "--snapshot", snapshot, "--json", "--output-dir", outputDir)
 	if err != nil || len(out) != 0 {
 		t.Fatalf("explicit output: %v %s", err, out)
 	}
@@ -122,7 +122,7 @@ func TestRunInspectBuiltBinaryOutputBoundaries(t *testing.T) {
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatal("report permissions are not private")
 	}
-	if out, err := runInspectBinary(t, binary, workspace, "run", "inspect", "--snapshot", snapshot, "--json", "--output-dir", outputDir); err == nil {
+	if out, err := runInspectBinary(t, binary, workspace, "run-inspect", "--snapshot", snapshot, "--json", "--output-dir", outputDir); err == nil {
 		t.Fatalf("overwrote prior report: %s", out)
 	}
 	current, _ := os.ReadFile(file)

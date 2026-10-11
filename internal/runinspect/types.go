@@ -85,22 +85,46 @@ type Archive struct {
 	Sources           []Ref  `json:"sources"`
 }
 
+type Receipt struct {
+	Source            Ref        `json:"source"`
+	RunID             string     `json:"run_id"`
+	SessionID         string     `json:"session_id"`
+	Status            string     `json:"status"`
+	ProviderSessionID string     `json:"provider_session_id,omitempty"`
+	TurnID            string     `json:"turn_id,omitempty"`
+	Deadline          *time.Time `json:"deadline,omitempty"`
+	StartedAt         *time.Time `json:"started_at,omitempty"`
+	EndedAt           *time.Time `json:"ended_at,omitempty"`
+	FailureKind       string     `json:"failure_kind,omitempty"`
+}
+
+type LegacyTask struct {
+	ID        string  `json:"run_id"`
+	ParentID  string  `json:"parent_id,omitempty"`
+	Status    string  `json:"status"`
+	Diagnosis string  `json:"diagnosis"`
+	Output    Output  `json:"output"`
+	Source    Ref     `json:"source"`
+	Issues    []Issue `json:"issues"`
+}
+
 type Run struct {
-	EvidenceState    string   `json:"evidence_state"`
-	ID               string   `json:"run_id"`
-	SessionID        string   `json:"session_id"`
-	ParentID         string   `json:"parent_id,omitempty"`
-	ConversationID   string   `json:"conversation_id,omitempty"`
-	CurrentSessionID string   `json:"current_session_id,omitempty"`
-	Phase            string   `json:"phase"`
-	WingStatus       string   `json:"wing_status"`
-	EggStatus        string   `json:"egg_status"`
-	Diagnosis        string   `json:"diagnosis"`
-	Acknowledgement  string   `json:"acknowledgement"`
-	Output           []Output `json:"outputs"`
-	Sources          []Ref    `json:"sources"`
-	Issues           []Issue  `json:"issues"`
-	Actions          []Action `json:"suggested_actions"`
+	Receipts         []Receipt `json:"receipts"`
+	EvidenceState    string    `json:"evidence_state"`
+	ID               string    `json:"run_id"`
+	SessionID        string    `json:"session_id"`
+	ParentID         string    `json:"parent_id,omitempty"`
+	ConversationID   string    `json:"conversation_id,omitempty"`
+	CurrentSessionID string    `json:"current_session_id,omitempty"`
+	Phase            string    `json:"phase"`
+	WingStatus       string    `json:"wing_status"`
+	EggStatus        string    `json:"egg_status"`
+	Diagnosis        string    `json:"diagnosis"`
+	Acknowledgement  string    `json:"acknowledgement"`
+	Output           []Output  `json:"outputs"`
+	Sources          []Ref     `json:"sources"`
+	Issues           []Issue   `json:"issues"`
+	Actions          []Action  `json:"suggested_actions"`
 }
 
 type Conversation struct {
@@ -115,6 +139,7 @@ type Conversation struct {
 }
 
 type Report struct {
+	LegacyTasks              []LegacyTask        `json:"legacy_tasks"`
 	CheckpointAttempts       []CheckpointAttempt `json:"checkpoint_attempts"`
 	Version                  int                 `json:"version"`
 	CapturedAt               time.Time           `json:"captured_at"`

@@ -18,7 +18,7 @@ func runInspectCmd() *cobra.Command {
 	var jsonOutput bool
 	var previewBytes int
 	cmd := &cobra.Command{
-		Use:   "inspect --snapshot PATH",
+		Use:   "run-inspect --snapshot PATH",
 		Short: "Explain a completed offline state snapshot without contacting a wing",
 		Long:  "Read a hash-verified completed snapshot inside the current workspace. No default state path, socket or provider is opened. Suggested actions are data for manual review. Output is metadata only unless --preview-bytes is requested.",
 		Args:  cobra.NoArgs,

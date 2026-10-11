@@ -92,6 +92,9 @@ func openSnapshot(ctx context.Context, path string, opts Options) (*snapshot, er
 	if len(data) > 1<<20 {
 		return nil, errors.New("snapshot manifest exceeds limit")
 	}
+	if uniqueJSON(data) != nil {
+		return nil, errors.New("invalid or ambiguous snapshot manifest")
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if dec.Decode(&s.manifest) != nil || dec.Decode(new(any)) != io.EOF {
@@ -170,13 +173,17 @@ func (s *snapshot) read(path string) ([]byte, error) {
 func digest(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }
 
 func (s *snapshot) verify(ctx context.Context) error {
-	var seen int
+	var seen, nodes int
 	err := fs.WalkDir(s.root.FS(), ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return errors.New("snapshot inventory is unavailable")
 		}
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		nodes++
+		if nodes > 2*maxFiles+1 {
+			return errors.New("snapshot directory count exceeds limit")
 		}
 		if path == "." {
 			return nil

@@ -8,6 +8,7 @@ import (
 // CheckpointAttempt describes retained mailbox intent. A matching durable
 // checkpoint covers its cursor, but does not prove which writer committed it.
 type CheckpointAttempt struct {
+	SessionID        string `json:"session_id"`
 	RequestID        string `json:"request_id"`
 	ConversationID   string `json:"conversation_id"`
 	ExpectedRevision *int64 `json:"expected_revision,omitempty"`
@@ -36,15 +37,20 @@ func (report *Report) checkpoints(s *snapshot, r *records) error {
 		}
 		if row.checkpointKnown && row.revision != nil && row.delivered != nil && *row.revision >= 0 && *row.delivered >= 0 && r.tables["conversation_events"] {
 			var head, pending int64
+			var headRef Ref
 			for _, event := range r.events {
 				if event.root == row.root {
 					if event.sequence > head {
 						head = event.sequence
+						headRef = event.source
 					}
 					if event.sequence > *row.delivered {
 						pending++
 					}
 				}
+			}
+			if head > 0 {
+				view.Sources = append(view.Sources, headRef)
 			}
 			cp.EventHead = &head
 			cp.PendingEvents = &pending
@@ -53,6 +59,8 @@ func (report *Report) checkpoints(s *snapshot, r *records) error {
 				cp.State = "inconsistent_cursor"
 			case row.checkpoint == "":
 				cp.State = "absent"
+			case *row.revision == 0:
+				cp.State = "unknown"
 			case pending > 0:
 				cp.State = "unacknowledged_events"
 			default:
@@ -90,7 +98,7 @@ func (report *Report) checkpoints(s *snapshot, r *records) error {
 			Payload json.RawMessage `json:"payload"`
 		}
 		ref := Ref{Path: path}
-		if json.Unmarshal(data, &entry) != nil || entry.Version != 1 {
+		if decodeRecord(data, &entry) != nil || entry.Version != 1 {
 			report.Issues = append(report.Issues, Issue{Code: "partial_or_unsupported_broker_journal", Sources: []Ref{ref}})
 			continue
 		}
@@ -109,12 +117,12 @@ func (report *Report) checkpoints(s *snapshot, r *records) error {
 				} `json:"arguments"`
 			} `json:"params"`
 		}
-		if json.Unmarshal(entry.Payload, &call) != nil || call.Method != "tools/call" || call.Params.Name != "conversation_checkpoint" || entry.Digest != digest(entry.Payload) || entry.ID+".json" != parts[3] {
+		if decodeRecord(entry.Payload, &call) != nil || call.Method != "tools/call" || call.Params.Name != "conversation_checkpoint" || entry.Digest != digest(entry.Payload) || entry.ID+".json" != parts[3] {
 			report.Issues = append(report.Issues, Issue{Code: "invalid_checkpoint_journal", Sources: []Ref{ref}})
 			continue
 		}
 		a := call.Params.Arguments
-		attempt := CheckpointAttempt{RequestID: entry.ID, ConversationID: a.ConversationID, ExpectedRevision: a.ExpectedRevision, AfterCursor: a.AfterCursor, FenceState: "unknown", Acknowledgement: "request_outcome_unconfirmed", Source: ref}
+		attempt := CheckpointAttempt{SessionID: parts[1], RequestID: entry.ID, ConversationID: a.ConversationID, ExpectedRevision: a.ExpectedRevision, AfterCursor: a.AfterCursor, FenceState: "unknown", Acknowledgement: "request_outcome_unconfirmed", Source: ref}
 		for _, view := range report.Conversations {
 			if view.ID != a.ConversationID {
 				continue
@@ -129,7 +137,7 @@ func (report *Report) checkpoints(s *snapshot, r *records) error {
 					attempt.FenceState = "revision_ahead_of_snapshot"
 				}
 			}
-			if a.AfterCursor != nil && view.Checkpoint.AcknowledgedCursor != nil && *a.AfterCursor <= *view.Checkpoint.AcknowledgedCursor {
+			if a.AfterCursor != nil && view.Checkpoint.Revision != nil && *view.Checkpoint.Revision > 0 && view.Checkpoint.AcknowledgedCursor != nil && *a.AfterCursor <= *view.Checkpoint.AcknowledgedCursor {
 				attempt.Acknowledgement = "cursor_covered_by_durable_checkpoint"
 			}
 		}

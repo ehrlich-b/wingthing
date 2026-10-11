@@ -80,7 +80,7 @@ func sqlExec(t *testing.T, db *sql.DB, query string, args ...any) {
 func addWing(t *testing.T, db *sql.DB, id, session, parent, phase, status string, text *string) {
 	t.Helper()
 	// This JSON is hand-authored independently of the inspector's projections.
-	data, err := json.Marshal(map[string]any{"run_id": id, "session_id": session, "parent_id": parent, "phase": phase, "launch": map[string]any{"Authority": map[string]any{"Principal": "owner", "UserID": "owner"}}, "result": map[string]any{"run_id": id, "session_id": session, "status": status, "text": text, "provider_session_id": "native-thread", "turn_id": "native-turn"}})
+	data, err := json.Marshal(map[string]any{"run_id": id, "session_id": session, "spec_hash": "wing-spec", "parent_id": parent, "phase": phase, "launch": map[string]any{"Authority": map[string]any{"Principal": "owner", "UserID": "owner"}}, "result": map[string]any{"run_id": id, "session_id": session, "status": status, "text": text, "provider_session_id": "native-thread", "turn_id": "native-turn"}})
 	if err != nil {
 		t.Fatal(err)
 	}

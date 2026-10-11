@@ -11,13 +11,13 @@
     },
     {
       "path": "records.sql",
-      "bytes": 1196,
-      "sha256": "6801d17743896887785de4bfe03148fb8d13bbf4471eeea070fa6032392ce79b"
+      "bytes": 1228,
+      "sha256": "e7fe4efa8cebd16e9675333d5c3305c2d12722b1699a04c4a7dab7209165d2fc"
     },
     {
       "path": "wt.db",
       "bytes": 32768,
-      "sha256": "4219f128b1776c7b294202b271abaeb6b64c9c07103bac1949099de2990a5087"
+      "sha256": "437801aeb71fe237c7c76f93f1641e972540da678f9832a95e9a99608acb2e9d"
     }
   ]
 }

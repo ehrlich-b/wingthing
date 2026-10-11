@@ -28,6 +28,11 @@ func RenderText(w io.Writer, report *Report) error {
 				return err
 			}
 		}
+		for _, receipt := range run.Receipts {
+			if err := write("  receipt %s native_session=%s turn=%s failure=%s\n", quote(receipt.Source.Path), quote(receipt.ProviderSessionID), quote(receipt.TurnID), receipt.FailureKind); err != nil {
+				return err
+			}
+		}
 		for _, out := range run.Output {
 			if err := write("  output %s %s: available=%t bytes=%d omitted=%d sha256=%s\n", quote(out.Source.Path), quote(out.Source.Record), out.Available, out.Bytes, out.OmittedBytes, out.SHA256); err != nil {
 				return err
@@ -52,6 +57,11 @@ func RenderText(w io.Writer, report *Report) error {
 					return err
 				}
 			}
+		}
+	}
+	for _, task := range report.LegacyTasks {
+		if err := write("Legacy task %s: %s; execution identity unavailable\n", quote(task.ID), task.Diagnosis); err != nil {
+			return err
 		}
 	}
 	for _, c := range report.Conversations {

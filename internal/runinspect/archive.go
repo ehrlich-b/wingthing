@@ -3,7 +3,6 @@ package runinspect
 import (
 	"bytes"
 	"compress/gzip"
-	"encoding/json"
 	"io"
 	"sort"
 	"strings"
@@ -130,7 +129,7 @@ func archiveIdentity(data []byte, agent, id string) string {
 				ID string `json:"id"`
 			} `json:"payload"`
 		}
-		if json.Unmarshal(line, &record) != nil {
+		if decodeRecord(line, &record) != nil {
 			return "partial_transcript"
 		}
 		observed := ""

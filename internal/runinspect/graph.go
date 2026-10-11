@@ -1,8 +1,15 @@
 package runinspect
 
-import "sort"
+import (
+	"sort"
+	"strconv"
+)
 
 func (report *Report) identityGraph(r *records) {
+	legacy := map[string]legacyRow{}
+	for _, task := range r.legacy {
+		legacy[task.id] = task
+	}
 	conversations := map[string][]conversationRow{}
 	executions := map[string][]executionRow{}
 	wingSessions := map[string][]wingRow{}
@@ -82,6 +89,12 @@ func (report *Report) identityGraph(r *records) {
 				}
 			}
 		}
+		if parent, ok := legacy[run.ParentID]; ok {
+			claims := wingSessions[run.SessionID]
+			if len(claims) == 1 && parent.principal != "" && parent.principal != claims[0].principal {
+				run.issue("parent_owner_conflict", []string{run.ID, parent.id}, claims[0].source, parent.source)
+			}
+		}
 		seen := map[string]bool{}
 		cursor := run.ID
 		chain := []string{}
@@ -94,6 +107,10 @@ func (report *Report) identityGraph(r *records) {
 			chain = append(chain, cursor)
 			p, ok := byRun[cursor]
 			if !ok {
+				if task, exists := legacy[cursor]; exists {
+					cursor = task.parent
+					continue
+				}
 				break
 			}
 			cursor = report.Runs[p].ParentID
@@ -173,6 +190,24 @@ func (report *Report) identityGraph(r *records) {
 		}
 		report.Conversations = append(report.Conversations, view)
 	}
+	for _, event := range r.events {
+		cs := conversations[event.conversation]
+		links := executions[event.session]
+		valid := event.sequence > 0 && len(cs) == 1 && cs[0].root == event.root && len(links) == 1 && links[0].conversation == event.conversation
+		state := "observed"
+		if !valid {
+			state = "inconsistent"
+			issue := Issue{Code: "event_identity_or_lineage_conflict", IDs: []string{event.root, event.conversation, event.session}, Sources: []Ref{event.source}}
+			report.Issues = append(report.Issues, issue)
+			for i := range report.Conversations {
+				view := &report.Conversations[i]
+				if view.RootID == event.root || view.ID == event.conversation || (len(cs) == 1 && view.RootID == cs[0].root) {
+					view.Issues = append(view.Issues, issue)
+				}
+			}
+		}
+		report.edge("event_execution", strconv.FormatInt(event.sequence, 10), event.session, state, event.source)
+	}
 	for _, e := range r.executions {
 		if len(conversations[e.conversation]) == 0 {
 			report.Issues = append(report.Issues, Issue{Code: "execution_missing_conversation", IDs: []string{e.session, e.conversation}, Sources: []Ref{e.source}})
@@ -186,7 +221,7 @@ func (report *Report) finalizeEvidence() {
 		run.EvidenceState = "consistent"
 		for _, issue := range run.Issues {
 			switch issue.Code {
-			case "missing_parent", "run_revision_unavailable", "partial_run_record", "partial_or_unsupported_egg_record", "execution_conversation_unavailable":
+			case "missing_parent", "run_revision_unavailable", "run_spec_hash_unavailable", "nonterminal_egg_after_wing_terminal", "partial_run_record", "partial_or_unsupported_egg_record", "execution_conversation_unavailable":
 				if run.EvidenceState == "consistent" {
 					run.EvidenceState = "incomplete"
 				}

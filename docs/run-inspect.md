@@ -1,16 +1,16 @@
 # Offline run inspection
 
-`wt run inspect --snapshot PATH --json` explains a completed copy of Wingthing
+`wt run-inspect --snapshot PATH --json` explains a completed copy of Wingthing
 state. Run it from the workspace containing that copy. It never loads ambient
 configuration, opens an egg socket, tests process liveness, launches a provider,
 replays a prompt, resumes a session, or runs archive restoration. It does not
 replace an installed executable. The human report renders the same typed data.
-`wt run` still runs prompts; use `wt run -- inspect` for a literal prompt named
-`inspect`, which is now a subcommand.
+The separate `run-inspect` command preserves every existing `wt run [prompt]`
+invocation, including a literal prompt named `inspect`.
 
 The Go interface is `runinspect.Inspect(ctx, path, Options{WorkspaceRoot: root})`
 and returns `*runinspect.Report`, version 1. Report fields describe observed
-runs, conversations, checkpoint attempts, archives, graph edges, issues,
+runs, legacy task ancestors, conversations, checkpoint attempts, archives, graph edges, issues,
 suggested actions and the host observations still required. `run_id` identifies
 a durable task; `session_id` identifies its execution. A conversation's current
 execution can differ from the execution whose run receipt is being inspected.
@@ -31,7 +31,7 @@ conversation-broker artifacts as needed. Merely copying an open database while
 omitting its WAL is insufficient. WAL, SHM and rollback-journal sidecars are
 refused. No snapshot collection command is included: collection is an operator
 operation outside this inspector's authority. Symlinks, missing/unlisted files,
-unsupported manifest versions and hash mismatches are refused. Input inventory
+unsupported manifest versions, duplicate JSON keys and hash mismatches are refused. Input inventory
 and hashes are verified again before returning the report. The current bounds
 are 4,096 files, 128 MiB per file and 256 MiB in total. Table reads stop at 10,000
 rows and report incomplete evidence; archive decoding stops at 32 MiB.
@@ -48,6 +48,7 @@ artifacts remain inspectable.
 
 | Observed record | Interpretation |
 | --- | --- |
+| `tasks` without a corresponding `agent_runs` row | Legacy ancestor and historical output evidence; execution identity remains unverified. |
 | `wt.db`, `agent_runs.record`, `revision` | Wing admission, launch/submission intent, ownership and acknowledged result; revision is its CAS fence. |
 | `eggs/SESSION/run.SHA256(RUN_ID).json`, version 1 | Egg reservation or native run receipt. Nonterminal records prove admission; they cannot establish present liveness. |
 | `conversations`, `conversation_executions` | Logical parent/root identity, owner and current versus earlier executions. |
@@ -97,7 +98,7 @@ report files.
 After `make -j1 ops ACTION=build`, from the clone root:
 
 ```sh
-./wt run inspect --snapshot internal/runinspect/testdata/orphan --json
+./wt run-inspect --snapshot internal/runinspect/testdata/orphan --json
 ```
 
 The original fixture has a wing submission intent and a complete egg receipt.
