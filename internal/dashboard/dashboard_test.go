@@ -40,6 +40,127 @@ func emptyInventory() *inventory {
 	return newInventory(func(context.Context, string) ([]eggclient.LocalSession, error) { return nil, nil })
 }
 
+func TestDashboardPasteCannotRunActionsAtAnyBoundary(t *testing.T) {
+	input := []byte("\x1b[200~q\rxyvt\x03\x02q雪\x1b[201~j")
+	for split := 0; split <= len(input); split++ {
+		s := fixture()
+		before := s.selected
+		decoder := &keyDecoder{}
+		paste := &dashboardPasteInput{}
+		for _, part := range [][]byte{input[:split], input[split:]} {
+			for _, key := range decoder.feed(paste.filter(part)) {
+				if act, quit := s.handle(key); act != nil || quit || s.mode != navigate {
+					t.Fatalf("paste ran an action at split %d: key=%q act=%+v quit=%v", split, key, act, quit)
+				}
+			}
+		}
+		if s.selected == before {
+			t.Fatalf("new navigation key did not survive at split %d", split)
+		}
+	}
+}
+
+func TestDashboardReadOnlyAndConfirmedTakeoverUseExactRoutes(t *testing.T) {
+	previous := config.ReleaseChannel
+	t.Cleanup(func() { config.ReleaseChannel = previous })
+	for _, channel := range []string{"stable", "preview"} {
+		config.ReleaseChannel = channel
+		s := fixture()
+		s.selected = "work:one"
+		m := s.machines["work"]
+		m.sessions[0].WriterID, m.sessions[0].WriterOwner, m.sessions[0].InputEpoch = "writer-1", "browser", 9
+		s.machines["work"] = m
+		act, quit := s.handle("v")
+		if quit || act == nil || !act.readOnly || act.takeover {
+			t.Fatal("v did not create read-only attachment")
+		}
+		args, err := actionArgs(*act, nil)
+		if err != nil || !reflect.DeepEqual(args, []string{"attach", "--read-only", "--", "work:one"}) {
+			t.Fatal(args, err)
+		}
+		act, _ = s.handle("t")
+		if act != nil {
+			t.Fatal("takeover was not confirmed")
+		}
+		if channel == "stable" {
+			if s.mode != navigate || !strings.Contains(s.message, "preview") {
+				t.Fatal("stable ownership behavior changed")
+			}
+			continue
+		}
+		if s.mode != confirmTakeover || !strings.Contains(render(s, 120, 24, time.Now()), "from browser? [y/N]") {
+			t.Fatal("missing owner/confirmation")
+		}
+		if act, _ := s.handle("enter"); act != nil || s.mode != navigate {
+			t.Fatal("Enter approved takeover")
+		}
+		_, _ = s.handle("t")
+		if act, _ := s.handle("escape"); act != nil {
+			t.Fatal("escape approved takeover")
+		}
+		_, _ = s.handle("t")
+		// Inventory removal cannot redirect the captured confirmation target.
+		s.machines["work"] = machine{}
+		s.reconcile()
+		act, _ = s.handle("y")
+		if act == nil || !act.takeover || act.row.key() != "work:one" {
+			t.Fatal("confirmation lost exact captured target")
+		}
+		args, err = actionArgs(*act, nil)
+		if err != nil || !reflect.DeepEqual(args, []string{"attach", "--takeover", "--", "work:one"}) {
+			t.Fatal(args, err)
+		}
+	}
+	config.ReleaseChannel = "preview"
+	s := fixture()
+	if act, _ := s.handle("t"); act != nil || s.mode != navigate {
+		t.Fatal("takeover claimed unsupported ownership")
+	}
+}
+
+func TestDashboardAttachErrorKeepsSelectionAndFiltersUntilUserRetry(t *testing.T) {
+	input, writer := pipeInput(t)
+	var restored atomic.Int32
+	entered := make(chan struct{}, 4)
+	terminal := fakeTerminal(io.Discard, &restored)
+	terminal.raw = func() (func() error, error) {
+		entered <- struct{}{}
+		return func() error { restored.Add(1); return nil }, nil
+	}
+	s := fixture()
+	s.filter, s.machineFilter, s.selected = "remote", "work", "work:one"
+	called := make(chan []string, 3)
+	command := func(_ context.Context, args []string, _ remotepkg.IO) error {
+		called <- args
+		return errors.New("transport ended; outcome unknown")
+	}
+	snapshot := make(map[string][]eggclient.LocalSession)
+	for name, machine := range s.machines {
+		snapshot[name] = append([]eggclient.LocalSession(nil), machine.sessions...)
+	}
+	inv := newInventory(func(_ context.Context, name string) ([]eggclient.LocalSession, error) { return snapshot[name], nil })
+	finished := make(chan error, 1)
+	go func() {
+		finished <- run(t.Context(), s, inv, nil, terminal, remotepkg.IO{In: input, Out: io.Discard}, command, nil)
+	}()
+	receive(t, entered)
+	_, _ = writer.Write([]byte("\r"))
+	receive(t, called)
+	receive(t, entered)
+	// No automatic retry occurs before this newly supplied navigation key.
+	_, _ = writer.Write([]byte("?"))
+	_, _ = writer.Write([]byte("\x1b\r"))
+	receive(t, called)
+	receive(t, entered)
+	_, _ = writer.Write([]byte("q"))
+	if err := receive(t, finished); err != nil {
+		t.Fatal(err)
+	}
+	if s.selected != "work:one" || s.filter != "remote" || s.machineFilter != "work" || len(called) != 0 {
+		t.Fatal("return changed selection/filter or replayed input")
+	}
+}
+
 func TestDashboardTerminalRestoreOnEveryExit(t *testing.T) {
 	failure := errors.New("test failure")
 	for _, name := range []string{"quit", "ctrl-c", "eof", "input error", "input panic", "enter error", "render error", "panic", "canceled"} {
@@ -517,5 +638,54 @@ func TestDashboardQuitWaitsForBackgroundProcessCleanup(t *testing.T) {
 	reaped <- struct{}{}
 	if err := receive(t, finished); err != nil || restored.Load() != 1 {
 		t.Fatalf("quit cleanup failed: %v, restores=%d", err, restored.Load())
+	}
+}
+
+func TestDashboardManualRefreshRequestsInventory(t *testing.T) {
+	input, writer := pipeInput(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var restored atomic.Int32
+	updated := make(chan struct{}, 8)
+	var queries atomic.Int32
+	inv := newInventory(func(context.Context, string) ([]eggclient.LocalSession, error) {
+		queries.Add(1)
+		return []eggclient.LocalSession{session("same", "parent", "/src/app", "blocked")}, nil
+	})
+	output := writerFunc(func(p []byte) (int, error) {
+		if strings.Contains(string(p), "> B parent") {
+			select {
+			case updated <- struct{}{}:
+			default:
+			}
+		}
+		return len(p), nil
+	})
+	finished := make(chan error, 1)
+	s := &state{machines: map[string]machine{"local": {}}}
+	go func() {
+		finished <- run(ctx, s, inv, nil, fakeTerminal(output, &restored), remotepkg.IO{In: input, Out: output}, nil, nil)
+	}()
+	receive(t, updated)
+	first := queries.Load()
+	if _, err := writer.Write([]byte("R")); err != nil {
+		t.Fatal(err)
+	}
+	// A redraw can precede the result; use query completion rather than counting
+	// frames to prove the explicit refresh does not await the periodic tick.
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for queries.Load() == first {
+		select {
+		case <-updated:
+		case <-deadline.C:
+			t.Fatal("R did not request inventory")
+		}
+	}
+	if _, err := writer.Write([]byte("q")); err != nil {
+		t.Fatal(err)
+	}
+	if err := receive(t, finished); err != nil || restored.Load() != 1 {
+		t.Fatalf("manual refresh exit: %v", err)
 	}
 }

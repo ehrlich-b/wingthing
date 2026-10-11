@@ -24,6 +24,8 @@ message StatusResponse {
     string writer_owner = 11;
     uint64 input_epoch = 12;
     int32 process_pid = 13;
+    // Explicit discovery; an ignored AttachOptions field is not negotiation.
+    bool native_terminal = 14;
 }
 
 message KillRequest { string session_id = 1; }
@@ -60,6 +62,7 @@ message AttachOptions {
     string owner = 4;
     uint32 rows = 5;
     uint32 cols = 6;
+    bool native_terminal = 7;
 }
 
 message AttachmentInfo {

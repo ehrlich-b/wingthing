@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/mattn/go-runewidth"
 )
@@ -45,7 +46,7 @@ func TestDashboardLayout80x24And40x12(t *testing.T) {
 			width, height := dimensions[0], dimensions[1]
 			output := render(s, width, height, time.Unix(1000, 0))
 			lines := renderedLines(t, output, width, height)
-			if lines[0] != "wt | 3 sessions | 2 machines" || lines[1] != "B:1 W:1 I:1 D:0 E:0 ?:0" {
+			if lines[0] != "wt | 3 sessions | 2 machines" || !strings.HasPrefix(lines[1], "B:1 W:1 I:1 D:0 E:0 F:0 ?:0") {
 				t.Fatalf("counts = %v", lines[:2])
 			}
 			text := strings.Join(lines, "\n")
@@ -99,11 +100,15 @@ func TestDashboardRendersAgeStatusAndPrompts(t *testing.T) {
 	for _, test := range []struct {
 		mode mode
 		want string
-	}{{filter, "Filter: /"}, {rename, "Name: "}, {newAgent, "Agent (blank = shell): "}, {newCWD, "Cwd on local:"}, {confirmStop, "Stop local:aged? [y/N]"}} {
+	}{{filter, "Filter: /"}, {rename, "Name: "}, {newAgent, "Agent (blank = shell): "}, {newCWD, "Cwd on local:"}, {confirmStop, "Stop local:aged (old)? [y/N]"}} {
 		s.mode, s.target, s.input = test.mode, s.rows()[0], "input"
 		if !strings.Contains(render(s, 80, 24, time.Now()), test.want) {
 			t.Errorf("mode %v missing prompt %q", test.mode, test.want)
 		}
+	}
+	s.mode = confirmStop
+	if !strings.Contains(render(s, 80, 24, time.Now()), "y stop  Enter/Esc cancel") {
+		t.Fatal("stop guidance implied Enter accepts")
 	}
 	if age(-1) != "0s" || age(3600) != "1h" || age(86400) != "1d" {
 		t.Fatal("age boundaries changed")
@@ -114,13 +119,102 @@ func TestDashboardAllStatusesAreVisible(t *testing.T) {
 	s := &state{machines: map[string]machine{"local": {sessions: []eggclient.LocalSession{
 		session("1", "working", "/src", "working"), session("2", "blocked", "/src", "blocked"),
 		session("3", "idle", "/src", "idle"), session("4", "done", "/src", "done"),
-		session("5", "exited", "/src", "exited"), session("6", "unknown", "/src", "future-status"),
+		session("5", "exited", "/src", "exited"), session("6", "unknown", "/src", "future-status"), session("7", "failure", "/src", "failed"),
 	}}}}
 	s.reconcile()
 	text := render(s, 80, 24, time.Now())
-	for _, want := range []string{"B:1 W:1 I:1 D:1 E:1 ?:1", "W working", "B blocked", "I idle", "D done", "E exited", "? unknown"} {
+	for _, want := range []string{"B:1 W:1 I:1 D:1 E:1 F:1 ?:1", "W working", "B blocked", "I idle", "D done", "E exited", "F failure", "? unknown"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("inventory missing %q", want)
 		}
+	}
+}
+
+func TestDashboardFreshnessDetailsHelpAndAttention(t *testing.T) {
+	s := fixture()
+	now := time.Unix(500, 0)
+	m := s.machines["work"]
+	m.updated, m.err = now.Add(-5*time.Minute), "query failed\x1b]52;c;secret\a"
+	s.machines["work"] = m
+	s.remotes = map[string]config.Remote{"work": {SSHTarget: "fake-forge", WTBinary: "/opt/wing thing/wt", WingthingDir: "/remote/state"}}
+	s.selected = "work:one"
+	text := render(s, 80, 24, now)
+	for _, want := range []string{"offline", "last success 5m ago", "stale", "> I remote", "! attention", "i details", "? help"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	drive(s, "i")
+	detail := strings.Join(renderedLines(t, render(s, 80, 24, now), 80, 24), "\n")
+	for _, want := range []string{"work:one", "/home/me/app", "fake-forge", "/opt/wing thing/wt", "/remote/state", "Isolation:", "Readers:", "Writer:"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("details missing %q:\n%s", want, detail)
+		}
+	}
+	drive(s, "\x1b?")
+	text = render(s, 80, 24, now)
+	for _, want := range []string{"Ctrl+B then q", "Ctrl+B twice", "B blocked", "F failed", "wt remote add", "keeps sessions running", "unread", "b: bell off", "disabled hooks"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("help missing %q", want)
+		}
+	}
+	for _, unsupported := range []string{"v observe", "t take control", "h recent"} {
+		if strings.Contains(text, unsupported) {
+			t.Errorf("unsupported control %q", unsupported)
+		}
+	}
+}
+
+func TestDashboardUnreadAndContentFreeLifecycleDetails(t *testing.T) {
+	s := &state{machines: map[string]machine{"local": {}}}
+	attentionApply(s, "local", attentionSession("working", 1, 0))
+	r := attentionSession("completed", 2, 2)
+	r.StateReason = "PRIVATE_TRANSCRIPT_TOKEN\x1b]52;payload\a"
+	attentionApply(s, "local", r)
+	for _, dimensions := range [][2]int{{80, 24}, {40, 12}} {
+		text := strings.Join(renderedLines(t, render(s, dimensions[0], dimensions[1], time.Now()), dimensions[0], dimensions[1]), "\n")
+		if !strings.Contains(text, "I* agent") || !strings.Contains(text, "U:1") || strings.Contains(text, "PRIVATE") {
+			t.Fatalf("unread/status projection: %s", text)
+		}
+	}
+	drive(s, "i")
+	text := render(s, 100, 24, time.Now())
+	for _, want := range []string{"Status: idle", "Attention: unread", "codex_hook", "State cursor: 2", "Foreground response completed", "descendants may continue"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("details missing %q", want)
+		}
+	}
+	if strings.Contains(text, "PRIVATE") || strings.Contains(s.message, "PRIVATE") {
+		t.Fatal("native reason leaked provider content")
+	}
+}
+
+func TestDashboardDetailsWrapUnicodeAndTinyPrompts(t *testing.T) {
+	s := fixture()
+	s.target = row{LocalSession: session("full-id", "界\u202e\x1bname", "/very/long/路径/with/a/complete/project/location", "blocked"), machine: "local"}
+	s.mode = details
+	lines := renderedLines(t, render(s, 40, 12, time.Now()), 40, 12)
+	text := strings.Join(lines, "")
+	if !strings.Contains(text, s.target.CWD) {
+		t.Fatalf("full cwd lost: %s", text)
+	}
+	if strings.Contains(text, "\u202e") {
+		t.Fatal("bidi control escaped sanitation")
+	}
+	s.mode, s.input = rename, "edited"
+	tiny := render(s, 40, 1, time.Now())
+	if !strings.Contains(tiny, "Name: edited") || !strings.Contains(tiny, "Esc/Ctrl-C") {
+		t.Fatal("tiny prompt lost escape guidance")
+	}
+	for _, dimensions := range [][2]int{{40, 12}, {20, 3}, {1, 1}} {
+		renderedLines(t, render(s, dimensions[0], dimensions[1], time.Now()), dimensions[0], dimensions[1])
+	}
+}
+
+func TestDashboardHelpAdvertisesRecentRuns(t *testing.T) {
+	s := fixture()
+	s.mode = help
+	if !strings.Contains(render(s, 120, 32, time.Now()), "h: recent runs") {
+		t.Fatal("history help missing")
 	}
 }

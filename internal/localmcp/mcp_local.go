@@ -613,6 +613,8 @@ func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMe
 		data, err = s.ToolConversationWake(arguments)
 	case "agent_run":
 		data, err = s.toolAgentRun(arguments)
+	case "agent_list":
+		data, err = s.toolAgentList(ctx, arguments)
 	case "agent_status":
 		data, err = s.toolAgentStatus(arguments)
 	case "agent_wait":

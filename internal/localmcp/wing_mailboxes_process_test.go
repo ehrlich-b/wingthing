@@ -145,18 +145,8 @@ func builtScopedParentProtocol(t *testing.T, exitParent bool) {
 	}
 	localGate := testprovider.NewCompletionGate(t, work)
 	remoteGate := testprovider.NewCompletionGate(t, remoteWork)
-	alias, err := os.MkdirTemp(filepath.Join(repo, ".scratch"), "c")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(home, alias); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(alias) })
-	localState, remoteState := filepath.Join(alias, "l"), filepath.Join(alias, "r")
+	localState := testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))
+	remoteState := testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))
 	path := bin + string(os.PathListSeparator) + h.Root + string(os.PathListSeparator) + os.Getenv("PATH")
 	t.Setenv("HOME", home)
 	t.Setenv("PATH", path)
@@ -173,7 +163,7 @@ func builtScopedParentProtocol(t *testing.T, exitParent bool) {
 	var mu sync.Mutex
 	var eggs []*mailboxProcess
 	env := func(state string) []string {
-		return []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + path, "SHELL=/bin/sh", "WT_FAKE_SSH_ROOT=" + h.Root}
+		return []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + path, "SHELL=/bin/sh", "TMPDIR=" + os.Getenv("TMPDIR"), "PYTHONDONTWRITEBYTECODE=1", "WT_FAKE_SSH_ROOT=" + h.Root}
 	}
 	newWing := func(state, workspace string) *wingsession.Service {
 		t.Helper()

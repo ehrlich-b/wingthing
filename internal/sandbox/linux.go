@@ -79,6 +79,9 @@ type linuxSandbox struct {
 // newPlatform tries to create a namespace+seccomp sandbox.
 // Returns an error if capabilities are insufficient so the factory falls back.
 func newPlatform(cfg Config) (Sandbox, error) {
+	if _, err := ValidateLaunchPreparation(cfg); err != nil {
+		return nil, err
+	}
 	// Writes outside HOME and through overlay prefixes are not a closed rule
 	// list here, so a protected set cannot be verified against final policy.
 	if err := refuseProtectedWriteTargets(cfg, "linux"); err != nil {

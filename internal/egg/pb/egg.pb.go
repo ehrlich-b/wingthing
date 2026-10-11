@@ -72,6 +72,8 @@ type StatusResponse struct {
 	WriterOwner    string                 `protobuf:"bytes,11,opt,name=writer_owner,json=writerOwner,proto3" json:"writer_owner,omitempty"`
 	InputEpoch     uint64                 `protobuf:"varint,12,opt,name=input_epoch,json=inputEpoch,proto3" json:"input_epoch,omitempty"`
 	ProcessPid     int32                  `protobuf:"varint,13,opt,name=process_pid,json=processPid,proto3" json:"process_pid,omitempty"`
+	// Explicit discovery; an ignored AttachOptions field is not negotiation.
+	NativeTerminal bool `protobuf:"varint,14,opt,name=native_terminal,json=nativeTerminal,proto3" json:"native_terminal,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -195,6 +197,13 @@ func (x *StatusResponse) GetProcessPid() int32 {
 		return x.ProcessPid
 	}
 	return 0
+}
+
+func (x *StatusResponse) GetNativeTerminal() bool {
+	if x != nil {
+		return x.NativeTerminal
+	}
+	return false
 }
 
 type KillRequest struct {
@@ -568,15 +577,16 @@ func (*SessionMsg_Attach) isSessionMsg_Payload() {}
 func (*SessionMsg_Detach) isSessionMsg_Payload() {}
 
 type AttachOptions struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ReadOnly      bool                   `protobuf:"varint,1,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
-	Takeover      bool                   `protobuf:"varint,2,opt,name=takeover,proto3" json:"takeover,omitempty"`
-	Claim         bool                   `protobuf:"varint,3,opt,name=claim,proto3" json:"claim,omitempty"`
-	Owner         string                 `protobuf:"bytes,4,opt,name=owner,proto3" json:"owner,omitempty"`
-	Rows          uint32                 `protobuf:"varint,5,opt,name=rows,proto3" json:"rows,omitempty"`
-	Cols          uint32                 `protobuf:"varint,6,opt,name=cols,proto3" json:"cols,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ReadOnly       bool                   `protobuf:"varint,1,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
+	Takeover       bool                   `protobuf:"varint,2,opt,name=takeover,proto3" json:"takeover,omitempty"`
+	Claim          bool                   `protobuf:"varint,3,opt,name=claim,proto3" json:"claim,omitempty"`
+	Owner          string                 `protobuf:"bytes,4,opt,name=owner,proto3" json:"owner,omitempty"`
+	Rows           uint32                 `protobuf:"varint,5,opt,name=rows,proto3" json:"rows,omitempty"`
+	Cols           uint32                 `protobuf:"varint,6,opt,name=cols,proto3" json:"cols,omitempty"`
+	NativeTerminal bool                   `protobuf:"varint,7,opt,name=native_terminal,json=nativeTerminal,proto3" json:"native_terminal,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *AttachOptions) Reset() {
@@ -649,6 +659,13 @@ func (x *AttachOptions) GetCols() uint32 {
 		return x.Cols
 	}
 	return 0
+}
+
+func (x *AttachOptions) GetNativeTerminal() bool {
+	if x != nil {
+		return x.NativeTerminal
+	}
+	return false
 }
 
 type AttachmentInfo struct {
@@ -784,7 +801,7 @@ var File_egg_proto protoreflect.FileDescriptor
 const file_egg_proto_rawDesc = "" +
 	"\n" +
 	"\tegg.proto\x12\x03egg\"\x0f\n" +
-	"\rStatusRequest\"\xc1\x03\n" +
+	"\rStatusRequest\"\xea\x03\n" +
 	"\x0eStatusResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
@@ -802,7 +819,8 @@ const file_egg_proto_rawDesc = "" +
 	"\vinput_epoch\x18\f \x01(\x04R\n" +
 	"inputEpoch\x12\x1f\n" +
 	"\vprocess_pid\x18\r \x01(\x05R\n" +
-	"processPid\",\n" +
+	"processPid\x12'\n" +
+	"\x0fnative_terminal\x18\x0e \x01(\bR\x0enativeTerminal\",\n" +
 	"\vKillRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"\x0e\n" +
@@ -829,14 +847,15 @@ const file_egg_proto_rawDesc = "" +
 	"\texit_code\x18\x05 \x01(\x05H\x00R\bexitCode\x12\x18\n" +
 	"\x06attach\x18\x06 \x01(\bH\x00R\x06attach\x12\x18\n" +
 	"\x06detach\x18\a \x01(\bH\x00R\x06detachB\t\n" +
-	"\apayload\"\x9c\x01\n" +
+	"\apayload\"\xc5\x01\n" +
 	"\rAttachOptions\x12\x1b\n" +
 	"\tread_only\x18\x01 \x01(\bR\breadOnly\x12\x1a\n" +
 	"\btakeover\x18\x02 \x01(\bR\btakeover\x12\x14\n" +
 	"\x05claim\x18\x03 \x01(\bR\x05claim\x12\x14\n" +
 	"\x05owner\x18\x04 \x01(\tR\x05owner\x12\x12\n" +
 	"\x04rows\x18\x05 \x01(\rR\x04rows\x12\x12\n" +
-	"\x04cols\x18\x06 \x01(\rR\x04cols\"\xc1\x01\n" +
+	"\x04cols\x18\x06 \x01(\rR\x04cols\x12'\n" +
+	"\x0fnative_terminal\x18\a \x01(\bR\x0enativeTerminal\"\xc1\x01\n" +
 	"\x0eAttachmentInfo\x12#\n" +
 	"\rattachment_id\x18\x01 \x01(\tR\fattachmentId\x12\x1b\n" +
 	"\twriter_id\x18\x02 \x01(\tR\bwriterId\x12!\n" +

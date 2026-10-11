@@ -4,10 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -32,29 +29,7 @@ type runProcessTree struct {
 }
 
 func processSnapshot() (map[int]observedProcess, error) {
-	// Both supported Unix platforms provide these fields. Exclude arguments,
-	// names and environment so no provider content enters survivor metadata.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	data, err := exec.CommandContext(ctx, "/bin/ps", "-axo", "pid=,ppid=,pgid=,stat=,lstart=").Output()
-	if err != nil {
-		return nil, errors.New("process descendant inventory unavailable")
-	}
-	out := make(map[int]observedProcess)
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 9 || strings.HasPrefix(fields[3], "Z") {
-			continue
-		}
-		pid, e1 := strconv.Atoi(fields[0])
-		parent, e2 := strconv.Atoi(fields[1])
-		group, e3 := strconv.Atoi(fields[2])
-		if e1 != nil || e2 != nil || e3 != nil {
-			continue
-		}
-		out[pid] = observedProcess{RunDescendant: RunDescendant{pid, parent, group}, start: strings.Join(fields[4:], " ")}
-	}
-	return out, nil
+	return processSnapshotContext(context.Background())
 }
 
 func (tree *runProcessTree) observe(snapshot map[int]observedProcess) {
@@ -93,36 +68,6 @@ func (tree *runProcessTree) kill(sess *Session) ([]RunDescendant, error) {
 	defer cancel()
 	err := terminateSession(ctx, sess, 3*time.Second)
 	after, afterErr := processSnapshot()
-	// SIGKILL delivery is asynchronous. Await disappearance of the signalled
-	// group before distinguishing escaped descendants from a process exiting.
-	if sess.processGroupID == sess.PID && afterErr == nil {
-		ticker := time.NewTicker(20 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			alive := false
-			for _, process := range after {
-				if process.ProcessGroupID == sess.PID {
-					alive = true
-					break
-				}
-			}
-			if !alive {
-				break
-			}
-			select {
-			case <-ctx.Done():
-				err = errors.Join(err, ctx.Err())
-			case <-ticker.C:
-			}
-			if ctx.Err() != nil {
-				break
-			}
-			after, afterErr = processSnapshot()
-			if afterErr != nil {
-				break
-			}
-		}
-	}
 	if afterErr != nil {
 		return nil, errors.Join(err, inventoryErr, afterErr)
 	}
@@ -138,19 +83,26 @@ func (tree *runProcessTree) kill(sess *Session) ([]RunDescendant, error) {
 	return survivors, errors.Join(err, inventoryErr)
 }
 
-// PTYs start a new session/process group. Tests and non-PTY callers may not;
-// never signal a group shared with the egg or its parent.
-func signalSessionGroup(sess *Session, signal syscall.Signal) error {
+func sessionOwnedGroupID(sess *Session) int {
 	pid := sess.cmd.Process.Pid
 	group, err := syscall.Getpgid(pid)
 	if sess.processGroupID == pid || (err == nil && group == pid) {
-		err = syscall.Kill(-pid, signal)
+		return pid
+	}
+	return 0
+}
+
+// PTYs start a new session/process group. Tests and non-PTY callers may not;
+// never signal a group shared with the egg or its parent.
+func signalSessionGroup(sess *Session, pgid int, signal syscall.Signal) error {
+	if pgid != 0 {
+		err := syscall.Kill(-pgid, signal)
 		if errors.Is(err, syscall.ESRCH) {
 			return nil
 		}
-		return err
+		return sessionGroupSignalError(pgid, err)
 	}
-	err = sess.cmd.Process.Signal(signal)
+	err := sess.cmd.Process.Signal(signal)
 	if errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrProcessDone) {
 		return nil
 	}

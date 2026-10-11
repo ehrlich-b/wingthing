@@ -422,6 +422,17 @@ func buildTools() []Tool {
 			Grant: "agent.run", Surfaces: both, AuditTargetKeys: []string{"run_id"},
 		},
 		{
+			Name: "agent_list", Title: "Discover durable agent runs",
+			Description: "List owned active runs plus bounded recent terminal metadata, including ordinary and task-augmented runs. Fixed admissions watermark, live lifecycle metadata. Opaque cursors survive restart for 24 hours. Use an exact idempotency_key to reconcile a lost admission without launching work. No prompts, output or provider transcripts.",
+			InputSchema: objectSchema(map[string]any{
+				"limit":                   map[string]any{"type": "integer", "minimum": 1, "maximum": 200, "default": 100},
+				"cursor":                  map[string]any{"type": "string", "maxLength": 4096},
+				"idempotency_key":         map[string]any{"type": "string", "maxLength": 200, "description": "Exact owner-scoped original admission key; includes older terminal admissions"},
+				"terminal_window_seconds": map[string]any{"type": "integer", "minimum": 3600, "maximum": 2592000, "default": 604800},
+			}), Annotations: readOnly,
+			Grant: "agent.read", Surfaces: both,
+		},
+		{
 			Name: "agent_status", Title: "Get agent run status",
 			Description: "Read bounded lifecycle metadata for one run owned by this MCP principal, including its deadline or no deadline.",
 			InputSchema: objectSchema(map[string]any{

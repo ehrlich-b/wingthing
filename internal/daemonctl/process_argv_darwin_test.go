@@ -3,9 +3,11 @@
 package daemonctl
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -49,5 +51,36 @@ func TestInspectDaemonPidPreservesExecutablePathSpacesOnDarwin(t *testing.T) {
 			t.Fatalf("spaced-path daemon was not recognized: matches=%v err=%v", matches, err)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestStopDaemonAndWaitHandlesUnreapedExitOnDarwin(t *testing.T) {
+	child := exec.Command(os.Args[0], "wing", "start", "--foreground")
+	child.Env = append(os.Environ(), daemonArgvHelperEnv+"=1")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// Do not reap until StopDaemonAndWait and ReadPidFrom have inspected
+	// the terminated daemon. Native signal(0) still reports its PID alive.
+	t.Cleanup(func() { _ = child.Process.Kill(); _ = child.Wait() })
+	pid := child.Process.Pid
+	if matches, err := inspectDaemonPid(pid, WingDaemon); err != nil || !matches {
+		t.Fatalf("fixture daemon not recognized: matches=%v error=%v", matches, err)
+	}
+	pidPath := filepath.Join(t.TempDir(), "wing.pid")
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(pid)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := StopDaemonAndWait(pid, WingDaemon, 3*time.Second); err != nil {
+		t.Fatalf("stop unreaped daemon: %v", err)
+	}
+	if matches, err := inspectDaemonPid(pid, WingDaemon); err != nil || matches {
+		t.Fatalf("terminated daemon inspection: matches=%v error=%v", matches, err)
+	}
+	if _, err := ReadPidFrom(pidPath, WingDaemon); !errors.Is(err, errStaleDaemonPID) {
+		t.Fatalf("terminated daemon PID metadata: %v", err)
+	}
+	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
+		t.Fatalf("terminated daemon PID file was not removed: %v", err)
 	}
 }

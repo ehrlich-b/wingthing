@@ -1,6 +1,7 @@
 package egg
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -242,5 +243,48 @@ func TestConfigSnapshotRestoresRegularFile(t *testing.T) {
 	info, err := os.Stat(provider)
 	if err != nil || info.Mode().Perm() != 0700 {
 		t.Fatalf("restored config directory is not private: %v, %v", info, err)
+	}
+}
+
+func TestNativeTerminalVTESnapshotRestoresLatestModes(t *testing.T) {
+	v := NewVTerm(30, 5)
+	defer closeTerminalForTest(t, v)
+	for i := range 12 {
+		writeTerminalForTest(t, v, []byte(fmt.Sprintf("HISTORY-%02d\r\n", i)))
+	}
+	for _, chunk := range []string{"\x1b[?10", "00h\x1b[?1006h\x1b[?2004h\x1b[?1049hALT", "\x1b[?100", "0l\x1b[?1006l\x1b[?1049lNORMAL"} {
+		writeTerminalForTest(t, v, []byte(chunk))
+	}
+	v.Resize(40, 8)
+	snapshot := v.Snapshot()
+	if !bytes.Contains(snapshot, []byte("HISTORY-00")) || !bytes.Contains(snapshot, []byte("NORMAL")) {
+		t.Fatalf("VTE lost normal history after resize: %q", snapshot)
+	}
+	var restored terminalModes
+	restored.write(snapshot)
+	for i, mode := range presentationModes {
+		if (mouseMode(mode) || alternateMode(mode)) && restored.states[i].enabled {
+			t.Fatalf("VTE restored stale enable for %d", mode)
+		}
+		if mode == 2004 && !restored.states[i].enabled {
+			t.Fatal("VTE lost bracketed paste mode")
+		}
+	}
+	var browser browserPresentation
+	legacy := browser.write(snapshot)
+	if bytes.Contains(legacy, []byte("\x1b[?1000h")) {
+		t.Fatal("VTE browser snapshot enabled mouse")
+	}
+	writeTerminalForTest(t, v, []byte("\x1b[?1000h\x1b[?1049hALT-RECONNECTED"))
+	enabled := v.Snapshot()
+	if !bytes.Contains(enabled, []byte("\x1b[?1000h")) || !bytes.Contains(browser.write(enabled), mouseTrackingMarker) {
+		t.Fatal("VTE enabled snapshot lost native mode or browser OSC 7771")
+	}
+	if bytes.Index(enabled, []byte("HISTORY-00")) > bytes.Index(enabled, []byte("\x1b[?1049h")) {
+		t.Fatal("alternate mode swallowed normal-screen scrollback")
+	}
+	writeTerminalForTest(t, v, []byte("\x1b[?100"))
+	if !bytes.HasSuffix(v.Snapshot(), []byte("\x1b[?100")) {
+		t.Fatal("VTE snapshot lost pending CSI at fence offset")
 	}
 }

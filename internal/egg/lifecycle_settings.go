@@ -15,7 +15,7 @@ import (
 // Check the opened identity, never a separately reopened settings path. The
 // caller passes the compiled session policy before adding the settings bridge.
 func validateClaudeSettingsFile(f *os.File, policy *sandbox.Config) error {
-	refuse := func() error { return errors.New("settings file is outside the session filesystem policy") }
+	refuse := func() error { return &settingsPolicyFailure{path: f.Name()} }
 	var stat unix.Stat_t
 	if err := unix.Fstat(int(f.Fd()), &stat); err != nil {
 		return err

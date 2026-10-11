@@ -10,15 +10,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -85,7 +90,7 @@ func TestAttachStandaloneEggRetainsDaemonlessContract(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = os.RemoveAll(root) })
-			state := filepath.Join(root, "s")
+			state := testprovider.ShortStateDir(t, scratch)
 			t.Setenv("HOME", filepath.Join(root, "home"))
 			t.Setenv("WINGTHING_DIR", state)
 			t.Setenv("WINGTHING_PREVIEW_DIR", "")
@@ -184,7 +189,7 @@ func TestAttachStandaloneEggRetainsDaemonlessContract(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = wing.Close() })
-			for _, args := range [][]string{{"fixture"}, {"--json"}, {"--select"}} {
+			for _, args := range [][]string{{"fixture"}, {"--takeover", "fixture"}, {"--read-only", "fixture"}, {"--json"}, {"--select"}} {
 				if _, err := run("", args...); err == nil || !strings.Contains(err.Error(), refusal.Error()) {
 					t.Fatalf("wing refusal bypassed for %v: %v", args, err)
 				}
@@ -193,5 +198,135 @@ func TestAttachStandaloneEggRetainsDaemonlessContract(t *testing.T) {
 				t.Fatal("refused or detached clients sent input or bypassed wing policy")
 			}
 		})
+	}
+}
+
+func TestAttachReconnectPreservesExecutableStateAndProfileWithoutTakeover(t *testing.T) {
+	dir := "/state with space; $(literal)"
+	profile := config.Remote{SSHTarget: "user@fixture", WTBinary: "/custom wt/wt-preview", WingthingDir: "/remote state"}
+	args := append(remotepkg.ProfileArgs(profile), "attach", "--takeover", "--", "full-id")
+	command := attachReconnectCommand(dir, args)
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"WINGTHING_DIR=" + remotepkg.ShellQuote(dir), "WINGTHING_PREVIEW_DIR=" + remotepkg.ShellQuote(dir), remotepkg.ShellQuote(executable), "'--remote' 'user@fixture'", "'--remote-binary' '/custom wt/wt-preview'", "'--remote-state' '/remote state'", "'attach' '--' 'full-id'"} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("reconnect lost %q: %s", want, command)
+		}
+	}
+	if strings.Contains(command, "'--takeover'") {
+		t.Fatal("reconnect repeated takeover")
+	}
+	if command := attachReconnectCommand(dir, []string{"attach", "--", "--takeover"}); !strings.HasSuffix(command, "'--' '--takeover'") {
+		t.Fatal("literal session argument changed")
+	}
+	if standaloneAttachAvailable(&eggclient.AttachConnectionError{Err: syscall.ECONNREFUSED}, "") {
+		t.Fatal("established stream failure retried through standalone authority")
+	}
+}
+
+func TestAttachRemoteUnknownOutcomePrintsExactReconnectOnlyOnStderr(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("WINGTHING_DIR", state)
+	t.Setenv("WINGTHING_PREVIEW_DIR", "")
+	if err := config.SaveRemotes(state, map[string]config.Remote{"forge": {SSHTarget: "fixture-host", WTBinary: "/custom binary/wt", WingthingDir: "/saved state"}}); err != nil {
+		t.Fatal(err)
+	}
+	ssh := writeFakeRemoteSSH(t, "exit 255\n")
+	var output, diagnostic bytes.Buffer
+	err := executeCLI(t.Context(), []string{"attach", "--takeover", "forge:full-id"}, remotepkg.IO{In: strings.NewReader(""), Out: &output, ErrOut: &diagnostic, SSHPath: ssh})
+	var exit *cmdutil.CommandExitError
+	if !errors.As(err, &exit) || exit.Code != 255 || output.Len() != 0 {
+		t.Fatal(output.String(), err)
+	}
+	for _, want := range []string{"forge (fixture-host)", "session outcome unknown", "'--remote-binary' '/custom binary/wt'", "'--remote-state' '/saved state'", "'attach' '--' 'full-id'"} {
+		if !strings.Contains(diagnostic.String(), want) {
+			t.Fatalf("missing %q: %s", want, diagnostic.String())
+		}
+	}
+	if !strings.Contains(diagnostic.String(), "'attach' '--' 'forge:full-id'") {
+		t.Fatal("reconnect did not qualify the saved profile")
+	}
+	if strings.Contains(diagnostic.String(), "'--takeover'") {
+		t.Fatal("failure advice repeats takeover")
+	}
+}
+
+func TestGenericRemoteAttachUnknownOutcomePreservesPinnedRoute(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("WINGTHING_DIR", state)
+	t.Setenv("WINGTHING_PREVIEW_DIR", "")
+	ssh := writeFakeRemoteSSH(t, "exit 255\n")
+	var output, diagnostic bytes.Buffer
+	args := []string{"--remote", "fixture-host", "--remote-binary", "/custom binary/wt", "--remote-state", "/saved state", "attach", "--takeover", "--", "full-id"}
+	err := executeCLI(t.Context(), args, remotepkg.IO{In: strings.NewReader(""), Out: &output, ErrOut: &diagnostic, SSHPath: ssh})
+	var exit *cmdutil.CommandExitError
+	if !errors.As(err, &exit) || exit.Code != 255 || output.Len() != 0 {
+		t.Fatal(output.String(), err)
+	}
+	for _, want := range []string{"Connection to fixture-host ended", "session outcome unknown", "'--remote' 'fixture-host'", "'--remote-binary' '/custom binary/wt'", "'--remote-state' '/saved state'", "'attach' '--' 'full-id'"} {
+		if !strings.Contains(diagnostic.String(), want) {
+			t.Fatalf("missing %q: %s", want, diagnostic.String())
+		}
+	}
+	if strings.Contains(diagnostic.String(), "'--takeover'") {
+		t.Fatal("failure advice repeats takeover")
+	}
+}
+
+func TestGenericRemoteAttachAfterDelimiterRequestsTTY(t *testing.T) {
+	ssh := writeFakeRemoteSSH(t, "printf '%s\\n' \"$@\"\n")
+	for _, test := range []struct {
+		args        []string
+		interactive bool
+		mode        string
+	}{
+		{[]string{"attach", "--", "full-session-id"}, true, "-t"},
+		{[]string{"attach", "--read-only", "--", "--takeover"}, true, "-t"},
+		{[]string{"attach", "--", "full-session-id"}, false, "-T"},
+		{[]string{"attach"}, true, "-T"},
+		{[]string{"attach", "--json"}, true, "-T"},
+	} {
+		var out bytes.Buffer
+		args := append([]string{"--remote", "fixture-host", "--remote-binary", "/opt/wt builds/wt-dev", "--remote-state", "/saved state"}, test.args...)
+		err := executeCLI(t.Context(), args, remotepkg.IO{In: strings.NewReader(""), Out: &out, ErrOut: io.Discard, StdinTTY: test.interactive, StdoutTTY: test.interactive, SSHPath: ssh})
+		want := test.mode + "\nfixture-host\nWINGTHING_DIR='/saved state' WINGTHING_PREVIEW_DIR='/saved state' '/opt/wt builds/wt-dev' '--expected-channel' 'stable'"
+		for _, arg := range test.args {
+			want += " " + remotepkg.ShellQuote(arg)
+		}
+		want += "\n"
+		if err != nil || out.String() != want {
+			t.Fatalf("generic attach %q: %q, %v; want %q", test.args, out.String(), err, want)
+		}
+	}
+}
+
+func TestRemoteBatchInvocationPreservesArgvAndTTYPolicy(t *testing.T) {
+	for _, test := range []struct {
+		args, want []string
+		tty, batch bool
+	}{
+		{[]string{"--remote-batch", "attach", "--", "full-id"}, []string{"attach", "--", "full-id"}, false, true},
+		{[]string{"--remote-batch=false", "attach", "--", "full-id"}, []string{"attach", "--", "full-id"}, true, false},
+		{[]string{"attach", "--", "--remote-batch"}, []string{"attach", "--", "--remote-batch"}, true, false},
+		{[]string{"--remote-batch", "terminal", "--name", "--remote-state", "--json"}, []string{"terminal", "--name", "--remote-state", "--json"}, false, true},
+		{[]string{"terminal", "--name", "--remote-batch", "--json"}, []string{"terminal", "--name", "--remote-batch", "--json"}, false, false},
+		{[]string{"--remote-batch"}, []string{"_remote", "enter", "--json"}, false, true},
+	} {
+		argv := append([]string{"--remote", "fixture-host"}, test.args...)
+		route, remote, err := remotepkg.ParseRemoteInvocation(argv, true, newRootCommand)
+		if err != nil || !remote || route.AllocateTTY != test.tty || route.NonInteractive != test.batch || !reflect.DeepEqual(route.Args, test.want) {
+			t.Fatalf("%q => %+v remote=%v err=%v; want %q tty=%v batch=%v", argv, route, remote, err, test.want, test.tty, test.batch)
+		}
+	}
+	if _, _, err := remotepkg.ParseRemoteInvocation([]string{"--remote", "fixture-host", "--remote-batch=invalid", "attach"}, true, newRootCommand); err == nil {
+		t.Fatal("invalid batch bool accepted")
+	}
+	if _, _, err := remotepkg.ParseRemoteInvocation([]string{"--remote-batch", "attach"}, true, newRootCommand); err == nil {
+		t.Fatal("batch accepted without remote")
+	}
+	if _, _, err := remotepkg.ParseRemoteInvocation([]string{"--remote", "fixture-host", "wing"}, true, newRootCommand); err == nil {
+		t.Fatal("remote command allowlist widened")
 	}
 }

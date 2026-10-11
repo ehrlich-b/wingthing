@@ -21,6 +21,8 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/control"
+	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 
 	"github.com/ehrlich-b/wingthing/internal/egg"
@@ -107,6 +109,7 @@ func eggRunCmd() *cobra.Command {
 		traceFlag                  bool
 		vteFlag                    bool
 		renderedConfigFlag         string
+		launchPolicyFlag           string
 		userHomeFlag               string
 		skipHostAgentEnvFlag       bool
 		idleTimeoutFlag            string
@@ -211,6 +214,12 @@ func eggRunCmd() *cobra.Command {
 					return errors.New("invalid initial native run request")
 				}
 			}
+			if launchPolicyFlag != "" {
+				rc.LaunchPolicy = new(egg.LaunchPolicySelection)
+				if len(launchPolicyFlag) > 64<<10 || json.Unmarshal([]byte(launchPolicyFlag), rc.LaunchPolicy) != nil {
+					return errors.New("invalid launch policy metadata")
+				}
+			}
 
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
@@ -224,6 +233,13 @@ func eggRunCmd() *cobra.Command {
 
 			err = srv.RunSession(ctx, rc)
 			if err != nil {
+				if d, ok := control.LaunchDiagnosticOf(err); ok {
+					if data, jsonErr := json.Marshal(d); jsonErr == nil {
+						if writeErr := daemonctl.WriteAtomicMetadataFile(filepath.Join(dir, "launch.failed.json"), data, 0600); writeErr != nil {
+							log.Printf("egg: preserve launch classification: %v", writeErr)
+						}
+					}
+				}
 				if _, diagnosticErr := eggclient.PreserveEggFailure(dir, err); diagnosticErr != nil {
 					log.Printf("egg: preserve startup failure: %v", diagnosticErr)
 				}
@@ -269,6 +285,10 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&traceFlag, "trace", false, "wrap sandbox with strace for syscall tracing (Linux only)")
 	cmd.Flags().BoolVar(&vteFlag, "vte", false, "use VTerm snapshot for reconnect (internal)")
 	cmd.Flags().StringVar(&renderedConfigFlag, "rendered-config", "", "rendered egg config YAML (internal)")
+	cmd.Flags().StringVar(&launchPolicyFlag, "launch-policy", "", "captured launch policy provenance (internal)")
+	if err := cmd.Flags().MarkHidden("launch-policy"); err != nil {
+		panic(err)
+	}
 	cmd.Flags().StringVar(&userHomeFlag, "user-home", "", "per-user home directory (internal)")
 	cmd.Flags().BoolVar(&skipHostAgentEnvFlag, "skip-host-agent-env", false, "do not inherit host provider credentials (internal)")
 	cmd.Flags().StringVar(&idleTimeoutFlag, "idle-timeout", "", "idle timeout duration (e.g. 4h)")

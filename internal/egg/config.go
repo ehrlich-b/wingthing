@@ -178,17 +178,18 @@ func (b BaseField) HasMasks() bool {
 
 // EggConfig holds the sandbox and environment configuration for egg sessions.
 type EggConfig struct {
-	Base                       BaseField         `yaml:"base,omitempty"`
-	FS                         []string          `yaml:"fs"`
-	RoostPolicyPaths           []string          `yaml:"-"` // runtime-only configured root policy files
-	Network                    NetworkField      `yaml:"network"`
-	Env                        EnvField          `yaml:"env,omitempty"`
-	Resources                  EggResources      `yaml:"resources"`
-	Shell                      string            `yaml:"shell"`
-	DangerouslySkipPermissions bool              `yaml:"dangerously_skip_permissions"`
-	Audit                      bool              `yaml:"audit"`
-	Trace                      bool              `yaml:"trace"`
-	AgentSettings              map[string]string `yaml:"agent_settings,omitempty"` // agent name -> settings file path
+	LaunchPolicy               *LaunchPolicySelection `yaml:"-"` // captured at resolution, never rediscovered for diagnostics
+	Base                       BaseField              `yaml:"base,omitempty"`
+	FS                         []string               `yaml:"fs"`
+	RoostPolicyPaths           []string               `yaml:"-"` // runtime-only configured root policy files
+	Network                    NetworkField           `yaml:"network"`
+	Env                        EnvField               `yaml:"env,omitempty"`
+	Resources                  EggResources           `yaml:"resources"`
+	Shell                      string                 `yaml:"shell"`
+	DangerouslySkipPermissions bool                   `yaml:"dangerously_skip_permissions"`
+	Audit                      bool                   `yaml:"audit"`
+	Trace                      bool                   `yaml:"trace"`
+	AgentSettings              map[string]string      `yaml:"agent_settings,omitempty"` // agent name -> settings file path
 }
 
 // EggResources configures resource limits for sandboxed processes.
@@ -231,8 +232,9 @@ func DefaultEggConfig() *EggConfig {
 	}
 	fs = append(fs, "deny-write:./egg.yaml")
 	return &EggConfig{
-		FS:  fs,
-		Env: EnvField{"HOME", "PATH", "TERM", "LANG", "USER"},
+		LaunchPolicy: &LaunchPolicySelection{Origin: "built-in defaults"},
+		FS:           fs,
+		Env:          EnvField{"HOME", "PATH", "TERM", "LANG", "USER"},
 	}
 }
 
@@ -346,52 +348,17 @@ const maxBaseDepth = 10
 // a fully merged config. If base is empty, merges on top of DefaultEggConfig.
 // If base is "none", returns the config as-is (empty slate).
 func ResolveEggConfig(path string) (*EggConfig, error) {
-	return resolveEggConfig(path, make(map[string]bool), 0)
-}
-
-func resolveEggConfig(path string, visited map[string]bool, depth int) (*EggConfig, error) {
-	if depth > maxBaseDepth {
-		return nil, fmt.Errorf("egg config base chain too deep (max %d)", maxBaseDepth)
-	}
-	abs, err := filepath.Abs(path)
+	path, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
-	if visited[abs] {
-		return nil, fmt.Errorf("egg config circular base reference: %s", abs)
+	home, _ := os.UserHomeDir()
+	resolver := configResolver{home: home, runtime: true, active: map[string]bool{}, visited: map[string]bool{}}
+	result, err := resolver.resolve(path, 0)
+	if err == nil {
+		result.cfg.LaunchPolicy = &LaunchPolicySelection{Origin: "selected policy", Path: filepath.Clean(path), Base: filepath.Dir(path), Rules: result.rules}
 	}
-	visited[abs] = true
-
-	child, err := LoadEggConfig(abs)
-	if err != nil {
-		return nil, err
-	}
-
-	var parent *EggConfig
-	switch child.Base.Name {
-	case "none":
-		if child.Base.HasMasks() {
-			return nil, fmt.Errorf("base masks invalid with base: none (nothing to mask)")
-		}
-		return child, nil
-	case "":
-		parent = DefaultEggConfig()
-	default:
-		parentPath := resolveBasePath(child.Base.Name, filepath.Dir(abs))
-		var err error
-		parent, err = resolveEggConfig(parentPath, visited, depth+1)
-		if err != nil {
-			return nil, fmt.Errorf("resolve base %q: %w", child.Base.Name, err)
-		}
-	}
-
-	if child.Base.HasMasks() {
-		if err := applySectionMasks(parent, child.Base, filepath.Dir(abs), visited, depth); err != nil {
-			return nil, err
-		}
-	}
-
-	return MergeEggConfig(parent, child), nil
+	return result.cfg, err
 }
 
 // resolveBasePath turns a base value into an absolute path.
@@ -418,50 +385,6 @@ func resolveBasePath(base, configDir string) string {
 	return path
 }
 
-// applySectionMasks replaces individual sections of the parent config based on
-// per-section mask values. "none" clears the section; a name/path resolves
-// that file's full chain and extracts the section.
-func applySectionMasks(parent *EggConfig, masks BaseField, configDir string,
-	visited map[string]bool, depth int) error {
-	if masks.FS != "" {
-		if masks.FS == "none" {
-			parent.FS = nil
-		} else {
-			refPath := resolveBasePath(masks.FS, configDir)
-			ref, err := resolveEggConfig(refPath, visited, depth+1)
-			if err != nil {
-				return fmt.Errorf("resolve base.fs %q: %w", masks.FS, err)
-			}
-			parent.FS = ref.FS
-		}
-	}
-	if masks.Network != "" {
-		if masks.Network == "none" {
-			parent.Network = NetworkField{}
-		} else {
-			refPath := resolveBasePath(masks.Network, configDir)
-			ref, err := resolveEggConfig(refPath, visited, depth+1)
-			if err != nil {
-				return fmt.Errorf("resolve base.network %q: %w", masks.Network, err)
-			}
-			parent.Network = ref.Network
-		}
-	}
-	if masks.Env != "" {
-		if masks.Env == "none" {
-			parent.Env = nil
-		} else {
-			refPath := resolveBasePath(masks.Env, configDir)
-			ref, err := resolveEggConfig(refPath, visited, depth+1)
-			if err != nil {
-				return fmt.Errorf("resolve base.env %q: %w", masks.Env, err)
-			}
-			parent.Env = ref.Env
-		}
-	}
-	return nil
-}
-
 // MergeEggConfig merges a child config on top of a parent config.
 // - fs: append child to parent; child ro/rw overrides parent deny for same path
 // - network: union (dedup); "*" in either -> ["*"]
@@ -470,10 +393,17 @@ func applySectionMasks(parent *EggConfig, masks BaseField, configDir string,
 // - shell: child wins if non-empty
 // - dangerously_skip_permissions: OR
 func MergeEggConfig(parent, child *EggConfig) *EggConfig {
+	home, _ := os.UserHomeDir()
+	return mergeEggConfigForHome(parent, child, home)
+}
+
+// mergeEggConfigForHome uses the merge-time host HOME. Execution HOME may
+// differ; callers must not use it to normalize inherited deny overrides.
+func mergeEggConfigForHome(parent, child *EggConfig, home string) *EggConfig {
 	merged := &EggConfig{}
 
 	// FS: append child to parent, with deny override logic
-	merged.FS = mergeFS(parent.FS, child.FS)
+	merged.FS = mergeFSForHome(parent.FS, child.FS, home)
 
 	// Network: union domains with wildcard short-circuit; mapping-only options
 	// follow child-wins, matching how Resources merge.
@@ -524,6 +454,10 @@ func MergeEggConfig(parent, child *EggConfig) *EggConfig {
 // drops deny:P from parent (normalized path comparison).
 func mergeFS(parent, child []string) []string {
 	home, _ := os.UserHomeDir()
+	return mergeFSForHome(parent, child, home)
+}
+
+func mergeFSForHome(parent, child []string, home string) []string {
 
 	// Collect child access paths (ro/rw) for deny override
 	childAccess := make(map[string]bool)
@@ -787,6 +721,12 @@ func (c *EggConfig) SSHAgentSocketDenyPaths(home string, force bool) []string {
 // filesystem deny, causing unexpected host-key prompts inside the egg.
 // If home is non-empty it is used to expand ~ in FS rules; otherwise os.UserHomeDir().
 func (c *EggConfig) BuildEnv(home string) []string {
+	return c.SelectEnv(home, os.Environ())
+}
+
+// SelectEnv applies the launch environment selection to an explicit snapshot.
+// Diagnostics can use it without inspecting ambient variable values.
+func (c *EggConfig) SelectEnv(home string, inherited []string) []string {
 	stripSSHAgent := c.sshDirDenied(home) && !c.explicitlyAllowsEnv("SSH_AUTH_SOCK")
 
 	filter := func(env []string) []string {
@@ -808,14 +748,14 @@ func (c *EggConfig) BuildEnv(home string) []string {
 	}
 
 	if c.IsAllEnv() {
-		return filter(os.Environ())
+		return filter(inherited)
 	}
 	allowed := make(map[string]bool)
 	for _, k := range c.Env {
 		allowed[k] = true
 	}
 	var env []string
-	for _, e := range os.Environ() {
+	for _, e := range inherited {
 		k, _, ok := strings.Cut(e, "=")
 		if ok && allowed[k] {
 			env = append(env, e)

@@ -105,8 +105,9 @@ type Session struct {
 
 // RunConfig holds everything needed to start a single egg session.
 type RunConfig struct {
-	Agent string
-	Kind  string
+	LaunchPolicy *LaunchPolicySelection
+	Agent        string
+	Kind         string
 	// Command replaces the agent entirely; AgentArgs extends the agent's own
 	// invocation and keeps the session an agent session. They are alternatives.
 	Command      []string
@@ -162,9 +163,10 @@ type replayBuffer struct {
 	notify       chan struct{} // closed+replaced on Write to wake readers
 	advanced     chan struct{} // closed+replaced when a reader advances (unblocks writer)
 	readers      []*readerCursor
-	trimPreamble []byte // mode sequences to re-inject after trim
+	trimPreamble []byte // snapshot-only preamble after raw buffer trim
 	cursorRow    int    // last known absolute cursor row (1-based)
 	cursorCol    int    // last known absolute cursor col (1-based)
+	modes        terminalModes
 }
 
 type replayStats struct {
@@ -237,6 +239,7 @@ func (r *replayBuffer) Write(p []byte) {
 		r.buf = append(r.buf, p...)
 
 		if len(r.buf) <= maxReplaySize {
+			r.modes.write(p)
 			// Under limit — just wake readers and return.
 			ch := r.notify
 			r.notify = make(chan struct{})
@@ -251,15 +254,14 @@ func (r *replayBuffer) Write(p []byte) {
 		// Search forward from the excess offset for the nearest frame boundary.
 		cut := findSafeCut(r.buf, excess)
 
-		// Re-inject agent's mode preamble + cursor position so replays
-		// start with correct terminal state after trim.
-		preamble := r.buildTrimPreamble()
+		// Canonical offsets count provider bytes only. Reconnect preambles
+		// belong to the snapshot, never to the raw replay buffer.
 
 		if len(r.readers) == 0 {
 			// No readers — trim freely at the safe cut point.
-			remaining := append(preamble, r.buf[cut:]...)
-			r.buf = append(r.buf[:0], remaining...)
-			r.trimmed += int64(cut) - int64(len(preamble))
+			r.buf = append(r.buf[:0], r.buf[cut:]...)
+			r.trimmed += int64(cut)
+			r.modes.write(p)
 			ch := r.notify
 			r.notify = make(chan struct{})
 			r.mu.Unlock()
@@ -278,9 +280,9 @@ func (r *replayBuffer) Write(p []byte) {
 		canTrim := int(minOff - r.trimmed)
 		if canTrim >= cut {
 			// Slowest reader is ahead of our safe cut — trim and go.
-			remaining := append(preamble, r.buf[cut:]...)
-			r.buf = append(r.buf[:0], remaining...)
-			r.trimmed += int64(cut) - int64(len(preamble))
+			r.buf = append(r.buf[:0], r.buf[cut:]...)
+			r.trimmed += int64(cut)
+			r.modes.write(p)
 			ch := r.notify
 			r.notify = make(chan struct{})
 			r.mu.Unlock()
@@ -308,6 +310,19 @@ func (r *replayBuffer) Snapshot() ([]byte, int64) {
 	cp := make([]byte, len(r.buf))
 	copy(cp, r.buf)
 	return cp, r.trimmed + int64(len(r.buf))
+}
+
+// AttachmentSnapshot restores presentation without moving the raw replay cursor.
+func (r *replayBuffer) AttachmentSnapshot() ([]byte, int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var snapshot []byte
+	if r.trimmed > 0 {
+		snapshot = r.buildTrimPreamble()
+		snapshot = append(snapshot, r.modes.restoreSelected(alternateMode)...)
+	}
+	snapshot = append(snapshot, r.buf...)
+	return r.modes.replaySnapshot(snapshot), r.trimmed + int64(len(r.buf))
 }
 
 // WritePosition returns the absolute end offset without copying the buffer.
@@ -497,39 +512,15 @@ func NewServer(dir string) (*Server, error) {
 	}, nil
 }
 
-// Mouse-tracking enables the browser terminal must never see. Claude turns mouse
-// reporting on so the wheel reaches it, but if xterm.js also enters mouse mode it stops
-// doing local selection and drag-to-copy dies — there is no DECSET that reports the
-// wheel without also capturing buttons. So we swallow the enable: the agent believes
-// mouse is on and parses the SGR wheel events terminal.js synthesizes, while the
-// terminal never captures the mouse and selection keeps working. Disables pass through.
-var mouseTrackingEnables = [][]byte{
-	[]byte("\x1b[?1000h"), []byte("\x1b[?1002h"), []byte("\x1b[?1003h"),
-	[]byte("\x1b[?1005h"), []byte("\x1b[?1006h"), []byte("\x1b[?1015h"), []byte("\x1b[?1016h"),
-}
-
-// Private OSC left in place of the enable so the browser terminal knows the agent will
-// parse mouse input even though xterm never entered mouse mode — it sends SGR wheel
-// events when it sees this and falls back to arrow keys when it doesn't. xterm discards
-// OSCs it has no handler for, so anything else rendering this stream is unaffected.
-var mouseTrackingMarker = []byte("\x1b]7771;1\x07")
-
-func stripMouseTracking(data []byte) []byte {
-	found := false
-	for _, seq := range mouseTrackingEnables {
-		if bytes.Contains(data, seq) {
-			data = bytes.ReplaceAll(data, seq, nil)
-			found = true
-		}
-	}
-	if found {
-		data = append(data, mouseTrackingMarker...)
-	}
-	return data
-}
-
 // RunSession is the core lifecycle: create sandbox, start agent in PTY, serve gRPC, exit when done.
 func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
+	stage, reason := "admission/policy", "preparation_failed"
+	var launch PreparedLaunch
+	defer func() {
+		if runErr != nil && rc.Agent == "claude" && rc.LaunchPolicy != nil {
+			runErr = ProjectLaunchFailure(runErr, rc.LaunchPolicy, launch, stage, reason)
+		}
+	}()
 	if err := ValidateSocketPath(filepath.Join(s.dir, "egg.sock")); err != nil {
 		return err
 	}
@@ -576,6 +567,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	}
 	if hasSandbox {
 		if ok, help := sandbox.CheckCapability(); !ok {
+			stage, reason = "provider startup", "sandbox_unavailable"
 			return fmt.Errorf("sandbox not available: %s\nrun: wt doctor --fix", help)
 		}
 	}
@@ -591,100 +583,67 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	}
 	log.Printf("egg: command binary: %s", binPath)
 
-	// Build environment: always use rc.Env (caller filtered via BuildEnvMap).
-	// Merge agent profile required vars + essentials from host env if missing.
-	profile := Profile(rc.Agent)
-	envMap := make(map[string]string, len(rc.Env))
-	for k, v := range rc.Env {
-		envMap[k] = v
-	}
-	// Merge required env vars from agent profile
-	if !rc.SkipHostAgentEnv {
-		for _, k := range profile.EnvVars {
-			if _, ok := envMap[k]; !ok {
-				if v := os.Getenv(k); v != "" {
-					envMap[k] = v
-				}
-			}
-		}
-		// Merge platform-specific env vars (e.g. macOS Keychain access for Claude)
-		for _, k := range profile.PlatformEnv {
-			if _, ok := envMap[k]; !ok {
-				if v := os.Getenv(k); v != "" {
-					envMap[k] = v
-				}
-			}
-		}
-	}
-	// Agent-forced env defaults (e.g. CLAUDE_CODE_DISABLE_MOUSE). Host/config still wins.
-	for k, v := range profile.SetEnv {
-		if _, ok := envMap[k]; !ok {
-			envMap[k] = v
-		}
-	}
-	// Ensure essentials are present
-	for _, k := range []string{"HOME", "PATH", "TERM"} {
-		if _, ok := envMap[k]; !ok {
-			if v := os.Getenv(k); v != "" {
-				envMap[k] = v
-			}
-		}
-	}
-	// Default TERM for headless services (systemd has no terminal)
-	if envMap["TERM"] == "" {
-		envMap["TERM"] = "xterm-256color"
-	}
-	if envMap["GOTRACEBACK"] == "" {
-		envMap["GOTRACEBACK"] = "all"
-	}
-	// Agent terminals should not get interleaved git credential prompts. Human
-	// shell/command sessions retain ordinary terminal behavior.
-	if rc.Kind == "agent" {
-		if _, ok := envMap["GIT_TERMINAL_PROMPT"]; !ok {
-			envMap["GIT_TERMINAL_PROMPT"] = "0"
-		}
-	}
-	// Per-user home override for relay sessions
-	if rc.UserHome != "" {
-		envMap["HOME"] = rc.UserHome
-	}
+	// Caller selection and profile reinjection are shared with preparation.
+	envMap := LaunchEnvironment(rc, rc.Env, os.Environ())
 	// Prepend ~/.local/bin to PATH so agents like Claude Code find their
 	// native installation and don't warn about missing PATH entries.
 	home := envMap["HOME"]
 	lifecycleSettingsPath := ""
-	prepareLifecycle := func(policy *sandbox.Config) error {
-		if rc.Agent != "claude" || len(rc.Command) != 0 || rc.ProviderSessionID == "" {
-			return nil
-		}
-		var err error
-		args, err = prepareClaudeLifecycleArgs(args, home, s.dir, rc.ProviderSessionID, rc.CWD, policy)
-		if err != nil {
-			return fmt.Errorf("prepare native lifecycle hooks: %w", err)
-		}
-		lifecycleSettingsPath = args[providerOptionsEnd(args)-1]
-		return nil
-	}
 	defer func() {
 		if lifecycleSettingsPath != "" {
 			_ = os.Remove(lifecycleSettingsPath)
 		}
 	}()
-	codexRun := false
-	if rc.Agent == "codex" && len(rc.Command) == 0 && codexLifecycleSupported(binPath) {
-		args, codexRun, err = CodexRunArgs(args, home, filepath.Base(s.dir))
+	hostHome, _ := os.UserHomeDir()
+	browserRequestsPath, shimDir := "", ""
+	if !rc.OmitBrowserBridge {
+		browserRequestsPath = filepath.Join(s.dir, "browser-requests")
+		shimDir = filepath.Join(s.dir, "shims")
+	}
+	toolBinary := ""
+	if rc.ToolSocketPath != "" && len(rc.ToolNames) > 0 {
+		toolBinary, err = os.Executable()
 		if err != nil {
-			return fmt.Errorf("prepare Codex lifecycle hooks: %w", err)
+			return fmt.Errorf("locate wt binary for sandbox mounts: %w", err)
+		}
+		if resolved, err := filepath.EvalSymlinks(toolBinary); err == nil {
+			toolBinary = resolved
 		}
 	}
-	if rc.Agent == "codex" && len(rc.Command) == 0 {
-		args = codexStartupArgs(args, rc.CWD)
-	}
-	if rc.InitialRun != nil {
-		if !nativeRunSupported(rc.Kind, rc.Agent, rc.Command, codexRun) || rc.Agent != "codex" || rc.ResumeSessionID != "" || providerOptionsEnd(args) != len(args) {
-			return errors.New("initial run requires a fresh native Codex TUI without a positional prompt")
+	previewClaudeOSHome := ""
+	if config.Channel() == "preview" && runtime.GOOS == "darwin" && rc.Agent == "claude" && len(rc.Command) == 0 {
+		previewClaudeOSHome, err = ApplyPreviewClaudeOSContext(envMap, rc.UserHome)
+		if err != nil {
+			return err
 		}
-		args = append(args, "--", rc.InitialRun.Prompt)
 	}
+	var requirements *LaunchRequirements
+	if rc.LaunchPolicy != nil {
+		requirements = &LaunchRequirements{PolicySource: rc.LaunchPolicy.Path, PolicyBase: rc.LaunchPolicy.Base, Rules: rc.LaunchPolicy.Rules}
+	}
+	prepared, err := PrepareLaunch(rc, LaunchPreparationOptions{
+		Binary: binPath, Home: home, HostHome: hostHome, EggDir: s.dir,
+		ProviderURL: envMap["WT_PROVIDER_BASE_URL"], BrowserRequestsPath: browserRequestsPath,
+		ToolBinary: toolBinary, PreviewClaudeOSHome: previewClaudeOSHome, Environment: envMap,
+		CodexCapability: InstalledCodexCapability{},
+		Requirements:    requirements,
+	}, NativeLaunchState())
+	launch = prepared
+	lifecycleSettingsPath = prepared.LifecycleSettingsPath
+	if err != nil {
+		return err
+	}
+	// Consume the checks from this preparation; do not assess or launch twice.
+	if rc.Agent == "claude" {
+		for _, check := range prepared.Checks {
+			if check.Status == LaunchFail && launchFailureReason(check.Code) != "" {
+				return errors.New("configured policy blocks prepared launch")
+			}
+		}
+	}
+	args = prepared.Args
+	envMap = prepared.Environment
+	codexRun := prepared.CodexRun
 	if home != "" {
 		localBin := filepath.Join(home, ".local", "bin")
 		if p, ok := envMap["PATH"]; ok {
@@ -703,16 +662,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		}
 	}()
 
-	// Resolve declared, agent-profile, and provider-derived domains through the
-	// same policy path used by `wt egg explain`.
-	networkPolicy, err := ResolvePolicyWithProvider(&EggConfig{
-		Network: NetworkField{Domains: rc.Network, LocalPorts: rc.LocalPorts, Mode: rc.NetworkMode, AgentDomains: rc.AgentDomains},
-	}, rc.Agent, envMap["HOME"], envMap["WT_PROVIDER_BASE_URL"])
-	if err != nil {
-		return err
-	}
+	networkPolicy := prepared.Policy
 	mergedDomains := networkPolicy.Domains
-	netNeed := sandbox.NetworkNeedFromDomains(mergedDomains)
+	netNeed := prepared.Sandbox.NetworkNeed
 
 	// A sandboxed Linux process has no route except the inherited relay. Proxy
 	// setup therefore fails closed instead of degrading to advisory env vars.
@@ -743,10 +695,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	// tokens, and control sockets remain outside its writable mount set.
 	// OmitBrowserBridge drops the whole optional bridge (file, shim, env, PATH
 	// entry and mount) instead of granting any write exception.
-	browserRequestsPath, shimDir := "", ""
 	if !rc.OmitBrowserBridge {
-		browserRequestsPath = filepath.Join(s.dir, "browser-requests")
-		shimDir = filepath.Join(s.dir, "shims")
 		if err := installBrowserBridge(envMap, s.dir, browserRequestsPath, shimDir); err != nil {
 			return err
 		}
@@ -781,16 +730,6 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		}
 	}
 
-	// Native hooks, snapshots, history and mounts still use rc.UserHome. Only
-	// macOS Claude's final subprocess receives its real OS-user HOME so the
-	// system Keychain can resolve the existing user-domain preference context.
-	previewClaudeOSHome := ""
-	if config.Channel() == "preview" && runtime.GOOS == "darwin" && rc.Agent == "claude" && len(rc.Command) == 0 {
-		previewClaudeOSHome, err = ApplyPreviewClaudeOSContext(envMap, rc.UserHome)
-		if err != nil {
-			return err
-		}
-	}
 	// Build envSlice AFTER proxy and OS-context setup.
 	var envSlice []string
 	for k, v := range envMap {
@@ -800,121 +739,16 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	sessionID := filepath.Base(s.dir)
 
 	// Build sandbox and command
+	stage, reason = "provider startup", "provider_failed"
 	var sb sandbox.Sandbox
 	var cmd *exec.Cmd
 
 	if hasSandbox {
-		home, _ := os.UserHomeDir()
-		// Use per-user home for ~ expansion when set, so FS rules like
-		// rw:~/.cache resolve to the per-user home, not the host home.
-		fsHome := home
-		if rc.UserHome != "" {
-			fsHome = rc.UserHome
-		}
-		mounts, deny, denyWrite := ParseFSRules(rc.FS, fsHome)
-		if browserRequestsPath != "" {
-			mounts = append(mounts, sandbox.Mount{
-				Source: browserRequestsPath,
-				Target: browserRequestsPath,
-			})
-		}
-
-		// Auto-inject agent binary install root so sandbox can find it.
-		if home != "" && len(mounts) > 0 {
-			realBin := binPath
-			if resolved, err := filepath.EvalSymlinks(binPath); err == nil {
-				realBin = resolved
-			}
-			binDir := filepath.Dir(realBin)
-			if strings.HasPrefix(binDir, home+string(filepath.Separator)) {
-				root := installRoot(binDir, home)
-				mounts = append(mounts, sandbox.Mount{Source: root, Target: root, ReadOnly: true})
-			}
-		}
-
-		// Auto-inject agent profile write dirs.
-		// Use per-user home for agent config dirs when set.
-		profileHome := home
-		if rc.UserHome != "" {
-			profileHome = rc.UserHome
-		}
-		if profileHome != "" && len(mounts) > 0 {
-			for _, d := range profile.WriteRegex {
-				abs := filepath.Join(profileHome, d)
-				if err := os.MkdirAll(abs, 0o700); err != nil {
-					return fmt.Errorf("create agent profile directory %s: %w", abs, err)
-				}
-				mounts = append(mounts, sandbox.Mount{Source: abs, Target: abs, UseRegex: true})
-			}
-			for _, d := range profile.WriteDirs {
-				abs := filepath.Join(profileHome, d)
-				if err := os.MkdirAll(abs, 0o700); err != nil {
-					return fmt.Errorf("create agent profile directory %s: %w", abs, err)
-				}
-				mounts = append(mounts, sandbox.Mount{Source: abs, Target: abs})
-			}
-		}
-
-		// Mount wt binary dir and .tools dir for tool shim access in jail mode.
-		// Only .tools is mounted — the rest of the session dir (audit logs, chat
-		// data) stays invisible to the sandboxed agent.
-		if rc.ToolSocketPath != "" && len(rc.ToolNames) > 0 {
-			wtBin, err := os.Executable()
-			if err != nil {
-				return fmt.Errorf("locate wt binary for sandbox mounts: %w", err)
-			}
-			if resolved, err := filepath.EvalSymlinks(wtBin); err == nil {
-				wtBin = resolved
-			}
-			wtDir := filepath.Dir(wtBin)
-			toolsDir := filepath.Dir(rc.ToolSocketPath)
-			mounts = append(mounts, sandbox.Mount{Source: wtDir, Target: wtDir, ReadOnly: true})
-			mounts = append(mounts, sandbox.Mount{Source: toolsDir, Target: toolsDir, ReadOnly: true})
-		}
-
-		proxyPort := 0
+		sbCfg := prepared.Sandbox
 		if domainProxy != nil {
-			proxyPort = domainProxy.Port()
+			sbCfg.ProxyPort = domainProxy.Port()
 		}
-
-		allowSockets := sandboxAllowedSockets(rc.ToolSocketPath, envMap)
-		if previewClaudeOSHome != "" {
-			protected, err := GuardPreviewClaudeMounts(mounts, previewClaudeOSHome)
-			if err != nil {
-				return err
-			}
-			deny = append(deny, protected...)
-		}
-
-		sbCfg := sandbox.Config{
-			Mounts:       mounts,
-			Deny:         deny,
-			DenyWrite:    denyWrite,
-			DenyRename:   denyRenamePaths(rc.FS, fsHome),
-			NetworkNeed:  netNeed,
-			NetworkMode:  networkPolicy.Mode,
-			Domains:      mergedDomains,
-			ProxyPort:    proxyPort,
-			LocalPorts:   append([]int(nil), networkPolicy.LocalPorts...),
-			CPULimit:     rc.CPULimit,
-			MemLimit:     rc.MemLimit,
-			MaxFDs:       rc.MaxFDs,
-			PidLimit:     rc.PidLimit,
-			SessionID:    sessionID,
-			UserHome:     rc.UserHome,
-			Trace:        rc.Trace,
-			AllowSockets: allowSockets,
-			// Enforced against the final emitted policy inside sandbox.New.
-			ProtectedWriteTargets: append([]string(nil), rc.ProtectedWriteTargets...),
-			RoostPolicyPaths:      append([]string(nil), rc.RoostPolicyPaths...),
-		}
-
-		if err := prepareLifecycle(&sbCfg); err != nil {
-			return err
-		}
-		if lifecycleSettingsPath != "" {
-			sbCfg.Mounts = append(sbCfg.Mounts, sandbox.Mount{Source: lifecycleSettingsPath, Target: lifecycleSettingsPath, ReadOnly: true})
-		}
+		sbCfg.AllowSockets = sandboxAllowedSockets(rc.ToolSocketPath, envMap)
 		configSnap = SnapshotAgentConfig(rc.Agent, rc.UserHome, &sbCfg)
 		sb, err = sandbox.New(sbCfg)
 		if err != nil {
@@ -932,9 +766,6 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			cmd.Dir = rc.CWD
 		}
 	} else {
-		if err := prepareLifecycle(nil); err != nil {
-			return err
-		}
 		configSnap = SnapshotAgentConfig(rc.Agent, rc.UserHome)
 		log.Printf("SECURITY: egg runs in outer-boundary mode with the full authority of the local OS user; Wingthing filesystem, network, syscall, and resource isolation is disabled")
 		cmd = exec.CommandContext(context.Background(), binPath, args...)
@@ -1558,16 +1389,10 @@ func (s *Server) readPTY(sess *Session) {
 			}
 			data := make([]byte, n)
 			copy(data, buf[:n])
-			data = stripMouseTracking(data)
 			sess.replay.Write(data)
 			sess.mu.Lock()
 			sess.lastOutput = time.Now()
 			sess.mu.Unlock()
-			offset := sess.replay.WritePosition()
-			select {
-			case sess.vtermCh <- vtermMsg{data: data, offset: offset}:
-			default:
-			}
 			if debugFile != nil {
 				if _, err := debugFile.Write(data); err != nil {
 					log.Printf("egg: write PTY debug file: %v", err)
@@ -1575,6 +1400,12 @@ func (s *Server) readPTY(sess *Session) {
 				}
 			}
 			sess.writeAuditFrame(0, data)
+			offset := sess.replay.WritePosition()
+			select {
+			case sess.vtermCh <- vtermMsg{data: data, offset: offset}:
+			case <-sess.done:
+				return
+			}
 		}
 		if err != nil {
 			// Close auditor on PTY exit
@@ -1716,17 +1547,21 @@ func (s *Server) Kill(ctx context.Context, req *pb.KillRequest) (*pb.KillRespons
 	return &pb.KillResponse{}, nil
 }
 
-// terminateSession does not report success until the child has actually
-// exited. Interactive shells commonly ignore SIGTERM, so a fire-and-forget
-// signal makes `wt session kill` lie while the egg and its session remain
-// discoverable. Give cooperative processes a grace period, then force the
-// process down and wait for the normal cmd.Wait cleanup path to complete.
+const sessionKillWait = 2 * time.Second
+
+// Give cooperative processes a grace period, then kill the entire owned group.
+// Cancellation also escalates: it must not strand a TERM-ignoring provider.
+// Even callers without a deadline get a bounded wait for cmd.Wait and group
+// termination; a stuck reaper or surviving member is an error, never success.
 func terminateSession(ctx context.Context, sess *Session, grace time.Duration) error {
 	if sess == nil || sess.cmd == nil || sess.cmd.Process == nil {
 		return nil
 	}
 
-	if err := signalSessionGroup(sess, syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	// Capture ownership while the leader is still present. Its descendants
+	// keep the same group after Wait reaps the leader.
+	pgid := sessionOwnedGroupID(sess)
+	if err := signalSessionGroup(sess, pgid, syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return fmt.Errorf("signal: %w", err)
 	}
 
@@ -1734,20 +1569,47 @@ func terminateSession(ctx context.Context, sess *Session, grace time.Duration) e
 	defer timer.Stop()
 	select {
 	case <-sess.done:
-		return signalSessionGroup(sess, syscall.SIGKILL)
 	case <-ctx.Done():
-		return ctx.Err()
 	case <-timer.C:
 	}
 
-	if err := signalSessionGroup(sess, syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		return fmt.Errorf("kill after %s grace period: %w", grace, err)
+	if err := signalSessionGroup(sess, pgid, syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return errors.Join(ctx.Err(), fmt.Errorf("kill after %s grace period: %w", grace, err))
 	}
-	select {
-	case <-sess.done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	// Reaping must continue even if the RPC context was cancelled. The normal
+	// cmd.Wait goroutine owns the child; never call Wait a second time here.
+	waitCtx, cancel := context.WithTimeout(context.Background(), sessionKillWait)
+	defer cancel()
+	waitErr := waitSessionTermination(waitCtx, sess.done, pgid)
+	return errors.Join(ctx.Err(), waitErr)
+}
+
+func waitSessionTermination(ctx context.Context, done <-chan struct{}, pgid int) error {
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		reaped := false
+		select {
+		case <-done:
+			reaped = true
+		default:
+		}
+		live := false
+		if pgid != 0 {
+			var err error
+			live, err = sessionProcessGroupAlive(ctx, pgid)
+			if err != nil {
+				return err
+			}
+		}
+		if reaped && !live {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("session did not terminate after SIGKILL (child reaped=%t, live group members=%t): %w", reaped, live, ctx.Err())
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -1826,7 +1688,7 @@ func (s *Server) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusR
 		RenderedConfig: sess.RenderedConfig,
 		IdleSeconds:    idleSec,
 		WriterId:       lease.WriterId, WriterOwner: lease.WriterOwner, InputEpoch: lease.InputEpoch,
-		ProcessPid: int32(sess.PID),
+		ProcessPid: int32(sess.PID), NativeTerminal: true,
 	}, nil
 }
 
@@ -1878,7 +1740,19 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 			return err
 		}
 	}
+	// Retain the raw buffer during snapshot/fence acquisition and transmission.
+	// Registering only after Send would let unattached output trim the gap.
+	cursor := sess.replay.Register(0)
+	defer sess.replay.Unregister(cursor)
 	var startOffset int64
+	native := msg.AttachOptions.GetNativeTerminal()
+	var browser browserPresentation
+	present := func(data []byte) []byte {
+		if native {
+			return data
+		}
+		return browser.write(data)
+	}
 
 	if msg.GetAttach() {
 		// Full replay as first message, then cursor starts after snapshot.
@@ -1891,25 +1765,28 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 				case result := <-fenceCh:
 					snapshot = result.Snapshot
 					startOffset = result.Offset
+					if snapshot == nil {
+						snapshot, startOffset = sess.replay.AttachmentSnapshot()
+					}
 				case <-sess.done:
-					snapshot, startOffset = sess.replay.Snapshot()
+					snapshot, startOffset = sess.replay.AttachmentSnapshot()
 				case <-time.After(5 * time.Second):
 					log.Printf("egg: vterm fence timeout, falling back to replay")
-					snapshot, startOffset = sess.replay.Snapshot()
+					snapshot, startOffset = sess.replay.AttachmentSnapshot()
 				}
 			case <-sess.done:
-				snapshot, startOffset = sess.replay.Snapshot()
+				snapshot, startOffset = sess.replay.AttachmentSnapshot()
 			case <-time.After(5 * time.Second):
 				log.Printf("egg: vterm fence enqueue timeout, falling back to replay")
-				snapshot, startOffset = sess.replay.Snapshot()
+				snapshot, startOffset = sess.replay.AttachmentSnapshot()
 			}
 		} else {
-			snapshot, startOffset = sess.replay.Snapshot()
+			snapshot, startOffset = sess.replay.AttachmentSnapshot()
 		}
 		if err := stream.Send(&pb.SessionMsg{
 			SessionId:      sessionID,
 			AttachmentInfo: s.inputLease.info(attachment),
-			Payload:        &pb.SessionMsg_Output{Output: snapshot},
+			Payload:        &pb.SessionMsg_Output{Output: present(snapshot)},
 		}); err != nil {
 			return err
 		}
@@ -1918,9 +1795,12 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 		_, startOffset = sess.replay.Snapshot()
 	}
 
-	// Register cursor so the buffer knows our position (enables backpressure).
-	cursor := sess.replay.Register(startOffset)
-	defer sess.replay.Unregister(cursor)
+	sess.replay.mu.Lock()
+	cursor.offset = startOffset
+	advanced := sess.replay.advanced
+	sess.replay.advanced = make(chan struct{})
+	sess.replay.mu.Unlock()
+	close(advanced)
 
 	// Output goroutine: cursor-based reads from the replay buffer.
 	// Every byte arrives in exact PTY order — no channel, no drops.
@@ -1930,7 +1810,7 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 			if data != nil {
 				if err := stream.Send(&pb.SessionMsg{
 					SessionId: sessionID,
-					Payload:   &pb.SessionMsg_Output{Output: data},
+					Payload:   &pb.SessionMsg_Output{Output: present(data)},
 				}); err != nil {
 					return
 				}
@@ -1944,9 +1824,16 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 				if data, _ := sess.replay.ReadAfter(cursor); data != nil {
 					if err := stream.Send(&pb.SessionMsg{
 						SessionId: sessionID,
-						Payload:   &pb.SessionMsg_Output{Output: data},
+						Payload:   &pb.SessionMsg_Output{Output: present(data)},
 					}); err != nil {
 						return
+					}
+				}
+				if !native {
+					if tail := browser.finish(); len(tail) > 0 {
+						if err := stream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Output{Output: tail}}); err != nil {
+							return
+						}
 					}
 				}
 				sess.mu.Lock()
@@ -2277,21 +2164,9 @@ func (s *Server) idleWatchdog(sess *Session) {
 		idle := sess.idleDuration()
 		if idle > sess.idleTimeout {
 			log.Printf("egg: idle timeout (%s idle, limit %s) — terminating", idle.Round(time.Second), sess.idleTimeout)
-			if sess.cmd != nil && sess.cmd.Process != nil {
-				if err := sess.cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
-					log.Printf("egg: signal idle session: %v", err)
-				}
-				select {
-				case <-sess.done:
-					return
-				case <-time.After(5 * time.Second):
-					if err := sess.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-						log.Printf("egg: kill idle session: %v", err)
-					}
-				}
+			if err := terminateSession(context.Background(), sess, 5*time.Second); err != nil {
+				log.Printf("egg: terminate idle session: %v", err)
 			}
-			// Wait for normal cleanup path (cmd.Wait -> close(done) -> gRPC stop)
-			<-sess.done
 			return
 		}
 	}

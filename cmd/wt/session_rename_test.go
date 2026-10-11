@@ -14,6 +14,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
 )
 
 func TestSessionRenameCLIAndMCPShareStoreLock(t *testing.T) {
@@ -86,11 +87,11 @@ func TestSessionRenameCLIAndMCPShareStoreLock(t *testing.T) {
 }
 
 func TestEggLaunchLabelChecksAvailabilityUnderStoreLock(t *testing.T) {
-	state, err := os.MkdirTemp("", "wt-names-")
+	scratch, err := filepath.Abs("../../.scratch")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(state) })
+	state := testprovider.ShortStateDir(t, scratch)
 	cfg := &config.Config{Dir: state}
 	workspace := t.TempDir()
 	writeActiveRenameFixture(t, cfg, "first", "alice", workspace, "one")

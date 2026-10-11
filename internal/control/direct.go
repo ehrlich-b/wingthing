@@ -36,14 +36,14 @@ func (r DirectResponse) Err() error {
 		return &MCPTaskError{Code: r.RPCErrorCode, Message: r.Error}
 	}
 	if r.Error != "" {
-		return DecodeError(r.ErrorKind, r.Error)
+		return restoreLaunchDiagnostic(DecodeError(r.ErrorKind, r.Error), r.Result)
 	}
 	if !r.IsError {
 		return nil
 	}
 	if r.ErrorKind != "" {
 		message, _ := r.Result["error"].(string)
-		return DecodeError(r.ErrorKind, message)
+		return restoreLaunchDiagnostic(DecodeError(r.ErrorKind, message), r.Result)
 	}
 	return ToolError(r.Result)
 }
@@ -81,7 +81,7 @@ func SplitWingTarget(arguments json.RawMessage) (string, json.RawMessage, error)
 // as well, so retaining one object outside its response cannot lose its wing.
 func QualifyResult(wingID string, result map[string]any) map[string]any {
 	qualified := cloneResultMap(result)
-	for _, key := range []string{"sessions", "messages", "message"} {
+	for _, key := range []string{"sessions", "messages", "message", "runs"} {
 		qualifyNestedResources(wingID, qualified[key])
 	}
 	qualified["wing_id"] = wingID

@@ -10,7 +10,11 @@ import (
 )
 
 func session(id, name, cwd, status string) eggclient.LocalSession {
-	return eggclient.LocalSession{ID: id, Name: name, CWD: cwd, Status: status, Agent: "codex", UptimeSecs: 120}
+	state := status
+	if status == "blocked" {
+		state = "needs_input"
+	}
+	return eggclient.LocalSession{ID: id, Name: name, CWD: cwd, Status: status, State: state, StateSource: "codex_hook", StateCursor: 1, Agent: "codex", UptimeSecs: 120}
 }
 
 func fixture() *state {
@@ -186,5 +190,102 @@ func TestDashboardDecoderFragmentedUTF8AndEscapes(t *testing.T) {
 	drive(s, "/界\x7f\r")
 	if s.filter != "" {
 		t.Fatal("backspace split a UTF-8 rune")
+	}
+}
+
+func TestDashboardMachinePickerTargetsEmptyRemote(t *testing.T) {
+	s := fixture()
+	s.machines["empty"] = machine{}
+	s.machines["offline"] = machine{err: "unreachable"}
+	drive(s, "mjj\r") // All, local, empty
+	if s.machineFilter != "empty" || s.selected != "" {
+		t.Fatalf("picker: %#v", s)
+	}
+	drive(s, "n\r")
+	if s.mode != newCWD || s.target.machine != "empty" || s.input != "" {
+		t.Fatal("empty remote inherited a local cwd")
+	}
+	if actions, _ := drive(s, "\r"); len(actions) != 0 || s.message == "" {
+		t.Fatal("remote cwd was not required")
+	}
+	actions, _ := drive(s, "/work/remote\r")
+	if len(actions) != 1 || actions[0].row.machine != "empty" || actions[0].cwd != "/work/remote" {
+		t.Fatalf("new target: %#v", actions)
+	}
+	drive(s, "mjj\r") // empty -> offline -> work
+	if s.machineFilter != "work" {
+		t.Fatal(s.machineFilter)
+	}
+	drive(s, "m\x1b")
+	if s.machineFilter != "work" {
+		t.Fatal("cancel changed machine")
+	}
+	drive(s, "m\x1b[H\r")
+	if s.machineFilter != "" {
+		t.Fatal("All did not restore all machines")
+	}
+}
+
+func TestDashboardAttentionAndOverlayTargetsSurviveRefresh(t *testing.T) {
+	s := fixture()
+	m := s.machines["work"]
+	m.sessions = append(m.sessions, session("failed", "failure", "/failed", "failed"))
+	s.machines["work"] = m
+	drive(s, "!")
+	if len(s.rows()) != 2 {
+		t.Fatalf("attention rows: %#v", s.rows())
+	}
+	for _, r := range s.rows() {
+		if !needsAttention(r.Status) {
+			t.Fatal("non-attention row")
+		}
+	}
+	drive(s, "ji")
+	captured := s.target.key()
+	inv := newInventory(nil)
+	inv.apply(s, inventoryResult{name: "work", sessions: []eggclient.LocalSession{session("replacement", "fresh", "/fresh", "blocked")}})
+	if s.mode != details || s.target.key() != captured {
+		t.Fatal("details retargeted during refresh")
+	}
+	actions, _ := drive(s, "nxr/")
+	if len(actions) != 0 || s.mode != details {
+		t.Fatal("overlay triggered an action")
+	}
+	drive(s, "\x1b!/?\r") // '?' belongs to filter
+	if s.filter != "?" {
+		t.Fatal("help key escaped its prompt")
+	}
+	drive(s, "/\x15\r?")
+	if s.mode != help {
+		t.Fatal("help missing")
+	}
+	drive(s, "\x1bR")
+	if !s.refresh {
+		t.Fatal("manual refresh missing")
+	}
+}
+
+func TestDashboardStopCapturesFullMachineIdentity(t *testing.T) {
+	s := fixture()
+	drive(s, "jjx")
+	inv := newInventory(nil)
+	inv.apply(s, inventoryResult{name: "work", sessions: []eggclient.LocalSession{session("replacement", "replacement", "/work", "idle")}})
+	actions, _ := drive(s, "y")
+	if len(actions) != 1 || actions[0].row.key() != "work:one" {
+		t.Fatalf("confirmation retargeted: %#v", actions)
+	}
+}
+
+func TestRecentRunsEntryPreservesSessionState(t *testing.T) {
+	s := fixture()
+	selected, query := s.selected, s.filter
+	s.handle("h")
+	if !s.recent || !s.history().requested {
+		t.Fatal("history did not request authenticated discovery")
+	}
+	s.handle("j")
+	s.handle("h")
+	if s.recent || s.selected != selected || s.filter != query {
+		t.Fatal("session state changed")
 	}
 }

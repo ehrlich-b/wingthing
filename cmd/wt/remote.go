@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
@@ -32,6 +33,20 @@ func executeCLI(ctx context.Context, args []string, streams remotepkg.IO) error 
 			return err
 		}
 		if remote {
+			if len(invocation.Args) > 0 && invocation.Args[0] == "attach" {
+				err := runRemoteAttachment(ctx, invocation, streams)
+				var exited *cmdutil.CommandExitError
+				if err != nil && ctx.Err() == nil && streams.ErrOut != nil && (!errors.As(err, &exited) || exited.Code == 255) {
+					dir, _ := config.StateDir()
+					route := config.Remote{SSHTarget: invocation.Target, WTBinary: invocation.Binary, WingthingDir: invocation.State}
+					args := append(remotepkg.ProfileArgs(route), invocation.Args...)
+					fmt.Fprintf(streams.ErrOut, "Connection to %s ended; session outcome unknown. Reconnect: %s\n", invocation.Target, attachReconnectCommand(dir, args))
+				}
+				return err
+			}
+			if len(invocation.Args) > 0 && invocation.Args[0] == "claude" {
+				return runRemoteClaude(ctx, invocation, streams)
+			}
 			return remotepkg.RunRemoteInvocation(ctx, invocation, streams)
 		}
 	}
