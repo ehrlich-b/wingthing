@@ -1,6 +1,10 @@
-# Native iOS foundation draft
+# Native Wingthing iOS client
 
-This is a native SwiftUI task/conversation client foundation. It includes a working, tested Foundation/CryptoKit client and a reviewable iOS app project. The app starts empty. It has no default address, vendor account, automatic discovery, rendezvous, relay, telemetry, or update check.
+The default native SwiftUI flow opens **Scan to pair**, pairs Bryan's iPhone with EhrlichMac's main wing using `wt pair`, and shows that machine's existing sessions. Forge is a separate pairing. LAN/Bonjour and tailnet work without a Wingthing account; the optional hosted relay remains encrypted to the scanned wing key. Both the terminal and phone must approve the same four emoji. Per-wing device keys/credentials use Secure Enclave and device-only Keychain storage; the phone does not restore an old account connection on startup.
+
+Use [IOS-INSTALL.md](../../IOS-INSTALL.md), [STORYBOARD.html](../../docs/pairing/STORYBOARD.html) and [PROTOCOL.md](../../docs/pairing/PROTOCOL.md). The installer connect step runs `wt pair` against the normal main wing. The hidden paste-link fallback uses the same pairing checks. **Existing Home setup** separately preserves the older account-based conversation adapter described below.
+
+October 11 QR validation: 133 Swift tests (including real Go SPAKE2/device proof interoperability), mocked installer checks and an unsigned simulator build pass. Invocation-local manifest sandbox flags are needed in this managed environment; no global Xcode or signing setting changed. Actual camera, Local Network permission, Secure Enclave/Keychain on Bryan's phone and cellular acceptance remain required. Counts below describe earlier conversation milestones.
 
 ## Implemented slice
 
@@ -9,7 +13,7 @@ inventory and Home settings. It does not select or launch a conversation until
 the user taps a row. `make simulator-first-connection-check` verifies this
 journey against an encrypted synthetic peer at the largest system text size,
 including the unfiltered accessibility audit and zero launch/input/Stop counters.
-The default unconfigured app still starts empty.
+The default unconfigured app opens the QR scanner.
 
 **New conversation** can create the first parent on an already authorized
 personal home. The form reads the pinned computer's existing `wing.info`
@@ -26,11 +30,12 @@ read, while **Retry creation** explicitly replays that exact launch. A confirmed
 failure permits an explicit new attempt. The encrypted reply must identify a
 matching parent/root, wing, name and workspace, and the subsequent native read
 must match the acknowledged execution before following it. A reply that arrives
-after another selection cannot retarget the screen or its draft. Old servers do
-not echo the launch request ID; the client uses the existing authenticated
-encrypted request/reply correlation and owner-scoped backend reservation.
+after another selection cannot retarget the screen or its draft. The decrypted
+reply must echo the inner request ID; the outer relay correlation alone is not
+sufficient. Older replies without that echo leave delivery unconfirmed. Prompt
+receipts additionally bind the session ID.
 
-This source passes **84 core tests** and the SwiftUI typecheck. Nine creation
+The original creation milestone passed **84 core tests** and the SwiftUI typecheck. Nine creation
 journeys cover empty-home creation, immutable replay/restart, save failure,
 confirmed failure, project revalidation and delayed-selection fences.
 `make simulator-creation-check` runs the separate synthetic native creation and
@@ -47,10 +52,10 @@ physical-phone home still require live acceptance.
 - Unsent drafts are atomically saved after each edit, bound to the exact profile/account/wing/conversation/session/provider. They survive parent/child navigation, offline use and process relaunch, separately from pending input. Save failures retain the visible text and show a notice. A confirmed input is not restored as an unsent draft.
 - Explicit input saves its immutable execution/reference, body, and request ID atomically before transport. An uncertain result remains uncertain. Only an explicit **Check receipt** reuses the same request and payload. Reconnect does not resend. `native_receipt_observed` requires the corresponding proof flag; `not_sent` requires `definitely_not_sent`.
 - An ended Claude root with a fresh, exactly bound `headless_continuation` advertisement can accept a follow-up through the existing `agent_start` contract. The native adapter sends only the original source execution, parent role, message and immutable request ID. It saves that intent before transport, binds confirmation to the wing/root/provider/request/message hash, and follows only the acknowledged target. Explicit **Retry follow-up** replays the saved intent; reads and reconnect never resend it. A failed launch restores the message for a new explicit attempt.
-- Whole-task Stop uses the existing exactly bound capability and receipt adapter from the stable composer action or Details. Confirmation captures the displayed execution, which must still match before creating an intent. Its receipt separates a signal request from observed provider termination; leaving the screen or disconnecting sends no Stop.
+- Whole-task Stop requires the exactly bound capability and receipt adapter; main lacks the corresponding `conversation_stop` server operation and capability, so real native Stop is unavailable. The synthetic client uses this adapter from the stable composer action or Details. Confirmation captures the displayed execution, which must still match before creating an intent. Its receipt separates a signal request from observed provider termination; leaving the screen or disconnecting sends no Stop.
 - Optional `coordinator_context` observations decode without inventing HomeRoostID or owner epoch. Logical DotID, executor WingID, and a future HomeRoostID remain separate. Local saved input is not a durable coordinator inbox receipt, acceptance, or processing claim.
 
-The `Home` form connects only to a home the user configures: the user enters the home address, account ID, executor WingID, pinned public key, and an access token they already hold, then explicitly connects. The app never obtains, mints, or refreshes a token, and there is no default address, vendor account, or server it depends on. Native pairing, QR scanning, and sign-in are unavailable. `Disconnect` drops the client and forgets the token; saved tasks and transcripts stay readable offline, marked as possibly out of date. `Reconnect` re-runs the read-only identity checks against the same configured home and never resends locally saved pending input. Tokens and tunnel private keys remain in memory only, so the token must be entered again after disconnecting or relaunching; this draft has no credential persistence or enrollment flow. Product UI contains no fixture agents.
+The `Home` form connects only to a home the user configures: the user enters the home address, account ID, executor WingID, pinned public key, and an access token they already hold, then explicitly connects. The app never obtains, mints, or refreshes a token, and no vendor account is required for a user-owned compatible Home. QR device pairing is the default flow; this hidden Home form is the older existing-account fallback and never performs phone sign-in. `Disconnect` drops the client and forgets the token; saved tasks and transcripts stay readable offline, marked as possibly out of date. `Reconnect` re-runs the read-only identity checks against the same configured home and never resends locally saved pending input. Verified bearers persist in non-synchronizing, device-only, when-unlocked Keychain items scoped to origin/account/wing/key; tunnel private keys remain in memory. Disconnect forgets the saved and attempted Home credentials. Relaunch can restore a configured Home, while device pairings use their independent machine-scoped enrollment flow. Product UI contains no fixture agents.
 
 ## Verification on this Mac
 
@@ -148,7 +153,7 @@ Full history/settings polish and manual VoiceOver acceptance remain open.
 ## Remaining gates
 
 - Full Xcode/iOS SDK/simulator compilation, connected child/history/Details/parent/reconnect interaction, the empty-start Home journey, the largest-text unfiltered audit, and landscape reading space passed. VoiceOver, background behavior and physical phone acceptance remain open.
-- Native pairing/sign-in, secure credential storage, identity QR approval, and passkey authorization are not implemented. No permissions or grants were requested.
+- Keychain credential storage is implemented; native pairing/sign-in, token renewal, identity QR approval, and passkey authorization are not. No permissions or grants were requested.
 - Current preview roost loopback binding prevents a physical phone from reaching the Mac. The app does not alter that guard. Local QR identity sharing would not make a home reachable across NAT; away access needs an explicitly selected user-owned endpoint or existing VPN/Tailscale/self-host relay. Hosted home is a separate explicit choice with no baked-in address.
 - Generic agent launch, terminal input leases and exact native approval decisions are not adapted. New parent creation, ended-root follow-up and whole-task Stop are narrow typed adapters; their native interaction checks use synthetic transport, not a live authorized phone. `needs_input` provides attention and an execution/state cursor, not a provider approval request ID. There is no Approve button or autoapproval.
 - HomeRoostID persistence, coordinator epoch fencing, durable inbox/outbox receipt stages, background delivery, push notifications, migration, and failover remain unsupported. No exactly-once external-effect claim is made.

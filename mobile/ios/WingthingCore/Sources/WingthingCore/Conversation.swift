@@ -113,6 +113,9 @@ public struct TranscriptState: Codable, Equatable, Sendable {
     private var observedAt: Date?
     enum CodingKeys: String, CodingKey { case cursor, events, lifecycle }
     public init() {}
+    public var hasUnreadHistory: Bool {
+        lifecycle?.hasMore == true && (lifecycle?.headCursor.map { cursor < $0 } ?? true)
+    }
     public mutating func apply(_ view: SessionLifecycle, target: ExecutionReference, now: Date = Date()) throws {
         guard view.sessionID == target.sessionID,
               target.providerSessionID == nil || target.providerSessionID == view.providerSessionID else { throw ClientError.staleReference }

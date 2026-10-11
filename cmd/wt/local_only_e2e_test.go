@@ -319,7 +319,7 @@ func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
 	}
 }
 
-func TestBuiltWTLocalOnlyDaemonBootsWithoutTokens(t *testing.T) {
+func TestBuiltWTDefaultDaemonBootsWithoutAccountOrRelay(t *testing.T) {
 	repo, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -339,7 +339,7 @@ func TestBuiltWTLocalOnlyDaemonBootsWithoutTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	environment := []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=/bin:/usr/bin", "TMPDIR=" + os.Getenv("TMPDIR")}
-	start := exec.CommandContext(t.Context(), binary, "wing", "start", "--local-only", "--paths", home)
+	start := exec.CommandContext(t.Context(), binary, "wing", "start", "--paths", home)
 	start.Env = environment
 	output, err := start.CombinedOutput()
 	// If a later assertion fails, terminate only the daemon admitted into this
@@ -355,6 +355,19 @@ func TestBuiltWTLocalOnlyDaemonBootsWithoutTokens(t *testing.T) {
 	})
 	if err != nil || !strings.Contains(string(output), "local control: ready") {
 		t.Fatalf("default local-only daemon start: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "Local network only. That's fine; nothing else needed.") || strings.Contains(string(output), "wingthing.ai") || strings.Contains(string(output), "require relay access") {
+		t.Fatalf("no-account startup advertised hosted access: %s", output)
+	}
+	statusData, err := os.ReadFile(filepath.Join(state, "wing.status"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status struct {
+		RoostURL string `json:"roost_url"`
+	}
+	if err := json.Unmarshal(statusData, &status); err != nil || status.RoostURL != "" {
+		t.Fatalf("default no-account startup retained relay origin: %s %v", statusData, err)
 	}
 	client, err := controlsocket.Dial(t.Context(), state, controlsocket.Hello{})
 	if err != nil {
