@@ -124,6 +124,8 @@ public enum HomeConnectionPhase: Equatable, Sendable {
             profile = home
             let bearer = try credentialStore.token(for: home)
             phase = .connecting; busy = true
+            // Published observers can deliver a setup link synchronously.
+            guard requested == generation, !homeSetupRequested else { busy = false; return }
             guard try await install(home, bearer: bearer, cacheFile: cacheFile(for: home), wire: wire, requested: requested) else { return }
             busy = false
             guard requested == generation, !homeSetupRequested else { return }
