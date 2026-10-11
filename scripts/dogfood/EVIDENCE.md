@@ -29,3 +29,29 @@ does not truncate, recycle, repair, extend the epoch or retry. The wrapper keeps
 the existing 24 raw receipts of at most 256 KiB apiece. Metadata must be durable
 before a raw receipt is eligible for rotation. Failed cleanup and interrupted
 starts hold admission under the existing runner-state semantics.
+
+## Whole-epoch consumer
+
+`status.py` retains its last-raw-receipt fields and adds `epoch_evidence`. A
+later green receipt cannot hide an earlier failed slot, required skip, unknown
+completion/identity or missed slot. Reports distinguish structural completion
+from fixture success: a failed run with all check records is completed and
+failed. Counts are deliberately overlapping. `skipped_slots` counts required
+unavailable checks; optional live/SSH skips appear per attempt instead.
+A slot passes fixture coverage only if every attempt in it passes; a successful
+retry does not erase the earlier failure. Duplicate attempts are counted but
+receive no additional slot coverage. `fraction_of_due_slots` is successful point
+samples divided by due slots, never uptime. No healthy interval is inferred.
+
+Fixture, native checks inside fixture receipts, optional live checks and fresh
+outside-host acceptance have separate fields. Each cohort joins host, expected
+and observed binary hashes, tracked-source commit/hash and actual slots. A
+changed binary or an unknown identity cannot borrow another cohort's success.
+
+The sparse consumer probe has eight planned slots: slots 0, 2 and 7 are missing;
+slot 3 fails then retries successfully; slot 4 has a required skip; slot 5 is
+late; slot 6 is interrupted. Six attempts cover five unique slots, with five
+completed attempts across four slots, one failed slot, one skipped slot, one
+unknown slot and two fixture-success slots. Successful point coverage is 2/8,
+or 25%. These literal expectations are independent of the consumer's counting
+code and model a sleeping host without any real-time sleep.
