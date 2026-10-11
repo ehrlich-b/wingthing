@@ -3,7 +3,6 @@ package dashboard
 import (
 	"fmt"
 	"path"
-	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -41,6 +40,8 @@ func statusLetter(status string) string {
 		return "D"
 	case "exited":
 		return "E"
+	case "failed":
+		return "F"
 	default:
 		return "?"
 	}
@@ -73,19 +74,30 @@ func age(seconds int64) string {
 }
 
 func rowText(r row, width int, seconds int64) string {
+	status := statusLetter(r.Status)
+
 	// All columns remain available at 40 cells. Smaller terminals truncate the
 	// compact row; the status and name are always the first visible fields.
-	available := max(0, width-4)
+	available := max(0, width-3-runewidth.StringWidth(status))
 	ageWidth := min(5, available/6)
 	agentWidth := min(12, available/5)
 	cwdWidth := available / 3
+	cwd := shortCWD(r.CWD)
+	if width < 60 {
+		ageWidth = min(4, available/6)
+		agentWidth = min(6, available/5)
+		cwdWidth = available / 4
+		if r.CWD != "" {
+			cwd = path.Base(path.Clean(r.CWD))
+		}
+	}
 	nameWidth := max(0, available-ageWidth-agentWidth-cwdWidth-3)
 	agent := r.Agent
 	if agent == "" {
 		agent = r.Kind
 	}
-	return "  " + statusLetter(r.Status) + " " + field(r.name(), nameWidth) + " " +
-		field(agent, agentWidth) + " " + field(shortCWD(r.CWD), cwdWidth) + " " + field(age(seconds), ageWidth)
+	return "  " + status + " " + field(r.name(), nameWidth) + " " +
+		field(agent, agentWidth) + " " + field(cwd, cwdWidth) + " " + field(age(seconds), ageWidth)
 }
 
 type viewLine struct {
@@ -100,32 +112,36 @@ func render(s *state, width, height int, now time.Time) string {
 	rows := s.rows()
 	counts := make(map[string]int)
 	total := 0
-	names := make([]string, 0, len(s.machines))
-	for name, machine := range s.machines {
-		names = append(names, name)
+	names := s.machineNames()
+	attention := 0
+	for _, machine := range s.machines {
 		for _, session := range machine.sessions {
 			counts[statusLetter(session.Status)]++
 			total++
+			if needsAttention(session.Status) {
+				attention++
+			}
 		}
 	}
-	sort.Slice(names, func(i, j int) bool {
-		if names[i] == "local" || names[j] == "local" {
-			return names[i] == "local"
-		}
-		return names[i] < names[j]
-	})
+	scope := s.machineFilter
+	if scope == "" {
+		scope = "All"
+	}
+	if s.attentionOnly {
+		scope += " ! attention"
+	}
 	header := []string{
 		fmt.Sprintf("wt | %d sessions | %d machines", total, len(names)),
-		fmt.Sprintf("B:%d W:%d I:%d D:%d E:%d ?:%d", counts["B"], counts["W"], counts["I"], counts["D"], counts["E"], counts["?"]),
+		fmt.Sprintf("B:%d W:%d I:%d D:%d E:%d F:%d ?:%d | [%s] !:%d", counts["B"], counts["W"], counts["I"], counts["D"], counts["E"], counts["F"], counts["?"], scope, attention),
 	}
 	var body []viewLine
 	selectedLine := 0
 	for _, name := range names {
-		machine := s.machines[name]
-		label := name
-		if machine.loading {
-			label += " (refreshing)"
+		if s.machineFilter != "" && name != s.machineFilter {
+			continue
 		}
+		machine := s.machines[name]
+		label := name + "  " + connection(machine, now)
 		body = append(body, viewLine{text: label})
 		if machine.err != "" {
 			body = append(body, viewLine{text: "  ! " + machine.err})
@@ -144,20 +160,59 @@ func render(s *state, width, height int, now time.Time) string {
 			if !machine.updated.IsZero() {
 				seconds += max(0, int64(now.Sub(machine.updated)/time.Second))
 			}
-			line := viewLine{text: rowText(r, width, seconds), selected: r.key() == s.selected}
+			rowWidth := width
+			suffix := ""
+			if machine.err != "" {
+				suffix = " stale"
+				rowWidth -= len(suffix)
+			}
+			line := viewLine{text: rowText(r, rowWidth, seconds) + suffix, selected: r.key() == s.selected}
 			if line.selected {
 				selectedLine = len(body)
 				line.text = ">" + line.text[1:]
 			}
 			body = append(body, line)
 		}
-		if !found && machine.err == "" {
-			body = append(body, viewLine{text: "  (no sessions)"})
+		if !found {
+			text := "  (no sessions)"
+			if s.filter != "" || s.attentionOnly {
+				text = "  (no matches)"
+			}
+			if machine.err != "" && machine.updated.IsZero() {
+				text = "  (inventory unavailable)"
+			}
+			body = append(body, viewLine{text: text})
 		}
 	}
-	footer := []string{"arrows/j/k move  Enter attach  n new  r rename  x stop  / filter  q/Ctrl-C quit"}
+	footer := []string{"arrows/j/k move  Enter attach  n new  r rename  x stop",
+		"/ filter  ! attention  m machines  i details  ? help  R refresh  q/Ctrl-C quit"}
 	if width < 75 {
-		footer = []string{"arrows/j/k move Enter attach n new", "r rename x stop / filter q/Ctrl-C quit"}
+		footer = []string{"Enter attach n new r rename x stop", "/ filter ! attention m i ? R q quit"}
+	}
+	if s.mode == machinePicker {
+		body = []viewLine{{text: "Machines (Enter selects)"}}
+		choices := append([]string{""}, names...)
+		for i, name := range choices {
+			text := "All machines"
+			if name != "" {
+				text = name + "  " + connection(s.machines[name], now)
+			}
+			prefix := "  "
+			if i == s.picker {
+				prefix = "> "
+				selectedLine = len(body)
+			}
+			body = append(body, viewLine{text: prefix + text, selected: i == s.picker})
+		}
+		footer = []string{"j/k move  Enter select  Esc cancel"}
+	} else if s.mode == help || s.mode == details {
+		body = nil
+		for _, line := range overlayLines(s, now) {
+			for _, wrapped := range wrap(line, width) {
+				body = append(body, viewLine{text: wrapped})
+			}
+		}
+		footer = []string{"j/k scroll  Esc/Enter back  Ctrl-C quit"}
 	}
 	message := s.message
 	if s.filter != "" && s.mode != filter && message == "" {
@@ -173,11 +228,28 @@ func render(s *state, width, height int, now time.Time) string {
 	case newCWD:
 		message = "Cwd on " + s.target.machine + ": " + s.input + "_"
 	case confirmStop:
-		message = "Stop " + s.target.key() + "? [y/N]"
+		message = "Stop " + s.target.key() + " (" + s.target.name() + ")? [y/N]"
 	}
-	footer = append(footer, message)
-	if s.mode != navigate && s.message != "" {
+	if s.mode == help || s.mode == details || s.mode == machinePicker {
+		message = ""
+	}
+	if s.mode != navigate && s.mode != help && s.mode != details && s.mode != machinePicker {
+		footer = []string{"Enter accept  Esc cancel  Ctrl-C quit", message}
+		if s.mode == confirmStop {
+			footer[0] = "y stop  Enter/Esc cancel  Ctrl-C quit"
+		}
+	} else if message != "" {
+		footer = append(footer, message)
+	}
+	if s.mode > navigate && s.mode < machinePicker && s.message != "" {
 		footer = append(footer, s.message)
+	}
+	// Preserve the prompt and escape guidance at tiny terminal heights.
+	if s.mode > navigate && s.mode < machinePicker && height <= 2 {
+		footer = []string{message, "Esc cancel Ctrl-C quit"}
+		if height == 1 {
+			footer = []string{clip(message, max(0, width-11)) + " Esc/Ctrl-C"}
+		}
 	}
 	// Preserve the current prompt even when the terminal is only a few rows.
 	if len(footer) > height {
@@ -186,6 +258,9 @@ func render(s *state, width, height int, now time.Time) string {
 	header = header[:min(len(header), height-len(footer))]
 	bodyHeight := max(0, height-len(header)-len(footer))
 	start := max(0, min(selectedLine-bodyHeight/2, len(body)-bodyHeight))
+	if s.mode == details || s.mode == help {
+		start = min(s.overlayOffset, max(0, len(body)-bodyHeight))
+	}
 	lines := make([]viewLine, 0, height)
 	for _, text := range header {
 		lines = append(lines, viewLine{text: text})
@@ -210,4 +285,97 @@ func render(s *state, width, height int, now time.Time) string {
 		output.WriteString("\x1b[0m")
 	}
 	return output.String()
+}
+
+// Freshness describes the query, independently of the provider lifecycle state.
+func connection(m machine, now time.Time) string {
+	text := "connecting"
+	if m.err != "" {
+		text = "offline"
+		if !m.updated.IsZero() {
+			text += "  last success " + age(int64(now.Sub(m.updated)/time.Second)) + " ago; cached rows stale"
+		}
+	} else if !m.updated.IsZero() {
+		text = "connected  updated " + age(int64(now.Sub(m.updated)/time.Second)) + " ago"
+	}
+	if m.loading {
+		text += " (refreshing)"
+	}
+	return text
+}
+
+// Wrap sanitized metadata by display cells so details expose complete values
+// without allowing terminal controls or splitting wide characters at an edge.
+func wrap(text string, width int) []string {
+	var lines []string
+	var line strings.Builder
+	cells := 0
+	for _, r := range clean(text) {
+		size := runewidth.RuneWidth(r)
+		if cells+size > width && line.Len() > 0 {
+			lines = append(lines, line.String())
+			line.Reset()
+			cells = 0
+		}
+		line.WriteRune(r)
+		cells += size
+	}
+	return append(lines, line.String())
+}
+
+func overlayLines(s *state, now time.Time) []string {
+	if s.mode == help {
+		return []string{
+			"Help / status legend",
+			"arrows or j/k: move; Enter: attach",
+			"n: new on selected machine; r: rename; x: confirm stop",
+			"/: filter machine, name, ID, agent, cwd or status",
+			"!: attention only (blocked or failed)",
+			"m: All, local, or a saved machine (including empty/offline)",
+			"i: full details; R: refresh; q or Ctrl-C: quit",
+			"W working  B blocked  I idle  D done  E exited  F failed  ? unknown",
+			"Connection/freshness is separate from session status; stale means a retained query result.",
+			"Attached: Ctrl+B then q returns here; Ctrl+B twice sends Ctrl+B.",
+			"Leaving wt keeps sessions running.",
+			"Remote setup: wt remote add NAME SSH_TARGET; wt remote list",
+			"Esc/Enter: back; j/k or PageUp/PageDown: scroll",
+		}
+	}
+	r := s.target
+	m := s.machines[r.machine]
+	elapsed := r.UptimeSecs
+	if !m.updated.IsZero() {
+		elapsed += max(0, int64(now.Sub(m.updated)/time.Second))
+	}
+	isolation := r.Isolation
+	if isolation == "" {
+		isolation = "not reported"
+	}
+	agent := r.Agent
+	if agent == "" {
+		agent = r.Kind
+	}
+	lines := []string{"Details: " + r.key(), "Name: " + r.name(), "Status: " + r.Status,
+		"Machine: " + r.machine + "  " + connection(m, now), "Cwd: " + r.CWD,
+		"Agent/kind: " + agent + " / " + r.Kind, "Age: " + age(elapsed), "Isolation: " + isolation,
+		fmt.Sprintf("Readers: %d  Writer: %s  Owner: %s  Epoch: %d", r.Readers, r.WriterID, r.WriterOwner, r.InputEpoch),
+	}
+	if r.machine == "local" {
+		lines = append(lines, "Route: local; state: "+s.localDir)
+	} else if remote, ok := s.remotes[r.machine]; ok {
+		state := remote.WingthingDir
+		if state == "" {
+			state = "default remote state"
+		}
+		lines = append(lines, "SSH: "+remote.SSHTarget, "Executable: "+remote.Binary(), "State: "+state)
+	}
+	if m.err != "" {
+		lines = append(lines, "Query error: "+m.err, "This row is stale; refresh before acting.")
+	}
+	ref := r.key()
+	if r.machine == "local" {
+		ref = r.ID
+	}
+	lines = append(lines, "Controls: Enter attach; r rename; x confirm stop; n new", "Attach: wt attach -- "+ref)
+	return lines
 }

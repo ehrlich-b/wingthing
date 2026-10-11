@@ -39,7 +39,7 @@ func Run(ctx context.Context, version string, streams remotepkg.IO) error {
 	if err != nil {
 		return err
 	}
-	s := &state{machines: map[string]machine{"local": {}}, defaultAgent: cfg.DefaultAgent, defaultCWD: cwd}
+	s := &state{machines: map[string]machine{"local": {}}, defaultAgent: cfg.DefaultAgent, defaultCWD: cwd, localDir: cfg.Dir}
 	for name := range remotes {
 		s.machines[name] = machine{}
 	}
@@ -56,6 +56,7 @@ func Run(ctx context.Context, version string, streams remotepkg.IO) error {
 }
 
 func run(ctx context.Context, s *state, inv *inventory, remotes map[string]config.Remote, terminal terminal, streams remotepkg.IO, command commandRunner, signals <-chan os.Signal) (err error) {
+	s.remotes = remotes
 	ctx, cancel := context.WithCancel(ctx)
 	var actions sync.WaitGroup
 	defer func() { cancel(); actions.Wait() }()
@@ -97,6 +98,14 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 	for {
 		if !suspended {
 			width, height := terminal.size()
+			if s.mode == details || s.mode == help {
+				lineCount := 0
+				for _, line := range overlayLines(s, time.Now()) {
+					lineCount += len(wrap(line, max(1, width)))
+				}
+				s.overlayLimit = max(0, lineCount-max(0, height-3))
+				s.overlayOffset = min(s.overlayOffset, s.overlayLimit)
+			}
 			if _, err := io.WriteString(streams.Out, render(s, width, height, time.Now())); err != nil {
 				return err
 			}
@@ -159,6 +168,10 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 				break
 			}
 			act, quit := s.handle(key)
+			if s.refresh {
+				s.refresh = false
+				inv.refresh(ctx, s)
+			}
 			if quit {
 				return nil
 			}

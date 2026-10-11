@@ -18,6 +18,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
@@ -30,8 +31,9 @@ func parentLifecycleWing(t *testing.T) *runWingFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Captured grants and the receiving wing compare canonical workspace paths.
-	home := config.CanonicalProviderPath(t.TempDir())
+	// Match production's physical workspace grants even when the host TMPDIR
+	// is a symlink (for example, /var -> /private/var on macOS).
+	home := wingpolicy.CanonicalPolicyPath(t.TempDir())
 	t.Setenv("HOME", home)
 	cfg := &config.Config{Dir: testprovider.ShortStateDir(t, scratch), WingID: "offline-wing", DefaultAgent: "claude"}
 	wc := &config.WingConfig{WingID: cfg.WingID, Paths: config.PathList{{Path: home}}}

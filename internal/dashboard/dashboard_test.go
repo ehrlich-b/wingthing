@@ -519,3 +519,52 @@ func TestDashboardQuitWaitsForBackgroundProcessCleanup(t *testing.T) {
 		t.Fatalf("quit cleanup failed: %v, restores=%d", err, restored.Load())
 	}
 }
+
+func TestDashboardManualRefreshRequestsInventory(t *testing.T) {
+	input, writer := pipeInput(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var restored atomic.Int32
+	updated := make(chan struct{}, 8)
+	var queries atomic.Int32
+	inv := newInventory(func(context.Context, string) ([]eggclient.LocalSession, error) {
+		queries.Add(1)
+		return []eggclient.LocalSession{session("same", "parent", "/src/app", "blocked")}, nil
+	})
+	output := writerFunc(func(p []byte) (int, error) {
+		if strings.Contains(string(p), "> B parent") {
+			select {
+			case updated <- struct{}{}:
+			default:
+			}
+		}
+		return len(p), nil
+	})
+	finished := make(chan error, 1)
+	s := &state{machines: map[string]machine{"local": {}}}
+	go func() {
+		finished <- run(ctx, s, inv, nil, fakeTerminal(output, &restored), remotepkg.IO{In: input, Out: output}, nil, nil)
+	}()
+	receive(t, updated)
+	first := queries.Load()
+	if _, err := writer.Write([]byte("R")); err != nil {
+		t.Fatal(err)
+	}
+	// A redraw can precede the result; use query completion rather than counting
+	// frames to prove the explicit refresh does not await the periodic tick.
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for queries.Load() == first {
+		select {
+		case <-updated:
+		case <-deadline.C:
+			t.Fatal("R did not request inventory")
+		}
+	}
+	if _, err := writer.Write([]byte("q")); err != nil {
+		t.Fatal(err)
+	}
+	if err := receive(t, finished); err != nil || restored.Load() != 1 {
+		t.Fatalf("manual refresh exit: %v", err)
+	}
+}

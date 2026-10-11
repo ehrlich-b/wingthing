@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 )
 
@@ -48,6 +49,9 @@ const (
 	newAgent
 	newCWD
 	confirmStop
+	machinePicker
+	details
+	help
 )
 
 type action struct {
@@ -60,18 +64,42 @@ type action struct {
 }
 
 type state struct {
-	machines     map[string]machine
-	selected     string
-	filter       string
-	mode         mode
-	input        string
-	previous     string
-	target       row
-	agent        string
-	defaultAgent string
-	defaultCWD   string
-	message      string
-	busy         bool
+	machines      map[string]machine
+	selected      string
+	filter        string
+	mode          mode
+	input         string
+	previous      string
+	target        row
+	agent         string
+	defaultAgent  string
+	defaultCWD    string
+	message       string
+	busy          bool
+	machineFilter string
+	attentionOnly bool
+	picker        int
+	overlayOffset int
+	overlayLimit  int
+	refresh       bool
+	localDir      string
+	remotes       map[string]config.Remote
+}
+
+func needsAttention(status string) bool { return status == "blocked" || status == "failed" }
+
+func (s *state) machineNames() []string {
+	names := make([]string, 0, len(s.machines))
+	for name := range s.machines {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if names[i] == "local" || names[j] == "local" {
+			return names[i] == "local"
+		}
+		return names[i] < names[j]
+	})
+	return names
 }
 
 func (s *state) rows() []row {
@@ -79,7 +107,13 @@ func (s *state) rows() []row {
 	query := strings.ToLower(s.filter)
 	blocked := make(map[string]bool)
 	for name, machine := range s.machines {
+		if s.machineFilter != "" && name != s.machineFilter {
+			continue
+		}
 		for _, session := range machine.sessions {
+			if s.attentionOnly && !needsAttention(session.Status) {
+				continue
+			}
 			r := row{LocalSession: session, machine: name}
 			if query != "" && !strings.Contains(strings.ToLower(strings.Join([]string{
 				name, session.ID, session.Name, session.Agent, session.Command, session.CWD, session.Status,
@@ -87,7 +121,7 @@ func (s *state) rows() []row {
 				continue
 			}
 			rows = append(rows, r)
-			if session.Status == "blocked" {
+			if needsAttention(session.Status) {
 				blocked[name+"\x00"+r.project()] = true
 			}
 		}
@@ -107,8 +141,8 @@ func (s *state) rows() []row {
 			}
 			return left.project() < right.project()
 		}
-		if (left.Status == "blocked") != (right.Status == "blocked") {
-			return left.Status == "blocked"
+		if needsAttention(left.Status) != needsAttention(right.Status) {
+			return needsAttention(left.Status)
 		}
 		if left.name() != right.name() {
 			return left.name() < right.name()
@@ -156,13 +190,52 @@ func (s *state) handle(key string) (act *action, quit bool) {
 	if key == "ctrl-c" {
 		return nil, true
 	}
+	if s.mode == machinePicker {
+		switch key {
+		case "escape", "q", "m":
+			s.mode = navigate
+		case "up", "k":
+			s.picker = max(0, s.picker-1)
+		case "down", "j":
+			s.picker = min(len(s.machineNames()), s.picker+1)
+		case "home":
+			s.picker = 0
+		case "end":
+			s.picker = len(s.machineNames())
+		case "enter":
+			s.machineFilter = ""
+			if s.picker > 0 {
+				s.machineFilter = s.machineNames()[s.picker-1]
+			}
+			s.mode, s.message = navigate, ""
+			s.reconcile()
+		}
+		return nil, false
+	}
+	if s.mode == details || s.mode == help {
+		switch key {
+		case "escape", "q", "enter", "i", "?":
+			s.mode = navigate
+		case "up", "k":
+			s.overlayOffset = max(0, s.overlayOffset-1)
+		case "down", "j":
+			s.overlayOffset = min(s.overlayLimit, s.overlayOffset+1)
+		case "pageup":
+			s.overlayOffset = max(0, s.overlayOffset-5)
+		case "pagedown":
+			s.overlayOffset = min(s.overlayLimit, s.overlayOffset+5)
+		case "home":
+			s.overlayOffset = 0
+		}
+		return nil, false
+	}
 	if s.mode != navigate {
 		if key == "escape" {
 			if s.mode == filter {
 				s.filter = s.previous
 				s.reconcile()
 			}
-			s.mode = navigate
+			s.mode, s.message = navigate, ""
 			return nil, false
 		}
 		if s.mode == confirmStop {
@@ -228,6 +301,24 @@ func (s *state) handle(key string) (act *action, quit bool) {
 		s.move(-1)
 	case "down", "right", "j":
 		s.move(1)
+	case "m":
+		s.mode, s.picker = machinePicker, 0
+		for i, name := range s.machineNames() {
+			if name == s.machineFilter {
+				s.picker = i + 1
+			}
+		}
+	case "i":
+		if r, ok := s.selection(); ok {
+			s.target, s.mode, s.overlayOffset = r, details, 0
+		}
+	case "?":
+		s.mode, s.overlayOffset = help, 0
+	case "!":
+		s.attentionOnly = !s.attentionOnly
+		s.reconcile()
+	case "R":
+		s.refresh = true
 	case "/":
 		s.mode, s.previous, s.input = filter, s.filter, s.filter
 	case "enter", "r", "x", "n":
@@ -239,7 +330,10 @@ func (s *state) handle(key string) (act *action, quit bool) {
 			return nil, false
 		}
 		if !ok {
-			r.machine = "local"
+			r.machine = s.machineFilter
+			if r.machine == "" {
+				r.machine = "local"
+			}
 		}
 		s.target, s.message = r, ""
 		switch key {

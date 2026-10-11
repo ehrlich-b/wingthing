@@ -56,6 +56,11 @@ prerequisite instead of installing npm dependencies. Every child receiver uses
 the explicitly built fixture; fake providers precede any installed provider on
 the fixture PATH.
 
+Run `make web` before the full `go test ./...` suite: the placeholder omits
+the manifest and service worker required by `TestStaticManifest` and
+`TestStaticSW`. Those two HTTP tests require TCP loopback; the protocol-only
+parent lifecycle fixtures do not.
+
 `testprovider.ShortStateDir` reserves address space for the full 16-character
 runtime ID, rather than relying on a decimal temporary suffix and an additional
 state component. The physical state directory also keeps the canonical control
