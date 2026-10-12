@@ -7,6 +7,9 @@ terminals. Start by giving Codex, Claude, or another parent agent typed MCP
 control of agents on the same machine, using the code and provider login already
 there. Add remote machines or a browser only when the work requires them.
 
+For the complete terminal workflow, see [the daily-driver guide](docs/daily-driver.md):
+cold `wt claude`, live saved machines in bare `wt`, detach, attention, and recent-run recovery.
+
 The agents run where the code and hardware already live. Wingthing keeps their
 terminals alive, records semantic runs as durable tasks, applies sandbox policy,
 and gives each caller an owner, actor, grant set, bound, and audit trail.

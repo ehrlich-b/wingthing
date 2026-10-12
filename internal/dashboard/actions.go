@@ -187,12 +187,20 @@ func actionArgs(act action, remotes map[string]config.Remote) ([]string, error) 
 	if act.kind == runAttach {
 		return runAttachArgs(act.run), nil
 	}
+	var prefix []string
+	if act.row.generation != "" && act.row.machine != "local" {
+		profile, exists := remotes[act.row.machine]
+		if !exists || profile != act.row.identity.profile {
+			return nil, fmt.Errorf("Cancelled: saved profile %s changed or was removed; select the current machine before acting", act.row.machine)
+		}
+		prefix = remotepkg.ProfileArgs(profile)
+	}
 	if act.attach {
 		ref := act.row.ID
-		if act.row.machine != "local" {
+		if act.row.machine != "local" && len(prefix) == 0 {
 			ref = act.row.machine + ":" + ref
 		}
-		args := []string{"attach"}
+		args := append(prefix, "attach")
 		if act.readOnly {
 			args = append(args, "--read-only")
 		}
@@ -272,5 +280,5 @@ command:
 			return eggclient.ValidateRemoteSession(ctx, name, current, id, streams)
 		}
 	}
-	return fmt.Errorf("cannot validate remote session %s on %s: saved profile changed or was removed; reopen wt before acting", id, route.SSHTarget)
+	return fmt.Errorf("cannot validate remote session %s on %s: saved profile changed or was removed; refresh wt before acting", id, route.SSHTarget)
 }

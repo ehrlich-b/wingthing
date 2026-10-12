@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
@@ -214,5 +215,89 @@ func TestDashboardInventoryQuitWaitsForQueryReaders(t *testing.T) {
 	reaped <- struct{}{}
 	if err := receive(t, finished); err != nil || restored.Load() != 1 {
 		t.Fatalf("quit cleanup: %v, restores=%d", err, restored.Load())
+	}
+}
+
+func TestDashboardRegistryReplacementCancelsAndRejectsLateResults(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	inv := newInventory(nil)
+	started := make(chan config.Remote, 8)
+	canceled := make(chan struct{}, 8)
+	release := make(chan struct{})
+	defer func() { cancel(); close(release); inv.workers.Wait() }()
+	inv.queryProfile = func(ctx context.Context, _ string, profile config.Remote) ([]eggclient.LocalSession, error) {
+		started <- profile
+		<-ctx.Done()
+		canceled <- struct{}{}
+		<-release // A transport can still return success after cancellation.
+		return []eggclient.LocalSession{session("late", "old-host", "/old", "working")}, nil
+	}
+	s := &state{machines: map[string]machine{"local": {}}, selected: "local:healthy"}
+	s.machines["local"] = machine{sessions: []eggclient.LocalSession{session("healthy", "local", "/src", "idle")}}
+	first := config.Remote{SSHTarget: "old", WTBinary: "/old/wt", WingthingDir: "/old"}
+	inv.reload(s, map[string]config.Remote{"work": first}, nil)
+	old := s.machines["work"].generation
+	inv.start(ctx, s, "work")
+	if receive(t, started) != first {
+		t.Fatal("query did not capture selected profile")
+	}
+	s.target = row{machine: "work", generation: old}
+	s.mode = confirmStop
+	next := config.Remote{SSHTarget: "new", WTBinary: "/new/wt", WingthingDir: "/new"}
+	inv.reload(s, map[string]config.Remote{"work": next, "empty": {SSHTarget: "empty"}}, nil)
+	receive(t, canceled)
+	if s.mode != navigate || !strings.Contains(s.message, "Cancelled") || s.selected != "local:healthy" {
+		t.Fatal("replacement lost healthy selection or old confirmation")
+	}
+	inv.start(ctx, s, "work")
+	if receive(t, started) != next {
+		t.Fatal("replacement reused old route")
+	}
+	current := s.machines["work"].generation
+	if current == old || inv.apply(s, inventoryResult{name: "work", generation: old, sessions: []eggclient.LocalSession{session("late", "wrong", "/old", "working")}}) || !inv.inFlight["work"] || len(s.machines["work"].sessions) != 0 {
+		t.Fatal("late result consumed replacement query")
+	}
+	inv.reload(s, nil, errors.New("malformed registry"))
+	if s.registryError == "" || s.remotes["work"] != next || !strings.Contains(render(s, 120, 30, time.Now()), "Registry error") {
+		t.Fatal("malformed registry discarded last valid route")
+	}
+	inv.reload(s, map[string]config.Remote{}, nil)
+	receive(t, canceled)
+	inv.apply(s, inventoryResult{name: "work", generation: current})
+	if _, exists := s.machines["work"]; exists {
+		t.Fatal("removed machine resurrected")
+	}
+	inv.reload(s, map[string]config.Remote{"work": first}, nil)
+	if s.registryError != "" || s.machines["work"].generation == old {
+		t.Fatal("re-added identical profile reused retired generation")
+	}
+	inv.apply(s, inventoryResult{name: "work", generation: old})
+	if len(s.machines["work"].sessions) != 0 {
+		t.Fatal("old profile ABA result accepted")
+	}
+}
+
+func TestDashboardRegistryCancelsPendingTargetsAndPreservesPicker(t *testing.T) {
+	for _, prompt := range []mode{rename, confirmStop, confirmTakeover, newAgent, newCWD} {
+		s := &state{machines: map[string]machine{"local": {}}}
+		inv := newInventory(nil)
+		inv.reload(s, map[string]config.Remote{"work": {SSHTarget: "host"}}, nil)
+		s.mode, s.target = prompt, row{machine: "work", generation: s.machines["work"].generation}
+		inv.reload(s, map[string]config.Remote{}, nil)
+		if s.mode != navigate || !strings.Contains(s.message, "changed or was removed") {
+			t.Fatalf("prompt %v survived removal", prompt)
+		}
+	}
+	s := &state{machines: map[string]machine{"local": {}}}
+	inv := newInventory(nil)
+	inv.reload(s, map[string]config.Remote{"z": {SSHTarget: "host"}}, nil)
+	s.mode, s.picker = machinePicker, 2
+	inv.reload(s, map[string]config.Remote{"a": {SSHTarget: "empty"}, "z": {SSHTarget: "host"}}, nil)
+	if s.picker != 3 {
+		t.Fatal("new machine moved selected picker route")
+	}
+	inv.reload(s, map[string]config.Remote{}, nil)
+	if s.picker != 0 {
+		t.Fatal("removed picker selection not reset")
 	}
 }

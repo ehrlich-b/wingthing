@@ -32,23 +32,20 @@ func Run(ctx context.Context, version string, streams remotepkg.IO) error {
 		return err
 	}
 	remotes, err := config.LoadRemotes(cfg.Dir)
-	if err != nil {
-		return err
-	}
+	registryErr := err
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
 	s := &state{machines: map[string]machine{"local": {}}, defaultAgent: cfg.DefaultAgent, defaultCWD: cwd, localDir: cfg.Dir}
-	for name := range remotes {
-		s.machines[name] = machine{}
-	}
-	inv := newInventory(func(ctx context.Context, name string) ([]eggclient.LocalSession, error) {
+	inv := newInventory(nil)
+	inv.reload(s, remotes, registryErr)
+	inv.queryProfile = func(ctx context.Context, name string, profile config.Remote) ([]eggclient.LocalSession, error) {
 		if name == "local" {
 			return eggclient.DiscoverActiveSessions(ctx, cfg)
 		}
-		return eggclient.QueryRemoteSessions(version, ctx, name, remotes[name], streams)
-	})
+		return eggclient.QueryRemoteSessions(version, ctx, name, profile, streams)
+	}
 	signals := make(chan os.Signal, 8)
 	signal.Notify(signals, syscall.SIGWINCH, syscall.SIGTSTP, syscall.SIGCONT)
 	defer signal.Stop(signals)
@@ -56,7 +53,9 @@ func Run(ctx context.Context, version string, streams remotepkg.IO) error {
 }
 
 func run(ctx context.Context, s *state, inv *inventory, remotes map[string]config.Remote, terminal terminal, streams remotepkg.IO, command commandRunner, signals <-chan os.Signal) (err error) {
-	s.remotes = remotes
+	if s.remotes == nil {
+		s.remotes = remotes
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	var actions sync.WaitGroup
 	history := s.history()
@@ -94,7 +93,23 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 		suspended = true
 		return terminal.suspend()
 	}
-	actionDone := make(chan error, 1)
+	var activeAction row
+	var actionCancel context.CancelFunc
+	reload := func() {
+		if inv.queryProfile != nil {
+			profiles, err := config.LoadRemotes(s.localDir)
+			inv.reload(s, profiles, err)
+			remotes = s.remotes
+			if actionCancel != nil && activeAction.generation != s.machines[activeAction.machine].generation {
+				actionCancel()
+			}
+		}
+	}
+	type actionResult struct {
+		row row
+		err error
+	}
+	actionDone := make(chan actionResult, 1)
 	inv.refresh(ctx, s)
 	for {
 		if !suspended {
@@ -160,10 +175,16 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			}
 			continue
 		case <-ticker.C:
+			reload()
 			inv.refresh(ctx, s)
 			continue
-		case actionErr := <-actionDone:
+		case result := <-actionDone:
 			s.busy = false
+			actionCancel = nil
+			if result.row.generation != s.machines[result.row.machine].generation {
+				continue
+			}
+			actionErr := result.err
 			s.message = "Done"
 			if actionErr != nil {
 				s.message = actionErr.Error()
@@ -186,9 +207,13 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 				inputErr = nil
 				break
 			}
+			if key == "R" && s.mode == navigate {
+				reload()
+			}
 			act, quit := s.handle(key)
 			if s.refresh {
 				s.refresh = false
+				reload()
 				inv.forceRefresh(ctx, s)
 			}
 			if history.requested && !history.loading {
@@ -213,6 +238,17 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 					continue
 				}
 			}
+			// Recheck the disk registry at the last event-loop boundary before
+			// dispatch; actionArgs then pins the accepted profile in literal argv.
+			reload()
+			if act.kind != runAttach && act.kind != runResult && act.row.machine != "local" && s.registryError != "" {
+				s.message = "cannot validate remote session: registry error: " + s.registryError
+				continue
+			}
+			if act.kind != runAttach && act.row.generation != s.machines[act.row.machine].generation {
+				s.message = "Cancelled: saved profile " + act.row.machine + " changed or was removed; select the current machine before acting"
+				continue
+			}
 			args, actionErr := actionArgs(*act, remotes)
 			if actionErr != nil {
 				s.message = actionErr.Error()
@@ -220,10 +256,12 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			}
 			if !act.attach && act.kind != newCWD {
 				s.busy, s.message = true, "Running…"
+				actionCtx, stop := context.WithTimeout(ctx, eggclient.RemoteSessionTimeout)
+				activeAction, actionCancel = act.row, stop
+				target := act.row
 				actions.Add(1)
 				go func() {
 					defer actions.Done()
-					actionCtx, stop := context.WithTimeout(ctx, eggclient.RemoteSessionTimeout)
 					defer stop()
 					var diagnostic bytes.Buffer
 					actionErr := backgroundCommand(actionCtx, command, args, remotepkg.IO{Out: io.Discard, ErrOut: &diagnostic, SSHPath: streams.SSHPath})
@@ -231,7 +269,7 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 						actionErr = fmt.Errorf("%w: %s", actionErr, diagnostic.String())
 					}
 					select {
-					case actionDone <- actionErr:
+					case actionDone <- actionResult{row: target, err: actionErr}:
 					case <-ctx.Done():
 					}
 				}()
@@ -272,6 +310,7 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			inputEvents = input.events
 			decoder.pending = nil
 			escapeTimer.Stop()
+			reload()
 			inv.refresh(ctx, s)
 			// Bytes read before the handoff belong to the old view.
 			inputErr = nil
