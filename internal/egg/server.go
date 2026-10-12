@@ -642,6 +642,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		}
 	}
 	args = prepared.Args
+	if err := SaveSessionPolicy(s.dir, rc, prepared); err != nil {
+		return fmt.Errorf("persist prepared session policy: %w", err)
+	}
 	envMap = prepared.Environment
 	codexRun := prepared.CodexRun
 	if home != "" {

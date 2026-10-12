@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
@@ -44,7 +45,12 @@ type providerWriteModel struct {
 func modelProviderWrites(cfg *config.Config, eggCfg *egg.EggConfig, agentName, cwd, sessionID string, identity eggclient.EggIdentity) (providerWriteModel, error) {
 	var model providerWriteModel
 	if runtime.GOOS != "darwin" {
-		return model, fmt.Errorf("provider write protection is modeled only for the macOS Seatbelt profile, not %s", runtime.GOOS)
+		diagnostic := control.LaunchDiagnostic{Stage: "admission/policy", Reason: "sandbox_unavailable", PolicyOrigin: "captured runtime policy"}
+		if eggCfg != nil && eggCfg.LaunchPolicy != nil {
+			diagnostic.PolicyOrigin = eggCfg.LaunchPolicy.Origin
+			diagnostic.PolicyPath = eggCfg.LaunchPolicy.Path
+		}
+		return model, control.WithLaunchDiagnostic(fmt.Errorf("provider write protection is modeled only for the macOS Seatbelt profile, not %s", runtime.GOOS), diagnostic)
 	}
 	if eggCfg == nil || !egg.RequiresSandbox(eggCfg, agentName) {
 		return model, errors.New("an outer-boundary session has the full authority of the OS user")
