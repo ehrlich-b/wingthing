@@ -1,0 +1,84 @@
+
+--- viewer starts before new output ---
+wt | 1 sessions | 1 machines
+B:0 W:1 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  /work/lanes/wt-phone-harness/wingthing/.scratch/northstar-315253260/work
+> W unread-parent                                                           claude       northstar-315253260/work                      2m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+
+--- new output unread ---
+wt | 1 sessions | 1 machines
+B:0 W:0 I:1 D:0 E:0 F:0 ?:0 U:1 | [All] !:1 bell:off
+local  connected  updated 0s ago
+  /work/lanes/wt-phone-harness/wingthing/.scratch/northstar-315253260/work
+> I* unread-parent                                                          claude       northstar-315253260/work                      2m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+New foreground response; provider or descendants may continue.

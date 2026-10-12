@@ -1,0 +1,696 @@
+{
+  "base": "71ef5dc5",
+  "branch": "codex/wt-phone-harness-20261011",
+  "toolchain": "go version go1.27.2 linux/amd64",
+  "nice": 15,
+  "GOFLAGS": "-p=4",
+  "before": {
+    "TestPhoneStoryboardWingJourney": [
+      "PASS"
+    ],
+    "TestStoryboardInstallCard0": [
+      "PASS"
+    ],
+    "TestStoryboardInstallCard1": [
+      "FAIL"
+    ],
+    "TestStoryboardInstallCard4": [
+      "FAIL"
+    ],
+    "TestStoryboardInstallCard5": [
+      "FAIL"
+    ],
+    "TestStoryboardInstallCard6": [
+      "FAIL"
+    ],
+    "TestStoryboardInstallCard7": [
+      "FAIL"
+    ],
+    "TestStoryboardInstallCard2": [
+      "PASS"
+    ],
+    "TestStoryboardInstallCard3": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard0": [
+      "FAIL"
+    ],
+    "TestStoryboardStartCard1": [
+      "FAIL"
+    ],
+    "TestStoryboardStartCard2/routing/local": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard2/native/local": [
+      "SKIP"
+    ],
+    "TestStoryboardStartCard2/routing/forge": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard2/native/forge": [
+      "SKIP"
+    ],
+    "TestStoryboardStartCard2": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard3": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard4/transport": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard4/remote/policy": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard4/remote/attach": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard4/remote": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard4/success": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard4/native": [
+      "SKIP"
+    ],
+    "TestStoryboardStartCard4": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard5/two-requested-parents-one-daemon": [
+      "FAIL"
+    ],
+    "TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor": [
+      "FAIL"
+    ],
+    "TestStoryboardStartCard5": [
+      "FAIL"
+    ],
+    "TestStoryboardNavigatorCard0": [
+      "PASS"
+    ],
+    "TestStoryboardNavigatorCard1": [
+      "PASS"
+    ],
+    "TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks": [
+      "PASS"
+    ],
+    "TestStoryboardNavigatorCard2/durable-unread-cursor": [
+      "FAIL"
+    ],
+    "TestStoryboardNavigatorCard2": [
+      "FAIL"
+    ],
+    "TestStoryboardNavigatorCard3": [
+      "PASS"
+    ],
+    "TestStoryboardNavigatorCard4/symlinked-TMPDIR-coordinator-loss": [
+      "PASS"
+    ],
+    "TestStoryboardNavigatorCard4": [
+      "PASS"
+    ],
+    "TestStoryboardNavigatorCard5": [
+      "FAIL"
+    ],
+    "TestStoryboardNavigatorCard6": [
+      "PASS"
+    ],
+    "TestStoryboardMachinesCard0": [
+      "PASS"
+    ],
+    "TestStoryboardMachinesCard1": [
+      "PASS"
+    ],
+    "TestStoryboardMachinesCard2/named": [
+      "PASS"
+    ],
+    "TestStoryboardMachinesCard2/generic": [
+      "PASS"
+    ],
+    "TestStoryboardMachinesCard2": [
+      "PASS"
+    ],
+    "TestStoryboardMachinesCard3": [
+      "FAIL"
+    ],
+    "TestStoryboardMachinesCard4/REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!": [
+      "PASS"
+    ],
+    "TestStoryboardMachinesCard4/unknown_flag:_--expected-channel": [
+      "PASS"
+    ],
+    "TestStoryboardMachinesCard4": [
+      "PASS"
+    ],
+    "TestStoryboardPhoneCard0": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard1": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard2": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard3": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard4": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard5": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard6": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard7": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard8": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard9": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard10": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard11": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard12": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard13": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard14": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard15": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard16": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard17": [
+      "FAIL"
+    ],
+    "TestStoryboardRunsCard0": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard1/routing/local": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard1/native/local": [
+      "SKIP"
+    ],
+    "TestStoryboardRunsCard1/routing/forge": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard1/native/forge": [
+      "SKIP"
+    ],
+    "TestStoryboardRunsCard1": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard2": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard3": [
+      "FAIL"
+    ],
+    "TestStoryboardRunsCard4": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard5/transport": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard5/remote/policy": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard5/remote/attach": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard5/remote": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard5/success": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard5/native": [
+      "SKIP"
+    ],
+    "TestStoryboardRunsCard5": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard6/symlinked-TMPDIR-coordinator-loss": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard6": [
+      "PASS"
+    ]
+  },
+  "after": {
+    "TestPhoneStoryboardHarnessPrerequisites/pair": [
+      "PASS"
+    ],
+    "TestPhoneStoryboardHarnessPrerequisites/devices": [
+      "PASS"
+    ],
+    "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone": [
+      "PASS"
+    ],
+    "TestPhoneStoryboardHarnessPrerequisites": [
+      "PASS"
+    ],
+    "TestPhoneStoryboardWingJourney": [
+      "PASS"
+    ],
+    "TestStoryboardInstallCard0": [
+      "PASS"
+    ],
+    "TestStoryboardInstallCard1": [
+      "FAIL"
+    ],
+    "TestStoryboardInstallCard4": [
+      "FAIL"
+    ],
+    "TestStoryboardInstallCard5": [
+      "FAIL"
+    ],
+    "TestStoryboardInstallCard6": [
+      "FAIL"
+    ],
+    "TestStoryboardInstallCard7": [
+      "FAIL"
+    ],
+    "TestStoryboardInstallCard2": [
+      "PASS"
+    ],
+    "TestStoryboardInstallCard3": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard0": [
+      "FAIL"
+    ],
+    "TestStoryboardStartCard1": [
+      "FAIL"
+    ],
+    "TestStoryboardStartCard2/routing/local": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard2/native/local": [
+      "SKIP"
+    ],
+    "TestStoryboardStartCard2/routing/forge": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard2/native/forge": [
+      "SKIP"
+    ],
+    "TestStoryboardStartCard2": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard3": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard4/transport": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard4/remote/policy": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard4/remote/attach": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard4/remote": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard4/success": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard4/native": [
+      "SKIP"
+    ],
+    "TestStoryboardStartCard4": [
+      "PASS"
+    ],
+    "TestStoryboardStartCard5/two-requested-parents-one-daemon": [
+      "FAIL"
+    ],
+    "TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor": [
+      "FAIL"
+    ],
+    "TestStoryboardStartCard5": [
+      "FAIL"
+    ],
+    "TestStoryboardNavigatorCard0": [
+      "PASS"
+    ],
+    "TestStoryboardNavigatorCard1": [
+      "PASS"
+    ],
+    "TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks": [
+      "PASS"
+    ],
+    "TestStoryboardNavigatorCard2/durable-unread-cursor": [
+      "FAIL"
+    ],
+    "TestStoryboardNavigatorCard2": [
+      "FAIL"
+    ],
+    "TestStoryboardNavigatorCard3": [
+      "PASS"
+    ],
+    "TestStoryboardNavigatorCard4/symlinked-TMPDIR-coordinator-loss": [
+      "PASS"
+    ],
+    "TestStoryboardNavigatorCard4": [
+      "PASS"
+    ],
+    "TestStoryboardNavigatorCard5": [
+      "FAIL"
+    ],
+    "TestStoryboardNavigatorCard6": [
+      "PASS"
+    ],
+    "TestStoryboardMachinesCard0": [
+      "PASS"
+    ],
+    "TestStoryboardMachinesCard1": [
+      "PASS"
+    ],
+    "TestStoryboardMachinesCard2/named": [
+      "PASS"
+    ],
+    "TestStoryboardMachinesCard2/generic": [
+      "PASS"
+    ],
+    "TestStoryboardMachinesCard2": [
+      "PASS"
+    ],
+    "TestStoryboardMachinesCard3": [
+      "FAIL"
+    ],
+    "TestStoryboardMachinesCard4/REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!": [
+      "PASS"
+    ],
+    "TestStoryboardMachinesCard4/unknown_flag:_--expected-channel": [
+      "PASS"
+    ],
+    "TestStoryboardMachinesCard4": [
+      "PASS"
+    ],
+    "TestStoryboardPhoneCard0": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard1": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard2": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard3": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard4": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard5": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard6": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard7": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard8": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard9": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard10": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard11": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard12": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard13": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard14": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard15": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard16": [
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard17": [
+      "FAIL"
+    ],
+    "TestStoryboardRunsCard0": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard1/routing/local": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard1/native/local": [
+      "SKIP"
+    ],
+    "TestStoryboardRunsCard1/routing/forge": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard1/native/forge": [
+      "SKIP"
+    ],
+    "TestStoryboardRunsCard1": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard2": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard3": [
+      "FAIL"
+    ],
+    "TestStoryboardRunsCard4": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard5/transport": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard5/remote/policy": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard5/remote/attach": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard5/remote": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard5/success": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard5/native": [
+      "SKIP"
+    ],
+    "TestStoryboardRunsCard5": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard6/symlinked-TMPDIR-coordinator-loss": [
+      "PASS"
+    ],
+    "TestStoryboardRunsCard6": [
+      "PASS"
+    ]
+  },
+  "flow5_three_runs": {
+    "TestPhoneStoryboardHarnessPrerequisites/pair": [
+      "PASS",
+      "PASS",
+      "PASS"
+    ],
+    "TestPhoneStoryboardHarnessPrerequisites/devices": [
+      "PASS",
+      "PASS",
+      "PASS"
+    ],
+    "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone": [
+      "PASS",
+      "PASS",
+      "PASS"
+    ],
+    "TestPhoneStoryboardHarnessPrerequisites": [
+      "PASS",
+      "PASS",
+      "PASS"
+    ],
+    "TestPhoneStoryboardWingJourney": [
+      "PASS",
+      "PASS",
+      "PASS"
+    ],
+    "TestStoryboardPhoneCard0": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard1": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard2": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard3": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard4": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard5": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard6": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard7": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard8": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard9": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard10": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard11": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard12": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard13": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard14": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard15": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard16": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "TestStoryboardPhoneCard17": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ]
+  },
+  "card_counts_before": {
+    "PASS": 21,
+    "FAIL": 30
+  },
+  "card_counts_after": {
+    "PASS": 21,
+    "FAIL": 30
+  },
+  "regressions": {},
+  "changed_existing_outcomes": {},
+  "new_tests": [
+    "TestPhoneStoryboardHarnessPrerequisites",
+    "TestPhoneStoryboardHarnessPrerequisites/devices",
+    "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+    "TestPhoneStoryboardHarnessPrerequisites/pair"
+  ],
+  "flow5_before": {
+    "PASS": 0,
+    "FAIL": 18,
+    "prerequisite_assertion_failures": 18
+  },
+  "flow5_after": {
+    "PASS": 0,
+    "FAIL": 18,
+    "prerequisite_assertion_failures": 0,
+    "physical_only": "REQUIRED-UNRUN",
+    "repetitions": 3
+  },
+  "gate_exit_codes": {
+    "storyboard-before": 1,
+    "storyboard-after": 1,
+    "flow5-after": 1,
+    "vet": 0,
+    "race": 0,
+    "harness-race": 0,
+    "nocgo-compile": 0,
+    "review-exec": 0
+  },
+  "beads_closed": [],
+  "logs_sha256": {
+    "storyboard-before.jsonl": "6fe5598ae00e66689d9d9b3742fb261d88fb6ac0eef5ec97f15feeabc358146b",
+    "race.txt": "eed598e004ed2178ad6d2c2211e1b48634516018f69eb86463cbd9d833f14ed8",
+    "flow5-after-initial.jsonl": "265b180e074928b21fe5972d5ff35cf1c1b541e52498c33b3039f713e8f61412",
+    "storyboard-after-initial.jsonl": "cd594db8b9beba4371707dad900d9fa8487cc7aa3f783229bcdfc4452be0f8b8",
+    "harness-race-initial.txt": "37c59e0f64ab8917fcd001b1255289277b1f81a859259d47d2008ae7ddd06295",
+    "vet-initial.txt": "a5d80cbdf966e0beb124fbc92b3f827a4ec7d6e8c48f855f87d4c0fc4eb1bef9",
+    "nocgo-compile-initial.txt": "472e828b9afaaac50742433f60d474efc4e3164d30aab95387bbf89fc74072f9",
+    "review-exec-initial.txt": "0dd88853308b51855efd9e7877cf2e6c7e1719e96342ebf38f8f9fdb1aa7910a",
+    "review-exec.txt": "25eb64c2936ead0bd049e7b313e2a5029450c4370f50df00df167d3a2c7d5693",
+    "storyboard-after.jsonl": "67e5fb6ab022f68c370589b184f1d0c7d490e52e47699e2852475d278c6adb20",
+    "flow5-after.jsonl": "634b63d9c6f97d490bf60c03e0363aca5dd96952208e93f03c4cee6d13085767",
+    "vet.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "harness-race.txt": "fec02af776b689b11cb97a1dfc49ca9f6da9039b4da7506eb53d27ff93a4d806",
+    "nocgo-compile.txt": "d408381bafad5740830ec56b95f8675494b8666ec3e2bd450677abeb33e6ac7f",
+    "review-prompt.txt": "a15c41b89014f9c36f26ab80c5442acd29832ee2b7085fa344bf330816899e5a"
+  },
+  "source_and_review_sha256": {
+    "cmd/wt/storyboard_pty_test.go": "1b951228946eeee1ede0b968d69ea7091ae9bba3bfe98e149e3b3365070653eb",
+    "cmd/wt/phone_storyboard_e2e_test.go": "61f710a5377f13123888afd070526d377954c321cabd3a72c1333af7616ccbfc",
+    "cmd/wt/storyboard_phone_harness_test.go": "ba16427eba3104451ee4dfc7473fa73a4c24acc14a22fce25b9bb46479fc5840",
+    "cmd/wt/storyboard_phone_nocgo_test.go": "86462040c67296f3bded3683cab7872dc06ff5bbb59c46d534b8f0b13789f487",
+    "HARNESS-FIX.md": "ca63df1c8198310f0cec15e76536c974c67221679ec4d6995e8e051ab357e9e8",
+    "HARNESS-REVIEW.md": "9203bd568d200a1beab1bbf0e570f5145c3ee008aaba29dcf927b7541b125bc7"
+  }
+}

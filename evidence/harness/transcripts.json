@@ -1,0 +1,3120 @@
+{
+  "storyboard-before": [
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-512660.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-512660.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-512652.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-512652.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-512644.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-512644.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-512629.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-512629.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-512621.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-512621.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-512313.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-512313.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-512283.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-512283.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard0/TestStoryboardInstallCard0-140-512756.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard0/TestStoryboardInstallCard0-140-512756.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard0/TestStoryboardInstallCard0-160-512686.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard0/TestStoryboardInstallCard0-160-512686.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard1",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard1/TestStoryboardInstallCard1-140-512794.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard1",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard1/TestStoryboardInstallCard1-140-512794.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard4",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard4/TestStoryboardInstallCard4-140-513126.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard4",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard4/TestStoryboardInstallCard4-140-513126.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard5",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard5/TestStoryboardInstallCard5-140-513485.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard5",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard5/TestStoryboardInstallCard5-140-513485.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard6",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard6/TestStoryboardInstallCard6-140-513696.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard6",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard6/TestStoryboardInstallCard6-140-513696.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard7",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard7/TestStoryboardInstallCard7-140-514233.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard7",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard7/TestStoryboardInstallCard7-140-514233.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard2",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard2/TestStoryboardInstallCard2-160-515289.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard2",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard2/TestStoryboardInstallCard2-160-515289.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard2",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard2/TestStoryboardInstallCard2-160-515278.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard2",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard2/TestStoryboardInstallCard2-160-515278.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard3/TestStoryboardInstallCard3-140-515372.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard3/TestStoryboardInstallCard3-140-515372.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard3/TestStoryboardInstallCard3-140-515357.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardInstallCard3/TestStoryboardInstallCard3-140-515357.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardStartCard0/TestStoryboardStartCard0-140-515398.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardStartCard0/TestStoryboardStartCard0-140-515398.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard1",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardStartCard1/TestStoryboardStartCard1-140-516757.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard1",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardStartCard1/TestStoryboardStartCard1-140-516757.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard2/routing/local",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardStartCard2-routing-local-120-519426.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard2/routing/local",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardStartCard2-routing-local-120-519426.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard2/routing/local",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardStartCard2-routing-local-120-519402.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard2/routing/local",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardStartCard2-routing-local-120-519402.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard2/routing/forge",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardStartCard2-routing-forge-120-519500.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard2/routing/forge",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardStartCard2-routing-forge-120-519500.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard2/routing/forge",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardStartCard2-routing-forge-120-519439.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard2/routing/forge",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardStartCard2-routing-forge-120-519439.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardStartCard3/TestStoryboardStartCard3-140-519551.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardStartCard3/TestStoryboardStartCard3-140-519551.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard4/transport",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardStartCard4-transport-120-520337.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard4/transport",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardStartCard4-transport-120-520337.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard4/transport",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardStartCard4-transport-240-520327.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard4/transport",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardStartCard4-transport-240-520327.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard4/remote/policy",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardStartCard4-remote-policy-120-520368.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard4/remote/policy",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardStartCard4-remote-policy-120-520368.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard4/remote/attach",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardStartCard4-remote-attach-120-520430.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard4/remote/attach",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardStartCard4-remote-attach-120-520430.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard4/success",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardStartCard4-success-120-520489.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard4/success",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardStartCard4-success-120-520489.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard5/two-requested-parents-one-daemon",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardStartCard5/two-requested-parents-one-daemon/TestStoryboardStartCard5-two-requested-parents-one-daemon-140-520508.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard5/two-requested-parents-one-daemon",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardStartCard5/two-requested-parents-one-daemon/TestStoryboardStartCard5-two-requested-parents-one-daemon-140-520508.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard5/two-requested-parents-one-daemon",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardStartCard5/two-requested-parents-one-daemon/TestStoryboardStartCard5-two-requested-parents-one-daemon-140-520507.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard5/two-requested-parents-one-daemon",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardStartCard5/two-requested-parents-one-daemon/TestStoryboardStartCard5-two-requested-parents-one-daemon-140-520507.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor/TestStoryboardStartCard5-canceled-waiter-does-not-kill-survivor-140-522456.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor/TestStoryboardStartCard5-canceled-waiter-does-not-kill-survivor-140-522456.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor/TestStoryboardStartCard5-canceled-waiter-does-not-kill-survivor-140-522455.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor/TestStoryboardStartCard5-canceled-waiter-does-not-kill-survivor-140-522455.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardNavigatorCard0/TestStoryboardNavigatorCard0-140-523897.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardNavigatorCard0/TestStoryboardNavigatorCard0-140-523897.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard1",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardNavigatorCard1/TestStoryboardNavigatorCard1-140-523959.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard1",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardNavigatorCard1/TestStoryboardNavigatorCard1-140-523959.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-525402.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-525402.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-524914.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-524914.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard2/durable-unread-cursor",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-525515.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard2/durable-unread-cursor",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-525515.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard2/durable-unread-cursor",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-525483.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard2/durable-unread-cursor",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-525483.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardNavigatorCard3-40-526898.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardNavigatorCard3-40-526898.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardNavigatorCard3-40-526883.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardNavigatorCard3-40-526883.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardNavigatorCard3-80-526863.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardNavigatorCard3-80-526863.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardNavigatorCard3/TestStoryboardNavigatorCard3-140-526772.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardNavigatorCard3/TestStoryboardNavigatorCard3-140-526772.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard4/symlinked-TMPDIR-coordinator-loss",
+      "path": "evidence/harness/transcripts/storyboard-before/evidence/09/pty/TestStoryboardNavigatorCard4-symlinked-TMPDIR-coordinator-loss-160-527782.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard4/symlinked-TMPDIR-coordinator-loss",
+      "path": "evidence/harness/transcripts/storyboard-before/evidence/09/pty/TestStoryboardNavigatorCard4-symlinked-TMPDIR-coordinator-loss-160-527782.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard4/symlinked-TMPDIR-coordinator-loss",
+      "path": "evidence/harness/transcripts/storyboard-before/evidence/09/pty/TestStoryboardNavigatorCard4-symlinked-TMPDIR-coordinator-loss-160-527732.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard4/symlinked-TMPDIR-coordinator-loss",
+      "path": "evidence/harness/transcripts/storyboard-before/evidence/09/pty/TestStoryboardNavigatorCard4-symlinked-TMPDIR-coordinator-loss-160-527732.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard5",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardNavigatorCard5/TestStoryboardNavigatorCard5-140-527851.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard5",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardNavigatorCard5/TestStoryboardNavigatorCard5-140-527851.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard6",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardNavigatorCard6/TestStoryboardNavigatorCard6-140-528884.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard6",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardNavigatorCard6/TestStoryboardNavigatorCard6-140-528884.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardMachinesCard0/TestStoryboardMachinesCard0-160-529132.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardMachinesCard0/TestStoryboardMachinesCard0-160-529132.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardMachinesCard0/TestStoryboardMachinesCard0-160-529093.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardMachinesCard0/TestStoryboardMachinesCard0-160-529093.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard1",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardMachinesCard1/TestStoryboardMachinesCard1-160-529206.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard1",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardMachinesCard1/TestStoryboardMachinesCard1-160-529206.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard1",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardMachinesCard1/TestStoryboardMachinesCard1-160-529178.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard1",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardMachinesCard1/TestStoryboardMachinesCard1-160-529178.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard2/named",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardMachinesCard2-named-80-530193.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard2/named",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardMachinesCard2-named-80-530193.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard2/generic",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardMachinesCard2-generic-80-530251.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard2/generic",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardMachinesCard2-generic-80-530251.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard2",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardMachinesCard2-80-530282.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard2",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardMachinesCard2-80-530282.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard2",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardMachinesCard2-80-529700.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard2",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardMachinesCard2-80-529700.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardMachinesCard3/TestStoryboardMachinesCard3-140-530501.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardMachinesCard3/TestStoryboardMachinesCard3-140-530501.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard4/REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!-160-532378.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard4/REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!-160-532378.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard4/REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!-140-532337.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard4/REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!-140-532337.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard4/unknown_flag:_--expected-channel",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel-160-532452.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard4/unknown_flag:_--expected-channel",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel-160-532452.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard4/unknown_flag:_--expected-channel",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel-140-532404.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard4/unknown_flag:_--expected-channel",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel-140-532404.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-532471.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-532471.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-532508.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-532508.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-532531.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-532531.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-532554.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-532554.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-532572.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-532572.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-532589.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-532589.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-532605.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-532605.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-532625.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-532625.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-532641.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-532641.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-532660.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-532660.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-532674.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-532674.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-532693.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-532693.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-532707.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-532707.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-532726.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-532726.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-532740.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-532740.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-532754.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-532754.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-532769.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-532769.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-532793.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-532793.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-532851.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-532851.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-532841.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-532841.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-532801.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard0",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-532801.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard1/routing/local",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-local-120-532882.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard1/routing/local",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-local-120-532882.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard1/routing/local",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-local-120-532865.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard1/routing/local",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-local-120-532865.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard1/routing/forge",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-forge-120-532932.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard1/routing/forge",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-forge-120-532932.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard1/routing/forge",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-forge-120-532890.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard1/routing/forge",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-forge-120-532890.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard2",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardRunsCard2/TestStoryboardRunsCard2-160-532950.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard2",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardRunsCard2/TestStoryboardRunsCard2-160-532950.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardRunsCard3/TestStoryboardRunsCard3-140-532974.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard3",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardRunsCard3/TestStoryboardRunsCard3-140-532974.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard4",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardRunsCard4/TestStoryboardRunsCard4-160-534519.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard4",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardRunsCard4/TestStoryboardRunsCard4-160-534519.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard4",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardRunsCard4/TestStoryboardRunsCard4-160-534507.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard4",
+      "path": "evidence/harness/transcripts/storyboard-before/storyboard-evidence/TestStoryboardRunsCard4/TestStoryboardRunsCard4-160-534507.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/transport",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardRunsCard5-transport-120-534567.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/transport",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardRunsCard5-transport-120-534567.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/transport",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardRunsCard5-transport-240-534558.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/transport",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardRunsCard5-transport-240-534558.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/remote/policy",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardRunsCard5-remote-policy-120-534598.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/remote/policy",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardRunsCard5-remote-policy-120-534598.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/remote/attach",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardRunsCard5-remote-attach-120-534641.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/remote/attach",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardRunsCard5-remote-attach-120-534641.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/success",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardRunsCard5-success-120-534684.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/success",
+      "path": "evidence/harness/transcripts/storyboard-before/northstar/northstar-evidence/TestStoryboardRunsCard5-success-120-534684.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard6/symlinked-TMPDIR-coordinator-loss",
+      "path": "evidence/harness/transcripts/storyboard-before/evidence/09/pty/TestStoryboardRunsCard6-symlinked-TMPDIR-coordinator-loss-160-535310.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard6/symlinked-TMPDIR-coordinator-loss",
+      "path": "evidence/harness/transcripts/storyboard-before/evidence/09/pty/TestStoryboardRunsCard6-symlinked-TMPDIR-coordinator-loss-160-535310.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard6/symlinked-TMPDIR-coordinator-loss",
+      "path": "evidence/harness/transcripts/storyboard-before/evidence/09/pty/TestStoryboardRunsCard6-symlinked-TMPDIR-coordinator-loss-160-535260.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard6/symlinked-TMPDIR-coordinator-loss",
+      "path": "evidence/harness/transcripts/storyboard-before/evidence/09/pty/TestStoryboardRunsCard6-symlinked-TMPDIR-coordinator-loss-160-535260.ansi"
+    }
+  ],
+  "storyboard-after": [
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/pair",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-pair/TestPhoneStoryboardHarnessPrerequisites-pair-160-567867.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/pair",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-pair/TestPhoneStoryboardHarnessPrerequisites-pair-160-567867.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/pair",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-pair/TestPhoneStoryboardHarnessPrerequisites-pair-160-567778.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/pair",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-pair/TestPhoneStoryboardHarnessPrerequisites-pair-160-567778.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-568816.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-568816.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-568462.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-568462.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-568348.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-568348.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-569408.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-569408.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-569392.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-569392.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-568976.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-568976.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-568864.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-568864.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569987.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569987.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569969.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569969.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569953.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569953.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569920.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569920.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569904.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569904.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569578.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569578.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569466.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569466.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard0/TestStoryboardInstallCard0-140-570250.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard0/TestStoryboardInstallCard0-140-570250.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard0/TestStoryboardInstallCard0-160-570076.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard0/TestStoryboardInstallCard0-160-570076.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard1",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard1/TestStoryboardInstallCard1-140-570301.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard1",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard1/TestStoryboardInstallCard1-140-570301.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard4",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard4/TestStoryboardInstallCard4-140-570968.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard4",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard4/TestStoryboardInstallCard4-140-570968.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard5",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard5/TestStoryboardInstallCard5-140-571430.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard5",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard5/TestStoryboardInstallCard5-140-571430.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard6",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard6/TestStoryboardInstallCard6-140-571968.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard6",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard6/TestStoryboardInstallCard6-140-571968.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard7",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard7/TestStoryboardInstallCard7-140-572352.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard7",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard7/TestStoryboardInstallCard7-140-572352.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard2",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard2/TestStoryboardInstallCard2-160-572889.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard2",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard2/TestStoryboardInstallCard2-160-572889.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard2",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard2/TestStoryboardInstallCard2-160-572877.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard2",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard2/TestStoryboardInstallCard2-160-572877.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard3/TestStoryboardInstallCard3-140-572972.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard3/TestStoryboardInstallCard3-140-572972.ansi"
+    },
+    {
+      "test": "TestStoryboardInstallCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard3/TestStoryboardInstallCard3-140-572958.txt"
+    },
+    {
+      "test": "TestStoryboardInstallCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardInstallCard3/TestStoryboardInstallCard3-140-572958.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardStartCard0/TestStoryboardStartCard0-140-573000.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardStartCard0/TestStoryboardStartCard0-140-573000.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard1",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardStartCard1/TestStoryboardStartCard1-140-573575.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard1",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardStartCard1/TestStoryboardStartCard1-140-573575.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard2/routing/local",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardStartCard2-routing-local-120-574268.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard2/routing/local",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardStartCard2-routing-local-120-574268.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard2/routing/local",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardStartCard2-routing-local-120-574250.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard2/routing/local",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardStartCard2-routing-local-120-574250.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard2/routing/forge",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardStartCard2-routing-forge-120-574323.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard2/routing/forge",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardStartCard2-routing-forge-120-574323.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard2/routing/forge",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardStartCard2-routing-forge-120-574276.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard2/routing/forge",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardStartCard2-routing-forge-120-574276.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardStartCard3/TestStoryboardStartCard3-140-574341.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardStartCard3/TestStoryboardStartCard3-140-574341.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard4/transport",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardStartCard4-transport-120-574666.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard4/transport",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardStartCard4-transport-120-574666.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard4/transport",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardStartCard4-transport-240-574658.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard4/transport",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardStartCard4-transport-240-574658.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard4/remote/policy",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardStartCard4-remote-policy-120-574684.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard4/remote/policy",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardStartCard4-remote-policy-120-574684.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard4/remote/attach",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardStartCard4-remote-attach-120-574729.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard4/remote/attach",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardStartCard4-remote-attach-120-574729.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard4/success",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardStartCard4-success-120-574772.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard4/success",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardStartCard4-success-120-574772.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard5/two-requested-parents-one-daemon",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardStartCard5/two-requested-parents-one-daemon/TestStoryboardStartCard5-two-requested-parents-one-daemon-140-574789.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard5/two-requested-parents-one-daemon",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardStartCard5/two-requested-parents-one-daemon/TestStoryboardStartCard5-two-requested-parents-one-daemon-140-574789.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard5/two-requested-parents-one-daemon",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardStartCard5/two-requested-parents-one-daemon/TestStoryboardStartCard5-two-requested-parents-one-daemon-140-574787.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard5/two-requested-parents-one-daemon",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardStartCard5/two-requested-parents-one-daemon/TestStoryboardStartCard5-two-requested-parents-one-daemon-140-574787.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor/TestStoryboardStartCard5-canceled-waiter-does-not-kill-survivor-140-575383.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor/TestStoryboardStartCard5-canceled-waiter-does-not-kill-survivor-140-575383.ansi"
+    },
+    {
+      "test": "TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor/TestStoryboardStartCard5-canceled-waiter-does-not-kill-survivor-140-575382.txt"
+    },
+    {
+      "test": "TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor/TestStoryboardStartCard5-canceled-waiter-does-not-kill-survivor-140-575382.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardNavigatorCard0/TestStoryboardNavigatorCard0-140-576131.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardNavigatorCard0/TestStoryboardNavigatorCard0-140-576131.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard1",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardNavigatorCard1/TestStoryboardNavigatorCard1-140-576189.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard1",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardNavigatorCard1/TestStoryboardNavigatorCard1-140-576189.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-577171.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-577171.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-576779.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-576779.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard2/durable-unread-cursor",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-577269.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard2/durable-unread-cursor",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-577269.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard2/durable-unread-cursor",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-577243.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard2/durable-unread-cursor",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-577243.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardNavigatorCard3-40-578520.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardNavigatorCard3-40-578520.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardNavigatorCard3-40-578506.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardNavigatorCard3-40-578506.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardNavigatorCard3-80-578493.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardNavigatorCard3-80-578493.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardNavigatorCard3/TestStoryboardNavigatorCard3-140-578420.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardNavigatorCard3/TestStoryboardNavigatorCard3-140-578420.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard4/symlinked-TMPDIR-coordinator-loss",
+      "path": "evidence/harness/transcripts/storyboard-after/evidence/09/pty/TestStoryboardNavigatorCard4-symlinked-TMPDIR-coordinator-loss-160-579873.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard4/symlinked-TMPDIR-coordinator-loss",
+      "path": "evidence/harness/transcripts/storyboard-after/evidence/09/pty/TestStoryboardNavigatorCard4-symlinked-TMPDIR-coordinator-loss-160-579873.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard4/symlinked-TMPDIR-coordinator-loss",
+      "path": "evidence/harness/transcripts/storyboard-after/evidence/09/pty/TestStoryboardNavigatorCard4-symlinked-TMPDIR-coordinator-loss-160-579832.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard4/symlinked-TMPDIR-coordinator-loss",
+      "path": "evidence/harness/transcripts/storyboard-after/evidence/09/pty/TestStoryboardNavigatorCard4-symlinked-TMPDIR-coordinator-loss-160-579832.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard5",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardNavigatorCard5/TestStoryboardNavigatorCard5-140-579939.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard5",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardNavigatorCard5/TestStoryboardNavigatorCard5-140-579939.ansi"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard6",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardNavigatorCard6/TestStoryboardNavigatorCard6-140-580678.txt"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard6",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardNavigatorCard6/TestStoryboardNavigatorCard6-140-580678.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardMachinesCard0/TestStoryboardMachinesCard0-160-580784.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardMachinesCard0/TestStoryboardMachinesCard0-160-580784.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardMachinesCard0/TestStoryboardMachinesCard0-160-580776.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardMachinesCard0/TestStoryboardMachinesCard0-160-580776.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard1",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardMachinesCard1/TestStoryboardMachinesCard1-160-580812.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard1",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardMachinesCard1/TestStoryboardMachinesCard1-160-580812.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard1",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardMachinesCard1/TestStoryboardMachinesCard1-160-580793.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard1",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardMachinesCard1/TestStoryboardMachinesCard1-160-580793.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard2/named",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardMachinesCard2-named-80-581483.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard2/named",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardMachinesCard2-named-80-581483.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard2/generic",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardMachinesCard2-generic-80-581517.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard2/generic",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardMachinesCard2-generic-80-581517.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard2",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardMachinesCard2-80-581551.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard2",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardMachinesCard2-80-581551.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard2",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardMachinesCard2-80-581120.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard2",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardMachinesCard2-80-581120.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardMachinesCard3/TestStoryboardMachinesCard3-140-581715.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardMachinesCard3/TestStoryboardMachinesCard3-140-581715.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard4/REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!-160-582555.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard4/REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!-160-582555.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard4/REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!-140-582513.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard4/REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!-140-582513.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard4/unknown_flag:_--expected-channel",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel-160-582635.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard4/unknown_flag:_--expected-channel",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel-160-582635.ansi"
+    },
+    {
+      "test": "TestStoryboardMachinesCard4/unknown_flag:_--expected-channel",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel-140-582577.txt"
+    },
+    {
+      "test": "TestStoryboardMachinesCard4/unknown_flag:_--expected-channel",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel-140-582577.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-582739.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-582739.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-582654.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-582654.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-583109.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-583109.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-583047.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-583047.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-583397.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-583397.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-583339.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-583339.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-583854.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-583854.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-583791.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-583791.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-584198.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-584198.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-584133.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-584133.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-584487.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-584487.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-584428.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-584428.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-585061.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-585061.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-584761.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-584761.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-584731.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-584731.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-585109.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-585109.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-585085.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-585085.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-585411.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-585411.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-585386.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-585386.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-585746.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-585746.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-585723.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-585723.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-586093.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-586093.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-586070.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-586070.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-586658.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-586658.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-586650.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-586650.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-586384.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-586384.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-586360.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-586360.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-586720.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-586720.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-586683.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-586683.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-587038.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-587038.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-587012.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-587012.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-587343.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-587343.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-587315.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-587315.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-587656.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-587656.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-587632.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-587632.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-587952.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-587952.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-587926.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-587926.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-588249.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-588249.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-588224.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-588224.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-588753.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-588753.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-588745.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-588745.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-588704.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard0",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-588704.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard1/routing/local",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-local-120-588782.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard1/routing/local",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-local-120-588782.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard1/routing/local",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-local-120-588761.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard1/routing/local",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-local-120-588761.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard1/routing/forge",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-forge-120-588832.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard1/routing/forge",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-forge-120-588832.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard1/routing/forge",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-forge-120-588790.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard1/routing/forge",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-forge-120-588790.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard2",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardRunsCard2/TestStoryboardRunsCard2-160-588850.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard2",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardRunsCard2/TestStoryboardRunsCard2-160-588850.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardRunsCard3/TestStoryboardRunsCard3-140-588871.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard3",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardRunsCard3/TestStoryboardRunsCard3-140-588871.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard4",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardRunsCard4/TestStoryboardRunsCard4-160-589710.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard4",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardRunsCard4/TestStoryboardRunsCard4-160-589710.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard4",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardRunsCard4/TestStoryboardRunsCard4-160-589696.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard4",
+      "path": "evidence/harness/transcripts/storyboard-after/storyboard-evidence/TestStoryboardRunsCard4/TestStoryboardRunsCard4-160-589696.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/transport",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardRunsCard5-transport-120-589740.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/transport",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardRunsCard5-transport-120-589740.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/transport",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardRunsCard5-transport-240-589728.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/transport",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardRunsCard5-transport-240-589728.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/remote/policy",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardRunsCard5-remote-policy-120-589760.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/remote/policy",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardRunsCard5-remote-policy-120-589760.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/remote/attach",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardRunsCard5-remote-attach-120-589803.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/remote/attach",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardRunsCard5-remote-attach-120-589803.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/success",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardRunsCard5-success-120-589845.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard5/success",
+      "path": "evidence/harness/transcripts/storyboard-after/northstar/northstar-evidence/TestStoryboardRunsCard5-success-120-589845.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard6/symlinked-TMPDIR-coordinator-loss",
+      "path": "evidence/harness/transcripts/storyboard-after/evidence/09/pty/TestStoryboardRunsCard6-symlinked-TMPDIR-coordinator-loss-160-590131.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard6/symlinked-TMPDIR-coordinator-loss",
+      "path": "evidence/harness/transcripts/storyboard-after/evidence/09/pty/TestStoryboardRunsCard6-symlinked-TMPDIR-coordinator-loss-160-590131.ansi"
+    },
+    {
+      "test": "TestStoryboardRunsCard6/symlinked-TMPDIR-coordinator-loss",
+      "path": "evidence/harness/transcripts/storyboard-after/evidence/09/pty/TestStoryboardRunsCard6-symlinked-TMPDIR-coordinator-loss-160-590088.txt"
+    },
+    {
+      "test": "TestStoryboardRunsCard6/symlinked-TMPDIR-coordinator-loss",
+      "path": "evidence/harness/transcripts/storyboard-after/evidence/09/pty/TestStoryboardRunsCard6-symlinked-TMPDIR-coordinator-loss-160-590088.ansi"
+    }
+  ],
+  "flow5-after": [
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/pair",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-pair/TestPhoneStoryboardHarnessPrerequisites-pair-160-567868.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/pair",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-pair/TestPhoneStoryboardHarnessPrerequisites-pair-160-567868.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/pair",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-pair/TestPhoneStoryboardHarnessPrerequisites-pair-160-567792.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/pair",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-pair/TestPhoneStoryboardHarnessPrerequisites-pair-160-567792.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-568808.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-568808.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-568456.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-568456.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-568336.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-568336.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-569407.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-569407.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-569389.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-569389.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-568970.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-568970.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-568853.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-568853.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569986.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569986.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569968.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569968.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569952.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569952.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569919.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569919.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569902.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569902.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569577.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569577.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569465.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-569465.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-570190.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-570190.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-570038.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-570038.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-570601.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-570601.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-570563.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-570563.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-570858.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-570858.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-570829.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-570829.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-571044.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-571044.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-571021.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-571021.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-571231.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-571231.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-571208.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-571208.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-571477.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-571477.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-571455.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-571455.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-571801.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-571801.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-571689.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-571689.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-571666.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-571666.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-571863.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-571863.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-571839.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-571839.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-572082.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-572082.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-572003.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-572003.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-572246.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-572246.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-572221.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-572221.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-572404.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-572404.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-572380.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-572380.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-572731.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-572731.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-572723.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-572723.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-572563.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-572563.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-572540.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-572540.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-572778.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-572778.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-572754.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-572754.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-573073.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-573073.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-573049.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-573049.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-573393.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-573393.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-573369.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-573369.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-573657.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-573657.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-573634.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-573634.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-573885.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-573885.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-573861.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-573861.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-574146.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-574146.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-574122.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-574122.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/pair",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-pair/TestPhoneStoryboardHarnessPrerequisites-pair-160-574581.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/pair",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-pair/TestPhoneStoryboardHarnessPrerequisites-pair-160-574581.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/pair",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-pair/TestPhoneStoryboardHarnessPrerequisites-pair-160-574555.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/pair",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-pair/TestPhoneStoryboardHarnessPrerequisites-pair-160-574555.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-575213.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-575213.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-574968.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-574968.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-574945.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-574945.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-575423.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-575423.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-575415.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-575415.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-575260.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-575260.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-575236.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-575236.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-575668.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-575668.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-575660.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-575660.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-575652.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-575652.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-575635.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-575635.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-575627.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-575627.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-575507.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-575507.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-575452.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-575452.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-575720.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-575720.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-575698.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-575698.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-575950.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-575950.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-575927.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-575927.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-576563.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-576563.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-576539.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-576539.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-577410.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-577410.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-577372.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-577372.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-577931.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-577931.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-577886.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-577886.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-578727.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-578727.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-578612.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-578612.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-580013.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-580013.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-579235.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-579235.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-579172.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-579172.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-580082.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-580082.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-580057.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-580057.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-580302.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-580302.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-580279.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-580279.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-580552.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-580552.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-580508.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-580508.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-580963.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-580963.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-580938.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-580938.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-582222.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-582222.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-582214.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-582214.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-581902.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-581902.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-581876.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-581876.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-582270.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-582270.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-582246.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-582246.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-582811.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-582811.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-582721.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-582721.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-583181.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-583181.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-583089.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-583089.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-583467.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-583467.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-583379.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-583379.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-583921.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-583921.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-583832.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-583832.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-584269.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-584269.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-584180.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-584180.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/pair",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-pair/TestPhoneStoryboardHarnessPrerequisites-pair-160-584594.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/pair",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-pair/TestPhoneStoryboardHarnessPrerequisites-pair-160-584594.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/pair",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-pair/TestPhoneStoryboardHarnessPrerequisites-pair-160-584469.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/pair",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-pair/TestPhoneStoryboardHarnessPrerequisites-pair-160-584469.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-585208.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-585208.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-584921.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-584921.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-584878.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices/TestPhoneStoryboardHarnessPrerequisites-devices-160-584878.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-585516.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-585516.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-585508.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-585508.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-585255.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-585255.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-585231.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardHarnessPrerequisites/devices-revoke-Bryan's_iPhone",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone/TestPhoneStoryboardHarnessPrerequisites-devices-revoke-Bryan's_iPhone-160-585231.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-585882.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-585882.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-585874.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-585874.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-585866.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-585866.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-585850.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-585850.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-585842.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-585842.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-585570.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-585570.ansi"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-585546.txt"
+    },
+    {
+      "test": "TestPhoneStoryboardWingJourney",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestPhoneStoryboardWingJourney/TestPhoneStoryboardWingJourney-160-585546.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-585935.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-585935.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-585911.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-585911.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-586230.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-586230.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-586208.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-586208.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-586524.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-586524.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-586501.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-586501.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-586879.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-586879.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-586855.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-586855.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-587179.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-587179.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-587156.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-587156.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-587492.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-587492.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-587468.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-587468.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-588052.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-588052.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-587795.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-587795.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-587771.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-587771.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-588098.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-588098.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-588075.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-588075.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-588531.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-588531.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-588505.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-588505.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-588952.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-588952.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-588929.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-588929.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-589401.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-589401.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-589377.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-589377.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-589958.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-589958.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-589950.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-589950.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-589588.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-589588.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-589564.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-589564.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-590005.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-590005.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-589981.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-589981.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-590420.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-590420.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-590274.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-590274.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-590992.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-590992.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-590966.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-590966.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-591384.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-591384.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-591359.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-591359.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-591527.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-591527.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-591504.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-591504.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-591806.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-591806.ansi"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-591779.txt"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "path": "evidence/harness/transcripts/flow5-after/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-591779.ansi"
+    }
+  ]
+}

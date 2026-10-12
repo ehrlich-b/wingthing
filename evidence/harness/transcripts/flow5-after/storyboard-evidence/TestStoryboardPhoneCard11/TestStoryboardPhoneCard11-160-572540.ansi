@@ -1,0 +1,6 @@
+wing daemon started (pid 572549)
+  local control: ready
+  Local network only. That's fine; nothing else needed.
+  log: /work/lanes/wt-phone-harness/wingthing/.scratch/15e805af8b/l/wing.log
+
+use wt pair to connect your phone, or wt mcp stdio to control the wing

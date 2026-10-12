@@ -1,0 +1,1 @@
+Starting local Claude...[2K]777;wt-launch-diagnostic=eyJzdGFnZSI6ImNvbm5lY3Qvc3RhcnR1cCIsInJlYXNvbiI6ImNhbmNlbGVkIiwicG9saWN5X29yaWdpbiI6InVuYXZhaWxhYmxlIn0=\Error: Claude launch failed during connect/startup: context canceled. Check the selected wing with wt wing start --local-only; inspect its wing.log. Policy: unavailable.

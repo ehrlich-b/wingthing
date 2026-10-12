@@ -1,0 +1,8 @@
+submitted: t-20261011-215833-a385f7cd276b4768 (Read the tests and report failures)
+2026/10/11 21:58:33 memory: warning: index: read: open /work/lanes/wt-phone-harness/wingthing/.scratch/ce2679ed93/l/memory/index.md: no such file or directory
+2026/10/11 21:58:33 memory: warning: identity: read: open /work/lanes/wt-phone-harness/wingthing/.scratch/ce2679ed93/l/memory/identity.md: no such file or directory
+2026/10/11 21:58:33 memory: warning: read dir /work/lanes/wt-phone-harness/wingthing/.scratch/ce2679ed93/l/memory: open /work/lanes/wt-phone-harness/wingthing/.scratch/ce2679ed93/l/memory: no such file or directory
+2026/10/11 21:58:33 domain proxy: listening on 127.0.0.1:36721, 4 domains, 2 wildcards
+2026/10/11 21:58:33 task t-20261011-215833-a385f7cd276b4768 sandbox: network=https enforcement=proxy domains=6 local_ports=[]
+2026/10/11 21:58:33 linux sandbox: created tmpdir=/work/lanes/wt-phone-harness/wingthing/.scratch/northstar-467495261/tmp-alias/wt-sandbox-4087110325 network=https cgroup=false
+STORYBOARD_LEGACY_RESULT
