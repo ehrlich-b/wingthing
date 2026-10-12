@@ -250,3 +250,25 @@ func TestDashboardRemoteMutationValidatesSameCurrentProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDashboardGenerationPinsEveryRemoteAction(t *testing.T) {
+	s := &state{machines: map[string]machine{"local": {}}}
+	inv := newInventory(nil)
+	profile := config.Remote{SSHTarget: "old", WTBinary: "/custom/wt", WingthingDir: "/state"}
+	inv.reload(s, map[string]config.Remote{"work": profile}, nil)
+	target := s.sessionRow("work", session("same", "old", "/cwd", "working"))
+	for _, act := range []action{{row: target, attach: true}, {row: target, kind: rename, name: "rename"}, {row: target, kind: confirmStop}, {row: target, kind: newCWD, agent: "claude", cwd: "/cwd"}} {
+		args, err := actionArgs(act, s.remotes)
+		if err != nil || len(args) < 6 || !reflect.DeepEqual(args[:6], remotepkg.ProfileArgs(profile)) {
+			t.Fatalf("action lost pinned generation route: %v %v", args, err)
+		}
+		replacement := profile
+		replacement.WingID = "other-identity"
+		if _, err := actionArgs(act, map[string]config.Remote{"work": replacement}); err == nil {
+			t.Fatal("old action accepted replacement identity")
+		}
+		if _, err := actionArgs(act, map[string]config.Remote{}); err == nil {
+			t.Fatal("old action accepted removed profile")
+		}
+	}
+}

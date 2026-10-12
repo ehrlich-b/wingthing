@@ -495,3 +495,44 @@ human approval routing remain open in [TODO](../TODO.md#personal-preview-accepta
 Native Codex parser/journal fixtures do not establish live supervisor readiness.
 The composed Android/iOS wire and core fixtures do not establish APK/Xcode or
 physical-device acceptance, native pairing or passkey approval.
+
+
+## Northstar terminal daily loop
+
+Use the native macOS Go 1.26.9 toolchain on the combined carrier. Providers and
+SSH are isolated fixtures; no real login, user daemon or remote installation is
+required. A passing kernel PTY test is not a real-provider, real-SSH or physical
+trackpad/selection canary. See [the daily-driver guide](daily-driver.md).
+
+```sh
+WT_GO=/Users/ehrlich/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.9.darwin-arm64/bin/go
+# Select clone-local HOME/state, temporary directories and populated module/build
+# caches before running. Use GOPROXY=off, GOSUMDB=off, GOTOOLCHAIN=local,
+# GOFLAGS=-p=2 and GOMAXPROCS=2. Execute heavy commands serially.
+make web/dist
+taskpolicy -b nice -n 15 "$WT_GO" vet -p 2 ./...
+taskpolicy -b nice -n 15 "$WT_GO" test -p 2 -count=1 -timeout=20m ./internal/dashboard ./internal/config ./internal/eggclient ./internal/remote ./cmd/wt
+taskpolicy -b nice -n 15 "$WT_GO" test -p 2 ./cmd/wt -list '^TestNorthstarPTYRemoteReload$'
+taskpolicy -b nice -n 15 "$WT_GO" test -p 2 -count=1 -timeout=3m ./cmd/wt -run '^TestNorthstarPTYRemoteReload$' -v
+taskpolicy -b nice -n 15 "$WT_GO" test -p 2 -count=1 -timeout=10m ./cmd/wt -run '^TestNorthstarPTY' -v
+make test-parent-lifecycle-offline GO="taskpolicy -b nice -n 15 $WT_GO"
+make test-run-inspect-roundtrip GO="taskpolicy -b nice -n 15 $WT_GO"
+make test-run-inventory test-launch-plan test-launch-plan-contract GO="taskpolicy -b nice -n 15 $WT_GO"
+taskpolicy -b nice -n 15 python3 -B scripts/launch-plan-native-gate.py --go "$WT_GO"
+```
+
+The registry PTY journey changes profiles while the navigator stays open,
+including a delayed old query, colliding session IDs, pending mutation prompts,
+malformed-registry recovery, an empty new machine and healthy local attach.
+Dashboard unit races deliver a retired result after the replacement starts and
+also check remove/re-add of an identical profile. Every fixture creates its own
+symlinked TMPDIR parent and checks lexical/canonical socket byte limits (103).
+The daily-loop PTY journey composes cold Claude, detach, bare wt, exact forge
+attach, native attention, client loss and discovery of the same durable run.
+The parent-lifecycle and roundtrip targets retain native policy and explicit
+snapshot recovery assertions. Logs/screens/receipts bind source and executable
+hashes; reject absent matches, `[no tests to run]`, any skip or failed assertion.
+Required native checks that cannot execute are REQUIRED-UNRUN with the exact
+command and reason. Final integration additionally runs one full
+`go test -p 2 -count=1 -timeout=25m ./...` and compares named failures with its
+recorded dependency baseline, targeting zero new failures.

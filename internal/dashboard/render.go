@@ -149,6 +149,9 @@ func render(s *state, width, height int, now time.Time) string {
 			continue
 		}
 		machine := s.machines[name]
+		if name != "local" && s.registryError != "" {
+			machine.err = "registry invalid; last valid route stale"
+		}
 		label := name + "  " + connection(machine, now)
 		body = append(body, viewLine{text: label})
 		if machine.err != "" {
@@ -207,6 +210,9 @@ func render(s *state, width, height int, now time.Time) string {
 			text := "All machines"
 			if name != "" {
 				text = name + "  " + connection(s.machines[name], now)
+				if name != "local" && s.registryError != "" {
+					text += " (registry stale)"
+				}
 			}
 			prefix := "  "
 			if i == s.picker {
@@ -226,6 +232,9 @@ func render(s *state, width, height int, now time.Time) string {
 		footer = []string{"j/k scroll  Esc/Enter back  Ctrl-C quit"}
 	}
 	message := s.message
+	if s.registryError != "" {
+		message = "Registry error: " + s.registryError + "; last valid remote routes stale. " + message
+	}
 	if s.filter != "" && s.mode != filter && message == "" {
 		message = "/" + s.filter + fmt.Sprintf(" (%d/%d)", len(rows), total)
 	}
@@ -245,6 +254,9 @@ func render(s *state, width, height int, now time.Time) string {
 	}
 	if s.mode == help || s.mode == details || s.mode == runDetails || s.mode == runResult || s.mode == machinePicker {
 		message = ""
+		if s.registryError != "" {
+			message = "Registry error: " + s.registryError + "; last valid remote routes stale"
+		}
 	}
 	if s.mode != navigate && s.mode != help && s.mode != details && s.mode != machinePicker && s.mode != runFilter && s.mode != runDetails && s.mode != runResult {
 		footer = []string{"Enter accept  Esc cancel  Ctrl-C quit", message}
@@ -363,9 +375,17 @@ func overlayLines(s *state, now time.Time) []string {
 			"* unread foreground response; U counts unread. Details/attach acknowledge that response.",
 			"Blocked clears on native evidence; unknown: missing evidence or disabled hooks.",
 			"Connection/freshness is separate from session status; stale means a retained query result.",
-			"Remote setup: wt remote add NAME SSH_TARGET; wt remote list",
+			"Remote setup: wt remote add NAME SSH_TARGET; wt remote ls",
 			"h: recent runs; / filter; N: next page; o: bounded result",
 			"Esc/Enter: back; j/k or PageUp/PageDown: scroll",
+			"Cold local Claude: wt claude --cwd PATH (starts a missing local wing).",
+			"Saved profiles: --wt-binary PATH --wingthing-dir PATH on wt remote add.",
+			"Remote cwd belongs to the receiving machine; local path resolution is never used.",
+			"Native wheel: provider mouse mode or terminal scrollback; use terminal modifier for selection.",
+			"Recent Enter: verified live attach or details; terminal records need explicit recovery.",
+			"Run recovery: wt agent recover --json; offline inspection: wt run-inspect --snapshot PATH.",
+			"Daily loop and limits: docs/daily-driver.md; browser/phone guide is a separate lane.",
+			"R reloads saved machines; automatic reload every 2s; invalid registry keeps stale routes and local work.",
 		}
 	}
 	r := s.target

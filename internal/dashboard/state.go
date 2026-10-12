@@ -12,15 +12,17 @@ import (
 )
 
 type machine struct {
-	sessions []eggclient.LocalSession
-	updated  time.Time
-	err      string
-	loading  bool
+	generation string
+	sessions   []eggclient.LocalSession
+	updated    time.Time
+	err        string
+	loading    bool
 }
 
 type row struct {
 	eggclient.LocalSession
 	machine    string
+	generation string
 	identity   attentionIdentity
 	attention  string
 	completion int64
@@ -78,6 +80,8 @@ type state struct {
 	recent            bool
 	runs              *runHistory
 	machines          map[string]machine
+	registryError     string
+	registrySequence  uint64
 	selected          string
 	filter            string
 	mode              mode
@@ -109,7 +113,7 @@ func needsAttention(attention string) bool {
 }
 
 func (s *state) sessionRow(name string, session eggclient.LocalSession) row {
-	r := row{LocalSession: session, machine: name, identity: s.attentionIdentity(name, session.ID)}
+	r := row{LocalSession: session, machine: name, generation: s.machines[name].generation, identity: s.attentionIdentity(name, session.ID)}
 	r.completion = s.attention[r.identity].completion
 	r.attention = s.attentionFor(r)
 	return r
@@ -375,6 +379,8 @@ func (s *state) handle(key string) (act *action, quit bool) {
 				r.machine = "local"
 			}
 		}
+		r.generation = s.machines[r.machine].generation
+		r.identity = s.attentionIdentity(r.machine, r.ID)
 		s.target, s.message = r, ""
 		switch key {
 		case "enter":
