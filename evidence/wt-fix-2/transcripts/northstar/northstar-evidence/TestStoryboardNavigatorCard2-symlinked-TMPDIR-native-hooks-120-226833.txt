@@ -1,0 +1,952 @@
+
+--- working and disabled native evidence / no bell ---
+wt | 3 sessions | 4 machines
+B:0 W:2 I:0 D:0 E:0 F:0 ?:1 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> ? hooks-off                                                  claude       northstar-1697570273/work              2m
+  W local-agent                                                claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago
+  (no sessions)
+forge  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+  W forge-agent                                                claude       northstar-1697570273/work              2m
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+
+--- instance bell help ---
+wt | 3 sessions | 4 machines
+B:0 W:2 I:0 D:0 E:0 F:0 ?:1 U:0 | [All] !:0 bell:off
+Help / status legend
+arrows or j/k: move; Enter: attach
+v: read-only (no input or resize); t: confirm preview takeover when ownership is reported
+Bracketed pastes are ignored in the navigator; attached pastes pass through literally.
+n: new on selected machine; r: rename; x: confirm stop
+/: filter machine, name, ID, agent, cwd or status
+!: attention only (native blocked, unread response or failed)
+b: bell off (off by default; this dashboard only)
+Attached: Ctrl+B then q returns here; Ctrl+B twice sends Ctrl+B.
+Leaving wt keeps sessions running.
+m: All, local, or a saved machine (including empty/offline)
+i: full details; R: refresh; q or Ctrl-C: quit
+W working  B blocked  I idle  D done  E exited  F failed  ? unknown
+* unread foreground response; U counts unread. Details/attach acknowledge that response.
+Blocked clears on native evidence; unknown: missing evidence or disabled hooks.
+Connection/freshness is separate from session status; stale means a retained query result.
+Remote setup: wt remote add NAME SSH_TARGET; wt remote list
+h: recent runs; / filter; N: next page; o: bounded result
+Esc/Enter: back; j/k or PageUp/PageDown: scroll
+
+
+
+
+
+
+
+
+
+
+j/k scroll  Esc/Enter back  Ctrl-C quit
+
+--- enable instance bell ---
+wt | 3 sessions | 4 machines
+B:0 W:2 I:0 D:0 E:0 F:0 ?:1 U:0 | [All] !:0 bell:on
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> ? hooks-off                                                  claude       northstar-1697570273/work              2m
+  W local-agent                                                claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago
+  (no sessions)
+forge  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+  W forge-agent                                                claude       northstar-1697570273/work              2m
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+Bell on for this dashboard
+
+--- select exact local provider ---
+wt | 3 sessions | 4 machines
+B:0 W:2 I:0 D:0 E:0 F:0 ?:1 U:0 | [All] !:0 bell:on
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> W local-agent                                                claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago
+  (no matches)
+forge  connected  updated 0s ago
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+/local-agent (1/3)
+
+--- native permission needs input ---
+wt | 3 sessions | 4 machines
+B:1 W:1 I:0 D:0 E:0 F:0 ?:1 U:0 | [All] !:1 bell:on
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> B local-agent                                                claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago
+  (no matches)
+forge  connected  updated 0s ago (refreshing)
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+Native provider requested input.
+
+--- repeated permission cursor ---
+wt | 3 sessions | 4 machines
+B:1 W:1 I:0 D:0 E:0 F:0 ?:1 U:0 | [All] !:1 bell:on
+local  connected  updated 0s ago (refreshing)
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> B local-agent                                                claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago (refreshing)
+  (no matches)
+forge  connected  updated 0s ago (refreshing)
+  (no matches)
+offline  offline (refreshing)
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+Native provider requested input.
+
+--- view blocked exact cursor ---
+wt | 3 sessions | 4 machines
+B:1 W:1 I:0 D:0 E:0 F:0 ?:1 U:0 | [All] !:1 bell:on
+Details: local:same
+Name: local-agent
+Status: blocked
+Machine: local  connected  updated 0s ago (refreshing)
+Cwd: /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+Attention: blocked
+Lifecycle source: claude_hook  State cursor: 3
+Reason: Native provider requested input; acknowledgement does not clear blocking.
+Agent/kind: claude / agent
+Age: 2m
+Isolation: fixture
+Readers: 1
+Writer: ownership not reported for this channel; v observes without input or resize
+Route: local; state: /work/lanes/wt-fix-2/wingthing/.scratch/e7f4795402/l
+Controls: Enter attach; v view; t confirm takeover; r rename; x confirm stop; n new
+Attach: wt attach -- same
+
+
+
+
+
+
+
+
+
+
+
+
+
+j/k scroll  Esc/Enter back  Ctrl-C quit
+
+--- blocked survives viewing ---
+wt | 3 sessions | 4 machines
+B:1 W:1 I:0 D:0 E:0 F:0 ?:1 U:0 | [All] !:1 bell:on
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> B local-agent                                                claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago (refreshing)
+  (no matches)
+forge  connected  updated 0s ago
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+Native provider requested input.
+
+--- foreground completed / alive provider / unread ---
+wt | 3 sessions | 4 machines
+B:0 W:1 I:1 D:0 E:0 F:0 ?:1 U:1 | [All] !:1 bell:on
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> I* local-agent                                               claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago (refreshing)
+  (no matches)
+forge  connected  updated 0s ago (refreshing)
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+New foreground response; provider or descendants may continue.
+
+--- repeated completion cursor ---
+wt | 3 sessions | 4 machines
+B:0 W:1 I:1 D:0 E:0 F:0 ?:1 U:1 | [All] !:1 bell:on
+local  connected  updated 0s ago (refreshing)
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> I* local-agent                                               claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago (refreshing)
+  (no matches)
+forge  connected  updated 0s ago (refreshing)
+  (no matches)
+offline  offline (refreshing)
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+New foreground response; provider or descendants may continue.
+
+--- acknowledge local completion ---
+wt | 3 sessions | 4 machines
+B:0 W:1 I:1 D:0 E:0 F:0 ?:1 U:0 | [All] !:0 bell:on
+Details: local:same
+Name: local-agent
+Status: idle
+Machine: local  connected  updated 0s ago
+Cwd: /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+Attention: unread
+Lifecycle source: claude_hook  State cursor: 4
+Reason: Foreground response completed; provider or descendants may continue.
+Agent/kind: claude / agent
+Age: 2m
+Isolation: fixture
+Readers: 1
+Writer: ownership not reported for this channel; v observes without input or resize
+Completion cursor shown: 4
+Route: local; state: /work/lanes/wt-fix-2/wingthing/.scratch/e7f4795402/l
+Controls: Enter attach; v view; t confirm takeover; r rename; x confirm stop; n new
+Attach: wt attach -- same
+
+
+
+
+
+
+
+
+
+
+
+
+j/k scroll  Esc/Enter back  Ctrl-C quit
+
+--- return after exact acknowledgement ---
+wt | 3 sessions | 4 machines
+B:0 W:1 I:1 D:0 E:0 F:0 ?:1 U:0 | [All] !:0 bell:on
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> I local-agent                                                claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago (refreshing)
+  (no matches)
+forge  connected  updated 0s ago (refreshing)
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+New foreground response; provider or descendants may continue.
+
+--- filter disabled hooks ---
+wt | 3 sessions | 4 machines
+B:0 W:1 I:1 D:0 E:0 F:0 ?:1 U:0 | [All] !:0 bell:on
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> ? hooks-off                                                  claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago (refreshing)
+  (no matches)
+forge  connected  updated 0s ago (refreshing)
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+/hooks-off (1/3)
+
+--- unknown evidence explains itself ---
+wt | 3 sessions | 4 machines
+B:0 W:1 I:1 D:0 E:0 F:0 ?:1 U:0 | [All] !:0 bell:on
+Details: local:nohooks
+Name: hooks-off
+Status: unknown
+Machine: local  connected  updated 0s ago
+Cwd: /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+Attention: unknown
+Lifecycle source: unsupported  State cursor: 0
+Reason: Native lifecycle evidence is missing, unknown or hooks are disabled; no screen inference.
+Agent/kind: claude / agent
+Age: 2m
+Isolation: fixture
+Readers: 1
+Writer: ownership not reported for this channel; v observes without input or resize
+Route: local; state: /work/lanes/wt-fix-2/wingthing/.scratch/e7f4795402/l
+Controls: Enter attach; v view; t confirm takeover; r rename; x confirm stop; n new
+Attach: wt attach -- nohooks
+
+
+
+
+
+
+
+
+
+
+
+
+
+j/k scroll  Esc/Enter back  Ctrl-C quit
+
+--- clear disabled filter ---
+wt | 3 sessions | 4 machines
+B:0 W:1 I:1 D:0 E:0 F:0 ?:1 U:0 | [All] !:0 bell:on
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> ? hooks-off                                                  claude       northstar-1697570273/work              2m
+  I local-agent                                                claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago
+  (no sessions)
+forge  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+  W forge-agent                                                claude       northstar-1697570273/work              2m
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+
+--- two same IDs / two unread results ---
+wt | 3 sessions | 4 machines
+B:0 W:0 I:2 D:0 E:0 F:0 ?:1 U:2 | [All] !:2 bell:on
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+  I* local-agent                                               claude       northstar-1697570273/work              2m
+> ? hooks-off                                                  claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago
+  (no sessions)
+forge  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+  I* forge-agent                                               claude       northstar-1697570273/work              2m
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+New foreground response; provider or descendants may continue.
+
+--- select only local result ---
+wt | 3 sessions | 4 machines
+B:0 W:0 I:2 D:0 E:0 F:0 ?:1 U:2 | [All] !:2 bell:on
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> I* local-agent                                               claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago
+  (no matches)
+forge  connected  updated 0s ago
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+/local-agent (1/3)
+
+--- ack only local result ---
+wt | 3 sessions | 4 machines
+B:0 W:0 I:2 D:0 E:0 F:0 ?:1 U:1 | [All] !:1 bell:on
+Details: local:same
+Name: local-agent
+Status: idle
+Machine: local  connected  updated 0s ago
+Cwd: /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+Attention: unread
+Lifecycle source: claude_hook  State cursor: 6
+Reason: Foreground response completed; provider or descendants may continue.
+Agent/kind: claude / agent
+Age: 2m
+Isolation: fixture
+Readers: 1
+Writer: ownership not reported for this channel; v observes without input or resize
+Completion cursor shown: 6
+Route: local; state: /work/lanes/wt-fix-2/wingthing/.scratch/e7f4795402/l
+Controls: Enter attach; v view; t confirm takeover; r rename; x confirm stop; n new
+Attach: wt attach -- same
+
+
+
+
+
+
+
+
+
+
+
+
+j/k scroll  Esc/Enter back  Ctrl-C quit
+
+--- select forge after local acknowledgement ---
+wt | 3 sessions | 4 machines
+B:0 W:0 I:2 D:0 E:0 F:0 ?:1 U:1 | [All] !:1 bell:on
+local  connected  updated 0s ago
+  (no matches)
+empty  connected  updated 0s ago
+  (no matches)
+forge  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> I* forge-agent                                               claude       northstar-1697570273/work              2m
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+/forge-agent (1/3)
+
+--- attach exact remote result ---
+ATTENTION_REMOTE_ATTACH_READY
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--- remote detach acknowledges captured completion ---
+wt | 3 sessions | 4 machines
+B:0 W:0 I:2 D:0 E:0 F:0 ?:1 U:0 | [All] !:0 bell:on
+local  connected  updated 0s ago (refreshing)
+  (no matches)
+empty  connected  updated 0s ago (refreshing)
+  (no matches)
+forge  connected  updated 0s ago (refreshing)
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> I forge-agent                                                claude       northstar-1697570273/work              2m
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+/forge-agent (1/3)
+
+--- restore all rows ---
+wt | 3 sessions | 4 machines
+B:0 W:0 I:2 D:0 E:0 F:0 ?:1 U:0 | [All] !:0 bell:on
+local  connected  updated 0s ago (refreshing)
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+  ? hooks-off                                                  claude       northstar-1697570273/work              2m
+  I local-agent                                                claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago (refreshing)
+  (no sessions)
+forge  connected  updated 0s ago (refreshing)
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> I forge-agent                                                claude       northstar-1697570273/work              2m
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+
+--- new remote completion ---
+wt | 3 sessions | 4 machines
+B:0 W:0 I:2 D:0 E:0 F:0 ?:1 U:1 | [All] !:1 bell:on
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+  ? hooks-off                                                  claude       northstar-1697570273/work              2m
+  I local-agent                                                claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago
+  (no sessions)
+forge  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> I* forge-agent                                               claude       northstar-1697570273/work              2m
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+New foreground response; provider or descendants may continue.
+
+--- stale machine retains visual unread ---
+wt | 3 sessions | 4 machines
+B:0 W:0 I:2 D:0 E:0 F:0 ?:1 U:1 | [All] !:1 bell:on
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+  ? hooks-off                                                  claude       northstar-1697570273/work              2m
+  I local-agent                                                claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago (refreshing)
+  (no sessions)
+forge  offline  last success 0s ago; cached rows stale
+  ! remote "forge": SSH to ns-forge ended with status 255; check the SSH diagnostic above. Session state is unknown; re…
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> I* forge-agent                                           claude       northstar-1697570273/work            2m    stale
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+New foreground response; provider or descendants may continue.
+
+--- reconnect without repeated cursor bell ---
+wt | 3 sessions | 4 machines
+B:0 W:0 I:2 D:0 E:0 F:0 ?:1 U:1 | [All] !:1 bell:on
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+  ? hooks-off                                                  claude       northstar-1697570273/work              2m
+  I local-agent                                                claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago (refreshing)
+  (no sessions)
+forge  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> I* forge-agent                                               claude       northstar-1697570273/work              2m
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+New foreground response; provider or descendants may continue.
+
+--- disable bell keeps visual attention ---
+wt | 3 sessions | 4 machines
+B:0 W:0 I:2 D:0 E:0 F:0 ?:1 U:1 | [All] !:1 bell:off
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+  ? hooks-off                                                  claude       northstar-1697570273/work              2m
+  I local-agent                                                claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago (refreshing)
+  (no sessions)
+forge  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> I* forge-agent                                               claude       northstar-1697570273/work              2m
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+Bell off for this dashboard
+
+--- disabled bell still shows blocked ---
+wt | 3 sessions | 4 machines
+B:1 W:0 I:1 D:0 E:0 F:0 ?:1 U:1 | [All] !:2 bell:off
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+  B local-agent                                                claude       northstar-1697570273/work              2m
+  ? hooks-off                                                  claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago (refreshing)
+  (no sessions)
+forge  connected  updated 0s ago (refreshing)
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> I* forge-agent                                               claude       northstar-1697570273/work              2m
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+Native provider requested input.
+
+--- attention filter excludes unknown ---
+wt | 3 sessions | 4 machines
+B:1 W:0 I:1 D:0 E:0 F:0 ?:1 U:1 | [All ! attention] !:2 bell:off
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+  B local-agent                                                claude       northstar-1697570273/work              2m
+empty  connected  updated 0s ago (refreshing)
+  (no matches)
+forge  connected  updated 0s ago (refreshing)
+  /work/lanes/wt-fix-2/wingthing/.scratch/northstar-1697570273/work
+> I* forge-agent                                               claude       northstar-1697570273/work              2m
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+Native provider requested input.

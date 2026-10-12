@@ -1,0 +1,27 @@
+{
+  "TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks": [
+    "fail",
+    "fail",
+    "fail"
+  ],
+  "TestStoryboardNavigatorCard2/durable-unread-cursor": [
+    "pass",
+    "pass",
+    "pass"
+  ],
+  "TestStoryboardNavigatorCard2": [
+    "fail",
+    "fail",
+    "fail"
+  ],
+  "TestStoryboardNavigatorCard5": [
+    "pass",
+    "pass",
+    "pass"
+  ],
+  "TestStoryboardMachinesCard3": [
+    "pass",
+    "pass",
+    "pass"
+  ]
+}

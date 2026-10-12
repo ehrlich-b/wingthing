@@ -1,0 +1,12 @@
+{"Time":"2026-10-11T21:21:21.704526979-04:00","Action":"start","Package":"github.com/ehrlich-b/wingthing/cmd/wt"}
+{"Time":"2026-10-11T21:21:21.713185759-04:00","Action":"run","Package":"github.com/ehrlich-b/wingthing/cmd/wt","Test":"TestDashboardNoTTYHelpUnchanged"}
+{"Time":"2026-10-11T21:21:21.713295094-04:00","Action":"output","Package":"github.com/ehrlich-b/wingthing/cmd/wt","Test":"TestDashboardNoTTYHelpUnchanged","Output":"=== RUN   TestDashboardNoTTYHelpUnchanged\n","OutputType":"frame"}
+{"Time":"2026-10-11T21:21:21.717422626-04:00","Action":"output","Package":"github.com/ehrlich-b/wingthing/cmd/wt","Test":"TestDashboardNoTTYHelpUnchanged","Output":"--- PASS: TestDashboardNoTTYHelpUnchanged (0.00s)\n","OutputType":"frame"}
+{"Time":"2026-10-11T21:21:21.717486966-04:00","Action":"pass","Package":"github.com/ehrlich-b/wingthing/cmd/wt","Test":"TestDashboardNoTTYHelpUnchanged","Elapsed":0}
+{"Time":"2026-10-11T21:21:21.717509148-04:00","Action":"run","Package":"github.com/ehrlich-b/wingthing/cmd/wt","Test":"TestDashboardInteractiveRootRoutesToDashboard"}
+{"Time":"2026-10-11T21:21:21.717513035-04:00","Action":"output","Package":"github.com/ehrlich-b/wingthing/cmd/wt","Test":"TestDashboardInteractiveRootRoutesToDashboard","Output":"=== RUN   TestDashboardInteractiveRootRoutesToDashboard\n","OutputType":"frame"}
+{"Time":"2026-10-11T21:21:21.718072694-04:00","Action":"output","Package":"github.com/ehrlich-b/wingthing/cmd/wt","Test":"TestDashboardInteractiveRootRoutesToDashboard","Output":"--- PASS: TestDashboardInteractiveRootRoutesToDashboard (0.00s)\n","OutputType":"frame"}
+{"Time":"2026-10-11T21:21:21.718091489-04:00","Action":"pass","Package":"github.com/ehrlich-b/wingthing/cmd/wt","Test":"TestDashboardInteractiveRootRoutesToDashboard","Elapsed":0}
+{"Time":"2026-10-11T21:21:21.718104614-04:00","Action":"output","Package":"github.com/ehrlich-b/wingthing/cmd/wt","Output":"PASS\n","OutputType":"frame"}
+{"Time":"2026-10-11T21:21:21.720437112-04:00","Action":"output","Package":"github.com/ehrlich-b/wingthing/cmd/wt","Output":"ok  \tgithub.com/ehrlich-b/wingthing/cmd/wt\t0.015s\n"}
+{"Time":"2026-10-11T21:21:21.720495292-04:00","Action":"pass","Package":"github.com/ehrlich-b/wingthing/cmd/wt","Elapsed":0.016}

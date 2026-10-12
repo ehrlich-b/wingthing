@@ -1,0 +1,62 @@
+
+--- command ["/work/lanes/wt-fix-2/wingthing/scripts/install.sh"]; exit=<nil> ---
+fetching latest release...
+downloading wt storyboard-fixture for linux/amd64...
+installed wt storyboard-fixture to /work/lanes/wt-fix-2/wingthing/.scratch/93c86305ea/installed/bin/wt
+
+add to your PATH:
+  export PATH="/work/lanes/wt-fix-2/wingthing/.scratch/93c86305ea/installed/bin:$PATH"
+
+give your local Codex or Claude tools to manage agents (no account required):
+  codex mcp add wingthing -- wt mcp stdio --client codex
+  claude mcp add --scope user wingthing -- wt mcp stdio --client claude
+
+manage agents across machines with direct encrypted control:
+  wt login
+  wt start
+  # then register: wt mcp connect --client <parent-agent>
+
+or start a private localhost browser portal:
+  wt roost start --https
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

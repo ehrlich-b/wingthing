@@ -1,0 +1,39 @@
+[
+  {
+    "id": "fleet-y9t6",
+    "title": "Wingthing: refuse stale remote actions before SSH attachment",
+    "description": "## Source:\n\nBinding spec: /work/lanes/skeptic/inputs/mac/drive/wingthing-app-spec.md and /work/lanes/wt-app/PRD.md. Original item/comments: /work/lanes/refine-wingthing/evidence/fleet-y9t6.show.json and .comments.json.\n\nCard: 03/card-5, ordinal #6: Remote offline or stale inventory\nSource: /work/lanes/wt-e2e/wingthing/evidence/storyboard-source/03-navigator.html#6\nCarrier: f8f9ebd96e1c72336ffd796c8d496ecda0a85619; Linux forge; isolated HOME/WINGTHING_DIR; fixture provider/SSH, real built wt + kernel PTY.\n\nExpected screen: Offline forge with last-success/stale rows; local still attachable\nExpected observable state: Stale attach refused; no fallback, exit inference or provider mutation\n\nActual outcome across three runs: FAIL, FAIL, FAIL.\n\n\n## Why\n\nBryan gets a clear validation refusal and keeps local work usable during remote outages.\n\n## The one question / capability\n\nCan Bryan safely act on local work while a remote inventory is stale?\n\n## Scope\n\nRepo: ehrlich-b/wingthing. Base: codex/wt-integration-20261011 @ 3a0b7fa8578b9889d9e17a0e5fb3a1ffab9831ca. Branch: codex/refine-fleet-y9t6-20261011; isolated checkout, record actual head and binary hash. internal/dashboard/actions.go and remote inventory validation; cmd/wt/remote.go adapter and tests. Consolidate TestStoryboardNavigatorCard5 and TestStoryboardMachinesCard3 from existing wt-e2e. Apply only stale/offline pre-action validation; preserve current exact-route and live disconnect handling.\n\n## Non-goals\n\nNo duplicate source-DONE implementation, Linux confinement bypass, public release/deploy, account/payment/provider spend or external outreach. Bare wt stays primary; free SSH/LAN/tailnet stay available and automatic Pro offers default OFF. Use disposable fixture sessions and installer transports; actual user/native/physical acceptance remains separately evidenced.\n\n## Acceptance\n\nEnumerate both card tests and run each three times on integrated source. Select cached forge row after a failed refresh; attach/takeover/rename/stop must refuse before opening a session SSH action or sending mutations, naming unvalidated stale target and Refresh/revalidate next action. Count fixture SSH action invocations separately from background inventory probes: zero action attempts while stale. Same-name local fallback, exit inference and provider relaunch remain impossible. Local rows and local attach remain usable; reconnect/fresh validated inventory permits the original pinned wing/session only. A disconnect after previously valid action admission remains outcome-unknown, not the new pre-validation refusal. go test -race ./internal/dashboard ./internal/remote ./cmd/wt, vet/full suite against baseline; no new failures, preserve exact host/pin denial tests. Merged source-card obligations (original transcripts retained in evidence/\u003cid\u003e.show.json):\n\nfleet-vzf3 (TestStoryboardMachinesCard3): Offline forge/stale inventory plus available local attachment\nExpected observable state: Cannot validate remote action; no same-name local fallback\n MOCKS-FIRST: proposed happy/failure screenshots must receive builder self-review and separate product-review PASS against each named view question before UI implementation; revise and re-review failed mocks, then review actual screenshots/transcripts after build.\n\n## UI contract / MOCKS-FIRST gate\n\nUser: Bryan gets a clear validation refusal and keeps local work usable during remote outages. One question per view: Offline machine: which cached work is unvalidated, and which local work can I still open? Reference: /work/lanes/wt-app/storyboard (flow matching source card), existing dense keyboard navigator and docs/pairing/STORYBOARD.html. Before UI build, capture happy/failure mock screens at narrow/wide sizes with readable focus/status, then self-review and obtain independent product-review PASS. Revise failures before building; review actual screenshots/transcripts again after build.\n\n## Review loop\n\nBuilder reviews every diff/card expectation against the one question and clear/purposeful/testable/minimal/deduplicated/no-one-shot rubric. Independent gpt-6.1-sol high implementation/evidence review before handoff; security reviewer checks policy, cursor or route authority changes. Fix findings and re-review. Product mocks must pass before UI work; coordinator integrates shared files serially.\n\n## Dependencies\n\nBlocking IDs: fleet-jugv. Tracking parent is not a blocker. Preserve native/physical gates and current active owner; do not create another suite lane.\n\n## V/C\n\nV=9/10; C=4 remaining agent-hours including implementation/qualification and review, excluding human wait. Rationale: Bryan gets a clear validation refusal and keeps local work usable during remote outages. Original V/C=6/1.3 uses board scheduling units, retained in evidence rather than compared as hours.\n",
+    "acceptance_criteria": "Enumerate both card tests and run each three times on integrated source. Select cached forge row after a failed refresh; attach/takeover/rename/stop must refuse before opening a session SSH action or sending mutations, naming unvalidated stale target and Refresh/revalidate next action. Count fixture SSH action invocations separately from background inventory probes: zero action attempts while stale. Same-name local fallback, exit inference and provider relaunch remain impossible. Local rows and local attach remain usable; reconnect/fresh validated inventory permits the original pinned wing/session only. A disconnect after previously valid action admission remains outcome-unknown, not the new pre-validation refusal. go test -race ./internal/dashboard ./internal/remote ./cmd/wt, vet/full suite against baseline; no new failures, preserve exact host/pin denial tests. Merged source-card obligations (original transcripts retained in evidence/\u003cid\u003e.show.json):\n\nfleet-vzf3 (TestStoryboardMachinesCard3): Offline forge/stale inventory plus available local attachment\nExpected observable state: Cannot validate remote action; no same-name local fallback MOCKS-FIRST: proposed happy/failure screenshots must receive builder self-review and separate product-review PASS against each named view question before UI implementation; revise and re-review failed mocks, then review actual screenshots/transcripts after build.",
+    "status": "closed",
+    "priority": 3,
+    "issue_type": "bug",
+    "owner": "fleet-board@localhost",
+    "created_at": "2026-10-12T00:33:44Z",
+    "created_by": "Fleet Board",
+    "updated_at": "2026-10-12T01:16:15Z",
+    "closed_at": "2026-10-12T01:16:15Z",
+    "close_reason": "03/card-5 now refuses stale remote actions before terminal handoff, keeps last successful rows and exact route, and leaves local attach usable. Unchanged TestStoryboardNavigatorCard5 PASS/PASS/PASS with real built wt + Linux kernel PTY: /work/lanes/wt-fix-2/wingthing/evidence/wt-fix-2/cards-3x.jsonl; summary cards-results.json; raw .txt/.ansi under transcripts; source hashes in source.json. Branch codex/wt-fix-2-20261011; no test changes. Native macOS REQUIRED-UNRUN.",
+    "metadata": {
+      "C": 4,
+      "C_unit": "agent-hours",
+      "V": 9,
+      "bryan_minutes": 0,
+      "codex_weekly_points": 3,
+      "coordinator_touches": 3,
+      "refined": "v1",
+      "refinement_base_sha": "3a0b7fa8578b9889d9e17a0e5fb3a1ffab9831ca",
+      "refinement_verdict": "KEEP",
+      "score_basis": "Refinement v1 remaining agent-hours including review; original mixed units preserved in lane evidence",
+      "score_derived_status": "stale-pending-coordinator",
+      "tokens": 300000,
+      "vc_ratio": 2.25
+    },
+    "labels": [
+      "host:forge",
+      "lane:burn",
+      "needs:coordinator",
+      "project:wingthing",
+      "score:estimated"
+    ]
+  }
+]
