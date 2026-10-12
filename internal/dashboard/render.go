@@ -405,7 +405,6 @@ func overlayLines(s *state, now time.Time) []string {
 		"Agent/kind: " + agent + " / " + r.Kind, "Age: " + age(elapsed), "Isolation: " + isolation,
 		fmt.Sprintf("Readers: %d", r.Readers),
 	}
-	lines = append(lines, sessionPolicyLines(r)...)
 	if takeoverAvailable(r) {
 		lines = append(lines, fmt.Sprintf("Writer: %s  Owner: %s  Epoch: %d", r.WriterID, r.WriterOwner, r.InputEpoch))
 	} else {
@@ -423,6 +422,7 @@ func overlayLines(s *state, now time.Time) []string {
 		}
 		lines = append(lines, "SSH: "+remote.SSHTarget, "Executable: "+remote.Binary(), "State: "+state)
 	}
+	lines = append(lines, sessionPolicyLines(r)...)
 	if m.err != "" {
 		lines = append(lines, "Query error: "+m.err, "This row is stale; refresh before acting.")
 	}

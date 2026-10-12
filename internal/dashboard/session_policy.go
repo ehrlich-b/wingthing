@@ -7,7 +7,7 @@ import (
 
 func sessionPolicyLines(r row) []string {
 	p := r.Policy
-	if p == nil {
+	if p == nil || p.Version != 1 || p.SessionID != r.ID || p.Workspace != r.CWD {
 		return []string{"Workspace: " + r.CWD + " (reported cwd; permissions unverified)",
 			"Provider state: not reported", "Network: not reported", "Denied: not reported",
 			"Effective launch policy unavailable; no confinement claim."}

@@ -22,6 +22,7 @@ import (
 	"unicode"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
+	"github.com/ehrlich-b/wingthing/internal/fsutil"
 	"github.com/ehrlich-b/wingthing/internal/pake"
 )
 
@@ -168,6 +169,9 @@ func (m *Manager) save() error {
 	if e == nil {
 		e = os.Rename(f.Name(), p)
 	}
+	if e == nil {
+		e = fsutil.SyncDirectory(m.dir)
+	}
 	return e
 }
 func (m *Manager) clean() {
@@ -239,6 +243,7 @@ func (m *Manager) cancelPending(p *pending) error {
 		}
 	}
 	p.state = "cancelled"
+	p.phone, p.terminal = false, false
 	p.q.Secret = ""
 	p.result = nil
 	return nil
@@ -374,6 +379,9 @@ func (m *Manager) handle(ctx context.Context, r Request) (Response, error) {
 			return Response{}, e
 		}
 		if p.state != "waiting" {
+			if p.state == "cancelled" {
+				return Response{}, failure("cancelled")
+			}
 			return Response{}, failure("used")
 		}
 		p.state = "used"

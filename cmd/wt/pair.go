@@ -235,7 +235,7 @@ func showInvitation(out io.Writer, q phonepair.Invitation) error {
 	for _, endpoint := range q.Endpoints {
 		fmt.Fprintf(out, "Direct endpoint: %s\n", endpoint)
 	}
-	fmt.Fprintf(out, "\n%s\n5:00 · Waiting for scan...\nSame Wi-Fi: no account needed. Away from home: needs this Mac registered once (`wt login`).\n", q.Secret)
+	fmt.Fprintf(out, "\n%s\n5:00 · Waiting for scan...\nSame Wi-Fi: no account needed. Away from home: needs %s registered once (`wt login`).\nExisting tailnet also connects directly for free. Pro is required only for Wingthing relay.\n", q.Secret, place)
 	return nil
 }
 func devicesCmd() *cobra.Command {
@@ -253,6 +253,12 @@ func devicesCmd() *cobra.Command {
 	}}
 	cmd.AddCommand(&cobra.Command{Use: "revoke <name-or-device-id>", Short: "Immediately revoke this phone, including live access", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if e := phoneAdmin(cmd.Context(), "revoke", "", args[0], nil); e != nil {
+			if e.Error() == "unknown_device" {
+				return fmt.Errorf("device %q is not paired with this wing", args[0])
+			}
+			if e.Error() == "ambiguous_name" {
+				return errors.New("more than one device has that name; use the device ID from wt devices")
+			}
 			return e
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Revoked %s. Live access closed.\n", args[0])
