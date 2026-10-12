@@ -1599,6 +1599,12 @@ func waitSessionTermination(ctx context.Context, done <-chan struct{}, pgid int)
 			var err error
 			live, err = sessionProcessGroupAlive(ctx, pgid)
 			if err != nil {
+				// The bounded wait can expire during the process inventory.
+				// Preserve its deadline/cancellation and the reaper result;
+				// unavailable inventory must never imply an empty group.
+				if ctx.Err() != nil {
+					return fmt.Errorf("session did not terminate after SIGKILL (child reaped=%t, group inventory unverified): %w", reaped, errors.Join(ctx.Err(), err))
+				}
 				return err
 			}
 		}

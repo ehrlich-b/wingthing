@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -20,6 +21,11 @@ func TestNorthstarBuildHelper(t *testing.T) {
 	}
 	signal.Ignore(syscall.SIGTERM)
 	fmt.Printf("%s %d\n", mode, os.Getpid())
+	if readyDir := os.Getenv("WT_NORTHSTAR_BUILD_READY_DIR"); readyDir != "" {
+		if err := os.WriteFile(filepath.Join(readyDir, mode), nil, 0600); err != nil {
+			panic(err)
+		}
+	}
 	if mode == "root" {
 		child := exec.Command(os.Args[0], "-test.run=^TestNorthstarBuildHelper$")
 		child.Env = append(os.Environ(), "WT_NORTHSTAR_BUILD_HELPER=compiler")
@@ -40,8 +46,9 @@ func TestNorthstarBuildHelper(t *testing.T) {
 
 func TestNorthstarBuildCancellationKillsCompilerGroup(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=^TestNorthstarBuildHelper$")
-	cmd.Env = append(os.Environ(), "WT_NORTHSTAR_BUILD_HELPER=root")
-	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	readyDir := t.TempDir()
+	cmd.Env = append(os.Environ(), "WT_NORTHSTAR_BUILD_HELPER=root", "WT_NORTHSTAR_BUILD_READY_DIR="+readyDir)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	type result struct {
 		output []byte
@@ -57,9 +64,28 @@ func TestNorthstarBuildCancellationKillsCompilerGroup(t *testing.T) {
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		}
 	})
+	// Cancellation must exercise the compiler group, rather than race its
+	// startup on a busy host. Each TERM-ignoring process publishes readiness.
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		_, rootErr := os.Stat(filepath.Join(readyDir, "root"))
+		_, compilerErr := os.Stat(filepath.Join(readyDir, "compiler"))
+		if rootErr == nil && compilerErr == nil {
+			break
+		}
+		select {
+		case got := <-done:
+			t.Fatalf("build exited before both helpers were ready: %v\n%s", got.err, got.output)
+		case <-ctx.Done():
+			t.Fatal("build helpers did not become ready")
+		case <-ticker.C:
+		}
+	}
+	cancel()
 	select {
 	case got := <-done:
-		if !errors.Is(got.err, context.DeadlineExceeded) {
+		if !errors.Is(got.err, context.Canceled) {
 			t.Fatalf("build cancellation: %v\n%s", got.err, got.output)
 		}
 		if !strings.Contains(string(got.output), "root ") || !strings.Contains(string(got.output), "compiler ") {
