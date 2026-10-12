@@ -44,29 +44,30 @@ var ErrSessionNameInUse = control.ErrSessionNameInUse
 
 type LocalSession struct {
 	ConversationLink
-	ID               string `json:"id"`
-	Name             string `json:"name,omitempty"`
-	Principal        string `json:"principal,omitempty"`
-	Kind             string `json:"kind"`
-	Agent            string `json:"agent,omitempty"`
-	Status           string `json:"status"`
-	State            string `json:"state,omitempty"`
-	StateSource      string `json:"state_source,omitempty"`
-	StateCursor      int64  `json:"state_cursor,omitempty"`
-	StateReason      string `json:"state_reason,omitempty"`
-	CompletionCursor int64  `json:"completion_cursor,omitempty"`
-	Command          string `json:"command,omitempty"`
-	CWD              string `json:"cwd,omitempty"`
-	Isolation        string `json:"isolation,omitempty"`
-	PID              int    `json:"pid"`
-	Readers          int32  `json:"readers"`
-	WriterID         string `json:"writer_id,omitempty"`
-	WriterOwner      string `json:"writer_owner,omitempty"`
-	InputEpoch       uint64 `json:"input_epoch,omitempty"`
-	UptimeSecs       int64  `json:"uptime_seconds"`
-	IdleSecs         int64  `json:"idle_seconds"`
-	BufferBytes      int64  `json:"buffer_bytes"`
-	TotalWritten     int64  `json:"total_written"`
+	ID               string                `json:"id"`
+	Name             string                `json:"name,omitempty"`
+	Principal        string                `json:"principal,omitempty"`
+	Kind             string                `json:"kind"`
+	Agent            string                `json:"agent,omitempty"`
+	Status           string                `json:"status"`
+	State            string                `json:"state,omitempty"`
+	StateSource      string                `json:"state_source,omitempty"`
+	StateCursor      int64                 `json:"state_cursor,omitempty"`
+	StateReason      string                `json:"state_reason,omitempty"`
+	CompletionCursor int64                 `json:"completion_cursor,omitempty"`
+	Command          string                `json:"command,omitempty"`
+	CWD              string                `json:"cwd,omitempty"`
+	Isolation        string                `json:"isolation,omitempty"`
+	Authority        *egg.SessionAuthority `json:"authority,omitempty"`
+	PID              int                   `json:"pid"`
+	Readers          int32                 `json:"readers"`
+	WriterID         string                `json:"writer_id,omitempty"`
+	WriterOwner      string                `json:"writer_owner,omitempty"`
+	InputEpoch       uint64                `json:"input_epoch,omitempty"`
+	UptimeSecs       int64                 `json:"uptime_seconds"`
+	IdleSecs         int64                 `json:"idle_seconds"`
+	BufferBytes      int64                 `json:"buffer_bytes"`
+	TotalWritten     int64                 `json:"total_written"`
 }
 
 func DiscoverActiveSessions(ctx context.Context, cfg *config.Config) ([]LocalSession, error) {
@@ -228,6 +229,7 @@ func DiscoverSessionRefs(cfg *config.Config) ([]LocalSession, error) {
 			Command:          meta["command"],
 			CWD:              meta["cwd"],
 			Isolation:        meta["isolation"],
+			Authority:        egg.ReadSessionAuthority(dir),
 			PID:              pid,
 		}
 		if s.Kind == "" {

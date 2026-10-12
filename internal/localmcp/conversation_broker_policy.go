@@ -44,7 +44,12 @@ type providerWriteModel struct {
 func modelProviderWrites(cfg *config.Config, eggCfg *egg.EggConfig, agentName, cwd, sessionID string, identity eggclient.EggIdentity) (providerWriteModel, error) {
 	var model providerWriteModel
 	if runtime.GOOS != "darwin" {
-		return model, fmt.Errorf("provider write protection is modeled only for the macOS Seatbelt profile, not %s", runtime.GOOS)
+		var policy *egg.LaunchPolicySelection
+		if eggCfg != nil {
+			policy = eggCfg.LaunchPolicy
+		}
+		cause := fmt.Errorf("provider write protection is modeled only for the macOS Seatbelt profile, not %s: %w", runtime.GOOS, errors.ErrUnsupported)
+		return model, egg.ProjectLaunchFailure(cause, policy, egg.PreparedLaunch{}, "admission/policy", "provider_protection_unsupported")
 	}
 	if eggCfg == nil || !egg.RequiresSandbox(eggCfg, agentName) {
 		return model, errors.New("an outer-boundary session has the full authority of the OS user")

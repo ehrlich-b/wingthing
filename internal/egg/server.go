@@ -947,6 +947,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	if err := atomicWritePrivate(metaPath, []byte(metaContent)); err != nil {
 		log.Printf("egg: warning: write meta: %v", err)
 	}
+	if err := writeSessionAuthority(s.dir, sessionAuthority(rc, prepared, captureHome)); err != nil {
+		log.Printf("egg: warning: write session authority: %v", err)
+	}
 	if err := RecordSessionProcessEvent(s.dir, "session_started", "starting", "provider process started; awaiting native readiness"); err != nil {
 		log.Printf("egg: persist lifecycle startup: %v", err)
 	}

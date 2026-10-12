@@ -415,6 +415,76 @@ func overlayLines(s *state, now time.Time) []string {
 		ref = r.ID
 	}
 	lines = append(lines, "Controls: Enter attach; v view; t confirm takeover; r rename; x confirm stop; n new", "Attach: wt attach -- "+ref)
+	lines = append(lines, authorityLines(r)...)
+	return lines
+}
+
+func authorityLines(r row) []string {
+	a := r.Authority
+	if a == nil || a.Version != 1 || a.Workspace != r.CWD {
+		lines := []string{"Workspace: " + r.CWD + " (session cwd; access not reported)",
+			"Provider state: not reported", "Network: not reported", "Denied files: not reported",
+			"Policy evidence: unavailable; cwd and isolation label alone do not establish authority."}
+		if r.Isolation == "outer-boundary" || r.Isolation == "privileged" {
+			lines = append(lines, "Privileged mode: full OS-user authority (explicit opt-in).")
+		}
+		return lines
+	}
+	lines := []string{"Workspace: " + a.Workspace, "Provider state: " + a.ProviderHome,
+		"Policy evidence: saved runtime policy on " + a.Platform + "; this display does not verify native confinement."}
+	if !a.Sandboxed {
+		return append(lines, "Privileged mode: full OS-user authority (explicit opt-in).",
+			"Network: unrestricted", "Denied files: no Wingthing sandbox restrictions")
+	}
+	networkMode := a.NetworkMode
+	if networkMode == "" {
+		networkMode = "default"
+	}
+	lines = append(lines, "Network: "+a.Network+"; mode: "+networkMode)
+	for _, domain := range a.Domains {
+		lines = append(lines, "  Domain: "+domain)
+	}
+	for _, port := range a.LocalPorts {
+		lines = append(lines, fmt.Sprintf("  Host loopback port: %d", port))
+	}
+	if a.Platform == "linux" {
+		jail := false
+		for _, path := range a.Denied {
+			jail = jail || path == "/"
+		}
+		if jail {
+			lines = append(lines, "Filesystem boundary: Linux allowlist jail; only selected mounts are exposed.")
+		} else {
+			lines = append(lines, "Filesystem boundary: Linux HOME write isolation; reads and writes outside HOME retain OS-user authority except explicit denies.")
+		}
+	}
+	for _, mount := range a.Mounts {
+		access := "read/write"
+		if mount.ReadOnly {
+			access = "read-only"
+		}
+		if mount.Prefix {
+			access += "; provider prefix/overlay"
+		}
+		lines = append(lines, "Filesystem: "+access+" "+mount.Path)
+	}
+	for _, dir := range a.ProviderDirs {
+		lines = append(lines, "Provider state directory: "+dir)
+	}
+	lines = append(lines, "Denied files (effective policy):")
+	if len(a.Denied)+len(a.WriteDenied)+len(a.RenameDenied)+len(a.ProtectedWrites) == 0 {
+		lines = append(lines, "  No explicit denial recorded; platform defaults still apply.")
+	}
+	for _, group := range []struct {
+		label string
+		paths []string
+	}{
+		{"read/write", a.Denied}, {"write", a.WriteDenied}, {"rename", a.RenameDenied}, {"protected write", a.ProtectedWrites},
+	} {
+		for _, path := range group.paths {
+			lines = append(lines, "  "+group.label+": "+path)
+		}
+	}
 	return lines
 }
 

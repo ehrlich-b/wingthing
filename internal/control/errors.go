@@ -50,7 +50,7 @@ func (d LaunchDiagnostic) Bounded() LaunchDiagnostic {
 		d.Stage = "admission/policy"
 	}
 	switch d.Reason {
-	case "connection_unavailable", "startup_failed", "startup_exited", "canceled", "admission_unknown", "policy_refused", "invalid_workspace", "session_name_in_use", "executable_denied", "provider_home_denied", "workspace_denied", "provider_config_denied", "network_denied", "preparation_failed", "provider_failed", "attach_failed", "sandbox_unavailable", "authentication_required", "client_required", "client_not_configured":
+	case "connection_unavailable", "startup_failed", "startup_exited", "canceled", "admission_unknown", "policy_refused", "invalid_workspace", "session_name_in_use", "executable_denied", "provider_home_denied", "workspace_denied", "provider_config_denied", "network_denied", "preparation_failed", "provider_failed", "attach_failed", "sandbox_unavailable", "provider_protection_unsupported", "authentication_required", "client_required", "client_not_configured":
 	default:
 		d.Reason = "policy_refused"
 	}
@@ -236,6 +236,8 @@ func FormatLaunchDiagnostic(d LaunchDiagnostic) string {
 			out.WriteString("Choose another session name or attach to the existing session.")
 		case "sandbox_unavailable":
 			out.WriteString("Run wt doctor to inspect host sandbox capability.")
+		case "provider_protection_unsupported":
+			out.WriteString("Scoped host-mailbox launches require macOS Seatbelt protection. Use a supported macOS host; retain the selected policy.")
 		default:
 			out.WriteString("Review the selected policy and launch requirements.")
 		}
@@ -290,6 +292,8 @@ func launchReason(reason string) string {
 		return "launch preparation failed"
 	case "sandbox_unavailable":
 		return "native sandbox capability is unavailable"
+	case "provider_protection_unsupported":
+		return "this platform cannot enforce the scoped provider write-protection contract"
 	case "provider_failed":
 		return "provider could not start under the selected boundary"
 	case "attach_failed":
