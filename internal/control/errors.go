@@ -78,7 +78,11 @@ type launchError struct {
 }
 
 func (e *launchError) Error() string {
-	return "launch failed during " + e.diagnostic.Stage + ": " + e.diagnostic.Reason
+	message := "launch failed during " + e.diagnostic.Stage + ": " + e.diagnostic.Reason
+	if e.diagnostic.Reason == "sandbox_unavailable" {
+		message += ". Run wt doctor --fix to inspect and repair host sandbox capability."
+	}
+	return message
 }
 func (e *launchError) Unwrap() error                      { return e.cause }
 func (e *launchError) LaunchDiagnostic() LaunchDiagnostic { return e.diagnostic }
@@ -235,7 +239,7 @@ func FormatLaunchDiagnostic(d LaunchDiagnostic) string {
 		case "session_name_in_use":
 			out.WriteString("Choose another session name or attach to the existing session.")
 		case "sandbox_unavailable":
-			out.WriteString("Run wt doctor to inspect host sandbox capability.")
+			out.WriteString("Run wt doctor --fix to inspect and repair host sandbox capability.")
 		default:
 			out.WriteString("Review the selected policy and launch requirements.")
 		}

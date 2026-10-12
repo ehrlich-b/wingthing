@@ -9,12 +9,12 @@ Click through [the storyboard](docs/pairing/STORYBOARD.html) while pairing. [The
 Bryan runs the existing installer himself:
 
 ```sh
-WT_IOS_CLONE=/Users/ehrlich/repos/wtqr /Users/ehrlich/repos/claude/bin/wt-ios-install
+WT_IOS_CLONE="$PWD" ./mobile/ios/scripts/wt-ios-install
 # If the app is already installed:
-WT_IOS_CLONE=/Users/ehrlich/repos/wtqr /Users/ehrlich/repos/claude/bin/wt-ios-install --connect-only
+WT_IOS_CLONE="$PWD" ./mobile/ios/scripts/wt-ios-install --connect-only
 ```
 
-Use this local checkout explicitly: its new commits are not pushed, and the older wrapper default points to another clone.
+Run from the intended checkout. A copied installer wrapper needs `WT_IOS_CLONE` set to that checkout explicitly.
 
 The signing/install stages retain the existing human-controlled Xcode workflow. Use the Apple Account and Team already selected in Xcode; connect and trust the iPhone by cable and enable Developer Mode. The agent only builds unsigned simulator/device SDK artifacts and does not change signing, accounts or Keychains. `--install-only` skips pairing. Keep the same Team and bundle ID when reinstalling to preserve the app's saved pairings.
 

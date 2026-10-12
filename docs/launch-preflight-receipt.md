@@ -1,7 +1,7 @@
 # Wave 8 launch preflight receipt
 
 Row 08 ran on macOS in
-`/Users/ehrlich/repos/w8-wingthing-launch-preflight-20261011`, from pinned base
+the `w8-wingthing-launch-preflight-20261011` checkout, from pinned base
 `2c3688f1f59cee08713d77476a917d7bc4bf7867`. No fresh upstream was used. Admission
 was satisfied for immutable offline scope. Launch was 2026-10-11 03:04 EDT;
 final validation finished before the 04:59 EDT deadline. The toolchain, module

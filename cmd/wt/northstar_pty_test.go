@@ -126,15 +126,15 @@ esac
 func northstarBuild(t *testing.T, f *northstarFixture, channel string) string {
 	t.Helper()
 	binary := filepath.Join(f.bin, "wt")
-	provided := os.Getenv("WT_TEST_BINARY")
+	selector := "WT_TEST_BINARY"
 	if channel == "preview" {
 		binary += "-preview"
-		provided = os.Getenv("WT_TEST_PREVIEW_BINARY")
+		selector = "WT_TEST_PREVIEW_BINARY"
 	}
-	if provided != "" {
-		// Make gates have already built this checkout. Copy the selected channel
-		// into the fixture so every CLI still launches through its TMPDIR alias.
-		data, err := os.ReadFile(provided)
+	if supplied := os.Getenv(selector); supplied != "" {
+		// Copy the selected channel into the fixture so every CLI still launches
+		// through its TMPDIR alias when a gate supplies a prebuilt binary.
+		data, err := os.ReadFile(supplied)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -146,6 +146,9 @@ func northstarBuild(t *testing.T, f *northstarFixture, channel string) string {
 	// Use the toolchain that compiled this test, regardless of the runner's
 	// username or whether a fixture replaced PATH with provider-only tools.
 	goBin := filepath.Join(runtime.GOROOT(), "bin", "go")
+	if info, err := os.Stat(goBin); err != nil || info.IsDir() || info.Mode()&0111 == 0 {
+		goBin = "go"
+	}
 	args := []string{"-n", "15", goBin, "build", "-p", "2", "-buildvcs=false", "-o", binary}
 	if channel == "preview" {
 		args = append(args, "-ldflags", "-X github.com/ehrlich-b/wingthing/internal/config.ReleaseChannel=preview")
@@ -411,7 +414,8 @@ func northstarStartPTY(t *testing.T, f *northstarFixture, binary string, cols, r
 	}
 	h := &northstarPTY{t: t, cmd: cmd, master: master, slave: slave, before: before, emu: vt.NewEmulator(cols, rows), changed: make(chan struct{}, 1), done: make(chan error, 1), readDone: make(chan struct{}), artifact: filepath.Join(f.evidence, strings.ReplaceAll(t.Name(), "/", "-")+"-"+strconv.Itoa(cols)+"-"+strconv.Itoa(cmd.Process.Pid))}
 	// VT query replies must be drained even if a child asks for capabilities.
-	go func() { _, _ = io.Copy(io.Discard, h.emu) }()
+	queryDone := make(chan struct{})
+	go func() { defer close(queryDone); _, _ = io.Copy(io.Discard, h.emu) }()
 	go func() { h.done <- cmd.Wait(); close(h.done) }()
 	go func() {
 		defer close(h.readDone)
@@ -454,6 +458,10 @@ func northstarStartPTY(t *testing.T, f *northstarFixture, binary string, cols, r
 		_ = master.Close()
 		_ = slave.Close()
 		<-h.readDone
+		// Emulator.Read checks an unsynchronized closed flag. Close its query
+		// pipe first and join the reader before Emulator.Close changes that flag.
+		_ = h.emu.InputPipe().(io.Closer).Close()
+		<-queryDone
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		_ = h.emu.Close()

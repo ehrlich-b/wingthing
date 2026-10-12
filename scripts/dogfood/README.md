@@ -91,7 +91,7 @@ the newest JSONL receipt after each run; service failure remains visible through
 ## Mac manual commands
 
 ```sh
-cd /Users/ehrlich/repos/wingthing-dogfood-20261010
+cd /path/to/wingthing-checkout
 nice -n 15 make web
 nice -n 15 go build -p 2 -buildvcs=false -o wt ./cmd/wt
 ./scripts/dogfood/run.sh

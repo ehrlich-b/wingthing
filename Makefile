@@ -244,6 +244,9 @@ ifneq ($(filter-out debian ubuntu,$(LINUX_DISTROS)),)
 	$(error Unknown LINUX_DISTROS: $(filter-out debian ubuntu,$(LINUX_DISTROS)))
 endif
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) build -p 2 -buildvcs=false -ldflags "-X main.version=test" -o test/linux/wt ./cmd/wt
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) build -p 2 -buildvcs=false -ldflags "-X main.version=test -X github.com/ehrlich-b/wingthing/internal/config.ReleaseChannel=preview" -o test/linux/wt-preview ./cmd/wt
+	@mkdir -p test/linux/runinspect-orphan
+	@cp -R internal/runinspect/testdata/orphan/. test/linux/runinspect-orphan/
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) build -p 2 -o test/linux/mock-agent ./test/mock-agent/
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) test -p 2 -c -tags 'e2e linux' -o test/linux/run-tests ./test/linux/
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) test -p 2 -c -tags integration -o test/linux/sandbox-tests ./internal/sandbox/

@@ -24,7 +24,7 @@ case "$MODE" in
 esac
 [[ $(uname -s) == Darwin ]] || die 'Run this installer on the Mac.'
 CLONE=${WT_IOS_CLONE:-$(cd "$(dirname "$0")/../../.." && pwd)}
-XCODE=${WT_IOS_XCODE:-/Users/ehrlich/Downloads/Xcode.app}
+XCODE=${WT_IOS_XCODE:-/Applications/Xcode.app}
 STATE=${WT_IOS_STATE:-$HOME/.local/state/wt-ios-install}
 SUPPORT=$CLONE/mobile/ios/scripts/ios_install_support.py
 ENTRYPOINT=${WT_IOS_ENTRYPOINT:-$HOME/repos/claude/bin/wt-ios-install}
@@ -133,8 +133,8 @@ fi
 
 step "6/7 Connect to this Mac's main wing"
 [[ -z ${WT_IOS_SETUP_LINK_FILE:-} ]] || die "The QR flow pairs with the main wing. For an old Home link, use the app's hidden Existing Home setup fallback."
-GO=${WT_IOS_GO:-$HOME/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.9.darwin-arm64/bin/go}
-[[ -x $GO ]] || die 'Go 1.26.9 is missing; set WT_IOS_GO to its executable.'
+GO=${WT_IOS_GO:-$(command -v go || true)}
+[[ -x $GO ]] || die 'Go 1.26.9 is missing; select it on PATH or set WT_IOS_GO to its executable.'
 WING=${WT_IOS_WING_DIR:-${WINGTHING_DIR:-$HOME/.wingthing}}
 BIN=$STATE/wt-pair
 printf '%s\n' "Pairing target: this Mac’s main wing in $WING (the same one wt and the dashboard use)." \

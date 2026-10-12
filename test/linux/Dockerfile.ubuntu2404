@@ -29,6 +29,9 @@ COPY mock-agent /usr/local/bin/mock-agent
 COPY wt /usr/local/bin/wt
 COPY wt /root/wt-fixture
 ENV WT_TEST_BINARY=/root/wt-fixture
+COPY wt-preview /root/wt-preview-fixture
+ENV WT_TEST_PREVIEW_BINARY=/root/wt-preview-fixture
+COPY runinspect-orphan /internal/runinspect/testdata/orphan
 COPY run-tests /root/run-tests
 COPY sandbox-tests /root/sandbox-tests
 COPY wt-tests /root/wt-tests

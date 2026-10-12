@@ -5,6 +5,7 @@ package sandbox
 import (
 	"context"
 	"net"
+	"os"
 	"slices"
 	"syscall"
 	"testing"
@@ -12,6 +13,60 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+func TestNetworkBridgeCloseJoinsIdleReceiver(t *testing.T) {
+	bridge, _, err := newNetworkBridge(12345, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { bridge.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("closing an idle relay did not wake and join recvmsg")
+	}
+	select {
+	case <-bridge.serveDone:
+	default:
+		t.Fatal("Close returned before the receive worker")
+	}
+}
+
+func TestNetworkBridgePeerExitStopsReceiver(t *testing.T) {
+	bridge, _, err := newNetworkBridge(12345, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bridge.Close()
+	bridge.closeChild()
+	select {
+	case <-bridge.serveDone:
+	case <-time.After(time.Second):
+		t.Fatal("relay receiver did not stop after its peer exited")
+	}
+}
+
+func TestLinuxSandboxConcurrentDestroy(t *testing.T) {
+	bridge, _, err := newNetworkBridge(12345, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &linuxSandbox{tmpDir: t.TempDir(), networkBridge: bridge}
+	start, results := make(chan struct{}), make(chan error, 2)
+	for range 2 {
+		go func() { <-start; results <- s.Destroy() }()
+	}
+	close(start)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(s.tmpDir); !os.IsNotExist(err) {
+		t.Fatalf("destroyed sandbox directory still exists: %v", err)
+	}
+}
 
 func TestNetworkBridgeConnectionLimit(t *testing.T) {
 	bridge := &networkBridge{

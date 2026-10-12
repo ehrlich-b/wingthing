@@ -8,15 +8,15 @@ are needed. Read [PHONE.md](PHONE.md) for authority and threat boundaries.
 ## 1. Use the verified local build (about 5 minutes)
 
 ```sh
-cd /Users/ehrlich/repos/w9-wingthing-phone-20261011
-export WT_PHONE_GO=/Users/ehrlich/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.9.darwin-arm64/bin/go
+cd /path/to/wingthing-checkout
+export WT_PHONE_GO="$(command -v go)"
 taskpolicy -b nice -n 15 sh scripts/check-phone.sh
 ```
 
 The script runs all Node tests, builds embedded web assets, runs gateway race
 tests and CLI configuration tests, then builds `.scratch/bin/wt-phone`. It uses
 clone-local Go/npm caches. The Go module cache was seeded by a local copy of
-`/Users/ehrlich/go/pkg/mod/cache/download`; no secret files were copied. If
+the invoking Go module download cache; no secret files were copied. If
 moving to forge, set `WT_PHONE_GO` to its Go **1.26.9** binary and seed that
 clone's `.scratch/gomod/cache/download` from its existing module cache, or
 deliberately allow dependency downloads with `GOPROXY=https://proxy.golang.org`
@@ -208,7 +208,7 @@ revocation. Account/production changes belong to Bryan, not this task.
 
 ## Native iOS: exact Xcode handoff and remaining gap
 
-1. Open `/Users/ehrlich/Downloads/Xcode.app`, then
+1. Open `/Applications/Xcode.app`, then
    `mobile/ios/Wingthing.xcodeproj`. Bryan accepts license/components himself.
 2. Xcode **Settings → Accounts → + → Apple ID**: Bryan signs in himself.
 3. Connect/unlock the iPhone, **Trust This Computer**, enable **Settings →
@@ -224,8 +224,8 @@ revocation. Account/production changes belong to Bryan, not this task.
 Exact existing Make equivalent, with the Team ID and UDID from Xcode:
 
 ```sh
-cd /Users/ehrlich/repos/w9-wingthing-phone-20261011
-DEVELOPER_DIR=/Users/ehrlich/Downloads/Xcode.app/Contents/Developer \
+cd /path/to/wingthing-checkout
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 taskpolicy -b nice -n 15 make -C mobile/ios device-install \
   DEVELOPMENT_TEAM='<TEAM_ID>' IOS_DEVICE_ID='<IPHONE_UDID>' \
   BUNDLE_ID='<UNIQUE_BUNDLE_ID>' \
@@ -257,11 +257,11 @@ Coordinator executes the real HTTPS/WebSocket echo/revocation test on a host
 that allows loopback, before exposure:
 
 ```sh
-cd /Users/ehrlich/repos/w9-wingthing-phone-20261011
+cd /path/to/wingthing-checkout
 taskpolicy -b nice -n 15 env GOTOOLCHAIN=local GOMAXPROCS=2 \
   GOCACHE="$PWD/.scratch/go-build" GOMODCACHE="$PWD/.scratch/gomod" \
   GOPROXY=off GOSUMDB=off \
-  /Users/ehrlich/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.9.darwin-arm64/bin/go \
+  "$(command -v go)" \
   test -p 2 -race -tags integration ./internal/phoneweb \
   -run '^TestPhoneGatewayLoopbackWebSocket$' -count=1
 ```
@@ -273,7 +273,7 @@ Also required: Chromium's existing desktop/mobile control-suite gate
 taskpolicy -b nice -n 15 env GOTOOLCHAIN=local GOMAXPROCS=2 \
   GOCACHE="$PWD/.scratch/go-build" GOMODCACHE="$PWD/.scratch/gomod" \
   GOPROXY=off GOSUMDB=off make e2e-web \
-  GO=/Users/ehrlich/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.9.darwin-arm64/bin/go
+  GO="$(command -v go)"
 ```
 
 Then run the exact physical Safari/tunn/keyboard/steer/stop journey in step 4. The
@@ -284,7 +284,7 @@ permits SwiftPM's normal manifest sandbox:
 ```sh
 taskpolicy -b nice -n 15 sh mobile/ios/scripts/offline_validation.sh core
 taskpolicy -b nice -n 15 sh mobile/ios/scripts/offline_validation.sh release
-DEVELOPER_DIR=/Users/ehrlich/Downloads/Xcode.app/Contents/Developer \
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   taskpolicy -b nice -n 15 sh mobile/ios/scripts/offline_validation.sh xcode
 ```
 

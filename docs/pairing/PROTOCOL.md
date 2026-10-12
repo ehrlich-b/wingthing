@@ -1,6 +1,6 @@
 # Wingthing phone pairing v1
 
-The contract is `/Users/ehrlich/repos/claude/state/drive/wingthing-pairing-spec.md` (11 October 2026). Pair Bryan's iPhone to **EhrlichMac's main wing** first; pair **forge's wing** separately. A phone grant permits session inventory, attachment, input and stop on precisely one wing. It confers no account, configuration, enrollment, shell-launch or other-machine authority. `wt pair` must contact the running wing's local control endpoint, not start a second wing with a new identity.
+The contract is the operator-maintained `wingthing-pairing-spec.md` (11 October 2026). Pair Bryan's iPhone to **EhrlichMac's main wing** first; pair **forge's wing** separately. A phone grant permits session inventory, attachment, input and stop on precisely one wing. It confers no account, configuration, enrollment, shell-launch or other-machine authority. `wt pair` must contact the running wing's local control endpoint, not start a second wing with a new identity.
 
 This document specifies the implemented v1 messages and boundaries. The storyboard is a visual specification; simulator tests do not establish camera or cellular acceptance.
 

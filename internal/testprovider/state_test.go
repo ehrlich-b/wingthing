@@ -20,7 +20,7 @@ func TestParentLifecycleFixtureSocketPaths(t *testing.T) {
 	}
 	// Reproduce the measured standalone fixture address without a listener.
 	// Its 104-byte address fits Linux but fails Darwin before attachment.
-	legacy := filepath.Join("/Users/ehrlich/repos/w7-wingthing-parent-lifecycle-20261011", ".scratch", "a1234567890", "s", "eggs", "fixture", "egg.sock")
+	legacy := filepath.Join("/Users/fixture/repos/w7-wingthing-parent-lifecycle-20261011", ".scratch", "a1234567890", "s", "eggs", "fixture", "egg.sock")
 	t.Logf("legacy socket: %d bytes (Darwin maximum 103, Linux maximum 107)", len(legacy))
 	if len(legacy) <= 103 || len(legacy) > 107 {
 		t.Fatal("fixture no longer distinguishes the recorded Mac and Linux paths")

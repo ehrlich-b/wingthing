@@ -3,7 +3,7 @@
 set -eu
 test -f go.mod && test -f web/package.json || { echo 'Run from the clone root.' >&2; exit 2; }
 task_root=$PWD
-phone_go=${WT_PHONE_GO:-/Users/ehrlich/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.9.darwin-arm64/bin/go}
+phone_go=${WT_PHONE_GO:-go}
 mkdir -p .scratch/go-build .scratch/gomod .scratch/npm .scratch/bin
 export GOTOOLCHAIN=local GOMAXPROCS=2 GOCACHE="$task_root/.scratch/go-build" GOMODCACHE="$task_root/.scratch/gomod"
 export GOPROXY=${GOPROXY:-off} GOSUMDB=${GOSUMDB:-off}

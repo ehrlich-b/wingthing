@@ -133,7 +133,7 @@ type Envelope struct {
 // WingProject is a project directory discovered on the wing.
 type WingProject struct {
 	Name    string `json:"name"`               // directory name (e.g. "wingthing")
-	Path    string `json:"path"`               // absolute path (e.g. "/Users/ehrlich/repos/wingthing")
+	Path    string `json:"path"`               // absolute path (e.g. "/workspace/project")
 	ModTime int64  `json:"mod_time,omitempty"` // unix timestamp of last modification
 }
 

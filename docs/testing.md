@@ -505,7 +505,7 @@ required. A passing kernel PTY test is not a real-provider, real-SSH or physical
 trackpad/selection canary. See [the daily-driver guide](daily-driver.md).
 
 ```sh
-WT_GO=/Users/ehrlich/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.9.darwin-arm64/bin/go
+WT_GO=$(command -v go) # Select Go 1.26.9 on PATH first.
 # Select clone-local HOME/state, temporary directories and populated module/build
 # caches before running. Use GOPROXY=off, GOSUMDB=off, GOTOOLCHAIN=local,
 # GOFLAGS=-p=2 and GOMAXPROCS=2. Execute heavy commands serially.

@@ -110,8 +110,9 @@ parsed:
 		signals := make(chan os.Signal, 4)
 		signal.Notify(signals, syscall.SIGWINCH)
 		resizeDone := make(chan struct{})
-		defer func() { signal.Stop(signals); close(resizeDone) }()
+		resizeJoined := make(chan struct{})
 		go func() {
+			defer close(resizeJoined)
 			for {
 				select {
 				case <-signals:
@@ -127,6 +128,11 @@ parsed:
 		go func() { _, _ = io.Copy(os.Stdout, master); close(outputDone) }()
 		go func() { _, _ = io.Copy(master, os.Stdin) }()
 		err = command.Wait()
+		// Stop and join ioctl users before closing the descriptor. Fd() is
+		// unsafe while the output reader releases a concurrently closed file.
+		signal.Stop(signals)
+		close(resizeDone)
+		<-resizeJoined
 		_ = master.Close()
 		<-outputDone
 	}
