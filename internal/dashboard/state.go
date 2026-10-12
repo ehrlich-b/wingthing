@@ -99,6 +99,7 @@ type state struct {
 	remotes           map[string]config.Remote
 	attention         map[attentionIdentity]attentionRecord
 	attentionProfiles map[string]attentionProfile
+	attentionStore    *attentionStore
 	attached          *attentionIdentity
 	bell              bool
 	pendingBells      int
@@ -273,6 +274,10 @@ func (s *state) handle(key string) (act *action, quit bool) {
 			kind := s.mode
 			s.mode = navigate
 			if key == "y" || key == "Y" {
+				if s.target.machine != "local" && s.machines[s.target.machine].err != "" {
+					s.message = "cannot validate " + s.target.machine + ": inventory unavailable; R refresh before acting"
+					return nil, false
+				}
 				return &action{kind: kind, row: s.target, attach: kind == confirmTakeover, takeover: kind == confirmTakeover}, false
 			}
 			return nil, false
@@ -376,6 +381,12 @@ func (s *state) handle(key string) (act *action, quit bool) {
 			}
 		}
 		s.target, s.message = r, ""
+		// Stop confirmation may still display the exact stale identity, but
+		// confirmation cannot dispatch until inventory verifies it again.
+		if key != "x" && r.machine != "local" && s.machines[r.machine].err != "" {
+			s.message = "cannot validate " + r.machine + ": inventory unavailable; R refresh before acting"
+			return nil, false
+		}
 		switch key {
 		case "enter":
 			return &action{row: r, attach: true}, false

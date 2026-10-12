@@ -40,6 +40,11 @@ func Run(ctx context.Context, version string, streams remotepkg.IO) error {
 		return err
 	}
 	s := &state{machines: map[string]machine{"local": {}}, defaultAgent: cfg.DefaultAgent, defaultCWD: cwd, localDir: cfg.Dir}
+	s.attentionStore, err = openAttentionStore(cfg.Dir)
+	if err != nil {
+		return fmt.Errorf("open navigator read cursors: %w", err)
+	}
+	defer s.attentionStore.Close()
 	for name := range remotes {
 		s.machines[name] = machine{}
 	}
@@ -212,6 +217,12 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 					history.pages[act.run.WingID] = staleRunPage(history.pages[act.run.WingID], err)
 					continue
 				}
+			}
+			// A refresh can fail while a rename/new-session prompt or stop/
+			// takeover confirmation is open. Recheck its captured machine.
+			if act.kind != runAttach && act.row.machine != "local" && s.machines[act.row.machine].err != "" {
+				s.message = "cannot validate " + act.row.machine + ": inventory unavailable; R refresh before acting"
+				continue
 			}
 			args, actionErr := actionArgs(*act, remotes)
 			if actionErr != nil {

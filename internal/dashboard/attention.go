@@ -8,7 +8,8 @@ import (
 
 // A saved name can later identify a different host, executable or state tree.
 // Snapshot the complete profile in rows so old views cannot acknowledge the
-// replacement's results. All records live only for this dashboard instance.
+// replacement's results. Runtime generations also isolate removed/readded
+// profiles; durable records are scoped to this local viewer and exact route.
 type attentionIdentity struct {
 	machine, session, localDir string
 	profile                    config.Remote
@@ -67,6 +68,15 @@ func (s *state) observeAttention() {
 		for _, session := range m.sessions {
 			key := s.attentionIdentity(name, session.ID)
 			record, known := s.attention[key]
+			if !known && s.attentionStore != nil && key.generation == 1 {
+				var err error
+				record, known, err = s.attentionStore.load(key)
+				if err != nil {
+					s.message = "Cannot read navigator cursors: " + err.Error()
+					continue
+				}
+			}
+			previous := record
 			if session.StateCursor < record.cursor {
 				continue
 			}
@@ -93,6 +103,9 @@ func (s *state) observeAttention() {
 				record.seen = record.completion
 			}
 			s.attention[key] = record
+			if !known || previous != record {
+				s.persistAttention(key, record, !known && key.generation > 1)
+			}
 			if known && qualifying && !attached {
 				if s.bell {
 					s.pendingBells++
@@ -141,6 +154,15 @@ func (s *state) acknowledge(r row) {
 		// newer completion arrived before this key/action was processed.
 		record.seen = max(record.seen, min(r.completion, record.completion))
 		s.attention[r.identity] = record
+		s.persistAttention(r.identity, record, false)
+	}
+}
+
+func (s *state) persistAttention(key attentionIdentity, record attentionRecord, reset bool) {
+	if s.attentionStore != nil && key == s.attentionIdentity(key.machine, key.session) {
+		if err := s.attentionStore.save(key, record, reset); err != nil {
+			s.message = "Cannot save navigator cursors: " + err.Error()
+		}
 	}
 }
 
