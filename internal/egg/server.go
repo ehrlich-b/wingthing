@@ -612,7 +612,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	}
 	previewClaudeOSHome := ""
 	if config.Channel() == "preview" && runtime.GOOS == "darwin" && rc.Agent == "claude" && len(rc.Command) == 0 {
-		previewClaudeOSHome, err = ApplyPreviewClaudeOSContext(envMap, rc.UserHome)
+		previewClaudeOSHome, _, err = PreviewClaudeOSContext(rc.UserHome)
 		if err != nil {
 			return err
 		}
@@ -643,6 +643,14 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	}
 	args = prepared.Args
 	envMap = prepared.Environment
+	// Preparation merges the data-home environment again. Apply the Mac
+	// credential account context only after that final merge, while keeping
+	// sandbox mounts, lifecycle hooks and history rooted in the data home.
+	if previewClaudeOSHome != "" {
+		if _, err := ApplyPreviewClaudeOSContext(envMap, rc.UserHome); err != nil {
+			return err
+		}
+	}
 	codexRun := prepared.CodexRun
 	if home != "" {
 		localBin := filepath.Join(home, ".local", "bin")

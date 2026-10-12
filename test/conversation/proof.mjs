@@ -55,6 +55,14 @@ if (stateRoot) {
     if (!inside(home, state)) throw new Error(`state ${state} must be inside the OS-account HOME ${home}`);
 }
 for (const directory of [workspace, state, home, bin]) await mkdir(directory, { recursive: true, mode: 0o700 });
+if (stateRoot) {
+    // An isolated HOME may sit under user-writable checkout directories.
+    // Pin its entries so the provider cannot rename the protected state tree.
+    // An omitted base retains every built-in sandbox restriction.
+    const pins = [];
+    for (let dir = home; dir !== path.dirname(dir); dir = path.dirname(dir)) pins.push('deny-write:' + dir);
+    await writeFile(path.join(workspace, 'egg.yaml'), 'fs: ' + JSON.stringify(pins) + '\n', { mode: 0o600, flag: 'wx' });
+}
 let providerData = '';
 if (stateRoot) {
     // The host mailbox requires the provider data home D outside the protected
