@@ -60,6 +60,11 @@ const (
 	runDetails
 	runResult
 	runAttach
+	agentChooser
+	installerConsent
+	providerVerify
+	providerLogin
+	onboardingRecovery
 )
 
 type action struct {
@@ -75,6 +80,9 @@ type action struct {
 }
 
 type state struct {
+	onboarding        bool
+	providerPaths     map[string]string
+	onboardingStage   mode
 	recent            bool
 	runs              *runHistory
 	machines          map[string]machine
@@ -221,6 +229,9 @@ func (s *state) handle(key string) (act *action, quit bool) {
 	if s.recent && s.mode != help {
 		return s.runHandle(key)
 	}
+	if s.mode >= agentChooser {
+		return s.handleOnboarding(key)
+	}
 	if s.mode == machinePicker {
 		switch key {
 		case "escape", "q", "m":
@@ -327,6 +338,12 @@ func (s *state) handle(key string) (act *action, quit bool) {
 		return nil, false
 	}
 	switch key {
+	case "s":
+		if s.firstRun() && !s.busy {
+			s.target = row{machine: "local"}
+			s.agent = ""
+			s.reviewCWD()
+		}
 	case "h":
 		s.recent = true
 		h := s.history()
@@ -393,6 +410,9 @@ func (s *state) handle(key string) (act *action, quit bool) {
 			s.mode = confirmStop
 		case "n":
 			s.mode, s.input = newAgent, s.defaultAgent
+			if s.firstRun() && r.machine == "local" {
+				s.beginOnboarding()
+			}
 		}
 	}
 	return nil, false

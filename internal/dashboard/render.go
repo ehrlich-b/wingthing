@@ -194,6 +194,11 @@ func render(s *state, width, height int, now time.Time) string {
 	}
 	footer := []string{"arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop",
 		"/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent"}
+	if s.firstRun() && !s.recent {
+		for _, line := range s.firstRunLines() {
+			body = append(body, viewLine{text: line})
+		}
+	}
 	if width < 75 {
 		footer = []string{"Enter attach v view t take n r x stop", "/ filter ! attention b bell m i ? R q h"}
 	}
@@ -261,6 +266,16 @@ func render(s *state, width, height int, now time.Time) string {
 	}
 	if s.mode > navigate && s.mode < machinePicker && s.message != "" {
 		footer = append(footer, s.message)
+	}
+	if s.mode >= agentChooser {
+		body = nil
+		for _, line := range s.onboardingLines() {
+			for _, wrapped := range wrap(line, width) {
+				body = append(body, viewLine{text: wrapped})
+			}
+		}
+		selectedLine = 0
+		footer = []string{"Enter accept  Esc cancel  Ctrl-C quit"}
 	}
 	// Preserve the prompt and escape guidance at tiny terminal heights.
 	if s.mode > navigate && s.mode < machinePicker && height <= 2 {
