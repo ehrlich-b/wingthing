@@ -1,0 +1,12 @@
+=== RUN   TestNativeRunPTYResizeKeepsInputCancellable
+--- PASS: TestNativeRunPTYResizeKeepsInputCancellable (0.05s)
+=== RUN   TestNativeRunPTYResizeKeepsInputCancellable
+--- PASS: TestNativeRunPTYResizeKeepsInputCancellable (0.05s)
+=== RUN   TestNativeRunPTYResizeKeepsInputCancellable
+--- PASS: TestNativeRunPTYResizeKeepsInputCancellable (0.05s)
+=== RUN   TestNativeRunPTYResizeKeepsInputCancellable
+--- PASS: TestNativeRunPTYResizeKeepsInputCancellable (0.05s)
+=== RUN   TestNativeRunPTYResizeKeepsInputCancellable
+--- PASS: TestNativeRunPTYResizeKeepsInputCancellable (0.00s)
+PASS
+ok  	github.com/ehrlich-b/wingthing/internal/egg	0.216s

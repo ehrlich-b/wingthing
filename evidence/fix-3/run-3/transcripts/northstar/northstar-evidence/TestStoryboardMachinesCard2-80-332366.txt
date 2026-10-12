@@ -1,0 +1,441 @@
+
+--- colliding local and two peers / one offline ---
+wt | 3 sessions | 4 machines
+B:0 W:3 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-3/wingthing/.scratch/northstar-1184672439/work space; $(to…
+> W shared-name                     claude       northstar-1184672439/wor… 2m
+forge  connected  updated 0s ago
+  /work/lanes/wt-fix-3/wingthing/.scratch/northstar-1184672439/work space; $(to…
+  W shared-name                     claude       northstar-1184672439/wor… 2m
+mirror  connected  updated 0s ago
+  /work/lanes/wt-fix-3/wingthing/.scratch/northstar-1184672439/work space; $(to…
+  W shared-name                     claude       northstar-1184672439/wor… 2m
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH di…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit…
+
+--- select exact forge ---
+wt | 3 sessions | 4 machines
+B:0 W:3 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  (no matches)
+forge  connected  updated 0s ago
+  /work/lanes/wt-fix-3/wingthing/.scratch/northstar-1184672439/work space; $(to…
+> W shared-name                     claude       northstar-1184672439/wor… 2m
+mirror  connected  updated 0s ago
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH di…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit…
+/forge (1/3)
+
+--- attach forge only ---
+FORGE_ONLY
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--- resize traverses remote PTY ---
+FORGE_ONLY
+REMOTE_SIZE:101x31
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--- detach returns to exact forge row ---
+wt | 3 sessions | 4 machines
+B:0 W:3 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago (refreshing)
+  (no matches)
+forge  connected  updated 0s ago (refreshing)
+  /work/lanes/wt-fix-3/wingthing/.scratch/northstar-1184672439/work space; $(touch injected); it's l…
+> W shared-name                                   claude       northstar-1184672439/work space… 2m
+mirror  connected  updated 0s ago (refreshing)
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Sessi…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+/forge (1/3)
+
+--- rename exact forge ---
+wt | 3 sessions | 4 machines
+B:0 W:3 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  (no matches)
+forge  connected  updated 0s ago
+  /work/lanes/wt-fix-3/wingthing/.scratch/northstar-1184672439/work space; $(touch injected); it's l…
+> W forge-renamed                                 claude       northstar-1184672439/work space… 2m
+mirror  connected  updated 0s ago
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Sessi…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+Done
+
+--- retain stale forge row ---
+wt | 3 sessions | 4 machines
+B:0 W:3 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  (no matches)
+forge  offline  last success 0s ago; cached rows stale
+  ! remote "forge": SSH to ns-forge ended with status 255; check the SSH diagnostic above. Session s…
+  /work/lanes/wt-fix-3/wingthing/.scratch/northstar-1184672439/work space; $(touch injected); it's l…
+> W forge-renamed                             claude       northstar-1184672439/work spa… 2m    stale
+mirror  connected  updated 0s ago (refreshing)
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Sessi…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+Done
+
+--- stale rename refused ---
+wt | 3 sessions | 4 machines
+B:0 W:3 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago (refreshing)
+  (no matches)
+forge  offline  last success 0s ago; cached rows stale
+  ! remote "forge": SSH to ns-forge ended with status 255; check the SSH diagnostic above. Session s…
+  /work/lanes/wt-fix-3/wingthing/.scratch/northstar-1184672439/work space; $(touch injected); it's l…
+> W forge-renamed                             claude       northstar-1184672439/work spa… 2m    stale
+mirror  connected  updated 0s ago (refreshing)
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Sessi…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+cannot validate remote session forge:shared-id; refresh before acting: remote "forge": SSH to ns-forg
+e ended with status 255; check the SSH diagnostic above. Session state is unknown; reconnect with the
+ same --remote-state and list sessions before relaunching (fixture offline)
+
+--- stale stop confirmation ---
+wt | 3 sessions | 4 machines
+B:0 W:3 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago (refreshing)
+  (no matches)
+forge  offline  last success 0s ago; cached rows stale
+  ! remote "forge": SSH to ns-forge ended with status 255; check the SSH diagnostic above. Session s…
+  /work/lanes/wt-fix-3/wingthing/.scratch/northstar-1184672439/work space; $(touch injected); it's l…
+> W forge-renamed                             claude       northstar-1184672439/work spa… 2m    stale
+mirror  connected  updated 0s ago (refreshing)
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Sessi…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+y stop  Enter/Esc cancel  Ctrl-C quit
+Stop forge:shared-id (forge-renamed)? [y/N]
+
+--- stale stop refused ---
+wt | 3 sessions | 4 machines
+B:0 W:3 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago (refreshing)
+  (no matches)
+forge  offline  last success 0s ago; cached rows stale
+  ! remote "forge": SSH to ns-forge ended with status 255; check the SSH diagnostic above. Session s…
+  /work/lanes/wt-fix-3/wingthing/.scratch/northstar-1184672439/work space; $(touch injected); it's l…
+> W forge-renamed                             claude       northstar-1184672439/work spa… 2m    stale
+mirror  connected  updated 0s ago (refreshing)
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Sessi…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+cannot validate remote session forge:shared-id; refresh before acting: remote "forge": SSH to ns-forg
+e ended with status 255; check the SSH diagnostic above. Session state is unknown; reconnect with the
+ same --remote-state and list sessions before relaunching (fixture offline)
+
+--- select healthy local ---
+wt | 3 sessions | 4 machines
+B:0 W:3 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago (refreshing)
+  /work/lanes/wt-fix-3/wingthing/.scratch/northstar-1184672439/work space; $(touch injected); it's l…
+> W shared-name                                   claude       northstar-1184672439/work space… 2m
+forge  offline  last success 0s ago; cached rows stale
+  ! remote "forge": SSH to ns-forge ended with status 255; check the SSH diagnostic above. Session s…
+  (no matches)
+mirror  connected  updated 0s ago (refreshing)
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Sessi…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+/local (1/3)
+
+--- attach local despite offline peers ---
+LOCAL_ONLY
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--- detach local ---
+wt | 3 sessions | 4 machines
+B:0 W:3 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-3/wingthing/.scratch/northstar-1184672439/work space; $(touch injected); it's l…
+> W shared-name                                   claude       northstar-1184672439/work space… 2m
+forge  offline  last success 0s ago; cached rows stale
+  ! remote "forge": SSH to ns-forge ended with status 255; check the SSH diagnostic above. Session s…
+  (no matches)
+mirror  connected  updated 0s ago (refreshing)
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Sessi…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+/local (1/3)
+
+--- recover exact forge ---
+wt | 3 sessions | 4 machines
+B:0 W:3 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  (no matches)
+forge  connected  updated 0s ago
+  /work/lanes/wt-fix-3/wingthing/.scratch/northstar-1184672439/work space; $(touch injected); it's l…
+> W forge-renamed                                 claude       northstar-1184672439/work space… 2m
+mirror  connected  updated 0s ago (refreshing)
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Sessi…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+/forge (1/3)

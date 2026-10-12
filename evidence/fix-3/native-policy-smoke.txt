@@ -1,0 +1,58 @@
+launch exit: 0
+{
+  "command": [
+    "/bin/sh",
+    "-c",
+    "printf NATIVE_POLICY_READY; exec sleep 6"
+  ],
+  "cwd": "/tmp/wt-auth-3waxhi4v/work",
+  "isolation": "wingthing-sandbox",
+  "kind": "command",
+  "name": "",
+  "session": "632e633f3eb548d1",
+  "status": "started"
+}
+
+inventory exit: 0
+{
+  "receipt": {
+    "command": [
+      "/bin/sh",
+      "-c",
+      "printf NATIVE_POLICY_READY; exec sleep 6"
+    ],
+    "cwd": "/tmp/wt-auth-3waxhi4v/work",
+    "isolation": "wingthing-sandbox",
+    "kind": "command",
+    "name": "",
+    "session": "632e633f3eb548d1",
+    "status": "started"
+  },
+  "authority": {
+    "version": 1,
+    "platform": "linux",
+    "workspace": "/tmp/wt-auth-3waxhi4v/work",
+    "provider_home": "/tmp/wt-auth-3waxhi4v/home",
+    "sandboxed": true,
+    "mounts": [
+      {
+        "path": "/",
+        "read_only": true
+      },
+      {
+        "path": "/tmp/wt-auth-3waxhi4v/work",
+        "read_only": false
+      },
+      {
+        "path": "/tmp/wt-auth-3waxhi4v/state/eggs/632e633f3eb548d1/browser-requests",
+        "read_only": false
+      }
+    ],
+    "denied": [
+      "/tmp/wt-auth-3waxhi4v/home/.ssh"
+    ],
+    "network": "none"
+  },
+  "inventory_authority_matches": true
+}
+native policy persistence/inventory smoke: PASS

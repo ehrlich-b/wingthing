@@ -1,0 +1,170 @@
+✓ fleet-wzyc [BUG] · Wingthing: show effective workspace and provider authority in details   [P3 · CLOSED]
+Created by: Fleet Board · Type: bug
+Created: 2026-10-12 · Updated: 2026-10-12
+
+CLOSE REASON
+
+  06/card-3 fixed: TestStoryboardRunsCard3 was FAIL/FAIL/FAIL in baseline     
+  evidence and now PASS/PASS/PASS with unchanged card tests. Proof:           
+  /work/lanes/wt-fix-3/wingthing/evidence/fix-3/card3-three-pass-proof.txt and
+  card3-proof-transcripts/*.txt plus adjacent raw ANSI. Details show saved    
+  runtime workspace, provider state, filesystem denies and network scope;     
+  missing evidence stays explicitly unknown and policy display never claims   
+  native confinement.                                                         
+
+DESCRIPTION
+
+  ## Source:                                                                  
+                                                                              
+  Binding spec: /work/lanes/skeptic/inputs/mac/drive/wingthing-app-spec.md and
+  /work/lanes/wt-app/PRD.md. Original item/comments: /work/lanes/refine-      
+  wingthing/evidence/fleet-wzyc.show.json and .comments.json.                 
+                                                                              
+  Card: 06/card-3, ordinal #4: 4 · What can this egg touch?                   
+  Source: /work/lanes/wt-e2e/wingthing/evidence/storyboard-source/06-         
+  runs.html#4                                                                 
+  Carrier: f8f9ebd96e1c72336ffd796c8d496ecda0a85619; Linux forge; isolated    
+  HOME/WINGTHING_DIR; fixture provider/SSH, real built wt + kernel PTY.       
+                                                                              
+  Expected screen: Launch policy workspace/provider home/denies/network review
+  Expected observable state: Effective authority explicit; full OS-user mode  
+  opt-in; displayed policy alone not confinement evidence                     
+                                                                              
+  Actual outcome across three runs: FAIL, FAIL, FAIL.                         
+                                                                              
+  ## Why                                                                      
+                                                                              
+  Bryan can inspect the selected egg authority without confusing a label with 
+  proven confinement.                                                         
+                                                                              
+  ## The one question / capability                                            
+                                                                              
+  What filesystem and network authority does this exact session actually have?
+                                                                              
+  ## Scope                                                                    
+                                                                              
+  Repo: ehrlich-b/wingthing. Base: codex/wt-integration-20261011 @            
+  3a0b7fa8578b9889d9e17a0e5fb3a1ffab9831ca. Branch: codex/refine-fleet-wzyc-  
+  20261011; isolated checkout, record actual head and binary hash.            
+  internal/dashboard/details rendering/actions, session policy projection in  
+  internal/wing/control.go, and focused tests. New projection fields bind     
+  exact wing/session and effective policy provenance; cmd/wt                  
+  TestStoryboardRunsCard3 integration. Coordinate dashboard/control shared    
+  files with diagnostics and native-registry owners.                          
+                                                                              
+  ## Non-goals                                                                
+                                                                              
+  No duplicate source-DONE implementation, Linux confinement bypass, public   
+  release/deploy, account/payment/provider spend or external outreach. Bare wt
+  stays primary; free SSH/LAN/tailnet stay available and automatic Pro offers 
+  default OFF. Use disposable fixture sessions and installer transports;      
+  actual user/native/physical acceptance remains separately evidenced.        
+                                                                              
+  ## Acceptance                                                               
+                                                                              
+  Enumerate and run TestStoryboardRunsCard3 three times. Details show         
+  canonical effective workspace, provider HOME/write regions, explicit denied 
+  paths, network mode/allowlist and policy source for the exact selected      
+  session. Full OS-user mode requires existing explicit opt-in and clear      
+  broader-authority copy; absent/stale/version-incompatible policy is unknown 
+  and cannot inherit local/same-named session values. Displaying policy alone 
+  is never native confinement proof; show whether evidence is                 
+  fixture/native/REQUIRED-UNRUN. Authorized local UI may show the selected    
+  workspace; exported diagnostics exclude full paths/secrets/transcript/raw   
+  argv. go test -race ./internal/dashboard ./internal/wing and focused cmd/wt 
+  tests plus vet/full suite vs baseline; no new failures. Native enforcement  
+  qualification remains separate.                                             
+  MOCKS-FIRST: proposed happy/failure screenshots must receive builder self-  
+  review and separate product-review PASS against each named view question    
+  before UI implementation; revise and re-review failed mocks, then review    
+  actual screenshots/transcripts after build.                                 
+                                                                              
+  ## UI contract / MOCKS-FIRST gate                                           
+                                                                              
+  User: Bryan can inspect the selected egg authority without confusing a label
+  with proven confinement. One question per view: Session details: what can   
+  this exact egg touch, and which authority claims have real evidence?        
+  Reference: /work/lanes/wt-app/storyboard (flow matching source card),       
+  existing dense keyboard navigator and docs/pairing/STORYBOARD.html. Before  
+  UI build, capture happy/failure mock screens at narrow/wide sizes with      
+  readable focus/status, then self-review and obtain independent product-     
+  review PASS. Revise failures before building; review actual                 
+  screenshots/transcripts again after build.                                  
+                                                                              
+  ## Review loop                                                              
+                                                                              
+  Builder reviews every diff/card expectation against the one question and    
+  clear/purposeful/testable/minimal/deduplicated/no-one-shot rubric.          
+  Independent gpt-6.1-sol high implementation/evidence review before handoff; 
+  security reviewer checks policy, cursor or route authority changes. Fix     
+  findings and re-review. Product mocks must pass before UI work; coordinator 
+  integrates shared files serially.                                           
+                                                                              
+  ## Dependencies                                                             
+                                                                              
+  Blocking IDs: fleet-jugv. Tracking parent is not a blocker. Preserve        
+  native/physical gates and current active owner; do not create another suite 
+  lane.                                                                       
+                                                                              
+  ## V/C                                                                      
+                                                                              
+  V=8/10; C=5 remaining agent-hours including implementation/qualification and
+  review, excluding human wait. Rationale: Bryan can inspect the selected egg 
+  authority without confusing a label with proven confinement. Original       
+  V/C=6/1.3 uses board scheduling units, retained in evidence rather than     
+  compared as hours.                                                          
+
+
+
+ACCEPTANCE CRITERIA
+
+  Enumerate and run TestStoryboardRunsCard3 three times. Details show         
+  canonical effective workspace, provider HOME/write regions, explicit denied 
+  paths, network mode/allowlist and policy source for the exact selected      
+  session. Full OS-user mode requires existing explicit opt-in and clear      
+  broader-authority copy; absent/stale/version-incompatible policy is unknown 
+  and cannot inherit local/same-named session values. Displaying policy alone 
+  is never native confinement proof; show whether evidence is                 
+  fixture/native/REQUIRED-UNRUN. Authorized local UI may show the selected    
+  workspace; exported diagnostics exclude full paths/secrets/transcript/raw   
+  argv. go test -race ./internal/dashboard ./internal/wing and focused cmd/wt 
+  tests plus vet/full suite vs baseline; no new failures. Native enforcement  
+  qualification remains separate. MOCKS-FIRST: proposed happy/failure         
+  screenshots must receive builder self-review and separate product-review    
+  PASS against each named view question before UI implementation; revise and  
+  re-review failed mocks, then review actual screenshots/transcripts after    
+  build.                                                                      
+
+
+
+LABELS: host:forge, lane:burn, needs:coordinator, project:wingthing, score:estimated
+
+METADATA
+  C: 5
+  C_unit: agent-hours
+  V: 8
+  bryan_minutes: 0
+  codex_weekly_points: 3
+  coordinator_touches: 3
+  refined: v1
+  refinement_base_sha: 3a0b7fa8578b9889d9e17a0e5fb3a1ffab9831ca
+  refinement_verdict: KEEP
+  score_basis: Refinement v1 remaining agent-hours including review; original mixed units preserved in lane evidence
+  score_derived_status: stale-pending-coordinator
+  tokens: 300000
+  vc_ratio: 1.6
+
+PARENT
+  ↑ ○ fleet-9e8778acfc12: (EPIC) Wingthing: track first-session, native-phone and customer gates P2
+
+DEPENDS ON
+  → ✓ fleet-jugv: Wingthing: finish integrated branch and evidence-backed backlog reconciliation P3
+
+COMMENTS
+  2026-10-12 00:54 Fleet Board
+    
+      refined=v1 resumed: full reviewed mini-PRD and final lead gates retained;   
+      remaining card obligations, explicit platform/physical boundaries, one live 
+      owner, testable acceptance and V/C in agent-hours. See /work/lanes/refine-  
+      wingthing/REFINEMENT.md.                                                    
+

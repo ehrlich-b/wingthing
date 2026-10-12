@@ -1,0 +1,55 @@
+{
+  "base": "580d4d9",
+  "product_commit": "15fc057",
+  "platform": "linux/amd64",
+  "commands": {
+    "vet": {
+      "command": "GOFLAGS=-p=4 nice -n 15 go vet ./...",
+      "exit_code": 0,
+      "log": "go-vet-final.txt"
+    },
+    "focused": {
+      "command": "GOFLAGS=-p=4 nice -n 15 go test -count=1 -parallel=1 ./internal/control ./internal/dashboard ./internal/eggclient ./internal/localmcp",
+      "exit_code": 0,
+      "log": "focused-passing-packages.txt"
+    },
+    "egg": {
+      "command": "GOFLAGS=-p=4 nice -n 15 go test -count=1 -parallel=1 ./internal/egg",
+      "exit_code": 1,
+      "log": "egg-package-final.txt"
+    },
+    "card3": {
+      "command": "GOFLAGS=-p=4 nice -n 15 go test -v -count=3 -run '^TestStoryboardRunsCard3$' ./cmd/wt",
+      "exit_code": 0,
+      "log": "card3-three-pass-proof.txt"
+    },
+    "native_policy_smoke": {
+      "command": "nice -n 15 python3 -u evidence/fix-3/native-policy-smoke.py",
+      "exit_code": 0,
+      "log": "native-policy-smoke.txt"
+    }
+  },
+  "baseline_reproduced_package_failures": [
+    {
+      "test": "TestClaudeLifecycleRefusesHostSettingsOutsideFinalPolicy/allowed",
+      "reason": "context deadline exceeded",
+      "baseline_log": "baseline-focused-failures.txt"
+    },
+    {
+      "test": "TestTerminateSessionBoundsMissingReaperNotification",
+      "reason": "process descendant inventory unavailable",
+      "baseline_log": "baseline-focused-failures.txt"
+    },
+    {
+      "test": "TestNativeRunPTYResizeKeepsInputCancellable",
+      "reason": "intermittent cancellation returns nil",
+      "baseline_log": "baseline-pty-cancellation.txt",
+      "candidate_retry": "pty-cancellation-retry.txt"
+    }
+  ],
+  "closed_beads": [
+    "fleet-wzyc"
+  ],
+  "native_macos_acceptance": "REQUIRED-UNRUN",
+  "physical_iphone_acceptance": "REQUIRED-UNRUN"
+}

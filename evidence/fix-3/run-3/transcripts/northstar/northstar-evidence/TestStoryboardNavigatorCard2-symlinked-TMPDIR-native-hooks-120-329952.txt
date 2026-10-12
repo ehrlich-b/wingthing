@@ -1,0 +1,34 @@
+
+--- fresh instance / historical completion baseline / known blocked ---
+wt | 3 sessions | 4 machines
+B:1 W:0 I:1 D:0 E:0 F:0 ?:1 U:0 | [All] !:1 bell:off
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-3/wingthing/.scratch/northstar-1439853525/work
+> B local-agent                                                claude       northstar-1439853525/work              2m
+  ? hooks-off                                                  claude       northstar-1439853525/work              2m
+empty  connected  updated 0s ago
+  (no sessions)
+forge  connected  updated 0s ago
+  /work/lanes/wt-fix-3/wingthing/.scratch/northstar-1439853525/work
+  I forge-agent                                                claude       northstar-1439853525/work              2m
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent

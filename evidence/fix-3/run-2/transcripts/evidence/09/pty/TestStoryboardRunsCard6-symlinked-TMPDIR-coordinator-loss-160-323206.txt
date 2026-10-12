@@ -1,0 +1,190 @@
+
+--- original parent / surviving egg ---
+wt | 1 sessions | 3 machines
+B:0 W:1 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-3/wingthing/.scratch/northstar-303463699/work
+> W surviving-parent                                                                     claude       northstar-303463699/work                             2m
+forge  connecting (refreshing)
+  (no sessions)
+legacy  offline
+  ! remote "legacy": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown; reconnect and list sessions before rela…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+
+--- find durable runs without remembered IDs ---
+wt | Recent runs | 101 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+legacy: history unavailable (legacy SSH-only profile)
+> running wing-local:same-run fixture northstar-303463699/work 12h output:available parent:parent-run cleanup:unknown live
+  running wing-forge:same-run fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  stopped wing-local:cancelled-record fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:complete-record fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  failed wing-local:failed-record fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-000 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-001 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-002 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-003 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-004 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-005 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-006 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-007 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-008 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-009 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-010 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-011 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-012 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-013 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-014 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-015 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-016 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-017 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-018 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-019 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-020 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-021 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-022 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-023 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-024 fixture northstar-303463699/work 13h output:available parent:parent-run cleanup:unknown live
+Enter live attach/details  i details  o bounded result  N next page
+/ history filter  R first pages  h sessions  ? help  q quit
+More history on local; N loads the next page explicitly
+
+--- captured qualified local run ---
+wt | Recent runs | 1 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+legacy: history unavailable (legacy SSH-only profile)
+> running wing-local:same-run fixture northstar-303463699/work 12h output:available parent:parent-run cleanup:unknown live
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter live attach/details  i details  o bounded result  N next page
+/ history filter  R first pages  h sessions  ? help  q quit
+More history on local; N loads the next page explicitly
+
+--- attach surviving exact local egg ---
+RECOVERY_LOCAL_LIVE
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--- detach preserves qualified run ---
+wt | Recent runs | 1 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+legacy: history unavailable (legacy SSH-only profile)
+> running wing-local:same-run fixture northstar-303463699/work 12h output:available parent:parent-run cleanup:unknown live
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter live attach/details  i details  o bounded result  N next page
+/ history filter  R first pages  h sessions  ? help  q quit
+More history on local; N loads the next page explicitly

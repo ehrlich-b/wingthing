@@ -1,0 +1,359 @@
+[
+  {
+    "card": "05/card-0",
+    "test": "TestStoryboardPhoneCard0",
+    "bug": "fleet-cpab",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Missing owner pairing/device CLI and device pairing product; physical iPhone acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "05/card-1",
+    "test": "TestStoryboardPhoneCard1",
+    "bug": "fleet-mxtz",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Missing owner pairing/device CLI and device pairing product; physical iPhone acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "05/card-2",
+    "test": "TestStoryboardPhoneCard2",
+    "bug": "fleet-bmxl",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Missing owner pairing/device CLI and device pairing product; physical iPhone acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "05/card-3",
+    "test": "TestStoryboardPhoneCard3",
+    "bug": "fleet-5bo6",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Missing owner pairing/device CLI and device pairing product; physical iPhone acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "05/card-4",
+    "test": "TestStoryboardPhoneCard4",
+    "bug": "fleet-wudw",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Missing owner pairing/device CLI and device pairing product; physical iPhone acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "05/card-5",
+    "test": "TestStoryboardPhoneCard5",
+    "bug": "fleet-lo13",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Missing owner pairing/device CLI and device pairing product; physical iPhone acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "05/card-6",
+    "test": "TestStoryboardPhoneCard6",
+    "bug": "fleet-ag5w",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Missing owner pairing/device CLI and device pairing product; physical iPhone acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "05/card-7",
+    "test": "TestStoryboardPhoneCard7",
+    "bug": "fleet-yq9i",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Missing owner pairing/device CLI and device pairing product; physical iPhone acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "05/card-8",
+    "test": "TestStoryboardPhoneCard8",
+    "bug": "fleet-pet5",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Missing owner pairing/device CLI and device pairing product; physical iPhone acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "05/card-9",
+    "test": "TestStoryboardPhoneCard9",
+    "bug": "fleet-ezc3",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Missing owner pairing/device CLI and device pairing product; physical iPhone acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "05/card-10",
+    "test": "TestStoryboardPhoneCard10",
+    "bug": "fleet-v2pw",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Missing owner pairing/device CLI and device pairing product; physical iPhone acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "05/card-11",
+    "test": "TestStoryboardPhoneCard11",
+    "bug": "fleet-8xhy",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Missing owner pairing/device CLI and device pairing product; physical iPhone acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "05/card-12",
+    "test": "TestStoryboardPhoneCard12",
+    "bug": "fleet-0p5v",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Missing owner pairing/device CLI and device pairing product; physical iPhone acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "05/card-13",
+    "test": "TestStoryboardPhoneCard13",
+    "bug": "fleet-v3b6",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Missing owner pairing/device CLI and device pairing product; physical iPhone acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "05/card-14",
+    "test": "TestStoryboardPhoneCard14",
+    "bug": "fleet-0oli",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Missing owner pairing/device CLI and device pairing product; physical iPhone acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "05/card-15",
+    "test": "TestStoryboardPhoneCard15",
+    "bug": "fleet-qh4d",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Missing owner pairing/device CLI and device pairing product; physical iPhone acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "05/card-16",
+    "test": "TestStoryboardPhoneCard16",
+    "bug": "fleet-hqms",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Missing owner pairing/device CLI and device pairing product; physical iPhone acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "05/card-17",
+    "test": "TestStoryboardPhoneCard17",
+    "bug": "fleet-6ev0",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Missing owner pairing/device CLI and device pairing product; physical iPhone acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "06/card-1",
+    "test": "TestStoryboardRunsCard1",
+    "bug": "fleet-pi85",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Linux scoped host-mailbox write-protection contract unsupported; typed policy provenance improved; native macOS acceptance REQUIRED-UNRUN."
+  },
+  {
+    "card": "06/card-3",
+    "test": "TestStoryboardRunsCard3",
+    "bug": "fleet-wzyc",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "PASS",
+      "PASS",
+      "PASS"
+    ],
+    "closed_here": true,
+    "reason": "Saved runtime policy scope and explicit unknown authority displayed; accepted three times."
+  },
+  {
+    "card": "06/card-5",
+    "test": "TestStoryboardRunsCard5",
+    "bug": "fleet-9h8k",
+    "before": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "after": [
+      "FAIL",
+      "FAIL",
+      "FAIL"
+    ],
+    "closed_here": false,
+    "reason": "Linux scoped host-mailbox write-protection contract unsupported; typed policy provenance improved; native macOS acceptance REQUIRED-UNRUN."
+  }
+]

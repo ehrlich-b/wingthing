@@ -1,0 +1,85 @@
+2026/10/11 21:18:46 egg: command binary: /tmp/wt-cc-4187680661/codex
+2026/10/11 21:18:46 SECURITY: egg runs in outer-boundary mode with the full authority of the local OS user; Wingthing filesystem, network, syscall, and resource isolation is disabled
+2026/10/11 21:18:46 egg: session ours kind=agent agent=codex command=[] pid=277272 network=* fs=0
+2026/10/11 21:18:46 egg: serving on /tmp/wt-cc-4187680661/eggs/ours/egg.sock (pid 277234)
+2026/10/11 21:18:46 egg: session ours exited with code 0
+2026/10/11 21:18:47 egg: global config discovery failed for /tmp/TestDiscoverEggConfigCustomStateLegacyFallbackstable_invalid_cu1619779364/001/alternate-state/egg.yaml: parse egg config: yaml: line 1: did not find expected ',' or ']'
+2026/10/11 21:18:50 egg: first PTY output from pid 0 after 2562047h47m16.854775807s (19 bytes)
+--- FAIL: TestClaudeLifecycleRefusesHostSettingsOutsideFinalPolicy (6.14s)
+    --- FAIL: TestClaudeLifecycleRefusesHostSettingsOutsideFinalPolicy/allowed (6.02s)
+        lifecycle_policy_test.go:107: allowed provider settings refused: context deadline exceeded
+--- FAIL: TestNativeRunPTYResizeKeepsInputCancellable (0.00s)
+    pty_input_test.go:113: run input ignored cancellation: <nil>
+2026/10/11 21:19:07 egg: snapshot: open .claude/settings.json: open provider path .claude: no such file or directory
+2026/10/11 21:19:07 egg: snapshot: restore .claude/settings.json: open provider path settings.json: too many levels of symbolic links
+2026/10/11 21:19:07 egg: snapshot: open .claude/settings.json: open provider path .claude: not a directory
+2026/10/11 21:19:07 egg: first PTY output from pid 0 after 2562047h47m16.854775807s (14 bytes)
+--- FAIL: TestTerminateSessionBoundsMissingReaperNotification (2.02s)
+    termination_test.go:63: missing reaper notification: process descendant inventory unavailable
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+2026/10/11 21:19:10 tool socket write JSON error: write unix /tmp/wt-ts-3771463998/t.sock->@: write: broken pipe
+FAIL
+FAIL	github.com/ehrlich-b/wingthing/internal/egg	28.534s
+FAIL

@@ -1,0 +1,8 @@
+--- FAIL: TestClaudeLifecycleRefusesHostSettingsOutsideFinalPolicy (6.10s)
+    --- FAIL: TestClaudeLifecycleRefusesHostSettingsOutsideFinalPolicy/allowed (6.02s)
+        lifecycle_policy_test.go:107: allowed provider settings refused: context deadline exceeded
+--- FAIL: TestTerminateSessionBoundsMissingReaperNotification (2.02s)
+    termination_test.go:63: missing reaper notification: process descendant inventory unavailable
+FAIL
+FAIL	github.com/ehrlich-b/wingthing/internal/egg	8.131s
+FAIL

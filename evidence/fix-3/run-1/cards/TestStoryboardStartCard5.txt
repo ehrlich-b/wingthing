@@ -1,0 +1,137 @@
+=== RUN   TestStoryboardStartCard5
+=== RUN   TestStoryboardStartCard5/two-requested-parents-one-daemon
+    storyboard_pty_test.go:365: Unix socket lexical/canonical bytes: 65/65
+    storyboard_pty_test.go:368: screen timeout (first concurrent parent):
+        Error: Claude launch failed during admission/policy: this platform cannot enforce the scoped provider write-protection contract. Scoped host
+        -mailbox launches require macOS Seatbelt protection. Native macOS acceptance: REQUIRED-UNRUN. Use a supported macOS host; retain the selecte
+        d policy. Policy: selected policy "/work/lanes/wt-fix-3/wingthing/.scratch/497f547476/l/egg.yaml". Doctor launch-plan needs an explicit --al
+        lowed-home-root; supply the exact --home, --executable and policy/base inputs. No complete request was captured.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-3/wingthing/.scratch/storyboard-evidence/TestStoryboardStartCard5/two-requested-parents-one-daemon/TestStoryboardStartCard5-two-requested-parents-one-daemon-140-275699.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-3/wingthing/.scratch/storyboard-evidence/TestStoryboardStartCard5/two-requested-parents-one-daemon/TestStoryboardStartCard5-two-requested-parents-one-daemon-140-275698.txt
+    storyboard_pty_test.go:803: fixture runtime diagnostic mcp-audit.log: {"actor":"default","argument_sha256":"35a262d151386f86fa2f34be83d556723030ded1b133d40773fc065f52ef1c39","decision":"error","isolation":"wingthing-sandbox","principal":"user-c214aba1be60e89264cf","timestamp":"2026-10-12T01:18:29.558156692Z","tool":"agent_start"}
+        {"actor":"default","argument_sha256":"99e41af204f6e86e5521dd1b19d9a877a56950b14e7c5ce0e122b425564c628c","decision":"error","isolation":"wingthing-sandbox","principal":"user-c214aba1be60e89264cf","timestamp":"2026-10-12T01:18:29.567792853Z","tool":"agent_start"}
+    storyboard_pty_test.go:803: fixture runtime diagnostic wing.log: 2026/10/11 21:18:29 egg: loaded wing config from /work/lanes/wt-fix-3/wingthing/.scratch/497f547476/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-fix-3/wingthing/.scratch/northstar-3111820122/work]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 21:18:29 wing: local control ready (wing_id=64453c7ba0bb42c78ef9c950)
+        wingthing MCP agent_start: launch failed during admission/policy: provider_protection_unsupported
+        wingthing MCP agent_start: launch failed during admission/policy: provider_protection_unsupported
+    storyboard_pty_test.go:820: fixture wing diagnostic: 2026/10/11 21:18:29 egg: loaded wing config from /work/lanes/wt-fix-3/wingthing/.scratch/497f547476/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-fix-3/wingthing/.scratch/northstar-3111820122/work]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 21:18:29 wing: local control ready (wing_id=64453c7ba0bb42c78ef9c950)
+        wingthing MCP agent_start: launch failed during admission/policy: provider_protection_unsupported
+        wingthing MCP agent_start: launch failed during admission/policy: provider_protection_unsupported
+--- FAIL: TestStoryboardStartCard5/two-requested-parents-one-daemon (8.13s)
+=== RUN   TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor
+    storyboard_pty_test.go:381: Unix socket lexical/canonical bytes: 65/65
+    storyboard_pty_test.go:399: screen timeout (accepted survivor provider):
+        Error: Claude launch failed during admission/policy: this platform cannot enforce the scoped provider write-protection contract. Scoped host
+        -mailbox launches require macOS Seatbelt protection. Native macOS acceptance: REQUIRED-UNRUN. Use a supported macOS host; retain the selecte
+        d policy. Policy: selected policy "/work/lanes/wt-fix-3/wingthing/.scratch/23337e83f9/l/egg.yaml". Doctor launch-plan needs an explicit --al
+        lowed-home-root; supply the exact --home, --executable and policy/base inputs. No complete request was captured.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-3/wingthing/.scratch/storyboard-evidence/TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor/TestStoryboardStartCard5-canceled-waiter-does-not-kill-survivor-140-276222.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-3/wingthing/.scratch/storyboard-evidence/TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor/TestStoryboardStartCard5-canceled-waiter-does-not-kill-survivor-140-276221.txt
+    storyboard_pty_test.go:803: fixture runtime diagnostic mcp-audit.log: {"actor":"default","argument_sha256":"23181ae22f6cc774c7217fc53bc37328d30b0a6c5eda7e0c57d8348b07c34395","decision":"error","isolation":"wingthing-sandbox","principal":"user-0ccba1760b956e177c44","timestamp":"2026-10-12T01:18:38.030375995Z","tool":"agent_start"}
+    storyboard_pty_test.go:803: fixture runtime diagnostic wing.log: 2026/10/11 21:18:37 egg: loaded wing config from /work/lanes/wt-fix-3/wingthing/.scratch/23337e83f9/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-fix-3/wingthing/.scratch/northstar-2279686805/work]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 21:18:38 wing: local control ready (wing_id=bc8e8bc2bea241609cede074)
+        wingthing MCP agent_start: launch failed during admission/policy: provider_protection_unsupported
+    storyboard_pty_test.go:820: fixture wing diagnostic: 2026/10/11 21:18:37 egg: loaded wing config from /work/lanes/wt-fix-3/wingthing/.scratch/23337e83f9/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-fix-3/wingthing/.scratch/northstar-2279686805/work]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 21:18:38 wing: local control ready (wing_id=bc8e8bc2bea241609cede074)
+        wingthing MCP agent_start: launch failed during admission/policy: provider_protection_unsupported
+--- FAIL: TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor (8.46s)
+--- FAIL: TestStoryboardStartCard5 (16.59s)

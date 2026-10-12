@@ -1,0 +1,14 @@
+=== RUN   TestNativeRunPTYResizeKeepsInputCancellable
+--- PASS: TestNativeRunPTYResizeKeepsInputCancellable (0.00s)
+=== RUN   TestNativeRunPTYResizeKeepsInputCancellable
+--- PASS: TestNativeRunPTYResizeKeepsInputCancellable (0.05s)
+=== RUN   TestNativeRunPTYResizeKeepsInputCancellable
+    pty_input_test.go:113: run input ignored cancellation: <nil>
+--- FAIL: TestNativeRunPTYResizeKeepsInputCancellable (0.00s)
+=== RUN   TestNativeRunPTYResizeKeepsInputCancellable
+--- PASS: TestNativeRunPTYResizeKeepsInputCancellable (0.05s)
+=== RUN   TestNativeRunPTYResizeKeepsInputCancellable
+--- PASS: TestNativeRunPTYResizeKeepsInputCancellable (0.05s)
+FAIL
+FAIL	github.com/ehrlich-b/wingthing/internal/egg	0.172s
+FAIL

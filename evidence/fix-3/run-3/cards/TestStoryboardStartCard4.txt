@@ -1,0 +1,86 @@
+=== RUN   TestStoryboardStartCard4
+=== RUN   TestStoryboardStartCard4/transport
+    storyboardLaunchFailure_pty_test.go:120: Unix socket lexical/canonical bytes: 65/65
+    storyboardLaunchFailure_pty_test.go:93: Unix socket lexical/canonical bytes: 83/83
+    storyboardLaunchFailure_pty_test.go:93: Unix socket lexical/canonical bytes: 83/83
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-3/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard4-transport-120-327668.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-3/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard4-transport-240-327660.txt
+--- PASS: TestStoryboardStartCard4/transport (0.10s)
+=== RUN   TestStoryboardStartCard4/remote
+=== RUN   TestStoryboardStartCard4/remote/policy
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 65/65
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 83/83
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-3/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard4-remote-policy-120-327692.txt
+--- PASS: TestStoryboardStartCard4/remote/policy (0.08s)
+=== RUN   TestStoryboardStartCard4/remote/attach
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 65/65
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 83/83
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-3/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard4-remote-attach-120-327739.txt
+--- PASS: TestStoryboardStartCard4/remote/attach (0.08s)
+--- PASS: TestStoryboardStartCard4/remote (0.16s)
+=== RUN   TestStoryboardStartCard4/success
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-3/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard4-success-120-327781.txt
+--- PASS: TestStoryboardStartCard4/success (0.04s)
+=== RUN   TestStoryboardStartCard4/native
+    storyboardLaunchFailure_pty_test.go:273: Unix socket lexical/canonical bytes: 65/65
+    storyboardLaunchFailure_pty_test.go:292: screen timeout (native denial):
+        Error: Claude launch failed during admission/policy: this platform cannot enforce the scoped provider write-protection contract. Scoped host-mailbox launches require macOS Seatbelt protection. Use a supported macOS host; retain the selected
+         policy. Policy: selected policy "/work/lanes/wt-fix-3/wingthing/.scratch/northstar-4150057662/work/egg.yaml". Doctor launch-plan needs an explicit --allowed-home-root; supply the exact --home, --executable and policy/base inputs. No comple
+        te request was captured.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-3/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard4-native-240-327789.txt
+    storyboard_pty_test.go:803: fixture runtime diagnostic mcp-audit.log: {"actor":"default","argument_sha256":"3af7ece641945c3cb9749dd5ae51385b576fd39db2ed9b15e1e5bb07b67bc62e","decision":"error","isolation":"wingthing-sandbox","principal":"user-646fcc895698b5f7fd3e","timestamp":"2026-10-12T01:24:12.936818237Z","tool":"agent_start"}
+    storyboard_pty_test.go:803: fixture runtime diagnostic wing.log: 2026/10/11 21:24:12 egg: loaded wing config from /work/lanes/wt-fix-3/wingthing/.scratch/9f9db3f2d1/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-fix-3/wingthing/.scratch/northstar-4150057662/work]
+          projects: 1 found
+            work → /work/lanes/wt-fix-3/wingthing/.scratch/northstar-4150057662/work
+          conv: auto
+        
+        2026/10/11 21:24:12 wing: local control ready (wing_id=b547cdcea987417e9cd208bb)
+        wingthing MCP agent_start: launch failed during admission/policy: provider_protection_unsupported
+    storyboard_pty_test.go:820: fixture wing diagnostic: 2026/10/11 21:24:12 egg: loaded wing config from /work/lanes/wt-fix-3/wingthing/.scratch/9f9db3f2d1/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-fix-3/wingthing/.scratch/northstar-4150057662/work]
+          projects: 1 found
+            work → /work/lanes/wt-fix-3/wingthing/.scratch/northstar-4150057662/work
+          conv: auto
+        
+        2026/10/11 21:24:12 wing: local control ready (wing_id=b547cdcea987417e9cd208bb)
+        wingthing MCP agent_start: launch failed during admission/policy: provider_protection_unsupported
+--- FAIL: TestStoryboardStartCard4/native (8.11s)
+--- FAIL: TestStoryboardStartCard4 (8.41s)

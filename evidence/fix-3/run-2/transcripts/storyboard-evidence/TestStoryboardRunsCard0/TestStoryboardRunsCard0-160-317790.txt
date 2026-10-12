@@ -1,0 +1,62 @@
+
+--- command ["status"]; exit=<nil> ---
+pending: 0
+running: 0
+agents:  0
+tokens:  2 today / 2 this week
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

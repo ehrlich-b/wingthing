@@ -1,0 +1,62 @@
+
+--- command ["run-inspect" "--snapshot" "/work/lanes/wt-fix-3/wingthing/.scratch/northstar-795030170/work/captured-state" "--json"]; exit=<nil> ---
+            {
+              "path": "wt.db",
+              "record": "agent_runs:fixture-orphan"
+            },
+            {
+              "path": "eggs/fixture-execution/run.8128e203343008b6187455d5a3607e980f82ea4abf77ac6bcb8aca4289a0e650.json"
+            }
+          ],
+          "requires": [
+            "Review the cited records and snapshot capture time."
+          ]
+        }
+      ]
+    }
+  ],
+  "conversations": [],
+  "archives": [
+    {
+      "compressed_bytes": 0,
+      "decoded_bytes": 0,
+      "rotation_pending": false,
+      "session_id": "fixture-execution",
+      "state": "absent",
+      "sources": [
+        {
+          "path": "eggs/fixture-execution/chat.meta"
+        },
+        {
+          "path": "eggs/fixture-execution/chat.jsonl.gz"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "kind": "run_execution",
+      "from": "fixture-orphan",
+      "to": "fixture-execution",
+      "state": "observed",
+      "sources": [
+        {
+          "path": "wt.db",
+          "record": "agent_runs:fixture-orphan"
+        },
+        {
+          "path": "eggs/fixture-execution/run.8128e203343008b6187455d5a3607e980f82ea4abf77ac6bcb8aca4289a0e650.json"
+        }
+      ]
+    }
+  ],
+  "issues": null,
+  "required_host_observations": [
+    "Verify the snapshot capture time and that no newer durable records exist.",
+    "Verify the exact session PID, process identity, provider thread/turn and absolute deadline on the real host.",
+    "Read the latest run receipt and complete output for the same run and execution IDs; never resend ambiguous input.",
+    "Reload conversation revision and delivered cursor; wake delivery and output existence do not acknowledge events.",
+    "Verify ownership, current execution, provider resume support, complete archive and policy before any manual recovery."
+  ]
+}
+

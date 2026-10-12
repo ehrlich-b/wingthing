@@ -1,0 +1,3 @@
+ok  	github.com/ehrlich-b/wingthing/internal/egg	0.020s
+ok  	github.com/ehrlich-b/wingthing/internal/dashboard	0.017s
+ok  	github.com/ehrlich-b/wingthing/internal/localmcp	0.010s

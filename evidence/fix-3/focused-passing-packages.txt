@@ -1,0 +1,4 @@
+ok  	github.com/ehrlich-b/wingthing/internal/control	0.006s
+ok  	github.com/ehrlich-b/wingthing/internal/dashboard	0.162s
+ok  	github.com/ehrlich-b/wingthing/internal/eggclient	4.868s
+ok  	github.com/ehrlich-b/wingthing/internal/localmcp	35.366s

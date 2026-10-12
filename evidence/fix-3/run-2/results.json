@@ -1,0 +1,405 @@
+{
+  "run": 2,
+  "exit_code": 1,
+  "statuses": {
+    "TestStoryboardInstallCard0": "PASS",
+    "TestStoryboardInstallCard1": "FAIL",
+    "TestStoryboardInstallCard4": "FAIL",
+    "TestStoryboardInstallCard5": "FAIL",
+    "TestStoryboardInstallCard6": "FAIL",
+    "TestStoryboardInstallCard7": "FAIL",
+    "TestStoryboardInstallCard2": "PASS",
+    "TestStoryboardInstallCard3": "PASS",
+    "TestStoryboardStartCard0": "FAIL",
+    "TestStoryboardStartCard1": "FAIL",
+    "TestStoryboardStartCard2": "FAIL",
+    "TestStoryboardStartCard3": "PASS",
+    "TestStoryboardStartCard4": "FAIL",
+    "TestStoryboardStartCard5": "FAIL",
+    "TestStoryboardNavigatorCard0": "PASS",
+    "TestStoryboardNavigatorCard1": "PASS",
+    "TestStoryboardNavigatorCard2": "FAIL",
+    "TestStoryboardNavigatorCard3": "PASS",
+    "TestStoryboardNavigatorCard4": "PASS",
+    "TestStoryboardNavigatorCard5": "FAIL",
+    "TestStoryboardNavigatorCard6": "PASS",
+    "TestStoryboardMachinesCard0": "PASS",
+    "TestStoryboardMachinesCard1": "PASS",
+    "TestStoryboardMachinesCard2": "PASS",
+    "TestStoryboardMachinesCard3": "FAIL",
+    "TestStoryboardMachinesCard4": "PASS",
+    "TestStoryboardPhoneCard0": "FAIL",
+    "TestStoryboardPhoneCard1": "FAIL",
+    "TestStoryboardPhoneCard2": "FAIL",
+    "TestStoryboardPhoneCard3": "FAIL",
+    "TestStoryboardPhoneCard4": "FAIL",
+    "TestStoryboardPhoneCard5": "FAIL",
+    "TestStoryboardPhoneCard6": "FAIL",
+    "TestStoryboardPhoneCard7": "FAIL",
+    "TestStoryboardPhoneCard8": "FAIL",
+    "TestStoryboardPhoneCard9": "FAIL",
+    "TestStoryboardPhoneCard10": "FAIL",
+    "TestStoryboardPhoneCard11": "FAIL",
+    "TestStoryboardPhoneCard12": "FAIL",
+    "TestStoryboardPhoneCard13": "FAIL",
+    "TestStoryboardPhoneCard14": "FAIL",
+    "TestStoryboardPhoneCard15": "FAIL",
+    "TestStoryboardPhoneCard16": "FAIL",
+    "TestStoryboardPhoneCard17": "FAIL",
+    "TestStoryboardRunsCard0": "PASS",
+    "TestStoryboardRunsCard1": "FAIL",
+    "TestStoryboardRunsCard2": "PASS",
+    "TestStoryboardRunsCard3": "PASS",
+    "TestStoryboardRunsCard4": "PASS",
+    "TestStoryboardRunsCard5": "FAIL",
+    "TestStoryboardRunsCard6": "PASS"
+  },
+  "regressions": [],
+  "transcripts": {
+    "TestStoryboardInstallCard0": [
+      "evidence/fix-3/run-2/cards/TestStoryboardInstallCard0.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard0/TestStoryboardInstallCard0-140-292914.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard0/TestStoryboardInstallCard0-140-292914.ansi",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard0/TestStoryboardInstallCard0-160-292793.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard0/TestStoryboardInstallCard0-160-292793.ansi"
+    ],
+    "TestStoryboardInstallCard1": [
+      "evidence/fix-3/run-2/cards/TestStoryboardInstallCard1.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard1/TestStoryboardInstallCard1-140-292936.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard1/TestStoryboardInstallCard1-140-292936.ansi"
+    ],
+    "TestStoryboardInstallCard4": [
+      "evidence/fix-3/run-2/cards/TestStoryboardInstallCard4.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard4/TestStoryboardInstallCard4-140-294875.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard4/TestStoryboardInstallCard4-140-294875.ansi"
+    ],
+    "TestStoryboardInstallCard5": [
+      "evidence/fix-3/run-2/cards/TestStoryboardInstallCard5.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard5/TestStoryboardInstallCard5-140-296355.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard5/TestStoryboardInstallCard5-140-296355.ansi"
+    ],
+    "TestStoryboardInstallCard6": [
+      "evidence/fix-3/run-2/cards/TestStoryboardInstallCard6.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard6/TestStoryboardInstallCard6-140-298158.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard6/TestStoryboardInstallCard6-140-298158.ansi"
+    ],
+    "TestStoryboardInstallCard7": [
+      "evidence/fix-3/run-2/cards/TestStoryboardInstallCard7.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard7/TestStoryboardInstallCard7-140-300112.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard7/TestStoryboardInstallCard7-140-300112.ansi"
+    ],
+    "TestStoryboardInstallCard2": [
+      "evidence/fix-3/run-2/cards/TestStoryboardInstallCard2.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard2/TestStoryboardInstallCard2-160-302377.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard2/TestStoryboardInstallCard2-160-302377.ansi",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard2/TestStoryboardInstallCard2-160-302336.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard2/TestStoryboardInstallCard2-160-302336.ansi"
+    ],
+    "TestStoryboardInstallCard3": [
+      "evidence/fix-3/run-2/cards/TestStoryboardInstallCard3.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard3/TestStoryboardInstallCard3-140-302534.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard3/TestStoryboardInstallCard3-140-302534.ansi",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard3/TestStoryboardInstallCard3-140-302517.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardInstallCard3/TestStoryboardInstallCard3-140-302517.ansi"
+    ],
+    "TestStoryboardStartCard0": [
+      "evidence/fix-3/run-2/cards/TestStoryboardStartCard0.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardStartCard0/TestStoryboardStartCard0-140-302605.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardStartCard0/TestStoryboardStartCard0-140-302605.ansi"
+    ],
+    "TestStoryboardStartCard1": [
+      "evidence/fix-3/run-2/cards/TestStoryboardStartCard1.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardStartCard1/TestStoryboardStartCard1-140-304304.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardStartCard1/TestStoryboardStartCard1-140-304304.ansi"
+    ],
+    "TestStoryboardStartCard2": [
+      "evidence/fix-3/run-2/cards/TestStoryboardStartCard2.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard2-routing-local-120-305476.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard2-routing-local-120-305476.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard2-routing-local-120-305457.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard2-routing-local-120-305457.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard2-native-local-120-305485.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard2-native-local-120-305485.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard2-routing-forge-120-307189.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard2-routing-forge-120-307189.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard2-routing-forge-120-307147.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard2-routing-forge-120-307147.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard2-native-forge-120-307207.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard2-native-forge-120-307207.ansi"
+    ],
+    "TestStoryboardStartCard3": [
+      "evidence/fix-3/run-2/cards/TestStoryboardStartCard3.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardStartCard3/TestStoryboardStartCard3-140-308882.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardStartCard3/TestStoryboardStartCard3-140-308882.ansi"
+    ],
+    "TestStoryboardStartCard4": [
+      "evidence/fix-3/run-2/cards/TestStoryboardStartCard4.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard4-transport-120-309295.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard4-transport-120-309295.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard4-transport-240-309287.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard4-transport-240-309287.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard4-remote-policy-120-309312.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard4-remote-policy-120-309312.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard4-remote-attach-120-309362.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard4-remote-attach-120-309362.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard4-success-120-309438.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard4-success-120-309438.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard4-native-240-309453.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardStartCard4-native-240-309453.ansi"
+    ],
+    "TestStoryboardStartCard5": [
+      "evidence/fix-3/run-2/cards/TestStoryboardStartCard5.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardStartCard5/two-requested-parents-one-daemon/TestStoryboardStartCard5-two-requested-parents-one-daemon-140-310483.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardStartCard5/two-requested-parents-one-daemon/TestStoryboardStartCard5-two-requested-parents-one-daemon-140-310483.ansi",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardStartCard5/two-requested-parents-one-daemon/TestStoryboardStartCard5-two-requested-parents-one-daemon-140-310482.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardStartCard5/two-requested-parents-one-daemon/TestStoryboardStartCard5-two-requested-parents-one-daemon-140-310482.ansi",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor/TestStoryboardStartCard5-canceled-waiter-does-not-kill-survivor-140-311060.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor/TestStoryboardStartCard5-canceled-waiter-does-not-kill-survivor-140-311060.ansi",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor/TestStoryboardStartCard5-canceled-waiter-does-not-kill-survivor-140-311059.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor/TestStoryboardStartCard5-canceled-waiter-does-not-kill-survivor-140-311059.ansi"
+    ],
+    "TestStoryboardNavigatorCard0": [
+      "evidence/fix-3/run-2/cards/TestStoryboardNavigatorCard0.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardNavigatorCard0/TestStoryboardNavigatorCard0-140-311747.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardNavigatorCard0/TestStoryboardNavigatorCard0-140-311747.ansi"
+    ],
+    "TestStoryboardNavigatorCard1": [
+      "evidence/fix-3/run-2/cards/TestStoryboardNavigatorCard1.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardNavigatorCard1/TestStoryboardNavigatorCard1-140-311811.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardNavigatorCard1/TestStoryboardNavigatorCard1-140-311811.ansi"
+    ],
+    "TestStoryboardNavigatorCard2": [
+      "evidence/fix-3/run-2/cards/TestStoryboardNavigatorCard2.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-312557.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-312557.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-312132.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-312132.ansi",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-312660.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-312660.ansi",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-312627.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-312627.ansi"
+    ],
+    "TestStoryboardNavigatorCard3": [
+      "evidence/fix-3/run-2/cards/TestStoryboardNavigatorCard3.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardNavigatorCard3-40-313695.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardNavigatorCard3-40-313695.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardNavigatorCard3-40-313681.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardNavigatorCard3-40-313681.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardNavigatorCard3-80-313667.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardNavigatorCard3-80-313667.ansi",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardNavigatorCard3/TestStoryboardNavigatorCard3-140-313603.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardNavigatorCard3/TestStoryboardNavigatorCard3-140-313603.ansi"
+    ],
+    "TestStoryboardNavigatorCard4": [
+      "evidence/fix-3/run-2/cards/TestStoryboardNavigatorCard4.txt",
+      "evidence/fix-3/run-2/transcripts/evidence/09/pty/TestStoryboardNavigatorCard4-symlinked-TMPDIR-coordinator-loss-160-314278.txt",
+      "evidence/fix-3/run-2/transcripts/evidence/09/pty/TestStoryboardNavigatorCard4-symlinked-TMPDIR-coordinator-loss-160-314278.ansi",
+      "evidence/fix-3/run-2/transcripts/evidence/09/pty/TestStoryboardNavigatorCard4-symlinked-TMPDIR-coordinator-loss-160-314241.txt",
+      "evidence/fix-3/run-2/transcripts/evidence/09/pty/TestStoryboardNavigatorCard4-symlinked-TMPDIR-coordinator-loss-160-314241.ansi"
+    ],
+    "TestStoryboardNavigatorCard5": [
+      "evidence/fix-3/run-2/cards/TestStoryboardNavigatorCard5.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardNavigatorCard5/TestStoryboardNavigatorCard5-140-314340.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardNavigatorCard5/TestStoryboardNavigatorCard5-140-314340.ansi"
+    ],
+    "TestStoryboardNavigatorCard6": [
+      "evidence/fix-3/run-2/cards/TestStoryboardNavigatorCard6.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardNavigatorCard6/TestStoryboardNavigatorCard6-140-315345.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardNavigatorCard6/TestStoryboardNavigatorCard6-140-315345.ansi"
+    ],
+    "TestStoryboardMachinesCard0": [
+      "evidence/fix-3/run-2/cards/TestStoryboardMachinesCard0.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardMachinesCard0/TestStoryboardMachinesCard0-160-315448.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardMachinesCard0/TestStoryboardMachinesCard0-160-315448.ansi",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardMachinesCard0/TestStoryboardMachinesCard0-160-315440.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardMachinesCard0/TestStoryboardMachinesCard0-160-315440.ansi"
+    ],
+    "TestStoryboardMachinesCard1": [
+      "evidence/fix-3/run-2/cards/TestStoryboardMachinesCard1.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardMachinesCard1/TestStoryboardMachinesCard1-160-315483.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardMachinesCard1/TestStoryboardMachinesCard1-160-315483.ansi",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardMachinesCard1/TestStoryboardMachinesCard1-160-315456.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardMachinesCard1/TestStoryboardMachinesCard1-160-315456.ansi"
+    ],
+    "TestStoryboardMachinesCard2": [
+      "evidence/fix-3/run-2/cards/TestStoryboardMachinesCard2.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardMachinesCard2-named-80-316086.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardMachinesCard2-named-80-316086.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardMachinesCard2-generic-80-316117.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardMachinesCard2-generic-80-316117.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardMachinesCard2-80-316159.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardMachinesCard2-80-316159.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardMachinesCard2-80-315727.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardMachinesCard2-80-315727.ansi"
+    ],
+    "TestStoryboardMachinesCard3": [
+      "evidence/fix-3/run-2/cards/TestStoryboardMachinesCard3.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardMachinesCard3/TestStoryboardMachinesCard3-140-316352.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardMachinesCard3/TestStoryboardMachinesCard3-140-316352.ansi"
+    ],
+    "TestStoryboardMachinesCard4": [
+      "evidence/fix-3/run-2/cards/TestStoryboardMachinesCard4.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!-160-317344.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!-160-317344.ansi",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!-140-317308.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!-140-317308.ansi",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel-160-317410.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel-160-317410.ansi",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel-140-317367.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel-140-317367.ansi"
+    ],
+    "TestStoryboardPhoneCard0": [
+      "evidence/fix-3/run-2/cards/TestStoryboardPhoneCard0.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-317426.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-317426.ansi"
+    ],
+    "TestStoryboardPhoneCard1": [
+      "evidence/fix-3/run-2/cards/TestStoryboardPhoneCard1.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-317441.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-317441.ansi"
+    ],
+    "TestStoryboardPhoneCard2": [
+      "evidence/fix-3/run-2/cards/TestStoryboardPhoneCard2.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-317455.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-317455.ansi"
+    ],
+    "TestStoryboardPhoneCard3": [
+      "evidence/fix-3/run-2/cards/TestStoryboardPhoneCard3.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-317469.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-317469.ansi"
+    ],
+    "TestStoryboardPhoneCard4": [
+      "evidence/fix-3/run-2/cards/TestStoryboardPhoneCard4.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-317483.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-317483.ansi"
+    ],
+    "TestStoryboardPhoneCard5": [
+      "evidence/fix-3/run-2/cards/TestStoryboardPhoneCard5.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-317497.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-317497.ansi"
+    ],
+    "TestStoryboardPhoneCard6": [
+      "evidence/fix-3/run-2/cards/TestStoryboardPhoneCard6.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-317512.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-317512.ansi"
+    ],
+    "TestStoryboardPhoneCard7": [
+      "evidence/fix-3/run-2/cards/TestStoryboardPhoneCard7.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-317539.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-317539.ansi"
+    ],
+    "TestStoryboardPhoneCard8": [
+      "evidence/fix-3/run-2/cards/TestStoryboardPhoneCard8.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-317561.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-317561.ansi"
+    ],
+    "TestStoryboardPhoneCard9": [
+      "evidence/fix-3/run-2/cards/TestStoryboardPhoneCard9.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-317599.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-317599.ansi"
+    ],
+    "TestStoryboardPhoneCard10": [
+      "evidence/fix-3/run-2/cards/TestStoryboardPhoneCard10.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-317616.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-317616.ansi"
+    ],
+    "TestStoryboardPhoneCard11": [
+      "evidence/fix-3/run-2/cards/TestStoryboardPhoneCard11.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-317631.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-317631.ansi"
+    ],
+    "TestStoryboardPhoneCard12": [
+      "evidence/fix-3/run-2/cards/TestStoryboardPhoneCard12.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-317656.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-317656.ansi"
+    ],
+    "TestStoryboardPhoneCard13": [
+      "evidence/fix-3/run-2/cards/TestStoryboardPhoneCard13.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-317671.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-317671.ansi"
+    ],
+    "TestStoryboardPhoneCard14": [
+      "evidence/fix-3/run-2/cards/TestStoryboardPhoneCard14.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-317685.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-317685.ansi"
+    ],
+    "TestStoryboardPhoneCard15": [
+      "evidence/fix-3/run-2/cards/TestStoryboardPhoneCard15.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-317700.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-317700.ansi"
+    ],
+    "TestStoryboardPhoneCard16": [
+      "evidence/fix-3/run-2/cards/TestStoryboardPhoneCard16.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-317714.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-317714.ansi"
+    ],
+    "TestStoryboardPhoneCard17": [
+      "evidence/fix-3/run-2/cards/TestStoryboardPhoneCard17.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-317728.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-317728.ansi"
+    ],
+    "TestStoryboardRunsCard0": [
+      "evidence/fix-3/run-2/cards/TestStoryboardRunsCard0.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-317790.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-317790.ansi",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-317781.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-317781.ansi",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-317736.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-317736.ansi"
+    ],
+    "TestStoryboardRunsCard1": [
+      "evidence/fix-3/run-2/cards/TestStoryboardRunsCard1.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-local-120-317863.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-local-120-317863.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-local-120-317817.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-local-120-317817.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard1-native-local-120-317928.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard1-native-local-120-317928.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-forge-120-319111.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-forge-120-319111.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-forge-120-319069.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-forge-120-319069.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard1-native-forge-120-319132.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard1-native-forge-120-319132.ansi"
+    ],
+    "TestStoryboardRunsCard2": [
+      "evidence/fix-3/run-2/cards/TestStoryboardRunsCard2.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardRunsCard2/TestStoryboardRunsCard2-160-320563.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardRunsCard2/TestStoryboardRunsCard2-160-320563.ansi"
+    ],
+    "TestStoryboardRunsCard3": [
+      "evidence/fix-3/run-2/cards/TestStoryboardRunsCard3.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardRunsCard3/TestStoryboardRunsCard3-140-320583.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardRunsCard3/TestStoryboardRunsCard3-140-320583.ansi"
+    ],
+    "TestStoryboardRunsCard4": [
+      "evidence/fix-3/run-2/cards/TestStoryboardRunsCard4.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardRunsCard4/TestStoryboardRunsCard4-160-320637.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardRunsCard4/TestStoryboardRunsCard4-160-320637.ansi",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardRunsCard4/TestStoryboardRunsCard4-160-320629.txt",
+      "evidence/fix-3/run-2/transcripts/storyboard-evidence/TestStoryboardRunsCard4/TestStoryboardRunsCard4-160-320629.ansi"
+    ],
+    "TestStoryboardRunsCard5": [
+      "evidence/fix-3/run-2/cards/TestStoryboardRunsCard5.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard5-transport-120-320658.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard5-transport-120-320658.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard5-transport-240-320650.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard5-transport-240-320650.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard5-remote-policy-120-320676.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard5-remote-policy-120-320676.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard5-remote-attach-120-320721.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard5-remote-attach-120-320721.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard5-success-120-320856.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard5-success-120-320856.ansi",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard5-native-240-320919.txt",
+      "evidence/fix-3/run-2/transcripts/northstar/northstar-evidence/TestStoryboardRunsCard5-native-240-320919.ansi"
+    ],
+    "TestStoryboardRunsCard6": [
+      "evidence/fix-3/run-2/cards/TestStoryboardRunsCard6.txt",
+      "evidence/fix-3/run-2/transcripts/evidence/09/pty/TestStoryboardRunsCard6-symlinked-TMPDIR-coordinator-loss-160-323243.txt",
+      "evidence/fix-3/run-2/transcripts/evidence/09/pty/TestStoryboardRunsCard6-symlinked-TMPDIR-coordinator-loss-160-323243.ansi",
+      "evidence/fix-3/run-2/transcripts/evidence/09/pty/TestStoryboardRunsCard6-symlinked-TMPDIR-coordinator-loss-160-323206.txt",
+      "evidence/fix-3/run-2/transcripts/evidence/09/pty/TestStoryboardRunsCard6-symlinked-TMPDIR-coordinator-loss-160-323206.ansi"
+    ]
+  }
+}
