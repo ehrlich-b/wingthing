@@ -132,7 +132,7 @@ func TestCompatWingUsesBaselineTokenStore(t *testing.T) {
 				t.Fatal(err)
 			}
 			cmd := exec.Command("sh", "-ec", "start_wing() {\n"+launch+"\n}\nstart_wing \"$1\" \"$TMP_ROOT/wing.log\"", "sh", recorder)
-			cmd.Env = append(os.Environ(), "TMP_ROOT="+root, "STATE_DIR="+root, "AGENT_DIR="+root, "REPO_ROOT="+root, "PORT=12345", "WT_COMPAT_ARGS_FILE="+argsFile)
+			cmd.Env = append(os.Environ(), "TMP_ROOT="+root, "STATE_DIR="+root, "AGENT_DIR="+root, "REPO_ROOT="+root, "EGG_CONFIG="+root+"/test/web/egg.yaml", "PORT=12345", "WT_COMPAT_ARGS_FILE="+argsFile)
 			if output, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("launch arguments: %v\n%s", err, output)
 			}

@@ -21,13 +21,21 @@ COMPAT_TMP_PARENT="${WT_COMPAT_TMPDIR:-/tmp}"
 TMP_ROOT=$(mktemp -d "$COMPAT_TMP_PARENT/wtc.XXXXXX")
 BASELINE_TREE="$TMP_ROOT/baseline"
 STATE_DIR="$TMP_ROOT/state"
-AGENT_DIR="$TMP_ROOT/bin"
+AGENT_DIR="$STATE_DIR/.local/bin"
 BASELINE_BIN="$TMP_ROOT/wt-baseline"
 CANDIDATE_BIN="$TMP_ROOT/wt-candidate"
 CHECK_BIN="$TMP_ROOT/compatcheck"
 SERVER_PID=""
 WING_PID=""
 SESSION_ID=""
+
+# The shared-host browser fixture uses Linux mount exceptions to deny:/.
+# Mac compatibility exercises the normal host sandbox, which retains the
+# built-in credential denials without a Linux-only sealed root.
+EGG_CONFIG="$REPO_ROOT/test/web/egg.yaml"
+case "$(uname -s)" in
+    Darwin) EGG_CONFIG="$REPO_ROOT/test/compat/egg-darwin.yaml" ;;
+esac
 
 cleanup() {
     status=$?
@@ -152,7 +160,7 @@ start_wing() {
     fi
     HOME="$STATE_DIR" PATH="$AGENT_DIR:$PATH" WINGTHING_DIR="$STATE_DIR" "$binary" daemon start --foreground "$@" \
         --roost "http://127.0.0.1:$PORT" --paths "$STATE_DIR" \
-        --egg-config "$REPO_ROOT/test/web/egg.yaml" >"$log_path" 2>&1 &
+        --egg-config "$EGG_CONFIG" >"$log_path" 2>&1 &
     WING_PID=$!
     wing_id=$(tr -d '[:space:]' < "$STATE_DIR/wing-id")
     registered=0
