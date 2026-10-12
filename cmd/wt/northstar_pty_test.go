@@ -129,6 +129,22 @@ func northstarBuild(t *testing.T, f *northstarFixture, channel string) string {
 	if channel == "preview" {
 		binary += "-preview"
 	}
+	selector := "WT_TEST_BINARY"
+	if channel == "preview" {
+		selector = "WT_TEST_PREVIEW_BINARY"
+	}
+	if supplied := os.Getenv(selector); supplied != "" {
+		data, err := os.ReadFile(supplied)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Keep the actual CLI launch under the fixture's TMPDIR alias even
+		// when a container gate supplies a binary built from this source.
+		if err := os.WriteFile(binary, data, 0700); err != nil {
+			t.Fatal(err)
+		}
+		return binary
+	}
 	goBin := "go"
 	if runtime.GOOS == "darwin" {
 		goBin = "/Users/ehrlich/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.9.darwin-arm64/bin/go"
@@ -143,10 +159,10 @@ func northstarBuild(t *testing.T, f *northstarFixture, channel string) string {
 		build = exec.Command("taskpolicy", append([]string{"-b", "nice"}, args...)...)
 	}
 	build.Dir = f.repo
-	// Build caches are clone-local even when the coordinator invokes go without
-	// cache selectors; child application env stays separate from the build env.
-	build.Env = append(os.Environ(), "GOCACHE="+filepath.Join(f.repo, ".scratch", "northstar", "go-build"),
-		"GOMODCACHE="+filepath.Join(f.repo, ".scratch", "northstar", "go-mod"))
+	// Reuse the invoking Go environment's caches, already populated by go test.
+	// A fresh private cache repeats downloads and the entire cgo build within
+	// the fixture deadline. Application state still uses only f.env.
+	build.Env = os.Environ()
 	// t.Context is cancelled during cleanup, not before the test timeout
 	// alarm. Give this nested build its own deadline so it cannot consume the
 	// entire acceptance budget or strand compiler children after a timeout.
@@ -394,7 +410,8 @@ func northstarStartPTY(t *testing.T, f *northstarFixture, binary string, cols, r
 	}
 	h := &northstarPTY{t: t, cmd: cmd, master: master, slave: slave, before: before, emu: vt.NewEmulator(cols, rows), changed: make(chan struct{}, 1), done: make(chan error, 1), readDone: make(chan struct{}), artifact: filepath.Join(f.evidence, strings.ReplaceAll(t.Name(), "/", "-")+"-"+strconv.Itoa(cols)+"-"+strconv.Itoa(cmd.Process.Pid))}
 	// VT query replies must be drained even if a child asks for capabilities.
-	go func() { _, _ = io.Copy(io.Discard, h.emu) }()
+	queryDone := make(chan struct{})
+	go func() { defer close(queryDone); _, _ = io.Copy(io.Discard, h.emu) }()
 	go func() { h.done <- cmd.Wait(); close(h.done) }()
 	go func() {
 		defer close(h.readDone)
@@ -437,6 +454,10 @@ func northstarStartPTY(t *testing.T, f *northstarFixture, binary string, cols, r
 		_ = master.Close()
 		_ = slave.Close()
 		<-h.readDone
+		// Emulator.Read checks an unsynchronized closed flag. Close its query
+		// pipe first and join the reader before Emulator.Close changes that flag.
+		_ = h.emu.InputPipe().(io.Closer).Close()
+		<-queryDone
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		_ = h.emu.Close()

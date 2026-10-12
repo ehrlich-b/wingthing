@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -74,6 +75,8 @@ type linuxSandbox struct {
 	cgroup        *cgroupManager
 	networkBridge *networkBridge
 	userNamespace bool
+	destroyOnce   sync.Once
+	destroyErr    error
 }
 
 // newPlatform tries to create a namespace+seccomp sandbox.
@@ -439,16 +442,20 @@ func (s *linuxSandbox) TraceLog() string {
 }
 
 func (s *linuxSandbox) Destroy() error {
-	if s.networkBridge != nil {
-		s.networkBridge.Close()
-		s.networkBridge = nil
-	}
-	if s.cgroup != nil {
-		if err := s.cgroup.Destroy(); err != nil {
-			log.Printf("linux sandbox: cgroup destroy: %v", err)
+	// Provider exit and context cancellation can both reach teardown.
+	// Keep the bridge identity stable and destroy each owned resource once.
+	s.destroyOnce.Do(func() {
+		if s.networkBridge != nil {
+			s.networkBridge.Close()
 		}
-	}
-	return os.RemoveAll(s.tmpDir)
+		if s.cgroup != nil {
+			if err := s.cgroup.Destroy(); err != nil {
+				log.Printf("linux sandbox: cgroup destroy: %v", err)
+			}
+		}
+		s.destroyErr = os.RemoveAll(s.tmpDir)
+	})
+	return s.destroyErr
 }
 
 func (s *linuxSandbox) buildEnv() []string {

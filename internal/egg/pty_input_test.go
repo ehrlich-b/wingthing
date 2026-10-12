@@ -106,7 +106,11 @@ func TestNativeRunPTYResizeKeepsInputCancellable(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	started, finished := make(chan struct{}), make(chan error, 1)
-	go func() { close(started); finished <- writePTYInput(ctx, master, []byte("run prompt")) }()
+	// Linux can move bytes from the master's flip buffer into the slave
+	// asynchronously after EAGAIN. A tiny prompt can then finish before cancel.
+	// With no slave reader, this payload exceeds both queues and must block.
+	prompt := []byte(strings.Repeat("run prompt", 64*1024))
+	go func() { close(started); finished <- writePTYInput(ctx, master, prompt) }()
 	<-started
 	cancel()
 	if err := <-finished; !errors.Is(err, context.Canceled) {

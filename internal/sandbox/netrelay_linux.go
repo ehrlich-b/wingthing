@@ -32,6 +32,7 @@ type networkBridge struct {
 	active      map[net.Conn]struct{}
 	closeOnce   sync.Once
 	childOnce   sync.Once
+	serveDone   chan struct{}
 }
 
 func newNetworkBridge(proxyPort int, localPorts []int) (*networkBridge, *os.File, error) {
@@ -65,12 +66,20 @@ func newNetworkBridge(proxyPort int, localPorts []int) (*networkBridge, *os.File
 	if err != nil {
 		return nil, nil, fmt.Errorf("socketpair: %w", err)
 	}
+	// Let os.File's poller own the host receive operation so Close can wake
+	// it and cannot recycle the descriptor while recvmsg is using it.
+	if err := unix.SetNonblock(pair[0], true); err != nil {
+		_ = unix.Close(pair[0])
+		_ = unix.Close(pair[1])
+		return nil, nil, fmt.Errorf("nonblocking relay socket: %w", err)
+	}
 	bridge := &networkBridge{
 		parent:      os.NewFile(uintptr(pair[0]), "wt-net-relay-parent"),
 		child:       os.NewFile(uintptr(pair[1]), "wt-net-relay-child"),
 		targets:     targets,
 		connections: make(chan struct{}, defaultNetworkConnectionLimit),
 		active:      make(map[net.Conn]struct{}),
+		serveDone:   make(chan struct{}),
 	}
 	go bridge.serve()
 	return bridge, bridge.child, nil
@@ -97,6 +106,9 @@ func (b *networkBridge) Close() {
 		b.closeChild()
 		if b.parent != nil {
 			_ = b.parent.Close()
+		}
+		if b.serveDone != nil {
+			<-b.serveDone
 		}
 		for _, connection := range active {
 			_ = connection.Close()
@@ -144,15 +156,38 @@ func (b *networkBridge) trackConnections(client, upstream net.Conn) (func(), boo
 }
 
 func (b *networkBridge) serve() {
+	defer close(b.serveDone)
+	raw, err := b.parent.SyscallConn()
+	if err != nil {
+		return
+	}
 	data := make([]byte, 2)
 	oob := make([]byte, unix.CmsgSpace(4))
 	for {
-		n, oobn, flags, _, err := unix.Recvmsg(int(b.parent.Fd()), data, oob, unix.MSG_CMSG_CLOEXEC)
+		var n, oobn, flags int
+		var receiveErr error
+		err := raw.Read(func(fd uintptr) bool {
+			for {
+				n, oobn, flags, _, receiveErr = unix.Recvmsg(int(fd), data, oob, unix.MSG_CMSG_CLOEXEC)
+				if !errors.Is(receiveErr, unix.EINTR) {
+					return !errors.Is(receiveErr, unix.EAGAIN)
+				}
+			}
+		})
+		if err == nil {
+			err = receiveErr
+		}
 		if err != nil {
-			if !errors.Is(err, os.ErrClosed) && !errors.Is(err, unix.EBADF) && !errors.Is(err, unix.ECONNRESET) {
+			b.mu.Lock()
+			closed := b.closed
+			b.mu.Unlock()
+			if !closed && !errors.Is(err, os.ErrClosed) && !errors.Is(err, unix.EBADF) && !errors.Is(err, unix.ECONNRESET) {
 				log.Printf("linux network relay: receive: %v", err)
 			}
 			return
+		}
+		if n == 0 && oobn == 0 {
+			return // peer closed the sequence-packet socket
 		}
 		messages, parseErr := unix.ParseSocketControlMessage(oob[:oobn])
 		if parseErr != nil {

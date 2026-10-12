@@ -7,8 +7,27 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"strings"
 	"testing"
 )
+
+func TestSandboxLaunchDiagnosticRetainsRepairGuidance(t *testing.T) {
+	cause := errors.New("private provider output and configuration")
+	diagnostic := LaunchDiagnostic{Stage: "provider startup", Reason: "sandbox_unavailable"}
+	original := WithLaunchDiagnostic(cause, diagnostic)
+	remote := ToolError(ErrorResult(original))
+	for _, message := range []string{original.Error(), remote.Error(), FormatLaunchDiagnostic(diagnostic)} {
+		if !strings.Contains(message, "sandbox") || !strings.Contains(message, "wt doctor --fix") {
+			t.Fatalf("sandbox failure lost repair instructions: %s", message)
+		}
+		if strings.Contains(message, cause.Error()) {
+			t.Fatalf("sandbox diagnostic exposed private cause: %s", message)
+		}
+	}
+	if !errors.Is(original, cause) {
+		t.Fatal("diagnostic lost local cause")
+	}
+}
 
 func TestDirectResponseRestoresSentinels(t *testing.T) {
 	for _, tc := range []struct {
