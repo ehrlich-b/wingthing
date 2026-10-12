@@ -1,0 +1,8 @@
+=== RUN   TestStoryboardNavigatorCard3
+    storyboardNativeMouse_pty_test.go:46: Unix socket lexical/canonical bytes: 74/74
+    storyboardNativeMouse_pty_test.go:190: kernel PTY bytes and SGR wheel input passed; physical trackpad/selection modifier remains a GUI canary
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardNavigatorCard3-40-423858.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardNavigatorCard3-40-423840.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardNavigatorCard3-80-423823.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/storyboard-evidence/TestStoryboardNavigatorCard3/TestStoryboardNavigatorCard3-140-423719.txt
+--- PASS: TestStoryboardNavigatorCard3 (3.73s)

@@ -1,0 +1,6 @@
+=== RUN   TestStoryboardMachinesCard0
+    storyboard_pty_test.go:520: command ["remote" "add" "forge" "ns-forge" "--wt-binary" "/work/lanes/wt-fix-phone/wingthing/.scratch/northstar-3478995940/tmp-alias/bin/wt" "--wingthing-dir" "/work/lanes/wt-fix-phone/wingthing/.scratch/0bf75a7571/r"] exit=<nil>
+    storyboard_pty_test.go:524: command ["remote" "ls"] exit=<nil>
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/storyboard-evidence/TestStoryboardMachinesCard0/TestStoryboardMachinesCard0-160-425970.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/storyboard-evidence/TestStoryboardMachinesCard0/TestStoryboardMachinesCard0-160-425961.txt
+--- PASS: TestStoryboardMachinesCard0 (0.03s)

@@ -1,0 +1,11 @@
+=== RUN   TestStoryboardPhoneCard11
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 84/84
+    storyboard_pty_test.go:603: command ["devices" "revoke" "Bryan's iPhone"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#12 prerequisite: [devices revoke Bryan's iPhone]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:612: expected screen contains "device"; actual:
+        Error: main wing is not ready for pairing; start it with wt wing start --local-only (or wt wing start if registered)
+    storyboard_pty_test.go:612: expected screen contains "not paired"; actual:
+        Error: main wing is not ready for pairing; start it with wt wing start --local-only (or wt wing start if registered)
+    storyboard_pty_test.go:613: REQUIRED-UNRUN: invitation prerequisite alone cannot prove this card's phone screen, device Keychain, encrypted RPC, route or revocation assertions; physical iPhone evidence required
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-428489.txt
+--- FAIL: TestStoryboardPhoneCard11 (0.02s)

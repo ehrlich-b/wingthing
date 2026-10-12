@@ -1,0 +1,4 @@
+ok  	github.com/ehrlich-b/wingthing/internal/phonepair	1.120s
+ok  	github.com/ehrlich-b/wingthing/internal/pake	1.027s
+ok  	github.com/ehrlich-b/wingthing/internal/relay	34.980s
+ok  	github.com/ehrlich-b/wingthing/internal/wing	6.544s

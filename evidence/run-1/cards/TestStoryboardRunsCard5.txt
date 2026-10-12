@@ -1,0 +1,27 @@
+=== RUN   TestStoryboardRunsCard5
+=== RUN   TestStoryboardRunsCard5/transport
+    storyboardLaunchFailure_pty_test.go:120: Unix socket lexical/canonical bytes: 69/69
+    storyboardLaunchFailure_pty_test.go:93: Unix socket lexical/canonical bytes: 87/87
+    storyboardLaunchFailure_pty_test.go:93: Unix socket lexical/canonical bytes: 87/87
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard5-transport-120-409032.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard5-transport-240-409017.txt
+--- PASS: TestStoryboardRunsCard5/transport (0.16s)
+=== RUN   TestStoryboardRunsCard5/remote
+=== RUN   TestStoryboardRunsCard5/remote/policy
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 69/69
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 87/87
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard5-remote-policy-120-409059.txt
+--- PASS: TestStoryboardRunsCard5/remote/policy (0.17s)
+=== RUN   TestStoryboardRunsCard5/remote/attach
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 69/69
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 87/87
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard5-remote-attach-120-409116.txt
+--- PASS: TestStoryboardRunsCard5/remote/attach (0.19s)
+--- PASS: TestStoryboardRunsCard5/remote (0.36s)
+=== RUN   TestStoryboardRunsCard5/success
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard5-success-120-409170.txt
+--- PASS: TestStoryboardRunsCard5/success (0.07s)
+=== RUN   TestStoryboardRunsCard5/native
+    storyboardLaunchFailure_pty_test.go:272: REQUIRED-UNRUN: protected-parent fixture uses macOS Seatbelt policy; run the native Mac gate
+--- SKIP: TestStoryboardRunsCard5/native (0.00s)
+--- PASS: TestStoryboardRunsCard5 (0.60s)

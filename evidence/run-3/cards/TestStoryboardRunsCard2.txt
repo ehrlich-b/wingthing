@@ -1,0 +1,4 @@
+=== RUN   TestStoryboardRunsCard2
+    storyboard_pty_test.go:694: command ["doctor" "launch-plan" "--route" "agent_run" "--agent" "codex" "--cwd" "/work/lanes/wt-fix-phone/wingthing/.scratch/northstar-3600531459/work" "--home" "/work/lanes/wt-fix-phone/wingthing/.scratch/northstar-3600531459/work/provider-home" "--allowed-home-root" "/work/lanes/wt-fix-phone/wingthing/.scratch/northstar-3600531459/work" "--executable" "/work/lanes/wt-fix-phone/wingthing/.scratch/northstar-3600531459/tmp-alias/bin/codex"] exit=<nil>
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/storyboard-evidence/TestStoryboardRunsCard2/TestStoryboardRunsCard2-160-448167.txt
+--- PASS: TestStoryboardRunsCard2 (0.01s)

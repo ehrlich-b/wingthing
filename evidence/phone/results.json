@@ -1,0 +1,216 @@
+{
+  "gates": {
+    "vet": "PASS",
+    "race phonepair/pake/relay/wing": "PASS",
+    "CLI journey race": "PASS",
+    "physical iPhone": "REQUIRED-UNRUN"
+  },
+  "base": "3a0b7fa8578b9889d9e17a0e5fb3a1ffab9831ca",
+  "source": "580d4d9f8241fd37f56011bced9535872128eeda",
+  "card_counts": {
+    "PASS": 21,
+    "FAIL": 30,
+    "FLAKY": 0,
+    "PENDING-FEATURE": 49
+  },
+  "card_regressions": [],
+  "subcase_regressions": [],
+  "card_improvements": [
+    "TestStoryboardStartCard2",
+    "TestStoryboardStartCard4",
+    "TestStoryboardRunsCard1",
+    "TestStoryboardRunsCard5"
+  ],
+  "flaky_tests": [],
+  "backend": {
+    "journey-complete-final-harness-three-runs": {
+      "TestPhoneStoryboardWingJourney": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    "protocol-three-runs": {
+      "TestDirectEndpointPreferenceWithoutAccount/lan_then_tailnet_IP_and_MagicDNS": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestDirectEndpointPreferenceWithoutAccount/no_tailscale_installed": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestDirectEndpointPreferenceWithoutAccount/stopped_tailnet": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestDirectEndpointPreferenceWithoutAccount/tailnet_without_wifi": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestDirectEndpointPreferenceWithoutAccount": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestPhoneTailnetEndpointsAndCompactInvitation": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestTwoSidedConfirmationAndCredentialRecovery/terminal-first": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestTwoSidedConfirmationAndCredentialRecovery/phone-first": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestTwoSidedConfirmationAndCredentialRecovery": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestExpiredUsedCancelledEmojiAndWrongPassword/expired": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestExpiredUsedCancelledEmojiAndWrongPassword/used": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestExpiredUsedCancelledEmojiAndWrongPassword/terminal-cancel": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestExpiredUsedCancelledEmojiAndWrongPassword/phone-cancel": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestExpiredUsedCancelledEmojiAndWrongPassword/emoji-mismatch": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestExpiredUsedCancelledEmojiAndWrongPassword/wrong-password": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestExpiredUsedCancelledEmojiAndWrongPassword": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestDeviceScopeReplayRevocationAndLiveClosure": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestConcurrentReplayAndExpiredConnection": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestTranscriptPinAndOpaqueCarrier": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestCancelAfterBothApprovalsRevokesUnclaimedGrant": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestRevocationInterruptsInFlightSessionWithoutWaiting": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestSPAKE2": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestPhoneSessionInventoryAttachmentInputAndStop": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    "relay-three-runs": {
+      "TestPhoneRelayOpaqueRoutingWithoutPhoneAccount": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "TestPhoneRelayUnreachableDisabledAndAccountHeaders": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    }
+  },
+  "final_full_suite_after_harness": {
+    "TestStoryboardInstallCard0": "PASS",
+    "TestStoryboardInstallCard1": "FAIL",
+    "TestStoryboardInstallCard4": "FAIL",
+    "TestStoryboardInstallCard5": "FAIL",
+    "TestStoryboardInstallCard6": "FAIL",
+    "TestStoryboardInstallCard7": "FAIL",
+    "TestStoryboardInstallCard2": "PASS",
+    "TestStoryboardInstallCard3": "PASS",
+    "TestStoryboardStartCard0": "FAIL",
+    "TestStoryboardStartCard1": "FAIL",
+    "TestStoryboardStartCard2": "PASS",
+    "TestStoryboardStartCard3": "PASS",
+    "TestStoryboardStartCard4": "PASS",
+    "TestStoryboardStartCard5": "FAIL",
+    "TestStoryboardNavigatorCard0": "PASS",
+    "TestStoryboardNavigatorCard1": "PASS",
+    "TestStoryboardNavigatorCard2": "FAIL",
+    "TestStoryboardNavigatorCard3": "PASS",
+    "TestStoryboardNavigatorCard4": "PASS",
+    "TestStoryboardNavigatorCard5": "FAIL",
+    "TestStoryboardNavigatorCard6": "PASS",
+    "TestStoryboardMachinesCard0": "PASS",
+    "TestStoryboardMachinesCard1": "PASS",
+    "TestStoryboardMachinesCard2": "PASS",
+    "TestStoryboardMachinesCard3": "FAIL",
+    "TestStoryboardMachinesCard4": "PASS",
+    "TestStoryboardPhoneCard0": "FAIL",
+    "TestStoryboardPhoneCard1": "FAIL",
+    "TestStoryboardPhoneCard2": "FAIL",
+    "TestStoryboardPhoneCard3": "FAIL",
+    "TestStoryboardPhoneCard4": "FAIL",
+    "TestStoryboardPhoneCard5": "FAIL",
+    "TestStoryboardPhoneCard6": "FAIL",
+    "TestStoryboardPhoneCard7": "FAIL",
+    "TestStoryboardPhoneCard8": "FAIL",
+    "TestStoryboardPhoneCard9": "FAIL",
+    "TestStoryboardPhoneCard10": "FAIL",
+    "TestStoryboardPhoneCard11": "FAIL",
+    "TestStoryboardPhoneCard12": "FAIL",
+    "TestStoryboardPhoneCard13": "FAIL",
+    "TestStoryboardPhoneCard14": "FAIL",
+    "TestStoryboardPhoneCard15": "FAIL",
+    "TestStoryboardPhoneCard16": "FAIL",
+    "TestStoryboardPhoneCard17": "FAIL",
+    "TestStoryboardRunsCard0": "PASS",
+    "TestStoryboardRunsCard1": "PASS",
+    "TestStoryboardRunsCard2": "PASS",
+    "TestStoryboardRunsCard3": "FAIL",
+    "TestStoryboardRunsCard4": "PASS",
+    "TestStoryboardRunsCard5": "PASS",
+    "TestStoryboardRunsCard6": "PASS"
+  }
+}

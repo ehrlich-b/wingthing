@@ -373,6 +373,9 @@ func (m *Manager) handle(ctx context.Context, r Request) (Response, error) {
 		if e != nil {
 			return Response{}, e
 		}
+		if p.state == "cancelled" {
+			return Response{}, failure("cancelled")
+		}
 		if p.state != "waiting" {
 			return Response{}, failure("used")
 		}

@@ -1,0 +1,5 @@
+wing_id: ""
+roost: http://127.0.0.1:40607
+paths:
+    - /work/lanes/wt-fix-phone/wingthing/.scratch/northstar-633177320/work
+hosted_relay: allow

@@ -1,0 +1,35 @@
+# github.com/ehrlich-b/wingthing/internal/pake
+In file included from bssl_crypto_err_err.cc:4:
+boringssl/crypto/err/err.cc:738:8: warning: ‘err_save_state_st’ has a field ‘{anonymous}::err_error_st* err_save_state_st::errors’ whose type uses the anonymous namespace [-Wsubobject-linkage]
+  738 | struct err_save_state_st {
+      |        ^~~~~~~~~~~~~~~~~
+ok  	github.com/ehrlich-b/wingthing/internal/phonepair	1.062s
+# github.com/ehrlich-b/wingthing/internal/pake [github.com/ehrlich-b/wingthing/internal/pake.test]
+In file included from bssl_crypto_err_err.cc:4:
+boringssl/crypto/err/err.cc:738:8: warning: ‘err_save_state_st’ has a field ‘{anonymous}::err_error_st* err_save_state_st::errors’ whose type uses the anonymous namespace [-Wsubobject-linkage]
+  738 | struct err_save_state_st {
+      |        ^~~~~~~~~~~~~~~~~
+ok  	github.com/ehrlich-b/wingthing/internal/pake	1.043s
+2026/10/11 21:33:21 entitlement cache: synced 1 entries
+2026/10/11 21:33:21 entitlement cache: synced 1 entries
+2026/10/11 21:33:21 entitlement cache: synced 3 entries
+2026/10/11 21:33:21 entitlement cache: synced 1 entries
+2026/10/11 21:33:21 entitlement cache: unsupported decision version "3"
+2026/10/11 21:33:21 entitlement cache: unsupported decision version "3"
+2026/10/11 21:33:21 entitlement cache: synced 1 entries
+2026/10/11 21:33:21 entitlement cache: response exceeds 1048576 bytes
+2026/10/11 21:33:22 latest release version: v1.2.3
+2026/10/11 21:33:22 websocket accept: failed to accept WebSocket connection: request Origin "attacker.example" is not authorized for Host "127.0.0.1:42965"
+2026/10/11 21:33:32 forward PTY payload to browser: failed to write msg: use of closed network connection
+--- FAIL: TestStaticSW (0.32s)
+    relay_test.go:709: status = 404, want 200
+--- FAIL: TestStaticManifest (0.22s)
+    relay_test.go:723: status = 404, want 200
+    relay_test.go:727: decode JSON response: json: cannot unmarshal number into Go value of type map[string]interface {}
+2026/10/11 21:33:45 session cache: synced org memberships for 1 users
+2026/10/11 21:33:56 user plan-test-user (plan-test-user) upgraded to pro (no billing)
+2026/10/11 21:33:56 org legacy-plan-org upgraded: plan=team_monthly seats=3 granted=1
+FAIL
+FAIL	github.com/ehrlich-b/wingthing/internal/relay	42.995s
+ok  	github.com/ehrlich-b/wingthing/internal/wing	6.344s
+FAIL

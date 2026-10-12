@@ -1,0 +1,8 @@
+=== RUN   TestStoryboardRunsCard0
+    storyboard_pty_test.go:649: command ["run" "Read the tests and report failures" "--agent" "claude" "--config" "/work/lanes/wt-fix-phone/wingthing/.scratch/northstar-1501451039/work/egg.yaml"] exit=<nil>
+    storyboard_pty_test.go:668: command ["timeline"] exit=<nil>
+    storyboard_pty_test.go:668: command ["status"] exit=<nil>
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-428677.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-428669.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-428624.txt
+--- PASS: TestStoryboardRunsCard0 (0.27s)

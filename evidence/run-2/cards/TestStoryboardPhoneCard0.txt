@@ -1,0 +1,13 @@
+=== RUN   TestStoryboardPhoneCard0
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 84/84
+    storyboard_pty_test.go:603: command ["pair"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#1 prerequisite: [pair]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:612: expected screen contains "Pair a phone"; actual:
+        Error: main wing is not ready for pairing; start it with wt wing start --local-only (or wt wing start if registered)
+    storyboard_pty_test.go:612: expected screen contains "5:00"; actual:
+        Error: main wing is not ready for pairing; start it with wt wing start --local-only (or wt wing start if registered)
+    storyboard_pty_test.go:612: expected screen contains "Waiting for scan"; actual:
+        Error: main wing is not ready for pairing; start it with wt wing start --local-only (or wt wing start if registered)
+    storyboard_pty_test.go:613: REQUIRED-UNRUN: invitation prerequisite alone cannot prove this card's phone screen, device Keychain, encrypted RPC, route or revocation assertions; physical iPhone evidence required
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-428323.txt
+--- FAIL: TestStoryboardPhoneCard0 (0.03s)

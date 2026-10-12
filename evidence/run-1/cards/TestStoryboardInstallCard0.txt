@@ -1,0 +1,5 @@
+=== RUN   TestStoryboardInstallCard0
+    storyboard_pty_test.go:184: command ["/work/lanes/wt-fix-phone/wingthing/scripts/install.sh"] exit=<nil>
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/storyboard-evidence/TestStoryboardInstallCard0/TestStoryboardInstallCard0-140-392491.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/storyboard-evidence/TestStoryboardInstallCard0/TestStoryboardInstallCard0-160-392390.txt
+--- PASS: TestStoryboardInstallCard0 (0.52s)

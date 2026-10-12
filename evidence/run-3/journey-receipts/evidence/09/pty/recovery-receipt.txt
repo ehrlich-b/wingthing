@@ -1,0 +1,1 @@
+same wing/run/session IDs survive parent loss; metadata-only outputs; explicit page calls=1; no mutations

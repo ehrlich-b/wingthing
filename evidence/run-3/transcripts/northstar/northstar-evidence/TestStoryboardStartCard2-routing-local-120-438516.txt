@@ -1,0 +1,160 @@
+
+--- new scoped parent / dashboard ---
+wt | 0 sessions | 1 machines
+B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  (no sessions)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+
+--- n / provider prompt ---
+wt | 0 sessions | 1 machines
+B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  (no sessions)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter accept  Esc cancel  Ctrl-C quit
+Agent (blank = shell): claude_
+
+--- Claude / receiving cwd prompt ---
+wt | 0 sessions | 1 machines
+B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  (no sessions)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter accept  Esc cancel  Ctrl-C quit
+Cwd on local: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar-1903005399/work_
+
+--- scoped parent attached ---
+[attached to scoped-parent; Ctrl+B then q detaches; Ctrl+B twice sends Ctrl+B]
+SCOPED_PARENT_ROUTE_READY
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--- detach / back to navigator ---
+wt | 0 sessions | 1 machines
+B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  (no sessions)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent

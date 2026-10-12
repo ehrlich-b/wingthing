@@ -1,0 +1,11 @@
+=== RUN   TestStoryboardRunsCard6
+=== RUN   TestStoryboardRunsCard6/symlinked-TMPDIR-coordinator-loss
+    northstar_recovery_pty_test.go:45: Unix socket lexical/canonical bytes: 75/75
+    northstar_recovery_pty_test.go:46: Unix socket lexical/canonical bytes: 75/75
+    northstar_recovery_pty_test.go:59: Unix socket lexical/canonical bytes: 69/69
+    northstar_recovery_pty_test.go:65: Unix socket lexical/canonical bytes: 69/69
+    northstar_recovery_pty_test.go:65: Unix socket lexical/canonical bytes: 69/69
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/evidence/09/pty/TestStoryboardRunsCard6-symlinked-TMPDIR-coordinator-loss-160-431353.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/evidence/09/pty/TestStoryboardRunsCard6-symlinked-TMPDIR-coordinator-loss-160-431262.txt
+--- PASS: TestStoryboardRunsCard6/symlinked-TMPDIR-coordinator-loss (4.58s)
+--- PASS: TestStoryboardRunsCard6 (4.58s)

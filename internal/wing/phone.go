@@ -58,7 +58,10 @@ func (h *phoneSessions) Execute(ctx context.Context, connection, op, id, input s
 		defer h.mu.Unlock()
 		for _, s := range sessions {
 			seen := h.seen[connection][s.ID]
-			out = append(out, map[string]any{"id": s.ID, "name": s.Name, "agent": s.Agent, "status": s.Status, "blocked": attention[s.ID], "unread": s.TotalWritten > seen})
+			// Native lifecycle evidence survives a wing restart, whereas the
+			// in-memory attention map may not have received a fresh event yet.
+			blocked := attention[s.ID] || s.State == "needs_input"
+			out = append(out, map[string]any{"id": s.ID, "name": s.Name, "agent": s.Agent, "status": s.Status, "blocked": blocked, "unread": s.TotalWritten > seen})
 		}
 		return out, nil
 	case "attach":

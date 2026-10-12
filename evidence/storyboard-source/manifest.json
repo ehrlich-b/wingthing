@@ -1,0 +1,191 @@
+{
+  "pages": 13,
+  "cards": 100,
+  "flows": [
+    {
+      "number": 1,
+      "file": "01-install.html",
+      "cards": 8,
+      "titles": [
+        "1 \u00b7 Install wt",
+        "2 \u00b7 An empty navigator is a useful beginning",
+        "Detect agents without a network check",
+        "Choose an agent and consent to its exact installer",
+        "Verify, hand off to provider login, then open the first session",
+        "Recover install, PATH or provider-auth failure",
+        "Install failed or wt is not on PATH",
+        "No network after installation"
+      ]
+    },
+    {
+      "number": 2,
+      "file": "02-start.html",
+      "cards": 6,
+      "titles": [
+        "1 \u00b7 wt claude from a cold start",
+        "2 \u00b7 Choose cwd explicitly",
+        "3 \u00b7 A new session in the current scope",
+        "4 \u00b7 Start a Codex session",
+        "Provider missing, policy denied, or daemon not ready",
+        "Two cold starts arrive together"
+      ]
+    },
+    {
+      "number": 3,
+      "file": "03-navigator.html",
+      "cards": 7,
+      "titles": [
+        "1 \u00b7 List, group and filter",
+        "2 \u00b7 Attach, then detach",
+        "3 \u00b7 Blocked now; unread next",
+        "4 \u00b7 Native mouse and scroll",
+        "5 \u00b7 Recover recent runs after a crash",
+        "Remote offline or stale inventory",
+        "Same name, different machine; stop is explicit"
+      ]
+    },
+    {
+      "number": 4,
+      "file": "04-machines.html",
+      "cards": 5,
+      "titles": [
+        "1 \u00b7 Prepare forge once",
+        "2 \u00b7 Verified remote for parent MCP orchestration",
+        "3 \u00b7 Attach to the exact remote session",
+        "forge is offline",
+        "Host key changed or remote wt is too old"
+      ]
+    },
+    {
+      "number": 5,
+      "file": "05-phone.html",
+      "cards": 18,
+      "titles": [
+        "1 \u00b7 Start on EhrlichMac",
+        "2 \u00b7 Scan with Bryan\u2019s iPhone",
+        "3 \u00b7 Check both screens",
+        "4 \u00b7 Make the pairing private",
+        "5 \u00b7 Your sessions on EhrlichMac",
+        "6 \u00b7 Use it away from home",
+        "7 \u00b7 Manage each wing separately",
+        "QR expired or already used",
+        "EhrlichMac is unreachable",
+        "The wing fingerprint does not match",
+        "The emoji differ",
+        "Bryan\u2019s iPhone is lost",
+        "Attach and type from the phone",
+        "Stop means stop this session",
+        "Attention notification with quiet content",
+        "Same Wi-Fi and tailnet both stay free",
+        "Camera or local-network permission denied",
+        "Pairing succeeds but the final reply drops"
+      ]
+    },
+    {
+      "number": 6,
+      "file": "06-runs.html",
+      "cards": 7,
+      "titles": [
+        "1 \u00b7 Run a task from the terminal",
+        "2 \u00b7 A parent asks an agent to work on forge",
+        "3 \u00b7 Explain launch readiness",
+        "4 \u00b7 What can this egg touch?",
+        "5 \u00b7 Inspect a completed copy safely",
+        "Policy, toolchain or native provider readiness failed",
+        "Unknown admission, expired output or orphaned run"
+      ]
+    },
+    {
+      "number": 7,
+      "file": "07-upgrade.html",
+      "cards": 8,
+      "titles": [
+        "1 \u00b7 Four moments to offer Pro",
+        "2 \u00b7 A price page with the complete bill",
+        "3 \u00b7 Stripe checkout",
+        "4 \u00b7 Pro activates without re-login",
+        "5 \u00b7 Manage, receipts and cancel",
+        "6 \u00b7 Downgrade keeps local work useful",
+        "Payment abandoned, declined, or webhook delayed",
+        "Bryan\u2019s owner entitlement"
+      ]
+    },
+    {
+      "number": 8,
+      "file": "08-reach.html",
+      "cards": 6,
+      "titles": [
+        "1 \u00b7 Register the Mac once",
+        "2 \u00b7 Switch from LAN to cellular",
+        "3 \u00b7 What the relay can see",
+        "4 \u00b7 Latency is visible, not promised",
+        "Wing asleep, relay interrupted or Pro expired",
+        "Network changes while sending"
+      ]
+    },
+    {
+      "number": 9,
+      "file": "09-share.html",
+      "cards": 7,
+      "titles": [
+        "1 \u00b7 Publish port 3000 privately",
+        "2 \u00b7 Invite Alice by Google or GitHub",
+        "3 \u00b7 Alice opens a private preview",
+        "4 \u00b7 Revoke app or live-session access",
+        "5 \u00b7 wt ssh forge through Wingthing",
+        "App down, wrong Alice account or revoked link",
+        "Duplicate ports and read-only session sharing"
+      ]
+    },
+    {
+      "number": 10,
+      "file": "10-cloud.html",
+      "cards": 22,
+      "titles": [
+        "1 \u00b7 Start from the terminal",
+        "2 \u00b7 Start from the dashboard",
+        "3 \u00b7 Start from Bryan\u2019s iPhone",
+        "4 \u00b7 Pick size and see the unit price",
+        "5 \u00b7 Set hours and a budget cap",
+        "6 \u00b7 Review, create, boot, ready",
+        "7 \u00b7 A workspace that survives stopped compute",
+        "8 \u00b7 Connect a private GitHub repository",
+        "9 \u00b7 Clone, branch, push or PR",
+        "10 \u00b7 Add secrets to the workspace vault",
+        "11 \u00b7 Choose model credentials",
+        "12 \u00b7 Network is explicit",
+        "13 \u00b7 Tools are ready; additions are controlled",
+        "14 \u00b7 Attach from terminal or phone",
+        "15 \u00b7 Cost stays visible while the agent runs",
+        "16 \u00b7 Idle stop, checkpoints and optional suspension",
+        "17 \u00b7 Resume the same workspace safely",
+        "18 \u00b7 Results: PR, artifacts and a private preview",
+        "19 \u00b7 Stop compute, export, then delete deliberately",
+        "Allocation, clone, credentials or boot failed",
+        "Cap hit, disk full, network denied or restore incompatible",
+        "Many launches, deleted volume or entitlement change"
+      ]
+    },
+    {
+      "number": 11,
+      "file": "11-billing.html",
+      "cards": 5,
+      "titles": [
+        "1 \u00b7 Usage and limits at a glance",
+        "2 \u00b7 Invoices and receipts",
+        "3 \u00b7 Notifications and support",
+        "Card failed or invoice remains unpaid",
+        "Incorrect usage, duplicate invoice or stale meter"
+      ]
+    },
+    {
+      "number": 12,
+      "file": "12-teams.html",
+      "cards": 1,
+      "titles": [
+        "Orgs, SSO and shared roosts / VMs \u00b7 later"
+      ]
+    }
+  ],
+  "vm_integration": "Integrated VM-ARCHITECTURE.md, PRICING.md and OPEN-QUESTIONS.md, read 2026-10-11. No missing lane placeholders. All offer values remain proposals for Bryan\u2019s approval."
+}

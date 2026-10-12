@@ -394,7 +394,9 @@ func northstarStartPTY(t *testing.T, f *northstarFixture, binary string, cols, r
 	}
 	h := &northstarPTY{t: t, cmd: cmd, master: master, slave: slave, before: before, emu: vt.NewEmulator(cols, rows), changed: make(chan struct{}, 1), done: make(chan error, 1), readDone: make(chan struct{}), artifact: filepath.Join(f.evidence, strings.ReplaceAll(t.Name(), "/", "-")+"-"+strconv.Itoa(cols)+"-"+strconv.Itoa(cmd.Process.Pid))}
 	// VT query replies must be drained even if a child asks for capabilities.
-	go func() { _, _ = io.Copy(io.Discard, h.emu) }()
+	queryDone := make(chan struct{})
+	inputPipe := h.emu.InputPipe().(io.Closer)
+	go func() { defer close(queryDone); _, _ = io.Copy(io.Discard, h.emu) }()
 	go func() { h.done <- cmd.Wait(); close(h.done) }()
 	go func() {
 		defer close(h.readDone)
@@ -437,6 +439,10 @@ func northstarStartPTY(t *testing.T, f *northstarFixture, binary string, cols, r
 		_ = master.Close()
 		_ = slave.Close()
 		<-h.readDone
+		// Emulator.Close changes its unsynchronized closed flag. Close the
+		// thread-safe pipe first and join the query reader before that change.
+		_ = inputPipe.Close()
+		<-queryDone
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		_ = h.emu.Close()

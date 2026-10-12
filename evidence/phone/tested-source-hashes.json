@@ -1,0 +1,9 @@
+{
+  "cmd/wt/northstar_pty_test.go": "00882d4f65a4a022a9bede51fdb6057ce9c9da1c45eab045a1344a8f64b120ad",
+  "cmd/wt/phone_storyboard_e2e_test.go": "035feebf1e4dfa559b2a4c81b6cb60451032f5e9907f55d69ceedd986ab01420",
+  "cmd/wt/pair.go": "8ddef85879a203b15f9892fa512b984f1ff3bb9c7da042e1d6cabdadcbd228f6",
+  "internal/phonepair/pairing.go": "62bc0b460eaa7b1d187afb806ccad6603cd3f70259a999a64602ef4d9367202d",
+  "internal/phonepair/testpeer/main.go": "c883f44cae71f0f7b908f546be1d2057166cf114d381c13b8716847270df6bdc",
+  "internal/phonepair/testpeer/client.go": "03a3cae0f8739314690bb7c9bae75004ce4c0267874794774fb5d2dacdccf3d3",
+  "internal/wing/phone.go": "524875e745a6adc4d2a4d637e3864ecbb3524a5e49dc5fb90d6efc7370ece6ab"
+}

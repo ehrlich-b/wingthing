@@ -1,0 +1,6 @@
+=== RUN   TestStoryboardStartCard3
+    storyboard_pty_test.go:343: Unix socket lexical/canonical bytes: 69/69
+    storyboard_pty_test.go:353: Unix socket lexical/canonical bytes: 87/87
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/storyboard-evidence/TestStoryboardStartCard3/TestStoryboardStartCard3-140-438605.txt
+2026/10/11 21:36:48 pty session af1c3c5eeee94f36: orphan termination requested (gRPC)
+--- PASS: TestStoryboardStartCard3 (3.26s)

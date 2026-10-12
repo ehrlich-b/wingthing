@@ -1,0 +1,18 @@
+=== RUN   TestStoryboardMachinesCard2
+    northstar_remote_pty_test.go:276: Unix socket lexical/canonical bytes: 69/69
+    northstar_remote_pty_test.go:276: Unix socket lexical/canonical bytes: 69/69
+    northstar_remote_pty_test.go:276: Unix socket lexical/canonical bytes: 69/69
+    northstar_remote_pty_test.go:293: Unix socket lexical/canonical bytes: 80/80
+    northstar_remote_pty_test.go:294: Unix socket lexical/canonical bytes: 80/80
+    northstar_remote_pty_test.go:295: Unix socket lexical/canonical bytes: 80/80
+    northstar_remote_pty_test.go:312: launch-to-fleet inventory: 54.01615ms
+=== RUN   TestStoryboardMachinesCard2/named
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardMachinesCard2-named-80-426893.txt
+--- PASS: TestStoryboardMachinesCard2/named (0.05s)
+=== RUN   TestStoryboardMachinesCard2/generic
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardMachinesCard2-generic-80-426926.txt
+--- PASS: TestStoryboardMachinesCard2/generic (0.04s)
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardMachinesCard2-80-426961.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardMachinesCard2-80-426507.txt
+    northstar_remote_pty_test.go:289: exact SSH/TTY routes: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar/northstar-evidence/TestNorthstarPTYRemoteAttach-northstar-975931405-ssh.jsonl
+--- PASS: TestStoryboardMachinesCard2 (4.28s)

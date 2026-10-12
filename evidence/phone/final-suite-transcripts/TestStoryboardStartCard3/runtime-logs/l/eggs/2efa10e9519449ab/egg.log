@@ -1,0 +1,6 @@
+2026/10/11 21:42:06 egg: command binary: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar-2094990144/tmp-real/bin/codex
+2026/10/11 21:42:06 domain proxy: listening on 127.0.0.1:44489, 4 domains, 2 wildcards
+2026/10/11 21:42:06 linux sandbox: created tmpdir=/work/lanes/wt-fix-phone/wingthing/.scratch/northstar-2094990144/tmp-alias/wt-sandbox-459346870 network=https cgroup=false
+2026/10/11 21:42:06 egg: session 2efa10e9519449ab kind=agent agent=codex command=[] pid=474059 network=api.openai.com,*.openai.com,chatgpt.com,*.chatgpt.com,localhost,127.0.0.1 fs=23
+2026/10/11 21:42:06 egg: serving on /work/lanes/wt-fix-phone/wingthing/.scratch/3e2515160b/l/eggs/2efa10e9519449ab/egg.sock (pid 474032)
+2026/10/11 21:42:06 egg: first PTY output from pid 474059 after 66ms (40 bytes)

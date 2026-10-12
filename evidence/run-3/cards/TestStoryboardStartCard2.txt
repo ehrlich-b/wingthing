@@ -1,0 +1,20 @@
+=== RUN   TestStoryboardStartCard2
+=== RUN   TestStoryboardStartCard2/routing/local
+    storyboardScopedNew_pty_test.go:35: Unix socket lexical/canonical bytes: 69/69
+    storyboardScopedNew_pty_test.go:35: Unix socket lexical/canonical bytes: 87/87
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard2-routing-local-120-438538.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard2-routing-local-120-438516.txt
+--- PASS: TestStoryboardStartCard2/routing/local (0.07s)
+=== RUN   TestStoryboardStartCard2/native/local
+    storyboardScopedNew_pty_test.go:100: REQUIRED-UNRUN: protected-parent fixture uses macOS Seatbelt policy; run the native Mac gate
+--- SKIP: TestStoryboardStartCard2/native/local (0.00s)
+=== RUN   TestStoryboardStartCard2/routing/forge
+    storyboardScopedNew_pty_test.go:35: Unix socket lexical/canonical bytes: 69/69
+    storyboardScopedNew_pty_test.go:35: Unix socket lexical/canonical bytes: 87/87
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard2-routing-forge-120-438584.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard2-routing-forge-120-438547.txt
+--- PASS: TestStoryboardStartCard2/routing/forge (0.08s)
+=== RUN   TestStoryboardStartCard2/native/forge
+    storyboardScopedNew_pty_test.go:100: REQUIRED-UNRUN: protected-parent fixture uses macOS Seatbelt policy; run the native Mac gate
+--- SKIP: TestStoryboardStartCard2/native/forge (0.00s)
+--- PASS: TestStoryboardStartCard2 (0.15s)

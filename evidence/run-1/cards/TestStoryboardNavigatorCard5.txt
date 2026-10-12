@@ -1,0 +1,46 @@
+=== RUN   TestStoryboardNavigatorCard5
+    storyboard_pty_test.go:479: Unix socket lexical/canonical bytes: 75/75
+    storyboard_pty_test.go:479: Unix socket lexical/canonical bytes: 75/75
+    storyboard_pty_test.go:486: screen timeout (stale attach denied):
+        wt | 2 sessions | 4 machines
+        B:1 W:1 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:1 bell:off
+        local  connected  updated 0s ago
+          (no matches)
+        empty  connected  updated 0s ago
+          (no matches)
+        forge  offline  last success 7s ago; cached rows stale
+          ! remote "forge": SSH to ns-forge ended with status 255; check the SSH diagnostic above. Session state is unknown; reconnect with the sam…
+          /work/lanes/wt-fix-phone/wingthing/.scratch/northstar-1367269008/work
+        > B coordinator                                                         claude       northstar-1367269008/work                   2m    stale
+        offline  offline
+          ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown; reconnect and list…
+          (inventory unavailable)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+        / filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+        exit status 255; Enter retries through fresh resolution. [remote attachment; Ctrl+B then q detaches; Ctrl+B twice sends Ctrl+B]?fixture quer
+        y failure?Connection to forge (ns-forge) ended; session outcome unknown. Reconnect: WINGTHING_DIR='/work/lanes/wt-fix-phone/wingthing/.scrat
+        ch/909094981e/l' WINGTHING_PREVIEW_DIR='/work/lanes/wt-fix-phone/wingthing/.scratch/909094981e/l' '/work/lanes/wt-fix-phone/wingthing/.scrat
+        ch/storyboard-wt' 'attach' '--' 'forge:same'?Pinned route: WINGTHING_DIR='/work/lanes/wt-fix-phone/wingthing/.scratch/909094981e/l' WINGTHIN
+        G_PREVIEW_DIR='/work/lanes/wt-fix-phone/wingthing/.scratch/909094981e/l' '/work/lanes/wt-fix-phone/wingthing/.scratch/storyboard-wt' '--remo
+        te' 'ns-forge' '--remote-binary' 'wt' '--remote-state' '/work/lanes/wt-fix-phone/wingthing/.scratch/909094981e/r' 'attach' '--' 'same'?SSH t
+        o ns-forge ended with status 255; check the SSH diagnostic above. Session state is unknown; reconnect with the same --remote-state and list
+        sessions before relaunching?
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-phone/wingthing/.scratch/storyboard-evidence/TestStoryboardNavigatorCard5/TestStoryboardNavigatorCard5-140-403746.txt
+--- FAIL: TestStoryboardNavigatorCard5 (8.14s)

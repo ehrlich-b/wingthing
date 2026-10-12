@@ -1,0 +1,1112 @@
+{
+  "counts": {
+    "PASS": 17,
+    "FAIL": 34,
+    "FLAKY": 0,
+    "PENDING-FEATURE": 49
+  },
+  "cards": [
+    {
+      "test": "TestStoryboardInstallCard0",
+      "status": "PASS",
+      "statuses": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    {
+      "test": "TestStoryboardInstallCard1",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardInstallCard4",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardInstallCard5",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardInstallCard6",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardInstallCard7",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardInstallCard2",
+      "status": "PASS",
+      "statuses": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    {
+      "test": "TestStoryboardInstallCard3",
+      "status": "PASS",
+      "statuses": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    {
+      "test": "TestStoryboardStartCard0",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardStartCard1",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardStartCard2",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardStartCard3",
+      "status": "PASS",
+      "statuses": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    {
+      "test": "TestStoryboardStartCard4",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardStartCard5",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardNavigatorCard0",
+      "status": "PASS",
+      "statuses": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    {
+      "test": "TestStoryboardNavigatorCard1",
+      "status": "PASS",
+      "statuses": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    {
+      "test": "TestStoryboardNavigatorCard2",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardNavigatorCard3",
+      "status": "PASS",
+      "statuses": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    {
+      "test": "TestStoryboardNavigatorCard4",
+      "status": "PASS",
+      "statuses": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    {
+      "test": "TestStoryboardNavigatorCard5",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardNavigatorCard6",
+      "status": "PASS",
+      "statuses": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    {
+      "test": "TestStoryboardMachinesCard0",
+      "status": "PASS",
+      "statuses": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    {
+      "test": "TestStoryboardMachinesCard1",
+      "status": "PASS",
+      "statuses": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    {
+      "test": "TestStoryboardMachinesCard2",
+      "status": "PASS",
+      "statuses": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    {
+      "test": "TestStoryboardMachinesCard3",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardMachinesCard4",
+      "status": "PASS",
+      "statuses": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardRunsCard0",
+      "status": "PASS",
+      "statuses": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    {
+      "test": "TestStoryboardRunsCard1",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardRunsCard2",
+      "status": "PASS",
+      "statuses": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    {
+      "test": "TestStoryboardRunsCard3",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardRunsCard4",
+      "status": "PASS",
+      "statuses": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    {
+      "test": "TestStoryboardRunsCard5",
+      "status": "FAIL",
+      "statuses": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ]
+    },
+    {
+      "test": "TestStoryboardRunsCard6",
+      "status": "PASS",
+      "statuses": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    },
+    {
+      "test": null,
+      "status": "PENDING-FEATURE",
+      "statuses": []
+    }
+  ],
+  "runs": [
+    {
+      "run": 1,
+      "all_test_statuses": {
+        "TestStoryboardInstallCard0": "PASS",
+        "TestStoryboardInstallCard1": "FAIL",
+        "TestStoryboardInstallCard4": "FAIL",
+        "TestStoryboardInstallCard5": "FAIL",
+        "TestStoryboardInstallCard6": "FAIL",
+        "TestStoryboardInstallCard7": "FAIL",
+        "TestStoryboardInstallCard2": "PASS",
+        "TestStoryboardInstallCard3": "PASS",
+        "TestStoryboardStartCard0": "FAIL",
+        "TestStoryboardStartCard1": "FAIL",
+        "TestStoryboardStartCard2/routing/local": "PASS",
+        "TestStoryboardStartCard2/native/local": "FAIL",
+        "TestStoryboardStartCard2/routing/forge": "PASS",
+        "TestStoryboardStartCard2/native/forge": "FAIL",
+        "TestStoryboardStartCard2": "FAIL",
+        "TestStoryboardStartCard3": "PASS",
+        "TestStoryboardStartCard4/transport": "PASS",
+        "TestStoryboardStartCard4/remote/policy": "PASS",
+        "TestStoryboardStartCard4/remote/attach": "PASS",
+        "TestStoryboardStartCard4/remote": "PASS",
+        "TestStoryboardStartCard4/success": "PASS",
+        "TestStoryboardStartCard4/native": "FAIL",
+        "TestStoryboardStartCard4": "FAIL",
+        "TestStoryboardStartCard5/two-requested-parents-one-daemon": "FAIL",
+        "TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor": "FAIL",
+        "TestStoryboardStartCard5": "FAIL",
+        "TestStoryboardNavigatorCard0": "PASS",
+        "TestStoryboardNavigatorCard1": "PASS",
+        "TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks": "PASS",
+        "TestStoryboardNavigatorCard2/durable-unread-cursor": "FAIL",
+        "TestStoryboardNavigatorCard2": "FAIL",
+        "TestStoryboardNavigatorCard3": "PASS",
+        "TestStoryboardNavigatorCard4/symlinked-TMPDIR-coordinator-loss": "PASS",
+        "TestStoryboardNavigatorCard4": "PASS",
+        "TestStoryboardNavigatorCard5": "FAIL",
+        "TestStoryboardNavigatorCard6": "PASS",
+        "TestStoryboardMachinesCard0": "PASS",
+        "TestStoryboardMachinesCard1": "PASS",
+        "TestStoryboardMachinesCard2/named": "PASS",
+        "TestStoryboardMachinesCard2/generic": "PASS",
+        "TestStoryboardMachinesCard2": "PASS",
+        "TestStoryboardMachinesCard3": "FAIL",
+        "TestStoryboardMachinesCard4/REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!": "PASS",
+        "TestStoryboardMachinesCard4/unknown_flag:_--expected-channel": "PASS",
+        "TestStoryboardMachinesCard4": "PASS",
+        "TestStoryboardPhoneCard0": "FAIL",
+        "TestStoryboardPhoneCard1": "FAIL",
+        "TestStoryboardPhoneCard2": "FAIL",
+        "TestStoryboardPhoneCard3": "FAIL",
+        "TestStoryboardPhoneCard4": "FAIL",
+        "TestStoryboardPhoneCard5": "FAIL",
+        "TestStoryboardPhoneCard6": "FAIL",
+        "TestStoryboardPhoneCard7": "FAIL",
+        "TestStoryboardPhoneCard8": "FAIL",
+        "TestStoryboardPhoneCard9": "FAIL",
+        "TestStoryboardPhoneCard10": "FAIL",
+        "TestStoryboardPhoneCard11": "FAIL",
+        "TestStoryboardPhoneCard12": "FAIL",
+        "TestStoryboardPhoneCard13": "FAIL",
+        "TestStoryboardPhoneCard14": "FAIL",
+        "TestStoryboardPhoneCard15": "FAIL",
+        "TestStoryboardPhoneCard16": "FAIL",
+        "TestStoryboardPhoneCard17": "FAIL",
+        "TestStoryboardRunsCard0": "PASS",
+        "TestStoryboardRunsCard1/routing/local": "PASS",
+        "TestStoryboardRunsCard1/native/local": "FAIL",
+        "TestStoryboardRunsCard1/routing/forge": "PASS",
+        "TestStoryboardRunsCard1/native/forge": "FAIL",
+        "TestStoryboardRunsCard1": "FAIL",
+        "TestStoryboardRunsCard2": "PASS",
+        "TestStoryboardRunsCard3": "FAIL",
+        "TestStoryboardRunsCard4": "PASS",
+        "TestStoryboardRunsCard5/transport": "PASS",
+        "TestStoryboardRunsCard5/remote/policy": "PASS",
+        "TestStoryboardRunsCard5/remote/attach": "PASS",
+        "TestStoryboardRunsCard5/remote": "PASS",
+        "TestStoryboardRunsCard5/success": "PASS",
+        "TestStoryboardRunsCard5/native": "FAIL",
+        "TestStoryboardRunsCard5": "FAIL",
+        "TestStoryboardRunsCard6/symlinked-TMPDIR-coordinator-loss": "PASS",
+        "TestStoryboardRunsCard6": "PASS"
+      }
+    },
+    {
+      "run": 2,
+      "all_test_statuses": {
+        "TestStoryboardInstallCard0": "PASS",
+        "TestStoryboardInstallCard1": "FAIL",
+        "TestStoryboardInstallCard4": "FAIL",
+        "TestStoryboardInstallCard5": "FAIL",
+        "TestStoryboardInstallCard6": "FAIL",
+        "TestStoryboardInstallCard7": "FAIL",
+        "TestStoryboardInstallCard2": "PASS",
+        "TestStoryboardInstallCard3": "PASS",
+        "TestStoryboardStartCard0": "FAIL",
+        "TestStoryboardStartCard1": "FAIL",
+        "TestStoryboardStartCard2/routing/local": "PASS",
+        "TestStoryboardStartCard2/native/local": "FAIL",
+        "TestStoryboardStartCard2/routing/forge": "PASS",
+        "TestStoryboardStartCard2/native/forge": "FAIL",
+        "TestStoryboardStartCard2": "FAIL",
+        "TestStoryboardStartCard3": "PASS",
+        "TestStoryboardStartCard4/transport": "PASS",
+        "TestStoryboardStartCard4/remote/policy": "PASS",
+        "TestStoryboardStartCard4/remote/attach": "PASS",
+        "TestStoryboardStartCard4/remote": "PASS",
+        "TestStoryboardStartCard4/success": "PASS",
+        "TestStoryboardStartCard4/native": "FAIL",
+        "TestStoryboardStartCard4": "FAIL",
+        "TestStoryboardStartCard5/two-requested-parents-one-daemon": "FAIL",
+        "TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor": "FAIL",
+        "TestStoryboardStartCard5": "FAIL",
+        "TestStoryboardNavigatorCard0": "PASS",
+        "TestStoryboardNavigatorCard1": "PASS",
+        "TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks": "PASS",
+        "TestStoryboardNavigatorCard2/durable-unread-cursor": "FAIL",
+        "TestStoryboardNavigatorCard2": "FAIL",
+        "TestStoryboardNavigatorCard3": "PASS",
+        "TestStoryboardNavigatorCard4/symlinked-TMPDIR-coordinator-loss": "PASS",
+        "TestStoryboardNavigatorCard4": "PASS",
+        "TestStoryboardNavigatorCard5": "FAIL",
+        "TestStoryboardNavigatorCard6": "PASS",
+        "TestStoryboardMachinesCard0": "PASS",
+        "TestStoryboardMachinesCard1": "PASS",
+        "TestStoryboardMachinesCard2/named": "PASS",
+        "TestStoryboardMachinesCard2/generic": "PASS",
+        "TestStoryboardMachinesCard2": "PASS",
+        "TestStoryboardMachinesCard3": "FAIL",
+        "TestStoryboardMachinesCard4/REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!": "PASS",
+        "TestStoryboardMachinesCard4/unknown_flag:_--expected-channel": "PASS",
+        "TestStoryboardMachinesCard4": "PASS",
+        "TestStoryboardPhoneCard0": "FAIL",
+        "TestStoryboardPhoneCard1": "FAIL",
+        "TestStoryboardPhoneCard2": "FAIL",
+        "TestStoryboardPhoneCard3": "FAIL",
+        "TestStoryboardPhoneCard4": "FAIL",
+        "TestStoryboardPhoneCard5": "FAIL",
+        "TestStoryboardPhoneCard6": "FAIL",
+        "TestStoryboardPhoneCard7": "FAIL",
+        "TestStoryboardPhoneCard8": "FAIL",
+        "TestStoryboardPhoneCard9": "FAIL",
+        "TestStoryboardPhoneCard10": "FAIL",
+        "TestStoryboardPhoneCard11": "FAIL",
+        "TestStoryboardPhoneCard12": "FAIL",
+        "TestStoryboardPhoneCard13": "FAIL",
+        "TestStoryboardPhoneCard14": "FAIL",
+        "TestStoryboardPhoneCard15": "FAIL",
+        "TestStoryboardPhoneCard16": "FAIL",
+        "TestStoryboardPhoneCard17": "FAIL",
+        "TestStoryboardRunsCard0": "PASS",
+        "TestStoryboardRunsCard1/routing/local": "PASS",
+        "TestStoryboardRunsCard1/native/local": "FAIL",
+        "TestStoryboardRunsCard1/routing/forge": "PASS",
+        "TestStoryboardRunsCard1/native/forge": "FAIL",
+        "TestStoryboardRunsCard1": "FAIL",
+        "TestStoryboardRunsCard2": "PASS",
+        "TestStoryboardRunsCard3": "FAIL",
+        "TestStoryboardRunsCard4": "PASS",
+        "TestStoryboardRunsCard5/transport": "PASS",
+        "TestStoryboardRunsCard5/remote/policy": "PASS",
+        "TestStoryboardRunsCard5/remote/attach": "PASS",
+        "TestStoryboardRunsCard5/remote": "PASS",
+        "TestStoryboardRunsCard5/success": "PASS",
+        "TestStoryboardRunsCard5/native": "FAIL",
+        "TestStoryboardRunsCard5": "FAIL",
+        "TestStoryboardRunsCard6/symlinked-TMPDIR-coordinator-loss": "PASS",
+        "TestStoryboardRunsCard6": "PASS"
+      }
+    },
+    {
+      "run": 3,
+      "all_test_statuses": {
+        "TestStoryboardInstallCard0": "PASS",
+        "TestStoryboardInstallCard1": "FAIL",
+        "TestStoryboardInstallCard4": "FAIL",
+        "TestStoryboardInstallCard5": "FAIL",
+        "TestStoryboardInstallCard6": "FAIL",
+        "TestStoryboardInstallCard7": "FAIL",
+        "TestStoryboardInstallCard2": "PASS",
+        "TestStoryboardInstallCard3": "PASS",
+        "TestStoryboardStartCard0": "FAIL",
+        "TestStoryboardStartCard1": "FAIL",
+        "TestStoryboardStartCard2/routing/local": "PASS",
+        "TestStoryboardStartCard2/native/local": "FAIL",
+        "TestStoryboardStartCard2/routing/forge": "PASS",
+        "TestStoryboardStartCard2/native/forge": "FAIL",
+        "TestStoryboardStartCard2": "FAIL",
+        "TestStoryboardStartCard3": "PASS",
+        "TestStoryboardStartCard4/transport": "PASS",
+        "TestStoryboardStartCard4/remote/policy": "PASS",
+        "TestStoryboardStartCard4/remote/attach": "PASS",
+        "TestStoryboardStartCard4/remote": "PASS",
+        "TestStoryboardStartCard4/success": "PASS",
+        "TestStoryboardStartCard4/native": "FAIL",
+        "TestStoryboardStartCard4": "FAIL",
+        "TestStoryboardStartCard5/two-requested-parents-one-daemon": "FAIL",
+        "TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor": "FAIL",
+        "TestStoryboardStartCard5": "FAIL",
+        "TestStoryboardNavigatorCard0": "PASS",
+        "TestStoryboardNavigatorCard1": "PASS",
+        "TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks": "PASS",
+        "TestStoryboardNavigatorCard2/durable-unread-cursor": "FAIL",
+        "TestStoryboardNavigatorCard2": "FAIL",
+        "TestStoryboardNavigatorCard3": "PASS",
+        "TestStoryboardNavigatorCard4/symlinked-TMPDIR-coordinator-loss": "PASS",
+        "TestStoryboardNavigatorCard4": "PASS",
+        "TestStoryboardNavigatorCard5": "FAIL",
+        "TestStoryboardNavigatorCard6": "PASS",
+        "TestStoryboardMachinesCard0": "PASS",
+        "TestStoryboardMachinesCard1": "PASS",
+        "TestStoryboardMachinesCard2/named": "PASS",
+        "TestStoryboardMachinesCard2/generic": "PASS",
+        "TestStoryboardMachinesCard2": "PASS",
+        "TestStoryboardMachinesCard3": "FAIL",
+        "TestStoryboardMachinesCard4/REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!": "PASS",
+        "TestStoryboardMachinesCard4/unknown_flag:_--expected-channel": "PASS",
+        "TestStoryboardMachinesCard4": "PASS",
+        "TestStoryboardPhoneCard0": "FAIL",
+        "TestStoryboardPhoneCard1": "FAIL",
+        "TestStoryboardPhoneCard2": "FAIL",
+        "TestStoryboardPhoneCard3": "FAIL",
+        "TestStoryboardPhoneCard4": "FAIL",
+        "TestStoryboardPhoneCard5": "FAIL",
+        "TestStoryboardPhoneCard6": "FAIL",
+        "TestStoryboardPhoneCard7": "FAIL",
+        "TestStoryboardPhoneCard8": "FAIL",
+        "TestStoryboardPhoneCard9": "FAIL",
+        "TestStoryboardPhoneCard10": "FAIL",
+        "TestStoryboardPhoneCard11": "FAIL",
+        "TestStoryboardPhoneCard12": "FAIL",
+        "TestStoryboardPhoneCard13": "FAIL",
+        "TestStoryboardPhoneCard14": "FAIL",
+        "TestStoryboardPhoneCard15": "FAIL",
+        "TestStoryboardPhoneCard16": "FAIL",
+        "TestStoryboardPhoneCard17": "FAIL",
+        "TestStoryboardRunsCard0": "PASS",
+        "TestStoryboardRunsCard1/routing/local": "PASS",
+        "TestStoryboardRunsCard1/native/local": "FAIL",
+        "TestStoryboardRunsCard1/routing/forge": "PASS",
+        "TestStoryboardRunsCard1/native/forge": "FAIL",
+        "TestStoryboardRunsCard1": "FAIL",
+        "TestStoryboardRunsCard2": "PASS",
+        "TestStoryboardRunsCard3": "FAIL",
+        "TestStoryboardRunsCard4": "PASS",
+        "TestStoryboardRunsCard5/transport": "PASS",
+        "TestStoryboardRunsCard5/remote/policy": "PASS",
+        "TestStoryboardRunsCard5/remote/attach": "PASS",
+        "TestStoryboardRunsCard5/remote": "PASS",
+        "TestStoryboardRunsCard5/success": "PASS",
+        "TestStoryboardRunsCard5/native": "FAIL",
+        "TestStoryboardRunsCard5": "FAIL",
+        "TestStoryboardRunsCard6/symlinked-TMPDIR-coordinator-loss": "PASS",
+        "TestStoryboardRunsCard6": "PASS"
+      }
+    }
+  ],
+  "bugs": [
+    {
+      "test": "TestStoryboardInstallCard1",
+      "id": "fleet-kxez"
+    },
+    {
+      "test": "TestStoryboardInstallCard4",
+      "id": "fleet-38ib"
+    },
+    {
+      "test": "TestStoryboardInstallCard5",
+      "id": "fleet-9th4"
+    },
+    {
+      "test": "TestStoryboardInstallCard6",
+      "id": "fleet-d0ob"
+    },
+    {
+      "test": "TestStoryboardInstallCard7",
+      "id": "fleet-fniu"
+    },
+    {
+      "test": "TestStoryboardStartCard0",
+      "id": "fleet-pgmx"
+    },
+    {
+      "test": "TestStoryboardStartCard1",
+      "id": "fleet-5ddm"
+    },
+    {
+      "test": "TestStoryboardStartCard2",
+      "id": "fleet-vws3"
+    },
+    {
+      "test": "TestStoryboardStartCard4",
+      "id": "fleet-x4yv"
+    },
+    {
+      "test": "TestStoryboardStartCard5",
+      "id": "fleet-6w2j"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard2",
+      "id": "fleet-itwd"
+    },
+    {
+      "test": "TestStoryboardNavigatorCard5",
+      "id": "fleet-y9t6"
+    },
+    {
+      "test": "TestStoryboardMachinesCard3",
+      "id": "fleet-vzf3"
+    },
+    {
+      "test": "TestStoryboardPhoneCard0",
+      "id": "fleet-cpab"
+    },
+    {
+      "test": "TestStoryboardPhoneCard1",
+      "id": "fleet-mxtz"
+    },
+    {
+      "test": "TestStoryboardPhoneCard2",
+      "id": "fleet-bmxl"
+    },
+    {
+      "test": "TestStoryboardPhoneCard3",
+      "id": "fleet-5bo6"
+    },
+    {
+      "test": "TestStoryboardPhoneCard4",
+      "id": "fleet-wudw"
+    },
+    {
+      "test": "TestStoryboardPhoneCard5",
+      "id": "fleet-lo13"
+    },
+    {
+      "test": "TestStoryboardPhoneCard6",
+      "id": "fleet-ag5w"
+    },
+    {
+      "test": "TestStoryboardPhoneCard7",
+      "id": "fleet-yq9i"
+    },
+    {
+      "test": "TestStoryboardPhoneCard8",
+      "id": "fleet-pet5"
+    },
+    {
+      "test": "TestStoryboardPhoneCard9",
+      "id": "fleet-ezc3"
+    },
+    {
+      "test": "TestStoryboardPhoneCard10",
+      "id": "fleet-v2pw"
+    },
+    {
+      "test": "TestStoryboardPhoneCard11",
+      "id": "fleet-8xhy"
+    },
+    {
+      "test": "TestStoryboardPhoneCard12",
+      "id": "fleet-0p5v"
+    },
+    {
+      "test": "TestStoryboardPhoneCard13",
+      "id": "fleet-v3b6"
+    },
+    {
+      "test": "TestStoryboardPhoneCard14",
+      "id": "fleet-0oli"
+    },
+    {
+      "test": "TestStoryboardPhoneCard15",
+      "id": "fleet-qh4d"
+    },
+    {
+      "test": "TestStoryboardPhoneCard16",
+      "id": "fleet-hqms"
+    },
+    {
+      "test": "TestStoryboardPhoneCard17",
+      "id": "fleet-6ev0"
+    },
+    {
+      "test": "TestStoryboardRunsCard1",
+      "id": "fleet-pi85"
+    },
+    {
+      "test": "TestStoryboardRunsCard3",
+      "id": "fleet-wzyc"
+    },
+    {
+      "test": "TestStoryboardRunsCard5",
+      "id": "fleet-9h8k"
+    }
+  ]
+}
