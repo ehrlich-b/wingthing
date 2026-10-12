@@ -64,6 +64,14 @@
 @media (max-width: 600px) {
     html { font: -apple-system-body; }
     body { font-size: 1rem; }
+    #phone-help { margin-bottom: 0.75rem; font-size: 0.875rem; }
+    #phone-help > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+    #phone-help p { margin-bottom: 0.5rem; line-height: 1.5; }
+    #phone-help button, #phone-access-link { display: inline-flex; align-items: center; min-height: 44px; padding: 8px; font: inherit; }
+    #phone-access-link[hidden] { display: none; }
+    #phone-refresh-status { display: block; overflow-wrap: anywhere; }
+    .conversation-launch input, .conversation-launch select { min-height: 44px; font-size: 16px; }
+    .chat-pending-item button { min-height: 44px; font-size: 0.875rem; }
     #app { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
     #app.chat-keyboard { padding-bottom: 0; }
     #main, #home-section { min-height: 0; }
@@ -123,3 +131,5 @@
     .chat-pending { font-size: 0.8125rem; max-height: 30%; }
     .chat-pending-item button { min-height: 44px; }
 }
+
+@media (min-width: 601px) { #phone-help { display: none; } }

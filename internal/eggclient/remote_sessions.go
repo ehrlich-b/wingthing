@@ -63,7 +63,8 @@ func (b *remoteSessionBuffer) Write(p []byte) (int, error) {
 func QueryRemoteSessions(localVersion string, ctx context.Context, name string, remote config.Remote, streams remotepkg.IO) ([]LocalSession, error) {
 	ctx, cancel := context.WithTimeout(ctx, RemoteSessionTimeout)
 	defer cancel()
-	invocation := remotepkg.Invocation{Target: remote.SSHTarget, Binary: remote.Binary(), State: remote.WingthingDir}
+	invocation := remotepkg.ProfileInvocation(remote, nil)
+	invocation.NonInteractive = true
 	stdout := remoteSessionBuffer{limit: remoteSessionStdoutLimit, stream: "stdout", cancel: cancel}
 	stderr := remoteSessionBuffer{limit: remoteSessionStderrLimit, stream: "stderr", cancel: cancel}
 	streams.In, streams.Out, streams.ErrOut = nil, &stdout, &stderr
@@ -78,16 +79,25 @@ func QueryRemoteSessions(localVersion string, ctx context.Context, name string, 
 		}
 		return err
 	}
-	invocation.Args = []string{"--version"}
-	if err := run(); err != nil {
-		return nil, remoteQueryError(name, err, stderr.buffer.String())
+	// A compatible response already carries its version. Only old/malformed
+	// receivers need a separate version query for an actionable diagnostic.
+	mismatch := func(remoteVersion, contract, detail string) error {
+		if remoteVersion == "" {
+			remoteVersion = "unknown"
+			if ctx.Err() == nil && stdout.overflow == nil && stderr.overflow == nil {
+				stdout.buffer.Reset()
+				stderr.buffer.Reset()
+				invocation.Args = []string{"--version"}
+				if err := run(); err != nil {
+					return remoteQueryError(name, err, stderr.buffer.String())
+				}
+				if value := strings.TrimSpace(stdout.buffer.String()); value != "" {
+					remoteVersion = value
+				}
+			}
+		}
+		return remoteInventoryMismatch(localVersion, name, remoteVersion, contract, detail)
 	}
-	remoteVersion := strings.TrimSpace(stdout.buffer.String())
-	if remoteVersion == "" {
-		remoteVersion = "unknown"
-	}
-	stdout.buffer.Reset()
-	stderr.buffer.Reset()
 	// The receiver skips its registry entirely, so this never recursively fans
 	// out to that machine's configured remotes (even a cycle back to this one).
 	invocation.Args = []string{"session", "ps", "--json", "--remote-inventory"}
@@ -99,14 +109,15 @@ func QueryRemoteSessions(localVersion string, ctx context.Context, name string, 
 		}
 		diagnostic := strings.TrimSpace(stderr.buffer.String())
 		if strings.Contains(diagnostic, "unknown flag") || strings.Contains(diagnostic, "unknown command") || strings.Contains(diagnostic, "flag provided but not defined") {
-			return nil, remoteInventoryMismatch(localVersion, name, remoteVersion, "unsupported", diagnostic)
+			return nil, mismatch("", "unsupported", diagnostic)
 		}
 		return nil, remoteQueryError(name, err, diagnostic)
 	}
 	var inventory RemoteSessionInventory
 	if err := json.Unmarshal(stdout.buffer.Bytes(), &inventory); err != nil {
-		return nil, remoteInventoryMismatch(localVersion, name, remoteVersion, "unsupported", "invalid session ps --json inventory")
+		return nil, mismatch("", "unsupported", "invalid session ps --json inventory")
 	}
+	remoteVersion := ""
 	if inventory.Version != "" {
 		remoteVersion = config.BinaryName() + " version " + inventory.Version
 	}
@@ -115,7 +126,7 @@ func QueryRemoteSessions(localVersion string, ctx context.Context, name string, 
 		if contract == "" {
 			contract = "unsupported"
 		}
-		return nil, remoteInventoryMismatch(localVersion, name, remoteVersion, contract, "session inventory contract is incompatible")
+		return nil, mismatch(remoteVersion, contract, "session inventory contract is incompatible")
 	}
 	return inventory.Sessions, nil
 }
@@ -167,4 +178,25 @@ func DiscoverMachineSessions(localVersion string, ctx context.Context, cfg *conf
 		rows = append(rows, result...)
 	}
 	return rows, nil
+}
+
+// ValidateRemoteSession refuses cached names, abbreviated IDs, and inventories
+// without an active process identity. It never dispatches a mutation or retries.
+func ValidateRemoteSession(ctx context.Context, name string, remote config.Remote, id string, streams remotepkg.IO) error {
+	sessions, err := QueryRemoteSessions("dashboard", ctx, name, remote, streams)
+	if err != nil {
+		return fmt.Errorf("cannot validate remote session %s:%s; refresh before acting: %w", name, id, err)
+	}
+	matches := 0
+	fresh := false
+	for _, session := range sessions {
+		if session.ID == id {
+			matches++
+			fresh = session.PID > 0
+		}
+	}
+	if id == "" || matches != 1 || !fresh {
+		return fmt.Errorf("cannot validate remote session %s:%s: no unique fresh process identity; refresh before acting", name, id)
+	}
+	return nil
 }

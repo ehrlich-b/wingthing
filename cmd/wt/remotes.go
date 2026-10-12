@@ -13,7 +13,7 @@ import (
 
 func remoteCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "remote", Short: "Manage configured SSH remotes"}
-	var wingthingDir string
+	var wingthingDir, wtBinary string
 	add := &cobra.Command{
 		Use: "add NAME SSH_TARGET", Short: "Add an SSH remote", Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -28,6 +28,11 @@ func remoteCmd() *cobra.Command {
 					return err
 				}
 			}
+			if cmd.Flags().Changed("wt-binary") {
+				if err := config.ValidateWTBinary(wtBinary); err != nil {
+					return err
+				}
+			}
 			cfg, err := config.Load()
 			if err != nil {
 				return err
@@ -36,11 +41,12 @@ func remoteCmd() *cobra.Command {
 				if _, exists := remotes[args[0]]; exists {
 					return fmt.Errorf("remote %q already exists; remove it before adding it again", args[0])
 				}
-				remotes[args[0]] = config.Remote{SSHTarget: args[1], WingthingDir: wingthingDir}
+				remotes[args[0]] = config.Remote{SSHTarget: args[1], WTBinary: wtBinary, WingthingDir: wingthingDir}
 				return nil
 			})
 		},
 	}
+	add.Flags().StringVar(&wtBinary, "wt-binary", "", "executable name or absolute path on the remote host")
 	add.Flags().StringVar(&wingthingDir, "wingthing-dir", "", "absolute Wingthing state directory on the remote host")
 	ls := &cobra.Command{
 		Use: "ls", Short: "List configured SSH remotes", Args: cobra.NoArgs,

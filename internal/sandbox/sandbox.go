@@ -47,6 +47,7 @@ type Config struct {
 	PidLimit     uint32        // cgroup pids.max (0 = no limit)
 	SessionID    string        // unique ID for cgroup naming
 	UserHome     string        // per-user home override (empty = os.UserHomeDir)
+	HostHome     string        // explicit host HOME for policy emission (empty = os.UserHomeDir)
 	Trace        bool          // wrap command with strace (Linux only)
 	AllowSockets []string      // Unix socket paths to allow outbound connections (macOS Seatbelt)
 	// ProtectedWriteTargets are host-owned absolute paths (e.g. controller
@@ -57,6 +58,10 @@ type Config struct {
 
 	// RoostPolicyPaths lists configured policy files whose absence must be checked.
 	RoostPolicyPaths []string
+
+	// RequiredWriteDirs are callback spools recorded by the provider builder.
+	// Their descendants must remain writable in the final emitted policy.
+	RequiredWriteDirs []string
 }
 
 // EnforcementError is returned when the system cannot enforce the requested sandbox config.

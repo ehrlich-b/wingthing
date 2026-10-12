@@ -31,3 +31,5 @@ test/web/claude
 /dist-preview/
 # Generated synthetic visual QA page; rebuild from the current app markup.
 web/fixtures/session-inventory.html
+/test/linux/wt-preview
+/test/linux/runinspect-orphan/

@@ -7,6 +7,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY wt /usr/local/bin/wt
 COPY wt /root/wt-fixture
 ENV WT_TEST_BINARY=/root/wt-fixture
+COPY wt-preview /root/wt-preview-fixture
+ENV WT_TEST_PREVIEW_BINARY=/root/wt-preview-fixture
+# The compiled run-inspect CLI tests consume this read-only source fixture
+# relative to /root, just as ordinary go test consumes it from cmd/wt.
+COPY runinspect-orphan /internal/runinspect/testdata/orphan
 COPY mock-agent /usr/local/bin/claude
 COPY run-tests /root/run-tests
 COPY sandbox-tests /root/sandbox-tests

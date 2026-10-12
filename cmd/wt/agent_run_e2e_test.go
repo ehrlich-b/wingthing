@@ -24,6 +24,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
 	"github.com/ehrlich-b/wingthing/internal/wing"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"golang.org/x/sys/unix"
@@ -85,7 +86,7 @@ func TestFakeCodexDoesNotAnnounceReadinessAtEmptyStartup(t *testing.T) {
 		t.Fatalf("native fake setup: %v", err)
 	}
 	cmd := exec.Command("nice", append([]string{"-n", "15", python, "-c", fakeRunCodex}, args...)...)
-	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}
+	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + os.Getenv("TMPDIR"), "PYTHONDONTWRITEBYTECODE=1"}
 	terminal, err := pty.Start(cmd)
 	if err != nil {
 		t.Fatal(err)
@@ -161,8 +162,7 @@ func testBuiltWTStdioWingEggFakeCodexTimeout(t *testing.T, modal, nativeTask boo
 	}
 	home := filepath.Join(fixture, "home")
 	bin := filepath.Join(fixture, "bin")
-	stateReal := filepath.Join(fixture, "s")
-	for _, dir := range []string{home, bin, stateReal} {
+	for _, dir := range []string{home, bin} {
 		if err := os.Mkdir(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -179,18 +179,7 @@ func testBuiltWTStdioWingEggFakeCodexTimeout(t *testing.T, modal, nativeTask boo
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}
-	alias, err := os.MkdirTemp(scratch, "e")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(fixture, alias); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Remove(alias) })
-	state := filepath.Join(alias, "s")
+	state := testprovider.ShortStateDir(t, scratch)
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", state)
 	t.Setenv("WT_MCP_CLIENT", "")
@@ -235,7 +224,7 @@ func testBuiltWTStdioWingEggFakeCodexTimeout(t *testing.T, modal, nativeTask boo
 			args = append(args, "--initial-run="+string(wire))
 		}
 		child := exec.Command(binary, args...)
-		child.Env = []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH")}
+		child.Env = []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + os.Getenv("TMPDIR"), "PYTHONDONTWRITEBYTECODE=1"}
 		child.Stdout = io.Discard
 		logs, err := child.StderrPipe()
 		if err != nil {
@@ -296,7 +285,7 @@ func testBuiltWTStdioWingEggFakeCodexTimeout(t *testing.T, modal, nativeTask boo
 	}
 	defer func() { listener.Close() }()
 	process := exec.Command(binary, "mcp", "stdio", "--unsandboxed")
-	process.Env = []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH")}
+	process.Env = []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + os.Getenv("TMPDIR"), "PYTHONDONTWRITEBYTECODE=1"}
 	process.Stderr = os.Stderr
 	input, err := process.StdinPipe()
 	if err != nil {
@@ -432,7 +421,7 @@ func testBuiltWTStdioWingEggFakeCodexTimeout(t *testing.T, modal, nativeTask boo
 	var restartedDecoder *json.Decoder
 	if nativeTask {
 		process = exec.Command(binary, "mcp", "stdio", "--unsandboxed")
-		process.Env = []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH")}
+		process.Env = []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + os.Getenv("TMPDIR"), "PYTHONDONTWRITEBYTECODE=1"}
 		process.Stderr = os.Stderr
 		input, err = process.StdinPipe()
 		if err != nil {

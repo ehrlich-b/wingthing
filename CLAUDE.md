@@ -394,6 +394,7 @@ After `make check`, restart the wing daemon with the local build: `./wt stop && 
 | `wt run [prompt]` | Run a prompt or skill directly |
 | `wt run --skill [name]` | Run a named skill |
 | `wt doctor` | Scan for available agents, API keys, services |
+| `wt doctor launch-plan` | Read-only explicit launch diagnosis with JSON/human gates; see docs/launch-preflight.md |
 | `wt timeline` | List upcoming/recent tasks |
 | `wt thread` | Show daily thread |
 | `wt status` | Task counts and token usage |

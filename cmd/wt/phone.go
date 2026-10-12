@@ -104,7 +104,7 @@ func phoneCmd() *cobra.Command {
 	}
 	link.Flags().BoolVar(&jsonOutput, "json", false, "print the setup URL as JSON")
 	link.Flags().BoolVar(&noToken, "no-token", false, "omit the bearer; enter it separately on the phone")
-	cmd.AddCommand(link)
+	cmd.AddCommand(link, phoneServeCmd())
 	return cmd
 }
 

@@ -1,0 +1,10 @@
+#!/bin/bash
+# Personal native iPhone installer; signing and account actions run as Bryan.
+set +x
+set -euo pipefail
+CLONE=${WT_IOS_CLONE:-$(cd "$(dirname "$0")/../../.." && pwd)}
+[[ -f "$CLONE/mobile/ios/scripts/install_phone.sh" ]] || {
+  printf 'Set WT_IOS_CLONE to the intended Wingthing checkout.\n' >&2
+  exit 1
+}
+exec /bin/bash "$CLONE/mobile/ios/scripts/install_phone.sh" "$@"

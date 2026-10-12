@@ -66,8 +66,15 @@ func codexLifecycleSupported(binary string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	output, err := exec.CommandContext(ctx, path, "--version").Output()
-	version, parsed := parseCodexVersion(string(output))
-	supported := err == nil && parsed
+	supported := err == nil && CodexLifecycleVersionSupported(string(output))
+	codexLifecycleCapabilityCache.byPath[path] = codexLifecycleCapability{modTime: info.ModTime(), supported: supported}
+	return supported
+}
+
+// CodexLifecycleVersionSupported applies the runtime compatibility rule to saved
+// version evidence. It does not execute the provider or establish live readiness.
+func CodexLifecycleVersionSupported(output string) bool {
+	version, supported := parseCodexVersion(output)
 	if supported {
 		// 0.159.3 is the earliest locally verified hook trust format. The
 		// bypass help flag does not establish compatibility with this format.
@@ -78,8 +85,17 @@ func codexLifecycleSupported(binary string) bool {
 			}
 		}
 	}
-	codexLifecycleCapabilityCache.byPath[path] = codexLifecycleCapability{modTime: info.ModTime(), supported: supported}
 	return supported
+}
+
+// CodexVersionFromSavedOutput returns only the parsed numeric version, never
+// arbitrary saved output that could contain a prompt or credential.
+func CodexVersionFromSavedOutput(output string) (string, bool) {
+	version, ok := parseCodexVersion(output)
+	if !ok {
+		return "", false
+	}
+	return fmt.Sprintf("%d.%d.%d", version[0], version[1], version[2]), true
 }
 
 func parseCodexVersion(output string) ([3]uint64, bool) {
@@ -106,6 +122,10 @@ func parseCodexVersion(output string) ([3]uint64, bool) {
 // Only the exact generated definitions are trusted. Neither CODEX_HOME nor its
 // config, notify, existing hook sources, or global trust policy is changed.
 func CodexLifecycleArgs(args []string, home, sessionID string) ([]string, error) {
+	return codexLifecycleArgs(args, home, sessionID, NativeLaunchState())
+}
+
+func codexLifecycleArgs(args []string, home, sessionID string, state LaunchState) ([]string, error) {
 	if home == "" || !validLifecycleID(sessionID) {
 		return nil, errors.New("provider home and exact egg identity required for Codex hooks")
 	}
@@ -133,7 +153,7 @@ func CodexLifecycleArgs(args []string, home, sessionID string) ([]string, error)
 		}
 	}
 	spool := filepath.Join(home, ".codex", "wingthing-events", sessionID)
-	if err := os.MkdirAll(spool, 0700); err != nil {
+	if err := state.ProviderSpool(home, filepath.Join(".codex", "wingthing-events", sessionID)); err != nil {
 		return nil, err
 	}
 	command := lifecycleHookCommand(spool)

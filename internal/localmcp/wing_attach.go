@@ -44,7 +44,7 @@ func bindWingAttachment(version string, sessions *wingsession.Service, owner str
 				return err
 			}
 			defer ec.Close()
-			stream, err := sessions.Attach(ctx, s.sessionAuthority(), ec, ref.ID, egg.AttachOptions{ReadOnly: a.ReadOnly, Takeover: a.Takeover, Claim: !a.ReadOnly, Owner: s.clientActor(), Rows: a.Rows, Cols: a.Cols}, nil)
+			stream, err := sessions.Attach(ctx, s.sessionAuthority(), ec, ref.ID, egg.AttachOptions{NativeTerminal: a.NativeTerminal, ReadOnly: a.ReadOnly, Takeover: a.Takeover, Claim: !a.ReadOnly, Owner: s.clientActor(), Rows: a.Rows, Cols: a.Cols}, nil)
 			if err != nil {
 				return err
 			}
@@ -133,7 +133,7 @@ func bindWingAttachment(version string, sessions *wingsession.Service, owner str
 // AttachWingIO only presents a stream; the wing resolves identity and sessions.
 func AttachWingIO(ctx context.Context, dir, clientName, session string, input io.Reader, output io.Writer, options egg.AttachOptions) (bool, error) {
 	return eggclient.AttachStreamIO(ctx, session, input, output, options, func(ctx context.Context, options egg.AttachOptions) (eggclient.SessionStream, error) {
-		stream, _, err := controlsocket.DialAttachment(ctx, dir, controlsocket.Hello{Client: clientName, Attach: &controlsocket.Attachment{Session: session, ReadOnly: options.ReadOnly, Takeover: options.Takeover, Rows: options.Rows, Cols: options.Cols}})
+		stream, _, err := controlsocket.DialAttachment(ctx, dir, controlsocket.Hello{Client: clientName, Attach: &controlsocket.Attachment{NativeTerminal: options.NativeTerminal, Session: session, ReadOnly: options.ReadOnly, Takeover: options.Takeover, Rows: options.Rows, Cols: options.Cols}})
 		return stream, err
 	})
 }

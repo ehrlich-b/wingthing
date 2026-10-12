@@ -18,6 +18,13 @@ func TestClaudeLifecycleRefusesHostSettingsOutsideFinalPolicy(t *testing.T) {
 	oldLog := log.Writer()
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(oldLog)
+	if runtime.GOOS == "linux" {
+		// Race-instrumented capability probes are short-lived re-execs of this
+		// test binary. Their default one-second exit sleeps consume the launch
+		// deadline before the provider starts. Remove only that diagnostic sleep
+		// in descendants; keep race detection and the three-second deadline.
+		t.Setenv("GORACE", strings.TrimSpace(os.Getenv("GORACE")+" atexit_sleep_ms=0"))
+	}
 	if ok, help := sandbox.CheckCapability(); !ok {
 		t.Skip(help)
 	}

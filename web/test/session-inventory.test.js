@@ -4,7 +4,7 @@ import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filte
 import { sessionRoute, parseSessionRoute } from '../src/session-route.js';
 
 const wing = { wing_id: 'mac', wing_label: 'Personal Mac', hostname: 'mac-mini', online: true, capabilities: ['session.rename.v1'] };
-const session = { id: 'session-1', wing_id: 'mac', user_id: 'owner', agent: 'claude', name: 'release-notes', cwd: '/home/bryan/repos/wingthing', swept: true, status: 'detached' };
+const session = { id: 'session-1', wing_id: 'mac', user_id: 'owner', agent: 'claude', name: 'release-notes', cwd: '/home/example/repos/wingthing', swept: true, status: 'detached' };
 
 test('viewing marks only the visible exact terminal or current-user transcript as seen', () => {
     const state = { activeView: 'terminal', ptySessionId: session.id, ptyWingId: 'mac', currentUser: { id: 'owner' } };

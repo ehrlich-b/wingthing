@@ -17,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
 	"github.com/fsnotify/fsnotify"
 	"golang.org/x/sys/unix"
 )
@@ -49,7 +50,7 @@ func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	home, bin := filepath.Join(fixture, "home"), filepath.Join(fixture, "bin")
-	for _, dir := range []string{home, bin, filepath.Join(fixture, "s")} {
+	for _, dir := range []string{home, bin} {
 		if err := os.Mkdir(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -61,24 +62,13 @@ func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
 	if err := unix.Mkfifo(gatePath, 0600); err != nil {
 		t.Fatal(err)
 	}
-	// The egg Unix sockets need a short spelling on Darwin. State and provider
-	// homes remain disposable; no installed wt or real wing is used.
+	// State and provider homes remain disposable; reserve the full runtime ID
+	// width in Darwin's egg socket address, even in a long checkout path.
 	scratch := filepath.Join(repo, ".scratch")
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}
-	alias, err := os.MkdirTemp(scratch, "l")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(fixture, alias); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(alias) })
-	state := filepath.Join(alias, "s")
+	state := testprovider.ShortStateDir(t, scratch)
 	work := config.CanonicalProviderPath(fixture)
 	childWork := filepath.Join(work, "runs", "batch")
 	if err := os.MkdirAll(childWork, 0700); err != nil {
@@ -92,7 +82,7 @@ func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
 	if err := config.SaveWingConfig(state, &config.WingConfig{AllowUnsandboxed: true, Roost: "http://127.0.0.1:1"}); err != nil {
 		t.Fatal(err)
 	}
-	environment := []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH"), "SHELL=/bin/sh"}
+	environment := []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + os.Getenv("PATH"), "SHELL=/bin/sh", "TMPDIR=" + os.Getenv("TMPDIR"), "PYTHONDONTWRITEBYTECODE=1"}
 	var wingProcesses []*exec.Cmd
 	var wingExits []chan error
 	startWing := func() {
@@ -329,7 +319,7 @@ func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
 	}
 }
 
-func TestBuiltWTLocalOnlyDaemonBootsWithoutTokens(t *testing.T) {
+func TestBuiltWTDefaultDaemonBootsWithoutAccountOrRelay(t *testing.T) {
 	repo, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -348,8 +338,8 @@ func TestBuiltWTLocalOnlyDaemonBootsWithoutTokens(t *testing.T) {
 	if err := os.Mkdir(home, 0700); err != nil {
 		t.Fatal(err)
 	}
-	environment := []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=/bin:/usr/bin"}
-	start := exec.CommandContext(t.Context(), binary, "wing", "start", "--local-only", "--paths", home)
+	environment := []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=/bin:/usr/bin", "TMPDIR=" + os.Getenv("TMPDIR")}
+	start := exec.CommandContext(t.Context(), binary, "wing", "start", "--paths", home)
 	start.Env = environment
 	output, err := start.CombinedOutput()
 	// If a later assertion fails, terminate only the daemon admitted into this
@@ -365,6 +355,19 @@ func TestBuiltWTLocalOnlyDaemonBootsWithoutTokens(t *testing.T) {
 	})
 	if err != nil || !strings.Contains(string(output), "local control: ready") {
 		t.Fatalf("default local-only daemon start: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "Local network only. That's fine; nothing else needed.") || strings.Contains(string(output), "wingthing.ai") || strings.Contains(string(output), "require relay access") {
+		t.Fatalf("no-account startup advertised hosted access: %s", output)
+	}
+	statusData, err := os.ReadFile(filepath.Join(state, "wing.status"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status struct {
+		RoostURL string `json:"roost_url"`
+	}
+	if err := json.Unmarshal(statusData, &status); err != nil || status.RoostURL != "" {
+		t.Fatalf("default no-account startup retained relay origin: %s %v", statusData, err)
 	}
 	client, err := controlsocket.Dial(t.Context(), state, controlsocket.Hello{})
 	if err != nil {

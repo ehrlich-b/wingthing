@@ -14,9 +14,9 @@ import WingthingUI
                         await model.openInteractiveFixture(scenario: environment["WT_IOS_FIXTURE_SCENARIO"] ?? "normal", persistenceID: environment["WT_IOS_FIXTURE_PERSISTENCE_ID"])
                     } else if environment["WT_IOS_PREVIEW_ENABLED"] == "1" {
                         await model.inspectLocalPreview(environment: environment)
-                    } else { await model.restoreHome() }
+                    } // Normal first-run starts with the QR scanner, without restoring account access.
                     #else
-                    await model.restoreHome()
+                    // Device pairings restore in PhonePairingView; legacy Home is an explicit fallback.
                     #endif
                 }
         }

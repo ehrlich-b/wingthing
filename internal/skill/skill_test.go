@@ -193,14 +193,14 @@ func TestInterpolateNoNamespace(t *testing.T) {
 func TestResolveVars(t *testing.T) {
 	mounts := []string{"$JIRA_DIR:ro", "$HOME/.config:ro", "/fixed/path:rw"}
 	vars := map[string]string{
-		"JIRA_DIR": "/Users/bryan/repos/jira",
-		"HOME":     "/Users/bryan",
+		"JIRA_DIR": "/Users/userx/repos/jira",
+		"HOME":     "/Users/userx",
 	}
 
 	got := ResolveVars(mounts, vars)
 	want := []string{
-		"/Users/bryan/repos/jira:ro",
-		"/Users/bryan/.config:ro",
+		"/Users/userx/repos/jira:ro",
+		"/Users/userx/.config:ro",
 		"/fixed/path:rw",
 	}
 	if len(got) != len(want) {

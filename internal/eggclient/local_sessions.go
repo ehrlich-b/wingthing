@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 
 	"time"
@@ -33,66 +34,163 @@ const (
 	// separately pressed Enter. Writing both in one PTY frame can leave the
 	// text in the editor instead of submitting it. Preserve the terminal-send
 	// contract by separating Enter from a non-empty text write.
-	sessionEnterDelay = 50 * time.Millisecond
+	sessionEnterDelay     = 50 * time.Millisecond
+	localInventoryWorkers = 8
+	localInventoryTimeout = time.Second
+	localStatusTimeout    = 750 * time.Millisecond
 )
 
 var ErrSessionNameInUse = control.ErrSessionNameInUse
 
 type LocalSession struct {
 	ConversationLink
-	ID           string `json:"id"`
-	Name         string `json:"name,omitempty"`
-	Principal    string `json:"principal,omitempty"`
-	Kind         string `json:"kind"`
-	Agent        string `json:"agent,omitempty"`
-	Status       string `json:"status"`
-	Command      string `json:"command,omitempty"`
-	CWD          string `json:"cwd,omitempty"`
-	Isolation    string `json:"isolation,omitempty"`
-	PID          int    `json:"pid"`
-	Readers      int32  `json:"readers"`
-	WriterID     string `json:"writer_id,omitempty"`
-	WriterOwner  string `json:"writer_owner,omitempty"`
-	InputEpoch   uint64 `json:"input_epoch,omitempty"`
-	UptimeSecs   int64  `json:"uptime_seconds"`
-	IdleSecs     int64  `json:"idle_seconds"`
-	BufferBytes  int64  `json:"buffer_bytes"`
-	TotalWritten int64  `json:"total_written"`
+	ID               string `json:"id"`
+	Name             string `json:"name,omitempty"`
+	Principal        string `json:"principal,omitempty"`
+	Kind             string `json:"kind"`
+	Agent            string `json:"agent,omitempty"`
+	Status           string `json:"status"`
+	State            string `json:"state,omitempty"`
+	StateSource      string `json:"state_source,omitempty"`
+	StateCursor      int64  `json:"state_cursor,omitempty"`
+	StateReason      string `json:"state_reason,omitempty"`
+	CompletionCursor int64  `json:"completion_cursor,omitempty"`
+	Command          string `json:"command,omitempty"`
+	CWD              string `json:"cwd,omitempty"`
+	Isolation        string `json:"isolation,omitempty"`
+	PID              int    `json:"pid"`
+	Readers          int32  `json:"readers"`
+	WriterID         string `json:"writer_id,omitempty"`
+	WriterOwner      string `json:"writer_owner,omitempty"`
+	InputEpoch       uint64 `json:"input_epoch,omitempty"`
+	UptimeSecs       int64  `json:"uptime_seconds"`
+	IdleSecs         int64  `json:"idle_seconds"`
+	BufferBytes      int64  `json:"buffer_bytes"`
+	TotalWritten     int64  `json:"total_written"`
 }
 
 func DiscoverActiveSessions(ctx context.Context, cfg *config.Config) ([]LocalSession, error) {
+	ctx, cancel := context.WithTimeout(ctx, localInventoryTimeout)
+	defer cancel()
 	sessions, err := DiscoverSessionRefs(cfg)
 	if err != nil {
 		return nil, err
 	}
 	for i := range sessions {
-		session := &sessions[i]
-		session.Status = "unknown"
-		dir := filepath.Join(cfg.Dir, "eggs", session.ID)
-		ec, dialErr := egg.Dial(filepath.Join(dir, "egg.sock"), filepath.Join(dir, "egg.token"))
-		if dialErr == nil {
-			statusCtx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
-			st, statusErr := ec.Status(statusCtx)
-			cancel()
-			_ = ec.Close()
-			if statusErr == nil {
-				session.Readers = st.Readers
-				session.WriterID, session.WriterOwner, session.InputEpoch = st.WriterId, st.WriterOwner, st.InputEpoch
-				session.UptimeSecs = st.UptimeSeconds
-				session.IdleSecs = st.IdleSeconds
-				session.BufferBytes = st.BufferBytes
-				session.TotalWritten = st.TotalWritten
-				if session.Agent == "" {
-					session.Agent = st.Agent
+		sessions[i].Status = "unknown"
+	}
+	// Workers own distinct rows. Cancellation stops admission, retains every
+	// metadata identity, and joins the workers/clients before returning.
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	for range min(localInventoryWorkers, len(sessions)) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for i := range jobs {
+				if ctx.Err() != nil {
+					return
 				}
+				enrichLocalSession(ctx, cfg, &sessions[i])
 			}
-		}
-		if view, err := tryLifecycleViewForSession(cfg, *session); err == nil {
-			session.Status = view.Status
+		}()
+	}
+admit:
+	for i := range sessions {
+		select {
+		case jobs <- i:
+		case <-ctx.Done():
+			break admit
 		}
 	}
+	close(jobs)
+	workers.Wait()
 	sortLocalSessions(sessions)
 	return sessions, nil
+}
+
+func enrichLocalSession(ctx context.Context, cfg *config.Config, session *LocalSession) {
+	// Keep the journal's existing nonblocking lock and one-event display page.
+	// Its filesystem/import work is not context-aware; do not detach it from
+	// the joined worker or infer idle when evidence is unavailable.
+	if view, err := tryLifecycleViewForSession(cfg, *session); err == nil {
+		projectSessionLifecycle(session, view)
+	}
+	metadataAgent := session.Agent
+	if ctx.Err() != nil {
+		return
+	}
+	dir := filepath.Join(cfg.Dir, "eggs", session.ID)
+	ec, dialErr := egg.Dial(filepath.Join(dir, "egg.sock"), filepath.Join(dir, "egg.token"))
+	if dialErr == nil {
+		statusCtx, cancel := context.WithTimeout(ctx, localStatusTimeout)
+		st, statusErr := ec.Status(statusCtx)
+		cancel()
+		_ = ec.Close()
+		if statusErr == nil {
+			session.Readers = st.Readers
+			session.WriterID, session.WriterOwner, session.InputEpoch = st.WriterId, st.WriterOwner, st.InputEpoch
+			session.UptimeSecs = st.UptimeSeconds
+			session.IdleSecs = st.IdleSeconds
+			session.BufferBytes = st.BufferBytes
+			session.TotalWritten = st.TotalWritten
+			if session.Agent == "" {
+				session.Agent = st.Agent
+			}
+		}
+	}
+	// Legacy metadata may omit the provider. Preserve the RPC agent fallback
+	// before projecting its native hook adapter, within the remaining budget.
+	if metadataAgent == "" && session.Agent != "" && ctx.Err() == nil {
+		if view, err := tryLifecycleViewForSession(cfg, *session); err == nil {
+			projectSessionLifecycle(session, view)
+		}
+	}
+}
+
+// Inventory keeps only structured, content-free evidence from its existing
+// lifecycle read. Never copy Reason, Events, Text, Raw or provider identifiers.
+func projectSessionLifecycle(session *LocalSession, view egg.SessionView) {
+	session.Status, session.StateCursor = view.Status, view.StateCursor
+	session.State, session.StateSource = "unknown", "unsupported"
+	session.StateReason = "Native lifecycle evidence is missing or hooks are disabled; status is unknown."
+	session.CompletionCursor = 0
+	switch view.StateSource {
+	case "claude_hook", "codex_hook", "egg_process", "native_import":
+		session.StateSource = view.StateSource
+	}
+	switch view.State {
+	case "starting", "working", "needs_input", "idle", "completed", "failed", "stopped", "unknown":
+		session.State = view.State
+	}
+	if session.StateSource == "unsupported" {
+		session.State = "unknown"
+		return
+	}
+	switch session.State {
+	case "needs_input":
+		session.StateReason = "Native provider requested input."
+	case "working", "starting":
+		session.StateReason = "Native provider is working."
+	case "idle":
+		session.StateReason = "Native provider is idle."
+	case "completed":
+		session.StateReason = "Native provider session ended; this does not certify descendant success."
+	case "failed", "stopped":
+		session.StateReason = "Native evidence reports a failure or stop."
+	case "unknown":
+		session.StateReason = "Native lifecycle evidence is unknown; no screen inference is used."
+	}
+	// SessionView exposes the state cursor but not the event type. These are
+	// the adapter's fixed reasons for turn_completed (including background
+	// work), distinct from SessionEnd, idle notifications and interruptions.
+	// They are matched, never forwarded; arbitrary provider reasons stay private.
+	native := session.StateSource == "claude_hook" || session.StateSource == "codex_hook"
+	if native && view.StateCursor > 0 && ((view.State == "completed" && view.Reason == "native Stop observed for foreground response; other Stop hooks or later prompts may continue the conversation") ||
+		(view.State == "idle" && view.Reason == "foreground response ended with background tasks pending")) {
+		session.CompletionCursor = view.StateCursor
+		session.StateReason = "Foreground response completed; provider or descendants may continue."
+	}
 }
 
 // discoverSessionRefs reads only process and metadata files. Resolution stays

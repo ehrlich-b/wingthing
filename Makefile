@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := check
-.PHONY: check gate test-run-recovery test-run-recovery-race test-run-load test-run-load-full test-run-canary e2e-linux e2e-web e2e-mac release deploy ops proto web serve clean
+.PHONY: check gate test-parent-lifecycle-offline test-parent-lifecycle-protocol test-parent-lifecycle-protocol-race test-parent-lifecycle-built test-run-inspect test-run-inspect-race test-run-inspect-roundtrip test-run-recovery test-run-recovery-race test-run-load test-run-load-full test-run-canary e2e-linux e2e-web e2e-mac release deploy ops proto web serve clean
 
 GO ?= nice -n 15 go
 NODE ?= nice -n 15 node
@@ -19,6 +19,43 @@ RACE_BASE ?= HEAD~1
 RACE_PACKAGES ?=
 RUN_RECOVERY_PACKAGES ?= ./internal/wingsession ./internal/localmcp ./internal/wingconnect ./internal/egg
 RUN_RECOVERY_TESTS ?= ^(TestRunRecovery.*|TestMCPTaskCancellationRecoversStopIntentAfterWingRestart|TestStopIntentAndQueuedCancellationSurviveWingRestart|TestLostRunSubmissionAcknowledgementDoesNotResendAfterRestart|TestRememberedPool(LostAdmissionReconcilesOriginalKey|UnreconciledAdmissionReportsOriginalKey)|TestProviderFailureContentAbsentFromLifecycleAndArchive)$$
+PARENT_LIFECYCLE_ROOT := $(CURDIR)/.scratch/parent-lifecycle
+PARENT_LIFECYCLE_PATH ?= /opt/homebrew/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+PARENT_LIFECYCLE_PACKAGES := ./internal/testprovider ./internal/egg ./internal/localmcp ./cmd/wt
+PARENT_LIFECYCLE_PROTOCOL_NAMES := TestParentLifecycle.*|TestHostMailbox.*|TestScopedParentLocalAndSSHChildrenSurviveReconnect|TestRunTurnSurvivesClientDisconnect|TestRunTurnRPCAuthenticatesEveryOperationAndStrictlyDecodes|TestRunTurnStopIsIdempotentAndDisarmsDeadline|TestCodexStopHookAloneNeverCompletesRun|TestCodexRunIDReplayAndConflictingInput|TestRunRecovery.*|TestLostRunSubmissionAcknowledgementDoesNotResendAfterRestart|TestSocketPath.*|TestAttachStandaloneEggRetainsDaemonlessContract
+PARENT_LIFECYCLE_BUILT_NAMES := TestBuiltWTStdioWingEggFakeCodex(Result|TaskResult|UnboundedResult)|TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult
+PARENT_LIFECYCLE_NATIVE_NAMES := TestBuiltClientScopedParentFakeProvidersSurviveDisconnect|TestBuiltWTClaudeScopedMailboxTwoLocalOnlyWings|TestUnboundedStopKillsProcessGroupAndReportsSurvivors
+# Only this clone's disposable home, state and staged caches are visible to the
+# gate. Drop ambient provider credentials and account/relay selectors entirely.
+PARENT_LIFECYCLE_ENV = env -i PATH="$(PARENT_LIFECYCLE_PATH)" HOME="$(PARENT_LIFECYCLE_ROOT)/home" \
+	TMPDIR="$(CURDIR)/.scratch/t" GOTMPDIR="$(CURDIR)/.scratch/t" \
+	GOCACHE="$(CURDIR)/.scratch/gocache" GOMODCACHE="$(CURDIR)/.scratch/modcache" GOPATH="$(CURDIR)/.scratch/gopath" \
+	GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-p=2 GOMAXPROCS=2 LEAN_NUM_THREADS=2 \
+	npm_config_offline=true npm_config_cache="$(CURDIR)/.scratch/npm" PYTHONDONTWRITEBYTECODE=1 \
+	CLANG_MODULE_CACHE_PATH="$(CURDIR)/.scratch/clang-cache"
+
+define parent-lifecycle-prepare
+mkdir -p "$(PARENT_LIFECYCLE_ROOT)/home" "$(PARENT_LIFECYCLE_ROOT)/logs" \
+	"$(CURDIR)/.scratch/t" "$(CURDIR)/.scratch/gocache" "$(CURDIR)/.scratch/modcache" "$(CURDIR)/.scratch/npm"
+endef
+
+# Fresh JSON logs plus a checked receipt: a missing test/package or any skip is
+# a failed gate. The receipt binds the source tree, log and optional wt binary.
+define parent-lifecycle-test
+@set -eu; $(parent-lifecycle-prepare); \
+	log=$$(mktemp "$(PARENT_LIFECYCLE_ROOT)/logs/$(1).XXXXXX"); result=0; \
+	source_head=$$(git rev-parse HEAD); source_diff=$$(git diff HEAD -- . ':!.scratch' | shasum -a 256 | cut -d ' ' -f 1); \
+	$(PARENT_LIFECYCLE_ENV) $(if $(4),WT_TEST_BINARY="$(PARENT_LIFECYCLE_ROOT)/wt") \
+		$(GO) test -p 1 -parallel=2 -json $(2) -run '^($(3))$$' -count=1 -timeout=5m $(5) > "$$log" 2>&1 || result=$$?; \
+	if [ "$$source_head" != "$$(git rev-parse HEAD)" ] || [ "$$source_diff" != "$$(git diff HEAD -- . ':!.scratch' | shasum -a 256 | cut -d ' ' -f 1)" ]; then \
+		echo 'Source changed during the lifecycle gate' >&2; result=1; fi; \
+	$(PARENT_LIFECYCLE_ENV) python3 scripts/check-parent-lifecycle.py "$$log" \
+		--profile $(1) --packages $(2) --source "$$source_head" --diff-sha "$$source_diff" \
+		--gate-exit "$$result" \
+		--go-version "$$($(PARENT_LIFECYCLE_ENV) $(GO) version)" \
+		$(if $(4),--binary "$(PARENT_LIFECYCLE_ROOT)/wt") || result=1; \
+	exit "$$result"
+endef
 
 HOST_ARCH := $(shell uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
 HOST_OS := $(shell uname -s | tr '[:upper:]' '[:lower:]')
@@ -65,8 +102,9 @@ endef
 # All untagged Go tests include android-contract and every former focused unit
 # selection (preview, conversation, socket, protected-target, remote and wake).
 check: web
-	$(GO) test -p 2 ./...
+	# Build once outside the PTY interaction deadlines, including CGO pairing.
 	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 ./...
 
 web:
 	cd web && $(NPM) ci
@@ -74,7 +112,47 @@ web:
 	cd web && $(NPM) test
 	cd web && $(NPM) run build
 
+# Hash-verified offline snapshots; no socket, daemon or provider is opened.
+test-run-inspect: | web/dist
+	$(GO) test -p 2 ./internal/runinspect -run '^TestRunInspect' -v -count=1 -parallel=2 -timeout=2m
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 ./cmd/wt -run '^(TestRunInspect.*|TestDashboardNoTTYHelpUnchanged)$$' -v -count=1 -parallel=2 -timeout=2m
+
+test-run-inspect-race: | web/dist
+	$(GO) test -p 2 -race ./internal/runinspect -run '^TestRunInspect' -v -count=1 -parallel=2 -timeout=2m
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -race ./cmd/wt -run '^(TestRunInspect.*|TestDashboardNoTTYHelpUnchanged)$$' -v -count=1 -parallel=2 -timeout=2m
+
+# Fixture-only serializer adapters are excluded from the ordinary built CLI.
+# Every invocation writes fresh, retained tiny artifacts below this scratch root.
+test-run-inspect-roundtrip: | web/dist
+	$(GO) test -p 2 $(INSPECT_TEST_FLAGS) ./internal/store -run '^(TestConversationDeliveryReplayAndCheckpointCAS|TestConversationLineageReplayAndResumePersist)$$' -v -count=1 -parallel=2 -timeout=2m
+	@mkdir -p "$(CURDIR)/.scratch/runinspect-roundtrip"
+	$(stable-build)
+	WT_INSPECT_FIXTURE_ROOT="$(CURDIR)/.scratch/runinspect-roundtrip" WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -tags runinspectfixture $(INSPECT_TEST_FLAGS) ./internal/runinspect ./cmd/wt -run '^TestRunInspectRoundTrip' -v -count=1 -parallel=2 -timeout=3m
+
 # Finite, offline native-provider fixtures; no live provider or remote launches.
+test-parent-lifecycle-protocol: | web/dist
+	$(call parent-lifecycle-test,protocol,$(PARENT_LIFECYCLE_PACKAGES),$(PARENT_LIFECYCLE_PROTOCOL_NAMES),,)
+
+test-parent-lifecycle-protocol-race: | web/dist
+	$(call parent-lifecycle-test,protocol-race,$(PARENT_LIFECYCLE_PACKAGES),$(PARENT_LIFECYCLE_PROTOCOL_NAMES),,-race)
+
+# These protocol fixtures use an explicit trusted outer process boundary and
+# Unix IPC. The two native parent tests below retain actual sandbox enforcement.
+test-parent-lifecycle-built: | web/dist
+	@$(parent-lifecycle-prepare)
+	$(PARENT_LIFECYCLE_ENV) $(GO) build -p 2 -buildvcs=false -ldflags "-X main.version=parent-lifecycle.$(VERSION)" -o "$(PARENT_LIFECYCLE_ROOT)/wt" ./cmd/wt
+	$(call parent-lifecycle-test,built,./cmd/wt,$(PARENT_LIFECYCLE_BUILT_NAMES),binary,)
+
+# Complete ordinary-host acceptance, including both original parent-exit modes,
+# native proxy binding and /bin/ps descendant inventory. Do not substitute the
+# protocol target when reporting this gate; restricted workers leave it unrun.
+test-parent-lifecycle-offline: | web/dist
+	@$(parent-lifecycle-prepare)
+	$(PARENT_LIFECYCLE_ENV) $(GO) build -p 2 -buildvcs=false -ldflags "-X main.version=parent-lifecycle.$(VERSION)" -o "$(PARENT_LIFECYCLE_ROOT)/wt" ./cmd/wt
+	$(call parent-lifecycle-test,offline,$(PARENT_LIFECYCLE_PACKAGES),$(PARENT_LIFECYCLE_PROTOCOL_NAMES)|$(PARENT_LIFECYCLE_BUILT_NAMES)|$(PARENT_LIFECYCLE_NATIVE_NAMES),binary,)
+
 test-run-recovery: | web/dist
 	$(GO) test -p 2 $(RUN_RECOVERY_PACKAGES) -run '$(RUN_RECOVERY_TESTS)' -count=$(COUNT) -timeout=5m
 
@@ -136,7 +214,7 @@ ifneq ($(filter static,$(GATE)),)
 			packages=$$($(GO) list -p 2 -e -f '{{if or .GoFiles .CgoFiles .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' $$packages); \
 		fi; \
 	fi; \
-	if [ -n "$$packages" ]; then $(GO) test -p 2 -race $$packages; \
+	if [ -n "$$packages" ]; then WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -race $$packages; \
 	else echo 'No touched Go packages to race-test'; fi
 	$(GO) run -p 2 golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 	cd web && $(NPM) ci && $(NPM) audit --audit-level=high
@@ -167,6 +245,9 @@ ifneq ($(filter-out debian ubuntu,$(LINUX_DISTROS)),)
 	$(error Unknown LINUX_DISTROS: $(filter-out debian ubuntu,$(LINUX_DISTROS)))
 endif
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) build -p 2 -buildvcs=false -ldflags "-X main.version=test" -o test/linux/wt ./cmd/wt
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) build -p 2 -buildvcs=false -ldflags "-X main.version=test -X github.com/ehrlich-b/wingthing/internal/config.ReleaseChannel=preview" -o test/linux/wt-preview ./cmd/wt
+	@mkdir -p test/linux/runinspect-orphan
+	@cp -R internal/runinspect/testdata/orphan/. test/linux/runinspect-orphan/
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) build -p 2 -o test/linux/mock-agent ./test/mock-agent/
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) test -p 2 -c -tags 'e2e linux' -o test/linux/run-tests ./test/linux/
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) test -p 2 -c -tags integration -o test/linux/sandbox-tests ./internal/sandbox/
@@ -188,7 +269,9 @@ e2e-mac: web
 	@test "$$(uname -s)" = Darwin || { echo 'e2e-mac requires the macOS Seatbelt parent sandbox'; exit 1; }
 	$(stable-build)
 	$(preview-build)
-	WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 -tags integration -v -timeout 120s ./internal/sandbox ./cmd/wt
+	# Keep the two-minute deadline for each group while running every CLI test.
+	WT_TEST_BINARY="$(CURDIR)/wt" WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 -tags integration -v -timeout 120s ./internal/sandbox ./cmd/wt -skip '^Test(Northstar|NativeTerminal)'
+	WT_TEST_BINARY="$(CURDIR)/wt" WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 -tags integration -v -timeout 120s ./cmd/wt -run '^Test(Northstar|NativeTerminal)'
 	$(GO) test -p 2 ./internal/egg -run 'TestPreviewClaude(GuardRejectsSymlinkAliases|ContextRejectsAliasedForeignSelector|LifecycleSettingsAndHooksKeepDataHome)$$' -count=1
 	python3 -B -m unittest discover -s test/preview -p test_mac_provider_context.py
 	python3 test/preview/mac_provider_context.py "$(PREVIEW_CONTEXT_BINARY)"
@@ -255,3 +338,57 @@ clean:
 	rm -f wt wt-preview
 	rm -rf dist/ dist-preview/
 	rm -f test/linux/wt test/linux/mock-agent test/linux/run-tests test/linux/sandbox-tests test/linux/wt-tests test/web/wt test/web/claude
+
+# Offline metadata inventory gates: no daemon, browser, provider or listener.
+RUN_INVENTORY_TESTS ?= RunInventory|AgentList|ServerLiteralsSetVersion|Dashboard|RootHelp
+.PHONY: test-run-inventory-store test-run-inventory test-run-inventory-race build-run-inventory-linux
+test-run-inventory-store: | web/dist
+	$(GO) test -p 2 -json -count=1 ./internal/store ./internal/control
+
+test-run-inventory: | web/dist
+	$(GO) test -p 2 -json -count=1 ./internal/localmcp ./internal/wingsession ./internal/runinventory ./cmd/wt -run '$(RUN_INVENTORY_TESTS)' -timeout=5m
+
+test-run-inventory-race: | web/dist
+	$(GO) test -race -p 2 -json -count=1 ./internal/store ./internal/wingsession ./internal/localmcp ./internal/runinventory ./cmd/wt -run '$(RUN_INVENTORY_TESTS)' -timeout=5m
+
+build-run-inventory-linux: | web/dist
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -p 2 -buildvcs=false -o .scratch/wt-inventory-linux ./cmd/wt
+
+.PHONY: test-run-inventory-retention
+test-run-inventory-retention: | web/dist
+	$(GO) test -race -p 2 -json -count=1 ./internal/localmcp -run '^TestRunInventoryReopenRetentionRemovedSessionsAndFiniteConsumer$$' -timeout=5m
+
+.PHONY: vet-run-inventory
+vet-run-inventory:
+	$(GO) vet -p 2 ./...
+
+.PHONY: test-run-inventory-fixture-safety
+test-run-inventory-fixture-safety: | web/dist
+	$(GO) test -race -p 2 -json -count=1 ./internal/localmcp -run '^Test(AgentListSerializedAdaptersReturnSameDurableIdentities|AgentListGrantBoundsAndUnsupportedErrors|RunInventoryTwoWingsIdenticalIDsRespectLiveOwnerAndPathPolicies)$$' -timeout=5m
+
+# Bounded offline launch-plan gates: no built CLI execution, provider, listener,
+# native sandbox, browser, installs, or global cache access.
+.PHONY: test-launch-plan test-launch-plan-contract vet-launch-plan build-launch-plan test-launch-plan-parity
+test-launch-plan: test-launch-plan-parity
+	$(GO) test -p 2 ./internal/agent ./internal/config
+	$(GO) test -p 2 ./internal/egg -run 'LaunchConfig|LaunchCommand|LaunchPreparation|LaunchState|CodexLifecycle(Args|Supported|Skips|Native)|CodexRunArgs|MergeEggConfig|ResolveEggConfig|DiscoverEggConfig|SectionMask|BaseField|BuildEnv|ParseFSRules|ToSandboxConfig|ResolvePolicy|ProviderURLGuardrails|InferLocalPorts|DefaultEggConfig|UnsandboxedEggConfig|WildcardNetwork|TaskYAML' -count=1
+	$(GO) test -p 2 ./internal/launchplan ./internal/fsutil -count=1
+
+# Pure differential oracles: no native sandbox, provider execution or listener.
+test-launch-plan-parity:
+	$(GO) test -p 2 ./internal/sandbox -run '^(TestReview|TestLaunchPlan|TestLaunchPreparation|TestBuildProfile|TestCanonicalSandboxPath)' -count=1
+	$(GO) test -p 2 ./internal/eggclient -run '^TestMCP(SubdirectoryRetainsRootPolicy|LaunchPreservesExplicitNestedRootPolicy)$$' -count=1
+
+test-launch-plan-contract: | web/dist
+	$(GO) test -p 2 ./cmd/wt -run 'Doctor.*Launch|LaunchPlan' -count=1
+
+vet-launch-plan: | web/dist
+	$(GO) vet -p 2 ./...
+
+build-launch-plan: | web/dist
+	$(GO) build -p 2 -buildvcs=false -o .scratch/wt-launch-plan ./cmd/wt
+
+# Coordinator-only: invokes native sandbox children and disposable loopback.
+.PHONY: accept-launch-plan-native
+accept-launch-plan-native:
+	python3 -B scripts/launch-plan-native-gate.py --go '$(shell command -v go)'

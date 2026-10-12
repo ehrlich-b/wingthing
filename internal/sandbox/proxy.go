@@ -129,14 +129,7 @@ func StartProxyWithOptions(opts ProxyOptions) (*DomainProxy, error) {
 		tunnels:     make(map[net.Conn]struct{}),
 		lookupIP:    net.DefaultResolver.LookupIPAddr,
 	}
-	for _, d := range opts.Domains {
-		d = normalizeDomain(d)
-		if strings.HasPrefix(d, "*.") {
-			p.wildcards = append(p.wildcards, d[1:]) // store ".anthropic.com"
-		} else {
-			p.domains[d] = true
-		}
-	}
+	p.setDomains(opts.Domains)
 
 	p.server = &http.Server{
 		Handler:           p,
@@ -203,6 +196,25 @@ func (p *DomainProxy) Events() []EgressEvent {
 
 // Observing reports whether the proxy logs violations instead of refusing them.
 func (p *DomainProxy) Observing() bool { return p.observe }
+
+// DomainAllowed uses the enforcing proxy's exact matcher without a listener,
+// DNS lookup or connection. Observe mode is handled by the caller.
+func DomainAllowed(domains []string, host string) bool {
+	p := &DomainProxy{domains: make(map[string]bool)}
+	p.setDomains(domains)
+	return p.allowed(host)
+}
+
+func (p *DomainProxy) setDomains(domains []string) {
+	for _, d := range domains {
+		d = normalizeDomain(d)
+		if strings.HasPrefix(d, "*.") {
+			p.wildcards = append(p.wildcards, d[1:]) // store ".anthropic.com"
+		} else {
+			p.domains[d] = true
+		}
+	}
+}
 
 // allowed checks if a domain is in the allowlist.
 func (p *DomainProxy) allowed(host string) bool {

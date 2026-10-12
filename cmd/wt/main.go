@@ -97,6 +97,7 @@ func newRootCommand() *cobra.Command {
 
 	root.AddCommand(
 		runCmd(),
+		runInspectCmd(),
 		startCmd(),
 		stopCmd(),
 		timelineCmd(),
@@ -112,6 +113,8 @@ func newRootCommand() *cobra.Command {
 		logoutCmd(),
 		whoamiCmd(),
 		phoneCmd(),
+		pairCmd(),
+		devicesCmd(),
 		supportCmd(),
 		embedCmd(),
 		doctorCmd(),
@@ -503,7 +506,7 @@ func logCmd() *cobra.Command {
 func agentCmd() *cobra.Command {
 	ag := &cobra.Command{
 		Use:   "agent",
-		Short: "Manage agent adapters",
+		Short: "Manage agent adapters and durable runs",
 	}
 	ag.AddCommand(&cobra.Command{
 		Use:   "list",
@@ -579,7 +582,7 @@ func agentCmd() *cobra.Command {
 	}
 	waitAny.Flags().Float64Var(&timeoutSeconds, "timeout", 30, "wait timeout in seconds (0.1-600)")
 	waitAny.Flags().StringVar(&clientName, "client", "", "local MCP client name (or WT_MCP_CLIENT)")
-	ag.AddCommand(waitAny)
+	ag.AddCommand(waitAny, agentInventoryCmd(false), agentInventoryCmd(true))
 	return ag
 }
 
@@ -870,7 +873,7 @@ func loginCmd() *cobra.Command {
 			}
 
 			// If a daemon was running, restart it so it picks up the new token
-			if err := daemonctl.RestartWingDaemonIfRunning(); err != nil {
+			if err := daemonctl.RestartWingDaemonAfterLogin(); err != nil {
 				fmt.Printf("warning: failed to restart wing daemon: %v\n", err)
 			}
 			return nil

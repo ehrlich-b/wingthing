@@ -190,14 +190,15 @@ private actor SetupPreviewWire: HomeWire {
                 }
                 await model.restoreHome(wire: wire)
             } else {
-                let restoring = Task(priority: .background) { await model.restoreHome(wire: wire) }
-                await withCheckedContinuation { ready in
-                    observation = model.$busy.first(where: { $0 }).sink { _ in ready.resume() }
+                // Deliver at the published installation boundary. Task priority
+                // cannot guarantee resumption before a fast actor returns.
+                observation = model.$busy.sink { busy in
+                    if busy && !arrived {
+                        arrived = true
+                        model.receiveHomeSetupLink(incoming)
+                    }
                 }
-                // The restoring task has yielded inside installation.
-                expectTrue(model.busy)
-                model.receiveHomeSetupLink(incoming); arrived = true
-                await restoring.value
+                await model.restoreHome(wire: wire)
             }
             observation?.cancel()
             expectTrue(arrived); expectFalse(model.connected); expectFalse(model.busy)

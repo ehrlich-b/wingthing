@@ -1,0 +1,116 @@
+# Wingthing phone pairing v1
+
+The contract is the operator-maintained `wingthing-pairing-spec.md` (11 October 2026). Pair Bryan's iPhone to **EhrlichMac's main wing** first; pair **forge's wing** separately. A phone grant permits session inventory, attachment, input and stop on precisely one wing. It confers no account, configuration, enrollment, shell-launch or other-machine authority. `wt pair` must contact the running wing's local control endpoint, not start a second wing with a new identity.
+
+This document specifies the implemented v1 messages and boundaries. The storyboard is a visual specification; simulator tests do not establish camera or cellular acceptance.
+
+## Cryptographic dependencies
+
+Use **BoringSSL's SPAKE2 implementation**, not a new PAKE implementation. Vendor the symbol-prefixed source shipped by Apple's Swift Crypto at revision `1c80d3aff53fedc445b60692980cb4f19a618657`, derived from BoringSSL `0226f30467f540a3f62ef48d453f93927da199b6`. Go and Swift call the same `SPAKE2_CTX_new`, `SPAKE2_generate_msg` and `SPAKE2_process_msg` library APIs. This is BoringSSL's Ed25519 SPAKE2 dialect; do not claim wire compatibility with arbitrary RFC 9382 implementations. Each context is used once and freed. BoringSSL is a maintained cryptographic library used by Chromium and Swift Crypto; this integration still needs independent review before a public security claim.
+
+Primary references: [BoringSSL SPAKE2 API](https://commondatastorage.googleapis.com/chromium-boringssl-docs/curve25519.h.html), [Swift Crypto source](https://github.com/apple/swift-crypto/tree/1c80d3aff53fedc445b60692980cb4f19a618657), [BoringSSL security policy](https://github.com/google/boringssl/blob/main/SECURITY.md). AES-256-GCM, X25519, HKDF-SHA256, HMAC-SHA256 and P-256 signing use Go standard crypto / x/crypto and Apple CryptoKit. No curve arithmetic, password exchange or cipher is implemented here.
+
+## Invitation and transport
+
+The wing already has a persistent X25519 `wing_key` and WingID. Its SHA-256 fingerprint is the full lowercase hex digest of the decoded 32-byte public key. The QR is `wingthing://pair#v1z.` followed by unpadded base64url of RFC 1951 raw-DEFLATE compression (Go `compress/flate`, Apple Foundation `NSData` zlib API) of a compact JSON array in this exact order: `[v, wing_id, name, key, local, relay, id, secret, expires_unix_seconds]`. Compressing the isolated invitation keeps the real QR within ordinary terminal widths even with tailnet endpoints. This compresses only a locally displayed invitation, never credential/session traffic; the input QR is limited to 4 KiB and decompressed JSON to 4 KiB. The app also accepts uncompressed `v1.` arrays. When there are additional direct endpoints, field `local` in this array is an ordered array `[primary_lan, other_lan, tailnet_ip, magicdns]` instead of one string. The expanded form retains `local` plus optional `endpoints`. The equivalent expanded object below describes the fields; the app also accepts percent-encoded expanded JSON after `wingthing://pair#` for the hidden paste fallback:
+
+```json
+{"v":1,"wing_id":"persistent-wing-id","name":"EhrlichMac","key":"base64-X25519-key","local":"http://192.168.1.40:6078","endpoints":["http://100.91.2.3:6078","http://ehrlichmac.fixture.ts.net:6078"],"relay":"","id":"random-invitation-id","secret":"six randomly selected words","expires_at":"2026-10-11T21:00:00Z"}
+```
+
+The secret is in the fragment, never an HTTP URL/query. Six independent words from a fixed 2048-word vocabulary provide 66 bits of entropy. Show the same six words in the terminal as the fallback code. A fallback additionally needs the invitation's address and public identity; the app's hidden paste-link route carries these together. A secret alone cannot identify a machine on an arbitrary network.
+
+The invitation lives only in the running wing's memory. Deadline is exactly creation + 300 seconds, enforced by the wing's clock at every transition. An attempted PAKE claims it atomically; no second phone may claim it. Wrong proof, cancel, timeout, successful pairing and terminal exit invalidate it. Enter creates a fresh invitation, never extends an old secret. Limit invitation count, attempts, message size, concurrent connections and idle duration. Local administration uses a loopback endpoint protected by a mode-0600 random control token; remote phone endpoints never accept that token.
+
+Local-only is the default and requires no Wingthing account or payment. A personal wing with no valid registration starts locally with plain `wt wing start`; no extra flag, relay lookup, account login or relay transport is required. Even a saved relay URL cannot opt an accountless wing into relay machinery. To keep a registered wing entirely local, use `wt wing start --local-only`. The default setup is:
+
+```sh
+wt wing start   # if the main wing is not already running
+wt pair         # scan on Bryan's iPhone; approve both emoji checks
+```
+
+On Wi-Fi all pairing and control traffic stays on the LAN. Tailnet mode sends it directly over the existing Tailscale network; it never uses the Wingthing relay. `wt pair` prints “Local network only. That's fine; nothing else needed.” when there is no registered relay. On Wi-Fi, connect directly to the QR's LAN endpoint. If that address changed, Bonjour discovers `_wingthing-phone._tcp.local.` with instance `wt-` plus the first 16 hex characters of SHA-256(WingID). TXT records contain only version, WingID and pinned public key, never an invitation secret or credential. The phone accepts a discovered address only for the scanned instance with matching WingID and key; normal encrypted authentication still follows. The daemon advertises only while running and withdraws on exit. iOS declares that Bonjour service and asks Local Network permission.
+
+The daemon reads local IPv4 interfaces and, when available, bounded read-only `tailscale status --json` output (`Self.TailscaleIPs`, `Self.DNSName`). The QR includes its `100.64.0.0/10` tailnet IPv4 and full `.ts.net` MagicDNS name. Both use the same pinned, direct protocol, with no Wingthing account or relay entitlement. Endpoint preference is **LAN (including Bonjour recovery), then tailnet, then relay only if registered**. The app owns this order even when QR endpoints arrive shuffled or duplicated; MagicDNS classification is case-insensitive. Each new handshake starts with LAN again, while an established session command stays on its selected carrier and is never replayed on a fallback route. Endpoints are collected at daemon startup and the QR contains those available addresses; Bonjour handles LAN changes and listener-port changes after restart. Tailscale itself must already be connected on both devices. No Tailscale login or configuration is changed. References: [Tailscale CLI](https://tailscale.com/kb/1080/cli), [Bonjour responder library](https://github.com/grandcat/zeroconf). HTTP is a carrier for authenticated PAKE and E2E ciphertext, not a confidentiality boundary. Only a literal private/link-local/tailnet IPv4 address or `.local` / `.ts.net` hostname is permitted for local transport; disable redirects and cookies. The iOS local-network permission and `NSAllowsLocalNetworking` ATS exception are required. MagicDNS has a narrowly scoped insecure-HTTP exception for `.ts.net` subdomains; default HTTPS protections remain on the relay. No global arbitrary-load exception is used, and the runtime still restricts direct origins and encrypts the complete request to the scanned pin. URLSession disables cookies, redirects and proxy configuration for this transport. [Apple ATS documentation](https://developer.apple.com/documentation/bundleresources/information-property-list/nsapptransportsecurity/nsallowslocalnetworking) covers literal IP and `.local` connections. Never downgrade a failed pinned-key check into another connection attempt.
+
+Away from home, use `/ws/phone?wing_id=<routing-id>` at the explicitly scanned HTTPS relay origin. The wing must be registered there by `wt login` once. The phone sends no account bearer, cookie or phone login. The relay forwards bounded `tunnel.req` messages with public purpose `phone` to that wing and correlates `tunnel.res` replies; it never injects account authority for phone messages. Existing hosted admission still applies to the wing. Phone grants are validated at the wing even if the relay is compromised. A future tunn carrier must preserve the same protocol and pin.
+
+## PAKE and two-sided confirmation
+
+All binary fields below are standard padded base64. Transport requests are JSON objects; errors are stable codes (`expired`, `used`, `cancelled`, `identity_mismatch`, `bad_proof`, `revoked`, `unreachable`, `denied`). Do not reflect secrets in errors or logs.
+
+1. `pair.start {id, message}`: phone creates SPAKE2 Alice; wing uses Bob. Alice identity is `wt-phone-v1`; Bob identity is `wt-wing-v1:<wing_id>:<full fingerprint>:<invitation id>`. Both use the exact UTF-8 six-word secret. `message` is Alice's library message. The wing claims the invitation and returns `{message, key, name, expires_at}` with Bob's library message. The phone compares the returned key to the scanned key BEFORE continuing. A mismatch is a red hard stop.
+2. Both library contexts process the peer's message. Build the transcript as UTF-8 `wt-pair-v1\n<wing_id>\n<key>\n<id>\n<Alice message>\n<Bob message>`. HKDF-SHA256 of SPAKE2 output, salt SHA-256(transcript), info `wt-pair-v1`, yields a 32-byte AES-GCM key. Nonces are fresh random 12-byte values; encode `nonce || ciphertext || tag` as base64. The encrypted plaintext binds its operation and invitation ID.
+3. `pair.prove {id, payload}` encrypts `{op:"prove", id, name:"Bryan's iPhone", public_key:"base64 P-256 X9.63 key"}`. The wing validates the key/name and possession of the PAKE key. It returns an encrypted `{op:"proved", id, emoji}`. The four emoji are the first four bytes of HMAC-SHA256(pair key, `wt-emoji-v1`) mapped into a fixed ordered 256-entry emoji vocabulary. This binds the emoji to the PAKE transcript, wing pin and invitation. Only then show the request in the terminal.
+4. The phone offers **Emoji match · Pair** and **Cancel · emoji differ**. Its explicit approval sends encrypted `pair.confirm {op:"confirm", id, emoji}`. A mismatch cancels the invitation. Local terminal Enter sets an independent approval bit; the phone cannot set it. Terminal Ctrl-C cancels. Approval on one side alone never issues a credential. The phone may query encrypted `pair.status {op:"status", id}` while waiting for Enter.
+5. Once both approvals exist, persist `{device_id, name, public_key, credential_hash, paired_at, last_seen}` with an atomic mode-0600 write before sending success. Issue a random 32-byte credential, encrypted as `{op:"paired", id, wing_id, key, device_id, credential}`. The hash is standard base64 of SHA-256 of the UTF-8 raw credential string. The raw credential is never written on the wing. The completed response is retrievable only under that invitation's PAKE key for its remaining lifetime, so a dropped final response can be recovered without creating another grant. The secret is already consumed. Duplicate confirms never issue a second device.
+
+## Device connections and sessions
+
+Generate a persistent P-256 signing key per pairing on the phone. Use Secure Enclave when supported, otherwise CryptoKit with a non-synchronizing, `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` Keychain item. Store the opaque device credential and key representation together in a device-only Keychain item scoped by WingID, pinned wing key and device ID. A Secure Enclave representation wraps a hardware-bound key; it is not the private scalar. Public machine names, endpoints, pins and device IDs may be stored in Application Support. Never place a secret or private key in UserDefaults, profile JSON, setup URLs, diagnostics or the clipboard. Each pairing is independent. X25519 connection keys are ephemeral and remain in memory.
+
+For each connection, phone creates ephemeral X25519 and derives AES-GCM to the scanned persistent wing key with the existing `wt-phone-v1` HKDF domain (32 zero salt bytes). `device.hello {sender_pub}` returns an encrypted random challenge and random connection ID. The phone signs UTF-8 `wt-device-v1\n<wing_id>\n<connection_id>\n<challenge>\n<sender_pub>` with its stored P-256 key. It sends encrypted `device.auth {device_id, credential, signature, connection_id}`. The wing checks credential hash in constant time, signature, fresh challenge, live device record and exact wing binding. The encrypted hello also returns current direct endpoints and the registered relay origin; after successful device authentication the app saves that public metadata. The existing `wt login` command restarts a running main wing with its new registration; this login-specific restart removes `--local-only` while retaining the same state directory, wing key, roost and session configuration. Ordinary restarts preserve local-only mode. Following `wt login` on a previously local-only Mac, reconnect the app once on the LAN so it learns the relay origin, without re-pairing or logging in on the phone. Challenge is single-use, expires in 30 seconds and authentication failure closes the connection.
+
+Authenticated requests and replies carry the connection ID and strictly increasing sequence number INSIDE ciphertext. Reject replay, duplicate sequence, wrong wing, mismatched response ID and oversized input. An RPC permits only `sessions`, `attach`, `read`, `input`, `stop`, `detach` and `close`. Inventory returns name, status and blocked/unread attention. Attach resolves an existing session on this wing and obtains the existing egg controller/observer capability; commands use the existing wing session service. There is no phone method for configuration, pairing administration, credentials, billing, file browsing or another wing. Revocation is checked on every command and before delivering stream output. Idle connections expire; disconnect cancels attachment streams and releases writer leases. Never automatically replay input after reconnect.
+
+The exact device wire shapes (inside `phone.box`) are:
+
+```json
+{"op":"device.hello","sender_pub":"base64 ephemeral X25519 key"}
+{"op":"device.auth","connection_id":"id","payload":"AEAD of {connection_id,device_id,credential,signature}"}
+{"op":"device.command","connection_id":"id","payload":"AEAD of {op,connection_id,sequence,session_id,input}"}
+```
+
+The hello plaintext is `{connection_id, challenge, wing_id, key, endpoints, relay}`. Successful auth plaintext is `{connection_id, sequence:0, ok:true}`. Command plaintext uses the exact seven-operation allowlist above and sequences beginning at 1; `session_id` and `input` are empty when inapplicable. Its response plaintext is `{connection_id, sequence, result}` or that same object with `error:"session_unavailable"`. The outer response is `{payload:"base64 AEAD"}`; authenticated protocol rejection is `{error:"code"}` inside the carrier envelope. Invalid carrier boxes can return only a generic outer `bad_proof`/`denied`, because their key cannot be authenticated. Additional bounded-admission codes are `busy`, `replay`, `too_large`, `bad_key`, `name_in_use` and `unknown_device`.
+
+A session inventory is an array of `{id,name,agent,status,blocked,unread}`. Attach/input/stop/detach/close acknowledge `{ok:true}`; read returns `{output,screen,ended,truncated}`, with `screen` rendered from the existing wing terminal model. No client interprets terminal escape codes as UI markup. Pending enrollment replies have `{op:"",id,state,emoji}`; proof uses `op:"proved"` and completed enrollment uses `op:"paired"` with the credential fields specified above.
+
+## Administration and revocation
+
+`wt devices` talks to the same main wing over local authenticated control. It lists paired phone name, paired-at and last seen. `wt devices revoke <name>` resolves exactly one active name; ambiguous names require the device ID. Under the same registry lock that admits commands, persist revocation and cancel all connections/attachments for that device before acknowledging success. New commands fail `revoked`; a relay cannot revive a revoked credential. Re-pairing requires a new QR and both confirmations. On loss, revoke separately on EhrlichMac and forge. Cached content on a lost phone cannot be remotely erased by this protocol.
+
+## Threat model and visibility
+
+| Party / attack | Boundaries |
+| --- | --- |
+| Wing | Knows device public key, name, credential hash and commands/content for its own sessions. Its existing persistent key never leaves it. |
+| Phone | Knows credentials and content only for independently paired wings. Possession does not grant machine configuration or enrollment rights. |
+| Relay / hostile Wi-Fi | Sees routing IDs, IPs, connection timing/sizes and random carrier public keys. No QR secret, device credential, phone name, session metadata or content. Can drop/delay/replay traffic; AEAD, transcript binding, challenges and counters detect substitution and replay. Availability is not guaranteed. Static-wing-key carrier/device envelopes do not promise forward secrecy against later compromise of that key; a replaced pin requires fresh pairing. |
+| QR photograph | Gives temporary invitation knowledge, which must still pass the terminal's name/emoji check and phone approval. After use or 300 seconds it is useless. A photograph taken before expiry can race the real phone and cause denial of service; the terminal must never auto-approve. |
+| Key substitution | PAKE identities/transcript and direct key comparison bind the scanned persistent pin. Changed pin always stops; no trust-on-first-use replacement. |
+| Lost phone | Revocation closes live access and denies future requests. A thief with an unlocked phone before revocation has the phone's granted session authority. |
+| Compromised wing/phone | Out of scope for confidentiality of content already present there. Revocation cannot retract cached content, undo commands already executed or terminate an input accepted before revocation acquired the admission lock. |
+
+A machine name is a display label, never an authorization selector. The persistent key and WingID identify the wing. A malicious QR can name a different machine “EhrlichMac”; Bryan's trusted terminal and two-sided check are the out-of-band authority. Never claim simulator acceptance proves a real QR camera scan, Keychain/Secure Enclave behavior on Bryan's hardware, or cellular reachability. Those remain required physical-phone checks.
+
+## Carrier envelope clarification
+
+The entire protocol above, including PAKE public messages, name/key replies and errors, is carried inside a second X25519/AES-GCM envelope to the scanned wing key. Before local HTTP or relay forwarding, generate a per-wire ephemeral X25519 key and derive with domain `wt-phone-carrier-v1`. Send `phone.box {sender_pub, payload}`; `payload` encrypts the exact request described above. The wing decrypts, processes the request and encrypts its complete response under that carrier key. Thus the relay sees only the routing ID, random ephemeral public key, request-correlation ID and ciphertext; it cannot inspect enrollment state, phone/machine names, PAKE messages, credentials or errors. PAKE authentication and both human confirmations remain mandatory inside this envelope. Changing carrier is allowed only for initial `pair.start`/`device.hello`, never after an uncertain session command.
+
+## Build and owner relay entitlement
+
+Pairing requires a native CGO build and C++17 compiler because both apps call the same vetted library. On EhrlichMac or forge, build `CGO_ENABLED=1 go build -o wt ./cmd/wt` using Go 1.26.9 and a native C++ compiler (Clang on macOS, `g++` on Linux). The existing `CGO_ENABLED=0` distribution builds retain the previous CLI/wing behavior and explicitly reject phone pairing; they do not replace PAKE with an unsafe implementation. Native iOS SwiftPM compiles the same portable BoringSSL sources. A Linux CGO build remains a separate platform check; no binary was installed or daemon restarted in this task.
+
+LAN and tailnet are free of Wingthing account/hosted entitlement checks. Hosted relay admission uses the existing `IsUserPro` join: an active `subscriptions` row plus `entitlements` for the registered wing owner's user ID. Changing `users.tier` alone does not grant access. Bryan, as the operator, can grant his owner account that entitlement without a Stripe subscription or payment. **Only Bryan runs the following production SQL**, on the login node's actual `roost.db` (normally `/data/roost.db`); the agent only validated this against a temporary SQLite schema. First run `wt login` once on EhrlichMac and use the existing account's exact `user_id` from `~/.wingthing/device_token.yaml` (or the selected `WINGTHING_DIR`) / a read-only users lookup, replacing `OWNER_ACCOUNT_ID` below. On the login node, Bryan opens the actual database with `sqlite3 /data/roost.db` (adjust that path to the deployed database) and pastes the block below. Then reconnect the phone on LAN so it learns the registered relay origin. This grants only that account and makes no Stripe write. Existing edge entitlement caches synchronize through their normal internal refresh.
+
+```sql
+-- In sqlite3 /data/roost.db on the LOGIN node, run by Bryan only.
+.parameter init
+.parameter set @owner OWNER_ACCOUNT_ID
+BEGIN IMMEDIATE;
+INSERT INTO subscriptions (id, user_id, plan, status, seats)
+SELECT 'operator-relay-' || id, id, 'operator-relay', 'active', 1
+FROM users WHERE id = @owner
+ON CONFLICT(id) DO UPDATE SET status = 'active', updated_at = CURRENT_TIMESTAMP
+WHERE subscriptions.user_id = excluded.user_id AND subscriptions.plan = 'operator-relay';
+INSERT INTO entitlements (id, user_id, subscription_id)
+SELECT 'operator-relay-' || id, id, 'operator-relay-' || id
+FROM users WHERE id = @owner
+ON CONFLICT(user_id, subscription_id) DO NOTHING;
+SELECT e.user_id, s.plan, s.status FROM entitlements e
+JOIN subscriptions s ON e.subscription_id = s.id
+WHERE e.user_id = @owner AND s.status = 'active';
+COMMIT;
+```
+
+The SELECT must return the intended account with an active entitlement. Keep the wing's hosted policy allowed and register it once with `wt login`; the phone remains accountless. Prepared SQL is not a production action or a claim that the live entitlement or new relay route is deployed.

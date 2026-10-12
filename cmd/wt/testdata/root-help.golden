@@ -5,13 +5,14 @@ Usage:
   wt [command]
 
 Available Commands:
-  agent        Manage agent adapters
+  agent        Manage agent adapters and durable runs
   attach       Attach this terminal to a running egg session
   channel      Show executable channel, isolated state, and update feed
   claude       Start and attach to a wing-owned Claude parent with scoped MCP
   completion   Generate the autocompletion script for the specified shell
   conversation Inspect persistent parent and child conversations
   daemon       Run this machine’s wing, locally or through a relay
+  devices      List phones paired with this wing
   doctor       Check available agents, embedders, and API keys
   embed        Generate embeddings
   help         Help about any command
@@ -22,6 +23,7 @@ Available Commands:
   login        Authenticate this device with the roost
   logout       Remove device authentication
   mcp          Expose Wingthing to LLM clients
+  pair         Pair a phone with this machine's main wing
   phone        Set up the phone app
   prompt       Manage named, versioned prompt templates
   relay        Start the relay server (web UI + WebSocket relay)
@@ -29,6 +31,7 @@ Available Commands:
   retry        Retry a failed task
   roost        Run relay + wing in a single process (self-hosted mode)
   run          Run a prompt or skill
+  run-inspect  Explain a completed offline state snapshot without contacting a wing
   sandbox      Run an agent in a sandboxed session
   schedule     Manage recurring tasks
   session      Inspect and automate persistent terminal sessions

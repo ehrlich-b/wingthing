@@ -38,6 +38,7 @@ import (
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
+	"github.com/ehrlich-b/wingthing/internal/phonepair"
 	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	relaypkg "github.com/ehrlich-b/wingthing/internal/relay"
 	"github.com/ehrlich-b/wingthing/internal/tunnel"
@@ -814,6 +815,20 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	}
 	var wingToolsMu sync.Mutex
 
+	// An embedded roost's in-memory credential never overwrites the operator's
+	// independent device_token.yaml registration.
+	// A personal wing without registration defaults to a wholly local runtime.
+	// Embedded roosts and explicit local/org enrollment retain their own paths.
+	var tok *auth.DeviceToken
+	if !options.LocalOnly {
+		tok, err = wingConnectionToken(cfg.Dir, local, tokenOverride)
+		if tok == nil && !sharedHost && orgFlag == "" && !local && tokenOverride == nil {
+			options.LocalOnly = true
+		} else if err != nil {
+			log.Printf("relay credential unavailable: %v; local runtime will remain available", err)
+		}
+	}
+
 	// Resolve roost URL
 	roostURL := ""
 	if !options.LocalOnly {
@@ -831,16 +846,6 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		wsURL = strings.TrimRight(wsURL, "/") + "/ws/wing"
 	}
 
-	// An all-in-one roost passes its embedded service credential in memory. It
-	// must not overwrite device_token.yaml: that file may hold the operator's
-	// independent wingthing.ai identity for standalone wings on this machine.
-	var tok *auth.DeviceToken
-	if !options.LocalOnly {
-		tok, err = wingConnectionToken(cfg.Dir, local, tokenOverride)
-		if err != nil {
-			log.Printf("relay credential unavailable: %v; local runtime will remain available", err)
-		}
-	}
 	var localOwner *config.LocalOwner
 	if !sharedHost && orgFlag == "" {
 		legacyOwner := ""
@@ -1136,6 +1141,21 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		log.Printf("wing: local control ready (wing_id=%s)", cfg.WingID)
 		daemonctl.WriteWingStatusForRoost("local", "", roostURL)
 	}
+	var phoneServer *phonepair.Server
+	if !sharedHost && localOwner != nil && orgFlag == "" {
+		phoneServer, err = phonepair.Listen(ctx, cfg.Dir, cfg.WingID, strings.TrimSuffix(cfg.Hostname, ".local"), func() string {
+			if tok != nil && strings.HasPrefix(roostURL, "https://") {
+				return roostURL
+			}
+			return ""
+		}, privKey, &phoneSessions{service: sessions, owner: localOwner.ID, attachments: map[string]*phoneAttachment{}, seen: map[string]map[string]int64{}})
+		if err != nil {
+			return fmt.Errorf("phone pairing: %w", err)
+		}
+		if phoneServer != nil {
+			defer phoneServer.Close()
+		}
+	}
 	if options.SetSessionService != nil {
 		options.SetSessionService(sessions)
 	}
@@ -1179,6 +1199,19 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	}
 
 	client.OnTunnel = func(ctx context.Context, req ws.TunnelRequest, write ws.PTYWriteFunc) {
+		if req.Purpose == "phone" {
+			response := phonepair.Response{Error: "denied"}
+			if phoneServer != nil && len(req.Payload) <= phonepair.MaxPayload+4096 {
+				var request phonepair.Request
+				if json.Unmarshal([]byte(req.Payload), &request) == nil {
+					response = phoneServer.Manager.Box(ctx, request)
+				}
+			}
+			encoded, _ := json.Marshal(response)
+			_ = write(ws.TunnelResponse{Type: ws.TypeTunnelResponse, RequestID: req.RequestID, Payload: string(encoded)})
+			return
+		}
+
 		req.SenderUserID = localOwner.OwnerForRelay(roostURL, req.SenderUserID)
 		tunnel.HandleTunnelRequest(tunnel.References{Version: version, WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowedKeys, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs, Sessions: sessions, BrowserTools: func() []*config.ToolConfig {
 			wingToolsMu.Lock()
