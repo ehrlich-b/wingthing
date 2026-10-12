@@ -1,0 +1,1 @@
+codex exec -m gpt-6.1-sol -s read-only -c approval_policy='"never"' --ephemeral -C /work/lanes/wt-test-disputes/wingthing --json -o /work/lanes/wt-test-disputes/wingthing/DISPUTES-REVIEW.md - < evidence/test-disputes/review-prompt.txt > evidence/test-disputes/review-exec.jsonl 2> evidence/test-disputes/review-exec.stderr
