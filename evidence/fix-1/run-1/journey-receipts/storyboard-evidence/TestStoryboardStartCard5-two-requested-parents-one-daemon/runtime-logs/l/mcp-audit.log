@@ -1,0 +1,2 @@
+{"actor":"default","argument_sha256":"71fd746bbae038372f224cba44fc4bded4f7594a0a280760e039b3dc6fd5ea65","decision":"error","isolation":"wingthing-sandbox","principal":"user-20e9e9be2be5ca408168","timestamp":"2026-10-12T01:17:32.36661744Z","tool":"agent_start"}
+{"actor":"default","argument_sha256":"a1eca216c9451a6c77a252940199e44565d1d70be8e0b4ed8e26bbf34e4ca36f","decision":"error","isolation":"wingthing-sandbox","principal":"user-20e9e9be2be5ca408168","timestamp":"2026-10-12T01:17:32.372300947Z","tool":"agent_start"}

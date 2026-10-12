@@ -1,0 +1,1 @@
+ok  	github.com/ehrlich-b/wingthing/cmd/wt	52.965s

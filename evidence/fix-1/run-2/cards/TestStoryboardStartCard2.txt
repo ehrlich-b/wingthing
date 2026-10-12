@@ -1,0 +1,107 @@
+=== RUN   TestStoryboardStartCard2
+=== RUN   TestStoryboardStartCard2/routing/local
+    storyboardScopedNew_pty_test.go:35: Unix socket lexical/canonical bytes: 65/65
+    storyboardScopedNew_pty_test.go:35: Unix socket lexical/canonical bytes: 83/83
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard2-routing-local-120-285175.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard2-routing-local-120-285148.txt
+--- PASS: TestStoryboardStartCard2/routing/local (0.23s)
+=== RUN   TestStoryboardStartCard2/native/local
+    storyboardScopedNew_pty_test.go:102: Unix socket lexical/canonical bytes: 65/65
+    storyboardScopedNew_pty_test.go:102: Unix socket lexical/canonical bytes: 83/83
+    storyboardScopedNew_pty_test.go:113: screen timeout (n / provider prompt):
+        wt | 0 sessions | 1 machines
+        B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+        Local only: forge + phones paired on your network
+        Selected agent: claude
+        Verify selected provider: claude --version
+        Executable: /work/lanes/wt-fix-1/wingthing/.scratch/northstar-1945108713/tmp-alias/bin/claude
+        Continue to the selected agent's own login after verification.
+        A version check is not authentication or a ready-session receipt.
+        Enter: verify   a: Add more agents   c/o: choose another   r: Rescan PATH   b: Back
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        Enter accept  Esc cancel  Ctrl-C quit
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard2-native-local-120-285220.txt
+--- FAIL: TestStoryboardStartCard2/native/local (8.24s)
+=== RUN   TestStoryboardStartCard2/routing/forge
+    storyboardScopedNew_pty_test.go:35: Unix socket lexical/canonical bytes: 65/65
+    storyboardScopedNew_pty_test.go:35: Unix socket lexical/canonical bytes: 83/83
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard2-routing-forge-120-287165.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard2-routing-forge-120-287113.txt
+--- PASS: TestStoryboardStartCard2/routing/forge (0.16s)
+=== RUN   TestStoryboardStartCard2/native/forge
+    storyboardScopedNew_pty_test.go:102: Unix socket lexical/canonical bytes: 65/65
+    storyboardScopedNew_pty_test.go:102: Unix socket lexical/canonical bytes: 83/83
+    storyboardScopedNew_pty_test.go:113: screen timeout (scoped parent attached):
+        wt | 0 sessions | 2 machines
+        B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [forge] !:0 bell:off
+        forge  connected  updated 0s ago
+          (no sessions)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+        / filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+        exit status 1
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard2-native-forge-120-287190.txt
+    storyboard_pty_test.go:803: fixture runtime diagnostic mcp-audit.log: {"actor":"default","argument_sha256":"e91b484f0f4fc4f0666cc2a46805f956296cc1bc515298bc3bbe28d199ab00fa","decision":"error","isolation":"wingthing-sandbox","principal":"user-fa7dae45eea23d2d85bf","timestamp":"2026-10-12T01:19:31.797983943Z","tool":"agent_start"}
+    storyboard_pty_test.go:803: fixture runtime diagnostic wing.log: 2026/10/11 21:19:31 egg: loaded wing config from /work/lanes/wt-fix-1/wingthing/.scratch/f0282bfe54/r/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude codex]
+          skills: []
+          paths: [/work/lanes/wt-fix-1/wingthing/.scratch/northstar-443853995/forge project space]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 21:19:31 wing: local control ready (wing_id=e025bc62a69342c4887d12de)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+    storyboard_pty_test.go:820: fixture wing diagnostic: 2026/10/11 21:19:31 egg: loaded wing config from /work/lanes/wt-fix-1/wingthing/.scratch/f0282bfe54/r/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude codex]
+          skills: []
+          paths: [/work/lanes/wt-fix-1/wingthing/.scratch/northstar-443853995/forge project space]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 21:19:31 wing: local control ready (wing_id=e025bc62a69342c4887d12de)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+--- FAIL: TestStoryboardStartCard2/native/forge (8.13s)
+--- FAIL: TestStoryboardStartCard2 (16.77s)

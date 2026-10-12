@@ -1,0 +1,62 @@
+
+--- command ["attach" "forge:same"]; exit=exit status 255 ---
+[remote attachment; Ctrl+B then q detaches; Ctrl+B twice sends Ctrl+B]
+unknown flag: --expected-channel
+Connection to forge (ns-forge) ended; session outcome unknown. Reconnect: WINGTHING_DIR='/work/lanes/wt-fix-1/wingthing/.scratch/2a2f015df9/l' WINGTHING_PREVIEW
+_DIR='/work/lanes/wt-fix-1/wingthing/.scratch/2a2f015df9/l' '/work/lanes/wt-fix-1/wingthing/.scratch/storyboard-wt' 'attach' '--' 'forge:same'
+Pinned route: WINGTHING_DIR='/work/lanes/wt-fix-1/wingthing/.scratch/2a2f015df9/l' WINGTHING_PREVIEW_DIR='/work/lanes/wt-fix-1/wingthing/.scratch/2a2f015df9/l'
+'/work/lanes/wt-fix-1/wingthing/.scratch/storyboard-wt' '--remote' 'ns-forge' '--remote-binary' 'wt' '--remote-state' '/work/lanes/wt-fix-1/wingthing/.scratch/2
+a2f015df9/r' 'attach' '--' 'same'
+SSH to ns-forge ended with status 255; check the SSH diagnostic above. Session state is unknown; reconnect with the same --remote-state and list sessions before
+ relaunching
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

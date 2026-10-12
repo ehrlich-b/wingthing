@@ -1,0 +1,3 @@
+=== RUN   TestStoryboardInstallCard1
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/storyboard-evidence/TestStoryboardInstallCard1/TestStoryboardInstallCard1-140-256284.txt
+--- PASS: TestStoryboardInstallCard1 (0.03s)

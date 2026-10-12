@@ -1,0 +1,28 @@
+
+--- reconnect enabled / alternate grid ---
+ALT_READY
+WHEEL_UP_SGR
+WHEEL_DOWN_SGR
+SIZE:40x12
+
+
+
+
+
+
+
+
+
+--- split disable / normal screen ---
+HISTORY-31
+HISTORY-32
+HISTORY-33
+HISTORY-34
+HISTORY-35
+HISTORY-36
+HISTORY-37
+HISTORY-38
+HISTORY-39
+MOUSE_READY
+NORMAL_HISTORY_READY
+

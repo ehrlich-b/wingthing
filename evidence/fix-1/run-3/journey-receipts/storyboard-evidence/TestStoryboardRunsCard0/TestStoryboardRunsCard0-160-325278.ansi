@@ -1,0 +1,8 @@
+submitted: t-20261011-212310-8df00bd907984eb2 (Read the tests and report failures)
+2026/10/11 21:23:10 memory: warning: index: read: open /work/lanes/wt-fix-1/wingthing/.scratch/69790fefcb/l/memory/index.md: no such file or directory
+2026/10/11 21:23:10 memory: warning: identity: read: open /work/lanes/wt-fix-1/wingthing/.scratch/69790fefcb/l/memory/identity.md: no such file or directory
+2026/10/11 21:23:10 memory: warning: read dir /work/lanes/wt-fix-1/wingthing/.scratch/69790fefcb/l/memory: open /work/lanes/wt-fix-1/wingthing/.scratch/69790fefcb/l/memory: no such file or directory
+2026/10/11 21:23:10 domain proxy: listening on 127.0.0.1:33985, 4 domains, 2 wildcards
+2026/10/11 21:23:10 task t-20261011-212310-8df00bd907984eb2 sandbox: network=https enforcement=proxy domains=6 local_ports=[]
+2026/10/11 21:23:10 linux sandbox: created tmpdir=/work/lanes/wt-fix-1/wingthing/.scratch/northstar-4010709938/tmp-alias/wt-sandbox-1665833111 network=https cgroup=false
+STORYBOARD_LEGACY_RESULT

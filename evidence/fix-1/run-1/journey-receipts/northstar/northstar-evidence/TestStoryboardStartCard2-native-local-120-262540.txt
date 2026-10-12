@@ -1,0 +1,32 @@
+
+--- new scoped parent / dashboard ---
+wt | 0 sessions | 1 machines
+B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connecting (refreshing)
+  (no sessions)
+
+Local only: this machine + phones paired on your network
+A wing is the daemon hosting sessions; a roost is the machine you work on.
+Free local / LAN / tailnet / saved SSH; your provider may need its own account and network.
+Found on this machine: claude · /work/lanes/wt-fix-1/wingthing/.scratch/northstar-1631180912/tmp-alias/bin/claude
+Found on this machine: codex · /work/lanes/wt-fix-1/wingthing/.scratch/northstar-1631180912/tmp-alias/bin/codex
+n: Use detected agent / Add more agents   s: Skip; open sessions / shell
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
