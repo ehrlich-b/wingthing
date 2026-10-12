@@ -235,7 +235,7 @@ func showInvitation(out io.Writer, q phonepair.Invitation) error {
 	for _, endpoint := range q.Endpoints {
 		fmt.Fprintf(out, "Direct endpoint: %s\n", endpoint)
 	}
-	fmt.Fprintf(out, "\n%s\n5:00 · Waiting for scan...\nSame Wi-Fi: no account needed. Away from home: needs this Mac registered once (`wt login`).\n", q.Secret)
+	fmt.Fprintf(out, "\n%s\n5:00 · Waiting for scan...\nSame Wi-Fi: no account needed. Away from home: needs %s registered once (`wt login`).\n", q.Secret, place)
 	return nil
 }
 func devicesCmd() *cobra.Command {

@@ -456,6 +456,9 @@ func TestNorthstarPTYColdClaude(t *testing.T) {
 
 func coldRequireSandbox(t *testing.T) {
 	t.Helper()
+	if runtime.GOOS != "darwin" {
+		t.Skip("REQUIRED-UNRUN: protected-parent fixture uses macOS Seatbelt policy; run the native Mac gate")
+	}
 	if runtime.GOOS == "darwin" {
 		probe := exec.CommandContext(t.Context(), "/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)", "/usr/bin/true")
 		if output, err := probe.CombinedOutput(); err != nil {

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"github.com/ehrlich-b/wingthing/internal/phonepair"
 	"github.com/skip2/go-qrcode"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,11 @@ func TestPairTerminalHasRealScannableLayoutAndPermissionCopy(t *testing.T) {
 	if e := showInvitation(&out, q); e != nil {
 		t.Fatal(e)
 	}
-	for _, copy := range []string{"Pair a phone with wing EhrlichMac (this Mac). The phone will be able to see and control the sessions on this machine.", q.Secret, "5:00 · Waiting for scan...", "Same Wi-Fi: no account needed. Away from home: needs this Mac registered once (`wt login`)."} {
+	place := "this machine"
+	if runtime.GOOS == "darwin" {
+		place = "this Mac"
+	}
+	for _, copy := range []string{"Pair a phone with wing EhrlichMac (" + place + "). The phone will be able to see and control the sessions on this machine.", q.Secret, "5:00 · Waiting for scan...", "Same Wi-Fi: no account needed. Away from home: needs " + place + " registered once (`wt login`)."} {
 		if !strings.Contains(out.String(), copy) {
 			t.Fatal("missing required terminal copy", copy)
 		}

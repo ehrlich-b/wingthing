@@ -175,6 +175,7 @@ while True:
 `
 
 func TestNorthstarPTYNativeMouse(t *testing.T) {
+	coldRequireSandbox(t)
 	f := northstarNativeMouseFixture(t) // creates a real parent and symlinked TMPDIR
 	binary := northstarBuild(t, f, "stable")
 	// All actual children inherit GOTMPDIR too; the build helper's clone-local

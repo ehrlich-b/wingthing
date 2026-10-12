@@ -218,13 +218,26 @@ func northstarReturnWait(t *testing.T, h *northstarPTY, wantFailure bool) {
 	}
 	// Wait on an explicit cleanup sequence, not process exit alone: the PTY
 	// output reader may still be draining the child's final writes.
-	h.waitNativeBytes(string(egg.NativeTerminalReset()))
-	h.mu.Lock()
-	data := bytes.Clone(h.transcript.Bytes())
-	h.mu.Unlock()
-	for _, mode := range []string{"1", "1000", "1006", "2004", "1049"} {
-		if bytes.LastIndex(data, []byte("\x1b[?"+mode+"l")) < bytes.LastIndex(data, []byte("\x1b[?"+mode+"h")) {
-			t.Fatalf("mode %s survived attachment: %q", mode, data)
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	for {
+		h.mu.Lock()
+		data := bytes.Clone(h.transcript.Bytes())
+		h.mu.Unlock()
+		reset := bytes.LastIndex(data, egg.NativeTerminalReset())
+		clean := reset >= 0
+		for _, mode := range []string{"1", "1000", "1006", "2004", "1049"} {
+			// The startup reset also matches. Require the cleanup reset after
+			// every provider enable, while the reader drains the final writes.
+			clean = clean && reset > bytes.LastIndex(data, []byte("\x1b[?"+mode+"h"))
+		}
+		if clean {
+			return
+		}
+		select {
+		case <-h.changed:
+		case <-timer.C:
+			t.Fatalf("cleanup reset did not follow provider modes: %q", data)
 		}
 	}
 }
@@ -317,7 +330,17 @@ func TestNorthstarPTYAttachReturn(t *testing.T) {
 					h.waitNativeBytes(want)
 				}
 			} else {
-				h.waitNativeBytes(remotepkg.ShellQuote(binary) + " 'attach' '--' 'same'")
+				reconnectBinary := binary
+				// Linux os.Executable resolves the alias through /proc/self/exe.
+				// Still require this exact fixture binary and qualified session.
+				if runtime.GOOS == "linux" {
+					var err error
+					reconnectBinary, err = filepath.EvalSymlinks(binary)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				h.waitNativeBytes(remotepkg.ShellQuote(reconnectBinary) + " 'attach' '--' 'same'")
 			}
 		})
 		t.Run(target.name+"-sigterm", func(t *testing.T) {
@@ -560,6 +583,9 @@ func northstarReturnNativeProvider(t *testing.T, f *northstarFixture, binary str
 
 func northstarReturnNativeProbe(t *testing.T, f *northstarFixture) {
 	t.Helper()
+	if runtime.GOOS != "darwin" {
+		t.Skip("REQUIRED-UNRUN: attach confinement fixture requires native macOS sandbox-exec")
+	}
 	probe := exec.CommandContext(t.Context(), "/usr/bin/sandbox-exec", "-p", "(version 1) (allow default)", "/usr/bin/true")
 	probe.Env, probe.Dir = f.env, f.work
 	if output, err := probe.CombinedOutput(); err != nil {
