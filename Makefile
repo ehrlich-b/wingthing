@@ -104,7 +104,8 @@ endef
 check: web
 	# Build once outside the PTY interaction deadlines, including CGO pairing.
 	$(stable-build)
-	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 ./...
+	$(preview-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 ./...
 
 web:
 	cd web && $(NPM) ci

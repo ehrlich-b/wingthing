@@ -1,0 +1,5 @@
+# Inherit the normal host sandbox, including its sensitive-directory denials.
+# The Linux browser fixture's deny:/ relies on Linux jail mount exceptions.
+network:
+  domains: ["*"]
+env: ["*"]
