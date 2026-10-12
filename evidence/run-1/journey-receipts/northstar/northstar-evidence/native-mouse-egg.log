@@ -1,0 +1,7 @@
+2026/10/11 20:21:28 egg: command binary: /usr/bin/python3.13
+2026/10/11 20:21:28 domain proxy: listening on 127.0.0.1:41505, 1 domains, 0 wildcards
+2026/10/11 20:21:28 linux sandbox: created tmpdir=/work/lanes/wt-e2e/wingthing/.scratch/native-2744150992/tmp-alias/wt-sandbox-1721999880 network=https cgroup=false
+2026/10/11 20:21:28 egg: session mouse kind=command agent= command=["/usr/bin/python3" "/work/lanes/wt-e2e/wingthing/.scratch/native-2744150992/work/native-mouse.py"] pid=3925879 network=none fs=25
+2026/10/11 20:21:28 egg: serving on /work/lanes/wt-e2e/wingthing/.scratch/15d947f2a9/eggs/mouse/egg.sock (pid 3925828)
+2026/10/11 20:21:28 egg: first PTY output from pid 3925879 after 197ms (115 bytes)
+2026/10/11 20:21:31 egg: session mouse exited with code -1

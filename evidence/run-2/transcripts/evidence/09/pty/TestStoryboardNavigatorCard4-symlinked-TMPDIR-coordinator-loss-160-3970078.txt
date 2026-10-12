@@ -1,0 +1,760 @@
+
+--- fresh parent inventory ---
+wt | 1 sessions | 3 machines
+B:0 W:1 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  /work/lanes/wt-e2e/wingthing/.scratch/northstar-3706974241/work
+> W surviving-parent                                                                     claude       northstar-3706974241/work                            2m
+forge  connecting (refreshing)
+  (no sessions)
+legacy  offline
+  ! remote "legacy": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown; reconnect and list sessions before rela…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+
+--- fresh wt recovers same durable IDs ---
+wt | Recent runs | 101 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+legacy: history unavailable (legacy SSH-only profile)
+> running wing-local:same-run fixture northstar-3706974241/work 11h output:available parent:parent-run cleanup:unknown live
+  running wing-forge:same-run fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown live
+  stopped wing-local:cancelled-record fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown live
+  done wing-local:complete-record fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown live
+  failed wing-local:failed-record fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-000 fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-001 fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-002 fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-003 fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-004 fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-005 fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-006 fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown live
+  done wing-local:filler-007 fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown live
+  done wing-local:fill
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter live attach/details  i details  o bounded result  N next page
+/ history filter  R first pages  h sessions  ? help  q quit
+
+--- same ID on another wing ---
+wt | Recent runs | 1 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+legacy: history unavailable (legacy SSH-only profile)
+> running wing-forge:same-run fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown live
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter live attach/details  i details  o bounded result  N next page
+/ history filter  R first pages  h sessions  ? help  q quit
+
+--- saved exact forge route attach ---
+RECOVERY_FORGE_LIVE
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--- forge detach ---
+wt | Recent runs | 1 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+legacy: history unavailable (legacy SSH-only profile)
+> running wing-forge:same-run fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown live
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter live attach/details  i details  o bounded result  N next page
+/ history filter  R first pages  h sessions  ? help  q quit
+
+--- terminal records after egg metadata loss ---
+wt | Recent runs | 4 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+Loading history…
+legacy: history unavailable (legacy SSH-only profile)
+> stopped wing-local:cancelled-record fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown live
+  done wing-local:complete-record fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown live
+  failed wing-local:failed-record fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown live
+  unknown wing-local:unknown-record fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown live
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter live attach/details  i details  o bounded result  N next page
+/ history filter  R first pages  h sessions  ? help  q quit
+More history on local; N loads the next page explicitly
+
+--- completed refresh confirms live metadata gone ---
+wt | Recent runs | 4 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+legacy: history unavailable (legacy SSH-only profile)
+> stopped wing-local:cancelled-record fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown
+  done wing-local:complete-record fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown
+  failed wing-local:failed-record fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown
+  unknown wing-local:unknown-record fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter live attach/details  i details  o bounded result  N next page
+/ history filter  R first pages  h sessions  ? help  q quit
+More history on local; N loads the next page explicitly
+
+--- cancelled run filter ---
+wt | Recent runs | 1 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+legacy: history unavailable (legacy SSH-only profile)
+> stopped wing-local:cancelled-record fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter live attach/details  i details  o bounded result  N next page
+/ history filter  R first pages  h sessions  ? help  q quit
+More history on local; N loads the next page explicitly
+
+--- terminal Enter opens metadata ---
+wt | Recent runs | 1 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+Run details: wing-local:cancelled-record
+Session: wing-local:same
+Status: stopped  Failure: stopped
+Agent: fixture
+Cwd: /work/lanes/wt-e2e/wingthing/.scratch/northstar-3706974241/work
+Created: 2026-10-11T12:00:00Z
+Output: available
+Parent: parent-run
+Cleanup attention: unknown
+Route: local
+Live session verified: false
+o: read an authorized result, bounded to 8192 characters
+Recovery guidance: wt agent recover --json --client 'recovery-fixture'
+Use the original admission key for unknown outcomes; never resend automatically.
+Offline: wt run-inspect --snapshot PATH
+PATH must be an explicit completed, hash-verified snapshot inside this workspace.
+The dashboard never snapshots or inspects mutable live state.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+j/k scroll  Esc/Enter back  Ctrl-C quit
+
+--- explicit bounded result / sanitized controls ---
+wt | Recent runs | 1 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+Result: wing-local:cancelled-record (explicit read; not cached)
+Terminal receipt: stopped (cancellation is not completion)
+METADATA_ONLY_RESULT
+?]52;fake??
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+j/k scroll  Esc/Enter back  Ctrl-C quit
+
+--- unknown admission never launches ---
+wt | Recent runs | 1 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+Run details: wing-local:unknown-record
+Session: wing-local:same
+Status: unknown  Failure: unknown_outcome
+Agent: fixture
+Cwd: /work/lanes/wt-e2e/wingthing/.scratch/northstar-3706974241/work
+Created: 2026-10-11T12:00:00Z
+Output: available
+Parent: parent-run
+Cleanup attention: unknown
+Route: local
+Live session verified: false
+o: read an authorized result, bounded to 8192 characters
+Recovery guidance: wt agent recover --json --client 'recovery-fixture'
+Use the original admission key for unknown outcomes; never resend automatically.
+Offline: wt run-inspect --snapshot PATH
+PATH must be an explicit completed, hash-verified snapshot inside this workspace.
+The dashboard never snapshots or inspects mutable live state.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+j/k scroll  Esc/Enter back  Ctrl-C quit
+
+--- pagination target first page ---
+wt | Recent runs | 1 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+legacy: history unavailable (legacy SSH-only profile)
+> running wing-local:same-run fixture northstar-3706974241/work 11h output:available parent:parent-run cleanup:unknown
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter live attach/details  i details  o bounded result  N next page
+/ history filter  R first pages  h sessions  ? help  q quit
+More history on local; N loads the next page explicitly
+
+--- explicit next page ---
+wt | Recent runs | 2 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+legacy: history unavailable (legacy SSH-only profile)
+> running wing-forge:same-run fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown
+  done wing-local:older-record fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter live attach/details  i details  o bounded result  N next page
+/ history filter  R first pages  h sessions  ? help  q quit
+
+--- restart first pages ---
+wt | Recent runs | 1 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+legacy: history unavailable (legacy SSH-only profile)
+> unknown wing-local:unknown-record fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter live attach/details  i details  o bounded result  N next page
+/ history filter  R first pages  h sessions  ? help  q quit
+More history on local; N loads the next page explicitly
+
+--- incomplete projection retains stale known row ---
+wt | Recent runs | 1 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+legacy: history unavailable (legacy SSH-only profile)
+forge: history unavailable; stale: incomplete or inconsistent history projection; refresh discovery
+local: history unavailable; stale: incomplete or inconsistent history projection; refresh discovery
+> unknown wing-local:unknown-record fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown stale
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter live attach/details  i details  o bounded result  N next page
+/ history filter  R first pages  h sessions  ? help  q quit
+More history on local; N loads the next page explicitly
+
+--- incomplete Enter cannot attach ---
+wt | Recent runs | 1 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+Run details: wing-local:unknown-record
+Session: wing-local:same
+Status: unknown  Failure: unknown_outcome
+Agent: fixture
+Cwd: /work/lanes/wt-e2e/wingthing/.scratch/northstar-3706974241/work
+Created: 2026-10-11T12:00:00Z
+Output: available
+Parent: parent-run
+Cleanup attention: unknown
+Route: local
+Live session verified: false
+Stale history: incomplete or inconsistent history projection; refresh discovery
+o: read an authorized result, bounded to 8192 characters
+Recovery guidance: wt agent recover --json --client 'recovery-fixture'
+Use the original admission key for unknown outcomes; never resend automatically.
+Offline: wt run-inspect --snapshot PATH
+PATH must be an explicit completed, hash-verified snapshot inside this workspace.
+The dashboard never snapshots or inspects mutable live state.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+j/k scroll  Esc/Enter back  Ctrl-C quit
+
+--- return from stale metadata ---
+wt | Recent runs | 1 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+Run details: wing-local:unknown-record
+Session: wing-local:same
+Status: unknown  Failure: unknown_outcome
+Agent: fixture
+Cwd: /work/lanes/wt-e2e/wingthing/.scratch/northstar-3706974241/work
+Created: 2026-10-11T12:00:00Z
+Output: available
+Parent: parent-run
+Cleanup attention: unknown
+Route: local
+Live session verified: false
+Stale history: incomplete or inconsistent history projection; refresh discovery
+o: read an authorized result, bounded to 8192 characters
+Recovery guidance: wt agent recover --json --client 'recovery-fixture'
+Use the original admission key for unknown outcomes; never resend automatically.
+Offline: wt run-inspect --snapshot PATH
+PATH must be an explicit completed, hash-verified snapshot inside this workspace.
+The dashboard never snapshots or inspects mutable live state.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+j/k scroll  Esc/Enter back  Ctrl-C quit
+
+--- policy denial remains unavailable ---
+wt | Recent runs | 1 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+legacy: history unavailable (legacy SSH-only profile)
+forge: history unavailable; stale: policy denied history
+local: history unavailable; stale: policy denied history
+> unknown wing-local:unknown-record fixture northstar-3706974241/work 12h output:available parent:parent-run cleanup:unknown stale
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter live attach/details  i details  o bounded result  N next page
+/ history filter  R first pages  h sessions  ? help  q quit
+More history on local; N loads the next page explicitly
+
+--- result denial shown without cached content ---
+wt | Recent runs | 1 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+Result: wing-local:unknown-record (explicit read; not cached)
+Result unavailable: policy denied result
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+j/k scroll  Esc/Enter back  Ctrl-C quit
+
+--- return from denied result ---
+wt | Recent runs | 1 visible | pages <=100 rows
+Partial/unavailable history; liveness and terminal outcome are separate
+Result: wing-local:unknown-record (explicit read; not cached)
+Result unavailable: policy denied result
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+j/k scroll  Esc/Enter back  Ctrl-C quit

@@ -1,0 +1,6 @@
+[remote attachment; Ctrl+B then q detaches; Ctrl+B twice sends Ctrl+B]
+[attached to scoped-parent; Ctrl+B then q detaches; Ctrl+B twice sends Ctrl+B]
+SCOPED_PARENT_ROUTE_READY
+[?1l[?9l[?25h[?47l[?1047l[?1049l[?1000l[?1001l[?1002l[?1003l[?1005l[?1006l[?1007l[?1015l[?1016l[?2004l
+[detached from scoped-parent]
+[?1l[?9l[?25h[?47l[?1047l[?1049l[?1000l[?1001l[?1002l[?1003l[?1005l[?1006l[?1007l[?1015l[?1016l[?2004l

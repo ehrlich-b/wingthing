@@ -1,0 +1,79 @@
+{
+  "frozen_sources": {
+    "matches": true,
+    "mismatches": []
+  },
+  "tested_sources": {
+    "matches": true,
+    "mismatches": []
+  },
+  "live_storyboard_matches_frozen": {
+    "01-install.html": true,
+    "02-start.html": true,
+    "03-navigator.html": true,
+    "04-machines.html": true,
+    "05-phone.html": true,
+    "06-runs.html": true,
+    "07-upgrade.html": true,
+    "08-reach.html": true,
+    "09-share.html": true,
+    "10-cloud.html": true,
+    "11-billing.html": true,
+    "12-teams.html": true,
+    "index.html": true
+  },
+  "live_prd_matches_frozen": true,
+  "cards": {
+    "total": 100,
+    "named_tests": 51,
+    "counts": {
+      "PASS": 17,
+      "FAIL": 34,
+      "FLAKY": 0,
+      "PENDING-FEATURE": 49
+    }
+  },
+  "run_1": {
+    "complete": true,
+    "counts": {
+      "PASS": 17,
+      "FAIL": 34
+    },
+    "transcript_files": 243,
+    "exit_code": 1
+  },
+  "run_2": {
+    "complete": true,
+    "counts": {
+      "PASS": 17,
+      "FAIL": 34
+    },
+    "transcript_files": 243,
+    "exit_code": 1
+  },
+  "run_3": {
+    "complete": true,
+    "counts": {
+      "PASS": 17,
+      "FAIL": 34
+    },
+    "transcript_files": 243,
+    "exit_code": 1
+  },
+  "bugs": {
+    "failing_cards": 34,
+    "unique_beads": 34,
+    "receipts_complete": true
+  },
+  "flaky_tests": [],
+  "gofmt_clean": true,
+  "built_binary_matches_recorded_sha256": true,
+  "existing_tracked_files_unchanged": true,
+  "branch": "codex/wt-storyboard-e2e-20261011",
+  "live_board_beads_verified": 34,
+  "compile_verification": {
+    "command": "GOFLAGS=-p=4 nice -n 15 go test -count=1 -run '^$' ./cmd/wt",
+    "exit_code": 0,
+    "output": "evidence/compile-verification.txt"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "card": "05/card-5",
+  "test": "TestStoryboardPhoneCard5",
+  "id": "fleet-lo13",
+  "statuses": [
+    "FAIL",
+    "FAIL",
+    "FAIL"
+  ],
+  "body": "evidence/bug-receipts/TestStoryboardPhoneCard5.md",
+  "transcripts": [
+    "evidence/run-1/cards/TestStoryboardPhoneCard5.txt",
+    "evidence/run-1/transcripts/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-3933477.txt"
+  ],
+  "board_receipt": {
+    "acceptance_criteria": "TestStoryboardPhoneCard5 passes three times against the real built wt on Linux with the stated screen/state assertions; preserve existing Northstar tests. For physical-phone behavior record separate real-device evidence, never substitute fixture PTYs.",
+    "created_at": "2026-10-12T00:34:32.899755112Z",
+    "created_by": "Fleet Board",
+    "description": "Card: 05/card-5, ordinal #6: 6 \u00b7 Use it away from homeEhrlichMac\nSource: /work/lanes/wt-e2e/wingthing/evidence/storyboard-source/05-phone.html#6\nCarrier: f8f9ebd96e1c72336ffd796c8d496ecda0a85619; Linux forge; isolated HOME/WINGTHING_DIR; fixture provider/SSH, real built wt + kernel PTY.\n\nExpected screen: Away from home connected through encrypted pinned relay\nExpected observable state: LAN then tailnet then entitled registered relay; phone never logs in\n\nActual outcome across three runs: FAIL, FAIL, FAIL.\nActual assertion/screen and state evidence:\nphone card blocked: required wt pair unavailable; expected prerequisite screen [\"Pair a phone\" \"5:00\" \"Waiting for scan\"]; actual:\n        Error: unknown command \"pair\" for \"wt\"\n    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-3933477.txt\n--- FAIL: TestStoryboardPhoneCard5 (0.26s)\n\n\nTranscripts (card observations plus PTY checkpoints; kernel PTY checkpoints have adjacent .ansi raw bytes):\n/work/lanes/wt-e2e/wingthing/evidence/run-1/cards/TestStoryboardPhoneCard5.txt\n/work/lanes/wt-e2e/wingthing/evidence/run-1/transcripts/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-3933477.txt\n\nReproduce: cd /work/lanes/wt-e2e/wingthing && GOFLAGS=-p=4 nice -n 15 go test -count=1 -run \"^TestStoryboardPhoneCard5$\" ./cmd/wt\n\nThe failure is a missing owner CLI prerequisite. Downstream iPhone camera/Keychain/crypto/RPC/route assertions are unexercised, not separately proven failures. A physical iPhone acceptance gate remains mandatory after that prerequisite ships.\n",
+    "id": "fleet-lo13",
+    "issue_type": "bug",
+    "labels": [
+      "host:forge",
+      "lane:burn",
+      "needs:coordinator",
+      "project:wingthing",
+      "score:estimated"
+    ],
+    "metadata": {
+      "C": 1.3,
+      "V": 6,
+      "bryan_minutes": 0,
+      "codex_weekly_points": 3,
+      "coordinator_touches": 3,
+      "score_basis": "Estimated remaining work: touches/3 + minutes/5 + weekly points/10 = 1.3. V=6: free storyboard acceptance gap; per-card scope, no claim of shipped security. Source cost data unavailable; coordinator review gated.",
+      "tokens": 300000,
+      "vc_ratio": 4.615384615384615
+    },
+    "owner": "fleet-board@localhost",
+    "priority": 2,
+    "schema_version": 1,
+    "status": "open",
+    "title": "Wingthing 05/card-5: Missing phone CLI prerequisite: 6 \u00b7 Use it away from homeEhrlichMac",
+    "updated_at": "2026-10-12T00:34:32.899755112Z"
+  }
+}

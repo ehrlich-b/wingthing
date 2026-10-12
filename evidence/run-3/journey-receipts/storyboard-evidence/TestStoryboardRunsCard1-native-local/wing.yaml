@@ -1,0 +1,5 @@
+wing_id: ""
+roost: http://127.0.0.1:1
+paths:
+    - /work/lanes/wt-e2e/wingthing/.scratch/northstar-3267113713/work/local project space
+hosted_relay: deny

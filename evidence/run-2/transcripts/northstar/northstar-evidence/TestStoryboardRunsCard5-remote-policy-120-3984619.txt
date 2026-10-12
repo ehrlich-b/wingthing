@@ -1,0 +1,185 @@
+
+--- remote navigator ready ---
+wt | 0 sessions | 2 machines
+B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  (no sessions)
+forge  connecting (refreshing)
+  (no sessions)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+
+--- select fixture remote ---
+wt | 0 sessions | 2 machines
+B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [forge] !:0 bell:off
+forge  connecting (refreshing)
+  (no sessions)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+
+--- remote provider prompt ---
+wt | 0 sessions | 2 machines
+B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [forge] !:0 bell:off
+forge  connecting (refreshing)
+  (no sessions)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter accept  Esc cancel  Ctrl-C quit
+Agent (blank = shell): claude_
+
+--- remote cwd prompt ---
+wt | 0 sessions | 2 machines
+B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [forge] !:0 bell:off
+forge  connecting (refreshing)
+  (no sessions)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter accept  Esc cancel  Ctrl-C quit
+Cwd on forge: _
+
+--- remote policy returned to navigator ---
+wt | 0 sessions | 2 machines
+B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [forge] !:0 bell:off
+forge  connecting (refreshing)
+  (no sessions)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+Claude launch failed during admission/policy: configured policy denies the provider executable. Choose a provider execut
+able allowed by this policy. Policy: selected policy "/work/lanes/wt-e2e/wingthing/.scratch/85add2f676/remote-policy.yam
+l"; denial from "/work/lanes/wt-e2e/wingthing/.scratch/85add2f676/remote-base.yaml". Doctor launch-plan needs an explici
+t --allowed-home-root; supply the exact --home, --executable and policy/base inputs. No complete request was captured.

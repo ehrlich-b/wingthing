@@ -1,0 +1,44 @@
+=== RUN   TestStoryboardInstallCard4
+    storyboard_pty_test.go:208: screen timeout (local no-agent detection):
+        wt | 0 sessions | 1 machines
+        B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+        local  connected  updated 0s ago
+          (no sessions)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+        / filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardInstallCard4/TestStoryboardInstallCard4-140-3906765.txt
+--- FAIL: TestStoryboardInstallCard4 (8.06s)

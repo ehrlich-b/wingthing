@@ -1,0 +1,62 @@
+
+--- command ["run" "Read the tests and report failures" "--agent" "claude" "--config" "/work/lanes/wt-e2e/wingthing/.scratch/northstar-1742787429/work/egg.yaml"]; exit=<nil> ---
+submitted: t-20261011-202617-df8650043f4a4efb (Read the tests and report failures)
+2026/10/11 20:26:17 memory: warning: index: read: open /work/lanes/wt-e2e/wingthing/.scratch/efa4ecf317/l/memory/index.md: no such file or directory
+2026/10/11 20:26:17 memory: warning: identity: read: open /work/lanes/wt-e2e/wingthing/.scratch/efa4ecf317/l/memory/identity.md: no such file or directory
+2026/10/11 20:26:17 memory: warning: read dir /work/lanes/wt-e2e/wingthing/.scratch/efa4ecf317/l/memory: open /work/lanes/wt-e2e/wingthing/.scratch/efa4ecf317/l
+/memory: no such file or directory
+2026/10/11 20:26:17 domain proxy: listening on 127.0.0.1:34957, 4 domains, 2 wildcards
+2026/10/11 20:26:17 task t-20261011-202617-df8650043f4a4efb sandbox: network=https enforcement=proxy domains=6 local_ports=[]
+2026/10/11 20:26:17 linux sandbox: created tmpdir=/work/lanes/wt-e2e/wingthing/.scratch/northstar-1742787429/tmp-alias/wt-sandbox-403352511 network=https cgroup
+=false
+STORYBOARD_LEGACY_RESULT
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

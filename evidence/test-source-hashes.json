@@ -1,0 +1,6 @@
+{
+  "cmd/wt/storyboard_pty_test.go": "f88f20de462878d76d08c9663a2a571ae3273fe8e3d7fc97385d39e26613bce9",
+  "cmd/wt/storyboardScopedNew_pty_test.go": "896ebad5a9e7f0e42eeacee6d65e88fa4b97e0cac27c314aed1bfbe747299ed9",
+  "cmd/wt/storyboardNativeMouse_pty_test.go": "265e0181b39e56904ba395bcd9e4a4b449ad0aa4f9c3e932dd64f4a76a7c49c6",
+  "cmd/wt/storyboardLaunchFailure_pty_test.go": "620d7a16b5b29e22559986a4b23ed067f6bdbbd65708470be60f80d7be15b028"
+}

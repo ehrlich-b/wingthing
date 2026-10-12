@@ -1,0 +1,16 @@
+=== RUN   TestStoryboardMachinesCard4
+=== RUN   TestStoryboardMachinesCard4/REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!
+    storyboard_pty_test.go:572: Unix socket lexical/canonical bytes: 69/69
+    storyboard_pty_test.go:572: Unix socket lexical/canonical bytes: 69/69
+    storyboard_pty_test.go:575: command ["attach" "forge:same"] exit=exit status 255
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!-160-3975578.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!-140-3975535.txt
+--- PASS: TestStoryboardMachinesCard4/REMOTE_HOST_IDENTIFICATION_HAS_CHANGED! (0.22s)
+=== RUN   TestStoryboardMachinesCard4/unknown_flag:_--expected-channel
+    storyboard_pty_test.go:572: Unix socket lexical/canonical bytes: 69/69
+    storyboard_pty_test.go:572: Unix socket lexical/canonical bytes: 69/69
+    storyboard_pty_test.go:575: command ["attach" "forge:same"] exit=exit status 255
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel-160-3975664.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel-140-3975612.txt
+--- PASS: TestStoryboardMachinesCard4/unknown_flag:_--expected-channel (0.36s)
+--- PASS: TestStoryboardMachinesCard4 (0.59s)

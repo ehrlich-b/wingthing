@@ -1,0 +1,6 @@
+=== RUN   TestStoryboardRunsCard4
+    storyboard_pty_test.go:723: command ["run-inspect" "--snapshot" "/work/lanes/wt-e2e/wingthing/.scratch/northstar-2437459037/work/captured-state" "--json"] exit=<nil>
+    storyboard_pty_test.go:743: command ["run-inspect" "--snapshot" "/work/lanes/wt-e2e/wingthing/.scratch/northstar-2437459037/work/captured-state" "--json"] exit=exit status 1
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardRunsCard4/TestStoryboardRunsCard4-160-3983823.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardRunsCard4/TestStoryboardRunsCard4-160-3983777.txt
+--- PASS: TestStoryboardRunsCard4 (0.22s)

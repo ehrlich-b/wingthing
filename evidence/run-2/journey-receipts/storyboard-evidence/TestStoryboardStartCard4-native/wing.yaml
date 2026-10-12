@@ -1,0 +1,5 @@
+wing_id: ""
+roost: http://127.0.0.1:1
+paths:
+    - /work/lanes/wt-e2e/wingthing/.scratch/northstar-3217068735/work
+hosted_relay: deny

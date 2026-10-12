@@ -1,0 +1,8 @@
+=== RUN   TestStoryboardPhoneCard11
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["devices" "revoke" "Bryan's iPhone"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#12 prerequisite: [devices revoke Bryan's iPhone]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt devices unavailable; expected prerequisite screen ["device" "not paired"]; actual:
+        Error: unknown command "devices" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-3933694.txt
+--- FAIL: TestStoryboardPhoneCard11 (0.28s)

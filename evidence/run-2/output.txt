@@ -1,0 +1,1386 @@
+=== RUN   TestStoryboardInstallCard0
+    storyboard_pty_test.go:184: command ["/work/lanes/wt-e2e/wingthing/scripts/install.sh"] exit=<nil>
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardInstallCard0/TestStoryboardInstallCard0-140-3945165.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardInstallCard0/TestStoryboardInstallCard0-160-3945039.txt
+--- PASS: TestStoryboardInstallCard0 (4.40s)
+=== RUN   TestStoryboardInstallCard1
+    storyboard_pty_test.go:202: screen timeout (first-run connection and terms):
+        wt | 0 sessions | 1 machines
+        B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+        local  connected  updated 0s ago
+          (no sessions)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+        / filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardInstallCard1/TestStoryboardInstallCard1-140-3945225.txt
+--- FAIL: TestStoryboardInstallCard1 (8.20s)
+=== RUN   TestStoryboardInstallCard4
+    storyboard_pty_test.go:208: screen timeout (local no-agent detection):
+        wt | 0 sessions | 1 machines
+        B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+        local  connected  updated 0s ago
+          (no sessions)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+        / filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardInstallCard4/TestStoryboardInstallCard4-140-3946479.txt
+--- FAIL: TestStoryboardInstallCard4 (8.88s)
+=== RUN   TestStoryboardInstallCard5
+    storyboard_pty_test.go:214: screen timeout (installer selection):
+        wt | 0 sessions | 1 machines
+        B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+        local  connected  updated 1s ago (refreshing)
+          (no sessions)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        Enter accept  Esc cancel  Ctrl-C quit
+        Agent (blank = shell): claude_
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardInstallCard5/TestStoryboardInstallCard5-140-3947377.txt
+--- FAIL: TestStoryboardInstallCard5 (8.34s)
+=== RUN   TestStoryboardInstallCard6
+    storyboard_pty_test.go:222: screen timeout (provider verification and native auth handoff):
+        wt | 0 sessions | 1 machines
+        B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+        local  connected  updated 0s ago
+          (no sessions)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        Enter accept  Esc cancel  Ctrl-C quit
+        Agent (blank = shell): claude_
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardInstallCard6/TestStoryboardInstallCard6-140-3948690.txt
+--- FAIL: TestStoryboardInstallCard6 (8.25s)
+=== RUN   TestStoryboardInstallCard7
+    storyboard_pty_test.go:228: screen timeout (installer failure recovery route):
+        wt | 0 sessions | 1 machines
+        B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+        local  connected  updated 0s ago
+          (no sessions)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        Enter accept  Esc cancel  Ctrl-C quit
+        Agent (blank = shell): claude_
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardInstallCard7/TestStoryboardInstallCard7-140-3949388.txt
+--- FAIL: TestStoryboardInstallCard7 (8.29s)
+=== RUN   TestStoryboardInstallCard2
+    storyboard_pty_test.go:234: command ["/work/lanes/wt-e2e/wingthing/scripts/install.sh"] exit=exit status 1
+    storyboard_pty_test.go:243: command ["/work/lanes/wt-e2e/wingthing/scripts/install.sh"] exit=<nil>
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardInstallCard2/TestStoryboardInstallCard2-160-3950575.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardInstallCard2/TestStoryboardInstallCard2-160-3950552.txt
+--- PASS: TestStoryboardInstallCard2 (0.73s)
+=== RUN   TestStoryboardInstallCard3
+    storyboard_pty_test.go:258: Unix socket lexical/canonical bytes: 78/78
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardInstallCard3/TestStoryboardInstallCard3-140-3950821.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardInstallCard3/TestStoryboardInstallCard3-140-3950724.txt
+--- PASS: TestStoryboardInstallCard3 (0.84s)
+=== RUN   TestStoryboardStartCard0
+    storyboard_pty_test.go:295: Unix socket lexical/canonical bytes: 63/63
+    storyboard_pty_test.go:297: screen timeout (cold parent ready):
+        Error: Claude launch failed during admission/policy: wing refused admission under its configured policy. Review the selected policy and laun
+        ch requirements. Policy: unavailable. Doctor launch-plan needs an explicit --allowed-home-root; supply the exact --home, --executable and po
+        licy/base inputs. No complete request was captured.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardStartCard0/TestStoryboardStartCard0-140-3950978.txt
+    storyboard_pty_test.go:803: fixture runtime diagnostic mcp-audit.log: {"actor":"default","argument_sha256":"778eda90e4cfa33b3d2e86bffd847c1090e397e2ebf6bc1a9b09fbe0a8b7765e","decision":"error","isolation":"wingthing-sandbox","principal":"user-0ba6702c1cf1a8a53395","timestamp":"2026-10-12T00:24:13.370085036Z","tool":"agent_start"}
+    storyboard_pty_test.go:803: fixture runtime diagnostic wing.log: 2026/10/11 20:24:13 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/8e9d126966/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-4098299394/work]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 20:24:13 wing: local control ready (wing_id=393b575547db4266aa97c8db)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+    storyboard_pty_test.go:820: fixture wing diagnostic: 2026/10/11 20:24:13 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/8e9d126966/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-4098299394/work]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 20:24:13 wing: local control ready (wing_id=393b575547db4266aa97c8db)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+--- FAIL: TestStoryboardStartCard0 (8.31s)
+=== RUN   TestStoryboardStartCard1
+    storyboard_pty_test.go:313: Unix socket lexical/canonical bytes: 63/63
+    storyboard_pty_test.go:319: screen timeout (explicit cwd parent):
+        Error: Claude launch failed during admission/policy: wing refused admission under its configured policy. Review the selected policy and laun
+        ch requirements. Policy: unavailable. Doctor launch-plan needs an explicit --allowed-home-root; supply the exact --home, --executable and po
+        licy/base inputs. No complete request was captured.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardStartCard1/TestStoryboardStartCard1-140-3952744.txt
+    storyboard_pty_test.go:803: fixture runtime diagnostic mcp-audit.log: {"actor":"default","argument_sha256":"fb54fc586076c4e179c1883e948b227ac7536c8cc16cf7b4a26c0c01cb01454a","decision":"error","isolation":"wingthing-sandbox","principal":"user-3a7b86f17707632f7a03","timestamp":"2026-10-12T00:24:21.515347431Z","tool":"agent_start"}
+    storyboard_pty_test.go:803: fixture runtime diagnostic wing.log: 2026/10/11 20:24:21 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/e1bd63dc57/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-2454872722/work]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 20:24:21 wing: local control ready (wing_id=c731f8d13e6f4cdb910ee292)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+    storyboard_pty_test.go:820: fixture wing diagnostic: 2026/10/11 20:24:21 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/e1bd63dc57/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-2454872722/work]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 20:24:21 wing: local control ready (wing_id=c731f8d13e6f4cdb910ee292)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+--- FAIL: TestStoryboardStartCard1 (8.16s)
+=== RUN   TestStoryboardStartCard2
+=== RUN   TestStoryboardStartCard2/routing/local
+    storyboardScopedNew_pty_test.go:35: Unix socket lexical/canonical bytes: 63/63
+    storyboardScopedNew_pty_test.go:35: Unix socket lexical/canonical bytes: 81/81
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard2-routing-local-120-3954358.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard2-routing-local-120-3954333.txt
+--- PASS: TestStoryboardStartCard2/routing/local (0.36s)
+=== RUN   TestStoryboardStartCard2/native/local
+    storyboardScopedNew_pty_test.go:102: Unix socket lexical/canonical bytes: 63/63
+    storyboardScopedNew_pty_test.go:102: Unix socket lexical/canonical bytes: 81/81
+    storyboardScopedNew_pty_test.go:113: screen timeout (scoped parent attached):
+        wt | 0 sessions | 1 machines
+        B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+        local  connected  updated 0s ago
+          (no sessions)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+        / filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+        Claude launch failed during admission/policy: wing refused admission under its configured policy. Review the selected po
+        licy and launch requirements. Policy: unavailable. Doctor launch-plan needs an explicit --allowed-home-root; supply the
+        exact --home, --executable and policy/base inputs. No complete request was captured.
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard2-native-local-120-3954424.txt
+    storyboard_pty_test.go:803: fixture runtime diagnostic mcp-audit.log: {"actor":"default","argument_sha256":"2a472158c80101e4988abf729721e906821b837a0dde70dce18ee4e10159d70b","decision":"error","isolation":"wingthing-sandbox","principal":"user-32d64bad8622b75cf727","timestamp":"2026-10-12T00:24:30.460833541Z","tool":"agent_start"}
+    storyboard_pty_test.go:803: fixture runtime diagnostic wing.log: 2026/10/11 20:24:30 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/06f36b809b/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude codex]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-77541060/work/local project space]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 20:24:30 wing: local control ready (wing_id=0a5bfa711ebe4372b2c99f36)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+    storyboard_pty_test.go:820: fixture wing diagnostic: 2026/10/11 20:24:30 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/06f36b809b/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude codex]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-77541060/work/local project space]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 20:24:30 wing: local control ready (wing_id=0a5bfa711ebe4372b2c99f36)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+--- FAIL: TestStoryboardStartCard2/native/local (8.52s)
+=== RUN   TestStoryboardStartCard2/routing/forge
+    storyboardScopedNew_pty_test.go:35: Unix socket lexical/canonical bytes: 63/63
+    storyboardScopedNew_pty_test.go:35: Unix socket lexical/canonical bytes: 81/81
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard2-routing-forge-120-3955926.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard2-routing-forge-120-3955851.txt
+--- PASS: TestStoryboardStartCard2/routing/forge (0.57s)
+=== RUN   TestStoryboardStartCard2/native/forge
+    storyboardScopedNew_pty_test.go:102: Unix socket lexical/canonical bytes: 63/63
+    storyboardScopedNew_pty_test.go:102: Unix socket lexical/canonical bytes: 81/81
+    storyboardScopedNew_pty_test.go:113: screen timeout (scoped parent attached):
+        wt | 0 sessions | 2 machines
+        B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [forge] !:0 bell:off
+        forge  connected  updated 1s ago (refreshing)
+          (no sessions)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+        / filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+        exit status 1
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard2-native-forge-120-3955978.txt
+    storyboard_pty_test.go:803: fixture runtime diagnostic mcp-audit.log: {"actor":"default","argument_sha256":"9094bd2a585585ef8c9396f1e038fe4b0cfee6415b529ea7444293e7f9e64b70","decision":"error","isolation":"wingthing-sandbox","principal":"user-0db8279a2b85c481706a","timestamp":"2026-10-12T00:24:39.237989103Z","tool":"agent_start"}
+    storyboard_pty_test.go:803: fixture runtime diagnostic wing.log: 2026/10/11 20:24:39 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/a5c63f770d/r/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude codex]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-1641418654/forge project space]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 20:24:39 wing: local control ready (wing_id=5bcef3af1271441f9d75b903)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+    storyboard_pty_test.go:820: fixture wing diagnostic: 2026/10/11 20:24:39 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/a5c63f770d/r/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude codex]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-1641418654/forge project space]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 20:24:39 wing: local control ready (wing_id=5bcef3af1271441f9d75b903)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+--- FAIL: TestStoryboardStartCard2/native/forge (8.29s)
+--- FAIL: TestStoryboardStartCard2 (17.75s)
+=== RUN   TestStoryboardStartCard3
+    storyboard_pty_test.go:343: Unix socket lexical/canonical bytes: 63/63
+    storyboard_pty_test.go:353: Unix socket lexical/canonical bytes: 81/81
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardStartCard3/TestStoryboardStartCard3-140-3956754.txt
+2026/10/11 20:24:51 pty session dc77668511fd494f: orphan termination requested (gRPC)
+--- PASS: TestStoryboardStartCard3 (4.25s)
+=== RUN   TestStoryboardStartCard4
+=== RUN   TestStoryboardStartCard4/transport
+    storyboardLaunchFailure_pty_test.go:120: Unix socket lexical/canonical bytes: 63/63
+    storyboardLaunchFailure_pty_test.go:93: Unix socket lexical/canonical bytes: 81/81
+    storyboardLaunchFailure_pty_test.go:93: Unix socket lexical/canonical bytes: 81/81
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard4-transport-120-3957592.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard4-transport-240-3957581.txt
+--- PASS: TestStoryboardStartCard4/transport (0.61s)
+=== RUN   TestStoryboardStartCard4/remote
+=== RUN   TestStoryboardStartCard4/remote/policy
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 63/63
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 81/81
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard4-remote-policy-120-3957653.txt
+--- PASS: TestStoryboardStartCard4/remote/policy (0.42s)
+=== RUN   TestStoryboardStartCard4/remote/attach
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 63/63
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 81/81
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard4-remote-attach-120-3957754.txt
+--- PASS: TestStoryboardStartCard4/remote/attach (0.55s)
+--- PASS: TestStoryboardStartCard4/remote (0.97s)
+=== RUN   TestStoryboardStartCard4/success
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard4-success-120-3957870.txt
+--- PASS: TestStoryboardStartCard4/success (0.39s)
+=== RUN   TestStoryboardStartCard4/native
+    storyboardLaunchFailure_pty_test.go:273: Unix socket lexical/canonical bytes: 63/63
+    storyboardLaunchFailure_pty_test.go:292: screen timeout (native denial):
+        Error: Claude launch failed during admission/policy: wing refused admission under its configured policy. Review the selected policy and launch requirements. Policy: unavailable. Doctor launch-plan needs an explicit --allowed-home-root; supp
+        ly the exact --home, --executable and policy/base inputs. No complete request was captured.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardStartCard4-native-240-3957930.txt
+    storyboard_pty_test.go:803: fixture runtime diagnostic mcp-audit.log: {"actor":"default","argument_sha256":"5f02d9211af2b6dd2efabbe2bcc71905b2959cb8077fc122001609978a3e8b15","decision":"error","isolation":"wingthing-sandbox","principal":"user-e0367d9cba02c5c1fc3e","timestamp":"2026-10-12T00:24:53.855012607Z","tool":"agent_start"}
+    storyboard_pty_test.go:803: fixture runtime diagnostic wing.log: 2026/10/11 20:24:53 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/9b4be888d1/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-3217068735/work]
+          projects: 1 found
+            work → /work/lanes/wt-e2e/wingthing/.scratch/northstar-3217068735/work
+          conv: auto
+        
+        2026/10/11 20:24:53 wing: local control ready (wing_id=67162827587d443f91fc7543)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+    storyboard_pty_test.go:820: fixture wing diagnostic: 2026/10/11 20:24:53 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/9b4be888d1/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-3217068735/work]
+          projects: 1 found
+            work → /work/lanes/wt-e2e/wingthing/.scratch/northstar-3217068735/work
+          conv: auto
+        
+        2026/10/11 20:24:53 wing: local control ready (wing_id=67162827587d443f91fc7543)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+--- FAIL: TestStoryboardStartCard4/native (8.40s)
+--- FAIL: TestStoryboardStartCard4 (10.38s)
+=== RUN   TestStoryboardStartCard5
+=== RUN   TestStoryboardStartCard5/two-requested-parents-one-daemon
+    storyboard_pty_test.go:365: Unix socket lexical/canonical bytes: 63/63
+    storyboard_pty_test.go:368: screen timeout (first concurrent parent):
+        Error: Claude launch failed during admission/policy: wing refused admission under its configured policy. Review the selected policy and laun
+        ch requirements. Policy: unavailable. Doctor launch-plan needs an explicit --allowed-home-root; supply the exact --home, --executable and po
+        licy/base inputs. No complete request was captured.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardStartCard5/two-requested-parents-one-daemon/TestStoryboardStartCard5-two-requested-parents-one-daemon-140-3960091.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardStartCard5/two-requested-parents-one-daemon/TestStoryboardStartCard5-two-requested-parents-one-daemon-140-3960089.txt
+    storyboard_pty_test.go:803: fixture runtime diagnostic mcp-audit.log: {"actor":"default","argument_sha256":"b1e89358f796acb784d0f057d9d77f2b593968ed00b49eedf23b4ff4de003ce2","decision":"error","isolation":"wingthing-sandbox","principal":"user-9c1ac8195d0df9b4b0d5","timestamp":"2026-10-12T00:25:02.051802258Z","tool":"agent_start"}
+        {"actor":"default","argument_sha256":"e239ee59197c32c245d2a94bf224e5ce7af53ac76a332b9e24b451c0ee28cb2b","decision":"error","isolation":"wingthing-sandbox","principal":"user-9c1ac8195d0df9b4b0d5","timestamp":"2026-10-12T00:25:02.062586703Z","tool":"agent_start"}
+    storyboard_pty_test.go:803: fixture runtime diagnostic wing.log: 2026/10/11 20:25:01 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/3811c1130d/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-3668789670/work]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 20:25:02 wing: local control ready (wing_id=249944a297b94e8195d94220)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+    storyboard_pty_test.go:820: fixture wing diagnostic: 2026/10/11 20:25:01 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/3811c1130d/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-3668789670/work]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 20:25:02 wing: local control ready (wing_id=249944a297b94e8195d94220)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+--- FAIL: TestStoryboardStartCard5/two-requested-parents-one-daemon (8.17s)
+=== RUN   TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor
+    storyboard_pty_test.go:381: Unix socket lexical/canonical bytes: 63/63
+    storyboard_pty_test.go:399: screen timeout (accepted survivor provider):
+        Error: Claude launch failed during admission/policy: wing refused admission under its configured policy. Review the selected policy and laun
+        ch requirements. Policy: unavailable. Doctor launch-plan needs an explicit --allowed-home-root; supply the exact --home, --executable and po
+        licy/base inputs. No complete request was captured.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor/TestStoryboardStartCard5-canceled-waiter-does-not-kill-survivor-140-3961826.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor/TestStoryboardStartCard5-canceled-waiter-does-not-kill-survivor-140-3961823.txt
+    storyboard_pty_test.go:803: fixture runtime diagnostic mcp-audit.log: {"actor":"default","argument_sha256":"604bcad44fbf3aa53bb00c83a7f1cbdb6283d48b7a77460f17c0b91f588d8b36","decision":"error","isolation":"wingthing-sandbox","principal":"user-bceaf5693f8b02e5e932","timestamp":"2026-10-12T00:25:11.173251128Z","tool":"agent_start"}
+    storyboard_pty_test.go:803: fixture runtime diagnostic wing.log: 2026/10/11 20:25:11 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/8fdebecc50/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-2001898032/work]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 20:25:11 wing: local control ready (wing_id=a71e436b22a54d838cfde603)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+    storyboard_pty_test.go:820: fixture wing diagnostic: 2026/10/11 20:25:11 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/8fdebecc50/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-2001898032/work]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 20:25:11 wing: local control ready (wing_id=a71e436b22a54d838cfde603)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+--- FAIL: TestStoryboardStartCard5/canceled-waiter-does-not-kill-survivor (9.16s)
+--- FAIL: TestStoryboardStartCard5 (17.34s)
+=== RUN   TestStoryboardNavigatorCard0
+    storyboard_pty_test.go:421: Unix socket lexical/canonical bytes: 69/69
+    storyboard_pty_test.go:421: Unix socket lexical/canonical bytes: 69/69
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardNavigatorCard0/TestStoryboardNavigatorCard0-140-3963292.txt
+--- PASS: TestStoryboardNavigatorCard0 (0.26s)
+=== RUN   TestStoryboardNavigatorCard1
+    storyboard_pty_test.go:432: Unix socket lexical/canonical bytes: 69/69
+    storyboard_pty_test.go:432: Unix socket lexical/canonical bytes: 69/69
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardNavigatorCard1/TestStoryboardNavigatorCard1-140-3963344.txt
+--- PASS: TestStoryboardNavigatorCard1 (0.33s)
+=== RUN   TestStoryboardNavigatorCard2
+=== RUN   TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks
+    northstar_attention_pty_test.go:120: Unix socket lexical/canonical bytes: 69/69
+    northstar_attention_pty_test.go:121: Unix socket lexical/canonical bytes: 69/69
+    northstar_attention_pty_test.go:122: Unix socket lexical/canonical bytes: 72/72
+    northstar_attention_pty_test.go:142: PermissionRequest to visible native blocked: 64.24001ms
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-3965860.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-3965300.txt
+--- PASS: TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks (8.03s)
+=== RUN   TestStoryboardNavigatorCard2/durable-unread-cursor
+    storyboard_pty_test.go:456: Unix socket lexical/canonical bytes: 71/71
+    storyboard_pty_test.go:466: screen timeout (same viewer durable unread after reopen):
+        wt | 1 sessions | 1 machines
+        B:0 W:0 I:1 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+        local  connected  updated 0s ago
+          /work/lanes/wt-e2e/wingthing/.scratch/northstar-2654018236/work
+        > I unread-parent                                                           claude       northstar-2654018236/work                     2m
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+        / filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-3966007.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-3965958.txt
+--- FAIL: TestStoryboardNavigatorCard2/durable-unread-cursor (8.26s)
+--- FAIL: TestStoryboardNavigatorCard2 (16.29s)
+=== RUN   TestStoryboardNavigatorCard3
+    storyboardNativeMouse_pty_test.go:46: Unix socket lexical/canonical bytes: 68/68
+    storyboardNativeMouse_pty_test.go:190: kernel PTY bytes and SGR wheel input passed; physical trackpad/selection modifier remains a GUI canary
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardNavigatorCard3-40-3968112.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardNavigatorCard3-40-3968093.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardNavigatorCard3-80-3968051.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardNavigatorCard3/TestStoryboardNavigatorCard3-140-3967900.txt
+--- PASS: TestStoryboardNavigatorCard3 (4.98s)
+=== RUN   TestStoryboardNavigatorCard4
+=== RUN   TestStoryboardNavigatorCard4/symlinked-TMPDIR-coordinator-loss
+    northstar_recovery_pty_test.go:45: Unix socket lexical/canonical bytes: 69/69
+    northstar_recovery_pty_test.go:46: Unix socket lexical/canonical bytes: 69/69
+    northstar_recovery_pty_test.go:59: Unix socket lexical/canonical bytes: 63/63
+    northstar_recovery_pty_test.go:65: Unix socket lexical/canonical bytes: 63/63
+    northstar_recovery_pty_test.go:65: Unix socket lexical/canonical bytes: 63/63
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/evidence/09/pty/TestStoryboardNavigatorCard4-symlinked-TMPDIR-coordinator-loss-160-3970078.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/evidence/09/pty/TestStoryboardNavigatorCard4-symlinked-TMPDIR-coordinator-loss-160-3969992.txt
+--- PASS: TestStoryboardNavigatorCard4/symlinked-TMPDIR-coordinator-loss (6.32s)
+--- PASS: TestStoryboardNavigatorCard4 (6.32s)
+=== RUN   TestStoryboardNavigatorCard5
+    storyboard_pty_test.go:479: Unix socket lexical/canonical bytes: 69/69
+    storyboard_pty_test.go:479: Unix socket lexical/canonical bytes: 69/69
+    storyboard_pty_test.go:486: screen timeout (stale attach denied):
+        wt | 2 sessions | 4 machines
+        B:1 W:1 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:1 bell:off
+        local  connected  updated 0s ago
+          (no matches)
+        empty  connected  updated 0s ago
+          (no matches)
+        forge  offline  last success 8s ago; cached rows stale
+          ! remote "forge": SSH to ns-forge ended with status 255; check the SSH diagnostic above. Session state is unknown; reconnect with the sam…
+          /work/lanes/wt-e2e/wingthing/.scratch/northstar-1454254387/work
+        > B coordinator                                                         claude       northstar-1454254387/work                   2m    stale
+        offline  offline
+          ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown; reconnect and list…
+          (inventory unavailable)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+        / filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+        exit status 255; Enter retries through fresh resolution. [remote attachment; Ctrl+B then q detaches; Ctrl+B twice sends Ctrl+B]?fixture quer
+        y failure?Connection to forge (ns-forge) ended; session outcome unknown. Reconnect: WINGTHING_DIR='/work/lanes/wt-e2e/wingthing/.scratch/daf
+        40db553/l' WINGTHING_PREVIEW_DIR='/work/lanes/wt-e2e/wingthing/.scratch/daf40db553/l' '/work/lanes/wt-e2e/wingthing/.scratch/storyboard-wt'
+        'attach' '--' 'forge:same'?Pinned route: WINGTHING_DIR='/work/lanes/wt-e2e/wingthing/.scratch/daf40db553/l' WINGTHING_PREVIEW_DIR='/work/lan
+        es/wt-e2e/wingthing/.scratch/daf40db553/l' '/work/lanes/wt-e2e/wingthing/.scratch/storyboard-wt' '--remote' 'ns-forge' '--remote-binary' 'wt
+        ' '--remote-state' '/work/lanes/wt-e2e/wingthing/.scratch/daf40db553/r' 'attach' '--' 'same'?SSH to ns-forge ended with status 255; check th
+        e SSH diagnostic above. Session state is unknown; reconnect with the same --remote-state and list sessions before relaunching?
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardNavigatorCard5/TestStoryboardNavigatorCard5-140-3970255.txt
+--- FAIL: TestStoryboardNavigatorCard5 (8.18s)
+=== RUN   TestStoryboardNavigatorCard6
+    storyboard_pty_test.go:494: Unix socket lexical/canonical bytes: 69/69
+    storyboard_pty_test.go:494: Unix socket lexical/canonical bytes: 69/69
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardNavigatorCard6/TestStoryboardNavigatorCard6-140-3971289.txt
+--- PASS: TestStoryboardNavigatorCard6 (0.42s)
+=== RUN   TestStoryboardMachinesCard0
+    storyboard_pty_test.go:520: command ["remote" "add" "forge" "ns-forge" "--wt-binary" "/work/lanes/wt-e2e/wingthing/.scratch/northstar-1463550903/tmp-alias/bin/wt" "--wingthing-dir" "/work/lanes/wt-e2e/wingthing/.scratch/2cfc3f4e8a/r"] exit=<nil>
+    storyboard_pty_test.go:524: command ["remote" "ls"] exit=<nil>
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardMachinesCard0/TestStoryboardMachinesCard0-160-3971428.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardMachinesCard0/TestStoryboardMachinesCard0-160-3971410.txt
+--- PASS: TestStoryboardMachinesCard0 (0.15s)
+=== RUN   TestStoryboardMachinesCard1
+    storyboard_pty_test.go:552: command ["mcp" "connect" "add" "forge" "--ssh" "ns-forge" "--wingthing-dir" "/work/lanes/wt-e2e/wingthing/.scratch/479cea315d/r" "--wt-binary" "/work/lanes/wt-e2e/wingthing/.scratch/northstar-2134270096/tmp-alias/bin/wt"] exit=<nil>
+    storyboard_pty_test.go:556: command ["mcp" "connect" "ls"] exit=<nil>
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardMachinesCard1/TestStoryboardMachinesCard1-160-3971472.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardMachinesCard1/TestStoryboardMachinesCard1-160-3971440.txt
+--- PASS: TestStoryboardMachinesCard1 (0.17s)
+=== RUN   TestStoryboardMachinesCard2
+    northstar_remote_pty_test.go:276: Unix socket lexical/canonical bytes: 63/63
+    northstar_remote_pty_test.go:276: Unix socket lexical/canonical bytes: 63/63
+    northstar_remote_pty_test.go:276: Unix socket lexical/canonical bytes: 63/63
+    northstar_remote_pty_test.go:293: Unix socket lexical/canonical bytes: 74/74
+    northstar_remote_pty_test.go:294: Unix socket lexical/canonical bytes: 74/74
+    northstar_remote_pty_test.go:295: Unix socket lexical/canonical bytes: 74/74
+    northstar_remote_pty_test.go:312: launch-to-fleet inventory: 287.211424ms
+=== RUN   TestStoryboardMachinesCard2/named
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardMachinesCard2-named-80-3973506.txt
+--- PASS: TestStoryboardMachinesCard2/named (0.07s)
+=== RUN   TestStoryboardMachinesCard2/generic
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardMachinesCard2-generic-80-3973557.txt
+--- PASS: TestStoryboardMachinesCard2/generic (0.11s)
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardMachinesCard2-80-3973620.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardMachinesCard2-80-3972914.txt
+    northstar_remote_pty_test.go:289: exact SSH/TTY routes: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestNorthstarPTYRemoteAttach-northstar-2237573148-ssh.jsonl
+--- PASS: TestStoryboardMachinesCard2 (10.16s)
+=== RUN   TestStoryboardMachinesCard3
+    storyboard_pty_test.go:479: Unix socket lexical/canonical bytes: 69/69
+    storyboard_pty_test.go:479: Unix socket lexical/canonical bytes: 69/69
+    storyboard_pty_test.go:486: screen timeout (stale attach denied):
+        wt | 2 sessions | 4 machines
+        B:1 W:1 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:1 bell:off
+        local  connected  updated 0s ago
+          (no matches)
+        empty  connected  updated 0s ago
+          (no matches)
+        forge  offline  last success 7s ago; cached rows stale
+          ! remote "forge": SSH to ns-forge ended with status 255; check the SSH diagnostic above. Session state is unknown; reconnect with the sam…
+          /work/lanes/wt-e2e/wingthing/.scratch/northstar-1310312/work
+        > B coordinator                                                         claude       northstar-1310312/work                      2m    stale
+        offline  offline
+          ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown; reconnect and list…
+          (inventory unavailable)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+        / filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+        exit status 255; Enter retries through fresh resolution. [remote attachment; Ctrl+B then q detaches; Ctrl+B twice sends Ctrl+B]?fixture quer
+        y failure?Connection to forge (ns-forge) ended; session outcome unknown. Reconnect: WINGTHING_DIR='/work/lanes/wt-e2e/wingthing/.scratch/51d
+        013276c/l' WINGTHING_PREVIEW_DIR='/work/lanes/wt-e2e/wingthing/.scratch/51d013276c/l' '/work/lanes/wt-e2e/wingthing/.scratch/storyboard-wt'
+        'attach' '--' 'forge:same'?Pinned route: WINGTHING_DIR='/work/lanes/wt-e2e/wingthing/.scratch/51d013276c/l' WINGTHING_PREVIEW_DIR='/work/lan
+        es/wt-e2e/wingthing/.scratch/51d013276c/l' '/work/lanes/wt-e2e/wingthing/.scratch/storyboard-wt' '--remote' 'ns-forge' '--remote-binary' 'wt
+        ' '--remote-state' '/work/lanes/wt-e2e/wingthing/.scratch/51d013276c/r' 'attach' '--' 'same'?SSH to ns-forge ended with status 255; check th
+        e SSH diagnostic above. Session state is unknown; reconnect with the same --remote-state and list sessions before relaunching?
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardMachinesCard3/TestStoryboardMachinesCard3-140-3973889.txt
+--- FAIL: TestStoryboardMachinesCard3 (8.44s)
+=== RUN   TestStoryboardMachinesCard4
+=== RUN   TestStoryboardMachinesCard4/REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!
+    storyboard_pty_test.go:572: Unix socket lexical/canonical bytes: 69/69
+    storyboard_pty_test.go:572: Unix socket lexical/canonical bytes: 69/69
+    storyboard_pty_test.go:575: command ["attach" "forge:same"] exit=exit status 255
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!-160-3975578.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!/TestStoryboardMachinesCard4-REMOTE_HOST_IDENTIFICATION_HAS_CHANGED!-140-3975535.txt
+--- PASS: TestStoryboardMachinesCard4/REMOTE_HOST_IDENTIFICATION_HAS_CHANGED! (0.22s)
+=== RUN   TestStoryboardMachinesCard4/unknown_flag:_--expected-channel
+    storyboard_pty_test.go:572: Unix socket lexical/canonical bytes: 69/69
+    storyboard_pty_test.go:572: Unix socket lexical/canonical bytes: 69/69
+    storyboard_pty_test.go:575: command ["attach" "forge:same"] exit=exit status 255
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel-160-3975664.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel/TestStoryboardMachinesCard4-unknown_flag:_--expected-channel-140-3975612.txt
+--- PASS: TestStoryboardMachinesCard4/unknown_flag:_--expected-channel (0.36s)
+--- PASS: TestStoryboardMachinesCard4 (0.59s)
+=== RUN   TestStoryboardPhoneCard0
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["pair"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#1 prerequisite: [pair]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt pair unavailable; expected prerequisite screen ["Pair a phone" "5:00" "Waiting for scan"]; actual:
+        Error: unknown command "pair" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard0/TestStoryboardPhoneCard0-160-3975697.txt
+--- FAIL: TestStoryboardPhoneCard0 (0.17s)
+=== RUN   TestStoryboardPhoneCard1
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["pair"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#2 prerequisite: [pair]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt pair unavailable; expected prerequisite screen ["Pair a phone" "5:00" "Waiting for scan"]; actual:
+        Error: unknown command "pair" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard1/TestStoryboardPhoneCard1-160-3975716.txt
+--- FAIL: TestStoryboardPhoneCard1 (0.14s)
+=== RUN   TestStoryboardPhoneCard2
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["pair"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#3 prerequisite: [pair]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt pair unavailable; expected prerequisite screen ["Pair a phone" "5:00" "Waiting for scan"]; actual:
+        Error: unknown command "pair" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-3975734.txt
+--- FAIL: TestStoryboardPhoneCard2 (0.06s)
+=== RUN   TestStoryboardPhoneCard3
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["pair"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#4 prerequisite: [pair]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt pair unavailable; expected prerequisite screen ["Pair a phone" "5:00" "Waiting for scan"]; actual:
+        Error: unknown command "pair" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard3/TestStoryboardPhoneCard3-160-3975763.txt
+--- FAIL: TestStoryboardPhoneCard3 (0.13s)
+=== RUN   TestStoryboardPhoneCard4
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["pair"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#5 prerequisite: [pair]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt pair unavailable; expected prerequisite screen ["Pair a phone" "5:00" "Waiting for scan"]; actual:
+        Error: unknown command "pair" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard4/TestStoryboardPhoneCard4-160-3975793.txt
+--- FAIL: TestStoryboardPhoneCard4 (0.07s)
+=== RUN   TestStoryboardPhoneCard5
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["pair"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#6 prerequisite: [pair]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt pair unavailable; expected prerequisite screen ["Pair a phone" "5:00" "Waiting for scan"]; actual:
+        Error: unknown command "pair" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard5/TestStoryboardPhoneCard5-160-3975812.txt
+--- FAIL: TestStoryboardPhoneCard5 (0.05s)
+=== RUN   TestStoryboardPhoneCard6
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["devices"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#7 prerequisite: [devices]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt devices unavailable; expected prerequisite screen ["NAME" "PAIRED AT" "LAST SEEN"]; actual:
+        Error: unknown command "devices" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard6/TestStoryboardPhoneCard6-160-3975827.txt
+--- FAIL: TestStoryboardPhoneCard6 (0.07s)
+=== RUN   TestStoryboardPhoneCard7
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["pair"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#8 prerequisite: [pair]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt pair unavailable; expected prerequisite screen ["Pair a phone" "5:00" "Waiting for scan"]; actual:
+        Error: unknown command "pair" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard7/TestStoryboardPhoneCard7-160-3975841.txt
+--- FAIL: TestStoryboardPhoneCard7 (0.08s)
+=== RUN   TestStoryboardPhoneCard8
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["pair"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#9 prerequisite: [pair]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt pair unavailable; expected prerequisite screen ["Pair a phone" "5:00" "Waiting for scan"]; actual:
+        Error: unknown command "pair" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard8/TestStoryboardPhoneCard8-160-3975857.txt
+--- FAIL: TestStoryboardPhoneCard8 (0.22s)
+=== RUN   TestStoryboardPhoneCard9
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["pair"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#10 prerequisite: [pair]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt pair unavailable; expected prerequisite screen ["Pair a phone" "5:00" "Waiting for scan"]; actual:
+        Error: unknown command "pair" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard9/TestStoryboardPhoneCard9-160-3975908.txt
+--- FAIL: TestStoryboardPhoneCard9 (0.03s)
+=== RUN   TestStoryboardPhoneCard10
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["pair"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#11 prerequisite: [pair]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt pair unavailable; expected prerequisite screen ["Pair a phone" "5:00" "Waiting for scan"]; actual:
+        Error: unknown command "pair" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard10/TestStoryboardPhoneCard10-160-3975924.txt
+--- FAIL: TestStoryboardPhoneCard10 (0.10s)
+=== RUN   TestStoryboardPhoneCard11
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["devices" "revoke" "Bryan's iPhone"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#12 prerequisite: [devices revoke Bryan's iPhone]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt devices unavailable; expected prerequisite screen ["device" "not paired"]; actual:
+        Error: unknown command "devices" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard11/TestStoryboardPhoneCard11-160-3975962.txt
+--- FAIL: TestStoryboardPhoneCard11 (0.08s)
+=== RUN   TestStoryboardPhoneCard12
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["pair"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#13 prerequisite: [pair]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt pair unavailable; expected prerequisite screen ["Pair a phone" "5:00" "Waiting for scan"]; actual:
+        Error: unknown command "pair" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard12/TestStoryboardPhoneCard12-160-3975976.txt
+--- FAIL: TestStoryboardPhoneCard12 (0.07s)
+=== RUN   TestStoryboardPhoneCard13
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["pair"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#14 prerequisite: [pair]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt pair unavailable; expected prerequisite screen ["Pair a phone" "5:00" "Waiting for scan"]; actual:
+        Error: unknown command "pair" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard13/TestStoryboardPhoneCard13-160-3976018.txt
+--- FAIL: TestStoryboardPhoneCard13 (0.06s)
+=== RUN   TestStoryboardPhoneCard14
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["pair"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#15 prerequisite: [pair]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt pair unavailable; expected prerequisite screen ["Pair a phone" "5:00" "Waiting for scan"]; actual:
+        Error: unknown command "pair" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard14/TestStoryboardPhoneCard14-160-3976046.txt
+--- FAIL: TestStoryboardPhoneCard14 (0.08s)
+=== RUN   TestStoryboardPhoneCard15
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["pair"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#16 prerequisite: [pair]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt pair unavailable; expected prerequisite screen ["Pair a phone" "5:00" "Waiting for scan"]; actual:
+        Error: unknown command "pair" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard15/TestStoryboardPhoneCard15-160-3976067.txt
+--- FAIL: TestStoryboardPhoneCard15 (0.10s)
+=== RUN   TestStoryboardPhoneCard16
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["pair"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#17 prerequisite: [pair]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt pair unavailable; expected prerequisite screen ["Pair a phone" "5:00" "Waiting for scan"]; actual:
+        Error: unknown command "pair" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard16/TestStoryboardPhoneCard16-160-3976106.txt
+--- FAIL: TestStoryboardPhoneCard16 (0.10s)
+=== RUN   TestStoryboardPhoneCard17
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 78/78
+    storyboard_pty_test.go:603: command ["pair"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#18 prerequisite: [pair]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt pair unavailable; expected prerequisite screen ["Pair a phone" "5:00" "Waiting for scan"]; actual:
+        Error: unknown command "pair" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard17/TestStoryboardPhoneCard17-160-3976125.txt
+--- FAIL: TestStoryboardPhoneCard17 (0.07s)
+=== RUN   TestStoryboardRunsCard0
+    storyboard_pty_test.go:649: command ["run" "Read the tests and report failures" "--agent" "claude" "--config" "/work/lanes/wt-e2e/wingthing/.scratch/northstar-1742787429/work/egg.yaml"] exit=<nil>
+    storyboard_pty_test.go:668: command ["timeline"] exit=<nil>
+    storyboard_pty_test.go:668: command ["status"] exit=<nil>
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-3976695.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-3976679.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardRunsCard0/TestStoryboardRunsCard0-160-3976136.txt
+--- PASS: TestStoryboardRunsCard0 (1.91s)
+=== RUN   TestStoryboardRunsCard1
+=== RUN   TestStoryboardRunsCard1/routing/local
+    storyboardScopedNew_pty_test.go:35: Unix socket lexical/canonical bytes: 63/63
+    storyboardScopedNew_pty_test.go:35: Unix socket lexical/canonical bytes: 81/81
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-local-120-3976827.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-local-120-3976802.txt
+--- PASS: TestStoryboardRunsCard1/routing/local (0.57s)
+=== RUN   TestStoryboardRunsCard1/native/local
+    storyboardScopedNew_pty_test.go:102: Unix socket lexical/canonical bytes: 63/63
+    storyboardScopedNew_pty_test.go:102: Unix socket lexical/canonical bytes: 81/81
+    storyboardScopedNew_pty_test.go:113: screen timeout (scoped parent attached):
+        wt | 0 sessions | 1 machines
+        B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+        local  connected  updated 0s ago
+          (no sessions)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+        / filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+        Claude launch failed during admission/policy: wing refused admission under its configured policy. Review the selected po
+        licy and launch requirements. Policy: unavailable. Doctor launch-plan needs an explicit --allowed-home-root; supply the
+        exact --home, --executable and policy/base inputs. No complete request was captured.
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard1-native-local-120-3976847.txt
+    storyboard_pty_test.go:803: fixture runtime diagnostic mcp-audit.log: {"actor":"default","argument_sha256":"fe8519c6f598d8988ba080dbb0b2596de17210b1b33272d82f78844cf7a752ef","decision":"error","isolation":"wingthing-sandbox","principal":"user-c42510bd60a7c13719d8","timestamp":"2026-10-12T00:26:20.117639638Z","tool":"agent_start"}
+    storyboard_pty_test.go:803: fixture runtime diagnostic wing.log: 2026/10/11 20:26:19 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/b2c6b78a24/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude codex]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-376264653/work/local project space]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 20:26:20 wing: local control ready (wing_id=1547a542e577406a91211917)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+    storyboard_pty_test.go:820: fixture wing diagnostic: 2026/10/11 20:26:19 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/b2c6b78a24/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude codex]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-376264653/work/local project space]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 20:26:20 wing: local control ready (wing_id=1547a542e577406a91211917)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+--- FAIL: TestStoryboardRunsCard1/native/local (8.39s)
+=== RUN   TestStoryboardRunsCard1/routing/forge
+    storyboardScopedNew_pty_test.go:35: Unix socket lexical/canonical bytes: 63/63
+    storyboardScopedNew_pty_test.go:35: Unix socket lexical/canonical bytes: 81/81
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-forge-120-3979195.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard1-routing-forge-120-3979119.txt
+--- PASS: TestStoryboardRunsCard1/routing/forge (1.84s)
+=== RUN   TestStoryboardRunsCard1/native/forge
+    storyboardScopedNew_pty_test.go:102: Unix socket lexical/canonical bytes: 63/63
+    storyboardScopedNew_pty_test.go:102: Unix socket lexical/canonical bytes: 81/81
+    storyboardScopedNew_pty_test.go:113: screen timeout (scoped parent attached):
+        wt | 0 sessions | 2 machines
+        B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [forge] !:0 bell:off
+        forge  connected  updated 0s ago
+          (no sessions)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+        / filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+        exit status 1
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard1-native-forge-120-3979539.txt
+    storyboard_pty_test.go:803: fixture runtime diagnostic mcp-audit.log: {"actor":"default","argument_sha256":"7c8a6cedefe20769e7ccae68def31a41a55d195feb0966f25f4a4d7e8cd11192","decision":"error","isolation":"wingthing-sandbox","principal":"user-c50a7d74361ea2041f56","timestamp":"2026-10-12T00:26:32.206531733Z","tool":"agent_start"}
+    storyboard_pty_test.go:803: fixture runtime diagnostic wing.log: 2026/10/11 20:26:32 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/fa40ac749e/r/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude codex]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-1129307112/forge project space]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 20:26:32 wing: local control ready (wing_id=8cc1820c458d4ca0a22ca19d)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+    storyboard_pty_test.go:820: fixture wing diagnostic: 2026/10/11 20:26:32 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/fa40ac749e/r/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude codex]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-1129307112/forge project space]
+          projects: 0 found
+          conv: auto
+        
+        2026/10/11 20:26:32 wing: local control ready (wing_id=8cc1820c458d4ca0a22ca19d)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+--- FAIL: TestStoryboardRunsCard1/native/forge (10.23s)
+--- FAIL: TestStoryboardRunsCard1 (21.04s)
+=== RUN   TestStoryboardRunsCard2
+    storyboard_pty_test.go:694: command ["doctor" "launch-plan" "--route" "agent_run" "--agent" "codex" "--cwd" "/work/lanes/wt-e2e/wingthing/.scratch/northstar-2498289832/work" "--home" "/work/lanes/wt-e2e/wingthing/.scratch/northstar-2498289832/work/provider-home" "--allowed-home-root" "/work/lanes/wt-e2e/wingthing/.scratch/northstar-2498289832/work" "--executable" "/work/lanes/wt-e2e/wingthing/.scratch/northstar-2498289832/tmp-alias/bin/codex"] exit=<nil>
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardRunsCard2/TestStoryboardRunsCard2-160-3981846.txt
+--- PASS: TestStoryboardRunsCard2 (0.05s)
+=== RUN   TestStoryboardRunsCard3
+    storyboard_pty_test.go:711: Unix socket lexical/canonical bytes: 69/69
+    storyboard_pty_test.go:711: Unix socket lexical/canonical bytes: 69/69
+    storyboard_pty_test.go:713: screen timeout (effective policy review):
+        wt | 2 sessions | 4 machines
+        B:1 W:1 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:1 bell:off
+        Details: local:same
+        Name: coordinator
+        Status: working
+        Machine: local  connected  updated 0s ago
+        Cwd: /work/lanes/wt-e2e/wingthing/.scratch/northstar-345733260/work
+        Attention: active
+        Lifecycle source: claude_hook  State cursor: 1
+        Reason: Native provider is working.
+        Agent/kind: claude / agent
+        Age: 2m
+        Isolation: fixture
+        Readers: 1
+        Writer: ownership not reported for this channel; v observes without input or resize
+        Route: local; state: /work/lanes/wt-e2e/wingthing/.scratch/c00b6256e3/l
+        Controls: Enter attach; v view; t confirm takeover; r rename; x confirm stop; n new
+        Attach: wt attach -- same
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        j/k scroll  Esc/Enter back  Ctrl-C quit
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardRunsCard3/TestStoryboardRunsCard3-140-3981870.txt
+--- FAIL: TestStoryboardRunsCard3 (8.28s)
+=== RUN   TestStoryboardRunsCard4
+    storyboard_pty_test.go:723: command ["run-inspect" "--snapshot" "/work/lanes/wt-e2e/wingthing/.scratch/northstar-2437459037/work/captured-state" "--json"] exit=<nil>
+    storyboard_pty_test.go:743: command ["run-inspect" "--snapshot" "/work/lanes/wt-e2e/wingthing/.scratch/northstar-2437459037/work/captured-state" "--json"] exit=exit status 1
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardRunsCard4/TestStoryboardRunsCard4-160-3983823.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/storyboard-evidence/TestStoryboardRunsCard4/TestStoryboardRunsCard4-160-3983777.txt
+--- PASS: TestStoryboardRunsCard4 (0.22s)
+=== RUN   TestStoryboardRunsCard5
+=== RUN   TestStoryboardRunsCard5/transport
+    storyboardLaunchFailure_pty_test.go:120: Unix socket lexical/canonical bytes: 63/63
+    storyboardLaunchFailure_pty_test.go:93: Unix socket lexical/canonical bytes: 81/81
+    storyboardLaunchFailure_pty_test.go:93: Unix socket lexical/canonical bytes: 81/81
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard5-transport-120-3984165.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard5-transport-240-3984154.txt
+--- PASS: TestStoryboardRunsCard5/transport (2.48s)
+=== RUN   TestStoryboardRunsCard5/remote
+=== RUN   TestStoryboardRunsCard5/remote/policy
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 63/63
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 81/81
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard5-remote-policy-120-3984619.txt
+--- PASS: TestStoryboardRunsCard5/remote/policy (2.61s)
+=== RUN   TestStoryboardRunsCard5/remote/attach
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 63/63
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 81/81
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard5-remote-attach-120-3985307.txt
+--- PASS: TestStoryboardRunsCard5/remote/attach (3.50s)
+--- PASS: TestStoryboardRunsCard5/remote (6.12s)
+=== RUN   TestStoryboardRunsCard5/success
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard5-success-120-3985598.txt
+--- PASS: TestStoryboardRunsCard5/success (0.93s)
+=== RUN   TestStoryboardRunsCard5/native
+    storyboardLaunchFailure_pty_test.go:273: Unix socket lexical/canonical bytes: 63/63
+    storyboardLaunchFailure_pty_test.go:292: screen timeout (native denial):
+        Error: Claude launch failed during admission/policy: wing refused admission under its configured policy. Review the selected policy and launch requirements. Policy: unavailable. Doctor launch-plan needs an explicit --allowed-home-root; supp
+        ly the exact --home, --executable and policy/base inputs. No complete request was captured.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard5-native-240-3985724.txt
+    storyboard_pty_test.go:803: fixture runtime diagnostic mcp-audit.log: {"actor":"default","argument_sha256":"e6b391d3c123bba952322653b764fbabd600439040e226f81b95b6bd732fdc21","decision":"error","isolation":"wingthing-sandbox","principal":"user-32e0ae012deac8bc0263","timestamp":"2026-10-12T00:26:58.916356959Z","tool":"agent_start"}
+    storyboard_pty_test.go:803: fixture runtime diagnostic wing.log: 2026/10/11 20:26:58 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/951b78300c/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-2729114931/work]
+          projects: 1 found
+            work → /work/lanes/wt-e2e/wingthing/.scratch/northstar-2729114931/work
+          conv: auto
+        
+        2026/10/11 20:26:58 wing: local control ready (wing_id=0a4a4af351e945a29d75fa3e)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+    storyboard_pty_test.go:820: fixture wing diagnostic: 2026/10/11 20:26:58 egg: loaded wing config from /work/lanes/wt-e2e/wingthing/.scratch/951b78300c/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-e2e/wingthing/.scratch/northstar-2729114931/work]
+          projects: 1 found
+            work → /work/lanes/wt-e2e/wingthing/.scratch/northstar-2729114931/work
+          conv: auto
+        
+        2026/10/11 20:26:58 wing: local control ready (wing_id=0a4a4af351e945a29d75fa3e)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+--- FAIL: TestStoryboardRunsCard5/native (8.57s)
+--- FAIL: TestStoryboardRunsCard5 (18.10s)
+=== RUN   TestStoryboardRunsCard6
+=== RUN   TestStoryboardRunsCard6/symlinked-TMPDIR-coordinator-loss
+    northstar_recovery_pty_test.go:45: Unix socket lexical/canonical bytes: 69/69
+    northstar_recovery_pty_test.go:46: Unix socket lexical/canonical bytes: 69/69
+    northstar_recovery_pty_test.go:59: Unix socket lexical/canonical bytes: 63/63
+    northstar_recovery_pty_test.go:65: Unix socket lexical/canonical bytes: 63/63
+    northstar_recovery_pty_test.go:65: Unix socket lexical/canonical bytes: 63/63
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/evidence/09/pty/TestStoryboardRunsCard6-symlinked-TMPDIR-coordinator-loss-160-3990508.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-e2e/wingthing/.scratch/evidence/09/pty/TestStoryboardRunsCard6-symlinked-TMPDIR-coordinator-loss-160-3990429.txt
+--- PASS: TestStoryboardRunsCard6/symlinked-TMPDIR-coordinator-loss (8.28s)
+--- PASS: TestStoryboardRunsCard6 (8.28s)
+FAIL
+FAIL	github.com/ehrlich-b/wingthing/cmd/wt	230.198s

@@ -1,0 +1,9 @@
+{
+  "sha256": "2aa15fcf43c747a3af9f1b7dec60e50534b53f8b5728b77d1c7a7841af38242b",
+  "base_commit": "f8f9ebd96e1c72336ffd796c8d496ecda0a85619",
+  "go": "go version go1.27.2 linux/amd64",
+  "uname": "Linux x86_64",
+  "GOFLAGS": "-p=4",
+  "nice": 15,
+  "embedding": "repository make web/dist placeholder; terminal-only acceptance"
+}

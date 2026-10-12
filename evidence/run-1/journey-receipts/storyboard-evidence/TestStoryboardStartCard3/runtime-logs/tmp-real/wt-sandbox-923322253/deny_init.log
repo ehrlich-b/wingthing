@@ -1,0 +1,13 @@
+2026/10/11 20:20:28 _deny_init: network namespace relay active (proxy=37359 local_ports=[])
+2026/10/11 20:20:28 _deny_init: prepared absent deny mountpoint /work/lanes/wt-e2e/wingthing/.scratch/efc86e90cf/.ssh
+2026/10/11 20:20:28 _deny_init: prepared absent deny mountpoint /work/lanes/wt-e2e/wingthing/.scratch/efc86e90cf/.gnupg
+2026/10/11 20:20:28 _deny_init: prepared absent deny mountpoint /work/lanes/wt-e2e/wingthing/.scratch/efc86e90cf/.aws
+2026/10/11 20:20:28 _deny_init: prepared absent deny mountpoint /work/lanes/wt-e2e/wingthing/.scratch/efc86e90cf/.docker
+2026/10/11 20:20:28 _deny_init: prepared absent deny mountpoint /work/lanes/wt-e2e/wingthing/.scratch/efc86e90cf/.kube
+2026/10/11 20:20:28 _deny_init: prepared absent deny mountpoint /work/lanes/wt-e2e/wingthing/.scratch/efc86e90cf/.netrc
+2026/10/11 20:20:28 _deny_init: prepared absent deny mountpoint /work/lanes/wt-e2e/wingthing/.scratch/efc86e90cf/.bash_history
+2026/10/11 20:20:28 _deny_init: prepared absent deny mountpoint /work/lanes/wt-e2e/wingthing/.scratch/efc86e90cf/.zsh_history
+2026/10/11 20:20:28 _deny_init: write isolation: HOME=/work/lanes/wt-e2e/wingthing/.scratch/efc86e90cf ro, 6 writable paths
+2026/10/11 20:20:28 _deny_init: deny-write path absent at launch: /work/lanes/wt-e2e/wingthing/.scratch/northstar-2117547316/work/egg.yaml
+2026/10/11 20:20:28 _deny_init: seccomp installed (36 denied syscalls)
+2026/10/11 20:20:28 _deny_init: binary /work/lanes/wt-e2e/wingthing/.scratch/northstar-2117547316/tmp-real/bin/codex mode=-rwx------ size=2827

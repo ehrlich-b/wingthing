@@ -1,0 +1,104 @@
+
+--- fresh fleet ---
+wt | 2 sessions | 4 machines
+B:0 W:2 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  /work/lanes/wt-e2e/wingthing/.scratch/northstar-2099319820/work space; $(touc…
+> W shared-name                     claude       northstar-2099319820/wor… 2m
+forge  connected  updated 0s ago
+  /work/lanes/wt-e2e/wingthing/.scratch/northstar-2099319820/work space; $(touc…
+  W forge-renamed                   claude       northstar-2099319820/wor… 2m
+mirror  connecting (refreshing)
+  (no sessions)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH di…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit…
+
+--- stop exact forge selection ---
+wt | 2 sessions | 4 machines
+B:0 W:2 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  (no matches)
+forge  connected  updated 0s ago
+  /work/lanes/wt-e2e/wingthing/.scratch/northstar-2099319820/work space; $(touc…
+> W forge-renamed                   claude       northstar-2099319820/wor… 2m
+mirror  connecting (refreshing)
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH di…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit…
+/forge (1/2)
+
+--- stop exact forge confirmation ---
+wt | 2 sessions | 4 machines
+B:0 W:2 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  (no matches)
+forge  connected  updated 0s ago
+  /work/lanes/wt-e2e/wingthing/.scratch/northstar-2099319820/work space; $(touc…
+> W forge-renamed                   claude       northstar-2099319820/wor… 2m
+mirror  connecting (refreshing)
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH di…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+y stop  Enter/Esc cancel  Ctrl-C quit
+Stop forge:shared-id (forge-renamed)? [y/N]
+
+--- stop exact forge ---
+wt | 2 sessions | 4 machines
+B:0 W:2 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connected  updated 0s ago
+  (no matches)
+forge  connected  updated 0s ago
+  (no matches)
+mirror  connected  updated 0s ago (refreshing)
+  (no matches)
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH di…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit…
+Done
