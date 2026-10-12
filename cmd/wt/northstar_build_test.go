@@ -14,6 +14,32 @@ import (
 	"time"
 )
 
+func TestNorthstarBuildUsesProvidedBinaries(t *testing.T) {
+	f := northstarNewFixture(t)
+	for _, channel := range []string{"stable", "preview"} {
+		source := filepath.Join(f.root, channel)
+		northstarWrite(t, source, "#!/bin/sh\nprintf '%s\\n' '"+channel+" fixture'\n", 0700)
+		key := "WT_TEST_BINARY"
+		if channel == "preview" {
+			key = "WT_TEST_PREVIEW_BINARY"
+		}
+		t.Setenv(key, source)
+	}
+	for _, channel := range []string{"stable", "preview"} {
+		binary := northstarBuild(t, f, channel)
+		if !strings.HasPrefix(binary, f.tmp+string(filepath.Separator)) {
+			t.Fatalf("%s binary escaped fixture TMPDIR alias: %s", channel, binary)
+		}
+		if err := os.Remove(filepath.Join(f.root, channel)); err != nil {
+			t.Fatal(err)
+		}
+		output, err := exec.CommandContext(t.Context(), binary).Output()
+		if err != nil || string(output) != channel+" fixture\n" {
+			t.Fatalf("%s fixture did not retain the selected binary: %v %s", channel, err, output)
+		}
+	}
+}
+
 func TestNorthstarBuildHelper(t *testing.T) {
 	mode := os.Getenv("WT_NORTHSTAR_BUILD_HELPER")
 	if mode == "" {

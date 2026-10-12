@@ -265,7 +265,9 @@ e2e-mac: web
 	@test "$$(uname -s)" = Darwin || { echo 'e2e-mac requires the macOS Seatbelt parent sandbox'; exit 1; }
 	$(stable-build)
 	$(preview-build)
-	WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 -tags integration -v -timeout 120s ./internal/sandbox ./cmd/wt
+	# Keep the two-minute deadline for each group while running every CLI test.
+	WT_TEST_BINARY="$(CURDIR)/wt" WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 -tags integration -v -timeout 120s ./internal/sandbox ./cmd/wt -skip '^Test(Northstar|NativeTerminal)'
+	WT_TEST_BINARY="$(CURDIR)/wt" WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 -tags integration -v -timeout 120s ./cmd/wt -run '^Test(Northstar|NativeTerminal)'
 	$(GO) test -p 2 ./internal/egg -run 'TestPreviewClaude(GuardRejectsSymlinkAliases|ContextRejectsAliasedForeignSelector|LifecycleSettingsAndHooksKeepDataHome)$$' -count=1
 	python3 -B -m unittest discover -s test/preview -p test_mac_provider_context.py
 	python3 test/preview/mac_provider_context.py "$(PREVIEW_CONTEXT_BINARY)"

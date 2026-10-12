@@ -122,6 +122,11 @@ func coldInstallBinary(t *testing.T, f *northstarFixture, built string) string {
 func coldCleanup(t *testing.T, f *northstarFixture, binary string) {
 	t.Helper()
 	t.Cleanup(func() {
+		if t.Failed() {
+			if log, err := os.ReadFile(filepath.Join(f.local, "wing.log")); err == nil {
+				t.Logf("fixture wing log:\n%s", log)
+			}
+		}
 		entries, _ := os.ReadDir(filepath.Join(f.local, "eggs"))
 		for _, entry := range entries {
 			if !entry.IsDir() {

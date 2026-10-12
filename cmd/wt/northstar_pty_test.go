@@ -126,13 +126,26 @@ esac
 func northstarBuild(t *testing.T, f *northstarFixture, channel string) string {
 	t.Helper()
 	binary := filepath.Join(f.bin, "wt")
+	provided := os.Getenv("WT_TEST_BINARY")
 	if channel == "preview" {
 		binary += "-preview"
+		provided = os.Getenv("WT_TEST_PREVIEW_BINARY")
 	}
-	goBin := "go"
-	if runtime.GOOS == "darwin" {
-		goBin = "/Users/ehrlich/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.9.darwin-arm64/bin/go"
+	if provided != "" {
+		// Make gates have already built this checkout. Copy the selected channel
+		// into the fixture so every CLI still launches through its TMPDIR alias.
+		data, err := os.ReadFile(provided)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(binary, data, 0700); err != nil {
+			t.Fatal(err)
+		}
+		return binary
 	}
+	// Use the toolchain that compiled this test, regardless of the runner's
+	// username or whether a fixture replaced PATH with provider-only tools.
+	goBin := filepath.Join(runtime.GOROOT(), "bin", "go")
 	args := []string{"-n", "15", goBin, "build", "-p", "2", "-buildvcs=false", "-o", binary}
 	if channel == "preview" {
 		args = append(args, "-ldflags", "-X github.com/ehrlich-b/wingthing/internal/config.ReleaseChannel=preview")
@@ -143,10 +156,14 @@ func northstarBuild(t *testing.T, f *northstarFixture, channel string) string {
 		build = exec.Command("taskpolicy", append([]string{"-b", "nice"}, args...)...)
 	}
 	build.Dir = f.repo
-	// Build caches are clone-local even when the coordinator invokes go without
-	// cache selectors; child application env stays separate from the build env.
-	build.Env = append(os.Environ(), "GOCACHE="+filepath.Join(f.repo, ".scratch", "northstar", "go-build"),
-		"GOMODCACHE="+filepath.Join(f.repo, ".scratch", "northstar", "go-mod"))
+	// Reuse the invoking gate's warmed caches. Without explicit selectors,
+	// keep caches clone-local; application children retain their isolated env.
+	build.Env = os.Environ()
+	for key, dir := range map[string]string{"GOCACHE": "go-build", "GOMODCACHE": "go-mod"} {
+		if os.Getenv(key) == "" {
+			build.Env = append(build.Env, key+"="+filepath.Join(f.repo, ".scratch", "northstar", dir))
+		}
+	}
 	// t.Context is cancelled during cleanup, not before the test timeout
 	// alarm. Give this nested build its own deadline so it cannot consume the
 	// entire acceptance budget or strand compiler children after a timeout.
