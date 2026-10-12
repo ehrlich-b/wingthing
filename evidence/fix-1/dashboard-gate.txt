@@ -1,0 +1,1 @@
+ok  	github.com/ehrlich-b/wingthing/internal/dashboard	0.164s

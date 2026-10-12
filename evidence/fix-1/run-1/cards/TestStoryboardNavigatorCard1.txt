@@ -1,0 +1,5 @@
+=== RUN   TestStoryboardNavigatorCard1
+    storyboard_pty_test.go:432: Unix socket lexical/canonical bytes: 71/71
+    storyboard_pty_test.go:432: Unix socket lexical/canonical bytes: 71/71
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/storyboard-evidence/TestStoryboardNavigatorCard1/TestStoryboardNavigatorCard1-140-267774.txt
+--- PASS: TestStoryboardNavigatorCard1 (0.09s)

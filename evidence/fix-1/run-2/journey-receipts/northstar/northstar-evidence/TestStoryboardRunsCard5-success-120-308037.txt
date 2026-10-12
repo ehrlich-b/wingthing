@@ -1,0 +1,32 @@
+
+--- successful launch quiet ---
+[attached to successful-parent; Ctrl+B then q detaches; Ctrl+B twice sends Ctrl+B]
+SUCCESSFUL_PROVIDER_READY
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

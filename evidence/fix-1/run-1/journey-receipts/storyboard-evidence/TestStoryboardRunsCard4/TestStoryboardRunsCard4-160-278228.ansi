@@ -1,0 +1,153 @@
+{
+  "legacy_tasks": null,
+  "checkpoint_attempts": null,
+  "version": 1,
+  "captured_at": "2026-10-10T12:00:00Z",
+  "input_files": [
+    {
+      "path": "eggs/fixture-execution/run.8128e203343008b6187455d5a3607e980f82ea4abf77ac6bcb8aca4289a0e650.json",
+      "bytes": 439,
+      "sha256": "8787ca70a26afb9c6e640e89c44b3a90bfe3ee5778c239d2169951b0c3e60f3f"
+    },
+    {
+      "path": "records.sql",
+      "bytes": 1228,
+      "sha256": "e7fe4efa8cebd16e9675333d5c3305c2d12722b1699a04c4a7dab7209165d2fc"
+    },
+    {
+      "path": "wt.db",
+      "bytes": 32768,
+      "sha256": "437801aeb71fe237c7c76f93f1641e972540da678f9832a95e9a99608acb2e9d"
+    }
+  ],
+  "runs": [
+    {
+      "receipts": [
+        {
+          "source": {
+            "path": "wt.db",
+            "record": "agent_runs:fixture-orphan"
+          },
+          "run_id": "fixture-orphan",
+          "session_id": "fixture-execution",
+          "status": "pending",
+          "deadline": "2026-10-10T12:01:00Z"
+        },
+        {
+          "source": {
+            "path": "eggs/fixture-execution/run.8128e203343008b6187455d5a3607e980f82ea4abf77ac6bcb8aca4289a0e650.json"
+          },
+          "run_id": "fixture-orphan",
+          "session_id": "fixture-execution",
+          "status": "done",
+          "provider_session_id": "fixture-thread",
+          "turn_id": "fixture-turn",
+          "deadline": "2026-10-10T12:01:00Z",
+          "started_at": "2026-10-10T11:59:00Z",
+          "ended_at": "2026-10-10T12:00:00Z"
+        }
+      ],
+      "evidence_state": "consistent",
+      "run_id": "fixture-orphan",
+      "session_id": "fixture-execution",
+      "phase": "submitting",
+      "wing_status": "pending",
+      "egg_status": "done",
+      "diagnosis": "completed_with_output",
+      "acknowledgement": "terminal_receipt_not_in_wing",
+      "outputs": [
+        {
+          "source": {
+            "path": "wt.db",
+            "record": "agent_runs:fixture-orphan",
+            "field": "result.text"
+          },
+          "available": true,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "omitted_bytes": 0
+        },
+        {
+          "source": {
+            "path": "eggs/fixture-execution/run.8128e203343008b6187455d5a3607e980f82ea4abf77ac6bcb8aca4289a0e650.json",
+            "field": "result.text"
+          },
+          "available": true,
+          "bytes": 60,
+          "sha256": "3e3b84dadc7bdcd52aed6844f10f81ce7267f7eabd2c12bf5d8f446db58c056f",
+          "omitted_bytes": 60
+        }
+      ],
+      "sources": [
+        {
+          "path": "wt.db",
+          "record": "agent_runs:fixture-orphan"
+        },
+        {
+          "path": "eggs/fixture-execution/run.8128e203343008b6187455d5a3607e980f82ea4abf77ac6bcb8aca4289a0e650.json"
+        }
+      ],
+      "issues": [],
+      "suggested_actions": [
+        {
+          "kind": "inspect",
+          "basis": [
+            {
+              "path": "wt.db",
+              "record": "agent_runs:fixture-orphan"
+            },
+            {
+              "path": "eggs/fixture-execution/run.8128e203343008b6187455d5a3607e980f82ea4abf77ac6bcb8aca4289a0e650.json"
+            }
+          ],
+          "requires": [
+            "Review the cited records and snapshot capture time."
+          ]
+        }
+      ]
+    }
+  ],
+  "conversations": [],
+  "archives": [
+    {
+      "compressed_bytes": 0,
+      "decoded_bytes": 0,
+      "rotation_pending": false,
+      "session_id": "fixture-execution",
+      "state": "absent",
+      "sources": [
+        {
+          "path": "eggs/fixture-execution/chat.meta"
+        },
+        {
+          "path": "eggs/fixture-execution/chat.jsonl.gz"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "kind": "run_execution",
+      "from": "fixture-orphan",
+      "to": "fixture-execution",
+      "state": "observed",
+      "sources": [
+        {
+          "path": "wt.db",
+          "record": "agent_runs:fixture-orphan"
+        },
+        {
+          "path": "eggs/fixture-execution/run.8128e203343008b6187455d5a3607e980f82ea4abf77ac6bcb8aca4289a0e650.json"
+        }
+      ]
+    }
+  ],
+  "issues": null,
+  "required_host_observations": [
+    "Verify the snapshot capture time and that no newer durable records exist.",
+    "Verify the exact session PID, process identity, provider thread/turn and absolute deadline on the real host.",
+    "Read the latest run receipt and complete output for the same run and execution IDs; never resend ambiguous input.",
+    "Reload conversation revision and delivered cursor; wake delivery and output existence do not acknowledge events.",
+    "Verify ownership, current execution, provider resume support, complete archive and policy before any manual recovery."
+  ]
+}

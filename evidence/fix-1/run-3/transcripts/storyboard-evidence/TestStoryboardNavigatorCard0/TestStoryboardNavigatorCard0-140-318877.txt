@@ -1,0 +1,126 @@
+
+--- grouped machines ---
+wt | 2 sessions | 4 machines
+B:1 W:1 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:1 bell:off
+local  connected  updated 0s ago
+  /work/lanes/wt-fix-1/wingthing/.scratch/northstar-3496716773/work
+> W coordinator                                                             claude       northstar-3496716773/work                     2m
+empty  connected  updated 0s ago
+  (no sessions)
+forge  connected  updated 0s ago
+  /work/lanes/wt-fix-1/wingthing/.scratch/northstar-3496716773/work
+  B coordinator                                                             claude       northstar-3496716773/work                     2m
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown; reconnect and list…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+
+--- machine filter ---
+wt | 2 sessions | 4 machines
+B:1 W:1 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:1 bell:off
+local  connected  updated 0s ago
+  (no matches)
+empty  connected  updated 0s ago
+  (no matches)
+forge  connected  updated 0s ago
+  /work/lanes/wt-fix-1/wingthing/.scratch/northstar-3496716773/work
+> B coordinator                                                             claude       northstar-3496716773/work                     2m
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown; reconnect and list…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+/forge (1/2)
+
+--- attention filter ---
+wt | 2 sessions | 4 machines
+B:1 W:1 I:0 D:0 E:0 F:0 ?:0 U:0 | [All ! attention] !:1 bell:off
+local  connected  updated 0s ago
+  (no matches)
+empty  connected  updated 0s ago
+  (no matches)
+forge  connected  updated 0s ago
+  /work/lanes/wt-fix-1/wingthing/.scratch/northstar-3496716773/work
+> B coordinator                                                             claude       northstar-3496716773/work                     2m
+offline  offline
+  ! remote "offline": SSH to ns-offline ended with status 255; check the SSH diagnostic above. Session state is unknown; reconnect and list…
+  (inventory unavailable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+/forge (1/2)

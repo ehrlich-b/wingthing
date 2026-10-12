@@ -1,0 +1,9 @@
+{
+  "product_commit": "6a08b45",
+  "base_commit": "580d4d9",
+  "binary_sha256": "45f945baad60086027388f7d99a7c9362ccf718a2e8ec944f5bda152306f943b",
+  "buildvcs": false,
+  "platform": "linux",
+  "GOFLAGS": "-p=4",
+  "nice": 15
+}

@@ -1,0 +1,8 @@
+=== RUN   TestStoryboardPhoneCard2
+    storyboard_pty_test.go:592: Unix socket lexical/canonical bytes: 80/80
+    storyboard_pty_test.go:603: command ["pair"] exit=exit status 1
+    storyboard_pty_test.go:608: card 05/#3 prerequisite: [pair]; downstream physical-device assertions are NOT exercised
+    storyboard_pty_test.go:610: phone card blocked: required wt pair unavailable; expected prerequisite screen ["Pair a phone" "5:00" "Waiting for scan"]; actual:
+        Error: unknown command "pair" for "wt"
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/storyboard-evidence/TestStoryboardPhoneCard2/TestStoryboardPhoneCard2-160-274780.txt
+--- FAIL: TestStoryboardPhoneCard2 (0.02s)

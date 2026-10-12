@@ -1,0 +1,17 @@
+[
+  {
+    "command": "GOFLAGS=-p=4 nice -n 15 go vet ./...",
+    "exit_code": 0,
+    "output": "vet-check.txt"
+  },
+  {
+    "command": "GOFLAGS=-p=4 nice -n 15 go test -count=1 ./internal/dashboard",
+    "exit_code": 0,
+    "output": "dashboard-gate.txt"
+  },
+  {
+    "command": "GOFLAGS=-p=4 nice -n 15 go test -count=1 -run '^Test(Claude|Dashboard)' ./cmd/wt",
+    "exit_code": 0,
+    "output": "cli-gate.txt"
+  }
+]

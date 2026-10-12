@@ -1,0 +1,41 @@
+base: none
+fs:
+    - ro:/
+    - rw:./
+    - rw:~/.cache/
+    - rw:~/Library/Caches/
+    - rw:~/go/pkg/mod/cache/
+    - deny:~/.ssh
+    - deny:~/.gnupg
+    - deny:~/.aws
+    - deny:~/.docker
+    - deny:~/.kube
+    - deny:~/.netrc
+    - deny:~/.bash_history
+    - deny:~/.zsh_history
+    - deny-write:./egg.yaml
+    - deny-rename:/work/lanes/wt-fix-1/wingthing/.scratch/0b913ad7e5
+    - deny-rename:/work/lanes/wt-fix-1/wingthing/.scratch
+    - deny-rename:/work/lanes/wt-fix-1/wingthing
+    - deny-rename:/work/lanes/wt-fix-1
+    - deny-rename:/work/lanes
+    - deny-rename:/work
+    - deny:/work/lanes/wt-fix-1/wingthing/.scratch/0b913ad7e5/l
+    - deny:/work/lanes/wt-fix-1/wingthing/.scratch/0b913ad7e5/r
+    - deny-write:/work/lanes/wt-fix-1/wingthing/.scratch/0b913ad7e5/mailbox
+network: none
+env:
+    - HOME
+    - PATH
+    - TERM
+    - LANG
+    - USER
+resources:
+    cpu: ""
+    memory: ""
+    max_fds: 0
+    max_pids: 0
+shell: ""
+dangerously_skip_permissions: false
+audit: false
+trace: false

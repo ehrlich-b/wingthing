@@ -1,0 +1,13 @@
+2026/10/11 21:22:44 _deny_init: network namespace relay active (proxy=34405 local_ports=[])
+2026/10/11 21:22:44 _deny_init: prepared absent deny mountpoint /work/lanes/wt-fix-1/wingthing/.scratch/e179dc1df7/.ssh
+2026/10/11 21:22:44 _deny_init: prepared absent deny mountpoint /work/lanes/wt-fix-1/wingthing/.scratch/e179dc1df7/.gnupg
+2026/10/11 21:22:44 _deny_init: prepared absent deny mountpoint /work/lanes/wt-fix-1/wingthing/.scratch/e179dc1df7/.aws
+2026/10/11 21:22:44 _deny_init: prepared absent deny mountpoint /work/lanes/wt-fix-1/wingthing/.scratch/e179dc1df7/.docker
+2026/10/11 21:22:44 _deny_init: prepared absent deny mountpoint /work/lanes/wt-fix-1/wingthing/.scratch/e179dc1df7/.kube
+2026/10/11 21:22:44 _deny_init: prepared absent deny mountpoint /work/lanes/wt-fix-1/wingthing/.scratch/e179dc1df7/.netrc
+2026/10/11 21:22:44 _deny_init: prepared absent deny mountpoint /work/lanes/wt-fix-1/wingthing/.scratch/e179dc1df7/.bash_history
+2026/10/11 21:22:44 _deny_init: prepared absent deny mountpoint /work/lanes/wt-fix-1/wingthing/.scratch/e179dc1df7/.zsh_history
+2026/10/11 21:22:44 _deny_init: write isolation: HOME=/work/lanes/wt-fix-1/wingthing/.scratch/e179dc1df7 ro, 6 writable paths
+2026/10/11 21:22:44 _deny_init: deny-write path absent at launch: /work/lanes/wt-fix-1/wingthing/.scratch/native-4243521774/work/egg.yaml
+2026/10/11 21:22:44 _deny_init: seccomp installed (36 denied syscalls)
+2026/10/11 21:22:44 _deny_init: binary /usr/bin/python3.13 mode=-rwxr-xr-x size=6832784

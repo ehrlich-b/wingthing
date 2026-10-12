@@ -9,11 +9,13 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"golang.org/x/term"
@@ -39,7 +41,18 @@ func Run(ctx context.Context, version string, streams remotepkg.IO) error {
 	if err != nil {
 		return err
 	}
-	s := &state{machines: map[string]machine{"local": {}}, defaultAgent: cfg.DefaultAgent, defaultCWD: cwd, localDir: cfg.Dir}
+	s := &state{machines: map[string]machine{"local": {}}, defaultAgent: cfg.DefaultAgent, agent: cfg.DefaultAgent, defaultCWD: cwd, localDir: cfg.Dir}
+	_, pidErr := os.Stat(filepath.Join(cfg.Dir, "wing.pid"))
+	s.onboarding = os.IsNotExist(pidErr)
+	// An already-prepared wing may expose its owner socket without a PID
+	// receipt. Preserve the existing scoped creation route in that case too.
+	if socket, err := controlsocket.Path(cfg.Dir); err == nil {
+		_, socketErr := os.Stat(socket)
+		s.onboarding = s.onboarding && os.IsNotExist(socketErr)
+	} else {
+		s.onboarding = false
+	}
+	s.rescanProviders()
 	for name := range remotes {
 		s.machines[name] = machine{}
 	}
@@ -213,12 +226,16 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 					continue
 				}
 			}
-			args, actionErr := actionArgs(*act, remotes)
+			var args []string
+			var actionErr error
+			if act.kind < agentChooser {
+				args, actionErr = actionArgs(*act, remotes)
+			}
 			if actionErr != nil {
 				s.message = actionErr.Error()
 				continue
 			}
-			if !act.attach && act.kind != newCWD {
+			if !act.attach && act.kind != newCWD && act.kind < agentChooser {
 				s.busy, s.message = true, "Running…"
 				actions.Add(1)
 				go func() {
@@ -246,7 +263,11 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			if act.attach && act.kind != runAttach {
 				s.attached = &act.row.identity
 			}
-			actionErr = command(ctx, args, streams)
+			if act.kind >= agentChooser {
+				actionErr = s.runOnboarding(ctx, act.kind, streams)
+			} else {
+				actionErr = command(ctx, args, streams)
+			}
 			if act.attach && act.kind != runAttach && actionErr == nil {
 				s.acknowledge(act.row)
 			}
@@ -256,7 +277,7 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			if err := terminal.leave(); err != nil {
 				return err
 			}
-			if actionErr != nil {
+			if actionErr != nil && act.kind < agentChooser {
 				s.message = qualifyLaunchAction(actionErr, act.row.machine).Error()
 			}
 			if ctx.Err() != nil {

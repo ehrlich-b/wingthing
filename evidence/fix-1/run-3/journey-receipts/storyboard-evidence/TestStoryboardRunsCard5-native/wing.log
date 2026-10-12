@@ -1,0 +1,11 @@
+2026/10/11 21:23:35 egg: loaded wing config from /work/lanes/wt-fix-1/wingthing/.scratch/9f7c6a9a80/l/egg.yaml (network=none)
+starting local-only wing
+  agents: [claude]
+  skills: []
+  paths: [/work/lanes/wt-fix-1/wingthing/.scratch/northstar-624960760/work]
+  projects: 1 found
+    work → /work/lanes/wt-fix-1/wingthing/.scratch/northstar-624960760/work
+  conv: auto
+
+2026/10/11 21:23:35 wing: local control ready (wing_id=63117dc8029f4c25a1ee3f96)
+wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux

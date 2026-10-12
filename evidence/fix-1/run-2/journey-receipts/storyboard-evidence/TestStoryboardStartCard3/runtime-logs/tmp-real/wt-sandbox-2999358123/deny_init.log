@@ -1,0 +1,13 @@
+2026/10/11 21:19:39 _deny_init: network namespace relay active (proxy=42495 local_ports=[])
+2026/10/11 21:19:39 _deny_init: prepared absent deny mountpoint /work/lanes/wt-fix-1/wingthing/.scratch/7e02b1e16f/.ssh
+2026/10/11 21:19:39 _deny_init: prepared absent deny mountpoint /work/lanes/wt-fix-1/wingthing/.scratch/7e02b1e16f/.gnupg
+2026/10/11 21:19:39 _deny_init: prepared absent deny mountpoint /work/lanes/wt-fix-1/wingthing/.scratch/7e02b1e16f/.aws
+2026/10/11 21:19:39 _deny_init: prepared absent deny mountpoint /work/lanes/wt-fix-1/wingthing/.scratch/7e02b1e16f/.docker
+2026/10/11 21:19:39 _deny_init: prepared absent deny mountpoint /work/lanes/wt-fix-1/wingthing/.scratch/7e02b1e16f/.kube
+2026/10/11 21:19:39 _deny_init: prepared absent deny mountpoint /work/lanes/wt-fix-1/wingthing/.scratch/7e02b1e16f/.netrc
+2026/10/11 21:19:39 _deny_init: prepared absent deny mountpoint /work/lanes/wt-fix-1/wingthing/.scratch/7e02b1e16f/.bash_history
+2026/10/11 21:19:39 _deny_init: prepared absent deny mountpoint /work/lanes/wt-fix-1/wingthing/.scratch/7e02b1e16f/.zsh_history
+2026/10/11 21:19:39 _deny_init: write isolation: HOME=/work/lanes/wt-fix-1/wingthing/.scratch/7e02b1e16f ro, 6 writable paths
+2026/10/11 21:19:39 _deny_init: deny-write path absent at launch: /work/lanes/wt-fix-1/wingthing/.scratch/northstar-3960221863/work/egg.yaml
+2026/10/11 21:19:39 _deny_init: seccomp installed (36 denied syscalls)
+2026/10/11 21:19:39 _deny_init: binary /work/lanes/wt-fix-1/wingthing/.scratch/northstar-3960221863/tmp-real/bin/codex mode=-rwx------ size=2827

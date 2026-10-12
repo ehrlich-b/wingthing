@@ -1,0 +1,56 @@
+=== RUN   TestStoryboardNavigatorCard2
+=== RUN   TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks
+    northstar_attention_pty_test.go:120: Unix socket lexical/canonical bytes: 71/71
+    northstar_attention_pty_test.go:121: Unix socket lexical/canonical bytes: 71/71
+    northstar_attention_pty_test.go:122: Unix socket lexical/canonical bytes: 74/74
+    northstar_attention_pty_test.go:142: PermissionRequest to visible native blocked: 27.612562ms
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-268860.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-268274.txt
+--- PASS: TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks (3.10s)
+=== RUN   TestStoryboardNavigatorCard2/durable-unread-cursor
+    storyboard_pty_test.go:456: Unix socket lexical/canonical bytes: 73/73
+    storyboard_pty_test.go:466: screen timeout (same viewer durable unread after reopen):
+        wt | 1 sessions | 1 machines
+        B:0 W:0 I:1 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+        local  connected  updated 0s ago
+          /work/lanes/wt-fix-1/wingthing/.scratch/northstar-3500476834/work
+        > I unread-parent                                                           claude       northstar-3500476834/work                     2m
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+        / filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-269013.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-268949.txt
+--- FAIL: TestStoryboardNavigatorCard2/durable-unread-cursor (8.08s)
+--- FAIL: TestStoryboardNavigatorCard2 (11.18s)

@@ -1,0 +1,86 @@
+=== RUN   TestStoryboardRunsCard5
+=== RUN   TestStoryboardRunsCard5/transport
+    storyboardLaunchFailure_pty_test.go:120: Unix socket lexical/canonical bytes: 65/65
+    storyboardLaunchFailure_pty_test.go:93: Unix socket lexical/canonical bytes: 83/83
+    storyboardLaunchFailure_pty_test.go:93: Unix socket lexical/canonical bytes: 83/83
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard5-transport-120-278268.txt
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard5-transport-240-278252.txt
+--- PASS: TestStoryboardRunsCard5/transport (0.14s)
+=== RUN   TestStoryboardRunsCard5/remote
+=== RUN   TestStoryboardRunsCard5/remote/policy
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 65/65
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 83/83
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard5-remote-policy-120-278304.txt
+--- PASS: TestStoryboardRunsCard5/remote/policy (0.24s)
+=== RUN   TestStoryboardRunsCard5/remote/attach
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 65/65
+    storyboardLaunchFailure_pty_test.go:160: Unix socket lexical/canonical bytes: 83/83
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard5-remote-attach-120-278354.txt
+--- PASS: TestStoryboardRunsCard5/remote/attach (0.19s)
+--- PASS: TestStoryboardRunsCard5/remote (0.43s)
+=== RUN   TestStoryboardRunsCard5/success
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard5-success-120-278425.txt
+--- PASS: TestStoryboardRunsCard5/success (0.09s)
+=== RUN   TestStoryboardRunsCard5/native
+    storyboardLaunchFailure_pty_test.go:273: Unix socket lexical/canonical bytes: 65/65
+    storyboardLaunchFailure_pty_test.go:292: screen timeout (native denial):
+        Error: Claude launch failed during admission/policy: wing refused admission under its configured policy. Review the selected policy and launch requirements. Policy: unavailable. Doctor launch-plan needs an explicit --allowed-home-root; supp
+        ly the exact --home, --executable and policy/base inputs. No complete request was captured.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+    northstar_pty_test.go:445: PTY screen transcript: /work/lanes/wt-fix-1/wingthing/.scratch/northstar/northstar-evidence/TestStoryboardRunsCard5-native-240-278446.txt
+    storyboard_pty_test.go:803: fixture runtime diagnostic mcp-audit.log: {"actor":"default","argument_sha256":"c44a3b62b15e8413b05bc286dfa6203335e348084790744c4731cf831e85f560","decision":"error","isolation":"wingthing-sandbox","principal":"user-fd87ff20f370577cf5d1","timestamp":"2026-10-12T01:18:49.758886888Z","tool":"agent_start"}
+    storyboard_pty_test.go:803: fixture runtime diagnostic wing.log: 2026/10/11 21:18:49 egg: loaded wing config from /work/lanes/wt-fix-1/wingthing/.scratch/5e6f20ca52/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-fix-1/wingthing/.scratch/northstar-1289134926/work]
+          projects: 1 found
+            work → /work/lanes/wt-fix-1/wingthing/.scratch/northstar-1289134926/work
+          conv: auto
+        
+        2026/10/11 21:18:49 wing: local control ready (wing_id=a0e4746276f44ff782955a15)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+    storyboard_pty_test.go:820: fixture wing diagnostic: 2026/10/11 21:18:49 egg: loaded wing config from /work/lanes/wt-fix-1/wingthing/.scratch/5e6f20ca52/l/egg.yaml (network=none)
+        starting local-only wing
+          agents: [claude]
+          skills: []
+          paths: [/work/lanes/wt-fix-1/wingthing/.scratch/northstar-1289134926/work]
+          projects: 1 found
+            work → /work/lanes/wt-fix-1/wingthing/.scratch/northstar-1289134926/work
+          conv: auto
+        
+        2026/10/11 21:18:49 wing: local control ready (wing_id=a0e4746276f44ff782955a15)
+        wingthing MCP agent_start: provider write protection is modeled only for the macOS Seatbelt profile, not linux
+--- FAIL: TestStoryboardRunsCard5/native (8.31s)
+--- FAIL: TestStoryboardRunsCard5 (8.97s)
