@@ -1,0 +1,5 @@
+[remote attachment; Ctrl+B then q detaches; Ctrl+B twice sends Ctrl+B]
+REMOTE HOST IDENTIFICATION HAS CHANGED!
+[?1l[?9l[?25h[?47l[?1047l[?1049l[?1000l[?1001l[?1002l[?1003l[?1005l[?1006l[?1007l[?1015l[?1016l[?2004lConnection to forge (ns-forge) ended; session outcome unknown. Reconnect: WINGTHING_DIR='/work/lanes/wt-phone-harness/wingthing/.scratch/b91aca0029/l' WINGTHING_PREVIEW_DIR='/work/lanes/wt-phone-harness/wingthing/.scratch/b91aca0029/l' '/work/lanes/wt-phone-harness/wingthing/.scratch/storyboard-wt' 'attach' '--' 'forge:same'
+Pinned route: WINGTHING_DIR='/work/lanes/wt-phone-harness/wingthing/.scratch/b91aca0029/l' WINGTHING_PREVIEW_DIR='/work/lanes/wt-phone-harness/wingthing/.scratch/b91aca0029/l' '/work/lanes/wt-phone-harness/wingthing/.scratch/storyboard-wt' '--remote' 'ns-forge' '--remote-binary' 'wt' '--remote-state' '/work/lanes/wt-phone-harness/wingthing/.scratch/b91aca0029/r' 'attach' '--' 'same'
+SSH to ns-forge ended with status 255; check the SSH diagnostic above. Session state is unknown; reconnect with the same --remote-state and list sessions before relaunching

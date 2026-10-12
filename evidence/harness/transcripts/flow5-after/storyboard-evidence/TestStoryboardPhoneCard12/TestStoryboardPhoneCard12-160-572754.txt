@@ -1,0 +1,62 @@
+
+--- command ["wing" "start" "--paths" "/work/lanes/wt-phone-harness/wingthing/.scratch/northstar-2484703811/work"]; exit=<nil> ---
+wing daemon started (pid 572763)
+  local control: ready
+  Local network only. That's fine; nothing else needed.
+  log: /work/lanes/wt-phone-harness/wingthing/.scratch/d40b6b5140/l/wing.log
+
+use wt pair to connect your phone, or wt mcp stdio to control the wing
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

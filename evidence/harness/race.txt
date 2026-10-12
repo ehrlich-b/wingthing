@@ -1,0 +1,14 @@
+# github.com/ehrlich-b/wingthing/internal/pake
+In file included from bssl_crypto_err_err.cc:4:
+boringssl/crypto/err/err.cc:738:8: warning: ‘err_save_state_st’ has a field ‘{anonymous}::err_error_st* err_save_state_st::errors’ whose type uses the anonymous namespace [-Wsubobject-linkage]
+  738 | struct err_save_state_st {
+      |        ^~~~~~~~~~~~~~~~~
+ok  	github.com/ehrlich-b/wingthing/internal/phonepair	1.079s
+# github.com/ehrlich-b/wingthing/internal/pake [github.com/ehrlich-b/wingthing/internal/pake.test]
+In file included from bssl_crypto_err_err.cc:4:
+boringssl/crypto/err/err.cc:738:8: warning: ‘err_save_state_st’ has a field ‘{anonymous}::err_error_st* err_save_state_st::errors’ whose type uses the anonymous namespace [-Wsubobject-linkage]
+  738 | struct err_save_state_st {
+      |        ^~~~~~~~~~~~~~~~~
+ok  	github.com/ehrlich-b/wingthing/internal/pake	1.016s
+ok  	github.com/ehrlich-b/wingthing/internal/relay	29.988s
+ok  	github.com/ehrlich-b/wingthing/internal/wing	5.610s

@@ -1,0 +1,77 @@
+{
+  "base": "71ef5dc5",
+  "checks": [
+    {
+      "file": "cmd/wt/phone_storyboard_e2e_test.go",
+      "base_sha256": "035feebf1e4dfa559b2a4c81b6cb60451032f5e9907f55d69ceedd986ab01420",
+      "current_sha256": "61f710a5377f13123888afd070526d377954c321cabd3a72c1333af7616ccbfc",
+      "original_content_byte_identical_after_setup_only_reconstruction": true
+    },
+    {
+      "file": "cmd/wt/storyboardLaunchFailure_pty_test.go",
+      "base_sha256": "620d7a16b5b29e22559986a4b23ed067f6bdbbd65708470be60f80d7be15b028",
+      "current_sha256": "620d7a16b5b29e22559986a4b23ed067f6bdbbd65708470be60f80d7be15b028",
+      "original_content_byte_identical_after_setup_only_reconstruction": true
+    },
+    {
+      "file": "cmd/wt/storyboardNativeMouse_pty_test.go",
+      "base_sha256": "265e0181b39e56904ba395bcd9e4a4b449ad0aa4f9c3e932dd64f4a76a7c49c6",
+      "current_sha256": "265e0181b39e56904ba395bcd9e4a4b449ad0aa4f9c3e932dd64f4a76a7c49c6",
+      "original_content_byte_identical_after_setup_only_reconstruction": true
+    },
+    {
+      "file": "cmd/wt/storyboardScopedNew_pty_test.go",
+      "base_sha256": "896ebad5a9e7f0e42eeacee6d65e88fa4b97e0cac27c314aed1bfbe747299ed9",
+      "current_sha256": "896ebad5a9e7f0e42eeacee6d65e88fa4b97e0cac27c314aed1bfbe747299ed9",
+      "original_content_byte_identical_after_setup_only_reconstruction": true
+    },
+    {
+      "file": "cmd/wt/storyboard_pty_test.go",
+      "base_sha256": "f88f20de462878d76d08c9663a2a571ae3273fe8e3d7fc97385d39e26613bce9",
+      "current_sha256": "1b951228946eeee1ede0b968d69ea7091ae9bba3bfe98e149e3b3365070653eb",
+      "original_content_byte_identical_after_setup_only_reconstruction": true
+    },
+    {
+      "file": "docs/pairing/STORYBOARD.html",
+      "base_sha256": "9cacb56dbad43f59ac1657de69cbbc40774722c82bbd9100a19ea76f36c10b88",
+      "current_sha256": "9cacb56dbad43f59ac1657de69cbbc40774722c82bbd9100a19ea76f36c10b88",
+      "original_content_byte_identical_after_setup_only_reconstruction": true
+    },
+    {
+      "file": "test/storyboard/PHONE.md",
+      "base_sha256": "1307a9ad62b321f727490a487ce0e38454855632ac35e47e6ba4e73e2d8e51ad",
+      "current_sha256": "1307a9ad62b321f727490a487ce0e38454855632ac35e47e6ba4e73e2d8e51ad",
+      "original_content_byte_identical_after_setup_only_reconstruction": true
+    },
+    {
+      "file": "test/storyboard/README.md",
+      "base_sha256": "bcd259dc24a934ed18da68ec0b68d7a100f569f6322c4363db884923d66f17b7",
+      "current_sha256": "bcd259dc24a934ed18da68ec0b68d7a100f569f6322c4363db884923d66f17b7",
+      "original_content_byte_identical_after_setup_only_reconstruction": true
+    },
+    {
+      "file": "test/storyboard/analyze.py",
+      "base_sha256": "6899af0bd6fbf5ebb0a19e57c987af0709f3dcf9092737306bd3820eaad3673b",
+      "current_sha256": "6899af0bd6fbf5ebb0a19e57c987af0709f3dcf9092737306bd3820eaad3673b",
+      "original_content_byte_identical_after_setup_only_reconstruction": true
+    },
+    {
+      "file": "test/storyboard/catalog.py",
+      "base_sha256": "8cbc43384d10615e8a151598331749a3928e1d1c6222988dddbde6609c8ec729",
+      "current_sha256": "8cbc43384d10615e8a151598331749a3928e1d1c6222988dddbde6609c8ec729",
+      "original_content_byte_identical_after_setup_only_reconstruction": true
+    },
+    {
+      "file": "test/storyboard/file_bugs.py",
+      "base_sha256": "a2ccb122b3074bb04268775a8049526dacc118bc972d295629ab8f314cfc7459",
+      "current_sha256": "a2ccb122b3074bb04268775a8049526dacc118bc972d295629ab8f314cfc7459",
+      "original_content_byte_identical_after_setup_only_reconstruction": true
+    },
+    {
+      "file": "test/storyboard/run.py",
+      "base_sha256": "d44671c6c4b44cbf9eccd0eb78edc18c76aff9655c549f7d265af81508a46e65",
+      "current_sha256": "d44671c6c4b44cbf9eccd0eb78edc18c76aff9655c549f7d265af81508a46e65",
+      "original_content_byte_identical_after_setup_only_reconstruction": true
+    }
+  ]
+}

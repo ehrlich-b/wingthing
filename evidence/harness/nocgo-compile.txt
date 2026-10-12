@@ -1,0 +1,1 @@
+ok  	github.com/ehrlich-b/wingthing/cmd/wt	0.008s [no tests to run]

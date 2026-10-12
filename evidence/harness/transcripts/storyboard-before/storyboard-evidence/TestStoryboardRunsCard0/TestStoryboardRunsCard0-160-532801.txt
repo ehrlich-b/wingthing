@@ -1,0 +1,62 @@
+
+--- command ["run" "Read the tests and report failures" "--agent" "claude" "--config" "/work/lanes/wt-phone-harness/wingthing/.scratch/northstar-855898666/work/egg.yaml"]; exit=<nil> ---
+submitted: t-20261011-214948-1e1d8a0cb5ed48a7 (Read the tests and report failures)
+2026/10/11 21:49:48 memory: warning: index: read: open /work/lanes/wt-phone-harness/wingthing/.scratch/45fab95d18/l/memory/index.md: no such file or directory
+2026/10/11 21:49:48 memory: warning: identity: read: open /work/lanes/wt-phone-harness/wingthing/.scratch/45fab95d18/l/memory/identity.md: no such file or direc
+tory
+2026/10/11 21:49:48 memory: warning: read dir /work/lanes/wt-phone-harness/wingthing/.scratch/45fab95d18/l/memory: open /work/lanes/wt-phone-harness/wingthing/.
+scratch/45fab95d18/l/memory: no such file or directory
+2026/10/11 21:49:48 domain proxy: listening on 127.0.0.1:44529, 4 domains, 2 wildcards
+2026/10/11 21:49:48 task t-20261011-214948-1e1d8a0cb5ed48a7 sandbox: network=https enforcement=proxy domains=6 local_ports=[]
+2026/10/11 21:49:48 linux sandbox: created tmpdir=/work/lanes/wt-phone-harness/wingthing/.scratch/northstar-855898666/tmp-alias/wt-sandbox-3983862158 network=ht
+tps cgroup=false
+STORYBOARD_LEGACY_RESULT
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

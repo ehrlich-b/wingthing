@@ -590,6 +590,7 @@ func TestStoryboardMachinesCard4(t *testing.T) {
 func storyboardPhone(t *testing.T, card int) {
 	f, binary := storyboardFixture(t)
 	northstarStandaloneEgg(t, f, f.local, "phone-session", "pairing", "needs_input", "PHONE_SESSION_UNCHANGED")
+	storyboardPhoneMainWing(t, f, binary)
 	command := []string{"pair"}
 	prerequisite := []string{"Pair a phone", "5:00", "Waiting for scan"}
 	if card == 6 {
@@ -600,7 +601,7 @@ func storyboardPhone(t *testing.T, card int) {
 		command = []string{"devices", "revoke", "Bryan's iPhone"}
 		prerequisite = []string{"device", "not paired"}
 	}
-	out, err := storyboardCommand(t, f, binary, command...)
+	out, err := storyboardPhoneCommand(t, f, binary, command...)
 	entries, _ := os.ReadDir(filepath.Join(f.remote, "eggs"))
 	if len(entries) != 0 {
 		t.Fatal("phone prerequisite admitted work on another wing")
