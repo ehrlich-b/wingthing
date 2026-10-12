@@ -1,0 +1,110 @@
+{
+  "test_branch": "codex/wt-test-disputes-20261011",
+  "test_base": "580d4d9f8241fd37f56011bced9535872128eeda",
+  "corrected_test_sha256": "404b64bb0249dbd8ad376114308f2968473dcf5b530b9366d20d5fae7082145d",
+  "runs": [
+    {
+      "checkout": "/work/lanes/wt-test-disputes/wingthing",
+      "product_commit": "580d4d9f8241fd37f56011bced9535872128eeda",
+      "command": "GOCACHE=\"$PWD/.scratch/northstar/go-build\" GOMODCACHE=\"$PWD/.scratch/northstar/go-mod\" GOFLAGS=-p=4 GOMAXPROCS=4 nice -n 15 go test -json -count=1 -run '^TestStoryboardNavigatorCard2$' -timeout 3m ./cmd/wt",
+      "exit_code": 1,
+      "log": "evidence/test-disputes/e2e-base-corrected-card.jsonl",
+      "outcomes": [
+        {
+          "test": "TestStoryboardNavigatorCard2",
+          "status": "fail",
+          "count": 1
+        },
+        {
+          "test": "TestStoryboardNavigatorCard2/durable-unread-cursor",
+          "status": "fail",
+          "count": 1
+        },
+        {
+          "test": "TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks",
+          "status": "fail",
+          "count": 1
+        },
+        {
+          "test": "package",
+          "status": "fail",
+          "count": 1
+        }
+      ],
+      "transcripts": [
+        "evidence/test-disputes/transcripts/wingthing/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-368775.txt",
+        "evidence/test-disputes/transcripts/wingthing/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-368775.ansi",
+        "evidence/test-disputes/transcripts/wingthing/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-368046.txt",
+        "evidence/test-disputes/transcripts/wingthing/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-368046.ansi",
+        "evidence/test-disputes/transcripts/wingthing/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-371424.txt",
+        "evidence/test-disputes/transcripts/wingthing/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-371424.ansi",
+        "evidence/test-disputes/transcripts/wingthing/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-371394.txt",
+        "evidence/test-disputes/transcripts/wingthing/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-371394.ansi"
+      ]
+    },
+    {
+      "checkout": "/work/lanes/wt-test-disputes/validation",
+      "product_commit": "580cb3a9b502f1335456d62dfe5b423e0f5fd763",
+      "command": "GOCACHE=\"$PWD/.scratch/northstar/go-build\" GOMODCACHE=\"$PWD/.scratch/northstar/go-mod\" GOFLAGS=-p=4 GOMAXPROCS=4 nice -n 15 go test -json -count=3 -run '^TestStoryboardNavigatorCard2$' -timeout 3m ./cmd/wt",
+      "exit_code": 0,
+      "log": "evidence/test-disputes/wt-fix-2-corrected-card-3x.jsonl",
+      "outcomes": [
+        {
+          "test": "TestStoryboardNavigatorCard2",
+          "status": "pass",
+          "count": 3
+        },
+        {
+          "test": "TestStoryboardNavigatorCard2/durable-unread-cursor",
+          "status": "pass",
+          "count": 3
+        },
+        {
+          "test": "TestStoryboardNavigatorCard2/symlinked-TMPDIR-native-hooks",
+          "status": "pass",
+          "count": 3
+        },
+        {
+          "test": "package",
+          "status": "pass",
+          "count": 1
+        }
+      ],
+      "transcripts": [
+        "evidence/test-disputes/transcripts/validation/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-368982.txt",
+        "evidence/test-disputes/transcripts/validation/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-368982.ansi",
+        "evidence/test-disputes/transcripts/validation/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-368188.txt",
+        "evidence/test-disputes/transcripts/validation/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-368188.ansi",
+        "evidence/test-disputes/transcripts/validation/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-369325.txt",
+        "evidence/test-disputes/transcripts/validation/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-369325.ansi",
+        "evidence/test-disputes/transcripts/validation/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-369300.txt",
+        "evidence/test-disputes/transcripts/validation/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-369300.ansi",
+        "evidence/test-disputes/transcripts/validation/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-370142.txt",
+        "evidence/test-disputes/transcripts/validation/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-370142.ansi",
+        "evidence/test-disputes/transcripts/validation/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-369731.txt",
+        "evidence/test-disputes/transcripts/validation/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-369731.ansi",
+        "evidence/test-disputes/transcripts/validation/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-370260.txt",
+        "evidence/test-disputes/transcripts/validation/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-370260.ansi",
+        "evidence/test-disputes/transcripts/validation/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-370234.txt",
+        "evidence/test-disputes/transcripts/validation/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-370234.ansi",
+        "evidence/test-disputes/transcripts/validation/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-370990.txt",
+        "evidence/test-disputes/transcripts/validation/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-370990.ansi",
+        "evidence/test-disputes/transcripts/validation/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-370594.txt",
+        "evidence/test-disputes/transcripts/validation/northstar/northstar-evidence/TestStoryboardNavigatorCard2-symlinked-TMPDIR-native-hooks-120-370594.ansi",
+        "evidence/test-disputes/transcripts/validation/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-371121.txt",
+        "evidence/test-disputes/transcripts/validation/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-371121.ansi",
+        "evidence/test-disputes/transcripts/validation/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-371067.txt",
+        "evidence/test-disputes/transcripts/validation/storyboard-evidence/TestStoryboardNavigatorCard2-durable-unread-cursor/TestStoryboardNavigatorCard2-durable-unread-cursor-140-371067.ansi"
+      ]
+    }
+  ],
+  "independent_review": {
+    "model": "gpt-6.1-sol",
+    "sandbox": "read-only",
+    "exit_code": 0,
+    "verdict": "PASS \u2014 no blocking findings",
+    "report": "DISPUTES-REVIEW.md",
+    "command": "evidence/test-disputes/review-command.txt",
+    "event_log": "evidence/test-disputes/review-exec.jsonl"
+  }
+}

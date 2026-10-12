@@ -1,0 +1,42 @@
+
+--- same viewer durable unread after reopen ---
+wt | 1 sessions | 1 machines
+B:0 W:0 I:1 D:0 E:0 F:0 ?:0 U:1 | [All] !:1 bell:off
+local  connected  updated 0s ago
+  /work/lanes/wt-test-disputes/validation/.scratch/northstar-1615043108/work
+> I* unread-parent                                                          claude       northstar-1615043108/work                     2m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent

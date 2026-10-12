@@ -1,0 +1,15 @@
+diff --git a/cmd/wt/northstar_attention_pty_test.go b/cmd/wt/northstar_attention_pty_test.go
+index 657712e..b56d518 100644
+--- a/cmd/wt/northstar_attention_pty_test.go
++++ b/cmd/wt/northstar_attention_pty_test.go
+@@ -203,7 +203,9 @@ func TestNorthstarPTYAttention(t *testing.T) {
+ 		})
+ 		h.exit("q")
+ 		fresh := northstarStartPTY(t, f, binary, 120, 32)
+-		fresh.expect("fresh instance / historical completion baseline / known blocked", 0, "B local-agent", "I forge-agent", "U:0", "bell:off")
++		// Storyboard 03/card-2: "Unread must be based on new output and a durable read cursor".
++		// Reopening the same viewer does not acknowledge the remote completion.
++		fresh.expect("same viewer reopen / durable remote unread / known blocked", 0, "B local-agent", "I* forge-agent", "U:1", "bell:off")
+ 		fresh.exit("q")
+ 		for _, pty := range []*northstarPTY{h, fresh} {
+ 			pty.mu.Lock()
