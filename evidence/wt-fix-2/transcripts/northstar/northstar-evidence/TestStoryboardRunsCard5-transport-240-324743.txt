@@ -1,0 +1,37 @@
+
+--- CLI phase/provenance/action ---
+Error: Claude launch failed during admission/policy: configured policy denies the provider executable. Choose a provider executable allowed by this policy. Policy: selected policy "/work/lanes/wt-fix-2/wingthing/.scratch/northstar-361557850
+1/work/egg.yaml"; denial from "/work/lanes/wt-fix-2/wingthing/.scratch/b0aa78b4a0/inherited.yaml". Doctor launch-plan needs an explicit --allowed-home-root; supply the exact --home, --executable and policy/base inputs. No complete request w
+as captured.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

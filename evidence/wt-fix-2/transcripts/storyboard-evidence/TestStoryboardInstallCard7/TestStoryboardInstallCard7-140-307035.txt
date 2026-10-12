@@ -1,0 +1,42 @@
+
+--- empty navigator ---
+wt | 0 sessions | 1 machines
+B:0 W:0 I:0 D:0 E:0 F:0 ?:0 U:0 | [All] !:0 bell:off
+local  connecting (refreshing)
+  (no sessions)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop
+/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent

@@ -1,0 +1,32 @@
+
+--- fresh client / same parent ---
+[attached to scoped-parent; Ctrl+B then q detaches; Ctrl+B twice sends Ctrl+B]
+SCOPED_PARENT_ROUTE_READY
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

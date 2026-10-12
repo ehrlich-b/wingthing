@@ -1,0 +1,232 @@
+{
+  "baseline_commit": "580d4d9",
+  "product_commit": "acae211ed8e4f0a173428939b0444704172749d5",
+  "baseline_counts": {
+    "PASS": 17,
+    "FAIL": 34
+  },
+  "final_counts": {
+    "PASS": 19,
+    "FAIL": 32
+  },
+  "regressions": [],
+  "improvements": [
+    "TestStoryboardNavigatorCard5",
+    "TestStoryboardMachinesCard3"
+  ],
+  "statuses": {
+    "TestStoryboardInstallCard0": "PASS",
+    "TestStoryboardInstallCard1": "FAIL",
+    "TestStoryboardInstallCard4": "FAIL",
+    "TestStoryboardInstallCard5": "FAIL",
+    "TestStoryboardInstallCard6": "FAIL",
+    "TestStoryboardInstallCard7": "FAIL",
+    "TestStoryboardInstallCard2": "PASS",
+    "TestStoryboardInstallCard3": "PASS",
+    "TestStoryboardStartCard0": "FAIL",
+    "TestStoryboardStartCard1": "FAIL",
+    "TestStoryboardStartCard2": "FAIL",
+    "TestStoryboardStartCard3": "PASS",
+    "TestStoryboardStartCard4": "FAIL",
+    "TestStoryboardStartCard5": "FAIL",
+    "TestStoryboardNavigatorCard0": "PASS",
+    "TestStoryboardNavigatorCard1": "PASS",
+    "TestStoryboardNavigatorCard2": "FAIL",
+    "TestStoryboardNavigatorCard3": "PASS",
+    "TestStoryboardNavigatorCard4": "PASS",
+    "TestStoryboardNavigatorCard5": "PASS",
+    "TestStoryboardNavigatorCard6": "PASS",
+    "TestStoryboardMachinesCard0": "PASS",
+    "TestStoryboardMachinesCard1": "PASS",
+    "TestStoryboardMachinesCard2": "PASS",
+    "TestStoryboardMachinesCard3": "PASS",
+    "TestStoryboardMachinesCard4": "PASS",
+    "TestStoryboardPhoneCard0": "FAIL",
+    "TestStoryboardPhoneCard1": "FAIL",
+    "TestStoryboardPhoneCard2": "FAIL",
+    "TestStoryboardPhoneCard3": "FAIL",
+    "TestStoryboardPhoneCard4": "FAIL",
+    "TestStoryboardPhoneCard5": "FAIL",
+    "TestStoryboardPhoneCard6": "FAIL",
+    "TestStoryboardPhoneCard7": "FAIL",
+    "TestStoryboardPhoneCard8": "FAIL",
+    "TestStoryboardPhoneCard9": "FAIL",
+    "TestStoryboardPhoneCard10": "FAIL",
+    "TestStoryboardPhoneCard11": "FAIL",
+    "TestStoryboardPhoneCard12": "FAIL",
+    "TestStoryboardPhoneCard13": "FAIL",
+    "TestStoryboardPhoneCard14": "FAIL",
+    "TestStoryboardPhoneCard15": "FAIL",
+    "TestStoryboardPhoneCard16": "FAIL",
+    "TestStoryboardPhoneCard17": "FAIL",
+    "TestStoryboardRunsCard0": "PASS",
+    "TestStoryboardRunsCard1": "FAIL",
+    "TestStoryboardRunsCard2": "PASS",
+    "TestStoryboardRunsCard3": "FAIL",
+    "TestStoryboardRunsCard4": "PASS",
+    "TestStoryboardRunsCard5": "FAIL",
+    "TestStoryboardRunsCard6": "PASS"
+  },
+  "remaining_failures": {
+    "01/card-1": {
+      "test": "TestStoryboardInstallCard1",
+      "reason": "Wingthing 01/card-1: Empty navigator omits connection header and first-run terms",
+      "scope": "outside flows 3\u20134"
+    },
+    "01/card-4": {
+      "test": "TestStoryboardInstallCard4",
+      "reason": "Wingthing 01/card-4: Bare wt omits local agent detection and no-agent chooser",
+      "scope": "outside flows 3\u20134"
+    },
+    "01/card-5": {
+      "test": "TestStoryboardInstallCard5",
+      "reason": "Wingthing 01/card-5: New-session flow omits exact installer consent",
+      "scope": "outside flows 3\u20134"
+    },
+    "01/card-6": {
+      "test": "TestStoryboardInstallCard6",
+      "reason": "Wingthing 01/card-6: Onboarding omits provider verification and native login handoff",
+      "scope": "outside flows 3\u20134"
+    },
+    "01/card-7": {
+      "test": "TestStoryboardInstallCard7",
+      "reason": "Wingthing 01/card-7: Onboarding omits stage-specific install/PATH/auth recovery",
+      "scope": "outside flows 3\u20134"
+    },
+    "02/card-0": {
+      "test": "TestStoryboardStartCard0",
+      "reason": "Wingthing 02/card-0: Linux cold scoped Claude parent is refused before readiness",
+      "scope": "outside flows 3\u20134"
+    },
+    "02/card-1": {
+      "test": "TestStoryboardStartCard1",
+      "reason": "Wingthing 02/card-1: Linux explicit-cwd scoped parent is refused before readiness",
+      "scope": "outside flows 3\u20134"
+    },
+    "02/card-2": {
+      "test": "TestStoryboardStartCard2",
+      "reason": "Wingthing 02/card-2: Linux dashboard scoped parent cannot launch on local or forge",
+      "scope": "outside flows 3\u20134"
+    },
+    "02/card-4": {
+      "test": "TestStoryboardStartCard4",
+      "reason": "Wingthing 02/card-4: Native launch denial omits provider cause and selected policy",
+      "scope": "outside flows 3\u20134"
+    },
+    "02/card-5": {
+      "test": "TestStoryboardStartCard5",
+      "reason": "Wingthing 02/card-5: Concurrent Linux scoped parents and surviving waiter cannot reach readiness",
+      "scope": "outside flows 3\u20134"
+    },
+    "03/card-2": {
+      "test": "TestStoryboardNavigatorCard2",
+      "reason": "Contradictory inherited historical-reset assertion; durable-unread subtest passes",
+      "scope": "in-scope test dispute"
+    },
+    "05/card-0": {
+      "test": "TestStoryboardPhoneCard0",
+      "reason": "Wingthing 05/card-0: Missing phone CLI prerequisite: 1 \u00b7 Start on EhrlichMac",
+      "scope": "outside flows 3\u20134"
+    },
+    "05/card-1": {
+      "test": "TestStoryboardPhoneCard1",
+      "reason": "Wingthing 05/card-1: Missing phone CLI prerequisite: 2 \u00b7 Scan with Bryan\u2019s iPhoneScan to pair",
+      "scope": "outside flows 3\u20134"
+    },
+    "05/card-2": {
+      "test": "TestStoryboardPhoneCard2",
+      "reason": "Wingthing 05/card-2: Missing phone CLI prerequisite: 3 \u00b7 Check both screensPair with EhrlichMac?",
+      "scope": "outside flows 3\u20134"
+    },
+    "05/card-3": {
+      "test": "TestStoryboardPhoneCard3",
+      "reason": "Wingthing 05/card-3: Missing phone CLI prerequisite: 4 \u00b7 Make the pairing privatePairing with EhrlichMac",
+      "scope": "outside flows 3\u20134"
+    },
+    "05/card-4": {
+      "test": "TestStoryboardPhoneCard4",
+      "reason": "Wingthing 05/card-4: Missing phone CLI prerequisite: 5 \u00b7 Your sessions on EhrlichMacEhrlichMac",
+      "scope": "outside flows 3\u20134"
+    },
+    "05/card-5": {
+      "test": "TestStoryboardPhoneCard5",
+      "reason": "Wingthing 05/card-5: Missing phone CLI prerequisite: 6 \u00b7 Use it away from homeEhrlichMac",
+      "scope": "outside flows 3\u20134"
+    },
+    "05/card-6": {
+      "test": "TestStoryboardPhoneCard6",
+      "reason": "Wingthing 05/card-6: Missing phone CLI prerequisite: 7 \u00b7 Manage each wing separatelyMachines",
+      "scope": "outside flows 3\u20134"
+    },
+    "05/card-7": {
+      "test": "TestStoryboardPhoneCard7",
+      "reason": "Wingthing 05/card-7: Missing phone CLI prerequisite: QR expired or already usedScan a fresh QR",
+      "scope": "outside flows 3\u20134"
+    },
+    "05/card-8": {
+      "test": "TestStoryboardPhoneCard8",
+      "reason": "Wingthing 05/card-8: Missing phone CLI prerequisite: EhrlichMac is unreachableCan\u2019t reach EhrlichMac",
+      "scope": "outside flows 3\u20134"
+    },
+    "05/card-9": {
+      "test": "TestStoryboardPhoneCard9",
+      "reason": "Wingthing 05/card-9: Missing phone CLI prerequisite: The wing fingerprint does not match\u26d4 Identity mismatch",
+      "scope": "outside flows 3\u20134"
+    },
+    "05/card-10": {
+      "test": "TestStoryboardPhoneCard10",
+      "reason": "Wingthing 05/card-10: Missing phone CLI prerequisite: The emoji differCancel pairing",
+      "scope": "outside flows 3\u20134"
+    },
+    "05/card-11": {
+      "test": "TestStoryboardPhoneCard11",
+      "reason": "Wingthing 05/card-11: Missing phone CLI prerequisite: Bryan\u2019s iPhone is lostAccess revoked",
+      "scope": "outside flows 3\u20134"
+    },
+    "05/card-12": {
+      "test": "TestStoryboardPhoneCard12",
+      "reason": "Wingthing 05/card-12: Missing phone CLI prerequisite: Attach and type from the phonepairing",
+      "scope": "outside flows 3\u20134"
+    },
+    "05/card-13": {
+      "test": "TestStoryboardPhoneCard13",
+      "reason": "Wingthing 05/card-13: Missing phone CLI prerequisite: Stop means stop this sessionStop pairing?",
+      "scope": "outside flows 3\u20134"
+    },
+    "05/card-14": {
+      "test": "TestStoryboardPhoneCard14",
+      "reason": "Wingthing 05/card-14: Missing phone CLI prerequisite: Attention notification with quiet contentNotifications",
+      "scope": "outside flows 3\u20134"
+    },
+    "05/card-15": {
+      "test": "TestStoryboardPhoneCard15",
+      "reason": "Wingthing 05/card-15: Missing phone CLI prerequisite: Same Wi-Fi and tailnet both stay freeEhrlichMac",
+      "scope": "outside flows 3\u20134"
+    },
+    "05/card-16": {
+      "test": "TestStoryboardPhoneCard16",
+      "reason": "Wingthing 05/card-16: Missing phone CLI prerequisite: Camera or local-network permission deniedAllow local access",
+      "scope": "outside flows 3\u20134"
+    },
+    "05/card-17": {
+      "test": "TestStoryboardPhoneCard17",
+      "reason": "Wingthing 05/card-17: Missing phone CLI prerequisite: Pairing succeeds but the final reply dropsFinishing pairing",
+      "scope": "outside flows 3\u20134"
+    },
+    "06/card-1": {
+      "test": "TestStoryboardRunsCard1",
+      "reason": "Wingthing 06/card-1: Linux scoped parent cannot obtain durable forge run receipts",
+      "scope": "outside flows 3\u20134"
+    },
+    "06/card-3": {
+      "test": "TestStoryboardRunsCard3",
+      "reason": "Wingthing 06/card-3: Session details omit effective workspace/provider/network authority",
+      "scope": "outside flows 3\u20134"
+    },
+    "06/card-5": {
+      "test": "TestStoryboardRunsCard5",
+      "reason": "Wingthing 06/card-5: Linux provider-policy denial loses phase-specific policy evidence",
+      "scope": "outside flows 3\u20134"
+    }
+  }
+}
