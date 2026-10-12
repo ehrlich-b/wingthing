@@ -1,0 +1,307 @@
+{
+  "gated_head": "e9a7609ca3caaffd4a748d7eab2dcd3a008ced51",
+  "before": {
+    "pass": 24,
+    "fail": 27
+  },
+  "after_each_of_three_runs": {
+    "pass": 25,
+    "fail": 26
+  },
+  "fixed": [
+    "TestStoryboardRunsCard3"
+  ],
+  "regressions": [],
+  "subtest_regressions": [],
+  "flaky_cards": [],
+  "remaining_failures": [
+    "TestStoryboardStartCard0",
+    "TestStoryboardStartCard1",
+    "TestStoryboardStartCard2",
+    "TestStoryboardStartCard4",
+    "TestStoryboardStartCard5",
+    "TestStoryboardNavigatorCard2",
+    "TestStoryboardPhoneCard0",
+    "TestStoryboardPhoneCard1",
+    "TestStoryboardPhoneCard2",
+    "TestStoryboardPhoneCard3",
+    "TestStoryboardPhoneCard4",
+    "TestStoryboardPhoneCard5",
+    "TestStoryboardPhoneCard6",
+    "TestStoryboardPhoneCard7",
+    "TestStoryboardPhoneCard8",
+    "TestStoryboardPhoneCard9",
+    "TestStoryboardPhoneCard10",
+    "TestStoryboardPhoneCard11",
+    "TestStoryboardPhoneCard12",
+    "TestStoryboardPhoneCard13",
+    "TestStoryboardPhoneCard14",
+    "TestStoryboardPhoneCard15",
+    "TestStoryboardPhoneCard16",
+    "TestStoryboardPhoneCard17",
+    "TestStoryboardRunsCard1",
+    "TestStoryboardRunsCard5"
+  ],
+  "verdicts": {
+    "TestStoryboardInstallCard0": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardInstallCard1": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardInstallCard4": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardInstallCard5": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardInstallCard6": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardInstallCard7": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardInstallCard2": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardInstallCard3": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardStartCard0": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardStartCard1": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardStartCard2": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardStartCard3": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardStartCard4": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardStartCard5": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardNavigatorCard0": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardNavigatorCard1": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardNavigatorCard2": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardNavigatorCard3": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardNavigatorCard4": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardNavigatorCard5": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardNavigatorCard6": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardMachinesCard0": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardMachinesCard1": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardMachinesCard2": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardMachinesCard3": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardMachinesCard4": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardPhoneCard0": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardPhoneCard1": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardPhoneCard2": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardPhoneCard3": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardPhoneCard4": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardPhoneCard5": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardPhoneCard6": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardPhoneCard7": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardPhoneCard8": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardPhoneCard9": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardPhoneCard10": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardPhoneCard11": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardPhoneCard12": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardPhoneCard13": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardPhoneCard14": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardPhoneCard15": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardPhoneCard16": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardPhoneCard17": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardRunsCard0": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardRunsCard1": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardRunsCard2": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardRunsCard3": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardRunsCard4": [
+      "pass",
+      "pass",
+      "pass"
+    ],
+    "TestStoryboardRunsCard5": [
+      "fail",
+      "fail",
+      "fail"
+    ],
+    "TestStoryboardRunsCard6": [
+      "pass",
+      "pass",
+      "pass"
+    ]
+  },
+  "original_acceptance_files_unchanged": 15,
+  "native_macos_and_physical_ios": "REQUIRED-UNRUN",
+  "go_flags": "-p=4",
+  "nice": 15,
+  "binary_sha256": "1062d9e7bb279c5ee1d177601a409f5b9eb6899776de0f41e9c418574d39deee"
+}

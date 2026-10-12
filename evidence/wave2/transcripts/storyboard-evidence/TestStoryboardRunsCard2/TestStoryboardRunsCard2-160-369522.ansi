@@ -1,0 +1,47 @@
+Provider version: unverified
+Planned options: -c (full argv in --json)
+Launch plan: blocked (agent_run)
+Policy: built-in defaults (explicit selection)
+Policy base: /work/lanes/wt-fix-wave2/wingthing/.scratch/northstar-1319995935/work
+Merge HOME: /work/lanes/wt-fix-wave2/wingthing/.scratch/northstar-1319995935/work/provider-home
+CWD: /work/lanes/wt-fix-wave2/wingthing/.scratch/northstar-1319995935/work
+Executable: /work/lanes/wt-fix-wave2/wingthing/.scratch/northstar-1319995935/tmp-real/bin/codex
+Network: proxy-only
+Argv scope: runtime adapter arguments; disposable identity launch-plan; prompt excluded
+PASS cwd: cwd directory exists; writability is assessed separately
+  source: path metadata
+PASS executable: explicit executable is present and executable; it was not invoked
+  source: path metadata + SHA256
+REQUIRED-UNRUN provider.evidence: no saved provider version/help evidence was supplied
+  source: explicit evidence input missing
+  next: capture version/help outside the worker; do not invoke a provider from preflight
+PASS provider.preparation: runtime launch preparation completed against disposable state
+  source: egg.PrepareLaunch (disposable state)
+REQUIRED-UNRUN provider.preparation.deferred: final native sandbox mount policy requires native acceptance
+  source: egg.PrepareLaunch effects boundary
+  next: verify this step in disposable native acceptance
+REQUIRED-UNRUN authentication: credential path availability does not prove provider authentication
+  source: no credential contents or login probe
+  next: use the separately authorized disposable provider canary
+PASS home.scope: provider home is within the declared scope
+  source: explicit allowed_home_root + canonical paths
+REQUIRED-UNRUN network.parent: effective outer network capability is unknown
+  source: no saved capability facts
+  next: capture the parent network policy outside the worker
+REQUIRED-UNRUN sandbox.native: native egg confinement has not been verified
+  source: no saved capability facts
+  next: run the isolated native sandbox gate outside the worker
+REQUIRED-UNRUN workspace.write: outer filesystem writability is unknown for required path: /work/lanes/wt-fix-wave2/wingthing/.scratch/northstar-1319995935/work
+  source: no saved capability facts
+  next: select a writable disposable path within the existing allowed scope
+REQUIRED-UNRUN provider_home.write: outer filesystem writability is unknown for required path: /work/lanes/wt-fix-wave2/wingthing/.scratch/northstar-1319995935/work/provider-home/.codex
+  source: no saved capability facts
+  next: select a writable disposable path within the existing allowed scope
+FAIL sandbox.nested: planned Codex invocation retains an inner sandbox inside a declared outer sandbox
+  source: runtime adapter argv + declared parent boundary
+  next: review the supported unattended egg route under the existing boundary; planner does not change flags
+REQUIRED-UNRUN route.agent_run: Codex native run compatibility requires bound version evidence
+  source: runtime Codex version parser
+REQUIRED-UNRUN provider.option: planned option has no bound saved help evidence: -c
+  source: runtime argv + saved help
+  next: capture help for the same executable and route; do not change sandbox flags automatically

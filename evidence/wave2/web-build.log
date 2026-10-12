@@ -1,0 +1,24 @@
+
+> build
+> vite build
+
+vite v6.4.3 building for production...
+transforming...
+✓ 73 modules transformed.
+[plugin vite:reporter] 
+(!) /work/lanes/wt-fix-wave2/wingthing/web/src/nav.js is dynamically imported by /work/lanes/wt-fix-wave2/wingthing/web/src/notify.js but also statically imported by /work/lanes/wt-fix-wave2/wingthing/web/src/conversation-view.js, /work/lanes/wt-fix-wave2/wingthing/web/src/main.js, /work/lanes/wt-fix-wave2/wingthing/web/src/palette.js, /work/lanes/wt-fix-wave2/wingthing/web/src/parent-dot.js, /work/lanes/wt-fix-wave2/wingthing/web/src/pty.js, /work/lanes/wt-fix-wave2/wingthing/web/src/render.js, /work/lanes/wt-fix-wave2/wingthing/web/src/terminal.js, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /work/lanes/wt-fix-wave2/wingthing/web/src/conversation-view.js is dynamically imported by /work/lanes/wt-fix-wave2/wingthing/web/src/notify.js but also statically imported by /work/lanes/wt-fix-wave2/wingthing/web/src/main.js, /work/lanes/wt-fix-wave2/wingthing/web/src/parent-dot.js, /work/lanes/wt-fix-wave2/wingthing/web/src/render.js, dynamic import will not move module into another chunk.
+
+rendering chunks...
+computing gzip size...
+dist/index.html                  14.36 kB │ gzip:   3.40 kB
+dist/assets/index-CsALPwEO.css   66.30 kB │ gzip:  13.28 kB
+dist/assets/index-BgKPPSXt.js   712.48 kB │ gzip: 199.43 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 2.04s

@@ -1,0 +1,15 @@
+{
+  "before": {
+    "pass": 24,
+    "fail": 27
+  },
+  "after_each_of_three_runs": {
+    "pass": 25,
+    "fail": 26
+  },
+  "fixed": [
+    "TestStoryboardRunsCard3"
+  ],
+  "regressions": [],
+  "flaky_cards": []
+}

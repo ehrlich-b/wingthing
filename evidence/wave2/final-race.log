@@ -1,0 +1,7 @@
+ok  	github.com/ehrlich-b/wingthing/internal/dashboard	1.321s
+ok  	github.com/ehrlich-b/wingthing/internal/eggclient	67.828s
+ok  	github.com/ehrlich-b/wingthing/internal/config	1.260s
+ok  	github.com/ehrlich-b/wingthing/internal/phonepair	1.072s
+ok  	github.com/ehrlich-b/wingthing/internal/pake	1.013s
+ok  	github.com/ehrlich-b/wingthing/internal/relay	27.489s
+ok  	github.com/ehrlich-b/wingthing/internal/wing	6.140s

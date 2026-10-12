@@ -1,0 +1,186 @@
+
+--- fresh invitation ---
+
+Pair a phone with wing forge (this machine). The phone will be able to see and control the sessions on this machine.
+
+
+
+    █▀▀▀▀▀█ ▄█ █▄  ▄█▄█▀▄  ▄█ █▄ █▀█   ▀█▀ ▄▄▀▀█▄█▄  ▀ ██ █▀▀▀▀▀█
+    █ ███ █ ▄█   ▄▀▄▀▄█ ▀  ▄▀█ ███▀▄▀▄▄▀▄ █▄▀ ▀▄▀▀ ▄▄▄█▀█ █ ███ █
+    █ ▀▀▀ █ ▄ █▀▄██▄▄▀▄█▄  ▀█ █▄█▀▀▀█▄   ▀  ▄▀█▄   ████▀  █ ▀▀▀ █
+    ▀▀▀▀▀▀▀ ▀▄▀ █▄█▄█▄█▄█ █▄▀ ▀ █ ▀ █ █ ▀▄█▄█▄▀ ▀▄█ █ ▀▄█ ▀▀▀▀▀▀▀
+    ▀██▀█ ▀█▀█▄▄▄▀▄  ▄█▄▄ ▄▀▄█ ▀█▀▀██▀▀▀██▀▄ ███▄ ▀▀▀▄ ▀ █▄█ ▀ ▀
+    ▄ ▀ ▀▄▀  ▄▀█▄▀█▀▀██▄█▀ ▀▀ ▀▄▀█▄▄▄█▄▄ █ █▄█▄█▄▄▀ ▄ █▀▀  ▄▀  █▀
+    █ █   ▀▄  ▀ ▄█  ▀▀▀█▀  ▄██▄▄▄▄█ ▄   █▄▀  ▄██  ▀█▀▄ ▀ ▄▄▀▄█▀█▀
+      █▀▄ ▀█▄  █▄▄  ▀▀  ▀▄█ ▄ █▀ ▄▄▀ ▄█ ▄▄█▀▄   ▄▀▄▄▀▀▄▄▄ ▀▀▀  ▀▀
+    ▄▄ █▀█▀ █ ▄█▄▄ ▄ ███▀▄▀▄▀▀▄██▀█▄█  ▀▀▄ ▄▄▄▄  ▀▀██▄▀ ▀▀▄█▄▄▄ █
+    █ █▄ ▄▀▀▄▀▄▀▀█ ▄ ▄▀▄ ▀▄▄ ▄▀▀▀█▄▄ ▀▄▄▀█▀▄▄▄▀▀   ▄▀▄▀ █▀▄ ▄█▀██
+     █▀█▀▄▀██▄  ███  █▀▄  ▄▄▄▄▄ ▀▄█▀█▀▀███ ▄▄▄▄█ ▀▀ ▀▄▀▀▀███▄▄█▀█
+     ▀█▀ ▄▀ ▀▀▄█▀█▀ █▀ ▄█▀▄█▄  ▀  ██ ▄█▀▄█▄ ▄▄▄█▄▀▀▀█▀ █▀▄▀▀▄  ▀█
+    ▀   ██▀▄▀█▄▄▄▄▄▀▀▀▄▀ ▀▄▀▄█▄▄██ █   ███▀▀ █▄▄   ▀██ ▀ ▄▄▀ ▀██▀
+     ▄██  ▀ ▄▄ ▄▄▄█▀ ▀▄▀ ▄▄██▄▄▀▀███ ███ ▀██  ▀ ▄▀▄ ▄ ▀ ▀▄▄ ▀ ▀█▀
+       ▀█▀▀▀█ ▄ █▄▄▀ ██▄▀▄ ▀▄▄▄▄█▀▀▀█▄ ▀▀▀▀ ▄▄▄█▄ ▀▀██ ██▀▀▀██▀█
+     █▄▀█ ▀ █▀█ ▄█  ▀  █▀▀ ▄▀▄▄ █ ▀ █ ▀ ██▀▀▄  ▀ ▄▀▄▀▄█▄█ ▀ █ ▀ ▀
+    ▄ █▀██▀▀▀ ▄▀█▀▀▀▄▀▀█▀▀  █▄▄███▀▀▀▀ ██▄▀ ▄███ ▀  ▀█  █▀▀█▀▀ █▀
+    ▄ ▄█▄█▀ █▄▄▀██ ▀█▀█▄▄█▄▀██▄▀▀ ▀▄ ▄▀ ▀ █▄▄▄▄█ ▀ ██ ▀▀ ▀▀   ▀ █
+    █  ▄▄ ▀  ▀▄▄  ▀  █▀▄▀▄▄▀▄█ ▀▀▀███ ▀██▄▀▄▄▄▄█▄▀▀██▄ ▀█▄▄▀▀ ▄▄▄
+    ▄█ ███▀█  ▄███▄▄▄▄██▄█▄ ▀█▄▀▄█▄ ▀ ▄▀  ▀▀ ██▀▄▄███▀█▄█▄▀▄▀▀▀▀█
+    █ ▀▄  ▀▄  █▀ ▄▀▄▀▄█▄▄▄▄█▄█▄█▄▀▀ ▀ ▀▄██▀ ▄█▄▀▄  █▀█ ▀▄███ ██
+    ▄▄▀▀ █▀  ██▄█  █▄█ ▄█▄ ▀ ▄ █▀ ▄▄▀██▄ ▀▀▄▀▄█  █▀███▀█▄▀██▄▀ ▄█
+    █▄ ▄ ▀▀█▀█▀▀▀▄█▄▀███  ▄▄▄█▄ ▄▀▀ ▀█ ██▄▀ ▄▄██▄▀▀▀▀█ ▀██▀▄▀▀▄▄▀
+    ▀▀ ▄█▀▀  █ ▄▄▀▄ ▀█▀█▄▄█▄   █ ▄██ ▄▀ ██▀██ ▄█  ██▀█▀▀▄▄▀▄ ▀▀ ▀
+    ██████▀▀ ███ ▀▀▄ ▀▀▄▀▄▀▄█▀▄ ▀▀▀ ▀  ▀▀▄ ▄ █▄█▄  █▀█▀█▄█ █▀ █▀█
+    ▄▄█▀█▀▀█ █ █  █▄  ▀▄▀█▄▀██ ▀▄█▄▄▀██  █  ▄▀█ ███▄▀▄   ▀▀   ▀█▀
+    ▀▀▀▀  ▀▀█▄▄▄▀ ▀▄▀▀▀▄▀  ██▄▄▄█▀▀▀█   █▄▀ ▄▄██    ▀█ ██▀▀▀█ ▀▄
+    █▀▀▀▀▀█ ▀▀ █▀▄▄▀▀▀ ▀▄▄▄▀█ █▀█ ▀ █▀   ▀▀▄ ▀█ ███▄█▀▀▄█ ▀ █ ▀ █
+    █ ███ █ █▄▄█ ▀▄▀ ▀▄▀ ▄ ▄█▀ ▀▀▀█▀█▀▀███   ██▀   ██ ▀ ▀▀█▀█ ▀ █
+    █ ▀▀▀ █ ████▀▄▄▀▀█ ▀ █ ▀▀█▄▀ █▄█▀▀   ▀▄▄  ███▀▀█  ▀ ▄██▀    █
+    ▀▀▀▀▀▀▀ ▀   ▀▀▀  ▀▀     ▀▀     ▀   ▀▀ ▀  ▀     ▀▀▀▀▀  ▀▀ ▀▀▀▀
+
+
+Local network only. That's fine; nothing else needed.
+Direct endpoint: http://172.17.0.1:37859
+
+candy typical forest pudding such funny
+5:00 · Waiting for scan...
+Same Wi-Fi: no account needed. Away from home: needs this machine registered once (`wt login`).
+Existing tailnet also connects directly for free. Pro is required only for Wingthing relay.
+
+One-time pairing link (keep private):
+wingthing://pair#v1z.PMlba7MwGADgvyLvdYi-HnIofBefSMfYKMhs1wNl2ESrbYmnOEl__W7Grp8TEohEmWjFolgIHQesvPCAVfyigUDdjdcKCAjEZfx-mz9y85R-7t8aF7hjc0iKu97s2fFltzNZgfH4f_k
+H5ASNtf3K91GGFJmgMWXJKuIikUD-jIcUOQ0o_sqZABAYDqnoHkMqn3JIi7U1X7lqVDpMWbtstrf9_ZNV62z7_ppNQECVRjvPur5V5cOru7GarNfPWrfm6k2zarx6NsYBQS6RM8mi8PwzAA
+
+
+
+
+
+
+
+
+
+
+
+
+--- terminal confirms native peer ---
+
+Pair a phone with wing forge (this machine). The phone will be able to see and control the sessions on this machine.
+
+
+
+    █▀▀▀▀▀█ ▄█ █▄  ▄█▄█▀▄  ▄█ █▄ █▀█   ▀█▀ ▄▄▀▀█▄█▄  ▀ ██ █▀▀▀▀▀█
+    █ ███ █ ▄█   ▄▀▄▀▄█ ▀  ▄▀█ ███▀▄▀▄▄▀▄ █▄▀ ▀▄▀▀ ▄▄▄█▀█ █ ███ █
+    █ ▀▀▀ █ ▄ █▀▄██▄▄▀▄█▄  ▀█ █▄█▀▀▀█▄   ▀  ▄▀█▄   ████▀  █ ▀▀▀ █
+    ▀▀▀▀▀▀▀ ▀▄▀ █▄█▄█▄█▄█ █▄▀ ▀ █ ▀ █ █ ▀▄█▄█▄▀ ▀▄█ █ ▀▄█ ▀▀▀▀▀▀▀
+    ▀██▀█ ▀█▀█▄▄▄▀▄  ▄█▄▄ ▄▀▄█ ▀█▀▀██▀▀▀██▀▄ ███▄ ▀▀▀▄ ▀ █▄█ ▀ ▀
+    ▄ ▀ ▀▄▀  ▄▀█▄▀█▀▀██▄█▀ ▀▀ ▀▄▀█▄▄▄█▄▄ █ █▄█▄█▄▄▀ ▄ █▀▀  ▄▀  █▀
+    █ █   ▀▄  ▀ ▄█  ▀▀▀█▀  ▄██▄▄▄▄█ ▄   █▄▀  ▄██  ▀█▀▄ ▀ ▄▄▀▄█▀█▀
+      █▀▄ ▀█▄  █▄▄  ▀▀  ▀▄█ ▄ █▀ ▄▄▀ ▄█ ▄▄█▀▄   ▄▀▄▄▀▀▄▄▄ ▀▀▀  ▀▀
+    ▄▄ █▀█▀ █ ▄█▄▄ ▄ ███▀▄▀▄▀▀▄██▀█▄█  ▀▀▄ ▄▄▄▄  ▀▀██▄▀ ▀▀▄█▄▄▄ █
+    █ █▄ ▄▀▀▄▀▄▀▀█ ▄ ▄▀▄ ▀▄▄ ▄▀▀▀█▄▄ ▀▄▄▀█▀▄▄▄▀▀   ▄▀▄▀ █▀▄ ▄█▀██
+     █▀█▀▄▀██▄  ███  █▀▄  ▄▄▄▄▄ ▀▄█▀█▀▀███ ▄▄▄▄█ ▀▀ ▀▄▀▀▀███▄▄█▀█
+     ▀█▀ ▄▀ ▀▀▄█▀█▀ █▀ ▄█▀▄█▄  ▀  ██ ▄█▀▄█▄ ▄▄▄█▄▀▀▀█▀ █▀▄▀▀▄  ▀█
+    ▀   ██▀▄▀█▄▄▄▄▄▀▀▀▄▀ ▀▄▀▄█▄▄██ █   ███▀▀ █▄▄   ▀██ ▀ ▄▄▀ ▀██▀
+     ▄██  ▀ ▄▄ ▄▄▄█▀ ▀▄▀ ▄▄██▄▄▀▀███ ███ ▀██  ▀ ▄▀▄ ▄ ▀ ▀▄▄ ▀ ▀█▀
+       ▀█▀▀▀█ ▄ █▄▄▀ ██▄▀▄ ▀▄▄▄▄█▀▀▀█▄ ▀▀▀▀ ▄▄▄█▄ ▀▀██ ██▀▀▀██▀█
+     █▄▀█ ▀ █▀█ ▄█  ▀  █▀▀ ▄▀▄▄ █ ▀ █ ▀ ██▀▀▄  ▀ ▄▀▄▀▄█▄█ ▀ █ ▀ ▀
+    ▄ █▀██▀▀▀ ▄▀█▀▀▀▄▀▀█▀▀  █▄▄███▀▀▀▀ ██▄▀ ▄███ ▀  ▀█  █▀▀█▀▀ █▀
+    ▄ ▄█▄█▀ █▄▄▀██ ▀█▀█▄▄█▄▀██▄▀▀ ▀▄ ▄▀ ▀ █▄▄▄▄█ ▀ ██ ▀▀ ▀▀   ▀ █
+    █  ▄▄ ▀  ▀▄▄  ▀  █▀▄▀▄▄▀▄█ ▀▀▀███ ▀██▄▀▄▄▄▄█▄▀▀██▄ ▀█▄▄▀▀ ▄▄▄
+    ▄█ ███▀█  ▄███▄▄▄▄██▄█▄ ▀█▄▀▄█▄ ▀ ▄▀  ▀▀ ██▀▄▄███▀█▄█▄▀▄▀▀▀▀█
+    █ ▀▄  ▀▄  █▀ ▄▀▄▀▄█▄▄▄▄█▄█▄█▄▀▀ ▀ ▀▄██▀ ▄█▄▀▄  █▀█ ▀▄███ ██
+    ▄▄▀▀ █▀  ██▄█  █▄█ ▄█▄ ▀ ▄ █▀ ▄▄▀██▄ ▀▀▄▀▄█  █▀███▀█▄▀██▄▀ ▄█
+    █▄ ▄ ▀▀█▀█▀▀▀▄█▄▀███  ▄▄▄█▄ ▄▀▀ ▀█ ██▄▀ ▄▄██▄▀▀▀▀█ ▀██▀▄▀▀▄▄▀
+    ▀▀ ▄█▀▀  █ ▄▄▀▄ ▀█▀█▄▄█▄   █ ▄██ ▄▀ ██▀██ ▄█  ██▀█▀▀▄▄▀▄ ▀▀ ▀
+    ██████▀▀ ███ ▀▀▄ ▀▀▄▀▄▀▄█▀▄ ▀▀▀ ▀  ▀▀▄ ▄ █▄█▄  █▀█▀█▄█ █▀ █▀█
+    ▄▄█▀█▀▀█ █ █  █▄  ▀▄▀█▄▀██ ▀▄█▄▄▀██  █  ▄▀█ ███▄▀▄   ▀▀   ▀█▀
+    ▀▀▀▀  ▀▀█▄▄▄▀ ▀▄▀▀▀▄▀  ██▄▄▄█▀▀▀█   █▄▀ ▄▄██    ▀█ ██▀▀▀█ ▀▄
+    █▀▀▀▀▀█ ▀▀ █▀▄▄▀▀▀ ▀▄▄▄▀█ █▀█ ▀ █▀   ▀▀▄ ▀█ ███▄█▀▀▄█ ▀ █ ▀ █
+    █ ███ █ █▄▄█ ▀▄▀ ▀▄▀ ▄ ▄█▀ ▀▀▀█▀█▀▀███   ██▀   ██ ▀ ▀▀█▀█ ▀ █
+    █ ▀▀▀ █ ████▀▄▄▀▀█ ▀ █ ▀▀█▄▀ █▄█▀▀   ▀▄▄  ███▀▀█  ▀ ▄██▀    █
+    ▀▀▀▀▀▀▀ ▀   ▀▀▀  ▀▀     ▀▀     ▀   ▀▀ ▀  ▀     ▀▀▀▀▀  ▀▀ ▀▀▀▀
+
+
+Local network only. That's fine; nothing else needed.
+Direct endpoint: http://172.17.0.1:37859
+
+candy typical forest pudding such funny
+5:00 · Waiting for scan...
+Same Wi-Fi: no account needed. Away from home: needs this machine registered once (`wt login`).
+Existing tailnet also connects directly for free. Pro is required only for Wingthing relay.
+
+One-time pairing link (keep private):
+wingthing://pair#v1z.PMlba7MwGADgvyLvdYi-HnIofBefSMfYKMhs1wNl2ESrbYmnOEl__W7Grp8TEohEmWjFolgIHQesvPCAVfyigUDdjdcKCAjEZfx-mz9y85R-7t8aF7hjc0iKu97s2fFltzNZgfH4f_k
+H5ASNtf3K91GGFJmgMWXJKuIikUD-jIcUOQ0o_sqZABAYDqnoHkMqn3JIi7U1X7lqVDpMWbtstrf9_ZNV62z7_ppNQECVRjvPur5V5cOru7GarNfPWrfm6k2zarx6NsYBQS6RM8mi8PwzAA
+
+🤣 🤥 🤙 🤏
+CLI test phone wants to pair. Enter to allow.
+Only allow if all 4 emoji match the phone. Ctrl-C cancels.
+4:58 · confirming
+
+
+
+
+
+
+
+--- both sides confirmed ---
+
+Pair a phone with wing forge (this machine). The phone will be able to see and control the sessions on this machine.
+
+
+
+    █▀▀▀▀▀█ ▄█ █▄  ▄█▄█▀▄  ▄█ █▄ █▀█   ▀█▀ ▄▄▀▀█▄█▄  ▀ ██ █▀▀▀▀▀█
+    █ ███ █ ▄█   ▄▀▄▀▄█ ▀  ▄▀█ ███▀▄▀▄▄▀▄ █▄▀ ▀▄▀▀ ▄▄▄█▀█ █ ███ █
+    █ ▀▀▀ █ ▄ █▀▄██▄▄▀▄█▄  ▀█ █▄█▀▀▀█▄   ▀  ▄▀█▄   ████▀  █ ▀▀▀ █
+    ▀▀▀▀▀▀▀ ▀▄▀ █▄█▄█▄█▄█ █▄▀ ▀ █ ▀ █ █ ▀▄█▄█▄▀ ▀▄█ █ ▀▄█ ▀▀▀▀▀▀▀
+    ▀██▀█ ▀█▀█▄▄▄▀▄  ▄█▄▄ ▄▀▄█ ▀█▀▀██▀▀▀██▀▄ ███▄ ▀▀▀▄ ▀ █▄█ ▀ ▀
+    ▄ ▀ ▀▄▀  ▄▀█▄▀█▀▀██▄█▀ ▀▀ ▀▄▀█▄▄▄█▄▄ █ █▄█▄█▄▄▀ ▄ █▀▀  ▄▀  █▀
+    █ █   ▀▄  ▀ ▄█  ▀▀▀█▀  ▄██▄▄▄▄█ ▄   █▄▀  ▄██  ▀█▀▄ ▀ ▄▄▀▄█▀█▀
+      █▀▄ ▀█▄  █▄▄  ▀▀  ▀▄█ ▄ █▀ ▄▄▀ ▄█ ▄▄█▀▄   ▄▀▄▄▀▀▄▄▄ ▀▀▀  ▀▀
+    ▄▄ █▀█▀ █ ▄█▄▄ ▄ ███▀▄▀▄▀▀▄██▀█▄█  ▀▀▄ ▄▄▄▄  ▀▀██▄▀ ▀▀▄█▄▄▄ █
+    █ █▄ ▄▀▀▄▀▄▀▀█ ▄ ▄▀▄ ▀▄▄ ▄▀▀▀█▄▄ ▀▄▄▀█▀▄▄▄▀▀   ▄▀▄▀ █▀▄ ▄█▀██
+     █▀█▀▄▀██▄  ███  █▀▄  ▄▄▄▄▄ ▀▄█▀█▀▀███ ▄▄▄▄█ ▀▀ ▀▄▀▀▀███▄▄█▀█
+     ▀█▀ ▄▀ ▀▀▄█▀█▀ █▀ ▄█▀▄█▄  ▀  ██ ▄█▀▄█▄ ▄▄▄█▄▀▀▀█▀ █▀▄▀▀▄  ▀█
+    ▀   ██▀▄▀█▄▄▄▄▄▀▀▀▄▀ ▀▄▀▄█▄▄██ █   ███▀▀ █▄▄   ▀██ ▀ ▄▄▀ ▀██▀
+     ▄██  ▀ ▄▄ ▄▄▄█▀ ▀▄▀ ▄▄██▄▄▀▀███ ███ ▀██  ▀ ▄▀▄ ▄ ▀ ▀▄▄ ▀ ▀█▀
+       ▀█▀▀▀█ ▄ █▄▄▀ ██▄▀▄ ▀▄▄▄▄█▀▀▀█▄ ▀▀▀▀ ▄▄▄█▄ ▀▀██ ██▀▀▀██▀█
+     █▄▀█ ▀ █▀█ ▄█  ▀  █▀▀ ▄▀▄▄ █ ▀ █ ▀ ██▀▀▄  ▀ ▄▀▄▀▄█▄█ ▀ █ ▀ ▀
+    ▄ █▀██▀▀▀ ▄▀█▀▀▀▄▀▀█▀▀  █▄▄███▀▀▀▀ ██▄▀ ▄███ ▀  ▀█  █▀▀█▀▀ █▀
+    ▄ ▄█▄█▀ █▄▄▀██ ▀█▀█▄▄█▄▀██▄▀▀ ▀▄ ▄▀ ▀ █▄▄▄▄█ ▀ ██ ▀▀ ▀▀   ▀ █
+    █  ▄▄ ▀  ▀▄▄  ▀  █▀▄▀▄▄▀▄█ ▀▀▀███ ▀██▄▀▄▄▄▄█▄▀▀██▄ ▀█▄▄▀▀ ▄▄▄
+    ▄█ ███▀█  ▄███▄▄▄▄██▄█▄ ▀█▄▀▄█▄ ▀ ▄▀  ▀▀ ██▀▄▄███▀█▄█▄▀▄▀▀▀▀█
+    █ ▀▄  ▀▄  █▀ ▄▀▄▀▄█▄▄▄▄█▄█▄█▄▀▀ ▀ ▀▄██▀ ▄█▄▀▄  █▀█ ▀▄███ ██
+    ▄▄▀▀ █▀  ██▄█  █▄█ ▄█▄ ▀ ▄ █▀ ▄▄▀██▄ ▀▀▄▀▄█  █▀███▀█▄▀██▄▀ ▄█
+    █▄ ▄ ▀▀█▀█▀▀▀▄█▄▀███  ▄▄▄█▄ ▄▀▀ ▀█ ██▄▀ ▄▄██▄▀▀▀▀█ ▀██▀▄▀▀▄▄▀
+    ▀▀ ▄█▀▀  █ ▄▄▀▄ ▀█▀█▄▄█▄   █ ▄██ ▄▀ ██▀██ ▄█  ██▀█▀▀▄▄▀▄ ▀▀ ▀
+    ██████▀▀ ███ ▀▀▄ ▀▀▄▀▄▀▄█▀▄ ▀▀▀ ▀  ▀▀▄ ▄ █▄█▄  █▀█▀█▄█ █▀ █▀█
+    ▄▄█▀█▀▀█ █ █  █▄  ▀▄▀█▄▀██ ▀▄█▄▄▀██  █  ▄▀█ ███▄▀▄   ▀▀   ▀█▀
+    ▀▀▀▀  ▀▀█▄▄▄▀ ▀▄▀▀▀▄▀  ██▄▄▄█▀▀▀█   █▄▀ ▄▄██    ▀█ ██▀▀▀█ ▀▄
+    █▀▀▀▀▀█ ▀▀ █▀▄▄▀▀▀ ▀▄▄▄▀█ █▀█ ▀ █▀   ▀▀▄ ▀█ ███▄█▀▀▄█ ▀ █ ▀ █
+    █ ███ █ █▄▄█ ▀▄▀ ▀▄▀ ▄ ▄█▀ ▀▀▀█▀█▀▀███   ██▀   ██ ▀ ▀▀█▀█ ▀ █
+    █ ▀▀▀ █ ████▀▄▄▀▀█ ▀ █ ▀▀█▄▀ █▄█▀▀   ▀▄▄  ███▀▀█  ▀ ▄██▀    █
+    ▀▀▀▀▀▀▀ ▀   ▀▀▀  ▀▀     ▀▀     ▀   ▀▀ ▀  ▀     ▀▀▀▀▀  ▀▀ ▀▀▀▀
+
+
+Local network only. That's fine; nothing else needed.
+Direct endpoint: http://172.17.0.1:37859
+
+candy typical forest pudding such funny
+5:00 · Waiting for scan...
+Same Wi-Fi: no account needed. Away from home: needs this machine registered once (`wt login`).
+Existing tailnet also connects directly for free. Pro is required only for Wingthing relay.
+
+One-time pairing link (keep private):
+wingthing://pair#v1z.PMlba7MwGADgvyLvdYi-HnIofBefSMfYKMhs1wNl2ESrbYmnOEl__W7Grp8TEohEmWjFolgIHQesvPCAVfyigUDdjdcKCAjEZfx-mz9y85R-7t8aF7hjc0iKu97s2fFltzNZgfH4f_k
+H5ASNtf3K91GGFJmgMWXJKuIikUD-jIcUOQ0o_sqZABAYDqnoHkMqn3JIi7U1X7lqVDpMWbtstrf9_ZNV62z7_ppNQECVRjvPur5V5cOru7GarNfPWrfm6k2zarx6NsYBQS6RM8mi8PwzAA
+
+🤣 🤥 🤙 🤏
+CLI test phone wants to pair. Enter to allow.
+Only allow if all 4 emoji match the phone. Ctrl-C cancels.
+4:58 · confirming
+Allowed on forge's terminal. Waiting for the phone to confirm…
+
+Paired CLI test phone with wing forge. Use wt devices to manage access.
+
+
+
