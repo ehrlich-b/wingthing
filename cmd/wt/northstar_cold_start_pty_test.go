@@ -277,6 +277,11 @@ func TestNorthstarPTYColdClaude(t *testing.T) {
 		}
 		coldTime := time.Since(started)
 		t.Logf("cold fixture launch-to-provider: %s (target <=3s)", coldTime)
+		// Native acceptance includes the host mailbox handshake. Keep its
+		// launch budgets enforced alongside the functional PTY assertions.
+		if coldTime > 3*time.Second {
+			t.Errorf("cold launch exceeded 3s budget: %s", coldTime)
+		}
 		pid := coldOneDaemon(t, f)
 		ids := coldSessionIDs(t, f)
 		if len(ids) != 1 {
@@ -300,6 +305,9 @@ func TestNorthstarPTYColdClaude(t *testing.T) {
 		}
 		sort.Slice(warm, func(i, j int) bool { return warm[i] < warm[j] })
 		t.Logf("warm fixture launch-to-provider sample=%v p95=%s (target <=1s)", warm, warm[len(warm)-1])
+		if warm[len(warm)-1] > time.Second {
+			t.Errorf("warm launch p95 exceeded 1s budget: %s", warm[len(warm)-1])
+		}
 		if ids := coldSessionIDs(t, f); len(ids) != 6 {
 			t.Fatalf("expected one admission per launch: %v", ids)
 		}

@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -104,17 +106,23 @@ func New(ctx context.Context, opts Options) (*Pool, error) {
 	opts.Hello.Aggregate = false // Never recursively discover another machine's remotes.
 	ctx, cancel := context.WithCancel(ctx)
 	p := &Pool{opts: opts, ctx: ctx, cancel: cancel, entries: map[string]*entry{}}
-	watcher, err := fsnotify.NewWatcher()
+	var watcher *fsnotify.Watcher
+	err := watchRegistryDirectory(ctx, opts.Dir, func() error {
+		var err error
+		watcher, err = fsnotify.NewWatcher()
+		if err != nil {
+			return err
+		}
+		if err = watcher.Add(opts.Dir); err != nil {
+			_ = watcher.Close()
+		}
+		return err
+	})
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 	p.watcher = watcher
-	if err = watcher.Add(opts.Dir); err != nil {
-		watcher.Close()
-		cancel()
-		return nil, err
-	}
 	// A bad registry cannot take local control down; retain/report directory errors.
 	_ = p.Reload()
 	p.wg.Add(1)
@@ -144,6 +152,31 @@ func New(ctx context.Context, opts Options) (*Pool, error) {
 	}()
 	return p, nil
 }
+
+// kqueue's initial directory scan stats every child. Atomic daemon metadata
+// writes may rename a temporary file between that listing and its stat. Restart
+// the complete watch setup only for a vanished direct child of a still-existing
+// registry directory; missing directories and all other errors remain fatal.
+// Each failed watcher is closed by watch, so a partial scan is never accepted.
+func watchRegistryDirectory(ctx context.Context, dir string, watch func() error) error {
+	for attempt := 0; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := watch()
+		var pathErr *os.PathError
+		if err == nil || runtime.GOOS != "darwin" || attempt == 2 ||
+			!errors.Is(err, os.ErrNotExist) || !errors.As(err, &pathErr) ||
+			filepath.Dir(pathErr.Path) != filepath.Clean(dir) {
+			return err
+		}
+		info, statErr := os.Stat(dir)
+		if statErr != nil || !info.IsDir() {
+			return err
+		}
+	}
+}
+
 func (p *Pool) notify() {
 	if p.opts.OnChange != nil {
 		p.opts.OnChange()

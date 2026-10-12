@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,6 +20,76 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/sshcontrol"
 	"github.com/ehrlich-b/wingthing/internal/testssh"
 )
+
+func TestRegistryWatchRecoversVanishedChildOnly(t *testing.T) {
+	dir := t.TempDir()
+	missingChild := fmt.Errorf("metadata scan: %w", &os.PathError{Op: "lstat", Path: filepath.Join(dir, ".wt-daemon-test.tmp"), Err: os.ErrNotExist})
+	missingDir := &os.PathError{Op: "lstat", Path: dir, Err: os.ErrNotExist}
+	missingElsewhere := &os.PathError{Op: "lstat", Path: filepath.Join(filepath.Dir(dir), "elsewhere.tmp"), Err: os.ErrNotExist}
+	permission := &os.PathError{Op: "lstat", Path: filepath.Join(dir, "remotes.yaml"), Err: os.ErrPermission}
+	for _, test := range []struct {
+		name       string
+		err        error
+		persistent bool
+	}{
+		{name: "vanished child", err: missingChild},
+		{name: "bounded churn", err: missingChild, persistent: true},
+		{name: "missing registry", err: missingDir},
+		{name: "unrelated missing path", err: missingElsewhere},
+		{name: "permission failure", err: permission},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			calls := 0
+			err := watchRegistryDirectory(t.Context(), dir, func() error {
+				calls++
+				if calls == 1 || test.persistent {
+					return test.err
+				}
+				return nil
+			})
+			wantCalls := 1
+			wantErr := test.err
+			if runtime.GOOS == "darwin" && test.err == missingChild {
+				wantCalls = 2
+				wantErr = nil
+				if test.persistent {
+					wantCalls, wantErr = 3, test.err
+				}
+			}
+			if calls != wantCalls || !errors.Is(err, wantErr) {
+				t.Fatalf("watch setup: calls=%d err=%v; want calls=%d err=%v", calls, err, wantCalls, wantErr)
+			}
+		})
+	}
+}
+
+func TestRegistryWatchStopsWhenDirectoryOrContextDisappears(t *testing.T) {
+	for _, cancelContext := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cancel=%t", cancelContext), func(t *testing.T) {
+			dir := t.TempDir()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			missing := &os.PathError{Op: "lstat", Path: filepath.Join(dir, "temporary"), Err: os.ErrNotExist}
+			calls := 0
+			err := watchRegistryDirectory(ctx, dir, func() error {
+				calls++
+				if cancelContext {
+					cancel()
+				} else if err := os.Remove(dir); err != nil {
+					t.Fatal(err)
+				}
+				return missing
+			})
+			wantErr := error(missing)
+			if runtime.GOOS == "darwin" && cancelContext {
+				wantErr = context.Canceled
+			}
+			if calls != 1 || !errors.Is(err, wantErr) {
+				t.Fatalf("watch setup continued: calls=%d err=%v; want err=%v", calls, err, wantErr)
+			}
+		})
+	}
+}
 
 type fakeTimer struct {
 	channel chan time.Time

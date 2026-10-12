@@ -102,8 +102,9 @@ endef
 # All untagged Go tests include android-contract and every former focused unit
 # selection (preview, conversation, socket, protected-target, remote and wake).
 check: web
-	$(GO) test -p 2 ./...
+	# Build once outside the PTY interaction deadlines, including CGO pairing.
 	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 ./...
 
 web:
 	cd web && $(NPM) ci
@@ -213,7 +214,7 @@ ifneq ($(filter static,$(GATE)),)
 			packages=$$($(GO) list -p 2 -e -f '{{if or .GoFiles .CgoFiles .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' $$packages); \
 		fi; \
 	fi; \
-	if [ -n "$$packages" ]; then $(GO) test -p 2 -race $$packages; \
+	if [ -n "$$packages" ]; then WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -race $$packages; \
 	else echo 'No touched Go packages to race-test'; fi
 	$(GO) run -p 2 golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 	cd web && $(NPM) ci && $(NPM) audit --audit-level=high
