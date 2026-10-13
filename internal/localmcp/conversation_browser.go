@@ -95,12 +95,8 @@ func BrowserSessionControl(version string, ctx context.Context, cfg *config.Conf
 		}
 	}
 	if operation == "agent_start" {
-		var args map[string]json.RawMessage
-		if err := json.Unmarshal(arguments, &args); err != nil {
+		if err := validateLinkedUserLaunch(arguments); err != nil {
 			return nil, err
-		}
-		if len(args["conversation_role"]) == 0 && len(args["parent_conversation_id"]) == 0 {
-			return nil, errors.New("browser agent_start requires a linked personal conversation")
 		}
 	}
 	if operation == "session_fork" || operation == "session_status" || operation == "session_read" || operation == "session_wait" || (operation == "session_prompt" || operation == "terminal_send") {
