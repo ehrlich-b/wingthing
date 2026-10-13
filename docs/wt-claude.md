@@ -16,6 +16,15 @@ and authenticate the provider CLI on each execution machine beforehand. Each
 machine needs its own existing workspace and personal credentials. Authorize
 the `forge` SSH alias before proceeding.
 
+On Linux, protected state, writable workspaces/configuration, temporary grants
+and HOME backing must use plain local ext4, xfs, btrfs without shared subvolume
+aliases, zfs datasets or tmpfs. Preexisting OverlayFS, bind aliases, FUSE,
+network filesystems and unknown types (including nested mounts) refuse launch
+with the affected path and filesystem type. Move that tree to a supported local
+filesystem and remove aliases before retrying. Wingthing validates these trees
+before constructing its own verified HOME overlay. See the
+[filesystem contract and native acceptance](testing.md#linux-provider-write-protection).
+
 ## Start two independent wings
 
 Use fresh state for this workflow. On the Mac:

@@ -92,6 +92,9 @@ func newPlatform(cfg Config) (Sandbox, error) {
 		if err := validateLinuxProtectedAliases(cfg.ProtectedWriteTargets); err != nil {
 			return nil, err
 		}
+		if err := validateLinuxProviderFilesystems(cfg.ProtectedWriteTargets, providerWritablePaths(cfg), providerHome(cfg)); err != nil {
+			return nil, err
+		}
 	}
 	hasNamespaceCapability := hasEffectiveCAPSYSADMIN()
 	if err := namespaceCapabilityError(hasNamespaceCapability); err != nil {

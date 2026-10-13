@@ -258,7 +258,7 @@ func TestLinuxProviderGuardRejectedTargetsNative(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			root := guardNativeRoot(t)
 			work, tmp := filepath.Join(root, "work"), filepath.Join(root, "tmp")
-			for _, dir := range []string{work, tmp} {
+			for _, dir := range []string{work, tmp, filepath.Join(root, "home")} {
 				if err := os.Mkdir(dir, 0700); err != nil {
 					t.Fatal(err)
 				}
@@ -317,7 +317,7 @@ func TestLinuxProviderGuardRejectedTargetsNative(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			sb, err := New(Config{Mounts: []Mount{{Source: work}}, ProtectedWriteTargets: []string{target}})
+			sb, err := New(Config{UserHome: filepath.Join(root, "home"), Mounts: []Mount{{Source: work}}, ProtectedWriteTargets: []string{target}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -390,6 +390,143 @@ func TestLinuxProviderGuardBindAliasesNative(t *testing.T) {
 			out, err := cmd.CombinedOutput()
 			if err != nil || !strings.Contains(string(out), "preexisting-bind-alias-refused") {
 				t.Fatalf("%v %s", err, out)
+			}
+		})
+	}
+}
+
+const guardFilesystemFixtureArg = "_test_linux_guard_filesystem_contract"
+
+// Each fixture mounts only disposable paths in its own user/mount namespace.
+// ramfs is a real kernel filesystem deliberately absent from the allowlist;
+// it exercises unknown-type refusal without pretending to mount a fake type.
+func init() {
+	if len(os.Args) != 5 || os.Args[1] != guardFilesystemFixtureArg {
+		return
+	}
+	root, kind, stage := os.Args[2], os.Args[3], os.Args[4]
+	if err := runGuardFilesystemFixture(root, kind, stage); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println("preexisting-filesystem-refused-before-exec")
+	os.Exit(0)
+}
+
+func runGuardFilesystemFixture(root, kind, stage string) error {
+	if err := unix.Mount("", "/", "", unix.MS_PRIVATE|unix.MS_REC, ""); err != nil {
+		return err
+	}
+	state, work, home := filepath.Join(root, "state"), filepath.Join(root, "work"), filepath.Join(root, "home")
+	upper, lower, merged := state, filepath.Join(root, "lower"), filepath.Join(work, "view")
+	fsType, rejected := "overlay", merged
+	switch kind {
+	case "overlay-lower":
+		upper, lower = filepath.Join(root, "upper"), state
+	case "overlay-protected":
+		upper, merged, rejected = filepath.Join(work, "upper"), state, state
+	case "unknown-work":
+		fsType, rejected = "ramfs", filepath.Join(work, "view")
+	case "unknown-state":
+		fsType, rejected = "ramfs", state
+	case "unknown-home":
+		fsType, rejected = "ramfs", home
+	case "unknown-temp":
+		fsType, rejected = "ramfs", filepath.Join(root, "tmp", "view")
+	case "bind-work":
+		fsType, rejected = "", filepath.Join(work, "view")
+	}
+	cfg := Config{UserHome: home, Mounts: []Mount{{Source: work}}, ProtectedWriteTargets: []string{state}}
+	var sb Sandbox
+	var err error
+	if stage == "wrapper" {
+		sb, err = New(cfg)
+		if err != nil {
+			return fmt.Errorf("plain fixture admission: %w", err)
+		}
+		defer sb.Destroy()
+	}
+	if fsType == "overlay" {
+		opts := fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s,userxattr,index=off", lower, upper, filepath.Join(root, "overlay-work"))
+		if err := unix.Mount("overlay", merged, "overlay", 0, opts); err != nil {
+			return fmt.Errorf("construct %s fixture: %w", kind, err)
+		}
+	} else if fsType == "ramfs" {
+		if err := unix.Mount("ramfs", rejected, "ramfs", unix.MS_NOSUID|unix.MS_NODEV, ""); err != nil {
+			return fmt.Errorf("construct unknown filesystem fixture: %w", err)
+		}
+	} else {
+		if err := unix.Mount(filepath.Join(root, "unrelated"), rejected, "", unix.MS_BIND, ""); err != nil {
+			return err
+		}
+		entries, err := readMountInfo("/proc/self/mountinfo")
+		if err != nil {
+			return err
+		}
+		fsType = entries[rejected].FSType
+	}
+	// Prove the mount is live before testing admission, with one finite write.
+	if err := os.WriteFile(filepath.Join(rejected, "fixture-ready"), []byte("synthetic"), 0600); err != nil {
+		return fmt.Errorf("fixture mount not writable: %w", err)
+	}
+	if stage == "admission" {
+		sb, err = New(cfg)
+		if sb != nil {
+			sb.Destroy()
+		}
+		if err == nil || !strings.Contains(err.Error(), rejected) || !strings.Contains(err.Error(), fsType) {
+			return fmt.Errorf("%s admission missing path/type refusal: %v", kind, err)
+		}
+		return nil
+	}
+	executed := filepath.Join(work, "executed")
+	cmd, err := sb.Exec(context.Background(), "/bin/sh", []string{"-c", `echo executed > "$1"`, "guard", executed})
+	if err != nil {
+		return err
+	}
+	cmd.Env = os.Environ()
+	out, execErr := cmd.CombinedOutput()
+	diag, err := os.ReadFile(sb.DiagLog())
+	if err != nil {
+		return err
+	}
+	if execErr == nil || !strings.Contains(string(diag), "refusing to launch agent") || !strings.Contains(string(diag), rejected) || !strings.Contains(string(diag), fsType) {
+		return fmt.Errorf("%s wrapper missing path/type refusal: %v %s %s", kind, execErr, out, diag)
+	}
+	if _, err := os.Stat(executed); !os.IsNotExist(err) {
+		return fmt.Errorf("provider executed before filesystem refusal")
+	}
+	return nil
+}
+
+func TestLinuxProviderGuardFilesystemsNative(t *testing.T) {
+	for _, kind := range []string{"overlay-upper", "overlay-lower", "overlay-protected", "unknown-work", "unknown-state", "unknown-home", "unknown-temp", "bind-work"} {
+		t.Run(kind, func(t *testing.T) {
+			for _, stage := range []string{"admission", "wrapper"} {
+				t.Run(stage, func(t *testing.T) {
+					root := guardNativeRoot(t)
+					for _, dir := range []string{"state", "work/view", "work/upper", "tmp/view", "home", "lower", "upper", "overlay-work", "unrelated"} {
+						if err := os.MkdirAll(filepath.Join(root, dir), 0700); err != nil {
+							t.Fatal(err)
+						}
+					}
+					for _, file := range []string{"state/record", "lower/record", "work/upper/record"} {
+						if err := os.WriteFile(filepath.Join(root, file), []byte("synthetic"), 0600); err != nil {
+							t.Fatal(err)
+						}
+					}
+					exe, err := os.Executable()
+					if err != nil {
+						t.Fatal(err)
+					}
+					cmd := exec.Command(exe, guardFilesystemFixtureArg, root, kind, stage)
+					cmd.Env = append(os.Environ(), "TMPDIR="+filepath.Join(root, "tmp"))
+					cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS, UidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getuid(), Size: 1}}, GidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getgid(), Size: 1}}}
+					out, err := cmd.CombinedOutput()
+					if err != nil || !strings.Contains(string(out), "preexisting-filesystem-refused-before-exec") {
+						t.Fatalf("%v %s", err, out)
+					}
+				})
 			}
 		})
 	}

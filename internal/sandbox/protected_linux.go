@@ -240,7 +240,7 @@ func checkProtectedMountAliases(entries map[string]mountInfoEntry, targets []str
 					aliasPath = point
 				}
 				if aliasPath != "" && !pathWithin(aliasPath, canonical) {
-					return &ProtectedWriteTargetError{Target: target, Rule: aliasPath, Reason: "protected filesystem has an external mount alias; remove the alias before launch"}
+					return &ProtectedWriteTargetError{Target: target, Rule: aliasPath, Reason: fmt.Sprintf("protected filesystem %q has an external mount alias; remove the alias before launch", source.FSType)}
 				}
 			}
 		}

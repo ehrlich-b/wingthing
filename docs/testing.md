@@ -563,6 +563,28 @@ Linux HOME overlay for adjacent provider files. These tests use synthetic files;
 a real provider admission/write drill is a separate acceptance step. Native
 macOS protection still requires `make e2e-mac` on macOS.
 
+The supported filesystem contract for protected Linux providers is bounded:
+protected state/controller trees, every writable mount tree, temporary write
+grants and the HOME backing tree must use plain local ext4, xfs, btrfs, zfs
+datasets or tmpfs. Every containing mount and nested submount is checked.
+Preexisting OverlayFS, bind aliases, FUSE, network filesystems and all unknown
+types are refused with the path, filesystem type and migration guidance.
+This also applies to read-only aliases and nested unsupported mounts. Move the
+affected tree to a supported local filesystem and remove its aliases before
+launch. Btrfs filesystem UUIDs normalize per-subvolume device identities;
+overlapping mounted subvolume roots are refused, while disjoint roots are allowed.
+Unavailable backing identities fail closed. No general layered-filesystem
+support is claimed.
+
+Admission checks repeat inside the private mount namespace before Wingthing
+constructs any mounts. Only Wingthing's subsequent verified HOME overlay is
+allowed; its backing tree and temporary upper/work location pass these checks
+first. Mandatory native fixtures construct both protected upper/lower trees
+behind writable merged views and protected merged state with writable backing,
+plus an unrelated writable bind alias and the non-allowlisted kernel type ramfs.
+Each fixture tests admission and a mount added after admission, observes a
+path/type refusal before provider execution, and fails acceptance on any skip.
+
 Protected Linux providers also use the jail's existing init/drop stages to replace
 host procfs and hide the wrapper's saved HOME and overlay backing directories in
 the provider's mount namespace. The trusted parent retains its separate mounts
@@ -577,5 +599,6 @@ tests for macOS and Linux arm64. It is build evidence, not native macOS acceptan
 
 The provider cwd is re-entered through the final namespace after masks are
 installed; the native fixtures check relative paths and `/proc/self/cwd` as well
-as absolute paths. Docker batteries stage these fixtures on a host filesystem
-bind mount because overlayfs cannot always be used as its own upper layer.
+as absolute paths. Docker batteries stage these fixtures on private tmpfs mounts, including
+temporary grants, so their backing trees satisfy the contract and the fixtures
+can construct overlays without using Docker's preexisting OverlayFS as an upper.

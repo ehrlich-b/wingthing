@@ -353,6 +353,12 @@ func DenyInit(args []string) {
 		failEnforcement("validate protected filesystem aliases", "sandbox filesystem", err)
 	}
 	tmpDir := filepath.Dir(logPath)
+	// Repeat admission against the inherited private mount table, before any
+	// trusted mounts exist. An OverlayFS type is never accepted based on its
+	// pathname; only the validated HOME overlay constructed below is allowed.
+	if err := validateLinuxProviderFilesystems(protectedTargets, append(append([]string(nil), writablePaths...), tmpDir), home); err != nil {
+		failEnforcement("validate provider filesystems", "sandbox filesystem", err)
+	}
 
 	// Jail mode: deny:/ creates an allowlist filesystem. Only explicitly
 	// mounted paths are visible; everything else is inaccessible.
