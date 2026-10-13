@@ -56,6 +56,12 @@ func TestMachineCountsLeaveOutThePinnedWing(t *testing.T) {
 	if s.machineCount("local") != "2 sessions" || s.machineCount("Studio") != "1 session" {
 		t.Fatalf("counts %q and %q include the pinned wing", s.machineCount("local"), s.machineCount("Studio"))
 	}
+	m := s.machines["Studio"]
+	m.err = "connection refused"
+	s.machines["Studio"] = m
+	if s.machineCount("Studio") != "1 session cached" || !strings.Contains(render(s, 132, 36, now), "1 cached") {
+		t.Fatalf("header cached count disagrees with %q", s.machineCount("Studio"))
+	}
 }
 
 func TestPaperOfflinePinnedStateIsLastSeen(t *testing.T) {

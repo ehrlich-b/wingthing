@@ -321,7 +321,7 @@ func keyHints(s *state) []string {
 	case diagnosticInput:
 		return []string{"Enter accept input   Ctrl-U clear", "Esc back   Ctrl-C quit"}
 	}
-	if s.mode == details {
+	if s.mode == details && !s.stale(s.target.machine) {
 		return []string{"j/k scroll   PgUp/PgDn page", "Enter open   Esc back   Ctrl-C quit"}
 	}
 	if s.isOverlay() {
@@ -372,7 +372,8 @@ func render(s *state, width, height int, now time.Time) string {
 	for name, m := range s.machines {
 		for _, session := range m.sessions {
 			r := s.sessionRow(name, session)
-			if r.Pinned && !pinCounted {
+			pin := r.Pinned && !pinCounted
+			if pin {
 				pinCounted = true
 			} else {
 				total++
@@ -381,7 +382,10 @@ func render(s *state, width, height int, now time.Time) string {
 				if r.attention == "unread" {
 					unread++
 				}
-				cached++
+				// Machine counts leave the pinned wing out of cached too.
+				if !pin {
+					cached++
+				}
 				continue
 			}
 			if r.attention == "blocked" {
