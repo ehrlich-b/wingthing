@@ -61,4 +61,41 @@ func TestPhoneFleetLaunchUsesExistingRuntimeAndEncryptedOwnerGates(t *testing.T)
 	if _, err := h.Execute(f.ctx, "phone", "launch", "", string(raw)); err == nil {
 		t.Fatal("phone bypassed linked-conversation browser launch restriction")
 	}
+	// Null/empty and decoder-accepted case variants must deny before either
+	// local launch or remote forwarding, on both encrypted user adapters.
+	f.wc.PhoneFleet = true
+	for _, origin := range []string{"fixture-wing", "unconfigured-remote"} {
+		for _, empty := range []map[string]any{
+			{"conversation_role": nil}, {"conversation_role": ""},
+			{"parent_conversation_id": nil}, {"parent_conversation_id": ""},
+			{"CONVERSATION_ROLE": nil}, {"Parent_Conversation_ID": ""},
+		} {
+			inner := map[string]any{"agent": "codex", "cwd": f.work}
+			for key, value := range empty {
+				inner[key] = value
+			}
+			args := map[string]any{"origin_wing_id": origin, "operation": "agent_start", "arguments": inner}
+			raw, _ := json.Marshal(args)
+			f.mu.Lock()
+			before := len(f.eggs)
+			f.mu.Unlock()
+			if _, err := h.Execute(f.ctx, "phone", "launch", "", string(raw)); err == nil {
+				t.Fatal("empty link phone launch accepted")
+			}
+			response := f.tunnel("alice", map[string]any{"type": "session.control", "operation": "session_launch", "arguments": args})
+			if response["error"] != "phone/browser agent launch requires a linked personal conversation" {
+				t.Fatal("empty link browser launch dispatched")
+			}
+			direct := f.tunnel("alice", map[string]any{"type": "session.control", "operation": "agent_start", "arguments": inner})
+			if direct["error"] != "phone/browser agent launch requires a linked personal conversation" {
+				t.Fatal("legacy browser launch retained empty-link bypass")
+			}
+			f.mu.Lock()
+			count := len(f.eggs)
+			f.mu.Unlock()
+			if count != before {
+				t.Fatal("empty link launched a runtime")
+			}
+		}
+	}
 }

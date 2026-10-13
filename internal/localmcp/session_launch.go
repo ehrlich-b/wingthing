@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -19,6 +20,22 @@ type launchArgs struct {
 	Operation    string          `json:"operation"`
 	Arguments    json.RawMessage `json:"arguments,omitempty"`
 	LocalOnly    bool            `json:"local_only"`
+}
+
+func validateLinkedUserLaunch(arguments json.RawMessage) error {
+	// Match the native launch decoder's case folding and null/empty semantics.
+	// Presence of a JSON key alone does not establish a linked conversation.
+	var selector struct {
+		ConversationRole     string `json:"conversation_role"`
+		ParentConversationID string `json:"parent_conversation_id"`
+	}
+	if err := json.Unmarshal(arguments, &selector); err != nil {
+		return err
+	}
+	if selector.ConversationRole == "" && selector.ParentConversationID == "" {
+		return errors.New("phone/browser agent launch requires a linked personal conversation")
+	}
+	return nil
 }
 
 // ToolSessionLaunch selects an execution origin before using the existing
@@ -45,8 +62,10 @@ func (s *Server) ToolSessionLaunch(ctx context.Context, arguments json.RawMessag
 		return nil, err
 	}
 	// Continuation is an action on an existing identity, not a new launch.
-	if _, ok := fields["resume_session"]; ok {
-		return nil, errors.New("qualified launch cannot resume an existing session")
+	for key := range fields {
+		if strings.EqualFold(key, "resume_session") {
+			return nil, errors.New("qualified launch cannot resume an existing session")
+		}
 	}
 	id, label, err := s.fleetIdentity()
 	if err != nil {

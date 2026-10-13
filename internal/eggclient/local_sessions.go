@@ -157,7 +157,12 @@ func enrichLocalSession(ctx context.Context, cfg *config.Config, session *LocalS
 // lifecycle read. Never copy Reason, Events, Text, Raw or provider identifiers.
 func projectSessionLifecycle(session *LocalSession, view egg.SessionView) {
 	session.Status, session.StateCursor = view.Status, view.StateCursor
-	session.StateObservedAt = view.StateObservedAt
+	session.StateObservedAt = ""
+	// Timestamps are provider-supplied text. Only a parsed date belongs in the
+	// content-free inventory; malformed values must not leak provider content.
+	if observed, err := time.Parse(time.RFC3339Nano, view.StateObservedAt); err == nil {
+		session.StateObservedAt = observed.UTC().Format(time.RFC3339Nano)
+	}
 	session.State, session.StateSource = "unknown", "unsupported"
 	session.StateReason = "Native lifecycle evidence is missing or hooks are disabled; status is unknown."
 	session.CompletionCursor = 0
