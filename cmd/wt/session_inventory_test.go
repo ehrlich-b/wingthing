@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -41,6 +43,27 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 	if _, e := os.Stat(binary); e != nil {
 		t.Fatal("build with make ops ACTION=build before this fixture")
 	}
+	peerBinary := os.Getenv("WT_TEST_PREVIEW_BINARY")
+	if peerBinary == "" {
+		peerBinary = filepath.Join(repo, "wt-preview")
+	}
+	if _, err := os.Stat(peerBinary); err != nil {
+		t.Fatal("build both channels with make test-multiwing before this fixture")
+	}
+	binaryHashes := map[string]string{}
+	for _, executable := range []string{binary, peerBinary} {
+		file, err := os.Open(executable)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hash := sha256.New()
+		_, err = io.Copy(hash, file)
+		_ = file.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		binaryHashes[executable] = fmt.Sprintf("%x", hash.Sum(nil))
+	}
 	h := testssh.New(t)
 	home := filepath.Join(h.Root, "home")
 	if e = os.Mkdir(home, 0700); e != nil {
@@ -48,16 +71,29 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 	}
 	macState := testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))
 	remoteState := testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))
+	previewState := testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))
 	path := h.Root + string(os.PathListSeparator) + os.Getenv("PATH")
 	environment := func(state string) []string {
 		return []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + path, "SHELL=/bin/sh", "TERM=xterm-256color", "WT_FAKE_SSH_ROOT=" + h.Root}
 	}
-	start := func(state, label string) {
+	// Let the preview executable initialize its own empty fixture state through
+	// its normal guard before adding configuration. Never hand-write a marker.
+	initialize := exec.Command(peerBinary, "session", "inventory", "--json")
+	initialize.Env = environment(previewState)
+	initialize.Dir = home
+	if _, err := initialize.CombinedOutput(); err == nil {
+		t.Fatal("empty preview fixture unexpectedly had a running wing")
+	}
+	if marker, err := os.ReadFile(filepath.Join(previewState, ".release-channel")); err != nil || strings.TrimSpace(string(marker)) != "preview" {
+		t.Fatalf("preview fixture was not initialized through its executable: %v", err)
+	}
+	reloadDone := map[string]chan struct{}{}
+	start := func(state, label, executable string) *exec.Cmd {
 		t.Helper()
 		if e = config.SaveWingConfig(state, &config.WingConfig{Label: label, PhoneFleet: true, AllowUnsandboxed: true, Roost: "http://127.0.0.1:1"}); e != nil {
 			t.Fatal(e)
 		}
-		process := exec.Command(binary, "wing", "start", "--local-only", "--foreground")
+		process := exec.Command(executable, "wing", "start", "--local-only", "--foreground")
 		process.Env = environment(state)
 		process.Dir = home
 		logs, e := process.StderrPipe()
@@ -68,6 +104,8 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 			t.Fatal(e)
 		}
 		ready := make(chan struct{})
+		reloaded := make(chan struct{}, 1)
+		reloadDone[state] = reloaded
 		done := make(chan error, 1)
 		go func() {
 			scanner := bufio.NewScanner(logs)
@@ -79,6 +117,12 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 				if !announced && strings.Contains(line, "wing: local control ready") {
 					announced = true
 					close(ready)
+				}
+				if strings.Contains(line, "tools reloaded:") {
+					select {
+					case reloaded <- struct{}{}:
+					default:
+					}
 				}
 			}
 			err := process.Wait()
@@ -104,9 +148,10 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			t.Fatal("wing readiness timeout")
 		}
+		return process
 	}
-	start(macState, "EhrlichMac")
-	start(remoteState, "forge")
+	gatewayProcess := start(macState, "EhrlichMac", binary)
+	start(remoteState, "forge", binary)
 	macMeta, e := sshcontrol.InspectLocal(t.Context(), macState, "")
 	if e != nil {
 		t.Fatal(e)
@@ -134,7 +179,11 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 		if e = eggclient.WriteSessionName(dir, name); e != nil {
 			t.Fatal(e)
 		}
-		files := map[string]string{"egg.meta": "agent=" + agent + "\ncwd=/personal/repo\nprovider_home=" + home + "\n", "lifecycle.jsonl": `{"sequence":1,"type":"message","source":"codex_transcript","role":"assistant","text":"` + text + `"}` + "\n"}
+		providerHome := home
+		if state == previewState {
+			providerHome = config.PreviewProviderHome(state)
+		}
+		files := map[string]string{"egg.meta": "agent=" + agent + "\ncwd=/personal/repo\nprovider_home=" + providerHome + "\n", "lifecycle.jsonl": `{"sequence":1,"type":"message","source":"codex_transcript","role":"assistant","text":"` + text + `"}` + "\n"}
 		if live {
 			files["egg.pid"] = fmt.Sprint(os.Getpid())
 		}
@@ -161,7 +210,11 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 	}
 	run := func(state, shot string, args ...string) ([]byte, error) {
 		t.Helper()
-		cmd := exec.Command(binary, args...)
+		executable := binary
+		if state == previewState {
+			executable = peerBinary
+		}
+		cmd := exec.Command(executable, args...)
 		cmd.Env = environment(state)
 		cmd.Dir = home
 		var output []byte
@@ -177,7 +230,7 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 			if e = os.WriteFile(filepath.Join(evidence, shot+".ansi"), output, 0600); e != nil {
 				t.Fatal(e)
 			}
-			metadata, _ := json.Marshal(map[string]any{"command": append([]string{"wt"}, args...), "surface": "cli", "rows": 36, "cols": 120, "fixture": true})
+			metadata, _ := json.Marshal(map[string]any{"command": append([]string{filepath.Base(executable)}, args...), "execution_binary": filepath.Base(executable), "binary_sha256": binaryHashes[executable], "surface": "cli", "rows": 36, "cols": 120, "fixture": true})
 			_ = os.WriteFile(filepath.Join(evidence, shot+".json"), metadata, 0600)
 		} else {
 			output, err = cmd.CombinedOutput()
@@ -198,7 +251,7 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 		}
 		return inv
 	}
-	must(remoteState, "heartbeat", "session", "heartbeat", "same-short-id", "--state", "asleep", "--last-wake", time.Now().UTC().Add(-time.Minute).Format(time.RFC3339), "--next-wake", time.Now().UTC().Add(time.Hour).Format(time.RFC3339), "--json")
+	must(remoteState, "heartbeat", "session", "heartbeat", "same-short-id", "--state", "asleep", "--last-wake", time.Now().UTC().Add(-time.Minute).Format(time.RFC3339), "--next-wake", time.Now().UTC().Add(time.Hour).Format(time.RFC3339), "--last-note", time.Now().UTC().Add(-30*time.Second).Format(time.RFC3339), "--json")
 	must(macState, "open", "session", "inventory")
 	combined := must(macState, "", "session", "inventory", "--remotes", "--json")
 	direct := must(remoteState, "", "session", "inventory", "--json")
@@ -224,7 +277,25 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 	}
 	// A finite provider-free real egg validates stop delivery and process exit.
 	// This fixture explicitly selects the outer host boundary, not a sandbox claim.
-	controlClient, err := controlsocket.Dial(t.Context(), remoteState, controlsocket.Hello{Unsandboxed: true})
+	start(previewState, "forge", peerBinary)
+	writerMeta, err := sshcontrol.InspectLocal(t.Context(), previewState, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Host(t, "writer-fixture", writerMeta)
+	originalRemotes, err := config.LoadRemotes(macState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expanded := map[string]config.Remote{}
+	for name, remote := range originalRemotes {
+		expanded[name] = remote
+	}
+	expanded["writer-fixture"] = config.Remote{SSHTarget: "writer-fixture", WTBinary: peerBinary, WingID: writerMeta.WingID, WingthingDir: writerMeta.WingthingDir, ControlSocket: writerMeta.ControlSocket, ControlVersion: writerMeta.Version}
+	if err := config.SaveRemotes(macState, expanded); err != nil {
+		t.Fatal(err)
+	}
+	controlClient, err := controlsocket.Dial(t.Context(), previewState, controlsocket.Hello{Unsandboxed: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +309,7 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 	if !ok {
 		t.Fatalf("finite egg identity: %+v", started)
 	}
-	t.Cleanup(func() { _ = eggclient.KillOrphanEggContext(t.Context(), &config.Config{Dir: remoteState}, stopID) })
+	t.Cleanup(func() { _ = eggclient.KillOrphanEggContext(t.Context(), &config.Config{Dir: previewState}, stopID) })
 	// The same phone gateway bridge reaches a real PTY, without exposing egg
 	// tokens or starting anything on a live machine.
 	owner, err := config.EnsureLocalOwner(macState, "")
@@ -253,12 +324,12 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 	// Fixture forwarding uses PATH only inside this test process.
 	t.Setenv("PATH", path)
 	t.Setenv("WT_FAKE_SSH_ROOT", h.Root)
-	bridge, err := localmcp.OwnerFleetAttach(t.Context(), service, owner.ID, fleet.Identity{OriginWingID: remoteMeta.WingID, SessionID: stopID}, false, false)
+	bridge, err := localmcp.OwnerFleetAttach(t.Context(), service, owner.ID, fleet.Identity{OriginWingID: writerMeta.WingID, SessionID: stopID}, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = bridge.Close() })
-	if bridge.Route.Kind != "via" || bridge.Route.Remote != "remote-fixture" {
+	if bridge.Route.Kind != "via" || bridge.Route.Remote != "writer-fixture" {
 		t.Fatalf("PTY route: %+v", bridge.Route)
 	}
 	streamReady := time.AfterFunc(5*time.Second, func() { _ = bridge.Close() })
@@ -280,17 +351,117 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 	}
 	streamReady.Stop()
 	_ = bridge.Close()
-	must(macState, "attach", "session", "action", "--wing", remoteMeta.WingID, "--session", stopID, "--operation", "terminal_read")
-	must(macState, "stop", "session", "action", "--wing", remoteMeta.WingID, "--session", stopID, "--operation", "terminal_stop")
+	must(macState, "attach", "session", "action", "--wing", writerMeta.WingID, "--session", stopID, "--operation", "terminal_read")
+	// The real built gateway receives encrypted, paired phone requests. Change
+	// only its disposable wing.yaml and SIGHUP its own child process; no fixture
+	// mutates the in-memory runtime flag on behalf of the reload handler.
+	phone := pairBuiltFleetPhone(t, macState)
+	attachmentArgs := map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": stopID, "takeover": true}
+	if result := phone.command("fleet_attach", attachmentArgs); result["error"] != nil {
+		t.Fatalf("built phone attach: %v", result["error"])
+	}
+	if result := phone.command("fleet_input", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": stopID, "input": "paired phone typed into the exact remote PTY\r"}); result["error"] != nil {
+		t.Fatal("paired phone input failed")
+	}
+	readUntil := time.Now().Add(3 * time.Second)
+	for {
+		result := phone.command("fleet_read", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": stopID})
+		if result["error"] != nil {
+			t.Fatal("paired phone read failed")
+		}
+		content, ok := result["result"].(map[string]any)
+		if !ok {
+			t.Fatal("paired phone result is not structured")
+		}
+		if screen, ok := content["screen"].(string); ok && strings.Contains(screen, "paired phone typed into the exact remote PTY") {
+			break
+		}
+		if time.Now().After(readUntil) {
+			t.Fatal("paired phone input did not reach the kernel PTY")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	must(macState, "phone-attach", "session", "action", "--wing", writerMeta.WingID, "--session", stopID, "--operation", "terminal_read")
+	_, observedEgg, err := eggclient.OpenLocalEgg(t.Context(), &config.Config{Dir: previewState}, stopID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = observedEgg.Close() })
+	if state, err := observedEgg.Status(t.Context()); err != nil || state.WriterId == "" {
+		t.Fatalf("phone writer was not claimed: %v", err)
+	}
+	reload := func(enabled bool) {
+		t.Helper()
+		updated, err := config.LoadWingConfig(macState)
+		if err != nil {
+			t.Fatal(err)
+		}
+		updated.PhoneFleet = enabled
+		if err := config.SaveWingConfig(macState, updated); err != nil {
+			t.Fatal(err)
+		}
+		if err := gatewayProcess.Process.Signal(syscall.SIGHUP); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-reloadDone[macState]:
+		case <-time.After(5 * time.Second):
+			t.Fatal("built gateway reload timeout")
+		}
+	}
+	reload(false)
+	// No phone command prompts cleanup. A quiet writer must be released by the
+	// policy observer after the production reload commits its revocation.
+	until := time.Now().Add(4 * time.Second)
+	for {
+		state, err := observedEgg.Status(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.WriterId == "" {
+			break
+		}
+		if time.Now().After(until) {
+			t.Fatal("reloaded revocation retained a quiet phone writer")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if result := phone.command("inventory", map[string]any{"include_remotes": true}); result["error"] == nil {
+		t.Fatal("saved/reloaded revocation retained inventory")
+	}
+	if result := phone.command("action", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": stopID, "operation": "terminal_read"}); result["error"] == nil {
+		t.Fatal("saved/reloaded revocation retained action")
+	}
+	if result := phone.command("fleet_read", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": stopID}); result["error"] == nil {
+		t.Fatal("saved/reloaded revocation retained attachment content")
+	}
+	if result := phone.command("fleet_attach", attachmentArgs); result["error"] == nil {
+		t.Fatal("saved/reloaded revocation admitted new attach")
+	}
+	reload(true)
+	if result := phone.command("fleet_attach", attachmentArgs); result["error"] != nil {
+		t.Fatalf("reloaded enable did not restore explicit attach: %v", result["error"])
+	}
+	if result := phone.command("detach", map[string]any{}); result["error"] != nil {
+		t.Fatal("built phone detach failed")
+	}
+	if result := phone.command("inventory", map[string]any{"include_remotes": true}); result["error"] != nil {
+		t.Fatal("reloaded enable did not restore inventory")
+	}
+	phone.command("close", map[string]any{})
+	must(macState, "stop", "session", "action", "--wing", writerMeta.WingID, "--session", stopID, "--operation", "terminal_stop")
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		if _, alive := eggclient.ReadAliveEggPID(filepath.Join(remoteState, "eggs", stopID)); !alive {
+		if _, alive := eggclient.ReadAliveEggPID(filepath.Join(previewState, "eggs", stopID)); !alive {
 			break
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("stopped egg process survived")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if err := config.SaveRemotes(macState, originalRemotes); err != nil {
+		t.Fatal(err)
 	}
 	// The phone's direct endpoint is down while this SSH gateway remains up.
 	// This is pre-dispatch reachability state, not a dropped mutation replay.

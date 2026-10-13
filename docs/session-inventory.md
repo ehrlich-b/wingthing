@@ -78,13 +78,17 @@ The gateway rechecks owner binding, current grants, path/passkey policy,
 `phone_fleet`, and the saved remote pin before each read/input. The execution wing
 also rechecks current policy before forwarding terminal frames; reads check the
 execution wing before returning buffered content. Failed checks close the
-attachment. Readiness is bounded to 5 seconds; output retention is 64 KiB and
+attachment. A one-second policy observer also closes a quiet attachment after
+delegation/pin revocation; its remote policy check is bounded to two seconds.
+Readiness uses one five-second budget across SSH, welcome and the egg acknowledgement; output retention is 64 KiB and
 individual input is limited to 16 KiB. A returned input `ok` records transport
 submission, not a provider delivery receipt; after loss its outcome is unknown.
 No egg token is sent to the phone, and no remote software is provisioned.
 
 Remote phone delegation additionally requires `phone_fleet: true` in the personal
-gateway's wing.yaml and the authenticated durable local owner binding. Pairing
+gateway's wing.yaml and the authenticated durable local owner binding. The
+flag hot-reloads through SIGHUP; disabling it revokes existing gateway
+attachments and new remote requests. Pairing
 alone does not enable remote access. The bridge retains clients.yaml restrictions;
 locked/passkey-protected wings refuse this socket-backed phone fleet path rather
 than bypassing the existing MCP ceremony limitation.
@@ -107,5 +111,6 @@ and source failure must not be presented as complete search coverage. A future
 paged index can remove these bounds without changing qualified identity.
 
 Validate with `make test-multiwing`, `make test-multiwing-race`, `make check` and
-`make gate`. The built fixture runs two disposable wings and SSH Unix forwarding;
+`make gate`. The built fixture runs three disposable stable/preview wings, encrypted paired
+phone requests, real config/SIGHUP revocation and SSH Unix forwarding;
 it proves routing/contracts, not a physical phone, public tunnel or live mesh.

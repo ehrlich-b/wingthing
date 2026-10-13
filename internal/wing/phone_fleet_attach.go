@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"sync"
-	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
@@ -48,9 +47,7 @@ func (h *phoneSessions) executeFleetAttachment(ctx context.Context, connection, 
 		}
 		a := &fleetPhoneAttachment{bridge: bridge, readOnly: args.ReadOnly, terminal: egg.NewVTerm(80, 30), done: make(chan struct{})}
 		// The first frame acknowledges the actual egg attachment/writer claim.
-		timer := time.AfterFunc(5*time.Second, func() { _ = bridge.Close() })
 		first, err := bridge.Recv()
-		timer.Stop()
 		if err != nil {
 			_ = bridge.Close()
 			_ = a.terminal.Close()

@@ -137,6 +137,25 @@ func newest(routes []Route) time.Time {
 	return latest
 }
 func better(a, b []Route) bool {
+	// Metadata follows the latest successful sighting. Route preference is a
+	// separate pre-dispatch decision and must not resurrect a stale pin/status.
+	newestHealthy := func(routes []Route) time.Time {
+		var at time.Time
+		for _, r := range routes {
+			if !r.Healthy {
+				continue
+			}
+			parsed, err := time.Parse(time.RFC3339Nano, r.ObservedAt)
+			if err == nil && parsed.After(at) {
+				at = parsed
+			}
+		}
+		return at
+	}
+	aa, bb := newestHealthy(a), newestHealthy(b)
+	if !aa.Equal(bb) {
+		return aa.After(bb)
+	}
 	if bestRank(a) != bestRank(b) {
 		return bestRank(a) < bestRank(b)
 	}

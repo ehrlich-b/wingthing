@@ -271,6 +271,21 @@ func TestPhoneFleetAttachmentGatewayCollidingIDsPinAndScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	attach()
+	h.mu.Lock()
+	quiet := h.fleetAttachments["phone"]
+	h.mu.Unlock()
+	if err := config.SaveRemotes(f.cfg.Dir, map[string]config.Remote{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-quiet.done:
+	case <-time.After(4 * time.Second):
+		t.Fatal("quiet attachment retained stream after saved pin removal")
+	}
+	if err := config.SaveRemotes(f.cfg.Dir, map[string]config.Remote{"peer": saved}); err != nil {
+		t.Fatal(err)
+	}
+	attach()
 	if err := os.WriteFile(filepath.Join(remote.cfg.Dir, "clients.yaml"), []byte("require_client: true\nclients: {}\n"), 0600); err != nil {
 		t.Fatal(err)
 	}

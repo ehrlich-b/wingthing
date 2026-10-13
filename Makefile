@@ -415,7 +415,8 @@ test-coordinator-role-race: | web/dist
 .PHONY: test-multiwing test-multiwing-race
 test-multiwing: | web/dist
 	$(stable-build)
-	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -v -p 2 ./internal/fleet ./internal/egg ./internal/eggclient ./internal/sessionrole ./internal/control ./internal/localmcp ./internal/wing ./internal/phonepair ./cmd/wt -run 'Test(Registry|LifecycleSourceCompleteness|Merge|SessionCatalog|CoordinatorPresence|SessionInventory|QualifiedSession|CoordinatorHeartbeat|OwnerFleet|PhoneFleet|BuiltMultiwing|RemoteInventoryOrigin)' -count=1 -timeout=3m
+	$(preview-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -v -p 2 ./internal/fleet ./internal/egg ./internal/eggclient ./internal/sessionrole ./internal/control ./internal/localmcp ./internal/wing ./internal/phonepair ./cmd/wt -run 'Test(Registry|LifecycleSourceCompleteness|Merge|SessionCatalog|CoordinatorPresence|SessionInventory|QualifiedSession|CoordinatorHeartbeat|OwnerFleet|PhoneFleet|BuiltMultiwing|RemoteInventoryOrigin)' -count=1 -timeout=3m
 
 test-multiwing-race: | web/dist
 	$(GO) test -p 2 -race ./internal/fleet ./internal/egg ./internal/eggclient ./internal/sessionrole ./internal/localmcp ./internal/wing -run 'Test(Registry|LifecycleSourceCompleteness|Merge|SessionCatalog|CoordinatorPresence|SessionInventory|QualifiedSession|CoordinatorHeartbeat|OwnerFleet|PhoneFleet|BuiltMultiwing|RemoteInventoryOrigin)' -count=1 -timeout=3m
