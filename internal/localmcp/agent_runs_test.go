@@ -756,8 +756,10 @@ func TestStopIntentAndQueuedCancellationSurviveWingRestart(t *testing.T) {
 	f := newRunWingFixture(t, nil)
 	original := f.service.RunBackend.Stop
 	stopping := make(chan struct{})
+	// Stop and reconciliation can both observe the same durable stop intent.
+	var stoppingOnce sync.Once
 	f.service.RunBackend.Stop = func(ctx context.Context, _ *config.Config, _ eggclient.LocalSession, _ string) (egg.RunTurnResult, error) {
-		close(stopping)
+		stoppingOnce.Do(func() { close(stopping) })
 		<-ctx.Done()
 		return egg.RunTurnResult{}, ctx.Err()
 	}

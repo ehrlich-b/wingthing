@@ -155,7 +155,8 @@ func TestRemoteInventoryOriginIdentityAndLegacyUnknown(t *testing.T) {
 	for _, tc := range []struct {
 		wing, pin string
 		fail      bool
-	}{{"origin", "origin", false}, {"changed", "origin", true}, {"", "origin", false}} {
+		// Pinned routes must prove identity; only unpinned legacy rows stay unknown.
+	}{{"origin", "origin", false}, {"changed", "origin", true}, {"", "origin", true}, {"", "", false}} {
 		root := t.TempDir()
 		ssh := filepath.Join(root, "ssh")
 		payload, _ := json.Marshal(RemoteSessionInventory{WingID: tc.wing, MachineLabel: "forge", Version: "fixture", ContractVersion: RemoteSessionContractVersion, Sessions: []LocalSession{{ID: "same-short-id", OriginWingID: "forged-row-origin"}}})
@@ -164,8 +165,8 @@ func TestRemoteInventoryOriginIdentityAndLegacyUnknown(t *testing.T) {
 		}
 		rows, e := QueryRemoteSessions("fixture", t.Context(), "fixture", config.Remote{SSHTarget: "fixture-host", WingID: tc.pin}, remotepkg.IO{SSHPath: ssh})
 		if tc.fail {
-			if e == nil {
-				t.Fatal("changed wing pin accepted")
+			if e == nil || !strings.Contains(e.Error(), "pinned wing identity mismatch") {
+				t.Fatalf("missing or changed wing pin was not rejected by identity: %v", e)
 			}
 			continue
 		}
