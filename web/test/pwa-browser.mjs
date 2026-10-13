@@ -13,7 +13,11 @@ async function run() {
     const fixture = await build({entryPoints:[resolve(root,'test/support/pwa-fixture.js')],bundle:true,write:false,format:'iife',platform:'browser',logLevel:'silent'});
     const publicKey = Buffer.from(x25519.getPublicKey(new Uint8Array(32).fill(37))).toString('base64');
     const types = { '.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml','.png':'image/png','.json':'application/json','.html':'text/html','.woff2':'font/woff2' };
+    let fixtureOffline = false;
     const server = createServer((request,response) => {
+        // Browser offline emulation can leave the worker transport online.
+        // Drop the real fixture transport too, so navigation must use fallback.
+        if (fixtureOffline) { response.destroy(); return; }
         const path = new URL(request.url,'http://localhost').pathname;
         response.setHeader('Cache-Control','no-store');
         const json = value => {response.setHeader('Content-Type','application/json');response.end(JSON.stringify(value));};
@@ -56,12 +60,14 @@ async function run() {
             await page.screenshot({path:resolve(output,`pwa-ready-${viewport.width}x${viewport.height}.png`)});
             assert.deepEqual(await page.evaluate(()=>caches.keys()),[],'private app data is never put in Cache Storage');
             const callCount=await page.evaluate(()=>coordinatorFixture.calls.length);
+            fixtureOffline = true;
             await context.setOffline(true);
             await page.locator('#pwa-connection').waitFor({state:'visible'});
             await page.reload({waitUntil:'domcontentloaded'});
             await page.getByRole('heading',{name:'You’re disconnected'}).waitFor();
             assert.equal(await page.locator('form,textarea').count(),0,'offline navigation has no mutation controls');
             await page.screenshot({path:resolve(output,`pwa-offline-${viewport.width}x${viewport.height}.png`)});
+            fixtureOffline = false;
             await context.setOffline(false);
             await page.getByRole('button',{name:'Try again'}).click();
             await page.locator('#coordinator-home .thread-bubble').filter({hasText:'The test suite passed.'}).waitFor();
