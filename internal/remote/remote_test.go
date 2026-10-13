@@ -374,17 +374,20 @@ func TestRemoteSavedProfileRouteKeepsLiteralPathsAndChannel(t *testing.T) {
 	t.Cleanup(func() { config.ReleaseChannel = old })
 	for _, profile := range []config.Remote{
 		{SSHTarget: "user@fixture", WingthingDir: "/state it's literal"},
-		{SSHTarget: "fixture", WTBinary: "/opt/wt builds/wt-dev", WingthingDir: "/state/$literal"},
+		{SSHTarget: "fixture", WTBinary: "/opt/wt builds/wt-dev", WingthingDir: "/state/$literal", WingID: "selected-wing"},
 	} {
 		argv := ProfileArgs(profile)
 		want := []string{"--remote", profile.SSHTarget, "--remote-binary", profile.Binary(), "--remote-state", profile.WingthingDir}
+		if profile.WingID != "" {
+			want = append(want, "--remote-wing-id", profile.WingID)
+		}
 		if !reflect.DeepEqual(argv, want) {
 			t.Fatalf("profile argv=%q want=%q", argv, want)
 		}
 		args := []string{"attach", "--", "full-id"}
 		invocation := ProfileInvocation(profile, args)
 		args[2] = "must-not-alias"
-		if invocation.Target != profile.SSHTarget || invocation.Binary != profile.Binary() || invocation.State != profile.WingthingDir || invocation.Args[2] != "full-id" {
+		if invocation.Target != profile.SSHTarget || invocation.Binary != profile.Binary() || invocation.State != profile.WingthingDir || invocation.WingID != profile.WingID || invocation.Args[2] != "full-id" {
 			t.Fatalf("profile route=%+v", invocation)
 		}
 	}

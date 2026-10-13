@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
@@ -29,6 +30,9 @@ func pinCmd(pinned bool) *cobra.Command {
 				return err
 			}
 			if name != "" {
+				if controlsocket.ExpectedWingID(cmd.Context()) != "" {
+					return fmt.Errorf("verified pin cannot change receiving wing")
+				}
 				remote, err := remotepkg.ConfiguredRemote(dir, name)
 				if err != nil {
 					return err
@@ -43,7 +47,7 @@ func pinCmd(pinned bool) *cobra.Command {
 			wire, _ := json.Marshal(map[string]any{"session": ref, "pinned": pinned})
 			clientName := os.Getenv("WT_MCP_CLIENT")
 			result, err := localmcp.CallLocalWingTool(cmd.Context(), dir, clientName, "session_pin", wire)
-			if standaloneAttachAvailable(err, clientName) {
+			if standaloneAttachAvailable(err, clientName) && controlsocket.ExpectedWingID(cmd.Context()) == "" {
 				// Legacy standalone eggs have the same local owner contract as rename.
 				cfg := &config.Config{Dir: dir}
 				var session eggclient.LocalSession

@@ -24,6 +24,7 @@ type Invocation struct {
 	Binary      string
 	CWD         string
 	State       string
+	WingID      string
 	Args        []string
 	AllocateTTY bool
 	// NonInteractive prevents SSH from prompting via /dev/tty in background work.
@@ -33,7 +34,7 @@ type Invocation struct {
 // ProfileInvocation preserves the saved host, executable and remote state. The
 // receiving binary still applies the channel guard and attachment authorization.
 func ProfileInvocation(profile config.Remote, args []string) Invocation {
-	return Invocation{Target: profile.SSHTarget, Binary: profile.Binary(), State: profile.WingthingDir, Args: append([]string(nil), args...)}
+	return Invocation{Target: profile.SSHTarget, Binary: profile.Binary(), State: profile.WingthingDir, WingID: profile.WingID, Args: append([]string(nil), args...)}
 }
 
 // ProfileArgs is literal local CLI argv; RunRemoteInvocation alone quotes it for
@@ -43,6 +44,9 @@ func ProfileArgs(profile config.Remote) []string {
 	args := []string{"--remote", route.Target, "--remote-binary", route.Binary}
 	if route.State != "" {
 		args = append(args, "--remote-state", route.State)
+	}
+	if route.WingID != "" {
+		args = append(args, "--remote-wing-id", route.WingID)
 	}
 	return args
 }
@@ -126,6 +130,11 @@ func ParseRemoteInvocation(argv []string, interactive bool, newRootCommand func(
 			invocation.Binary = value
 		case "--remote-cwd":
 			invocation.CWD = value
+		case "--remote-wing-id":
+			if invocation.WingID != "" || value == "" || strings.ContainsAny(value, "\x00\r\n:") {
+				return Invocation{}, false, errors.New("invalid or repeated --remote-wing-id")
+			}
+			invocation.WingID = value
 		case "--remote-state":
 			if stateSeen {
 				return Invocation{}, false, errors.New("--remote-state may be specified only once")
@@ -225,10 +234,10 @@ func remoteTransportFlag(arg string) (name, value string, inline, matched bool) 
 	switch arg {
 	case "--remote", "-r":
 		return "--remote", "", false, true
-	case "--remote-binary", "--remote-cwd", "--remote-state":
+	case "--remote-binary", "--remote-cwd", "--remote-state", "--remote-wing-id":
 		return arg, "", false, true
 	}
-	for _, name := range []string{"--remote", "--remote-binary", "--remote-cwd", "--remote-state"} {
+	for _, name := range []string{"--remote", "--remote-binary", "--remote-cwd", "--remote-state", "--remote-wing-id"} {
 		if value, ok := strings.CutPrefix(arg, name+"="); ok {
 			return name, value, true, true
 		}
@@ -415,6 +424,12 @@ func RunRemoteInvocation(ctx context.Context, invocation Invocation, streams IO)
 		// WINGTHING_DIR without the state channel-marker check. Stable argv
 		// without --remote-state stays unchanged for existing installations.
 		remoteArgs = append(remoteArgs, "--expected-channel", config.Channel())
+	}
+	if invocation.WingID != "" {
+		if strings.ContainsAny(invocation.WingID, "\x00\r\n:") {
+			return errors.New("invalid expected remote wing ID")
+		}
+		remoteArgs = append(remoteArgs, "--expected-wing-id", invocation.WingID)
 	}
 	remoteArgs = append(remoteArgs, remoteCommandArgs(invocation.Args)...)
 	quoted := make([]string, len(remoteArgs))

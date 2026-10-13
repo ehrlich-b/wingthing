@@ -14,6 +14,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
@@ -63,6 +64,9 @@ func sessionPSCmd() *cobra.Command {
 				if !jsonFlag {
 					return fmt.Errorf("--remote-inventory requires --json")
 				}
+				if controlsocket.ExpectedWingID(cmd.Context()) != "" {
+					return verifiedInventory(cmd, cfg.Dir)
+				}
 				sessions, err := eggclient.DiscoverActiveSessions(cmd.Context(), cfg)
 				if err != nil {
 					return err
@@ -85,6 +89,13 @@ func sessionPSCmd() *cobra.Command {
 					sessions[i].MachineLabel = wc.Label
 				}
 				return encoder.Encode(eggclient.RemoteSessionInventory{WingID: wingID, MachineLabel: wc.Label, Version: version, ContractVersion: eggclient.RemoteSessionContractVersion, Sessions: sessions})
+			}
+			if controlsocket.ExpectedWingID(cmd.Context()) != "" {
+				sessions, err := attachSessions(cmd.Context(), cfg.Dir, os.Getenv("WT_MCP_CLIENT"))
+				if err != nil {
+					return err
+				}
+				return writeLocalSessions(cmd.OutOrStdout(), sessions, jsonFlag)
 			}
 			remotes, err := config.LoadRemotes(cfg.Dir)
 			if err != nil {
@@ -284,6 +295,9 @@ func sessionRenameCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if controlsocket.ExpectedWingID(cmd.Context()) != "" {
+				return verifiedMutation(cmd, cfg.Dir, "terminal_rename", map[string]any{"session": args[0], "name": args[1]}, jsonFlag)
+			}
 			session, err := eggclient.ResolveActiveSession(cmd.Context(), cfg, args[0])
 			if err != nil {
 				return err
@@ -321,6 +335,9 @@ func sessionKillCmd() *cobra.Command {
 			cfg, err := config.Load()
 			if err != nil {
 				return err
+			}
+			if controlsocket.ExpectedWingID(cmd.Context()) != "" {
+				return verifiedMutation(cmd, cfg.Dir, "terminal_stop", map[string]any{"session": args[0]}, jsonFlag)
 			}
 			session, ec, err := eggclient.OpenLocalEgg(cmd.Context(), cfg, args[0])
 			if err != nil {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
@@ -56,7 +57,7 @@ func attachCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if sessionID == "coordinator" && remoteName == "" && os.Getenv("WT_MCP_CLIENT") == "" {
+			if sessionID == "coordinator" && controlsocket.ExpectedWingID(cmd.Context()) == "" && remoteName == "" && os.Getenv("WT_MCP_CLIENT") == "" {
 				rows, err := eggclient.DiscoverMachineSessions(version, cmd.Context(), &config.Config{Dir: dir}, remotepkg.Streams(cmd.Context()))
 				if err != nil {
 					return err
@@ -73,6 +74,9 @@ func attachCmd() *cobra.Command {
 				}
 			}
 			if remoteName != "" {
+				if controlsocket.ExpectedWingID(cmd.Context()) != "" {
+					return errors.New("verified attachment cannot change receiving wing")
+				}
 				remote, err := remotepkg.ConfiguredRemote(dir, remoteName)
 				if err != nil {
 					return err
@@ -120,7 +124,7 @@ func attachCmd() *cobra.Command {
 			options := egg.AttachOptions{ReadOnly: readOnlyFlag, Takeover: takeoverFlag}
 			ctx := eggclient.WithAttachDiagnostics(cmd.Context(), cmd.ErrOrStderr())
 			detached, err := localmcp.AttachWingIO(ctx, dir, clientName, sessionID, cmd.InOrStdin(), cmd.OutOrStdout(), options)
-			if standaloneAttachAvailable(err, clientName) {
+			if standaloneAttachAvailable(err, clientName) && controlsocket.ExpectedWingID(cmd.Context()) == "" {
 				options.Claim, options.Owner = !readOnlyFlag, "cli"
 				detached, err = eggclient.AttachLocalIO(ctx, &config.Config{Dir: dir}, sessionID, cmd.InOrStdin(), cmd.OutOrStdout(), options)
 			}
@@ -214,7 +218,7 @@ func attachReconnectCommand(dir string, args []string) string {
 
 func attachSessions(ctx context.Context, dir, clientName string) ([]eggclient.LocalSession, error) {
 	result, err := localmcp.CallLocalWingTool(ctx, dir, clientName, "terminal_list", json.RawMessage(`{}`))
-	if standaloneAttachAvailable(err, clientName) {
+	if standaloneAttachAvailable(err, clientName) && controlsocket.ExpectedWingID(ctx) == "" {
 		return eggclient.DiscoverActiveSessions(ctx, &config.Config{Dir: dir})
 	}
 	if err != nil {

@@ -115,3 +115,26 @@ func TestRunInventoryModernProjectionDamageFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+// Native nonterminal receipts omit failure_kind. Absence does not turn an
+// admitted/running task into an unknown terminal outcome in CLI, MCP or TUI.
+func TestRunInventoryRunningReceiptDoesNotInventUnknownOutcome(t *testing.T) {
+	for _, status := range []string{"pending", "running", "done", "failed", "timeout", "stopped"} {
+		t.Run(status, func(t *testing.T) {
+			s := inventoryTestStore(t)
+			now := time.Now().UTC()
+			inventoryFixture(t, s, "receipt", "reader", "user", "/allowed", status, "original-key", now)
+			page, err := s.ListRunInventory(t.Context(), RunInventoryQuery{Scope: RunInventoryScope{Principal: "reader", UserID: "user"}, Limit: 10, TerminalSince: now.Add(-time.Hour)})
+			if err != nil || len(page.Runs) != 1 {
+				t.Fatal(page, err)
+			}
+			want := ""
+			if status == "failed" || status == "timeout" || status == "stopped" {
+				want = "unknown_outcome"
+			}
+			if page.Runs[0].Status != status || page.Runs[0].FailureKind != want {
+				t.Fatalf("receipt invented or lost outcome: %+v", page.Runs[0])
+			}
+		})
+	}
+}

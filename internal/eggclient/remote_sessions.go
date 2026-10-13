@@ -131,8 +131,8 @@ func QueryRemoteSessions(localVersion string, ctx context.Context, name string, 
 		}
 		return nil, mismatch(remoteVersion, contract, "session inventory contract is incompatible")
 	}
-	if remote.WingID != "" && inventory.WingID != "" && remote.WingID != inventory.WingID {
-		return nil, fmt.Errorf("remote %q wing identity changed; verify and pair again", name)
+	if remote.WingID != "" && inventory.WingID != remote.WingID {
+		return nil, fmt.Errorf("remote %q pinned wing identity mismatch; verify the host and wing out of band", name)
 	}
 	for i := range inventory.Sessions {
 		inventory.Sessions[i].OriginWingID = inventory.WingID

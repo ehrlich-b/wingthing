@@ -696,3 +696,46 @@ func TestLaunchPlanDirectoryPreparationMatchesCodexRun(t *testing.T) {
 		})
 	}
 }
+
+func TestLaunchPlanHumanReachUsesSharedPolicyEvidence(t *testing.T) {
+	req, _ := setup(t)
+	policy(t, &req, "base: none\nfs: [rw:./, 'deny:/private-data']\nnetwork: {agent_domains: none}\n")
+	report, err := Inspect(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := Render(&output, report); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, want := range []string{"Egg reach", "native confinement requires acceptance", "Provider HOME:", "deny:/private-data", "source:", "Provider domains:", "Acceptance: externally-pending"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in human policy report", want)
+		}
+	}
+}
+
+func TestLaunchPlanHumanReachDistinguishesTrustedOuterBoundary(t *testing.T) {
+	req, _ := setup(t)
+	policy(t, &req, "base: none\nnetwork: {domains: ['*'], agent_domains: none}\nenv: ['*']\n")
+	report, err := Inspect(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.SandboxRequired {
+		t.Fatal("trusted outer policy labelled sandboxed")
+	}
+	var output bytes.Buffer
+	if err := Render(&output, report); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "full OS-user authority (explicit policy selection)") {
+		t.Fatal(output.String())
+	}
+	policy(t, &req, "base: none\nfs: ['rw:./']\nnetwork: {domains: ['*'], agent_domains: none}\nenv: ['*']\n")
+	report, err = Inspect(req)
+	if err != nil || !report.SandboxRequired {
+		t.Fatal("filesystem policy lost native boundary", err)
+	}
+}

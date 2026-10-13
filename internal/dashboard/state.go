@@ -75,6 +75,10 @@ const (
 	providerReady
 	setupFailure
 	setupInvoke
+	machineDetails
+	diagnostics
+	diagnosticInput
+	diagnosticReport
 )
 
 type action struct {
@@ -88,6 +92,7 @@ type action struct {
 	readOnly   bool
 	takeover   bool
 	setupStage string
+	args       []string
 }
 
 type state struct {
@@ -128,6 +133,7 @@ type state struct {
 	attached          *attentionIdentity
 	bell              bool
 	pendingBells      int
+	diagnostic        diagnosticState
 }
 
 func needsAttention(attention string) bool {
@@ -254,6 +260,17 @@ func (s *state) handle(key string) (act *action, quit bool) {
 	if s.mode >= agentSetup {
 		return s.setupHandle(key)
 	}
+	if s.mode == diagnostics || s.mode == diagnosticInput || s.mode == diagnosticReport {
+		return s.diagnosticHandle(key)
+	}
+	if s.mode == machineDetails {
+		if key == "escape" || key == "enter" || key == "q" || key == "M" {
+			s.mode = navigate
+		} else {
+			s.scrollOverlay(key)
+		}
+		return nil, false
+	}
 	if s.recent && s.mode != help {
 		return s.runHandle(key)
 	}
@@ -269,6 +286,11 @@ func (s *state) handle(key string) (act *action, quit bool) {
 			s.picker = 0
 		case "end":
 			s.picker = len(s.machineNames())
+		case "i", "M":
+			if s.picker > 0 {
+				s.target = row{machine: s.machineNames()[s.picker-1]}
+				s.mode, s.overlayOffset = machineDetails, 0
+			}
 		case "enter":
 			s.machineFilter = ""
 			if s.picker > 0 {
@@ -373,6 +395,17 @@ func (s *state) handle(key string) (act *action, quit bool) {
 	switch key {
 	case "a":
 		s.openSetup()
+	case "d":
+		s.mode, s.overlayOffset = diagnostics, 0
+	case "M":
+		name := s.machineFilter
+		if r, ok := s.selection(); ok {
+			name = r.machine
+		}
+		if name == "" {
+			name = "local"
+		}
+		s.target, s.mode, s.overlayOffset = row{machine: name}, machineDetails, 0
 	case "h":
 		s.recent = true
 		h := s.history()

@@ -38,7 +38,7 @@ func executeCLI(ctx context.Context, args []string, streams remotepkg.IO) error 
 				var exited *cmdutil.CommandExitError
 				if err != nil && ctx.Err() == nil && streams.ErrOut != nil && (!errors.As(err, &exited) || exited.Code == 255) {
 					dir, _ := config.StateDir()
-					route := config.Remote{SSHTarget: invocation.Target, WTBinary: invocation.Binary, WingthingDir: invocation.State}
+					route := config.Remote{SSHTarget: invocation.Target, WTBinary: invocation.Binary, WingthingDir: invocation.State, WingID: invocation.WingID}
 					args := append(remotepkg.ProfileArgs(route), invocation.Args...)
 					fmt.Fprintf(streams.ErrOut, "Connection to %s ended; session outcome unknown. Reconnect: %s\n", invocation.Target, attachReconnectCommand(dir, args))
 				}

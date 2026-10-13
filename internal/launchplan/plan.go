@@ -68,6 +68,7 @@ type Report struct {
 	ProviderVersion    string                 `json:"provider_version,omitempty"`
 	SchemaVersion      int                    `json:"schema_version"`
 	ReadOnly           bool                   `json:"read_only"`
+	SandboxRequired    bool                   `json:"sandbox_required"`
 	Readiness          string                 `json:"readiness"`
 	Route              string                 `json:"route"`
 	Agent              string                 `json:"agent,omitempty"`
@@ -202,6 +203,7 @@ func Inspect(req Request) (Report, error) {
 		return report, err
 	}
 	report.PolicyRules = rules
+	report.SandboxRequired = egg.RequiresSandbox(cfg, req.Agent)
 	report.PolicySource = req.PolicyPath
 	if req.PolicyPath == "" {
 		report.PolicySource = "built-in defaults (explicit selection)"
@@ -478,6 +480,32 @@ func Render(w io.Writer, report Report) error {
 		return err
 	}
 	if _, err := fmt.Fprintf(w, "Launch plan: %s (%s)\nPolicy: %s\nPolicy base: %s\nMerge HOME: %s\nCWD: %s\nExecutable: %s\nNetwork: %s\nArgv scope: %s\n", report.Readiness, report.Route, report.PolicySource, report.PolicyBase.Path, report.MergeHome.Path, report.CWD.Resolved, report.Executable.Resolved, report.Network, report.ArgvScope); err != nil {
+		return err
+	}
+	for _, gate := range report.Gates {
+		if gate.Status != Fail {
+			continue
+		}
+		if _, err := fmt.Fprintf(w, "Blocked phase: %s\n  reason: %s\n  policy/evidence source: %s\n  next action: %s\n", gate.Code, gate.Reason, gate.Source, gate.Correction); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(w, "Provider HOME: %s\nEgg reach (policy evidence; native confinement requires acceptance):\n", report.Home.Path); err != nil {
+		return err
+	}
+	boundary := "native sandbox required by selected policy; confinement is not verified by this report"
+	if !report.SandboxRequired {
+		boundary = "trusted outer host boundary; full OS-user authority (explicit policy selection)"
+	}
+	if _, err := fmt.Fprintf(w, "Boundary: %s\n", boundary); err != nil {
+		return err
+	}
+	for _, rule := range report.PolicyRules {
+		if _, err := fmt.Fprintf(w, "  %s: %s [source: %s]\n", rule.Section, rule.Rule, rule.Source); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(w, "Provider domains: %s\nLocal ports: %v\nAcceptance: %s\n", strings.Join(report.Domains, ", "), report.LocalPorts, report.Acceptance); err != nil {
 		return err
 	}
 	for _, gate := range report.Gates {

@@ -436,3 +436,14 @@ capture-tui-start: | web/dist
 	$(stable-build)
 	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -count=1 ./cmd/wt -run '^TestOnboardingPTYStoryboard$$' -v -timeout 3m
 	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -count=1 ./cmd/wt -run '^TestOnboardingCodexPTYSession$$' -v -timeout 1m
+
+# Storyboard machine/runs journeys: production CLI/TUI with isolated fixture wings.
+.PHONY: test-storyboard-machines-runs
+test-storyboard-machines-runs: | web/dist
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 ./internal/dashboard ./internal/launchplan ./cmd/wt -run '^Test(Diagnostics|MachineDetails|RunReceipt|LaunchPlanHumanReach|StoryboardMachinesRunsPTY|BuiltWTConnectRememberedSSHRunSurvivesDrop|MCPConnect(Verifies|Upgrade)|BuiltWTVerifiedSSH|VerifiedCLI|VerifiedProfile)' -v -count=1 -timeout=3m
+
+.PHONY: test-storyboard-runs-offline
+test-storyboard-runs-offline: | web/dist
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -tags runinspectfixture ./cmd/wt -run '^TestStoryboard(RunsOffline|TerminalTask)PTY$$' -v -count=1 -timeout=3m

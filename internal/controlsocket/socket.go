@@ -189,7 +189,10 @@ func serve(ctx context.Context, conn *net.UnixConn, wingID string, bind Bind, at
 	}
 	welcome := Welcome{Version: control.ContractVersion, WingID: wingID}
 	if hello.Version != control.ContractVersion || hello.WingID != "" && hello.WingID != wingID {
-		welcome.Error = "incompatible local wing control protocol or wing ID; upgrade wt and restart the wing"
+		welcome.Error = "incompatible local wing control protocol; upgrade wt and restart the wing"
+		if hello.WingID != "" && hello.WingID != wingID {
+			welcome.Error = "pinned wing identity mismatch (wing ID); verify the host and wing out of band"
+		}
 		_ = encoder.Encode(welcome)
 		return
 	}
@@ -313,6 +316,11 @@ func Dial(ctx context.Context, dir string, hello Hello) (*Client, error) {
 // DialPath connects to a verified SSH stream-local forward as well as local IPC.
 // The forwarding process must belong to this UID; Hello pins the remote wing.
 func DialPath(ctx context.Context, path string, hello Hello) (*Client, error) {
+	var err error
+	hello, err = expectedHello(ctx, hello)
+	if err != nil {
+		return nil, err
+	}
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", path)
 	if err != nil {
 		return nil, err
