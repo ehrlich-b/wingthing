@@ -258,10 +258,10 @@ export function applyPaidAction(original, action) {
         const existing = s.pendingIntervals[action.eventId];
         if (existing) demand(existing.seconds === action.seconds && existing.runId === s.cloud.runId, 'Usage event ID conflicts with the retained interval');
         if (!action.verified) {
-            if (!existing) s.pendingIntervals[action.eventId] = {eventId:action.eventId,runId:s.cloud.runId,seconds:action.seconds,status:'pending'};
+            if (!existing) s.pendingIntervals[action.eventId] = {eventId:action.eventId,runId:s.cloud.runId,seconds:action.seconds,status:'pending',observedAt:s.asOf,endAt:s.asOf,startAt:new Date(Date.parse(s.asOf)-action.seconds*1000).toISOString(),computeCents:Math.ceil(action.seconds*SIZES[s.cloud.size].cents/3600)};
             s.meterFresh = !pendingUsage(s); s.message = 'Estimated interval retained pending explicit reconciliation; new starts blocked.'; break;
         }
-        if (existing) existing.status = 'verified';
+        if (existing) { existing.status = 'verified'; existing.resolvedAt = s.asOf; }
         recordInterval(s,action.eventId,action.seconds);
         s.meterFresh = !pendingUsage(s);
         if (s.cloud.status !== 'stopping') s.message = 'Verified ready interval recorded once. Models and outbound remain separate.';
@@ -344,7 +344,7 @@ export function applyPaidAction(original, action) {
     case 'billing-recover': s.billingBlocked = false; s.invoice.status = 'paid'; s.message = 'Fixture payment-method recovery recorded. Cap unchanged; no automatic launch or duplicate charge.'; break;
     case 'notification': demand(Object.hasOwn(s.notifications, action.name) && typeof action.enabled === 'boolean', 'Unknown notification preference'); s.notifications[action.name] = action.enabled; s.notificationsSavedAt=s.asOf; s.message = 'Preference saved for the explicit fixture owner; no notification sent.'; break;
     case 'support':
-        s.report = { accountId: s.accountId, requestId: s.cloud?.requestId || null, wingId: s.cloud?.wingId || null, version: 'paid-fixture-v1', route: 'fixture-local', classification: s.fault || (s.billingBlocked ? 'unpaid-invoice' : 'none'), usageEventIds: [...s.meterEvents], invoiceId: s.invoice.id };
+        s.report = { accountId: s.accountId, requestId: s.cloud?.requestId || null, wingId: s.cloud?.wingId || null, version: 'paid-fixture-v1', route: 'fixture-local', classification: pendingUsage(s) ? 'usage-under-review' : s.fault || (s.billingBlocked ? 'unpaid-invoice' : 'none'), pendingUsageEventIds: Object.values(s.pendingIntervals).filter(v=>v.status==='pending').map(v=>v.eventId), usageEventIds: [...s.meterEvents], invoiceId: s.invoice.id };
         s.message = 'Metadata-only support report prepared for your review. Nothing sent.'; break;
     case 'reconcile': {
         id(action.eventId);
@@ -353,7 +353,7 @@ export function applyPaidAction(original, action) {
             const interval = s.pendingIntervals[action.usageEventId]; demand(interval, 'Unknown retained usage interval');
             demand(interval.runId === s.cloud?.runId, 'Usage interval execution identity does not match');
             if (interval.status === 'pending') {
-                interval.status = action.decision === 'confirmed' ? 'verified' : 'rejected';
+                interval.status = action.decision === 'confirmed' ? 'verified' : 'rejected'; interval.resolvedAt = s.asOf;
                 if (action.decision === 'confirmed') recordInterval(s, interval.eventId, interval.seconds);
             } else demand(interval.status === (action.decision === 'confirmed' ? 'verified' : 'rejected'), 'Usage interval already resolved with another decision');
         }
