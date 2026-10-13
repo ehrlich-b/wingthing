@@ -1,3 +1,4 @@
+import { initSessionViewer, openSessionViewer, closeSessionViewer } from './session-viewer.js';
 import { S } from './state.js';
 import { escapeHtml, wingDisplayName } from './helpers.js';
 import { sendTunnelRequest } from './tunnel.js';
@@ -5,7 +6,7 @@ import { SEARCH_VERSION, mergeSearchInventories, searchRoute, createSearchContro
 
 let installed = false, timer, controller, current = null, owner = null, reading = 0;
 
-async function searchEverywhere(query) {
+export async function searchEverywhere(query) {
     const wings = S.wingsData.filter(wing => wing.wing_id && wingDisplayName(wing));
     const inventories = [], failures = [];
     const userId = S.currentUser?.id;
@@ -62,7 +63,7 @@ function showResults(state) {
                 `<div class="search-identity">${escapeHtml(row.origin_wing_id)} / ${escapeHtml(row.session_id)}</div>` +
                 `<p>${(row.routes || []).map(r => `<span class="search-route">${escapeHtml(r.kind === 'via' ? 'via ' + r.machine_label : 'direct')}${r.healthy ? '' : ' · unavailable'}</span>`).join(' ')}</p>` +
                 `<p class="text-dim">Matched: ${escapeHtml((row.match_fields || []).join(', '))}${row.search_incomplete ? ' · index incomplete' : ''}</p>` +
-                `<button type="button" data-search-read="${index}" ${route ? '' : 'disabled'}>Read transcript</button></article>`;
+                `<button type="button" data-search-open="${index}" ${route ? '' : 'disabled'}>Open session</button> <button type="button" data-search-read="${index}" ${route ? '' : 'disabled'}>Read transcript</button></article>`;
         }).join('') + (!state.sessions.length ? '<p>No matching sessions in the sources checked.</p>' : '');
 }
 
@@ -93,7 +94,9 @@ async function readResult(index) {
 export function initSessionSearch() {
     const input = document.getElementById('session-search-input');
     if (!input) return;
+    initSessionViewer(searchEverywhere);
     if (owner !== S.currentUser?.id) {
+        closeSessionViewer();
         owner = S.currentUser?.id;
         controller?.retire(); reading++; clearTimeout(timer);
         input.value = ''; current = null;
@@ -120,6 +123,8 @@ export function initSessionSearch() {
     });
     document.getElementById('session-search-form').addEventListener('submit', event => { event.preventDefault(); clearTimeout(timer); run(); });
     document.getElementById('session-search-results').addEventListener('click', event => {
+        const open = event.target.closest('[data-search-open]');
+        if (open && !open.disabled) openSessionViewer(current?.sessions?.[Number(open.dataset.searchOpen)]);
         const button = event.target.closest('[data-search-read]');
         if (button && !button.disabled) readResult(Number(button.dataset.searchRead));
     });

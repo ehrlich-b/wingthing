@@ -20,6 +20,9 @@ func bindWingAttachment(version string, sessions *wingsession.Service, owner str
 		if a == nil || a.Session == "" || hello.Execution != "" || hello.Conversation != "" || hello.Aggregate || a.ReadOnly && (a.Takeover || a.Rows != 0 || a.Cols != 0) {
 			return controlsocket.Welcome{}, nil, errors.New("invalid wing attachment request")
 		}
+		if a.RequireLease && (!a.Takeover || a.ReadOnly) {
+			return controlsocket.Welcome{}, nil, errors.New("input lease proof requires explicit writable takeover")
+		}
 		target := a.Session
 		check := func(write, archived bool) (*Server, eggclient.LocalSession, error) {
 			s, err := resolveLocalWingClient(version, sessions, owner, admission, hello)
@@ -55,6 +58,7 @@ func bindWingAttachment(version string, sessions *wingsession.Service, owner str
 			done := make(chan error, 2)
 			var detached atomic.Bool
 			go func() {
+				leaseAcknowledged := false
 				for {
 					msg, err := stream.Recv()
 					if err != nil {
@@ -67,6 +71,17 @@ func bindWingAttachment(version string, sessions *wingsession.Service, owner str
 					if _, _, err := check(false, true); err != nil {
 						done <- err
 						return
+					}
+					if a.RequireLease && !leaseAcknowledged {
+						info := msg.AttachmentInfo
+						// The initial frame proves the execution egg granted this
+						// attachment its writer capability. An older egg that
+						// ignored takeover cannot acknowledge an exclusive lease.
+						if info == nil || info.AttachmentId == "" || info.WriterId != info.AttachmentId || info.AttachmentToken == "" || info.InputEpoch == 0 {
+							done <- errors.New("execution egg did not acknowledge the takeover input lease")
+							return
+						}
+						leaseAcknowledged = true
 					}
 					// Writer capabilities remain in the wing.
 					msg.AttachmentInfo = nil

@@ -193,7 +193,7 @@ func OwnerFleetAttach(ctx context.Context, sessions *wingsession.Service, owner 
 			}
 		}
 	}()
-	hello := controlsocket.Hello{WingID: id.OriginWingID, Attach: &controlsocket.Attachment{Session: id.SessionID, Exact: true, ReadOnly: readOnly, Takeover: takeover}}
+	hello := controlsocket.Hello{WingID: id.OriginWingID, Attach: &controlsocket.Attachment{Session: id.SessionID, Exact: true, ReadOnly: readOnly, Takeover: takeover, RequireLease: takeover}}
 	if !readOnly {
 		hello.Attach.Rows, hello.Attach.Cols = 30, 80
 	}

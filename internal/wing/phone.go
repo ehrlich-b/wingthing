@@ -44,7 +44,7 @@ func (h *phoneSessions) Execute(ctx context.Context, connection, op, id, input s
 		return nil, errors.New("unavailable")
 	}
 	switch op {
-	case "fleet_attach", "fleet_read", "fleet_input":
+	case "fleet_attach", "fleet_read", "fleet_input", "fleet_detach":
 		return h.executeFleetAttachment(ctx, connection, op, input)
 	case "inventory", "search", "action", "launch":
 		operation := "session_inventory"

@@ -541,7 +541,7 @@ func (m *Manager) handle(ctx context.Context, r Request) (Response, error) {
 			_ = m.save()
 		}
 		switch cmd.Op {
-		case "sessions", "attach", "read", "input", "stop", "detach", "close", "inventory", "search", "action", "launch", "fleet_attach", "fleet_read", "fleet_input":
+		case "sessions", "attach", "read", "input", "stop", "detach", "close", "inventory", "search", "action", "launch", "fleet_attach", "fleet_read", "fleet_input", "fleet_detach":
 		default:
 			return Response{}, failure("denied")
 		}
