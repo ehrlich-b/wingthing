@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/ehrlich-b/wingthing/internal/phonepair"
 )
 
@@ -122,12 +124,14 @@ func (f *fixture) execute(op, origin, id, input string) (any, error) {
 func (*fixture) Close(string) {}
 
 type peer struct {
-	manager    *phonepair.Manager
-	invitation phonepair.Invitation
-	server     *http.Server
-	handler    *fixture
-	mu         sync.Mutex
-	down, drop bool
+	manager      *phonepair.Manager
+	invitation   phonepair.Invitation
+	server       *http.Server
+	handler      *fixture
+	mu           sync.Mutex
+	down, drop   bool
+	relay        string
+	relayEnabled bool
 }
 
 func newPeer(root, wing, name string, fleet bool) (*peer, error) {
@@ -140,7 +144,8 @@ func newPeer(root, wing, name string, fleet bool) (*peer, error) {
 		return nil, e
 	}
 	handler := &fixture{wing: wing, fleet: fleet}
-	manager, e := phonepair.New(root, wing, name, "http://"+ln.Addr().String(), nil, private, handler)
+	p := &peer{handler: handler}
+	manager, e := phonepair.New(root, wing, name, "http://"+ln.Addr().String(), func() string { p.mu.Lock(); defer p.mu.Unlock(); return p.relay }, private, handler)
 	if e != nil {
 		ln.Close()
 		return nil, e
@@ -151,7 +156,7 @@ func newPeer(root, wing, name string, fleet bool) (*peer, error) {
 		manager.Close()
 		return nil, e
 	}
-	p := &peer{manager: manager, invitation: q, handler: handler}
+	p.manager, p.invitation = manager, q
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /phone", func(w http.ResponseWriter, r *http.Request) {
 		p.mu.Lock()
@@ -242,6 +247,66 @@ func main() {
 	rand.Read(tokenBytes)
 	token := base64.RawURLEncoding.EncodeToString(tokenBytes)
 	mux := http.NewServeMux()
+	// The simulator-only fixture uses loopback WS. Production still requires WSS.
+	mux.HandleFunc("GET /ws/phone", func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("wing_id")
+		p := main
+		if id == "fixture-remote-wing" {
+			p = remote
+		} else if id != "fixture-main-wing" {
+			http.Error(w, "unknown wing", 404)
+			return
+		}
+		p.mu.Lock()
+		enabled := p.relayEnabled
+		p.mu.Unlock()
+		if !enabled || r.Header.Get("Authorization") != "" || r.Header.Get("Origin") != "" {
+			http.Error(w, "relay unavailable", 403)
+			return
+		}
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		conn.SetReadLimit(260 << 10)
+		for {
+			_, data, err := conn.Read(r.Context())
+			if err != nil {
+				return
+			}
+			p.mu.Lock()
+			enabled = p.relayEnabled
+			p.mu.Unlock()
+			if !enabled {
+				_ = conn.Close(websocket.StatusPolicyViolation, "fixture relay unavailable")
+				return
+			}
+			var envelope struct {
+				Type      string `json:"type"`
+				Purpose   string `json:"purpose"`
+				WingID    string `json:"wing_id"`
+				RequestID string `json:"request_id"`
+				Payload   string `json:"payload"`
+				Sender    string `json:"sender_pub"`
+			}
+			if json.Unmarshal(data, &envelope) != nil || envelope.Type != "tunnel.req" || envelope.Purpose != "phone" || envelope.WingID != id || envelope.Sender != "" || len(envelope.Payload) > 256<<10 {
+				return
+			}
+			var request phonepair.Request
+			if json.Unmarshal([]byte(envelope.Payload), &request) != nil {
+				return
+			}
+			payload, err := json.Marshal(p.manager.Box(r.Context(), request))
+			if err != nil {
+				return
+			}
+			reply, _ := json.Marshal(map[string]string{"type": "tunnel.res", "request_id": envelope.RequestID, "payload": string(payload)})
+			if conn.Write(r.Context(), websocket.MessageText, reply) != nil {
+				return
+			}
+		}
+	})
 	mux.HandleFunc("POST /fixture", func(w http.ResponseWriter, r *http.Request) {
 		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
 			http.Error(w, "denied", 403)
@@ -259,6 +324,15 @@ func main() {
 		var err error
 		var value any = map[string]bool{"ok": true}
 		switch req.Op {
+		case "relay-on":
+			p.mu.Lock()
+			p.relay = "https://" + ln.Addr().String()
+			p.relayEnabled = true
+			p.mu.Unlock()
+		case "relay-off":
+			p.mu.Lock()
+			p.relayEnabled = false
+			p.mu.Unlock()
 		case "allow":
 			err = p.manager.Allow(p.invitation.ID)
 		case "cancel":

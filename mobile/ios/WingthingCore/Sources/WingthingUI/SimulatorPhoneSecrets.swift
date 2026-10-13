@@ -8,7 +8,7 @@ import WingthingCore
 struct SimulatorPhoneSecrets: PhoneSecretStore {
     let directory: URL
     private func file(_ wing: PairedWing) throws -> URL {
-        guard wing.local.host == "127.0.0.1", wing.relay == nil,
+        guard wing.wingID.hasPrefix("fixture-"), wing.local.host == "127.0.0.1", wing.relay.map({ $0.host == "127.0.0.1" && PairingInvitation.relayAllowed($0) }) ?? true,
               wing.endpoints?.allSatisfy({ $0.host == "127.0.0.1" }) ?? true else { throw PairingError.invalidQR }
         let scope = wing.wingID + ":" + wing.key + ":" + wing.deviceID
         let key = SHA256.hash(data: Data(scope.utf8)).map { String(format: "%02x", $0) }.joined()

@@ -186,10 +186,21 @@ public actor URLSessionPhoneWire: PhoneWire {
     private var selectedDirect: URL?
     public func configure(endpoints: [URL]) async { self.endpoints = endpoints; selectedDirect = nil; remoteSelected = false }
     public func carrierDescription() -> String? {
-        if remoteSelected { return "Relay · encrypted to pinned wing" }
+        if remoteSelected {
+            #if DEBUG && targetEnvironment(simulator)
+            if Self.loopbackRelayFixture { return "Relay fixture · loopback WS" }
+            #endif
+            return "Relay · encrypted to pinned wing"
+        }
         guard let selectedDirect else { return nil }
         return Self.isTailnet(selectedDirect) ? "Tailnet · Free" : "LAN · Free"
     }
+    #if DEBUG && targetEnvironment(simulator)
+    private static var loopbackRelayFixture: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["WT_IOS_PHONE_TEST_RELAY_WS"] == "1" && environment["WT_IOS_PAID_FIXTURE_ENABLED"] == "1" && environment["WT_IOS_PHONE_FIXTURE_ID"].flatMap(UUID.init(uuidString:)) != nil
+    }
+    #endif
     public static func isTailnet(_ url: URL) -> Bool {
         guard let host = url.host?.lowercased() else { return false }; if host.hasSuffix(".ts.net") { return true }
         let octets = host.split(separator: ".").compactMap { Int($0) }
@@ -272,6 +283,9 @@ public actor URLSessionPhoneWire: PhoneWire {
         if let relayExchange { return try await relayExchange(value, relay, wingID) }
         var parts = URLComponents(url: relay.appendingPathComponent("ws/phone"), resolvingAgainstBaseURL: false)!
         parts.scheme = "wss"; parts.queryItems = [URLQueryItem(name: "wing_id", value: wingID)]
+        #if DEBUG && targetEnvironment(simulator)
+        if Self.loopbackRelayFixture && relay.host == "127.0.0.1" && wingID.hasPrefix("fixture-") { parts.scheme = "ws" }
+        #endif
         guard let url = parts.url else { throw PairingError.invalidQR }
         let connection: URLSessionWebSocketTask
         if let socket { connection = socket } else { connection = session.webSocketTask(with: url); connection.maximumMessageSize = 256 << 10; connection.resume(); socket = connection }

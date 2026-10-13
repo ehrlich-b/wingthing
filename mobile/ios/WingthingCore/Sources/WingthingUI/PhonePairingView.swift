@@ -234,7 +234,11 @@ public struct PhonePairingView: View {
     private func session(_ row: PhoneFleetSession) -> some View {
         VStack(spacing: 12) {
             HStack {
-                Text(row.machine + " · " + (model.activeRoute?.label ?? "disconnected")).font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(row.machine + " · " + (model.activeRoute?.label ?? "disconnected")).font(.caption).foregroundStyle(.secondary)
+                    if let carrier = model.activeCarrier { Text(carrier).font(.caption2).foregroundStyle(.secondary) }
+                    if model.simulatorFixture && model.activeCarrier?.hasPrefix("Relay fixture") == true { Text("Dormant · loopback relay fixture").font(.caption2).foregroundStyle(.orange) }
+                }
                 Spacer()
                 if !model.online { Button("Reconnect") { Task { await model.reconnectAttached() } }.accessibilityIdentifier("phone-reconnect") }
             }.padding(.horizontal)
@@ -307,8 +311,8 @@ public struct PhonePairingView: View {
         NavigationStack {
             List {
                 Section("Connection") {
-                    Text(model.carrier ?? "No route connected")
-                    if let latency = model.latencyMilliseconds { Text("Last inventory request: \(latency) ms").font(.footnote) }
+                    Text(model.activeCarrier ?? model.carrier ?? "No route connected")
+                    if let latency = model.latencyMilliseconds { Text("Last inventory request (\(model.latencyWingName ?? "machine")): \(latency) ms").font(.footnote) }
                     Text("The phone tries LAN, then your existing tailnet, then a registered relay. LAN and tailnet need no Wingthing account.")
                 }
                 Section("Privacy") {

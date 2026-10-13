@@ -31,7 +31,10 @@ import WingthingCore
     @Published public private(set) var notificationsEnabled = false
     @Published public private(set) var notificationNotice: String?
     @Published public private(set) var carrier: String?
+    @Published public private(set) var connectionCarriers: [String: String] = [:]
     @Published public private(set) var latencyMilliseconds: Int?
+    @Published public private(set) var latencyWingName: String?
+    public var activeCarrier: String? { activeRoute.flatMap { connectionCarriers[$0.wingID] } }
     private var attentionSeen: Set<PhoneSessionIdentity> = []
     private let attention: any PhoneAttentionDelivery
     public let simulatorFixture: Bool
@@ -80,7 +83,7 @@ import WingthingCore
         epoch = UUID(); let request = epoch; error = nil; hardStop = false; busy = true
         do {
             let q = try PairingInvitation(link: link)
-            if simulatorFixture && (q.local.host != "127.0.0.1" || q.relay != nil || !(q.endpoints?.allSatisfy { $0.host == "127.0.0.1" } ?? true)) { throw PairingError.invalidQR }
+            if simulatorFixture && (!q.wingID.hasPrefix("fixture-") || q.local.host != "127.0.0.1" || !(q.relay.map { $0.host == "127.0.0.1" } ?? true) || !(q.endpoints?.allSatisfy { $0.host == "127.0.0.1" } ?? true)) { throw PairingError.invalidQR }
             invitation = q
             let enrollment = try makeEnrollment(q); self.enrollment = enrollment
             try await enrollment.start()
@@ -160,6 +163,7 @@ import WingthingCore
                 let start = Date(); let list = try await client.sessions()
                 guard epoch == request else { return }
                 latencyMilliseconds = Int(Date().timeIntervalSince(start) * 1000)
+                latencyWingName = wing.name
                 inventories[wing.wingID] = PhoneInventory(wing: wing, sessions: list, healthy: true)
                 if let client = client as? PhoneConnection {
                     let updated = await client.wing
@@ -169,6 +173,7 @@ import WingthingCore
                         try persist(saved); wings = saved
                     }
                     carrier = await client.carrierDescription()
+                    connectionCarriers[wing.wingID] = carrier
                     if let notice = await client.inventoryWarning() { inventoryNotice = wing.name + ": " + notice }
                 }
             } catch {

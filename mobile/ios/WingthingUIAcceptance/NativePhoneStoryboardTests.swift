@@ -70,7 +70,11 @@ final class NativePhoneStoryboardTests: XCTestCase {
         try await pair(app, wing: "main", captureSteps: true)
         capture("05-5-your-sessions-on-ehrlichmac"); capture("05-16-same-wifi-and-tailnet-both-stay-free")
         try await pair(app, wing: "remote")
-        capture("05-7-manage-each-wing-separately"); capture("13-1-open-the-app-anywhere")
+        capture("13-1-open-the-app-anywhere")
+        app.buttons["phone-machines-menu"].tap()
+        XCTAssertTrue(app.buttons["EhrlichMac"].exists); XCTAssertTrue(app.buttons["forge"].exists)
+        capture("05-7-manage-each-wing-separately")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.09)).tap()
         let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'phone-session-'"))
         XCTAssertEqual(app.buttons["phone-refresh"].value as? String, "5 sessions", "Two exact origins with same raw ID, one merged coordinator, one unproven duplicate")
         let coordinator = rows.matching(NSPredicate(format: "label CONTAINS 'Message your coordinator'")).firstMatch
@@ -81,6 +85,7 @@ final class NativePhoneStoryboardTests: XCTestCase {
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'DNS helper is ready'")).firstMatch.waitForExistence(timeout: 10))
         XCTAssertFalse(app.scrollViews["phone-terminal"].exists)
         capture("13-6-the-coordinator-is-always-on-top")
+        capture("13-7-dots-like-presence")
         menu(app, "Run in cloud")
         XCTAssertTrue(app.buttons["phone-cloud-request"].waitForExistence(timeout: 5))
         capture("10-3-start-from-bryans-iphone")
@@ -218,4 +223,31 @@ final class NativePhoneStoryboardTests: XCTestCase {
         try await pair(app, wing: "main", dropReply: true)
         let stats = try await control("stats"); XCTAssertEqual(stats["devices"] as? Int, 1)
     }
+    @MainActor func testRelayFixtureSwitchKeepsTheSameSessionAndDirectRemainsFree() async throws {
+        let app = app(); app.launchEnvironment["WT_IOS_PHONE_TEST_RELAY_WS"] = "1"
+        _ = try await control("relay-on")
+        _ = try await control("up")
+        try await pair(app, wing: "main")
+        let coordinator = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'phone-session-' AND label CONTAINS 'Message your coordinator'")).firstMatch
+        coordinator.tap(); XCTAssertTrue(app.scrollViews["phone-wing-thread"].waitForExistence(timeout: 10))
+        send(app, text: "Keep this session selected.")
+        _ = try await control("down")
+        XCTAssertTrue(app.buttons["phone-reconnect"].waitForExistence(timeout: 10))
+        app.buttons["phone-reconnect"].tap()
+        XCTAssertTrue(app.staticTexts["Relay fixture · loopback WS"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["forge · via EhrlichMac"].exists)
+        capture("05-6-use-it-away-from-home")
+        capture("08-2-switch-from-lan-to-cellular")
+        let inputs = try await control("stats")["inputs"] as! [String]
+        XCTAssertEqual(inputs.filter { $0.contains("Keep this session selected.") }.count, 1)
+        _ = try await control("relay-off")
+        XCTAssertTrue(app.buttons["phone-reconnect"].waitForExistence(timeout: 10))
+        _ = try await control("up")
+        app.buttons["phone-reconnect"].tap()
+        XCTAssertTrue(app.staticTexts["LAN · Free"].waitForExistence(timeout: 15))
+        let after = try await control("stats")["inputs"] as! [String]
+        XCTAssertEqual(after, inputs)
+        _ = try await control("relay-off")
+    }
+
 }
