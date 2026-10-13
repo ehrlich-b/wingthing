@@ -254,10 +254,13 @@ endif
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) test -p 2 -c -tags integration -o test/linux/sandbox-tests ./internal/sandbox/
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) test -p 2 -c -tags integration -o test/linux/wt-tests ./cmd/wt/
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) test -p 2 -c -o test/linux/eggclient-tests ./internal/eggclient/
+	@mkdir -p .scratch/linux-provider-guard-containers
 	@set -e; for distro in $(LINUX_DISTROS); do \
 		case "$$distro" in debian) dockerfile= testimage=wt-test-linux ;; ubuntu) dockerfile=.ubuntu2404 testimage=wt-test-ubuntu ;; *) echo "Unknown distro: $$distro"; exit 1 ;; esac; \
 		docker build -t "$$testimage" -f "test/linux/Dockerfile$$dockerfile" test/linux/; \
-		docker run --rm --privileged "$$testimage" sh -lc \
+		docker run --rm --privileged \
+   --mount type=bind,src="$(CURDIR)/.scratch/linux-provider-guard-containers",dst=/provider-guard-fixtures \
+   -e WT_PROVIDER_GUARD_FIXTURE_ROOT=/provider-guard-fixtures "$$testimage" sh -lc \
 			'/root/run-tests -test.v -test.timeout 120s && /root/sandbox-tests -test.v -test.timeout 120s && /root/wt-tests -test.v -test.timeout 120s && sh /root/roost-pin-tests.sh /root/eggclient-tests'; \
 	done
 
@@ -393,3 +396,22 @@ build-launch-plan: | web/dist
 .PHONY: accept-launch-plan-native
 accept-launch-plan-native:
 	python3 -B scripts/launch-plan-native-gate.py --go '$(shell command -v go)'
+
+# Real Linux kernel required; missing Landlock/userns and every skip fail this gate.
+.PHONY: test-linux-provider-guard accept-linux-provider-guard
+test-linux-provider-guard: | web/dist
+	$(GO) test -p 2 ./internal/sandbox ./internal/localmcp -run 'LinuxProtected|LinuxProviderWrite' -count=1
+
+accept-linux-provider-guard:
+	@test "$$(uname -s)" = Linux || { echo 'accept-linux-provider-guard requires Linux'; exit 1; }
+	python3 -B scripts/linux-provider-guard-gate.py --go '$(shell command -v go)'
+
+.PHONY: test-linux-provider-guard-portability
+test-linux-provider-guard-portability: | web/dist
+	@mkdir -p .scratch/linux-provider-guard-cross
+	@set -eu; for platform in darwin/amd64 darwin/arm64 linux/arm64; do \
+		os=$${platform%/*}; arch=$${platform#*/}; \
+		for package in sandbox egg localmcp; do \
+			CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) test -p 2 -c -o .scratch/linux-provider-guard-cross/$$os-$$arch-$$package ./internal/$$package; \
+		done; \
+	done

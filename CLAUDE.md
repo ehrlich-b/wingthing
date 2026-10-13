@@ -241,7 +241,7 @@ Implementations in `internal/sandbox/`:
 | Platform | Implementation | How |
 |----------|---------------|-----|
 | macOS | Seatbelt | `sandbox-exec` with generated SBPL profile |
-| Linux | User namespaces + seccomp + cgroups v2 | CLONE_NEWUSER/NEWNS/NEWPID/NEWNET, BPF syscall filter (27+ denied), cgroups v2 memory/PIDs + prlimit |
+| Linux | User namespaces + seccomp + cgroups v2; Landlock for protected providers | CLONE_NEWUSER/NEWNS/NEWPID/NEWNET, BPF syscall filter (27+ denied), cgroups v2 memory/PIDs + prlimit |
 
 No fallback — if the platform can't enforce the requested isolation, the egg fails with `EnforcementError`.
 

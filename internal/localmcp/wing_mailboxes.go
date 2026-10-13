@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -60,8 +61,15 @@ func sealMailboxPolicy(cfg *config.Config, policy *egg.EggConfig) error {
 	// Pin the HOME ancestry as literal directory entries. Descendant workspace
 	// writes remain available, while an agent cannot rename an ancestor to move
 	// protected state out of its sandbox boundary (including isolated profiles).
+	pinMode := "deny-write:" // Seatbelt's literal directory deny preserves descendants.
+	if runtime.GOOS == "linux" {
+		pinMode = "deny-rename:"
+	}
 	for path := wingpolicy.CanonicalPolicyPath(home); ; path = filepath.Dir(path) {
-		policy.FS = append(policy.FS, "deny-write:"+path)
+		if runtime.GOOS == "linux" && path == "/" {
+			break
+		} // root cannot be renamed.
+		policy.FS = append(policy.FS, pinMode+path)
 		if filepath.Dir(path) == path {
 			break
 		}

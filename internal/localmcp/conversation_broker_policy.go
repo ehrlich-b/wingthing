@@ -12,6 +12,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 )
 
@@ -33,18 +34,27 @@ type providerWriteRegion struct {
 // Literal deny-write directory entries can separately pin rename ancestors;
 // they do not make a writable target or its contents safe.
 //
+// Linux uses the same persistent write regions, with explicit protected mounts
+// and ancestor pins plus Landlock instead of the Seatbelt HOME boundary.
 // This is a host-side model of the policy that will be rendered, used before
 // any provider runs. The native fixture separately observes the real denial.
 type providerWriteModel struct {
-	DenyRoot string                `json:"deny_root"`
-	Pinned   []string              `json:"pinned,omitempty"`
-	Regions  []providerWriteRegion `json:"regions"`
+	DenyRoot           string                `json:"deny_root"`
+	ExplicitProtection bool                  `json:"explicit_protection,omitempty"`
+	Pinned             []string              `json:"pinned,omitempty"`
+	Regions            []providerWriteRegion `json:"regions"`
 }
 
 func modelProviderWrites(cfg *config.Config, eggCfg *egg.EggConfig, agentName, cwd, sessionID string, identity eggclient.EggIdentity) (providerWriteModel, error) {
 	var model providerWriteModel
-	if runtime.GOOS != "darwin" {
-		return model, fmt.Errorf("provider write protection is modeled only for the macOS Seatbelt profile, not %s", runtime.GOOS)
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		return model, fmt.Errorf("provider write protection is unavailable on %s", runtime.GOOS)
+	}
+	if runtime.GOOS == "linux" {
+		if err := sandbox.CheckProviderWriteProtection(); err != nil {
+			return model, err
+		}
+		model.ExplicitProtection = true
 	}
 	if eggCfg == nil || !egg.RequiresSandbox(eggCfg, agentName) {
 		return model, errors.New("an outer-boundary session has the full authority of the OS user")
@@ -96,9 +106,15 @@ func modelProviderWrites(cfg *config.Config, eggCfg *egg.EggConfig, agentName, c
 	for _, dir := range profile.WriteDirs {
 		add(filepath.Join(dataHome, dir), "agent profile write directory", false, false)
 	}
-	add(filepath.Join(model.DenyRoot, "Library", "Keychains"), "keychain directory", false, false)
+	if runtime.GOOS == "darwin" {
+		add(filepath.Join(model.DenyRoot, "Library", "Keychains"), "keychain directory", false, false)
+	}
 	add(os.TempDir(), "TMPDIR", false, false)
-	add("/private/tmp", "system temporary directory", false, false)
+	if runtime.GOOS == "darwin" {
+		add("/private/tmp", "system temporary directory", false, false)
+	} else {
+		add("/tmp", "system temporary directory", false, false)
+	}
 	return model, nil
 }
 
@@ -114,7 +130,7 @@ func (m providerWriteModel) writable(path string) (string, bool) {
 			return region.Reason + " " + region.Path, true
 		}
 	}
-	if !wingpolicy.SessionPolicyContains(m.DenyRoot, path) {
+	if !m.ExplicitProtection && !wingpolicy.SessionPolicyContains(m.DenyRoot, path) {
 		return "outside the sandbox HOME write-deny root " + m.DenyRoot, true
 	}
 	return "", false
@@ -141,6 +157,9 @@ func (m providerWriteModel) verifyProtected(stateDir string, targets []string) e
 		}
 		return fmt.Errorf("provider-writable %s %s is inside protected state %s", region.Reason, region.Path, state)
 	}
+	if m.ExplicitProtection {
+		return nil
+	} // Linux pins every protected ancestor natively.
 	return verifyPinnedAncestorsNotRenamable(m.DenyRoot, m.Pinned)
 }
 

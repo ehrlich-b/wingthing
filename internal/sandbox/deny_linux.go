@@ -42,7 +42,13 @@ const policyPinWalkArg = "_policy_pin_walk"
 // Both re-execs pass the real uid/gid as argv so the drop stage knows its map.
 // Arg layout: <stage-arg> <uid> <gid> -- <command...>.
 func init() {
-	if len(os.Args) < 6 || os.Args[4] != "--" {
+	if len(os.Args) < 6 {
+		return
+	}
+	commandIndex, hidden := 5, ""
+	if os.Args[4] == "--hide-sandbox-internals" && len(os.Args) >= 8 && os.Args[6] == "--" {
+		commandIndex, hidden = 7, os.Args[5]
+	} else if os.Args[4] != "--" {
 		return
 	}
 	switch os.Args[1] {
@@ -50,7 +56,7 @@ func init() {
 		walkPolicyPins(os.Args[5:])
 		os.Exit(0)
 	case jailAgentInitArg:
-		jailAgentInit(os.Args[2], os.Args[3], os.Args[5:])
+		jailAgentInit(os.Args[2], os.Args[3], os.Args[commandIndex:], hidden)
 	case jailAgentDropArg:
 		jailAgentDrop(os.Args[2], os.Args[3], os.Args[5:])
 	}
@@ -60,9 +66,13 @@ func init() {
 // over its mount namespace and can swap /proc. It never execs the agent itself:
 // after the swap it clones jailAgentDrop into a nested user namespace that maps
 // back to the real nonzero uid, so the agent runs unprivileged.
-func jailAgentInit(uidStr, gidStr string, command []string) {
+func jailAgentInit(uidStr, gidStr string, command []string, hidden string) {
 	if len(command) == 0 || command[0] == "" {
 		log.Fatal("_jail_agent_init: missing command")
+	}
+	visibleCWD, err := os.Getwd()
+	if err != nil {
+		failEnforcement("resolve provider cwd", "sandbox filesystem", err)
 	}
 	// Detaching the host procfs is preferred, but a kernel may refuse it when
 	// the bound tree carries locked host submounts (binfmt_misc on 5.15).
@@ -79,6 +89,27 @@ func jailAgentInit(uidStr, gidStr string, command []string) {
 	}
 	if err := verifyPrivateProcfs(); err != nil {
 		failEnforcement("verify PID-namespace procfs", "/proc/self/status", err)
+	}
+
+	// The parent wrapper retains the saved HOME and overlay backing trees for
+	// persistence. The provider's separate mount namespace must never expose
+	// those aliases (including denied secrets) or allow persistence tampering.
+	if hidden != "" {
+		if !strings.HasPrefix(filepath.Base(hidden), "wt-sandbox-") || !filepath.IsAbs(hidden) {
+			failEnforcement("hide sandbox internals", hidden, fmt.Errorf("invalid sandbox directory"))
+		}
+		if err := unix.Mount("tmpfs", hidden, "tmpfs", unix.MS_RDONLY|unix.MS_NOSUID|unix.MS_NODEV, "size=0"); err != nil {
+			failEnforcement("hide sandbox internals", hidden, err)
+		}
+		if err := verifyExpectedMounts([]expectedMount{{Path: hidden, FSType: "tmpfs", ReadOnly: true}}); err != nil {
+			failEnforcement("verify hidden sandbox internals", hidden, err)
+		}
+	}
+
+	if hidden != "" {
+		if err := os.Chdir(visibleCWD); err != nil {
+			failEnforcement("reenter provider cwd after masks", visibleCWD, err)
+		}
 	}
 
 	// Drop to the real nonzero uid before the agent runs. We cannot
@@ -204,6 +235,8 @@ func verifyPrivateProcfs() error {
 // [--rlimit RESOURCE=VALUE...] -- CMD ARGS...
 func DenyInit(args []string) {
 	var denyPaths []string
+	var protectedTargets []string
+	var readOnlyFiles []string
 	var denyRenamePaths []string
 	var denyWritePaths []string
 	var roostPolicyPaths []string
@@ -217,6 +250,10 @@ func DenyInit(args []string) {
 	var localPorts []int
 	var limits []rlimitPair
 	var cmdStart int
+	launchCWD, cwdErr := os.Getwd()
+	if cwdErr != nil {
+		failEnforcement("resolve launch cwd", "sandbox filesystem", cwdErr)
+	}
 
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--" {
@@ -240,6 +277,12 @@ func DenyInit(args []string) {
 				i++
 			case "--roost-policy-path":
 				roostPolicyPaths = append(roostPolicyPaths, args[i+1])
+				i++
+			case "--readonly-file":
+				readOnlyFiles = append(readOnlyFiles, args[i+1])
+				i++
+			case "--protected-write-target":
+				protectedTargets = append(protectedTargets, args[i+1])
 				i++
 			case "--deny-write":
 				denyWritePaths = append(denyWritePaths, args[i+1])
@@ -306,6 +349,9 @@ func DenyInit(args []string) {
 		failEnforcement("make mount namespace private", "/", err)
 	}
 
+	if err := validateLinuxProtectedAliases(protectedTargets); err != nil {
+		failEnforcement("validate protected filesystem aliases", "sandbox filesystem", err)
+	}
 	tmpDir := filepath.Dir(logPath)
 
 	// Jail mode: deny:/ creates an allowlist filesystem. Only explicitly
@@ -330,6 +376,12 @@ func DenyInit(args []string) {
 		failEnforcement(operation, path, err)
 	}
 
+	// Seal the real backing tree before the overlay saves a recursive HOME
+	// alias. The visible overlay and its saved alias are sealed again below.
+	if _, err := sealLinuxProtectedTargets(protectedTargets); err != nil {
+		failEnforcement("seal protected backing targets", "sandbox filesystem", err)
+	}
+
 	// Write isolation: make HOME read-only, then punch writable holes.
 	// Must happen BEFORE deny mounts so deny tmpfs overlays take precedence.
 	// Skip if HOME itself is in the writable list (user wants full HOME rw).
@@ -351,9 +403,23 @@ func DenyInit(args []string) {
 		}
 	}
 
+	// Pin exact host-generated artifacts after sealing their backing mount and
+	// before directory masks remove their path. No contents are copied.
+	readFiles, err := openRuntimeReadOnlyFiles(readOnlyFiles)
+	if err != nil {
+		failEnforcement("pin runtime read-only files", "sandbox filesystem", err)
+	}
+	defer func() {
+		for _, fd := range readFiles {
+			unix.Close(fd)
+		}
+	}()
+
 	// Mount empty read-only tmpfs over each deny path to hide its contents.
 	// We're UID 0 in the namespace -> have CAP_SYS_ADMIN -> can mount.
 	var expectedMounts []expectedMount
+	allDenyPaths := append([]string(nil), denyPaths...)
+	denyPaths = minimalDenyPaths(denyPaths)
 	for _, p := range denyPaths {
 		// Stat to determine if path is a file or directory. Files can't
 		// be overmounted with tmpfs — bind-mount /dev/null instead.
@@ -385,11 +451,24 @@ func DenyInit(args []string) {
 		var knownHosts []byte
 		sshDir := filepath.Join(os.Getenv("HOME"), ".ssh")
 		khPath := filepath.Join(sshDir, "known_hosts")
-		if p == sshDir && !containsPath(denyPaths, khPath) {
+		if p == sshDir && !containsPath(allDenyPaths, khPath) {
 			knownHosts, _ = os.ReadFile(khPath)
 		}
 
-		if knownHosts != nil {
+		if runtimeFilesWithin(readFiles, p) {
+			if knownHosts != nil {
+				failEnforcement("runtime file read exception", p, fmt.Errorf("cannot reopen an SSH directory mask"))
+			}
+			if err := unix.Mount("tmpfs", p, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "size=1048576"); err != nil {
+				failEnforcement("mask protected runtime directory", p, err)
+			}
+			if err := exposeRuntimeReadOnlyFiles(readFiles, p); err != nil {
+				failEnforcement("expose runtime read-only file", p, err)
+			}
+			if err := unix.Mount("", p, "", unix.MS_REMOUNT|unix.MS_RDONLY|unix.MS_NOSUID|unix.MS_NODEV, ""); err != nil {
+				failEnforcement("seal runtime directory mask", p, err)
+			}
+		} else if knownHosts != nil {
 			// Mount writable tmpfs, write known_hosts, remount read-only.
 			if err := unix.Mount("tmpfs", p, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "size=65536"); err != nil {
 				failEnforcement("mask denied directory", p, err)
@@ -443,6 +522,26 @@ func DenyInit(args []string) {
 		expectedMounts = append(expectedMounts, expectedMount{Path: "/", FSType: "tmpfs", ReadOnly: true})
 	}
 
+	// An overlay is a separate hierarchy; protect both visible targets and
+	// their saved real-HOME aliases so /tmp cannot expose the backing state.
+	allProtected := append([]string(nil), protectedTargets...)
+	if overlayPersistFn != nil {
+		for _, target := range protectedTargets {
+			if isPathWithin(target, home) {
+				rel, err := filepath.Rel(home, target)
+				if err != nil {
+					failEnforcement("resolve protected HOME alias", target, err)
+				}
+				allProtected = append(allProtected, filepath.Join(tmpDir, "real-home", rel))
+			}
+		}
+	}
+	protectedPins, err := sealLinuxProtectedTargets(allProtected)
+	if err != nil {
+		failEnforcement("seal protected targets", "sandbox filesystem", err)
+	}
+	denyRenamePaths = append(denyRenamePaths, protectedPins...)
+
 	// Linux cannot rename or unlink a mountpoint. Recursive self-binds keep
 	// each policy directory in place and preserve all descendant mount flags.
 	pins, err := pinRenamePaths(denyRenamePaths, missingWritePaths, uid, gid, jailMode)
@@ -459,6 +558,18 @@ func DenyInit(args []string) {
 		failEnforcement("verify filesystem policy", "/proc/self/mountinfo", err)
 	}
 
+	if err := verifyLinuxProtectedMounts(allProtected); err != nil {
+		failEnforcement("verify protected targets", "sandbox filesystem", err)
+	}
+
+	if len(protectedTargets) > 0 {
+		// A cwd opened before the HOME overlay/masks is an alias to the old tree.
+		// Rewalk its absolute spelling after all mounts, before cloning the init.
+		if err := os.Chdir(launchCWD); err != nil {
+			failEnforcement("reenter protected launch cwd", launchCWD, err)
+		}
+	}
+
 	// Apply soft and hard limits before an agent process exists. They are also
 	// inherited through both re-execs of the sealed jail's init/drop stages.
 	if err := applyRlimits(limits); err != nil {
@@ -467,7 +578,7 @@ func DenyInit(args []string) {
 
 	// Install seccomp after mounts. Jail mode delegates this to the PID-namespace
 	// init, which must replace the temporarily visible host procfs first.
-	if !jailMode {
+	if !jailMode && len(protectedTargets) == 0 {
 		if err := installSeccomp(); err != nil {
 			failEnforcement("install seccomp", "agent process", err)
 		}
@@ -487,14 +598,34 @@ func DenyInit(args []string) {
 	}
 
 	cmd := exec.Command(binPath, cmdArgs[1:]...)
-	if jailMode {
+	if len(protectedTargets) > 0 {
+		grants := append([]string(nil), writablePaths...)
+		grants = append(grants, os.TempDir(), "/tmp", "/dev")
+		if overlayPersistFn != nil {
+			grants = append(grants, home)
+		}
+		guarded := []string{landlockExecArg}
+		for _, path := range grants {
+			guarded = append(guarded, "--writable", path)
+		}
+		guarded = append(guarded, "--", cmd.Path)
+		guarded = append(guarded, cmdArgs[1:]...)
+		cmd = exec.Command("/proc/self/exe", guarded...)
+		cmdArgs = append([]string{cmd.Path}, guarded...)
+	}
+	if jailMode || len(protectedTargets) > 0 {
 		// /proc/self/exe remains executable after pivot_root even when the wt
 		// binary's original host path is outside the jail allowlist. Carry the
 		// outer wrapper's PATH resolution into the jail because syscall.Exec does
 		// not search PATH and the host-side agent binary itself is intentionally
 		// absent there.
 		resolvedCommand := append([]string{cmd.Path}, cmdArgs[1:]...)
-		initArgs := append([]string{jailAgentInitArg, strconv.Itoa(uid), strconv.Itoa(gid), "--"}, resolvedCommand...)
+		initArgs := []string{jailAgentInitArg, strconv.Itoa(uid), strconv.Itoa(gid)}
+		if len(protectedTargets) > 0 {
+			initArgs = append(initArgs, "--hide-sandbox-internals", tmpDir)
+		}
+		initArgs = append(initArgs, "--")
+		initArgs = append(initArgs, resolvedCommand...)
 		cmd = exec.Command("/proc/self/exe", initArgs...)
 	}
 	cmd.Stdin = os.Stdin
@@ -510,6 +641,12 @@ func DenyInit(args []string) {
 		// never leaves survivors running detached from the runtime.
 		Pdeathsig: syscall.SIGKILL,
 	}
+	if len(protectedTargets) > 0 {
+		// The init masks saved HOME/backing aliases only for the provider, even
+		// when a root caller does not need a UID mapping. Persistence stays in the
+		// parent wrapper's separate namespace.
+		cmd.SysProcAttr.Cloneflags |= syscall.CLONE_NEWNS
+	}
 	if uid != 0 {
 		// CLONE_NEWNS must accompany CLONE_NEWUSER: the nested user namespace
 		// holds no capabilities over the wrapper's mount namespace, so without
@@ -523,7 +660,7 @@ func DenyInit(args []string) {
 		// Non-jail mode has no procfs swap and runs the agent directly, so it
 		// maps straight to the real uid.
 		initUID, initGID := uid, gid
-		if jailMode {
+		if jailMode || len(protectedTargets) > 0 {
 			initUID, initGID = 0, 0
 		}
 		cmd.SysProcAttr.UidMappings = []syscall.SysProcIDMap{{
@@ -565,6 +702,33 @@ func DenyInit(args []string) {
 		overlayPersistFn()
 	}
 	os.Exit(0)
+}
+
+func minimalDenyPaths(paths []string) []string {
+	var out []string
+	for i, path := range paths {
+		covered := false
+		for j, parent := range paths {
+			if i == j {
+				continue
+			}
+			if path == parent && j < i {
+				covered = true
+				break
+			}
+			if parent != path && isPathWithin(path, parent) {
+				info, err := os.Lstat(parent)
+				if err == nil && info.IsDir() {
+					covered = true
+					break
+				}
+			}
+		}
+		if !covered {
+			out = append(out, path)
+		}
+	}
+	return out
 }
 
 func prepareDenyMountpoints(paths []string) (operation, path string, err error) {
@@ -906,6 +1070,8 @@ type expectedMount struct {
 }
 
 type mountInfoEntry struct {
+	Device  string
+	Root    string
 	FSType  string
 	Options map[string]bool
 }
@@ -1033,6 +1199,8 @@ func readMountInfo(path string) (map[string]mountInfoEntry, error) {
 		}
 		mountPoint := unescapeMountInfoPath(fields[4])
 		entries[filepath.Clean(mountPoint)] = mountInfoEntry{
+			Device:  fields[2],
+			Root:    filepath.Clean(unescapeMountInfoPath(fields[3])),
 			FSType:  fields[separator+1],
 			Options: options,
 		}

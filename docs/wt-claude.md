@@ -6,8 +6,12 @@ attaches your terminal through the wing. The wing starts providers and owns
 SSH connections. Closing a viewer or MCP connection leaves accepted worker
 eggs running on their owning machines.
 
-The protected parent mailbox currently requires macOS. An SSH worker wing can
-run on Linux with its supported sandbox. Install a compatible Wingthing build
+The protected parent mailbox requires macOS Seatbelt or a Linux host with
+namespace/mount support and enabled Landlock ABI 3 or newer. Linux protected
+sessions seal controller state, pin its ancestors, and retain a write allowlist;
+unsupported hosts refuse admission. Run `make accept-linux-provider-guard` on
+the Linux host before promotion. A restricted outer sandbox's existing launch
+gates still apply. An SSH worker wing uses its supported sandbox. Install a compatible Wingthing build
 and authenticate the provider CLI on each execution machine beforehand. Each
 machine needs its own existing workspace and personal credentials. Authorize
 the `forge` SSH alias before proceeding.

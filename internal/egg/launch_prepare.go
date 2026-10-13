@@ -205,6 +205,9 @@ func PrepareLaunch(rc RunConfig, opts LaunchPreparationOptions, state LaunchStat
 		} else {
 			out.LifecycleSettingsPath = out.Args[providerOptionsEnd(out.Args)-1]
 			out.Sandbox.Mounts = append(out.Sandbox.Mounts, sandbox.Mount{Source: out.LifecycleSettingsPath, Target: out.LifecycleSettingsPath, ReadOnly: true})
+			if runtime.GOOS == "linux" && len(rc.ProtectedWriteTargets) > 0 {
+				out.Sandbox.ReadOnlyFiles = append(out.Sandbox.ReadOnlyFiles, out.LifecycleSettingsPath)
+			}
 		}
 	}
 	out.NativeRun = nativeRunSupported(rc.Kind, rc.Agent, rc.Command, out.CodexRun)
