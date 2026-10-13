@@ -606,7 +606,10 @@ func DenyInit(args []string) {
 	cmd := exec.Command(binPath, cmdArgs[1:]...)
 	if len(protectedTargets) > 0 {
 		grants := append([]string(nil), writablePaths...)
-		grants = append(grants, os.TempDir(), "/tmp", "/dev")
+		grants = append(grants, providerStorageWritePaths()...)
+		for path := range providerCharacterDevices() {
+			grants = append(grants, path)
+		}
 		if overlayPersistFn != nil {
 			grants = append(grants, home)
 		}

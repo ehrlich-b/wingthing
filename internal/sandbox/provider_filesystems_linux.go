@@ -30,7 +30,7 @@ func validateLinuxProviderFilesystems(targets, writable []string, home string) e
 	}
 	paths := append([]string(nil), targets...)
 	paths = append(paths, writable...)
-	paths = append(paths, os.TempDir(), "/tmp")
+	paths = append(paths, providerStorageWritePaths()...)
 	if home != "" {
 		paths = append(paths, home)
 	}
@@ -43,7 +43,38 @@ func validateLinuxProviderFilesystems(targets, writable []string, home string) e
 			return err
 		}
 	}
+	for path, device := range providerCharacterDevices() {
+		var stat unix.Stat_t
+		if err := unix.Stat(path, &stat); err == nil && stat.Mode&unix.S_IFMT == unix.S_IFCHR && uint64(stat.Rdev) == device {
+			continue
+		}
+		fsType := "unknown"
+		containing := ""
+		for point, entry := range entries {
+			if pathWithin(path, point) && len(point) > len(containing) {
+				containing, fsType = point, entry.FSType
+			}
+		}
+		return providerFilesystemError(path, fsType, "runtime device must be the expected character device; restore the standard /dev node")
+	}
 	return nil
+}
+
+// These are the only implicit grants to filesystem storage. Keep admission and
+// the final Landlock rules on the same list; never grant the host /dev tree.
+func providerStorageWritePaths() []string {
+	return []string{os.TempDir(), "/tmp", "/dev/shm"}
+}
+
+// Device I/O is limited to standard character nodes, not writable directory
+// trees. Stat/rdev validation prevents a substituted regular file or backing
+// view from receiving one of these exact-file grants.
+func providerCharacterDevices() map[string]uint64 {
+	return map[string]uint64{
+		"/dev/null": unix.Mkdev(1, 3), "/dev/zero": unix.Mkdev(1, 5),
+		"/dev/random": unix.Mkdev(1, 8), "/dev/urandom": unix.Mkdev(1, 9),
+		"/dev/tty": unix.Mkdev(5, 0),
+	}
 }
 
 func providerFilesystemError(path, fsType, reason string) error {

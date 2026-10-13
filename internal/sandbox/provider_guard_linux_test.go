@@ -78,6 +78,10 @@ open(work+"/ordinary","w").write("workspace-ok")
 open(work+"/atomic.tmp","w").write("atomic-ok")
 os.rename(work+"/atomic.tmp",work+"/atomic")
 open(home+"/.claude/config","w").write("provider-ok")
+open("/dev/null","w").write("device-io-ok")
+import tempfile
+with tempfile.NamedTemporaryFile(dir="/dev/shm") as shared:
+ shared.write(b"shared-memory-ok");shared.flush()
 if os.path.exists(home+"/.claude.json"):
  open(home+"/.claude.json.tmp","w").write("adjacent-ok")
  os.rename(home+"/.claude.json.tmp",home+"/.claude.json")
@@ -420,6 +424,16 @@ func runGuardFilesystemFixture(root, kind, stage string) error {
 	state, work, home := filepath.Join(root, "state"), filepath.Join(root, "work"), filepath.Join(root, "home")
 	upper, lower, merged := state, filepath.Join(root, "lower"), filepath.Join(work, "view")
 	fsType, rejected := "overlay", merged
+	if strings.HasSuffix(kind, "-shm") {
+		// Only this fixture's private mount namespace sees the replacement.
+		if err := unix.Mount("tmpfs", "/dev/shm", "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "size=1m"); err != nil {
+			return err
+		}
+		merged, rejected = "/dev/shm/guard-view", "/dev/shm/guard-view"
+		if err := os.Mkdir(merged, 0700); err != nil {
+			return err
+		}
+	}
 	switch kind {
 	case "overlay-lower":
 		upper, lower = filepath.Join(root, "upper"), state
@@ -433,6 +447,10 @@ func runGuardFilesystemFixture(root, kind, stage string) error {
 		fsType, rejected = "ramfs", home
 	case "unknown-temp":
 		fsType, rejected = "ramfs", filepath.Join(root, "tmp", "view")
+	case "unknown-shm":
+		fsType = "ramfs"
+	case "device-regular":
+		fsType, rejected = "device", "/dev/null"
 	case "bind-work":
 		fsType, rejected = "", filepath.Join(work, "view")
 	}
@@ -456,7 +474,14 @@ func runGuardFilesystemFixture(root, kind, stage string) error {
 			return fmt.Errorf("construct unknown filesystem fixture: %w", err)
 		}
 	} else {
-		if err := unix.Mount(filepath.Join(root, "unrelated"), rejected, "", unix.MS_BIND, ""); err != nil {
+		source := filepath.Join(root, "unrelated")
+		if kind == "device-regular" {
+			source = filepath.Join(root, "unrelated-device")
+			if err := os.WriteFile(source, []byte("synthetic"), 0600); err != nil {
+				return err
+			}
+		}
+		if err := unix.Mount(source, rejected, "", unix.MS_BIND, ""); err != nil {
 			return err
 		}
 		entries, err := readMountInfo("/proc/self/mountinfo")
@@ -466,8 +491,10 @@ func runGuardFilesystemFixture(root, kind, stage string) error {
 		fsType = entries[rejected].FSType
 	}
 	// Prove the mount is live before testing admission, with one finite write.
-	if err := os.WriteFile(filepath.Join(rejected, "fixture-ready"), []byte("synthetic"), 0600); err != nil {
-		return fmt.Errorf("fixture mount not writable: %w", err)
+	if kind != "device-regular" {
+		if err := os.WriteFile(filepath.Join(rejected, "fixture-ready"), []byte("synthetic"), 0600); err != nil {
+			return fmt.Errorf("fixture mount not writable: %w", err)
+		}
 	}
 	if stage == "admission" {
 		sb, err = New(cfg)
@@ -500,7 +527,7 @@ func runGuardFilesystemFixture(root, kind, stage string) error {
 }
 
 func TestLinuxProviderGuardFilesystemsNative(t *testing.T) {
-	for _, kind := range []string{"overlay-upper", "overlay-lower", "overlay-protected", "unknown-work", "unknown-state", "unknown-home", "unknown-temp", "bind-work"} {
+	for _, kind := range []string{"overlay-upper", "overlay-lower", "overlay-protected", "overlay-shm", "unknown-work", "unknown-state", "unknown-home", "unknown-temp", "unknown-shm", "bind-work", "device-regular"} {
 		t.Run(kind, func(t *testing.T) {
 			for _, stage := range []string{"admission", "wrapper"} {
 				t.Run(stage, func(t *testing.T) {

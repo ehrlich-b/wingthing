@@ -32,9 +32,9 @@ def main():
                 'TestLinuxProviderGuardBindAliasesNative/state',
                 'TestLinuxProviderGuardBindAliasesNative/controller')
     required += tuple(f'TestLinuxProviderGuardFilesystemsNative/{kind}/{stage}'
-                      for kind in ('overlay-upper', 'overlay-lower', 'overlay-protected',
+                      for kind in ('overlay-upper', 'overlay-lower', 'overlay-protected', 'overlay-shm',
                                    'unknown-work', 'unknown-state', 'unknown-home',
-                                   'unknown-temp', 'bind-work')
+                                   'unknown-temp', 'unknown-shm', 'bind-work', 'device-regular')
                       for stage in ('admission', 'wrapper'))
     source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip()
     diff = subprocess.check_output(['git', 'diff', 'HEAD'], cwd=repo)

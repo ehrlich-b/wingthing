@@ -565,7 +565,7 @@ macOS protection still requires `make e2e-mac` on macOS.
 
 The supported filesystem contract for protected Linux providers is bounded:
 protected state/controller trees, every writable mount tree, temporary write
-grants and the HOME backing tree must use plain local ext4, xfs, btrfs, zfs
+grants, `/dev/shm` and the HOME backing tree must use plain local ext4, xfs, btrfs, zfs
 datasets or tmpfs. Every containing mount and nested submount is checked.
 Preexisting OverlayFS, bind aliases, FUSE, network filesystems and all unknown
 types are refused with the path, filesystem type and migration guidance.
@@ -584,6 +584,12 @@ behind writable merged views and protected merged state with writable backing,
 plus an unrelated writable bind alias and the non-allowlisted kernel type ramfs.
 Each fixture tests admission and a mount added after admission, observes a
 path/type refusal before provider execution, and fails acceptance on any skip.
+
+The host `/dev` directory receives no recursive write grant. Device I/O uses
+only exact-file grants to the standard null, zero, random, urandom and tty
+character devices, checked for their expected device numbers at both admission
+and wrapper recheck. Shared-memory storage is a separate validated `/dev/shm`
+tree. Mandatory fixtures reject OverlayFS and ramfs beneath that implicit grant.
 
 Protected Linux providers also use the jail's existing init/drop stages to replace
 host procfs and hide the wrapper's saved HOME and overlay backing directories in
