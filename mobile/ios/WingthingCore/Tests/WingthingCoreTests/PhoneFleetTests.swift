@@ -6,8 +6,8 @@ import WingthingUI
 private func paired(_ id: String, _ name: String) -> PairedWing {
     PairedWing(wingID: id, name: name, key: Data(repeating: 1, count: 32).base64EncodedString(), deviceID: "device-" + id, local: URL(string: "http://127.0.0.1:6078")!, relay: nil)
 }
-private func session(_ id: String = "same", origin: String? = nil, machine: String? = nil, pinned: Bool = false) throws -> PhoneSession {
-    var fields: [String: JSONValue] = ["id": .string(id), "name": .string(pinned ? "wing" : "Session"), "agent": .string("claude"), "status": .string("idle"), "blocked": .bool(false), "unread": .bool(true), "pinned": .bool(pinned), "role": .string(pinned ? "coordinator" : "")]
+private func session(_ id: String = "same", origin: String? = nil, machine: String? = nil, pinned: Bool = false, status: String = "idle") throws -> PhoneSession {
+    var fields: [String: JSONValue] = ["id": .string(id), "name": .string(pinned ? "wing" : "Session"), "agent": .string("claude"), "status": .string(status), "blocked": .bool(false), "unread": .bool(true), "pinned": .bool(pinned), "role": .string(pinned ? "coordinator" : "")]
     if let origin { fields["origin_wing_id"] = .string(origin) }
     if let machine { fields["machine"] = .string(machine) }
     return try JSONDecoder().decode(PhoneSession.self, from: JSONEncoder().encode(fields))
@@ -98,6 +98,17 @@ private actor FleetTransport: PhoneSessionTransport {
         #expect(model.threadVisible); #expect(model.attached?.coordinator == true)
         #expect(await transport.calls.filter { $0.hasPrefix("attach|") }.isEmpty)
         await model.detach()
+    }
+    @Test func archivedCoordinatorNeverClaimsTerminalOrDispatchesMutations() async throws {
+        let transport = FleetTransport([try session("former-coordinator", pinned: true, status: "archived")]), model = try model(transport)
+        await model.restore(); await model.attach(model.fleet[0])
+        await model.showTerminal()
+        #expect(model.threadVisible)
+        #expect(!(await model.input("do not send")))
+        await model.stop(expectedRowID: model.fleet[0].id)
+        await model.detach()
+        #expect(await transport.calls.contains { $0.hasPrefix("thread|") })
+        #expect(await transport.calls.allSatisfy { $0.hasPrefix("thread|") })
     }
     @Test func fallbackSelectionAndInputKeepExactRemoteOrigin() async throws {
         let a = FleetTransport([try session("same", origin: "b", machine: "Server")]), b = FleetTransport([try session()])

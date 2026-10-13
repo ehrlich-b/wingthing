@@ -99,7 +99,7 @@ public struct PhonePairingView: View {
             }
             Text(model.scanning ? "Scan to pair" : model.attached?.coordinator == true ? "wing" : model.attached?.session.title ?? model.selected?.name ?? "Everywhere").font(.title2.bold()).lineLimit(1)
             Spacer()
-            if model.attached?.coordinator == true {
+            if model.attached?.coordinator == true, model.attached?.session.status != "archived" {
                 Button { if model.threadVisible { Task { await model.showTerminal() } } else { model.showThread() } } label: {
                     Image(systemName: model.threadVisible ? "terminal" : "bubble.left.and.bubble.right").frame(width: 44, height: 44)
                 }.accessibilityLabel(model.threadVisible ? "Open terminal" : "Open wing thread").accessibilityIdentifier("phone-thread-terminal")

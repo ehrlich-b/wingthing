@@ -253,7 +253,7 @@ import WingthingCore
         }
     }
     public func showTerminal() async {
-        guard !busy, let row = attached, let identity = row.identity, let route = activeRoute, let client = connections[route.wingID] else { return }
+        guard !busy, let row = attached, row.session.status != "archived", let identity = row.identity, let route = activeRoute, let client = connections[route.wingID] else { return }
         busy = true; let request = epoch
         do {
             if !terminalAttached { _ = try await client.command("attach", session: identity.sessionID, input: "", originWingID: identity.originWingID) }
