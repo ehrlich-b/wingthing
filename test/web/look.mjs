@@ -26,6 +26,7 @@ const log = fs.openSync(path.join(state, 'roost.log'), 'w');
 const roost = spawn('nice', ['-n', '10', process.env.WT_LOOK_BIN || path.join(root, 'wt'), 'roost', 'start', '--foreground', '--dev', '--addr', '127.0.0.1:' + port], { cwd: root, env, stdio: ['ignore', log, log] });
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const sockets = new Map();
+const sent = [];
 
 function encrypt(key, value) {
     const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -113,6 +114,7 @@ async function machine(id) {
             response = selected ? { session: selected.session_id, lifecycle: { ...selected.lifecycle, session_id: selected.session_id, agent: selected.agent, provider_session_id: 'provider-' + selected.session_id, process_alive: true, ready: true, cursor: list.length, head_cursor: list.length, has_more: false, report_cursor: list.length, reported_at: at(1), report: { goal: 'Fix the redirect loop and deploy to staging', update: 'Deploy script is ready on Studio and needs your go.', presence: 'awake' }, events: list } } : { error: 'Session not found' };
         }
         else if (inner.type === 'session.control' && inner.operation === 'terminal_read') response = { result: { ansi: (screens[inner.arguments.session] || '$ ').replace(/\r/g, '') } };
+        else if (inner.type === 'session.control' && inner.operation === 'terminal_send') { sent.push({ machine: id, ...inner.arguments }); response = { session: inner.arguments.session, bytes_sent: inner.arguments.input.length }; }
         else if (inner.type === 'sessions.history') response = { sessions: [] };
         else if (inner.type === 'conversations.list') response = { conversations: [] };
         else response = { error: 'unsupported fixture request' };
@@ -162,6 +164,13 @@ try {
         await shoot(page, '03-session', v.suffix);
         await go(page, process.env.WT_LOOK_LEGACY ? '#chat/redirect?wing=studio' : '#approve/studio/redirect');
         await shoot(page, '04-approve', v.suffix);
+        if (index === 0 && !process.env.WT_LOOK_LEGACY) {
+            // Approve answers the agent's own prompt through terminal_send.
+            await page.click('[data-answer="approve"]');
+            await page.waitForFunction(() => /Approved at/.test(document.body.textContent), null, { timeout: 8000 }).catch(() => {});
+            await shoot(page, '04-approve-sent', v.suffix);
+            if (JSON.stringify(sent) !== JSON.stringify([{ machine: 'studio', session: 'redirect', input: '1' }])) throw Error('approve sent ' + JSON.stringify(sent));
+        }
         await go(page, '#pair');
         await shoot(page, '05-pair', v.suffix);
         await go(page, '#machines');
