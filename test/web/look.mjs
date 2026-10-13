@@ -164,7 +164,7 @@ try {
         await shoot(page, '03-session', v.suffix);
         await go(page, process.env.WT_LOOK_LEGACY ? '#chat/redirect?wing=studio' : '#approve/studio/redirect');
         await shoot(page, '04-approve', v.suffix);
-        if (index < 2 && !process.env.WT_LOOK_LEGACY) {
+        if (!process.env.WT_LOOK_LEGACY) {
             // Approve answers the agent's own prompt through terminal_send,
             // and the answered request leaves every Needs-you mark.
             await page.click('[data-answer="approve"]');
