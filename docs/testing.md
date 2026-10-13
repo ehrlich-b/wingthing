@@ -9,7 +9,7 @@ disagree about which sessions exist.
 
 | Command | Coverage and prerequisites |
 | --- | --- |
-| `make test-multiwing` | Qualified live/archive search, identity collisions, duplicate reconciliation, phone/tunnel scope and revocation, native import coverage and two built disposable wings through fake SSH. Includes qualified direct/gateway phone attachment, scope/pin revocation and a finite provider-free real egg PTY input/output and stop/exit check; no sandbox or live phone claim. |
+| `make test-multiwing` | Qualified live/archive search, identity collisions, duplicate reconciliation, phone/tunnel scope and revocation, native import coverage and three built stable/preview disposable wings through fake SSH and an encrypted paired phone fixture. Includes qualified direct/gateway phone attachment, scope/pin revocation and a finite provider-free real egg PTY input/output and stop/exit check; no sandbox or live phone claim. |
 | `make test-multiwing-race` | The qualified inventory, merge, search, heartbeat and phone adapter selection under the race detector. |
 | `make check` | All untagged Go tests, including Android wire contract and every former focused unit selection; web syntax/Node unit tests, Vite and host binary build. Go and Node/npm; no provider or Docker requirement. |
 | `make test-parent-lifecycle-protocol` | Finite regular-file, in-memory RPC and fake-SSH Unix IPC fixtures for admission, lost acknowledgements, reconnect, scoped messages, delayed native results and an explicitly joined disposable Stop child. No TCP binding or provider call. |

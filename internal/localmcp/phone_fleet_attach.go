@@ -31,6 +31,7 @@ type FleetAttachment struct {
 	forward  *sshcontrol.Connection
 	cancel   context.CancelFunc
 	once     sync.Once
+	initial  *pb.SessionMsg
 }
 
 func phoneFleetServer(sessions *wingsession.Service, owner string) (*Server, error) {
@@ -113,9 +114,54 @@ func (a *FleetAttachment) Close() error {
 	return nil
 }
 func (a *FleetAttachment) Send(msg *pb.SessionMsg) error { return a.Stream.Send(msg) }
-func (a *FleetAttachment) Recv() (*pb.SessionMsg, error) { return a.Stream.Recv() }
+func (a *FleetAttachment) Recv() (*pb.SessionMsg, error) {
+	if a.initial != nil {
+		first := a.initial
+		a.initial = nil
+		return first, nil
+	}
+	return a.Stream.Recv()
+}
+
+// A quiet phone cannot retain a writer or SSH forward after delegation/pin
+// revocation. This observation never resends input or selects another route.
+func (a *FleetAttachment) watchPolicy(ctx context.Context, write bool) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			check, cancel := context.WithTimeout(ctx, 2*time.Second)
+			err := a.Check(check, write)
+			cancel()
+			if err != nil {
+				_ = a.Close()
+				return
+			}
+		}
+	}
+}
 
 func OwnerFleetAttach(ctx context.Context, sessions *wingsession.Service, owner string, id fleet.Identity, readOnly, takeover bool) (*FleetAttachment, error) {
+	// One readiness budget includes policy, SSH, welcome and the actual egg ack.
+	ready, stopReady := context.WithTimeout(ctx, 5*time.Second)
+	defer stopReady()
+	lifetime, cancel := context.WithCancel(ctx)
+	success := false
+	defer func() {
+		if !success {
+			cancel()
+		}
+	}()
+	stopLifetime := context.AfterFunc(ready, cancel)
+	defer stopLifetime()
+	defer func() {
+		if ready.Err() != nil {
+			cancel()
+		}
+	}()
 	if id.OriginWingID == "" || id.SessionID == "" {
 		return nil, errors.New("origin_wing_id and full session_id are required")
 	}
@@ -127,16 +173,15 @@ func OwnerFleetAttach(ctx context.Context, sessions *wingsession.Service, owner 
 	}
 	s, err := phoneFleetServer(sessions, owner)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 	origin, label, err := s.fleetIdentity()
 	if err != nil {
 		return nil, err
 	}
-	lifetime, cancel := context.WithCancel(ctx)
 	a := &FleetAttachment{Identity: id, sessions: sessions, owner: owner, cancel: cancel,
 		Route: fleet.Route{WingID: origin, MachineLabel: label, Kind: "direct", Healthy: true, ObservedAt: time.Now().UTC().Format(time.RFC3339Nano)}}
-	success := false
 	defer func() {
 		if !success {
 			cancel()
@@ -177,29 +222,36 @@ func OwnerFleetAttach(ctx context.Context, sessions *wingsession.Service, owner 
 		remote := remotes[names[0]]
 		a.remote = &remote
 		a.Route.Kind, a.Route.Remote = "via", names[0]
-		if err := a.Check(ctx, !readOnly); err != nil {
+		if err := a.Check(ready, !readOnly); err != nil {
 			return nil, err
 		}
-		attempt, stop := context.WithTimeout(ctx, 5*time.Second)
-		a.forward, err = (sshcontrol.Transport{}).Dial(attempt, remote, controlsocket.Hello{})
-		stop()
+		a.forward, err = (sshcontrol.Transport{}).Dial(ready, remote, controlsocket.Hello{})
 		if err != nil {
 			return nil, err
 		}
 		path = a.forward.SocketPath()
 	}
-	if err := a.Check(ctx, !readOnly); err != nil {
+	if err := a.Check(ready, !readOnly); err != nil {
 		return nil, err
 	}
 	// The timeout bounds readiness only; a successful stream uses the phone's
 	// authenticated connection lifetime, not a short request context.
-	timer := time.AfterFunc(5*time.Second, cancel)
 	a.Stream, _, err = controlsocket.DialAttachmentPath(lifetime, path, hello)
-	timer.Stop()
 	if err != nil {
 		return nil, err
 	}
+	a.initial, err = a.Stream.Recv()
+	if err != nil {
+		return nil, err
+	}
+	if ready.Err() != nil {
+		return nil, ready.Err()
+	}
+	// Detach the readiness deadline before stopping it, keeping the successful
+	// stream bound to the authenticated phone connection lifetime.
+	stopLifetime()
 	success = true
+	go a.watchPolicy(lifetime, !readOnly)
 	return a, nil
 }
 
