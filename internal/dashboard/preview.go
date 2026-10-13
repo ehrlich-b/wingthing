@@ -383,7 +383,7 @@ func (s *state) messageLines(r row, width int) []string {
 	for _, message := range value.messages {
 		label := message.speaker
 		if stamp := previewStamp(message.timestamp); stamp != "" {
-			label += " / " + stamp
+			label += " · " + stamp
 		}
 		lines = append(lines, label)
 		parts := wrap(message.text, width)

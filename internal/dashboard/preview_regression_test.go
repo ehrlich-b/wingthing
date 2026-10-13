@@ -186,13 +186,22 @@ func TestInventoryDenialClearsFrozenTargetAndPreventsConfirmedMutation(t *testin
 		s.input = "private draft"
 		s.draftMachine, s.draftCWD = "work", "/private/project"
 		newInventory(nil).apply(s, inventoryResult{name: "work", err: errors.New("grant revoked"), updated: time.Now()})
-		if s.mode != navigate || s.target.ID != "" || s.target.CWD != "" || s.input != "" || s.draftCWD != "" {
+		// Details and the stop dialog stay open and say why in place; other
+		// prompts return to the list.
+		wantMode := navigate
+		if mode == details || mode == confirmStop {
+			wantMode = mode
+		}
+		if s.mode != wantMode || s.target.ID != "" || s.target.CWD != "" || s.input != "" || s.draftCWD != "" {
 			t.Fatalf("denial kept protected target in %v", mode)
+		}
+		text := render(s, 80, 24, time.Now())
+		if wantMode != navigate && !strings.Contains(text, "access was revoked. Ask its owner to restore it.") {
+			t.Fatalf("revoked %v did not say why in place: %s", mode, text)
 		}
 		if act, _ := s.handle("y"); act != nil {
 			t.Fatal("denied confirmation still dispatched old target")
 		}
-		text := render(s, 80, 24, time.Now())
 		if strings.Contains(text, "Private task") || strings.Contains(text, "private/project") {
 			t.Fatal("denied metadata remained visible")
 		}

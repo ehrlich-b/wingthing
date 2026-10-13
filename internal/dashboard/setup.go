@@ -107,7 +107,7 @@ func (s *state) setupHandle(key string) (*action, bool) {
 
 func (s *state) setupLines() []string {
 	if s.mode == agentSetup {
-		lines := []string{"Install an agent", "This machine", "", "Detection checks installed commands. Provider login is separate.", ""}
+		lines := []string{"Install an agent", "This machine", ""}
 		for _, a := range s.agents {
 			status := "Missing"
 			if a.Path != "" {
@@ -123,31 +123,40 @@ func (s *state) setupLines() []string {
 		return append(lines, "Install "+a.Name, "Downloads the agent and its runtime dependencies.", "", a.Installer, "", "Runs as your OS user. No automatic sudo.", "Nothing changes until you choose Install.")
 	}
 	if s.mode == setupFailure {
-		cause := "The command failed. Check its output in your terminal."
+		cause := "The command failed. Its output is in your terminal."
 		lower := strings.ToLower(s.setupError)
 		switch {
 		case strings.Contains(lower, "managed"), strings.Contains(lower, "ancestry"), strings.Contains(lower, "user terminal"), strings.Contains(lower, "context"):
-			cause = "Provider login requires a private user terminal."
+			cause = "Sign in to " + a.Name + " in a normal terminal:"
 		case strings.Contains(lower, "download"), strings.Contains(lower, "curl"), s.setupStage == "install" && strings.Contains(lower, "exit status 22"):
-			cause = "Download failed. Check the network and source above."
+			cause = "The download failed. Check your network and the source above."
 		case strings.Contains(lower, "permission"):
-			cause = "Access was denied. Check directory permissions."
+			cause = "Permission denied. Check you can write to the install folder."
 		case strings.Contains(lower, "absent"), strings.Contains(lower, "path"):
-			cause = "The agent command was not found. Check PATH, then rescan."
+			cause = a.ID + " is not on your PATH. Fix PATH, then press R."
 		}
-		lines = append(lines, "Failed stage: "+s.setupStage, cause)
-		if strings.Contains(cause, "private user terminal") {
-			lines = append(lines, "", a.ID+" "+strings.Join(a.Login, " "))
-		}
-		if s.setupStage == "install" {
-			return append(lines, "", "Retry installation requires a new review.")
+		lines = append(lines, setupStageLabel(s.setupStage)+" failed.", cause)
+		if strings.HasPrefix(cause, "Sign in to ") {
+			lines = append(lines, a.ID+" "+strings.Join(a.Login, " "))
 		}
 		return lines
 	}
 	if s.setupCompleted != "" {
-		lines = append(lines, "Completed: "+s.setupCompleted)
+		lines = append(lines, setupStageLabel(s.setupCompleted)+" finished.")
 	}
-	return append(lines, "Installed", "", a.ID+" --version", a.ID+" "+strings.Join(a.Login, " "), "", "Provider login uses your provider account.", "An installed command does not prove login or session readiness.")
+	return append(lines, "Installed", "", "To sign in, run this in a normal terminal:", a.ID+" "+strings.Join(a.Login, " "))
+}
+
+func setupStageLabel(stage string) string {
+	switch stage {
+	case "install":
+		return "Install"
+	case "login":
+		return "Sign-in"
+	case "verify":
+		return "Version check"
+	}
+	return "Setup"
 }
 
 // This human-only handoff does not capture installer/provider output or persist

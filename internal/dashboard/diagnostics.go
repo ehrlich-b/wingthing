@@ -192,22 +192,46 @@ func (s *state) machineLines(now time.Time) []string {
 	if !exists {
 		return append(lines, "Saved machine was removed. Select its current profile.")
 	}
-	lines = append(lines, "Inventory: "+connection(m, now), machineCount(m))
+	if accessDenied(m.err) {
+		lines = append(lines, accessLine(name, m.err))
+	} else {
+		lines = append(lines, connection(m, now), machineCount(m))
+	}
 	if s.registryError != "" {
 		lines = append(lines, "Saved machines could not be loaded. Remote actions are blocked.")
 	}
-	if s.stale(name) {
-		lines = append(lines, "", routeCause(m.err), "Cached sessions do not prove this machine is empty.", "Verify this machine before attaching. R retries from the list.")
+	if s.stale(name) && !accessDenied(m.err) {
+		lines = append(lines, "", routeCause(m.err), "The session list may be out of date.")
 	}
 	if name == "local" {
-		return append(lines, "", "Route: Local", "", "Add a machine with a saved SSH profile:", "wt remote add Studio SSH_ALIAS")
+		return append(lines, "", "Add a machine you reach over SSH:", "wt remote add Studio SSH_ALIAS")
 	}
 	r := s.remotes[name]
-	verification := "not verified"
+	verification := "Reached over SSH. Machine ID not saved yet."
 	if r.WingID != "" && r.ControlSocket != "" && r.ControlVersion != "" {
-		verification = "Saved identity verified; checked on every connection"
+		verification = "Reached over SSH. Machine ID checked on every connect."
 	}
-	return append(lines, "", "Route: SSH", "Identity: "+verification, "", "Check the saved profile in your terminal:", "wt remote ls", "", "An identity change requires manual verification.", "Never bypass SSH host-key checks.")
+	return append(lines, "", verification, "", "List saved machines:", "wt remote ls")
+}
+
+// accessLine says in one line why a machine's sessions are gone and what to do.
+func accessLine(name, err string) string {
+	lower := strings.ToLower(err)
+	if strings.Contains(lower, "permission denied") || strings.Contains(lower, "authentication") {
+		return routeCause(err)
+	}
+	if strings.Contains(lower, "revoked") {
+		return machineLabel(name) + " access was revoked. Ask its owner to restore it."
+	}
+	return "You lost access to " + machineLabel(name) + ". Ask its owner to restore it."
+}
+
+// accessState is the lowercase mid-line state for a machine you cannot reach.
+func accessState(err string) string {
+	if strings.Contains(strings.ToLower(err), "revoked") {
+		return "access revoked"
+	}
+	return "access denied"
 }
 
 func machineCount(m machine) string {

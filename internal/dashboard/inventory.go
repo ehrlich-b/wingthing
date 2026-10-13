@@ -134,7 +134,12 @@ func (i *inventory) apply(s *state, result inventoryResult) bool {
 			machine.sessions = nil
 			if s.target.machine == result.name {
 				switch s.mode {
-				case details, rename, confirmStop, confirmTakeover, actionMenu, newAgent, newCWD:
+				case details, confirmStop:
+					// Keep the open page and say why in place, but drop the
+					// session's private metadata; y then has no target to stop.
+					s.target = row{machine: result.name}
+					s.input, s.overlayOffset = "", 0
+				case rename, confirmTakeover, actionMenu, newAgent, newCWD:
 					s.target = row{}
 					s.mode, s.input = navigate, ""
 					s.message = "Access denied. R refresh."

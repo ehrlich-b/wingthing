@@ -145,7 +145,7 @@ func TestNorthstarPTYAttention(t *testing.T) {
 		h.expect("select exact local provider", h.send("/local-agent\r"), "> local-agent")
 		started := time.Now()
 		local.emit(t, "PermissionRequest")
-		permission := northstarAttentionRefresh(t, h, "native permission needs input", 1, "local-agent", "Native provider requested input.")
+		permission := northstarAttentionRefresh(t, h, "native permission needs input", 1, "local-agent", "Waiting for your answer.")
 		permission = h.waitScreen("permission on exact native row", 0, func(screen string) bool {
 			return northstarNamedState(screen, "local-agent", "! Needs you")
 		})
@@ -155,10 +155,10 @@ func TestNorthstarPTYAttention(t *testing.T) {
 		permissionVisible := time.Since(started)
 		t.Logf("PermissionRequest to visible native blocked: %s", permissionVisible)
 		northstarAttentionRefresh(t, h, "repeated permission cursor", 1, "local-agent")
-		h.expect("view blocked exact cursor", h.send("i"), "State: ! Needs you", "Machine: This machine", "Native provider requested input", "acknowledgement does not clear blocking")
+		h.expect("view blocked exact cursor", h.send("i"), "State: ! Needs you", "Machine: This machine", "is waiting for your answer")
 		h.expect("blocked survives viewing", h.send("\x1b"), "local-agent")
 		local.emit(t, "Stop")
-		completion := northstarAttentionRefresh(t, h, "foreground completed / alive provider / unread", 2, "local-agent *", "1 unread", "descendants may continue")
+		completion := northstarAttentionRefresh(t, h, "foreground completed / alive provider / unread", 2, "local-agent *", "1 unread", "Background work may still run")
 		completion = h.waitScreen("completion on exact native row", 0, func(screen string) bool {
 			return northstarNamedState(screen, "local-agent *", "o Idle") && strings.Contains(screen, "1 unread")
 		})
@@ -172,10 +172,10 @@ func TestNorthstarPTYAttention(t *testing.T) {
 		h.waitScreen("exact native completion before details", 0, func(screen string) bool {
 			return northstarNamedState(screen, "local-agent *", "o Idle") && strings.Contains(screen, "1 unread")
 		})
-		h.expect("acknowledge local completion", h.send("i"), "Machine: This machine", "Unread response", "Foreground response completed", "0 unread")
+		h.expect("acknowledge local completion", h.send("i"), "Machine: This machine", "Unread response", "replied. Background work may still run.", "0 unread")
 		h.expect("return after exact acknowledgement", h.send("\x1b"), "local-agent", "0 unread")
 		h.expect("filter disabled hooks", h.send("/\x15hooks-off\r"), "> hooks-off")
-		h.expect("unknown evidence explains itself", h.send("i"), "State: ? Unknown", "missing, unknown or hooks are disabled", "no screen inference")
+		h.expect("unknown evidence explains itself", h.send("i"), "State: ? Unknown", "does not report whether it is working")
 		h.expect("clear disabled filter", h.send("\x1b/\x15\r"), "local-agent", "forge-agent")
 		// Identical session IDs belong to separate machines and hook spools.
 		local.emit(t, "UserPromptSubmit")
@@ -246,7 +246,7 @@ func northstarNamedState(screen, name, state string) bool {
 	for _, line := range strings.Split(screen, "\n") {
 		line = strings.TrimLeft(line, "│|")
 		line = strings.SplitN(strings.SplitN(line, "|", 2)[0], "│", 2)[0]
-		line = strings.Join(strings.Fields(line), " ")
+		line = strings.TrimPrefix(strings.Join(strings.Fields(line), " "), "> ")
 		if !strings.HasPrefix(line, state) {
 			continue
 		}

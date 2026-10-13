@@ -390,7 +390,7 @@ func (s *state) handle(key string) (act *action, quit bool) {
 		if s.mode == confirmStop || s.mode == confirmTakeover {
 			kind := s.mode
 			s.mode = navigate
-			if key == "y" || key == "Y" {
+			if (key == "y" || key == "Y") && s.target.ID != "" && !accessDenied(s.machines[s.target.machine].err) {
 				return &action{kind: kind, row: s.target, attach: kind == confirmTakeover, takeover: kind == confirmTakeover}, false
 			}
 			return nil, false

@@ -75,11 +75,11 @@ func (s *state) observeAttention() {
 			if nativeSource(session.StateSource) && session.StateCursor > 0 {
 				if session.State == "needs_input" && session.StateCursor > record.blocked {
 					record.blocked = session.StateCursor
-					qualifying, message = true, "Native provider requested input."
+					qualifying, message = true, "Waiting for your answer."
 				}
 				if session.CompletionCursor > record.completion && session.CompletionCursor <= session.StateCursor {
 					record.completion = session.CompletionCursor
-					qualifying, message = true, "New foreground response; provider or descendants may continue."
+					qualifying, message = true, "New reply. Background work may still run."
 				}
 			}
 			record.cursor = max(record.cursor, session.StateCursor)
