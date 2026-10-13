@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import { x25519 } from '../../web/node_modules/@noble/curves/ed25519.js';
 import { hkdf } from '../../web/node_modules/@noble/hashes/hkdf.js';
 import { sha256 } from '../../web/node_modules/@noble/hashes/sha2.js';
@@ -28,6 +29,8 @@ const pages = [];
 const sockets = [];
 const errors = [];
 let browser;
+let completed = false;
+let failure = null;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 function record(name) { steps.push(name); console.log('PASS ' + name); }
 async function ready() {
@@ -100,9 +103,25 @@ async function screenshot(page, flow, card, slug, suffix = '') {
     if (flow === 3 || flow === 5) {
         let target = page.locator('#sessions-list');
         if (slug === 'unread-output') target = page.locator('.egg-box[data-sid="review"]');
+        else if (flow === 3 && card === 3) target = page.locator('.egg-box[data-sid="same-id"][data-wing-id="fixture-mac"]');
         else if (card === 7) target = page.locator('.egg-box[data-sid="same-id"][data-wing-id="' + (slug === 'stop-verified' ? 'fixture-remote' : 'fixture-mac') + '"]');
         else if (card === 6) target = page.locator('.egg-box[data-wing-id="fixture-remote"]').first();
-        await target.scrollIntoViewIfNeeded();
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                await target.scrollIntoViewIfNeeded({ timeout: 5000 });
+                break;
+            } catch (error) {
+                if (attempt === 2 || !String(error.message).includes('not attached')) throw error;
+                // The locator resolves the replacement row on the next try.
+                await page.waitForTimeout(100);
+            }
+        }
+        if (slug === 'stop-unverified') assert.match(await target.innerText(), /process exit unverified/);
+        if (slug === 'stop-verified') {
+            assert.equal(await page.locator('.egg-box[data-sid="same-id"][data-wing-id="fixture-mac"]').count(), 0);
+            assert.match(await target.innerText(), /forge/);
+        }
+        if (slug === 'unread-output') assert.match(await target.innerText(), /unread output/);
     }
     await page.waitForTimeout(100);
     const file = `${String(flow).padStart(2, '0')}-${card}-${slug}${suffix}.png`;
@@ -307,11 +326,18 @@ try {
     assert.equal(requests.filter(r => r.type === 'pty.input' || r.type === 'session_prompt').length, 0);
     assert.deepEqual(errors, []);
     await context.close();
+    completed = true;
+} catch (error) {
+    failure = { name: error.name, message: error.message };
+    throw error;
 } finally {
     await browser?.close();
     sockets.forEach(socket => { try { socket.close(); } catch {} });
     roost.kill('SIGINT');
     await new Promise(resolve => { if (roost.exitCode !== null) resolve(); else roost.once('exit', resolve); });
     fs.closeSync(log);
-    fs.writeFileSync(path.join(out, 'browser-receipt.json'), JSON.stringify({ steps, captured, requests, errors, state, source: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim(), generatedAt: new Date().toISOString() }, null, 2));
+    fs.writeFileSync(path.join(out, 'browser-receipt.json'), JSON.stringify({ completed, failure, steps, captured, requests, errors, state,
+        source: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim(),
+        sourceDirty: spawnSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).stdout.trim(),
+        binarySHA256: createHash('sha256').update(fs.readFileSync(path.join(root, 'wt'))).digest('hex'), generatedAt: new Date().toISOString() }, null, 2));
 }
