@@ -19,6 +19,7 @@ import (
 
 	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/sessionrole"
 
 	"golang.org/x/sys/unix"
 )
@@ -290,6 +291,34 @@ func prepareClaudeLifecycleArgs(args []string, home, eggDir, providerID, cwd str
 		return nil, err
 	}
 	settingsIndex := providerOptionsEnd(out) - 1
+	metadata, err := sessionrole.Read(eggDir)
+	if err != nil {
+		return nil, err
+	}
+	if metadata.Role != "" {
+		if err := sessionrole.ValidateClaudeArgs(args); err != nil {
+			return nil, err
+		}
+		if err := validateAmbientRoleHooks(args, home, cwd, policies...); err != nil {
+			return nil, err
+		}
+		prompt, err := sessionrole.Prompt(filepath.Dir(filepath.Dir(eggDir)), metadata.Role)
+		if err != nil {
+			return nil, err
+		}
+		var settings map[string]any
+		if err := json.Unmarshal([]byte(out[settingsIndex]), &settings); err != nil {
+			return nil, err
+		}
+		if err := sessionrole.AddHook(settings, prompt, filepath.Join(home, ".claude")); err != nil {
+			return nil, err
+		}
+		data, err := json.Marshal(settings)
+		if err != nil {
+			return nil, err
+		}
+		out[settingsIndex] = string(data)
+	}
 	path, err := filepath.Abs(filepath.Join(eggDir, claudeLifecycleSettingsFile))
 	if err != nil {
 		return nil, err

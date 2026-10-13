@@ -6,6 +6,73 @@ attaches your terminal through the wing. The wing starts providers and owns
 SSH connections. Closing a viewer or MCP connection leaves accepted worker
 eggs running on their owning machines.
 
+## Keep a coordinator within reach
+
+```sh
+wt claude --name coordinator --role coordinator
+wt session ps                 # pins first, with [coordinator] and * badges
+wt attach coordinator         # finds a reachable pinned coordinator on any configured machine
+wt unpin SESSION_ID           # retains the role and its context hook
+wt pin work:SESSION_ID        # pin an existing session on a configured SSH remote
+```
+
+Bare `wt` shows a pinned section before machine/project groups. The first entry
+can be attached with Enter; unavailable machines remain visible with errors,
+and cached TUI pins are marked stale. CLI discovery uses fresh inventories.
+Pin and role metadata belong to the execution wing and survive wing restarts.
+Wing-owned provider continuations transfer them; a fork starts with its own
+unpinned identity. Standalone `wt egg --resume` refuses a role-bearing source
+before restoring history because it cannot preserve the protected fleet MCP.
+Continue an ended role session through wing `agent_start` with `resume_session`,
+`conversation_role: parent`, `input`, and an immutable `request_id`. A live
+session supports native `/resume` and `/clear` with the same role hook.
+Pins are not an automatic process restart or workspace migration mechanism.
+
+Role prompts come from `roles/<role>.md` in the selected Wingthing state
+(normally `~/.wingthing/roles/<role>.md`). A missing `coordinator.md` uses the
+built-in “you are the coordinator node” prompt and points to that file. Other
+roles require a file. Prompts must be nonempty and at most 8 KiB; their contents
+are treated as text. Each launch snapshots the role into scoped Claude settings;
+edits apply on the next launch or Wingthing provider resume. The `SessionStart`
+hook injects it on startup, resume, `/clear`, and manual or automatic compaction.
+`disableAllHooks` in launch or loaded user/project/local settings is refused for
+role sessions. `--bare`, `--safe-mode`, and equivalent environment modes are
+incompatible. Roles use their selected provider data directory; a different
+`CLAUDE_CONFIG_DIR` is refused. Excluded ambient sources (`--setting-sources=`
+or `--restricted`) do not block the scoped hook.
+Ordinary sessions acquire no role prompt. Unpinning changes ordering only.
+
+The coordinator automatically receives the existing wing-client MCP transport.
+Its explicit coordinator scope includes owned agent and session inventories and
+bounded native messages (`session_prompt`) on configured, granted wings, including
+work started outside its own child tree. Current owner grants, captured workspace
+paths, and spawn limits still apply. An unrestricted personal owner captures
+all owned local sessions, including standalone eggs. Remote wings without path
+restrictions must explicitly advertise that fact; older receivers need advertised
+paths. Local worker launches retain the parent's
+workspace sandbox. Other role sessions keep the ordinary parent scope.
+Raw terminal input remains outside the scoped MCP.
+
+Multiple pins, including coordinator pins on different wings, are allowed.
+`wt attach coordinator` refuses ambiguity and lists qualified machine/session
+routes. Named MCP clients retain their local attachment scope. Configured SSH
+remotes use the `wt remote` registry; the fleet MCP uses verified wings from
+`wt mcp connect`. These existing configuration surfaces remain separate.
+
+The protected parent currently requires macOS; Linux worker wings are supported.
+Pin records have no platform dependency, but hosted Linux coordinator execution
+still needs the existing protected-parent boundary to support Linux.
+
+`make test-coordinator-role` covers both role and ordinary sessions, pin/unpin,
+resume/fork, fleet MCP, CLI/TUI order, and unreachable remotes.
+`make test-coordinator-role-vendor` proves the installed Claude's role injection
+on startup, resume, clear, and after a real `/compact`, against a loopback fake API
+with fixture credentials. `make test-coordinator-role-native` exercises the built
+protected coordinator, scoped settings, and two wings on macOS; it has no provider
+account requirement.
+See [Claude's hook reference](https://code.claude.com/docs/en/hooks#sessionstart)
+for the `SessionStart` matcher and `additionalContext` contract.
+
 The protected parent mailbox currently requires macOS. An SSH worker wing can
 run on Linux with its supported sandbox. Install a compatible Wingthing build
 and authenticate the provider CLI on each execution machine beforehand. Each
