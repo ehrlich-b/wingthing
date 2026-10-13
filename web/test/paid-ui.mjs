@@ -5,7 +5,8 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { cards } from '../src/paid/cards.js';
-import { escape } from '../src/paid/view.js';
+import { createPaidState, applyPaidAction } from '../src/paid/model.js';
+import { escape, cardContent } from '../src/paid/view.js';
 async function runPaidUI() {
 const base = process.env.PAID_BASE_URL || 'http://127.0.0.1:18407';
 const defaultBase = process.env.PAID_DEFAULT_URL;
@@ -23,8 +24,9 @@ const screenshotMap = new Map();
 const errors=[], unexpected=[];
 const browser = await chromium.launch({headless:true,executablePath:process.env.PAID_CHROMIUM || undefined,args:['--disable-background-networking','--renderer-process-limit=2']});
 try {
- for (const viewport of [{width:1440,height:900},{width:390,height:844}]) {
-  const mobile=viewport.width===390;
+ for (const viewport of [{width:1440,height:900},{width:390,height:844},{width:430,height:932}]) {
+  const mobile=viewport.width<700;
+  const mid=viewport.width===430;
   const context=await browser.newContext({viewport,hasTouch:mobile,deviceScaleFactor:1,acceptDownloads:true});
   // Fulfill nothing: every application resource comes from the actual wt build.
   // Abort all non-loopback traffic and fail the run if the UI tries any.
@@ -41,19 +43,19 @@ try {
   const go=async (group,key)=>{
    if(mobile) await page.locator('#paid-route').selectOption(`#paid/${group}/${key}`);
    else { const nav=page.locator('.paid-nav details').filter({has:page.locator(`a[href="#paid/${group}/${key}"]`)}); if(!await nav.getAttribute('open')) { if(await nav.getAttribute('open')===null) await nav.locator('summary').click(); } await nav.locator(`a[href="#paid/${group}/${key}"]`).click(); }
-   const card=cards.find(c=>c.group===group&&c.key===key); await page.locator('h1').filter({hasText:card.title}).waitFor();
-   assert.equal(await page.locator('h1').innerText(),card.title);
+   const card=cards.find(c=>c.group===group&&c.key===key), title=cardContent(card,await state()).title||card.title; await page.locator('h1').filter({hasText:title}).waitFor();
+   assert.equal(await page.locator('h1').innerText(),title);
   };
   const reset=async profile=>{await page.locator('#paid-profile').selectOption(profile);await click('Reset selected fixture');};
   const capture=async (group,key)=>{
    const card=cards.find(c=>c.group===group&&c.key===key);
-   assert.equal(await page.locator('h1').innerText(),card.title);
+   assert.equal(await page.locator('h1').innerText(),cardContent(card,await state()).title||card.title);
    assert.ok(await page.getByText('Dormant · dev fixture',{exact:true}).isVisible());
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'no horizontal overflow');
    await page.evaluate(()=>window.scrollTo(0,0));
-   const path=resolve(shots,file(card,mobile));await page.screenshot({path,animations:'disabled'});
-   const record=screenshotMap.get(`${card.flow}-${card.card}`)||{card,desktop:null,mobile:null};record[mobile?'mobile':'desktop']=path;
-   if(await page.evaluate(()=>document.documentElement.scrollHeight>innerHeight)){const full=resolve(shots,file(card,mobile).replace('.png','-full.png'));await page.screenshot({path:full,fullPage:true,animations:'disabled'});record[mobile?'mobileFull':'desktopFull']=full;}
+   const path=resolve(shots,file(card,mobile).replace('.png',mid ? '-430.png' : '.png'));await page.screenshot({path,animations:'disabled'});
+   const record=screenshotMap.get(`${card.flow}-${card.card}`)||{card,desktop:null,mobile:null};record[mid?'mid':mobile?'mobile':'desktop']=path;
+   if(await page.evaluate(()=>document.documentElement.scrollHeight>innerHeight)){const full=resolve(shots,file(card,mobile).replace('.png',mid ? '-430-full.png' : '-full.png'));await page.screenshot({path:full,fullPage:true,animations:'disabled'});record[mid?'midFull':mobile?'mobileFull':'desktopFull']=full;}
    screenshotMap.set(`${card.flow}-${card.card}`,record);
   };
   const launch=async()=>{await go('cloud','launch');await click('Create fixture workspace');for(let i=0;i<4;i++)await click('Advance verified boot step');assert.equal((await state()).cloud.status,'ready');};
@@ -68,7 +70,17 @@ try {
   await go('upgrade','activation');await capture('upgrade','activation');
   await go('upgrade','manage');await click('Cancel renewal');assert.equal((await state()).pro,true);assert.equal((await state()).cancellation,true);await capture('upgrade','manage');
   await launch();await go('upgrade','downgrade');await click('Apply fixture expiry');assert.equal((await state()).cloud.status,'stopping');assert.deepEqual((await state()).localDeviceGrants,['fixture-local-wing']);await capture('upgrade','downgrade');
-  await reset('free');await go('upgrade','payment-pending');await click('Reuse pending checkout');await click('Simulate declined');await click('Simulate delayed');assert.equal((await state()).pro,false);assert.equal((await state()).cloud,null);await capture('upgrade','payment-pending');
+  await reset('free');
+  const paymentBase=applyPaidAction(createPaidState(),{op:'checkout',requestId:'checkout-1'});
+  const stage=async value=>{await page.evaluate(value=>sessionStorage.setItem('wingthing-dormant-paid-fixture-v1',JSON.stringify({state:value,profile:'free'})),value);await page.reload();await page.locator('#paid-root').waitFor();};
+  for(const outcome of ['pending','declined','abandoned']) {
+   const value=outcome==='pending'?paymentBase:applyPaidAction(paymentBase,{op:'payment',checkoutId:'checkout-1',eventId:outcome,outcome});
+   await stage(value);await go('upgrade','payment-pending');
+   if(outcome==='pending'){await click('Check payment');assert.equal((await state()).checkout.id,'checkout-1');assert.equal((await state()).paymentEvents.length,0);}
+   assert.equal((await state()).pro,false);assert.equal((await state()).cloud,null);
+   await page.screenshot({path:resolve(shots,`07-7-payment-${outcome}-${viewport.width}.png`),fullPage:true});
+  }
+  await stage(paymentBase);await go('upgrade','payment-pending');await capture('upgrade','payment-pending');
   await go('upgrade','owner');assert.equal(await page.getByRole('button',{name:'Record fixture owner grant',exact:true}).isDisabled(),true);await reset('operator');await click('Record fixture owner grant');assert.equal((await state()).audit.at(-1).reason,'Owner dogfood fixture');await capture('upgrade','owner');
   await reset('active');await go('cloud','terminal');await page.locator('[name="task"]').fill('Review pairing from terminal');await click('Save terminal-origin draft');assert.equal((await state()).cloud,null);await capture('cloud','terminal');
   await go('cloud','dashboard');await page.locator('[name="task"]').fill('Review pairing and open a PR');await click('Save dashboard draft');assert.equal((await state()).draft.task,'Review pairing and open a PR');await capture('cloud','dashboard');
@@ -101,7 +113,7 @@ try {
   await go('billing','invoices');await click('Finalize settled fixture invoice');assert.equal((await state()).invoice.status,'finalized');
   downloadPromise=page.waitForEvent('download');await click('Download fixture invoice');const invoice=await downloadPromise;assert.equal(invoice.suggestedFilename(),'dormant-fixture-invoice.json');const invoiceJSON=JSON.parse(await readFile(await invoice.path(),'utf8'));assert.equal(invoiceJSON.fixture,true);await capture('billing','invoices');
   await go('billing','notifications');await page.locator('[data-preference="attention"]').check();await click('Prepare support report');assert.equal((await state()).notifications.attention,true);assert.ok(!JSON.stringify((await state()).report).includes('DEPLOY_TOKEN'));await capture('billing','notifications');
-  await go('billing','payment-failed');await click('Simulate unpaid invoice');assert.equal((await state()).billingBlocked,true);await capture('billing','payment-failed');await click('Recover fixture payment method');assert.equal((await state()).accountCapCents,500);
+  await stage(applyPaidAction(await state(),{op:'billing-fail',invoiceId:'fixture-invoice-1'}));await go('billing','payment-failed');assert.equal((await state()).billingBlocked,true);await capture('billing','payment-failed');await click('Update payment method');assert.equal((await state()).accountCapCents,500);
   await go('billing','reconcile');await click('Mark meter stale');assert.equal((await state()).meterFresh,false);await capture('billing','reconcile');await click('Record fixture reconciliation');await click('Deduplicate finalized invoice');assert.equal((await state()).invoiceEvents.length,1);
   await go('teams','later');await page.locator('[name="role"]').selectOption('phone');await page.locator('[name="resource"]').selectOption('billing');await click('Review fixture resource access');assert.match((await state()).teamDecision,/denied/);await capture('teams','later');
   // The dormant route survives reload and browser back without entering terminal lifecycle.
@@ -124,7 +136,7 @@ try {
   assert.ok(desktop&&mobile);await appendFile(jsonl,JSON.stringify({flow:card.flow,card:card.card,title:card.title,status:'dormant',png:desktop,mobile_png:mobile,full_png:desktopFull || null,mobile_full_png:mobileFull || null,surface:'web',test:`web/test/paid/model.test.js (${String(card.flow).padStart(2,'0')}-${card.card}); make test-paid-ui`,commit,notes:'Real built wt local SPA; default-OFF development fixture; proposed prices; no payment/account/provider/VM calls. Phone viewport is web, not native iPhone.'})+'\n');
  }
  const supplementalScreenshots=[...screenshotMap.values()].reduce((n,v)=>n+Number(!!v.mobileFull)+Number(!!v.desktopFull),0);
- await writeFile(resolve(shots,'paid-browser-receipt.json'),JSON.stringify({commit,binarySha256,supplementalScreenshots,sourceThrough:'2026-10-11 storyboards; current fixture source',generatedAt:new Date().toISOString(),cards:36,screenshots:72,viewports:[{width:1440,height:900},{width:390,height:844}],defaultOffChecked:!!defaultBase,errors,unexpected,status:'passed'},null,2)+'\n');
+ await writeFile(resolve(shots,'paid-browser-receipt.json'),JSON.stringify({commit,binarySha256,supplementalScreenshots,sourceThrough:'2026-10-11 storyboards; current fixture source',generatedAt:new Date().toISOString(),cards:36,screenshots:108,viewports:[{width:1440,height:900},{width:390,height:844},{width:430,height:932}],defaultOffChecked:!!defaultBase,errors,unexpected,status:'passed'},null,2)+'\n');
  const gallery=resolve(shots,'paid.html');if(existsSync(gallery))await copyFile(gallery,gallery+'.bak-1012-'+new Date().toISOString().replace(/[^0-9]/g,'').slice(8,12));
  await writeFile(gallery,`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dormant paid UI review</title><style>body{font:15px/1.5 system-ui;background:#101713;color:#deeadf;max-width:1400px;margin:auto;padding:24px}a{color:#a5edbe}section{margin:24px 0;padding:20px;background:#19231c;border:1px solid #3c5142;border-radius:12px}img{max-width:100%;border:1px solid #3c5142}figure{margin:0}.shots{display:grid;grid-template-columns:3fr 1fr;gap:16px}small{color:#afc3b5}@media(max-width:700px){.shots{grid-template-columns:1fr}}</style><h1>36 dormant paid cards</h1><p>Real local wt build · 1440×900 and 390×844 · no money, accounts, providers or VMs.</p><p>Candidate <code>${commit}</code> · binary SHA256 <code>${binarySha256}</code></p><p>Fixture source through 2026-10-12T21:00:00Z; generated ${new Date().toISOString()}. Native iPhone / live payment / production cloud acceptance remain unrun.</p>${[...screenshotMap.values()].map(({card,desktopFull,mobileFull})=>`<section><h2>${escape(card.title)}</h2><p><small>Flow ${card.flow} · card ${card.card} · dormant · unit and Chromium journey passed</small></p><div class="shots"><figure><a href="${file(card)}"><img loading="lazy" src="${file(card)}" alt="${escape(card.title)} desktop"></a>${desktopFull?`<p><a href="${file(card).replace('.png','-full.png')}">Complete desktop page</a></p>`:''}</figure><figure><a href="${file(card,true)}"><img loading="lazy" src="${file(card,true)}" alt="${escape(card.title)} mobile web"></a>${mobileFull?`<p><a href="${file(card,true).replace('.png','-full.png')}">Complete mobile page</a></p>`:''}</figure></div></section>`).join('')}</html>`);
  console.log(JSON.stringify({status:'passed',cards:36,screenshots:72,supplementalScreenshots,defaultOffChecked:!!defaultBase,commit,manifest:jsonl}));

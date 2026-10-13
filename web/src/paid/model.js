@@ -54,7 +54,7 @@ export function createPaidState(scenario = 'free') {
         template: { id: 'fixture-template-1', approved: scenario !== 'unapproved-phone', size: 'standard', hours: 2, capCents: 0, coordinatorWingId: 'fixture-coordinator-wing', coordinatorSessionId: 'fixture-coordinator-session' },
         phoneRequest: null, phonePairedWings: ['fixture-local-wing', 'fixture-coordinator-wing'], localSessions: ['fixture-local-session'], localDeviceGrants: ['fixture-local-wing'],
         notifications: { budget: true, billing: true, workspace: true, attention: false }, report: null, deletionReview: false,
-        fault: null, audit: [], teamDecision: null, message: 'Dormant fixture. All amounts are proposed; no providers are connected.',
+        fault: null, audit: [], teamDecision: null, messageTone: 'info', message: 'Dormant fixture. All amounts are proposed; no providers are connected.',
     };
     return s;
 }
@@ -145,7 +145,7 @@ export function applyPaidAction(original, action) {
         s.message = 'Offer dismissed; your draft and local work remain available.'; break;
     case 'checkout':
         id(action.requestId); demand(!s.pro, 'Already entitled; no second subscription');
-        if (s.checkout && s.checkout.status !== 'abandoned') { s.message = 'Reusing the existing fixture checkout; no second subscription.'; break; }
+        if (s.checkout) { s.message = 'Existing checkout retained. Check its payment status before paying.'; break; }
         s.checkout = { id: action.requestId, status: 'pending', accountId: s.accountId };
         s.message = 'Fixture checkout handoff created. Waiting for a verified fixture payment event.'; break;
     case 'checkout-return': s.message = 'Return received; entitlement still depends on the verified payment event.'; break;
@@ -365,6 +365,7 @@ export function applyPaidAction(original, action) {
         s.teamDecision = action.tenant === 'sample-tenant' && !action.revoked && action.role !== 'phone' && (action.resource !== 'billing' || action.role === 'admin') ? 'allowed by explicit fixture resource role' : 'denied; live access must close';
         s.message = `Later team design: ${s.teamDecision}. Individual Pro does not include team seats.`; break;
     }
+    s.messageTone = actionTone(s, action);
     if (!op.startsWith('owner-') && op !== 'reconcile') audit(s, op);
     return s;
 }
@@ -378,4 +379,21 @@ export function fixtureDownload(s, kind) {
     }
     demand(kind === 'artifacts', 'Unknown artifact');
     return 'Dormant fixture artifact\nTest report: fixture contract exercised.\nPatch: review before applying.\nNo source, credentials or real provider results are included.\n';
+}
+
+function actionTone(s, action) {
+    const op = action.op;
+    if (op === 'billing-fail' || op === 'launch-fail' || op === 'fault') return 'error';
+    if (op === 'team-check') return s.teamDecision.startsWith('denied') ? 'error' : 'success';
+    if (['payment', 'checkout', 'checkout-return', 'payment-check'].includes(op)) {
+        return { pending: 'pending', declined: 'error', abandoned: 'warning', confirmed: 'success' }[s.checkout?.status] || 'info';
+    }
+    if (op === 'idle-check') return !s.cloud.active && s.cloud.idleMinutes >= TERMS.idleMinutes - TERMS.warningMinutes ? 'warning' : 'info';
+    if (op === 'stop-confirm') return s.meterFresh ? 'success' : 'warning';
+    if (op === 'reconcile') return s.meterFresh ? 'success' : 'pending';
+    if (op === 'launch-step') return s.cloud.status === 'ready' ? 'success' : 'pending';
+    if (['launch', 'launch-retry', 'resume', 'stop', 'phone-request'].includes(op)) return 'pending';
+    if (['expire', 'delete-review', 'cancel', 'owner-revoke'].includes(op)) return 'warning';
+    if (['attach', 'cloud-pair', 'git-clone', 'git-push', 'delete', 'billing-recover', 'invoice-finalize', 'owner-grant'].includes(op)) return 'success';
+    return 'info';
 }
