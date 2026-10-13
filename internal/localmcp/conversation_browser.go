@@ -31,7 +31,7 @@ type BrowserLaunchConfig struct {
 // access is checked independently before selecting a legacy session principal.
 func BrowserSessionControl(version string, ctx context.Context, cfg *config.Config, wc *config.WingConfig, req ws.TunnelRequest, operation string, arguments json.RawMessage, home string, sharedHost bool, launchConfig ...BrowserLaunchConfig) (map[string]any, error) {
 	switch operation {
-	case "session_inventory", "session_action", "session_fork", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "conversation_list", "conversation_bootstrap", "conversation_read", "conversation_checkpoint", "conversation_wake", "agent_start":
+	case "session_inventory", "session_action", "session_launch", "session_fork", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "conversation_list", "conversation_bootstrap", "conversation_read", "conversation_checkpoint", "conversation_wake", "agent_start":
 	default:
 		return nil, errors.New("unsupported browser session operation")
 	}
@@ -55,6 +55,11 @@ func BrowserSessionControl(version string, ctx context.Context, cfg *config.Conf
 	}
 	server.sessionBrowser = true
 	server.sessionRole = req.SenderOrgRole
+	if operation == "session_launch" {
+		// The local socket retains the same personal owner, client, passkey and
+		// path gates as paired-phone delegation, even for a local origin.
+		return OwnerFleetControl(ctx, server.Sessions, req.SenderUserID, operation, arguments)
+	}
 	if operation == "session_inventory" {
 		var selector inventoryArgs
 		if err := decodeStrict(arguments, &selector); err != nil {

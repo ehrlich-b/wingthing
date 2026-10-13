@@ -59,6 +59,7 @@ type SessionView struct {
 	Status            string `json:"status"`
 	StateSource       string `json:"state_source"`
 	StateCursor       int64  `json:"state_cursor"`
+	StateObservedAt   string `json:"state_observed_at,omitempty"`
 	Reason            string `json:"reason,omitempty"`
 	Ready             bool   `json:"ready"`
 	ProcessAlive      bool   `json:"process_alive"`
@@ -554,6 +555,7 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 			view.StateSource = event.Source
 			view.Reason = event.Reason
 			view.StateCursor = event.Sequence
+			view.StateObservedAt = event.Timestamp
 		}
 		if event.Source == "claude_hook" || event.Source == "codex_hook" {
 			if event.State != "" {
@@ -581,6 +583,7 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		view.StateSource = hookState.Source
 		view.Reason = hookState.Reason
 		view.StateCursor = hookState.Sequence
+		view.StateObservedAt = hookState.Timestamp
 	}
 	// Explicit stops and failures remain authoritative during native import.
 	processInterrupted := processEnded && (processEnd.State == "failed" || processEnd.State == "stopped")
@@ -592,6 +595,7 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 			view.StateSource = processEnd.Source
 			view.Reason = processEnd.Reason
 			view.StateCursor = processEnd.Sequence
+			view.StateObservedAt = processEnd.Timestamp
 		}
 		view.Ready = false
 		view.ProcessAlive = false
@@ -604,6 +608,7 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 			view.State = "working"
 			view.StateSource = "native_import"
 			view.StateCursor = 0
+			view.StateObservedAt = ""
 			view.Reason = "native lifecycle import has not reached the source head"
 		}
 	}
@@ -616,6 +621,7 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 	if agent != "claude" && hookState.Sequence == 0 && !processEnded {
 		view.State = "unknown"
 		view.StateSource = "unsupported"
+		view.StateObservedAt = ""
 		view.Ready = false
 		view.Reason = "provider has no native interactive lifecycle adapter"
 	}
@@ -624,6 +630,7 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		if !processEnded && !sessionEnded {
 			view.State = "unknown"
 			view.StateSource = "egg_process"
+			view.StateObservedAt = ""
 			view.Reason = "provider process unavailable without a recorded exit"
 		}
 	}
