@@ -390,7 +390,11 @@ func HandleTunnelRequest(refs References, ctx context.Context, cfg *config.Confi
 		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"sdp": answerSDP}, write)
 
 	case "sessions.inventory", "sessions.search":
-		result, err := localmcp.BrowserSessionControl(version, ctx, cfg, wingCfg, req, "session_inventory", inner.Arguments, home, sharedHost, localmcp.BrowserLaunchConfig{Sessions: refs.Sessions, PublicKey: req.SenderPub, AuthToken: inner.AuthToken})
+		operation := "session_inventory"
+		if inner.Type == "sessions.search" {
+			operation = "session_search"
+		}
+		result, err := localmcp.BrowserSessionControl(version, ctx, cfg, wingCfg, req, operation, inner.Arguments, home, sharedHost, localmcp.BrowserLaunchConfig{Sessions: refs.Sessions, PublicKey: req.SenderPub, AuthToken: inner.AuthToken})
 		if err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]any{"error": err.Error()}, write)
 			return

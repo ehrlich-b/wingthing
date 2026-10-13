@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -71,7 +72,14 @@ type SessionView struct {
 	Events         []SessionEvent `json:"events"`
 }
 
+type lifecycleReadBudget struct {
+	ctx             context.Context
+	remaining       *int64
+	sourceRemaining int64
+}
+
 type lifecycleJournal struct {
+	readBudget        *lifecycleReadBudget
 	root              *os.Root
 	lock, file        *os.File
 	events            []SessionEvent
@@ -83,12 +91,15 @@ func openLifecycleJournal(dir string) (*lifecycleJournal, error) {
 	return openLifecycleJournalWithLock(dir, unix.LOCK_EX)
 }
 
-func openLifecycleJournalWithLock(dir string, lockFlags int) (*lifecycleJournal, error) {
+func openLifecycleJournalWithLock(dir string, lockFlags int, budgets ...*lifecycleReadBudget) (*lifecycleJournal, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
 	}
 	j := &lifecycleJournal{root: root}
+	if len(budgets) > 0 {
+		j.readBudget = budgets[0]
+	}
 	fail := func(err error) (*lifecycleJournal, error) { j.close(); return nil, err }
 	j.lock, err = root.OpenFile("lifecycle.lock", os.O_CREATE|os.O_RDWR|unix.O_NOFOLLOW, 0600)
 	if err != nil {
@@ -101,7 +112,7 @@ func openLifecycleJournalWithLock(dir string, lockFlags int) (*lifecycleJournal,
 	if err != nil {
 		return fail(err)
 	}
-	r := bufio.NewReader(j.file)
+	r := bufio.NewReader(j.boundedReader(j.file))
 	var offset int64
 	for {
 		line, readErr := readLifecycleLine(r)
@@ -497,12 +508,12 @@ func TryReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID s
 	return readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID, processAlive, after, limit, unix.LOCK_EX|unix.LOCK_NB)
 }
 
-func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID string, processAlive bool, after int64, limit, lockFlags int) (SessionView, error) {
+func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID string, processAlive bool, after int64, limit, lockFlags int, budgets ...*lifecycleReadBudget) (SessionView, error) {
 	view := SessionView{SessionID: filepath.Base(eggDir), Agent: agent, ProviderSessionID: exactProviderID, State: "unknown", Status: "unknown", StateSource: "unsupported", ProcessAlive: processAlive, Events: []SessionEvent{}, Cursor: after, SourceComplete: true}
 	if after < 0 || limit < 1 || limit > 200 {
 		return view, errors.New("after_cursor must be non-negative and limit between 1 and 200")
 	}
-	j, err := openLifecycleJournalWithLock(eggDir, lockFlags)
+	j, err := openLifecycleJournalWithLock(eggDir, lockFlags, budgets...)
 	if err != nil {
 		return view, err
 	}
@@ -757,12 +768,20 @@ func (j *lifecycleJournal) importTranscript(root *os.File, eggDir, cwd, id strin
 		defer func() { _ = gz.Close() }()
 		reader = gz
 	}
-	if offset > 0 {
-		if _, err = io.CopyN(io.Discard, reader, offset); err != nil {
+	if offset > 0 && gz == nil && source != nil {
+		info, e := source.Stat()
+		if e != nil || info.Size() < offset {
+			return errors.New("provider transcript was truncated")
+		}
+		if _, err := source.Seek(offset, io.SeekStart); err != nil {
+			return err
+		}
+	} else if offset > 0 {
+		if _, err = io.CopyN(io.Discard, j.boundedReader(reader), offset); err != nil {
 			return fmt.Errorf("provider transcript was truncated: %w", err)
 		}
 	}
-	r := bufio.NewReader(reader)
+	r := bufio.NewReader(j.boundedReader(reader))
 	for count := 0; count < 500; count++ {
 		line, size, oversized, readErr := readNativeLifecycleLine(r)
 		if readErr == io.EOF && !oversized {
@@ -911,8 +930,16 @@ func (j *lifecycleJournal) importProviderHooks(root *os.File, spool, providerID,
 		return providerID, err
 	}
 	defer dir.Close()
-	entries, err := dir.ReadDir(-1)
-	if err != nil {
+	entryLimit := -1
+	if j.readBudget != nil {
+		entryLimit = 1001
+	}
+	entries, err := dir.ReadDir(entryLimit)
+	if j.readBudget != nil && len(entries) > 1000 {
+		entries = entries[:1000]
+		j.hooksPending = true
+	}
+	if err != nil && err != io.EOF {
 		return providerID, err
 	}
 	seen := map[string]bool{}
@@ -927,6 +954,11 @@ func (j *lifecycleJournal) importProviderHooks(root *os.File, spool, providerID,
 	}
 	var files []hookFile
 	for _, entry := range entries {
+		if j.readBudget != nil {
+			if err := j.readBudget.ctx.Err(); err != nil {
+				return providerID, err
+			}
+		}
 		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") && !seen["hook:"+entry.Name()] {
 			var stat unix.Stat_t
 			if err := unix.Fstatat(int(dir.Fd()), entry.Name(), &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
@@ -966,7 +998,7 @@ func (j *lifecycleJournal) importProviderHooks(root *os.File, spool, providerID,
 		e := SessionEvent{Source: source, SourceKey: "hook:" + file.name, ProviderSessionID: providerID, Timestamp: file.modified.UTC().Format(time.RFC3339Nano)}
 		var data []byte
 		if info.Size() <= maxLifecycleRecord {
-			data, err = io.ReadAll(io.LimitReader(f, maxLifecycleRecord+1))
+			data, err = io.ReadAll(j.boundedReader(io.LimitReader(f, maxLifecycleRecord+1)))
 		}
 		_ = f.Close()
 		if err != nil {

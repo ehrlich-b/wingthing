@@ -1,14 +1,13 @@
 package eggclient
 
 import (
-	"bufio"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,27 +15,63 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/fleet"
 	"github.com/ehrlich-b/wingthing/internal/sessionrole"
-	"golang.org/x/sys/unix"
+	"github.com/ehrlich-b/wingthing/internal/sessionsearch"
 )
 
 // SessionCatalog returns content-free search results after authority filtering.
-const catalogReadBudget = 32 << 20
-
 func SessionCatalog(ctx context.Context, cfg *config.Config, wingID, label, query string, owns func(LocalSession) bool) ([]fleet.Session, bool, error) {
 	if len(query) > 256 || len(strings.Fields(query)) > 8 {
 		return nil, false, errors.New("query must be at most 256 bytes and 8 words")
 	}
-	entries, err := os.ReadDir(filepath.Join(cfg.Dir, "eggs"))
+	eggs, err := os.Open(filepath.Join(cfg.Dir, "eggs"))
 	if errors.Is(err, os.ErrNotExist) {
 		return []fleet.Session{}, true, nil
 	}
 	if err != nil {
 		return nil, false, err
 	}
+	entries, err := eggs.ReadDir(1001)
+	_ = eggs.Close()
+	if err != nil && err != io.EOF {
+		return nil, false, err
+	}
+	directoryComplete := len(entries) <= 1000
+	if !directoryComplete {
+		entries = entries[:1000]
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	rows := []fleet.Session{}
-	complete := true
-	budget := int64(catalogReadBudget)
+	complete := directoryComplete
+	statusBudget := int64(sessionsearch.ReadBudget)
+	budget := int64(sessionsearch.ReadBudget)
+	var index *sessionsearch.Index
+	if strings.TrimSpace(query) != "" {
+		index, err = sessionsearch.Open(cfg.Dir)
+		if err != nil {
+			complete = false
+		} else {
+			defer index.Close()
+			if directoryComplete {
+				allIDs := []string{}
+				for _, entry := range entries {
+					if entry.IsDir() {
+						allIDs = append(allIDs, entry.Name())
+					}
+				}
+				if err := index.Prune(ctx, allIDs); err != nil {
+					complete = false
+				}
+			}
+		}
+	}
 	words := strings.Fields(strings.ToLower(query))
+	type candidate struct {
+		row    fleet.Session
+		found  []bool
+		fields map[string]bool
+	}
+	candidates := []candidate{}
+	ids := []string{}
 	now := time.Now()
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
@@ -66,20 +101,38 @@ func SessionCatalog(ctx context.Context, cfg *config.Config, wingID, label, quer
 		}
 		s.Status = "unknown"
 		importIncomplete := false
-		if view, e := tryLifecycleViewForSession(cfg, s); e == nil {
-			projectSessionLifecycle(&s, view)
-			importIncomplete = !view.SourceComplete
+		// Lifecycle projection imports native tails through the existing owner
+		// contract. Bound the journal it loads before invoking that importer.
+		canProject := true
+		if info, e := os.Lstat(filepath.Join(dir, "lifecycle.jsonl")); e == nil {
+			canProject = info.Mode().IsRegular() && info.Size() <= int64(sessionsearch.SourceBudget) && info.Size() <= statusBudget
+
+		} else if !errors.Is(e, os.ErrNotExist) {
+			canProject = false
+		}
+		if canProject {
+			if view, e := tryCatalogLifecycleView(ctx, cfg, s, &statusBudget); e == nil {
+				projectSessionLifecycle(&s, view)
+				importIncomplete = !view.SourceComplete
+			} else {
+				importIncomplete = true
+			}
 		} else {
 			importIncomplete = true
 		}
+
 		row := fleet.Session{Identity: fleet.Identity{OriginWingID: wingID, SessionID: s.ID}, MachineLabel: label, Name: s.Name, Agent: s.Agent, CWD: s.CWD, Status: s.Status, Live: live, Pinned: s.Pinned, Role: s.Role, NeedsAttention: s.State == "needs_input", Routes: []fleet.Route{}}
+		row.Agent = sessionsearch.Redact(row.Agent)
+		row.Name = sessionsearch.Redact(row.Name)
+		row.CWD = sessionsearch.Redact(row.CWD)
+		row.MachineLabel = sessionsearch.Redact(row.MachineLabel)
 		if s.Role == "coordinator" {
 			row.Presence = sessionrole.ReadPresence(dir, live, s.State, s.StateSource, now, s.StateObservedAt)
 		}
 		found := make([]bool, len(words))
 		fields := map[string]bool{}
 		match := func(value, field string) {
-			lower := strings.ToLower(value)
+			lower := strings.ToLower(sessionsearch.Redact(value))
 			for i, w := range words {
 				if strings.Contains(lower, w) {
 					found[i] = true
@@ -92,45 +145,76 @@ func SessionCatalog(ctx context.Context, cfg *config.Config, wingID, label, quer
 		match(s.Agent, "agent")
 		match(s.CWD, "repo")
 		match(label, "machine")
+		matchable := index != nil
 		if len(words) > 0 {
 			row.SearchIncomplete = importIncomplete
 			if importIncomplete {
 				complete = false
 			}
-			for _, name := range []string{"lifecycle.jsonl", "chat.jsonl.gz"} {
-				remaining := budget
-				if remaining <= 0 {
-					row.SearchIncomplete = true
-					complete = false
-					break
-				}
-				// Bound decompressed bytes as well as individual native records. Read only
-				// wing-owned journals/archives, never arbitrary provider home directories.
-				malformed := false
-				read, full, e := searchSessionFile(ctx, dir, name, min(remaining, int64(8<<20)), func(record []byte) {
-					var event egg.SessionEvent
-					if name == "lifecycle.jsonl" {
-						if json.Unmarshal(record, &event) == nil {
-							match(event.Text, "transcript")
-						} else {
-							malformed = true
+			if index == nil {
+				row.SearchIncomplete = true
+			} else {
+				for _, name := range []string{"lifecycle.jsonl", "chat.jsonl.gz"} {
+					full, e := index.Refresh(ctx, s.ID, dir, name, &budget, func(record []byte) (string, bool) {
+						if name == "lifecycle.jsonl" {
+							var event egg.SessionEvent
+							if json.Unmarshal(record, &event) != nil {
+								return "", false
+							}
+							if event.Truncated {
+								return "", false
+							}
+							if (event.Type == "message" || event.Type == "prompt_submitted") && (event.Role == "" || event.Role == "user" || event.Role == "assistant") {
+								return event.Text, true
+							}
+							return "", true
 						}
-					} else {
 						var value map[string]any
-						if json.Unmarshal(record, &value) == nil {
-							match(transcriptText(value), "transcript")
-						} else {
-							malformed = true
+						if json.Unmarshal(record, &value) != nil {
+							return "", false
+						}
+						return transcriptText(value), true
+					})
+					if e != nil || !full {
+						row.SearchIncomplete = true
+						if e != nil {
+							matchable = false
+							_ = index.Invalidate(ctx, s.ID, name)
 						}
 					}
-				})
-				budget -= read
-				if e != nil || !full || malformed {
-					row.SearchIncomplete = true
-					complete = false
 				}
+
+			}
+			if row.SearchIncomplete {
+				complete = false
 			}
 		}
+		candidates = append(candidates, candidate{row: row, found: found, fields: fields})
+		if matchable {
+			ids = append(ids, s.ID)
+		}
+	}
+	matches := map[string][]bool{}
+	matchError := false
+	if index != nil {
+		matches, err = index.MatchesMany(ctx, ids, words)
+		if err != nil {
+			complete = false
+			matchError = true
+		}
+	}
+	for _, candidate := range candidates {
+		row, found, fields := candidate.row, candidate.found, candidate.fields
+		if matchError {
+			row.SearchIncomplete = true
+		}
+		for n, hit := range matches[row.SessionID] {
+			if hit {
+				found[n] = true
+				fields["transcript"] = true
+			}
+		}
+
 		all := true
 		for _, v := range found {
 			all = all && v
@@ -159,56 +243,14 @@ func SessionCatalog(ctx context.Context, cfg *config.Config, wingID, label, quer
 	}
 	return rows, complete, nil
 }
-func searchSessionFile(ctx context.Context, dir, name string, limit int64, consume func([]byte)) (int64, bool, error) {
-	info, err := os.Lstat(filepath.Join(dir, name))
-	if errors.Is(err, os.ErrNotExist) {
-		return 0, true, nil
-	}
-	if err != nil {
-		return 0, false, err
-	}
-	if !info.Mode().IsRegular() {
-		return 0, false, errors.New("transcript is not a regular file")
-	}
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return 0, false, err
-	}
-	defer root.Close()
-	f, err := root.OpenFile(name, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
-	if err != nil {
-		return 0, false, err
-	}
-	defer f.Close()
-	actual, e := f.Stat()
-	if e != nil || !actual.Mode().IsRegular() {
-		return 0, false, errors.New("transcript is not a regular file")
-	}
-	var reader io.Reader = f
-	if strings.HasSuffix(name, ".gz") {
-		gz, e := gzip.NewReader(f)
-		if e != nil {
-			return 0, false, e
-		}
-		defer gz.Close()
-		reader = gz
-	}
-	limited := &io.LimitedReader{R: reader, N: limit + 1}
-	scanner := bufio.NewScanner(limited)
-	scanner.Buffer(make([]byte, 4096), 1<<20)
-	for scanner.Scan() {
-		if err := ctx.Err(); err != nil {
-			return limit + 1 - limited.N, false, err
-		}
-		consume(scanner.Bytes())
-	}
-	read := limit + 1 - limited.N
-	return read, read <= limit && scanner.Err() == nil, scanner.Err()
-}
 
 // Only human/assistant text fields from archived provider records are searched;
 // tool payloads, credentials and terminal escape bytes are not searchable text.
 func transcriptText(v map[string]any) string {
+	typeName, _ := v["type"].(string)
+	if typeName != "user" && typeName != "assistant" && typeName != "message" && typeName != "response_item" {
+		return ""
+	}
 	if text, ok := v["text"].(string); ok {
 		return text
 	}
@@ -228,6 +270,9 @@ func contentText(v any) string {
 	if items, ok := v.([]any); ok {
 		for _, item := range items {
 			if m, ok := item.(map[string]any); ok {
+				if kind, _ := m["type"].(string); kind != "text" && kind != "input_text" && kind != "output_text" {
+					continue
+				}
 				if text, ok := m["text"].(string); ok {
 					b.WriteString(text)
 					b.WriteByte('\n')

@@ -14,6 +14,7 @@
     <link rel="manifest" href="%BASE_URL%manifest.json">
     <link rel="stylesheet" href="style.css">
     <title>wingthing</title>
+<link rel="stylesheet" href="src/session-search.css">
 </head>
 <body>
     <div id="app">
@@ -102,6 +103,15 @@
                     <div class="direct-agent-command"><code>claude mcp add --scope user wingthing -- wt mcp connect --client claude</code><button data-copy-command="claude mcp add --scope user wingthing -- wt mcp connect --client claude">copy</button></div>
                     <p class="hint">On each machine you want to manage, run <code>wt login</code> and <code>wt start</code>. Keep both peers on the same LAN or tailnet for the first direct release. Pro includes the hosted browser terminal and control relay. The native connector never silently changes from direct transport to relay transport.</p>
                 </div>
+                <section class="session-search" aria-label="Search sessions everywhere">
+                    <form id="session-search-form">
+                        <label for="session-search-input">Search sessions everywhere</label>
+                        <div class="search-input-row"><input id="session-search-input" type="search" maxlength="256" placeholder="Name, repo, machine, agent or transcript" autocomplete="off"><button type="submit">Search</button></div>
+                    </form>
+                    <p id="session-search-status" role="status" aria-live="polite"></p>
+                    <div id="session-search-results" hidden></div>
+                    <pre id="session-search-transcript" aria-label="Session transcript" hidden></pre>
+                </section>
                 <div id="wing-status"></div>
                 <section id="conversation-inventory" aria-label="Conversations"></section>
                 <div id="sessions-list"></div>
