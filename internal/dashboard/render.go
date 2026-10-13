@@ -79,6 +79,10 @@ func rowText(r row, width int, seconds int64) string {
 		status += "*"
 	}
 
+	if r.Pinned {
+		return "  " + status + " " + clip(r.name(), max(0, width-3-runewidth.StringWidth(status)))
+	}
+
 	// All columns remain available at 40 cells. Smaller terminals truncate the
 	// compact row; the status and name are always the first visible fields.
 	available := max(0, width-3-runewidth.StringWidth(status))
@@ -144,6 +148,25 @@ func render(s *state, width, height int, now time.Time) string {
 	}
 	var body []viewLine
 	selectedLine := 0
+	for _, r := range rows {
+		if !r.Pinned {
+			continue
+		}
+		if len(body) == 0 {
+			body = append(body, viewLine{text: "Pinned"})
+		}
+		m := s.machines[r.machine]
+		suffix := " @ " + clean(r.machine)
+		if m.err != "" || (r.machine != "local" && s.registryError != "") {
+			suffix += " stale"
+		}
+		line := viewLine{text: rowText(r, max(0, width-len(suffix)), r.UptimeSecs) + suffix, selected: r.key() == s.selected}
+		if line.selected {
+			selectedLine = len(body)
+			line.text = ">" + line.text[1:]
+		}
+		body = append(body, line)
+	}
 	for _, name := range names {
 		if s.machineFilter != "" && name != s.machineFilter {
 			continue
@@ -160,6 +183,10 @@ func render(s *state, width, height int, now time.Time) string {
 		project, found := "", false
 		for _, r := range rows {
 			if r.machine != name {
+				continue
+			}
+			if r.Pinned {
+				found = true
 				continue
 			}
 			found = true

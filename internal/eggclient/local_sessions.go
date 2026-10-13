@@ -22,6 +22,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/procinfo"
+	"github.com/ehrlich-b/wingthing/internal/sessionrole"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -44,6 +45,7 @@ var ErrSessionNameInUse = control.ErrSessionNameInUse
 
 type LocalSession struct {
 	ConversationLink
+	sessionrole.Metadata
 	ID               string `json:"id"`
 	Name             string `json:"name,omitempty"`
 	Principal        string `json:"principal,omitempty"`
@@ -238,6 +240,10 @@ func DiscoverSessionRefs(cfg *config.Config) ([]LocalSession, error) {
 			}
 		}
 
+		s.Metadata, err = sessionrole.Read(dir)
+		if err != nil {
+			return nil, fmt.Errorf("read role for session %s: %w", sessionID, err)
+		}
 		sessions = append(sessions, s)
 	}
 	sortLocalSessions(sessions)
@@ -272,6 +278,9 @@ func WriteSessionPrincipal(dir, principal string) error {
 func sortLocalSessions(sessions []LocalSession) {
 	sort.Slice(sessions, func(i, j int) bool {
 		left, right := sessions[i], sessions[j]
+		if left.Pinned != right.Pinned {
+			return left.Pinned
+		}
 		if left.Name != "" && right.Name == "" {
 			return true
 		}
@@ -581,4 +590,24 @@ func WaitForSessionText(ctx context.Context, cfg *config.Config, ref, needle str
 			return LocalSession{}, fmt.Errorf("session %s exited before producing %q", session.ID, needle)
 		}
 	}
+}
+
+// SetSessionPinned shares the metadata lock with names and other pin writers.
+// Adapters must resolve and authorize the exact session before calling it.
+func SetSessionPinned(cfg *config.Config, sessionID string, pinned bool) (sessionrole.Metadata, error) {
+	if err := ValidateSessionID(sessionID); err != nil {
+		return sessionrole.Metadata{}, err
+	}
+	lock, err := AcquireSessionNameLock(cfg)
+	if err != nil {
+		return sessionrole.Metadata{}, err
+	}
+	defer lock.Close()
+	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
+	m, err := sessionrole.Read(dir)
+	if err != nil {
+		return m, err
+	}
+	m.Pinned = pinned
+	return m, sessionrole.Write(dir, m)
 }

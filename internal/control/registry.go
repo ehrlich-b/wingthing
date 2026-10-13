@@ -390,6 +390,7 @@ func buildTools() []Tool {
 				"cwd":                    stringProperty("Working directory; defaults to the MCP server's current directory"),
 				"label":                  stringProperty("Optional stable human-readable session label"),
 				"unattended":             map[string]any{"type": "boolean", "description": "Enable the agent's unattended permission mode", "default": false},
+				"role":                   stringProperty("Pinned Claude role; requires scoped_mcp and reads roles/<role>.md on the owning wing"),
 				"scoped_mcp":             map[string]any{"type": "boolean", "description": "Inject one wing-owned scoped mailbox into a sandboxed Claude parent"},
 				"conversation_role":      map[string]any{"type": "string", "enum": []string{"parent", "child"}, "description": "Create a persistent personal conversation; Claude currently supported"},
 				"parent_conversation_id": stringProperty("Owned logical parent conversation ID; inherited by conversation-bound MCP connections"),
@@ -498,6 +499,15 @@ func buildTools() []Tool {
 				"run_id": stringProperty("Wingthing agent run ID"),
 			}, "run_id"), Annotations: destructive,
 			Grant: "agent.stop", Surfaces: both, AuditTargetKeys: []string{"run_id"},
+		},
+		{
+			Name: "session_pin", Title: "Pin persistent session",
+			Description: "Pin or unpin an owned session in fleet inventories without changing its role or permissions.",
+			InputSchema: objectSchema(map[string]any{
+				"session": stringProperty("Owned session ID or label"),
+				"pinned":  map[string]any{"type": "boolean"},
+			}, "session", "pinned"), Annotations: mutating,
+			Grant: "terminal.rename", Surfaces: both, AuditTargetKeys: []string{"session"},
 		},
 		{
 			Name: "terminal_rename", Title: "Rename persistent terminal",
