@@ -46,7 +46,7 @@ func (h *phoneSessions) Execute(ctx context.Context, connection, op, id, input s
 	switch op {
 	case "fleet_attach", "fleet_read", "fleet_input":
 		return h.executeFleetAttachment(ctx, connection, op, input)
-	case "inventory", "search", "action":
+	case "inventory", "search", "action", "launch":
 		operation := "session_inventory"
 		arguments := json.RawMessage(input)
 		if len(arguments) == 0 {
@@ -54,6 +54,9 @@ func (h *phoneSessions) Execute(ctx context.Context, connection, op, id, input s
 		}
 		if op == "action" {
 			operation = "session_action"
+		}
+		if op == "launch" {
+			operation = "session_launch"
 		}
 		return localmcp.OwnerFleetControl(ctx, h.service, h.owner, operation, arguments)
 	case "sessions":

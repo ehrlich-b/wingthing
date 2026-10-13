@@ -36,7 +36,7 @@ func RecordPresence(dir string, p fleet.Presence, now time.Time) error {
 	}
 	return daemonctl.WriteAtomicMetadataFile(filepath.Join(dir, presenceFile), data, 0600)
 }
-func ReadPresence(dir string, live bool, state, source string, now time.Time) *fleet.Presence {
+func ReadPresence(dir string, live bool, state, source string, now time.Time, stateObservedAt ...string) *fleet.Presence {
 	p := &fleet.Presence{State: "unknown", Source: "missing", Stale: true}
 	f, err := openRegular(filepath.Join(dir, presenceFile))
 	if err == nil {
@@ -61,14 +61,20 @@ func ReadPresence(dir string, live bool, state, source string, now time.Time) *f
 		return p
 	}
 	if p.Source == "missing" && (source == "claude_hook" || source == "codex_hook") {
+		p.Source = "native_lifecycle"
+		if len(stateObservedAt) > 0 {
+			p.ObservedAt = stateObservedAt[0]
+		}
+		at, err := time.Parse(time.RFC3339Nano, p.ObservedAt)
+		p.Stale = err != nil || at.After(now) || now.Sub(at) > 2*time.Minute
+		if p.Stale {
+			return p
+		}
 		if state == "working" || state == "starting" {
 			p.State = "awake"
 		} else if state == "idle" {
 			p.State = "asleep"
 		}
-		p.Source = "native_lifecycle"
-		p.ObservedAt = now.UTC().Format(time.RFC3339Nano)
-		p.Stale = false
 	}
 	return p
 }
