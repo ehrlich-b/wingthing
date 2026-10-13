@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/sessionsearch"
 )
 
 func catalogFixture(t *testing.T, cfg *config.Config, id, name, agent, content string) {
@@ -76,5 +77,46 @@ func TestSessionCatalogMalformedRecordReportsIncomplete(t *testing.T) {
 	rows, complete, e := SessionCatalog(t.Context(), cfg, "origin", "machine", "visible", nil)
 	if e != nil || complete || len(rows) != 1 || !rows[0].SearchIncomplete {
 		t.Fatalf("malformed data claimed complete: %+v %t %v", rows, complete, e)
+	}
+}
+
+func TestSessionSearchCatalogNativePromptAndRemovedSessionPrivacy(t *testing.T) {
+	cfg := &config.Config{Dir: t.TempDir()}
+	catalogFixture(t, cfg, "prompt-session", "visible", "unsupported", `{"sequence":1,"type":"prompt_submitted","source":"codex_hook","text":"please repair native DNS helper"}`+"\n")
+	rows, full, err := SessionCatalog(t.Context(), cfg, "origin", "Laptop", "native DNS", nil)
+	if err != nil || !full || len(rows) != 1 {
+		t.Fatalf("native user prompt: %+v %t %v", rows, full, err)
+	}
+	if err := os.RemoveAll(filepath.Join(cfg.Dir, "eggs", "prompt-session")); err != nil {
+		t.Fatal(err)
+	}
+	rows, full, err = SessionCatalog(t.Context(), cfg, "origin", "Laptop", "native DNS", nil)
+	if err != nil || !full || len(rows) != 0 {
+		t.Fatalf("deleted session survived index: %+v %t %v", rows, full, err)
+	}
+	index, err := sessionsearch.Open(cfg.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer index.Close()
+	matches, err := index.Matches(t.Context(), "prompt-session", []string{"native"})
+	if err != nil || matches[0] {
+		t.Fatal("deleted cached content survived", err)
+	}
+}
+
+func TestSessionSearchCatalogLongNamesPathsAndTranscriptRemainSearchable(t *testing.T) {
+	cfg := &config.Config{Dir: t.TempDir()}
+	path := "/home/example/projects/a-long-public-repository-path"
+	name := "a-long-human-session-name-for-the-project"
+	catalogFixture(t, cfg, "session", name, "unsupported", `{"sequence":1,"type":"message","source":"native_import","role":"assistant","text":"Changed /home/example/projects/a-long-public-repository-path. Commit aabbccddeeff0011223344556677889900112233445566778899."}`+"\n")
+	if err := os.WriteFile(filepath.Join(cfg.Dir, "eggs", "session", "egg.meta"), []byte("agent=unsupported\ncwd="+path+"\nprovider_home="+cfg.Dir+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{"public-repository", "human-session", "aabbccddeeff"} {
+		rows, full, err := SessionCatalog(t.Context(), cfg, "origin", "Laptop", query, nil)
+		if err != nil || !full || len(rows) != 1 || rows[0].CWD != path || rows[0].Name != name {
+			t.Fatalf("ordinary metadata/text was redacted: q=%q rows=%+v full=%t err=%v", query, rows, full, err)
+		}
 	}
 }

@@ -1,4 +1,5 @@
 import { S, DOM, TERM_THUMB_PREFIX } from './state.js';
+import { initSessionSearch } from './session-search.js';
 import { escapeHtml, wingDisplayName, shortenPath, projectName, sessionDisplayName, validSessionName, formatRelativeTime, semverCompare, nestedRepoCount, agentIcon, agentWithIcon, dirParent, setupCopyable } from './helpers.js';
 import { identityPubKey } from './crypto.js';
 import { sendTunnelRequest, tunnelCloseWing } from './tunnel.js';
@@ -2495,6 +2496,7 @@ export function renderDashboard() {
 
     renderChannelBanner();
     renderSessionInventory();
+    initSessionSearch();
 }
 
 function visibleInventorySessions() {

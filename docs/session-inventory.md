@@ -1,10 +1,19 @@
 # Qualified personal session inventory
 
+`wt search 'DNS helper' --json` searches every verified configured personal remote
+by default; use `--local` for only this wing. MCP `session_search` takes required
+`query` and optional `include_remotes` (default true). The home dashboard has the
+same search across authorized connected wings and explicitly delegated remotes,
+with origin IDs, route chips, coverage status and a qualified transcript reader.
+Browser tunnels keep remote delegation explicit; disabled fleet delegation still
+permits local search and marks remote coverage incomplete.
+
 `wt session inventory --remotes --query 'DNS helper' --json` searches live and
 archived sessions through the running personal wing. `session_inventory` exposes
 the same contract through MCP. `query` matches all words across session name,
 repository path, machine label, provider and recorded transcript text. The wing
-checks session ownership and path scope before reading content. The response
+checks session ownership and path scope before reading content. The [incremental search index](session-search.md) refreshes changed sources and
+redacts recognized credentials before indexing or matching metadata. The response
 contains match field names, never transcript snippets or raw provider records.
 
 Inventories use version `wingthing.session-inventory.v1`. The top-level `wing_id`
@@ -39,8 +48,10 @@ arguments omit `session`; names and prefixes are refused. The result includes th
 selected route and execution identity. Controller and execution wing both check
 the underlying operation grant. Current saved pins, ownership, path, passkey and
 writer gates still apply. A forwarded action cannot recursively route onward.
-Provider launch and a typed approval protocol remain separate runtime
-capabilities. Qualified live phone attachment uses the same authenticated
+Qualified launch uses the existing runtime capabilities described below. A
+typed provider approval protocol remains unavailable; terminal input does not
+establish delivery to an exact pending approval request.
+Qualified live phone attachment uses the same authenticated
 wing-control stream as the CLI, as described below.
 
 Only explicitly configured, verified personal remotes participate. Configure
@@ -54,8 +65,35 @@ Paired phone commands retain their encrypted carrier, authentication and sequenc
 checks. Use `op: "inventory"` or `"search"`, with `input` holding JSON
 `{"query":"...","include_remotes":true}`. Use `op: "action"`, with `input` holding
 `{"origin_wing_id":"...","session_id":"...","operation":"session_read","arguments":{}}`.
+`wt session launch --wing <origin> --operation terminal_start
+--arguments '{"command":["/bin/sh"],"cwd":"/personal/project"}' --json`
+and MCP `session_launch` start a new session on an explicit personal origin.
+Use `terminal_start` or `agent_start` with their existing argument schemas.
+The execution wing chooses its launch policy, workspace, credentials and durable
+state; nothing is copied between wings. The response contains the exact newly
+created `session_id`, `origin_wing_id`, selected route and underlying result.
+Verified saved pins and both endpoints' launch grants, path restrictions,
+session quotas, passkey and sandbox checks still apply. Organization/shared
+wings and conversation-bound connections cannot use qualified launch.
+Continuation through `resume_session` is refused by this new-session operation.
+One route is dispatched once; no automatic retry or alternate-origin launch
+occurs after a lost response. Plain terminal and unlinked agent launches do not
+promise idempotency: inspect the origin inventory before deliberately retrying.
+Linked conversation launches retain their existing exact `request_id` receipt
+contract. A phone may select a different healthy endpoint before dispatch.
+
+Paired phones use `op: "launch"` with `input` holding JSON
+`{"origin_wing_id":"...","operation":"terminal_start","arguments":{}}`.
+Phone/browser `agent_start` launches preserve the existing linked-personal-
+conversation requirement; supported providers remain those of that underlying
+capability. Unlinked provider launch is available through the qualified CLI/MCP
+surface, within its own authority.
 Encrypted browser tunnels use `sessions.inventory` / `sessions.search` with
 `arguments` and `session.control` with `operation: "session_action"`.
+Use `session.control` with `operation: "session_launch"` for qualified launch;
+this owner-bound personal path preserves socket client and passkey restrictions
+even when the origin is local. An existing browser passkey token does not bypass
+the socket path's unavailable MCP passkey ceremony.
 Live phone terminal commands are `fleet_attach`, `fleet_read` and `fleet_input`.
 Each `input` envelope includes `origin_wing_id` and the full `session_id`.
 Attach additionally accepts `read_only` or explicit `takeover`; input additionally
@@ -100,7 +138,10 @@ observation time and staleness. `wt session heartbeat <full-id> --state asleep
 presence on an owned coordinator role session. It records data and never installs
 or arms timers. Missing evidence is unknown; records older than 120 seconds are
 stale/unknown; absent active egg process identity reports dead/unavailable while
-retaining wake times. Native working/idle states are an explicitly labeled fallback.
+retaining wake times. Native working/idle states are an explicitly labeled fallback
+that retains the state-defining event's timestamp. Missing, invalid, future or
+older-than-120-second native timestamps produce stale/unknown presence. Reading
+an inventory or a newer transcript message never refreshes old native evidence.
 
 Search covers Wingthing-managed sessions and wing journals plus archived chat,
 not unrelated vendor sessions that were never imported. Reads are bounded to

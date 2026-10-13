@@ -36,6 +36,7 @@ Available Commands:
   run-inspect  Explain a completed offline state snapshot without contacting a wing
   sandbox      Run an agent in a sandboxed session
   schedule     Manage recurring tasks
+  search       Search live and past sessions across local and configured personal wings
   session      Inspect and automate persistent terminal sessions
   setup        Detect local agents and show their user-terminal setup commands
   start        Start the daemon (alias for wt wing start / wt daemon start)

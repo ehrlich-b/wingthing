@@ -294,6 +294,12 @@ func buildTools() []Tool {
 			Grant: "terminal.read", Surfaces: both,
 		},
 		{
+			Name: "session_search", Title: "Search sessions everywhere",
+			Description: "Search authorized live and past sessions by name, repo, machine, agent or redacted transcript text using the wing's incremental index. Returns exact origin/session IDs, routes and incomplete coverage. Includes verified personal remotes by default; set include_remotes=false for local or scoped access. No transcript snippets or recursive fanout.",
+			InputSchema: objectSchema(map[string]any{"query": map[string]any{"type": "string", "minLength": 1, "maxLength": 256}, "include_remotes": map[string]any{"type": "boolean", "default": true}}, "query"), Annotations: readOnly,
+			Grant: "terminal.read", Surfaces: both,
+		},
+		{
 			Name: "session_action", Title: "Act on an exact qualified session",
 			Description: "Route one operation to an exact (origin_wing_id, session_id). Rechecks current verified routes and underlying operation grants. Never replays a dispatched action after transport failure; reconcile the original request. Uses existing ownership, path, passkey and writer gates.",
 			InputSchema: objectSchema(map[string]any{
@@ -303,6 +309,17 @@ func buildTools() []Tool {
 				"local_only": map[string]any{"type": "boolean", "default": false},
 			}, "origin_wing_id", "session_id", "operation"), Annotations: destructive,
 			Grant: "terminal.read", Surfaces: both, AuditTargetKeys: []string{"origin_wing_id", "session_id"},
+		},
+		{
+			Name: "session_launch", Title: "Launch on an explicit personal wing",
+			Description: "Start one terminal or agent on an explicit origin_wing_id through existing launch policy, quotas and grants. Uses a verified saved route, never recursive routing or automatic retry. Transport failure may mean the launch succeeded; inspect the origin inventory before deliberately retrying. Existing linked-conversation request IDs retain their native retry contract.",
+			InputSchema: objectSchema(map[string]any{
+				"origin_wing_id": stringProperty("Stable execution wing ID"),
+				"operation":      map[string]any{"type": "string", "enum": []string{"terminal_start", "agent_start"}},
+				"arguments":      map[string]any{"type": "object", "description": "Existing launch arguments; cwd refers to a path on the execution wing"},
+				"local_only":     map[string]any{"type": "boolean", "default": false},
+			}, "origin_wing_id", "operation"), Annotations: modelCall,
+			Grant: "terminal.start", Surfaces: both, AuditTargetKeys: []string{"origin_wing_id", "session_id"},
 		},
 		{
 			Name: "coordinator_heartbeat", Title: "Record coordinator presence",

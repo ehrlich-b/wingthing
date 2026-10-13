@@ -31,6 +31,7 @@ func sessionCmd() *cobra.Command {
 	cmd.AddCommand(sessionInventoryCmd())
 	cmd.AddCommand(sessionMergeCmd())
 	cmd.AddCommand(sessionActionCmd())
+	cmd.AddCommand(sessionLaunchCmd())
 	cmd.AddCommand(sessionHeartbeatCmd())
 	cmd.AddCommand(sessionSyncCmd())
 	cmd.AddCommand(sessionListCmd())

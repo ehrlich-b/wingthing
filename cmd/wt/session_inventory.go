@@ -167,6 +167,42 @@ func sessionActionCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonFlag, "json", false, "print machine-readable JSON")
 	return cmd
 }
+func sessionLaunchCmd() *cobra.Command {
+	var origin, operation, arguments string
+	var jsonFlag bool
+	cmd := &cobra.Command{Use: "launch", Short: "Start one session on an explicit personal wing", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		raw, err := json.Marshal(map[string]any{"origin_wing_id": origin, "operation": operation, "arguments": json.RawMessage(arguments)})
+		if err != nil {
+			return err
+		}
+		result, err := localmcp.CallLocalWingTool(cmd.Context(), cfg.Dir, "", "session_launch", raw)
+		if err != nil {
+			return err
+		}
+		if !jsonFlag {
+			data, _ := json.Marshal(result["route"])
+			var route fleet.Route
+			_ = json.Unmarshal(data, &route)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s / %s\nLaunched %s · route %s", origin, result["session_id"], operation, route.Kind)
+			if route.Kind == "via" {
+				fmt.Fprintf(cmd.OutOrStdout(), " %s", route.MachineLabel)
+			}
+			fmt.Fprintln(cmd.OutOrStdout())
+			return nil
+		}
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+	}}
+	cmd.Flags().StringVar(&origin, "wing", "", "execution origin wing ID")
+	cmd.Flags().StringVar(&operation, "operation", "terminal_start", "terminal_start or agent_start")
+	cmd.Flags().StringVar(&arguments, "arguments", "{}", "existing launch arguments as JSON; cwd is on the execution wing")
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "print machine-readable JSON")
+	return cmd
+}
+
 func sessionHeartbeatCmd() *cobra.Command {
 	var state, last, next, note string
 	var jsonFlag bool

@@ -17,7 +17,6 @@ import (
 	"github.com/creack/pty"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
-	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/fleet"
@@ -73,6 +72,11 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 	remoteState := testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))
 	previewState := testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))
 	path := h.Root + string(os.PathListSeparator) + os.Getenv("PATH")
+	// The agent launch uses a fixture executable ahead of all installed provider
+	// CLIs. It proves launch argv/runtime routing without any model request.
+	if err := os.WriteFile(filepath.Join(h.Root, "codex"), []byte("#!/bin/sh\nprintf 'fixture agent terminal ready\\n'\nexec /bin/cat\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
 	environment := func(state string) []string {
 		return []string{"HOME=" + home, "WINGTHING_DIR=" + state, "PATH=" + path, "SHELL=/bin/sh", "TERM=xterm-256color", "WT_FAKE_SSH_ROOT=" + h.Root}
 	}
@@ -188,7 +192,7 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 			files["egg.pid"] = fmt.Sprint(os.Getpid())
 		}
 		if coordinator {
-			files["lifecycle.jsonl"] += `{"sequence":2,"type":"session_ready","state":"needs_input","source":"codex_hook","reason":"input needed"}` + "\n"
+			files["lifecycle.jsonl"] += `{"sequence":2,"type":"session_ready","state":"working","source":"codex_hook","timestamp":"` + time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano) + `","reason":"native work started"}` + "\n"
 			if e = sessionrole.Write(dir, sessionrole.Metadata{Role: "coordinator", Pinned: true}); e != nil {
 				t.Fatal(e)
 			}
@@ -251,6 +255,13 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 		}
 		return inv
 	}
+	oldEvidence := parse(must(remoteState, "", "session", "inventory", "--json"))
+	for _, row := range oldEvidence.Sessions {
+		if row.Role == "coordinator" && (row.Presence == nil || row.Presence.State != "unknown" || !row.Presence.Stale || row.Presence.ObservedAt == "") {
+			t.Fatal("built inventory refreshed old native hook")
+		}
+	}
+	must(remoteState, "native-stale", "session", "inventory")
 	must(remoteState, "heartbeat", "session", "heartbeat", "same-short-id", "--state", "asleep", "--last-wake", time.Now().UTC().Add(-time.Minute).Format(time.RFC3339), "--next-wake", time.Now().UTC().Add(time.Hour).Format(time.RFC3339), "--last-note", time.Now().UTC().Add(-30*time.Second).Format(time.RFC3339), "--json")
 	must(macState, "open", "session", "inventory")
 	combined := must(macState, "", "session", "inventory", "--remotes", "--json")
@@ -262,11 +273,22 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 		t.Fatalf("built merge: %+v", merged)
 	}
 	must(macState, "fleet", "session", "inventory", "--remotes")
-	must(macState, "search", "session", "inventory", "--remotes", "--query", "DNS helper")
-	searched := parse(must(macState, "", "session", "inventory", "--remotes", "--query", "DNS helper", "--json"))
+	must(macState, "search", "search", "DNS helper")
+	searched := parse(must(macState, "", "search", "DNS helper", "--json"))
 	if len(searched.Sessions) != 1 || searched.Sessions[0].SessionID != "past-dns-run" || searched.Sessions[0].Live {
 		t.Fatalf("archive search: %+v", searched)
 	}
+	localSearch := parse(must(macState, "", "search", "DNS helper", "--local", "--json"))
+	if !localSearch.Complete || len(localSearch.Sessions) != 0 {
+		t.Fatalf("local search crossed origin: %+v", localSearch)
+	}
+	for _, origin := range []string{macState, remoteState} {
+		collisions := parse(must(origin, "", "search", "codex", "--json"))
+		if origin == macState && (len(collisions.Sessions) != 2 || collisions.Sessions[0].OriginWingID == collisions.Sessions[1].OriginWingID) {
+			t.Fatalf("search conflated overlapping IDs: %+v", collisions)
+		}
+	}
+
 	must(macState, "steer", "session", "action", "--wing", remoteMeta.WingID, "--session", "past-dns-run", "--operation", "session_read", "--arguments", `{"limit":1}`)
 	must(macState, "rename", "session", "action", "--wing", remoteMeta.WingID, "--session", "same-short-id", "--operation", "terminal_rename", "--arguments", `{"name":"wing-renamed"}`)
 	if eggclient.ReadSessionName(filepath.Join(macState, "eggs", "same-short-id")) != "local-run" || eggclient.ReadSessionName(filepath.Join(remoteState, "eggs", "same-short-id")) != "wing-renamed" {
@@ -277,6 +299,9 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 	}
 	// A finite provider-free real egg validates stop delivery and process exit.
 	// This fixture explicitly selects the outer host boundary, not a sandbox claim.
+	if err := os.WriteFile(filepath.Join(previewState, "egg.yaml"), []byte("isolation: privileged\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	start(previewState, "forge", peerBinary)
 	writerMeta, err := sshcontrol.InspectLocal(t.Context(), previewState, "")
 	if err != nil {
@@ -295,21 +320,35 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 	if err := config.SaveRemotes(macState, expanded); err != nil {
 		t.Fatal(err)
 	}
-	controlClient, err := controlsocket.Dial(t.Context(), previewState, controlsocket.Hello{Unsandboxed: true})
-	if err != nil {
+	startArgs, _ := json.Marshal(map[string]any{"command": []string{"/bin/cat"}, "cwd": home})
+	startOutput := must(macState, "launch", "session", "launch", "--wing", writerMeta.WingID, "--operation", "terminal_start", "--arguments", string(startArgs), "--json")
+	var started map[string]any
+	if err := json.Unmarshal(startOutput, &started); err != nil {
 		t.Fatal(err)
 	}
-	startArgs, _ := json.Marshal(map[string]any{"command": []string{"/bin/cat"}, "cwd": home})
-	started, denied, err := controlClient.Call(t.Context(), "terminal_start", startArgs)
-	_ = controlClient.Close()
-	if err != nil || denied {
-		t.Fatalf("finite egg start: %+v %v", started, err)
-	}
-	stopID, ok := started["session"].(string)
+	stopID, ok := started["session_id"].(string)
 	if !ok {
-		t.Fatalf("finite egg identity: %+v", started)
+		t.Fatal("finite egg launch returned no exact identity")
+	}
+	if started["origin_wing_id"] != writerMeta.WingID || started["route"].(map[string]any)["kind"] != "via" {
+		t.Fatal("launch crossed origin")
 	}
 	t.Cleanup(func() { _ = eggclient.KillOrphanEggContext(t.Context(), &config.Config{Dir: previewState}, stopID) })
+	agentArgs, _ := json.Marshal(map[string]any{"agent": "codex", "cwd": home, "label": "qualified-agent"})
+	agentLaunch := must(macState, "agent-launch", "session", "launch", "--wing", writerMeta.WingID, "--operation", "agent_start", "--arguments", string(agentArgs), "--json")
+	var agentReceipt map[string]any
+	if err := json.Unmarshal(agentLaunch, &agentReceipt); err != nil {
+		t.Fatal(err)
+	}
+	agentID, ok := agentReceipt["session_id"].(string)
+	if !ok || agentReceipt["origin_wing_id"] != writerMeta.WingID {
+		t.Fatal("qualified agent launch identity missing")
+	}
+	t.Cleanup(func() { _ = eggclient.KillOrphanEggContext(t.Context(), &config.Config{Dir: previewState}, agentID) })
+	if meta := eggclient.ReadEggMetaValues(filepath.Join(previewState, "eggs", agentID)); meta["agent"] != "codex" {
+		t.Fatal("qualified agent did not execute on the origin")
+	}
+	must(macState, "", "session", "action", "--wing", writerMeta.WingID, "--session", agentID, "--operation", "terminal_stop")
 	// The same phone gateway bridge reaches a real PTY, without exposing egg
 	// tokens or starting anything on a live machine.
 	owner, err := config.EnsureLocalOwner(macState, "")
@@ -356,16 +395,29 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 	// only its disposable wing.yaml and SIGHUP its own child process; no fixture
 	// mutates the in-memory runtime flag on behalf of the reload handler.
 	phone := pairBuiltFleetPhone(t, macState)
-	attachmentArgs := map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": stopID, "takeover": true}
+	phoneLaunch := phone.command("launch", map[string]any{"origin_wing_id": writerMeta.WingID, "operation": "terminal_start", "arguments": map[string]any{"command": []string{"/bin/cat"}, "cwd": home, "label": "phone-launched"}})
+	if phoneLaunch["error"] != nil {
+		t.Fatalf("built phone launch: %v", phoneLaunch["error"])
+	}
+	phoneReceipt, ok := phoneLaunch["result"].(map[string]any)
+	if !ok || phoneReceipt["origin_wing_id"] != writerMeta.WingID {
+		t.Fatal("built phone launch origin mismatch")
+	}
+	phoneID, ok := phoneReceipt["session_id"].(string)
+	if !ok {
+		t.Fatal("built phone launch lacks session identity")
+	}
+	t.Cleanup(func() { _ = eggclient.KillOrphanEggContext(t.Context(), &config.Config{Dir: previewState}, phoneID) })
+	attachmentArgs := map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": phoneID, "takeover": true}
 	if result := phone.command("fleet_attach", attachmentArgs); result["error"] != nil {
 		t.Fatalf("built phone attach: %v", result["error"])
 	}
-	if result := phone.command("fleet_input", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": stopID, "input": "paired phone typed into the exact remote PTY\r"}); result["error"] != nil {
+	if result := phone.command("fleet_input", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": phoneID, "input": "paired phone typed into the exact remote PTY\r"}); result["error"] != nil {
 		t.Fatal("paired phone input failed")
 	}
 	readUntil := time.Now().Add(3 * time.Second)
 	for {
-		result := phone.command("fleet_read", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": stopID})
+		result := phone.command("fleet_read", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": phoneID})
 		if result["error"] != nil {
 			t.Fatal("paired phone read failed")
 		}
@@ -381,8 +433,8 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	must(macState, "phone-attach", "session", "action", "--wing", writerMeta.WingID, "--session", stopID, "--operation", "terminal_read")
-	_, observedEgg, err := eggclient.OpenLocalEgg(t.Context(), &config.Config{Dir: previewState}, stopID)
+	must(macState, "phone-attach", "session", "action", "--wing", writerMeta.WingID, "--session", phoneID, "--operation", "terminal_read")
+	_, observedEgg, err := eggclient.OpenLocalEgg(t.Context(), &config.Config{Dir: previewState}, phoneID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,10 +481,13 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 	if result := phone.command("inventory", map[string]any{"include_remotes": true}); result["error"] == nil {
 		t.Fatal("saved/reloaded revocation retained inventory")
 	}
-	if result := phone.command("action", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": stopID, "operation": "terminal_read"}); result["error"] == nil {
+	if result := phone.command("action", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": phoneID, "operation": "terminal_read"}); result["error"] == nil {
 		t.Fatal("saved/reloaded revocation retained action")
 	}
-	if result := phone.command("fleet_read", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": stopID}); result["error"] == nil {
+	if result := phone.command("launch", map[string]any{"origin_wing_id": writerMeta.WingID, "operation": "terminal_start", "arguments": map[string]any{"command": []string{"/bin/cat"}, "cwd": home}}); result["error"] == nil {
+		t.Fatal("saved/reloaded revocation retained launch")
+	}
+	if result := phone.command("fleet_read", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": phoneID}); result["error"] == nil {
 		t.Fatal("saved/reloaded revocation retained attachment content")
 	}
 	if result := phone.command("fleet_attach", attachmentArgs); result["error"] == nil {
@@ -448,7 +503,35 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 	if result := phone.command("inventory", map[string]any{"include_remotes": true}); result["error"] != nil {
 		t.Fatal("reloaded enable did not restore inventory")
 	}
-	phone.command("close", map[string]any{})
+	// Device revocation cuts off an otherwise enabled gateway and releases an
+	// active remote writer without requiring another phone command.
+	if result := phone.command("fleet_attach", attachmentArgs); result["error"] != nil {
+		t.Fatal("reattach before device revocation failed")
+	}
+	must(macState, "phone-revoked", "devices", "revoke", "fixture-phone")
+	until = time.Now().Add(3 * time.Second)
+	for {
+		state, err := observedEgg.Status(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.WriterId == "" {
+			break
+		}
+		if time.Now().After(until) {
+			t.Fatal("device revocation retained quiet remote writer")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	for _, op := range []string{"inventory", "search", "launch", "action", "fleet_attach", "fleet_read", "fleet_input"} {
+		if result := phone.command(op, attachmentArgs); result["error"] != "revoked" {
+			t.Fatalf("revoked phone used %s", op)
+		}
+	}
+	must(macState, "phone-revocation-independent", "session", "action", "--wing", writerMeta.WingID, "--session", phoneID, "--operation", "terminal_read")
+	must(macState, "phone-launch", "session", "action", "--wing", writerMeta.WingID, "--session", phoneID, "--operation", "terminal_send", "--arguments", `{"input":"phone launched this exact remote kernel PTY","enter":true}`)
+	must(macState, "phone-launch-read", "session", "action", "--wing", writerMeta.WingID, "--session", phoneID, "--operation", "terminal_read")
+	must(macState, "", "session", "action", "--wing", writerMeta.WingID, "--session", phoneID, "--operation", "terminal_stop")
 	must(macState, "stop", "session", "action", "--wing", writerMeta.WingID, "--session", stopID, "--operation", "terminal_stop")
 	deadline := time.Now().Add(5 * time.Second)
 	for {

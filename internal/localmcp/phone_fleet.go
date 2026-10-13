@@ -22,7 +22,7 @@ func OwnerFleetControl(ctx context.Context, sessions *wingsession.Service, owner
 	if policy.Wing == nil || sessions.SharedHost || policy.Wing.Org != "" || owner == "" {
 		return nil, errors.New("personal owner fleet control required")
 	}
-	if operation != "session_inventory" && operation != "session_action" {
+	if operation != "session_search" && operation != "session_inventory" && operation != "session_action" && operation != "session_launch" {
 		return nil, errors.New("unsupported phone fleet operation")
 	}
 	if _, err := os.Stat(filepath.Join(sessions.Config.Dir, "local-owner.yaml")); err != nil {
@@ -35,6 +35,13 @@ func OwnerFleetControl(ctx context.Context, sessions *wingsession.Service, owner
 	if local.ID != owner {
 		return nil, errors.New("fleet access is not delegated to this owner")
 	}
+	if operation == "session_search" {
+		args, err = searchInventoryArguments(args)
+		if err != nil {
+			return nil, err
+		}
+		operation = "session_inventory"
+	}
 	remote := false
 	if operation == "session_inventory" {
 		var a inventoryArgs
@@ -42,10 +49,25 @@ func OwnerFleetControl(ctx context.Context, sessions *wingsession.Service, owner
 			return nil, e
 		}
 		remote = a.IncludeRemotes
-	} else {
+	} else if operation == "session_action" {
 		var a actionArgs
 		if e := decodeStrict(args, &a); e != nil {
 			return nil, e
+		}
+		id := policy.Wing.WingID
+		if id == "" {
+			id = sessions.Config.WingID
+		}
+		remote = a.OriginWingID != id
+	} else {
+		var a launchArgs
+		if e := decodeFleetArguments(args, &a); e != nil {
+			return nil, e
+		}
+		if a.Operation == "agent_start" {
+			if e := validateLinkedUserLaunch(a.Arguments); e != nil {
+				return nil, e
+			}
 		}
 		id := policy.Wing.WingID
 		if id == "" {

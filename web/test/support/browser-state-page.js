@@ -32,7 +32,7 @@ export async function bootBrowserState(sources) {
     const common = { ...state, S, DOM, ...helpers, ...references, ...inventory, ...merge, ...completion,
         Terminal, FitAddon, SerializeAddon, TERM_BUF_PREFIX, TERM_THUMB_PREFIX,
         WebSocket: LocalSocket, applyWingEventMetadata, sessionRoute,
-        refreshParentDot: noop, renderCoordinatorHome: noop, refreshConversationInventory: noop,
+        refreshParentDot: noop, renderCoordinatorHome: noop, refreshConversationInventory: noop, initSessionSearch: noop,
         renderDashboard: noop, renderWingDetailPage: noop, renderCanvasToolbar: noop,
         isCanvasActive: () => false, hideCanvasView: noop, showCanvasView: noop,
         stopChatPolling: noop, chatSnapshot: () => null, browserLocalStorage: () => localStorage,

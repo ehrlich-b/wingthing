@@ -31,7 +31,7 @@ type BrowserLaunchConfig struct {
 // access is checked independently before selecting a legacy session principal.
 func BrowserSessionControl(version string, ctx context.Context, cfg *config.Config, wc *config.WingConfig, req ws.TunnelRequest, operation string, arguments json.RawMessage, home string, sharedHost bool, launchConfig ...BrowserLaunchConfig) (map[string]any, error) {
 	switch operation {
-	case "session_inventory", "session_action", "session_fork", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "conversation_list", "conversation_bootstrap", "conversation_read", "conversation_checkpoint", "conversation_wake", "agent_start":
+	case "session_inventory", "session_search", "session_action", "session_launch", "session_fork", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "conversation_list", "conversation_bootstrap", "conversation_read", "conversation_checkpoint", "conversation_wake", "agent_start":
 	default:
 		return nil, errors.New("unsupported browser session operation")
 	}
@@ -55,6 +55,28 @@ func BrowserSessionControl(version string, ctx context.Context, cfg *config.Conf
 	}
 	server.sessionBrowser = true
 	server.sessionRole = req.SenderOrgRole
+	if operation == "session_launch" {
+		// The local socket retains the same personal owner, client, passkey and
+		// path gates as paired-phone delegation, even for a local origin.
+		return OwnerFleetControl(ctx, server.Sessions, req.SenderUserID, operation, arguments)
+	}
+	if operation == "session_search" {
+		// Preserve the existing tunnel default: remote delegation is explicit.
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(arguments, &fields); err != nil || fields == nil {
+			return nil, errors.New("search arguments must be an object")
+		}
+		if _, ok := fields["include_remotes"]; !ok {
+			fields["include_remotes"] = json.RawMessage(`false`)
+			arguments, _ = json.Marshal(fields)
+		}
+		var err error
+		arguments, err = searchInventoryArguments(arguments)
+		if err != nil {
+			return nil, err
+		}
+		operation = "session_inventory"
+	}
 	if operation == "session_inventory" {
 		var selector inventoryArgs
 		if err := decodeStrict(arguments, &selector); err != nil {
@@ -90,12 +112,8 @@ func BrowserSessionControl(version string, ctx context.Context, cfg *config.Conf
 		}
 	}
 	if operation == "agent_start" {
-		var args map[string]json.RawMessage
-		if err := json.Unmarshal(arguments, &args); err != nil {
+		if err := validateLinkedUserLaunch(arguments); err != nil {
 			return nil, err
-		}
-		if len(args["conversation_role"]) == 0 && len(args["parent_conversation_id"]) == 0 {
-			return nil, errors.New("browser agent_start requires a linked personal conversation")
 		}
 	}
 	if operation == "session_fork" || operation == "session_status" || operation == "session_read" || operation == "session_wait" || (operation == "session_prompt" || operation == "terminal_send") {

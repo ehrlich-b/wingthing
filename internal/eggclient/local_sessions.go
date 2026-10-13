@@ -57,6 +57,7 @@ type LocalSession struct {
 	State            string `json:"state,omitempty"`
 	StateSource      string `json:"state_source,omitempty"`
 	StateCursor      int64  `json:"state_cursor,omitempty"`
+	StateObservedAt  string `json:"state_observed_at,omitempty"`
 	StateReason      string `json:"state_reason,omitempty"`
 	CompletionCursor int64  `json:"completion_cursor,omitempty"`
 	Command          string `json:"command,omitempty"`
@@ -156,6 +157,12 @@ func enrichLocalSession(ctx context.Context, cfg *config.Config, session *LocalS
 // lifecycle read. Never copy Reason, Events, Text, Raw or provider identifiers.
 func projectSessionLifecycle(session *LocalSession, view egg.SessionView) {
 	session.Status, session.StateCursor = view.Status, view.StateCursor
+	session.StateObservedAt = ""
+	// Timestamps are provider-supplied text. Only a parsed date belongs in the
+	// content-free inventory; malformed values must not leak provider content.
+	if observed, err := time.Parse(time.RFC3339Nano, view.StateObservedAt); err == nil {
+		session.StateObservedAt = observed.UTC().Format(time.RFC3339Nano)
+	}
 	session.State, session.StateSource = "unknown", "unsupported"
 	session.StateReason = "Native lifecycle evidence is missing or hooks are disabled; status is unknown."
 	session.CompletionCursor = 0
@@ -169,6 +176,7 @@ func projectSessionLifecycle(session *LocalSession, view egg.SessionView) {
 	}
 	if session.StateSource == "unsupported" {
 		session.State = "unknown"
+		session.StateObservedAt = ""
 		return
 	}
 	switch session.State {
