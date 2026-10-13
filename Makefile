@@ -483,3 +483,9 @@ test-linux-provider-guard-portability: | web/dist
 			CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) test -p 2 -c -o .scratch/linux-provider-guard-cross/$$os-$$arch-$$package ./internal/$$package; \
 		done; \
 	done
+.PHONY: test-session-report test-coordinator-home-web
+test-session-report: | web/dist
+	$(GO) test -p 2 -count=1 ./internal/egg ./internal/localmcp ./internal/control ./internal/wing ./cmd/wt -run 'SessionReport|RegistryDefinesExpectedSurfaceOperations' -timeout 180s
+
+test-coordinator-home-web:
+	cd web && $(NODE) test/coordinator-home-browser.mjs

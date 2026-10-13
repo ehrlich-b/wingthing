@@ -363,6 +363,8 @@ type SessionAttention struct {
 // SessionInfo describes one active session on a wing (used in tunnel sessions.list responses).
 type SessionInfo struct {
 	Output                *SessionOutput `json:"output,omitempty"`
+	Pinned                bool           `json:"pinned,omitempty"`
+	Role                  string         `json:"role,omitempty"`
 	ConversationID        string         `json:"conversation_id,omitempty"`
 	RootConversationID    string         `json:"root_conversation_id,omitempty"`
 	ParentConversationID  string         `json:"parent_conversation_id,omitempty"`

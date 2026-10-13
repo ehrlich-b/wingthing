@@ -40,6 +40,7 @@ func sessionCmd() *cobra.Command {
 	cmd.AddCommand(sessionTranscriptCmd())
 	cmd.AddCommand(sessionAwaitCmd())
 	cmd.AddCommand(sessionPromptCmd())
+	cmd.AddCommand(sessionReportCmd())
 	cmd.AddCommand(sessionSendCmd())
 	cmd.AddCommand(sessionWaitCmd())
 	cmd.AddCommand(sessionRenameCmd())

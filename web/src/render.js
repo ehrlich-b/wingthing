@@ -2,7 +2,7 @@ import { S, DOM, TERM_THUMB_PREFIX } from './state.js';
 import { escapeHtml, wingDisplayName, shortenPath, projectName, sessionDisplayName, validSessionName, formatRelativeTime, semverCompare, nestedRepoCount, agentIcon, agentWithIcon, dirParent, setupCopyable } from './helpers.js';
 import { identityPubKey } from './crypto.js';
 import { sendTunnelRequest, tunnelCloseWing } from './tunnel.js';
-import { switchToSession, deleteSession } from './nav.js';
+import { switchToSession, showSessionChat, deleteSession } from './nav.js';
 import { showHome, navigateToWingDetail, navigateToAccount } from './nav.js';
 import { connectPTY } from './pty.js';
 import { setLastTermAgent, getLastTermAgent, setWingOrder, setEggOrder, getCachedWingSessions, setCachedWingSessions, probeWing, fetchWingSessions, mergeWingSessions, saveSessionCache } from './data.js';
@@ -18,6 +18,7 @@ import { readSessionContent, notificationForSession } from './session-reference.
 import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionResourceKey, groupSessionInventory, sessionGroupHeader, unseenCompletionBadge, sessionProjectRoot } from './session-inventory.js';
 import { refreshConversationInventory } from './conversation-view.js';
 import { refreshParentDot } from './parent-dot.js';
+import { renderCoordinatorHome } from './coordinator-home.js';
 import { unseenSessionCompletions, acknowledgeSessionCompletions } from './session-completion.js';
 import { browserLocalStorage } from './storage-scope.js';
 import { unreadSessionOutput, acknowledgeSessionOutput } from './session-unread.js';
@@ -111,12 +112,14 @@ function sessionConnectionDot(s) {
 export function renderSidebar() {
     renderChannelBanner();
     refreshParentDot();
+    renderCoordinatorHome(false);
     setupSidebarListeners(DOM.sessionTabs);
     // Live inventory refreshes must not discard an unfinished rename.
     if (DOM.sessionTabs.querySelector('.renaming, .forking')) return;
     var focus = captureSessionFocus(DOM.sessionTabs, document.activeElement);
     var sessions = S.sessionsData.filter(function(s) {
         if ((s.kind || 'terminal') === 'chat') return false;
+        if (s.pinned === true && s.role === 'coordinator') return false;
         if (sessionIsSelected(s, S.ptySessionId, S.ptyWingId)) return true;
         return isWingVisible(s.wing_id);
     });
@@ -2382,6 +2385,7 @@ export function showSessionInfo() {
 
 export function renderDashboard() {
     refreshReachShare();
+    renderCoordinatorHome();
     refreshConversationInventory();
     var visibleWings = S.wingsData.filter(function(w) {
         return wingDisplayName(w);
@@ -2570,6 +2574,7 @@ export function renderSessionInventory() {
             (wingName ? '<div class="egg-wing">' + escapeHtml(wingName) + '</div>' : '') +
             '<div class="inventory-session-path" title="' + escapeHtml(s.cwd || '') + '">' + escapeHtml(shortenPath(s.cwd || 'no project')) + '</div>' +
             '<div class="inventory-session-state"><span class="inventory-status status-' + state.tone + '">' + escapeHtml(state.agentLabel) + '</span><span>' + escapeHtml(state.connectionLabel + ' · ' + state.attachment) + '</span>' + unseenCompletionBadge(unseen) + unreadOutputBadge(inventoryFilters.unread.has(sessionResourceKey(s))) + '</div>' +
+            '<button type="button" class="egg-activity btn-sm">Activity</button>' +
             (error ? '<div class="inventory-action-status" role="status">' + escapeHtml(error) + '</div>' : '') +
         '</div>';
     }
@@ -2623,7 +2628,7 @@ export function renderSessionInventory() {
             if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); card.click(); }
         });
         card.addEventListener('click', function(e) {
-            if (e.target.closest('.box-menu-btn, .egg-delete')) return;
+            if (e.target.closest('.box-menu-btn, .egg-delete, .egg-activity')) return;
             if (!session || !sessionInventoryActions(session, sessionWing(session), S.currentUser).attach) {
                 var label = card.querySelector('.egg-label');
                 if (label) { var orig = label.innerHTML; label.textContent = 'wing offline'; setTimeout(function() { label.innerHTML = orig; }, 1500); }
@@ -2634,6 +2639,11 @@ export function renderSessionInventory() {
         card.querySelector('.box-menu-btn').addEventListener('click', function(e) {
             e.stopPropagation();
             showEggDetail(card.dataset.sid, card.dataset.wingId);
+        });
+        var activity = card.querySelector('.egg-activity');
+        if (activity && session) activity.addEventListener('click', function(event) {
+            event.stopPropagation();
+            if (showSessionChat(session.id, session.wing_id)) document.querySelector('[data-session-view="activity"]').click();
         });
         var stop = card.querySelector('.egg-delete');
         if (stop && session) bindStopCancellation(session, stop);

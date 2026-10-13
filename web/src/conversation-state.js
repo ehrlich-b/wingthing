@@ -77,9 +77,13 @@ export function applyConversationRead(previous, view, meta) {
     (view.events || []).forEach(function(event) {
         if (!Number.isSafeInteger(event.sequence) || next.seen.has(event.sequence)) return;
         next.seen.add(event.sequence);
+        if (event.type === 'session_report' && event.report || event.state || ['session_ready', 'prompt_submitted', 'session_exit'].includes(event.type)) {
+            next.messages.push({ type: 'activity', eventType: event.type, state: event.state || '', reason: event.reason || '', report: event.report, sequence: event.sequence, timestamp: event.timestamp || '' });
+        }
         if (event.raw) {
             var parsed = parseJSONL(JSON.stringify(event.raw), agent);
             parsed.forEach(function(message, index) {
+                message.timestamp = event.timestamp || message.timestamp || "";
                 message.sequence = event.sequence;
                 message.itemIndex = index;
                 message.truncated = event.truncated === true;
@@ -93,7 +97,7 @@ export function applyConversationRead(previous, view, meta) {
                 next.messages.push({ type: 'provider_record', name: event.type || 'provider record', content: record, sequence: event.sequence, truncated: event.truncated === true });
             }
         } else if (event.type === 'message' && (event.role === 'user' || event.role === 'assistant')) {
-            next.messages.push({ type: event.role, content: event.text || '', sequence: event.sequence, truncated: event.truncated === true });
+            next.messages.push({ type: event.role, content: event.text || '', timestamp: event.timestamp || '', sequence: event.sequence, truncated: event.truncated === true });
         } else {
             var marker = markerFor(event);
             if (marker) next.messages.push(marker);

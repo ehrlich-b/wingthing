@@ -8,6 +8,7 @@ import { escapeMarkup, renderSafeSimpleMarkdown } from './security.js';
 import { createConversationReader } from './conversation-recovery.js';
 import { coordinatorComposer, chatEnterSubmits, coordinatorStatus } from './coordinator-state.js';
 import { trackSessionCompletions, sessionCompletionObservation, acknowledgeSessionCompletions } from './session-completion.js';
+import { timelineMarkup, reportChips } from './session-activity.js';
 
 var reader = null;
 var selectionVersion = 0;
@@ -22,6 +23,7 @@ var pendingEl = null;
 var renderedSignature = '';
 var pendingSignature = '';
 var followsLatest = true;
+var activitySignature = '';
 
 function browserStorage(kind) {
     try { return window[kind]; } catch (e) { return null; }
@@ -52,6 +54,17 @@ function ensureReader() {
 
 export function initChatView() {
     container = document.getElementById('chat-messages');
+    document.getElementById('chat-view-tabs').addEventListener('click', function(event) {
+        var button = event.target.closest('[data-session-view]');
+        if (!button) return;
+        var activity = button.dataset.sessionView === 'activity';
+        document.getElementById('session-activity').hidden = !activity;
+        container.hidden = activity;
+        document.getElementById('chat-input-bar').hidden = activity;
+        document.querySelectorAll('[data-session-view]').forEach(function(item) { item.setAttribute('aria-pressed', String(item === button)); });
+    });
+    document.getElementById('session-activity').addEventListener('click', openActivityArtifact);
+    container.addEventListener('click', openActivityArtifact);
     inputEl = document.getElementById('chat-input');
     sendBtn = document.getElementById('chat-send');
     statusEl = document.getElementById('chat-view-status');
@@ -123,6 +136,10 @@ export function startChatPolling(target) {
     selectionVersion++;
     followsLatest = true;
     renderedSignature = '';
+    activitySignature = '';
+    var conversationTab = document.querySelector('[data-session-view="conversation"]');
+    if (conversationTab) conversationTab.click();
+    document.getElementById('session-activity').innerHTML = '';
     pendingSignature = '';
     if (container) container.innerHTML = '';
     var t = target || { sessionId: S.ptySessionId, wingId: S.ptyWingId };
@@ -149,12 +166,30 @@ function render() {
     if (!snapshot) return;
     updateInput();
     renderPending();
+    var activity = document.getElementById('session-activity');
+    var nextActivity = timelineMarkup(snapshot.messages);
+    if (nextActivity !== activitySignature) {
+        var focused = activity.contains(document.activeElement) && document.activeElement.dataset.artifactPath;
+        activity.innerHTML = (snapshot.cached || snapshot.trimmed ? '<p class="activity-empty">' + (snapshot.cached ? 'Saved activity · reconnecting. ' : '') + (snapshot.trimmed ? 'Earlier records were trimmed from this browser.' : '') + '</p>' : '') + nextActivity;
+        activitySignature = nextActivity;
+        if (focused) Array.from(activity.querySelectorAll('[data-artifact-path]')).find(item => item.dataset.artifactPath === focused)?.focus({ preventScroll: true });
+    }
     var thinking = !!snapshot.lifecycle && snapshot.presentation.live && snapshot.lifecycle.state === 'working';
     var signature = snapshot.messages.length + ':' + thinking + ':' + snapshot.cached + ':' + snapshot.trimmed;
     if (signature !== renderedSignature) {
         renderMessages(thinking);
         renderedSignature = signature;
     }
+}
+
+function openActivityArtifact(event) {
+    var button = event.target.closest('[data-artifact-path]');
+    if (!button || !snapshot || !snapshot.target) return;
+    // The existing file adapter checks the exact session's artifact grants.
+    S.ptySessionId = snapshot.target.sessionId;
+    S.ptyWingId = snapshot.target.wingId;
+    document.getElementById('session-file-path').value = button.dataset.artifactPath;
+    if (document.getElementById('session-files-panel').style.display === 'none') document.getElementById('session-files-btn').click();
 }
 
 function updateInput() {
@@ -288,6 +323,10 @@ function renderMessages(thinking) {
         } else if (msg.type === 'lifecycle') {
             el.className += ' cv-lifecycle-' + msg.kind;
             el.innerHTML = '<p>' + escapeMarkup(markerText[msg.kind] || msg.kind) + (msg.reason ? ' · ' + escapeMarkup(msg.reason) : '') + '<span class="text-dim"> · ' + escapeMarkup(msg.source || 'native') + ' #' + escapeMarkup(String(msg.sequence)) + '</span></p>';
+        } else if (msg.type === 'activity') {
+            if (!msg.report) continue;
+            el.className = 'cv-msg cv-assistant';
+            el.innerHTML = '<div class="cv-text">' + escapeMarkup(msg.report.update || '') + '</div>' + reportChips(msg.report);
         }
         if (msg.truncated || msg.cacheTruncated) {
             var truncation = document.createElement('p');
