@@ -25,6 +25,7 @@ Available Commands:
   mcp          Expose Wingthing to LLM clients
   pair         Pair a phone with this machine's main wing
   phone        Set up the phone app
+  pin          Pin a session at the top of the fleet inventory
   prompt       Manage named, versioned prompt templates
   relay        Start the relay server (web UI + WebSocket relay)
   remote       Manage configured SSH remotes
@@ -43,6 +44,7 @@ Available Commands:
   thread       Print today's daily thread
   timeline     Show upcoming and recent tasks
   tool-list    List available privileged tools
+  unpin        Remove a session from the pinned inventory
   update       Update wt to the latest release
   whoami       Show the currently logged-in user
   wings        Find online wings available through a roost

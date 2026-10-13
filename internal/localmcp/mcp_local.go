@@ -25,6 +25,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
+	"github.com/ehrlich-b/wingthing/internal/sessionrole"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
@@ -84,6 +85,7 @@ type Server struct {
 	wingGrants             map[string][]string
 	restrictWings          bool
 	scopedParent           bool
+	parentRole             string
 	startMailbox           func(conversationBrokerRegistration) error
 	captureWings           func(*Server) (map[string][]string, error)
 }
@@ -629,6 +631,8 @@ func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMe
 		data, err = s.toolAgentSteer(arguments)
 	case "agent_stop":
 		data, err = s.toolAgentStop(arguments)
+	case "session_pin":
+		data, err = s.ToolSessionPin(ctx, arguments)
 	case "terminal_rename":
 		data, err = s.ToolTerminalRename(ctx, arguments)
 	case "terminal_stop":
@@ -717,13 +721,14 @@ func (s *Server) toolCapabilities(arguments json.RawMessage) (map[string]any, er
 		}
 	}
 	return map[string]any{
-		"version":           s.Version,
-		"principal":         s.clientPrincipal(),
-		"paths":             s.allowedPaths,
-		"agents":            agents,
-		"actor":             s.clientActor(),
-		"objects":           control.ObjectKinds(surface),
-		"session_isolation": s.sessionIsolationMode(),
+		"version":              s.Version,
+		"principal":            s.clientPrincipal(),
+		"paths":                s.allowedPaths,
+		"path_bounds_enforced": s.enforcePathBounds,
+		"agents":               agents,
+		"actor":                s.clientActor(),
+		"objects":              control.ObjectKinds(surface),
+		"session_isolation":    s.sessionIsolationMode(),
 		"control_contract": map[string]any{
 			"version":    control.ContractVersion,
 			"surface":    string(surface),
@@ -1187,6 +1192,7 @@ func (s *Server) toolAgentStart(arguments json.RawMessage) (map[string]any, erro
 		Model                string   `json:"model"`
 		CWD                  string   `json:"cwd"`
 		Label                string   `json:"label"`
+		Role                 string   `json:"role,omitempty"`
 		ScopedMCP            bool     `json:"scoped_mcp,omitempty"`
 		Unattended           bool     `json:"unattended"`
 		Args                 []string `json:"args"`
@@ -1199,10 +1205,25 @@ func (s *Server) toolAgentStart(arguments json.RawMessage) (map[string]any, erro
 	if err := decodeStrict(arguments, &args); err != nil {
 		return nil, err
 	}
+	if err := sessionrole.Validate(args.Role); err != nil {
+		return nil, err
+	}
+	if args.Role != "" {
+		if err := sessionrole.ValidateClaudeArgs(args.Args); err != nil {
+			return nil, err
+		}
+		if !args.ScopedMCP {
+			return nil, errors.New("role sessions require scoped_mcp")
+		}
+		if _, err := sessionrole.Prompt(s.Cfg.Dir, args.Role); err != nil {
+			return nil, err
+		}
+	}
 	if args.ScopedMCP && (args.ConversationRole != "parent" || args.Agent != "claude" || s.Unsandboxed || s.broker != nil) {
 		return nil, errors.New("scoped_mcp requires a sandboxed Claude parent")
 	}
 	s.scopedParent = args.ScopedMCP
+	s.parentRole = args.Role
 	if args.ResumeSession != "" {
 		return s.toolAgentContinue(arguments)
 	}
@@ -1280,7 +1301,7 @@ func (s *Server) toolAgentStart(arguments json.RawMessage) (map[string]any, erro
 		if err := s.preflightBrokerChild(eggCfg, args.Agent, args.CWD, sessionID); err != nil {
 			return err
 		}
-		opts := eggclient.SpawnEggOpts{Label: args.Label, Kind: "agent", AgentArgs: args.Args, Principal: s.clientPrincipal()}
+		opts := eggclient.SpawnEggOpts{RoleMetadata: sessionrole.Metadata{Role: args.Role, Pinned: args.Role != ""}, Label: args.Label, Kind: "agent", AgentArgs: args.Args, Principal: s.clientPrincipal()}
 		// Broker-managed parents and every child of a host mailbox carry the
 		// protected state/executable set and omit the browser bridge.
 		if managedParent != nil {

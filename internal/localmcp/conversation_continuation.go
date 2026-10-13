@@ -20,6 +20,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/sessionrole"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 )
@@ -140,8 +141,11 @@ func (s *Server) addSessionContinuation(result map[string]any, view egg.SessionV
 	}
 }
 
-func headlessCoordinatorArgs(model, input string) []string {
+func headlessCoordinatorArgs(model, input string, granted ...[]string) []string {
 	tools := []string{"agent_start", "session_wait", "session_read", "session_status", "conversation_read", "conversation_checkpoint", "wingthing_capabilities"}
+	if len(granted) > 0 {
+		tools = append([]string(nil), granted[0]...)
+	}
 	for i := range tools {
 		tools[i] = "mcp__wingthing__" + tools[i]
 	}
@@ -278,14 +282,27 @@ func (s *Server) launchHeadlessContinuation(c *store.Conversation, turn *store.C
 		if provider != turn.ProviderSessionID {
 			return errors.New("restored provider does not match the continuation")
 		}
-		args, managed, err := s.prepareBoundParentLaunch(c, eggCfg, headlessCoordinatorArgs(model, input))
+		role, err := sessionrole.Read(filepath.Join(s.Cfg.Dir, "eggs", turn.SourceSession))
+		if err != nil {
+			return err
+		}
+		if role.Role != "" {
+			s.scopedParent = true
+			s.parentRole = role.Role
+		}
+		launchArgs := headlessCoordinatorArgs(model, input)
+		if role.Role == "coordinator" {
+			tools, _, _ := s.brokerToolCeiling()
+			launchArgs = headlessCoordinatorArgs(model, input, tools)
+		}
+		args, managed, err := s.prepareBoundParentLaunch(c, eggCfg, launchArgs)
 		if err != nil {
 			return err
 		}
 		if err := saveCoordinatorModel(s.Cfg.Dir, c.SessionID, model); err != nil {
 			return err
 		}
-		opts := eggclient.SpawnEggOpts{Label: c.Title, Kind: "agent", AgentArgs: args, Principal: s.clientPrincipal(), ResumeSessionID: provider, ResumeSourceSessionID: turn.SourceSession, ProviderReserved: true}
+		opts := eggclient.SpawnEggOpts{RoleMetadata: role, Label: c.Title, Kind: "agent", AgentArgs: args, Principal: s.clientPrincipal(), ResumeSessionID: provider, ResumeSourceSessionID: turn.SourceSession, ProviderReserved: true}
 		if managed != nil {
 			opts = managed.launchOpts(s.Cfg, opts)
 		}

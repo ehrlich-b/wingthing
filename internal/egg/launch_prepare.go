@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/sessionrole"
 )
 
 // CodexCapability isolates the installed --version probe. Dry preparation uses
@@ -185,6 +186,17 @@ func PrepareLaunch(rc RunConfig, opts LaunchPreparationOptions, state LaunchStat
 		}
 	}
 	if rc.Agent == "claude" && len(rc.Command) == 0 && rc.ProviderSessionID != "" {
+		if _, native := state.(nativeLaunchState); native {
+			metadata, err := sessionrole.Read(opts.EggDir)
+			if err != nil {
+				return out, err
+			}
+			if metadata.Role != "" {
+				if err := sessionrole.ValidateClaudeEnvironment(out.Environment, filepath.Join(opts.Home, ".claude")); err != nil {
+					return out, err
+				}
+			}
+		}
 		var policy *sandbox.Config
 		if !rc.OuterBoundary {
 			policy = &out.Sandbox
