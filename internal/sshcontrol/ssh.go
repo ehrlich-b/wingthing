@@ -161,10 +161,15 @@ type Connection struct {
 	done   chan struct{}
 	stderr *cappedBuffer
 	dir    string
+	socket string
 	once   sync.Once
 }
 
 func (c *Connection) Done() <-chan struct{} { return c.done }
+
+// SocketPath is the private, already authenticated forward. Attachments must
+// still pin their handshake to the verified execution wing.
+func (c *Connection) SocketPath() string { return c.socket }
 func (c *Connection) Close() error {
 	c.once.Do(func() {
 		if c.Client != nil {
@@ -215,7 +220,7 @@ func (t Transport) Dial(ctx context.Context, remote config.Remote, hello control
 	// The caller's connection-attempt context does not own an accepted transport.
 	cmd := exec.Command(t.sshPath(), args...)
 	cmd.WaitDelay = time.Second
-	c := &Connection{cmd: cmd, exited: make(chan struct{}), done: make(chan struct{}), stderr: &cappedBuffer{}, dir: dir}
+	c := &Connection{cmd: cmd, exited: make(chan struct{}), done: make(chan struct{}), stderr: &cappedBuffer{}, dir: dir, socket: local}
 	cmd.Stderr = c.stderr
 	if err = cmd.Start(); err != nil {
 		_ = os.RemoveAll(dir)
