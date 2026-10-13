@@ -80,7 +80,7 @@ export function createSessionViewer({ inventory, request, user, wings, update, u
             const view = result.result?.lifecycle;
             if (!view || !Array.isArray(view.events) || !Number.isSafeInteger(view.cursor) || view.cursor < state.cursor) throw Error('Transcript contract mismatch');
             if (view.events.length > 200) throw Error('Transcript page exceeds limit');
-            const textEvents = view.events.map(event => ({ sequence: event.sequence, type: event.type, role: event.role, text: typeof event.text === 'string' ? event.text.length > 16384 ? event.text.slice(0, 16384) + '\n[Text truncated]' : event.text : '', reason: typeof event.reason === 'string' ? event.reason.slice(0, 1024) : '' }));
+            const textEvents = view.events.map(event => ({ sequence: event.sequence, type: event.type, role: event.role, text: typeof event.text === 'string' ? event.text.length > 16384 ? event.text.slice(0, 16384) + '\n[Text truncated]' : event.text : '', timestamp: typeof event.timestamp === 'string' ? event.timestamp : '', report: event.report && typeof event.report.update === 'string' ? event.report : null, reason: typeof event.reason === 'string' ? event.reason.slice(0, 1024) : '' }));
             const nextEvents = [...state.events, ...textEvents];
             state.trimmedEvents = (state.trimmedEvents || 0) + Math.max(0, nextEvents.length - 400);
             state.events = nextEvents.slice(-400);

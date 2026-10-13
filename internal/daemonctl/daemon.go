@@ -515,9 +515,14 @@ func StopDaemonAndWait(pid int, kind DaemonKind, timeout time.Duration) error {
 }
 
 func SignalDaemon(sig os.Signal) error {
+	// A deliberately stopped installation has no reload recipient. Preserve
+	// rejection when metadata was present but malformed, stale or conflicting.
+	_, wingMetadataErr := os.Lstat(WingPidPath())
+	_, roostMetadataErr := os.Lstat(RoostPidPath())
+	noMetadata := os.IsNotExist(wingMetadataErr) && os.IsNotExist(roostMetadataErr)
 	pid, err := ReadPid()
 	if err != nil {
-		if DaemonAbsentError(err) {
+		if DaemonAbsentError(err) || noMetadata && errors.Is(err, ErrNoDaemonRunning) {
 			return nil
 		}
 		return fmt.Errorf("find daemon to signal: %w", err)

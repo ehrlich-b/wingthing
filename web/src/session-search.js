@@ -1,8 +1,9 @@
+import { setCoordinatorFleet } from './coordinator-home.js';
 import { initSessionViewer, openSessionViewer, closeSessionViewer } from './session-viewer.js';
 import { S } from './state.js';
 import { escapeHtml, wingDisplayName } from './helpers.js';
 import { sendTunnelRequest } from './tunnel.js';
-import { SEARCH_VERSION, mergeSearchInventories, searchRoute, createSearchController } from './session-search-state.js';
+import { SEARCH_VERSION, inventoryPresentation, mergeSearchInventories, searchRoute, createSearchController } from './session-search-state.js';
 
 let installed = false, timer, controller, current = null, owner = null, reading = 0;
 
@@ -22,12 +23,12 @@ export async function searchEverywhere(query) {
             try {
                 let result;
                 try {
-                    result = await sendTunnelRequest(wing.wing_id, { type: 'sessions.search', arguments: { query, include_remotes: remotes } }, { skipPasskey: true });
+                    result = await sendTunnelRequest(wing.wing_id, { type: query ? 'sessions.search' : 'sessions.inventory', arguments: { query, include_remotes: remotes } }, { skipPasskey: true });
                 } catch (error) {
                     if (!remotes) throw error;
                     // Local read remains useful when fleet delegation is disabled.
                     failures.push({ machine_label: label, healthy: false, error: 'Configured remote search unavailable' });
-                    result = await sendTunnelRequest(wing.wing_id, { type: 'sessions.search', arguments: { query, include_remotes: false } }, { skipPasskey: true });
+                    result = await sendTunnelRequest(wing.wing_id, { type: query ? 'sessions.search' : 'sessions.inventory', arguments: { query, include_remotes: false } }, { skipPasskey: true });
                 }
                 if (result.version !== SEARCH_VERSION || result.wing_id !== wing.wing_id || !Array.isArray(result.sessions)) throw Error('Search contract or wing identity mismatch');
                 inventories.push(result);
@@ -45,26 +46,27 @@ function showResults(state) {
     const status = document.getElementById('session-search-status');
     const normal = document.getElementById('sessions-list');
     const empty = document.getElementById('empty-state');
-    const active = Boolean(state.query);
+    const presentation = inventoryPresentation(state);
+    const active = presentation.visible;
+    if (!state.query && !state.loading) setCoordinatorFleet(state);
     results.hidden = !active;
-    if (normal) normal.hidden = active;
-    if (empty) empty.hidden = active;
+    if (normal) normal.hidden = active && !presentation.fallback;
+    if (empty) empty.hidden = active && !presentation.fallback;
     if (!active) { results.replaceChildren(); status.textContent = ''; return; }
-    status.textContent = state.loading ? 'Searching sessions…' :
-        (state.error || `${state.sessions.length} sessions · ${state.complete ? 'coverage complete' : 'coverage incomplete'}`);
+    status.textContent = presentation.status + (presentation.fallback && !state.loading ? ' · local inventory below may be cached' : '');
     results.innerHTML = '';
     if (state.loading) return;
     results.innerHTML = (state.sources || []).filter(source => !source.healthy).map(source =>
         `<p class="search-source-error">${escapeHtml(source.machine_label)} · ${escapeHtml(source.error || 'unavailable')}</p>`).join('') +
-        state.sessions.map((row, index) => {
+        groupedRows(state.sessions).map(({ row, index, heading }) => {
             const route = searchRoute(row, S.wingsData);
-            return `<article class="search-session"><h3>${row.pinned && row.role === 'coordinator' ? 'Pinned wing · ' : ''}${escapeHtml(row.name || row.session_id)} · ${escapeHtml(row.agent || 'agent')}</h3>` +
-                `<p>${escapeHtml(row.machine_label)} · ${escapeHtml(row.cwd || '')} · ${escapeHtml(row.status)}</p>` +
+            return heading + `<article class="search-session" data-origin="${escapeHtml(row.origin_wing_id)}" data-session="${escapeHtml(row.session_id)}"><h3>${row.pinned && row.role === 'coordinator' ? 'Pinned wing · ' : ''}${escapeHtml(row.name || row.session_id)} · ${escapeHtml(row.agent || 'agent')}</h3>` +
+                `<p>${escapeHtml(row.machine_label)} · ${escapeHtml(row.cwd || '')} · ${escapeHtml(row.status)}${row.possible_duplicate ? ' · possible duplicate' : ''}</p>` +
                 `<div class="search-identity">${escapeHtml(row.origin_wing_id)} / ${escapeHtml(row.session_id)}</div>` +
                 `<p>${(row.routes || []).map(r => `<span class="search-route">${escapeHtml(r.kind === 'via' ? 'via ' + r.machine_label : 'direct')}${r.healthy ? '' : ' · unavailable'}</span>`).join(' ')}</p>` +
                 `<p class="text-dim">Matched: ${escapeHtml((row.match_fields || []).join(', '))}${row.search_incomplete ? ' · index incomplete' : ''}</p>` +
                 `<button type="button" data-search-open="${index}" ${route ? '' : 'disabled'}>Open session</button> <button type="button" data-search-read="${index}" ${route ? '' : 'disabled'}>Read transcript</button></article>`;
-        }).join('') + (!state.sessions.length ? '<p>No matching sessions in the sources checked.</p>' : '');
+        }).join('') + (!state.sessions?.length ? '<p>' + (state.complete ? 'No sessions matched in the successfully checked sources.' : 'Inventory coverage is incomplete. Reconnect or unlock the unavailable sources and refresh.') + '</p>' : '');
 }
 
 async function readResult(index) {
@@ -114,8 +116,11 @@ export function initSessionSearch() {
         const query = input.value.trim();
         reading++;
         document.getElementById('session-search-transcript').hidden = true;
-        if (query) controller.run(query); else { controller.retire(); showResults({ query: '', sessions: [] }); }
+        controller.run(query);
     }
+    run();
+    setInterval(() => { if (S.activeView === 'home' && document.visibilityState === 'visible' && !input.value.trim() && !current?.loading) controller.run(''); }, 15000);
+    window.addEventListener('online', run);
     input.addEventListener('input', () => {
         controller.retire(); clearTimeout(timer); reading++;
         showResults({ query: input.value.trim(), loading: true, sessions: [] });
@@ -128,4 +133,15 @@ export function initSessionSearch() {
         const button = event.target.closest('[data-search-read]');
         if (button && !button.disabled) readResult(Number(button.dataset.searchRead));
     });
+}
+
+function groupedRows(rows = []) {
+    const groups = new Map();
+    rows.forEach((row, index) => {
+        const origin = row.origin_wing_id;
+        if (!groups.has(origin)) groups.set(origin, []);
+        groups.get(origin).push({ row, index });
+    });
+    return [...groups.values()].flatMap(group => group.map((item, index) => ({ ...item,
+        heading: index === 0 ? '<h2 class="fleet-machine">' + escapeHtml(item.row.machine_label || 'Machine') + '</h2>' : '' })));
 }

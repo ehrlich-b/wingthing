@@ -23,6 +23,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/relay"
+	"github.com/ehrlich-b/wingthing/internal/tunnidentity"
 	"github.com/ehrlich-b/wingthing/internal/wing"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
@@ -117,6 +118,22 @@ func RunRoostForeground(version string, addrFlag string, devFlag bool, labelsFla
 	}
 
 	srv := relay.NewServer(store, srvCfg)
+	// The SSO mode is deliberately single-owner and loopback-bound. It does not
+	// enroll an account or trust a publisher's unsigned email header.
+	tunnSSO, err := TunnSSOFromEnv()
+	if err != nil {
+		return err
+	}
+	if tunnSSO != nil {
+		if AuthProvidersConfigured() || localHTTPS != nil || orgFlag != "" {
+			return fmt.Errorf("tunn SSO requires the personal loopback roost without OAuth, org or local CA mode")
+		}
+		if _, err := PrepareLocalHTTPAddress(addrFlag, true); err != nil {
+			return err
+		}
+		srv.TunnSSO = tunnSSO
+	}
+
 	if err := srv.InitJWTKey(); err != nil {
 		return fmt.Errorf("init jwt key: %w", err)
 	}
@@ -472,4 +489,20 @@ func roostToolRunner(dir string, tools []*config.ToolConfig) (*egg.ToolRunner, e
 		return nil, err
 	}
 	return egg.NewToolRunner(tools, client), nil
+}
+
+// TunnSSOFromEnv is opt-in; partial configuration fails rather than bypassing login.
+func TunnSSOFromEnv() (*tunnidentity.Verifier, error) {
+	origin, issuer := strings.TrimSpace(os.Getenv("WT_TUNN_ORIGIN")), strings.TrimSpace(os.Getenv("WT_TUNN_ISSUER"))
+	account, jwks := strings.TrimSpace(os.Getenv("WT_TUNN_ACCOUNT_ID")), strings.TrimSpace(os.Getenv("WT_TUNN_JWKS_FILE"))
+	if origin == "" && issuer == "" && account == "" && jwks == "" {
+		return nil, nil
+	}
+	if origin == "" || issuer == "" || account == "" || jwks == "" {
+		return nil, fmt.Errorf("tunn SSO requires WT_TUNN_ORIGIN, WT_TUNN_ISSUER, WT_TUNN_ACCOUNT_ID and WT_TUNN_JWKS_FILE")
+	}
+	if os.Getenv("WT_BASE_URL") != origin {
+		return nil, fmt.Errorf("WT_BASE_URL must equal WT_TUNN_ORIGIN")
+	}
+	return tunnidentity.New(tunnidentity.Config{Origin: origin, Issuer: issuer, AccountID: account, JWKSFile: jwks})
 }

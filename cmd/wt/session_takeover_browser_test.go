@@ -24,10 +24,12 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
+	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	"github.com/ehrlich-b/wingthing/internal/pake"
 	"github.com/ehrlich-b/wingthing/internal/relay"
+	"github.com/ehrlich-b/wingthing/internal/sessionrole"
 	"github.com/ehrlich-b/wingthing/internal/sshcontrol"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
 	"github.com/ehrlich-b/wingthing/internal/testssh"
@@ -196,6 +198,20 @@ func TestBuiltSessionTakeoverDashboard(t *testing.T) {
 		t.Fatal("missing exact launched session")
 	}
 	t.Cleanup(func() { _ = eggclient.KillOrphanEggContext(context.Background(), &config.Config{Dir: states[1]}, id) })
+	// The pinned coordinator is the real launched fixture egg, not a UI-only row.
+	if err := sessionrole.Write(filepath.Join(states[1], "eggs", id), sessionrole.Metadata{Pinned: true, Role: "coordinator"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := eggclient.WriteSessionName(filepath.Join(states[1], "eggs", id), "wing"); err != nil {
+		t.Fatal(err)
+	}
+	wake := time.Now()
+	if _, err := egg.RecordSessionReport(filepath.Join(states[1], "eggs", id), egg.SessionReport{
+		Goal: "Keep the DNS change ready for review", Update: "The DNS helper is ready. I collected the result in a short brief.", NextAction: "Review the brief or send the next step.", Presence: "asleep", LastWake: wake.Add(-time.Minute).UTC().Format(time.RFC3339), NextWake: wake.Add(time.Hour).UTC().Format(time.RFC3339), Artifacts: []egg.ReportArtifact{{Label: "DNS brief.md", Path: "reports/dns-brief.md"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	// A second machine deliberately has the same full ID; only the remote one
 	// is live. Search/action must retain origin, even with identical selectors.
 	dir := filepath.Join(states[0], "eggs", id)

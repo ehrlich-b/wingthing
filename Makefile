@@ -524,3 +524,13 @@ test-session-search-regression: | web/dist
 .PHONY: test-phone-discovery-lifecycle
 test-phone-discovery-lifecycle: | web/dist
 	$(GO) test -v -p 2 -race ./internal/phonepair -run '^TestPhoneListenerImmediateShutdown$$' -count=5 -timeout=60s
+
+.PHONY: test-pwa test-pwa-web
+test-pwa: | web/dist
+	$(GO) test -p 2 ./internal/tunnidentity ./internal/relay ./internal/localrelay -run 'Tunn|LocalMode|LocalBrowser' -count=1 -timeout=90s
+	cd web && $(NODE) --test test/pwa.test.js test/coordinator-thread.test.js test/session-search.test.js test/session-viewer.test.js
+
+test-pwa-web: web
+	$(preview-build)
+	WT_SESSION_TAKEOVER_BROWSER=1 WT_TEST_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 ./cmd/wt -run '^TestBuiltSessionTakeoverDashboard$$' -v -timeout=180s
+	cd web && $(NODE) test/pwa-browser.mjs

@@ -61,3 +61,13 @@ export function createSearchController(search, update) {
         },
     };
 }
+
+// Checked emptiness differs from missing coverage. Keep both observable even
+// before the first successful fleet row has arrived.
+export function inventoryPresentation(state) {
+    const checked = state.complete === true || state.complete === false;
+    const visible = Boolean(state.query || state.loading || state.error || state.sessions?.length || checked);
+    const fallback = !state.query && !state.sessions?.length && (state.loading || state.complete === false || state.error);
+    return { visible, fallback, status: state.loading ? (state.query ? 'Searching sessions…' : 'Loading machine inventory…') :
+        state.error || (checked ? `${state.sessions?.length || 0} sessions · ${state.complete ? 'coverage complete' : 'coverage incomplete'}` : '') };
+}

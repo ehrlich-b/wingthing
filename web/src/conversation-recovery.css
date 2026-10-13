@@ -77,7 +77,8 @@
     #main, #home-section { min-height: 0; }
     #home-section { display: flex; flex-direction: column; }
     #home-section > * { flex-shrink: 0; }
-    #conversation-inventory:not(:empty) { order: -1; margin: 0 0 1rem; padding: 0.75rem; }
+    #home-section:not(.has-pinned-coordinator) #conversation-inventory:not(:empty) { order: -1; margin: 0 0 1rem; padding: 0.75rem; }
+    #home-section.has-pinned-coordinator #coordinator-home { order: -2; }
     #conversation-inventory button, .conversation-toolbar button { font-size: 0.875rem; min-height: 44px; }
     .conversation-heading h3 { font-size: 1rem; }
     .conversation-heading { align-items: stretch; }

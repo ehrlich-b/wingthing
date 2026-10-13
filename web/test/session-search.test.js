@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeSearchInventories, searchRoute, createSearchController } from '../src/session-search-state.js';
+import { inventoryPresentation, mergeSearchInventories, searchRoute, createSearchController } from '../src/session-search-state.js';
 
 const now = Date.now();
 const route = (wing_id, kind, healthy = true) => ({ wing_id, kind, healthy, observed_at: new Date(now - 1000).toISOString(), machine_label: wing_id });
@@ -50,4 +50,13 @@ test('new input and owner changes retire delayed search success and error', asyn
     finishSecond(new Error('retired error'));
     await second;
     assert.equal(updates.some(update => update.error), false);
+});
+
+test('empty machine inventory retains failures and separates verified zero from unavailable coverage', () => {
+    const missing = inventoryPresentation({query:'',sessions:[],complete:false,sources:[{healthy:false,error:'offline'}]});
+    assert.equal(missing.visible,true);assert.equal(missing.fallback,true);assert.match(missing.status,/coverage incomplete/);
+    const zero = inventoryPresentation({query:'',sessions:[],complete:true,sources:[]});
+    assert.equal(zero.visible,true);assert.equal(Boolean(zero.fallback),false);assert.equal(zero.status,'0 sessions · coverage complete');
+    assert.equal(inventoryPresentation({query:'',sessions:[],loading:true}).visible,true);
+    assert.equal(inventoryPresentation({query:'',sessions:[],error:'Unavailable'}).status,'Unavailable');
 });

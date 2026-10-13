@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -343,5 +344,23 @@ func TestActiveWingRelayHTTPURLPrefersStatusAndSupportsOldDaemonArgs(t *testing.
 	}
 	if got := ActiveWingRelayHTTPURL(cfg, &WingStatus{}); got != "https://saved.example" {
 		t.Fatalf("saved-args roost = %q", got)
+	}
+}
+
+func TestSignalDaemonStoppedInstallationIsNoOpButInvalidMetadataRejects(t *testing.T) {
+	t.Setenv("WINGTHING_DIR", t.TempDir())
+	if err := SignalDaemon(syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{WingPidPath(), RoostPidPath()} {
+		if err := os.WriteFile(path, []byte("not-a-pid"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := SignalDaemon(syscall.SIGHUP); err == nil {
+			t.Fatal("malformed metadata silently accepted")
+		}
+	}
+	if !procinfo.OwnedProcessIsAlive(os.Getpid()) {
+		t.Fatal("signal reached an unrelated process")
 	}
 }

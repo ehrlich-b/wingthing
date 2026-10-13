@@ -19,6 +19,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/ehrlich-b/wingthing/internal/mcp"
+	"github.com/ehrlich-b/wingthing/internal/tunnidentity"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/ehrlich-b/wingthing/web"
 )
@@ -57,10 +58,11 @@ type ServerConfig struct {
 type Server struct {
 	Store          *RelayStore
 	Config         ServerConfig
-	DevTemplateDir string // if set, re-read templates from disk on each request
-	DevMode        bool   // if set, auto-claim device codes with test-user
-	LocalMode      bool   // if set, bypass auth — single-user, zero-config
-	RoostMode      bool   // if set, enrolled authenticated users can access the embedded service wing
+	DevTemplateDir string                 // if set, re-read templates from disk on each request
+	DevMode        bool                   // if set, auto-claim device codes with test-user
+	TunnSSO        *tunnidentity.Verifier // Explicit signed single-owner ingress; local guards remain the default.
+	LocalMode      bool                   // if set, bypass auth — single-user, zero-config
+	RoostMode      bool                   // if set, enrolled authenticated users can access the embedded service wing
 	localUser      *User
 	Wings          *WingRegistry
 	PTY            *PTYRoutes
@@ -456,11 +458,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// service. Reject hostile Host headers as well as relying on the CLI's bind
 	// check: otherwise DNS rebinding can make an attacker-controlled origin look
 	// same-origin while the TCP connection lands on 127.0.0.1.
-	if s.LocalMode && !localRequestHost(r.Host) {
+	tunnRequest := s.LocalMode && !localRequestHost(r.Host) && s.TunnSSO != nil
+	if tunnRequest {
+		w.Header().Set("Cache-Control", "private, no-store")
+		w.Header().Add("Vary", tunnidentity.Header)
+		if err := s.TunnSSO.Verify(r); err != nil {
+			http.Error(w, "tunn owner authentication required", http.StatusForbidden)
+			return
+		}
+	} else if s.LocalMode && !localRequestHost(r.Host) {
 		http.Error(w, "local mode accepts only localhost requests", http.StatusForbidden)
 		return
 	}
-	if s.LocalMode && !localBrowserMutationAllowed(r) {
+	if s.LocalMode && !tunnRequest && !localBrowserMutationAllowed(r) {
 		http.Error(w, "local mode rejects cross-origin browser mutations", http.StatusForbidden)
 		return
 	}
