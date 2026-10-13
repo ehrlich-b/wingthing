@@ -203,7 +203,7 @@ func TestNorthstarPTYAttention(t *testing.T) {
 		})
 		h.exit("q")
 		fresh := northstarStartPTY(t, f, binary, 120, 32)
-		fresh.expect("fresh instance / historical completion baseline / known blocked", 0, "B local-agent", "I forge-agent", "U:0", "bell:off")
+		fresh.expect("fresh instance / durable unread cursor / known blocked", 0, "B local-agent", "I* forge-agent", "U:1", "bell:off")
 		fresh.exit("q")
 		for _, pty := range []*northstarPTY{h, fresh} {
 			pty.mu.Lock()
