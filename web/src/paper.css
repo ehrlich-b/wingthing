@@ -233,4 +233,5 @@ body.paper-on #app { display: none; }
     .pp-tabs small { font-size: 11px; }
     .pp-tabs small:not(.pp-hot) { display: none; }
     .pp-tabs small:empty { display: none; }
+    .pp-desk-only { display: none; }
 }

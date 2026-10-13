@@ -199,8 +199,8 @@ function viewPair() {
         '<p class="pp-lead">Pairing starts on the computer with <code>wt pair</code> and is joined from the Wingthing phone app.</p>' +
         '<p class="pp-quiet">This page can\'t join a pairing. Use the phone app to scan the code.</p>' +
         kicker('On your computer') + '<pre class="pp-cmd"><span class="pp-prompt">$</span> wt pair</pre>' +
-        '<div class="pp-actions"><button type="button" class="pp-btn" data-copy="wt pair">Copy command</button></div>' +
-        '<p class="pp-gap">Run it in a terminal on that machine. It shows a code to scan, good for five minutes.</p>' +
+        '<div class="pp-actions pp-desk-only"><button type="button" class="pp-btn" data-copy="wt pair">Copy command</button></div>' +
+        '<p class="pp-gap">Run it in a terminal on the computer you want to pair. It shows a code to scan, good for five minutes.</p>' +
         kicker('Then, in that terminal') + '<p>After the scan, the terminal shows four symbols and the phone\'s name. If the phone shows the same four in the same order, press <code>Enter</code> to allow. <code>Ctrl-C</code> cancels.</p>' +
         kicker('What pairing allows') + '<p>The phone can read this machine\'s sessions and message wing. It cannot type into a terminal until you take control from the phone.</p>' +
         '<p class="pp-quiet pp-gap">Pairing lasts until you revoke it. <code>wt devices</code> lists paired phones and <code>wt devices revoke</code> removes one.</p></div>' +
