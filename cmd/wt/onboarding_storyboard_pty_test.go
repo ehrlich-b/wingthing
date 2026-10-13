@@ -38,6 +38,25 @@ func onboardingStoryboardCapture(t *testing.T, h *northstarPTY, card string) {
 func TestOnboardingPTYStoryboard(t *testing.T) {
 	f := northstarNewFixture(t)
 	binary := northstarBuild(t, f, "stable")
+	// Provider discovery is part of this fixture. Expose the real installer
+	// utilities without inheriting an already installed host Claude or Codex.
+	for _, tool := range []string{"awk", "basename", "cat", "chmod", "cp", "cut", "date", "dirname", "grep", "head", "id", "ls", "mkdir", "mktemp", "mv", "ps", "readlink", "rm", "sed", "sh", "sleep", "sort", "tr", "uname", "wc", "sha256sum", "shasum"} {
+		path, err := exec.LookPath(tool)
+		if err != nil {
+			if tool == "sha256sum" || tool == "shasum" {
+				continue
+			}
+			t.Fatalf("installer fixture requires %s: %v", tool, err)
+		}
+		if err := os.Symlink(path, filepath.Join(f.bin, tool)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, value := range f.env {
+		if strings.HasPrefix(value, "PATH=") {
+			f.env[i] = "PATH=" + f.bin
+		}
+	}
 	if err := os.Remove(filepath.Join(f.local, "remotes.yaml")); err != nil {
 		t.Fatal(err)
 	}
