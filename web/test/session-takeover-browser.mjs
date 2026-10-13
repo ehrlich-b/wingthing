@@ -31,7 +31,14 @@ async function run() {
             assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
             assert.equal(await page.locator('.fleet-machine').count(),2);
             assert.ok((await liveInventory.textContent()).includes('via Laptop'));
+
+            const position = await page.evaluate(() => ({pin:document.getElementById('coordinator-home').getBoundingClientRect().top, other:document.getElementById('conversation-inventory').getBoundingClientRect().top}));
+            assert.ok(position.pin < position.other, 'pinned thread renders above coordinator creation after refresh');
             await page.screenshot({path:resolve(shots, `pwa-home-${viewport.width}x${viewport.height}.png`)});
+            await page.locator('#session-search-form').scrollIntoViewIfNeeded();
+            await page.screenshot({path:resolve(shots, `pwa-inventory-${viewport.width}x${viewport.height}.png`)});
+            await page.locator('#coordinator-home').scrollIntoViewIfNeeded();
+
         }
 
         await liveInventory.getByRole('button', { name: 'Open session', exact: true }).click();
@@ -105,7 +112,7 @@ async function run() {
         await dialog.locator('[data-close]').click();
         await page.locator('#session-search-input').fill('');
         await page.waitForFunction(() => document.querySelectorAll('.search-session').length === 2);
-        await page.locator('#coordinator-home .thread-bubble').filter({hasText:'Show a permission attention event.'}).waitFor();
+        await page.locator('#coordinator-home .thread-bubble').filter({hasText:'Checked the DNS helper: Show a permission attention event.'}).waitFor();
         assert.ok((await page.locator('#coordinator-home').textContent()).includes('wing'));
         await page.screenshot({path:resolve(shots,'pwa-home-via-390x844.png')});
         assert.deepEqual(errors, []);

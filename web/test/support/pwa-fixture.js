@@ -49,6 +49,7 @@ function answer(wingId, inner) {
     calls.push({ wingId, ...inner });
     if (inner.type === 'wing.info') return { hostname: wingId === 'machine-a' ? 'Workstation' : 'Studio', platform: wingId === 'machine-a' ? 'linux' : 'darwin', agents: ['claude', 'codex'], projects: [{ name: 'release', path: '/fixture/release' }], capabilities: ['session.file_download.v1'] };
     if (inner.type === 'sessions.inventory' || inner.type === 'sessions.search') {
+        if (window.pwaInventoryFailure) return {error:'Fixture inventory unavailable'};
         const route = (id, kind = 'direct') => ({wing_id:id,kind,healthy:true,observed_at:new Date().toISOString(),machine_label:id==='machine-a'?'Workstation':'Studio'});
         const own = { origin_wing_id:wingId, session_id:'same-id',name:wingId==='machine-a'?'wing':'Research',agent:'claude',machine_label:wingId==='machine-a'?'Workstation':'Studio',live:true,status:'idle',pinned:wingId==='machine-a',role:wingId==='machine-a'?'coordinator':'', routes:[route(wingId)] };
         const rows = [own];

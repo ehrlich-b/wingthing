@@ -124,6 +124,7 @@ export function renderCoordinatorHome(read = true) {
     const mount = document.getElementById('coordinator-home'), nav = document.getElementById('coordinator-nav');
     if (!mount || !nav) return;
     const sessions = candidates(), session = choose();
+    mount.parentElement.classList.toggle('has-pinned-coordinator', Boolean(session));
     if (session && mount.parentElement.firstElementChild !== mount) mount.parentElement.prepend(mount);
     const otherCoordinators = document.getElementById('conversation-inventory');
     if (session && otherCoordinators && otherCoordinators.parentElement === mount.parentElement) mount.parentElement.append(otherCoordinators);

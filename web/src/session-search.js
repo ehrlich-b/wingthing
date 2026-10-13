@@ -3,7 +3,7 @@ import { initSessionViewer, openSessionViewer, closeSessionViewer } from './sess
 import { S } from './state.js';
 import { escapeHtml, wingDisplayName } from './helpers.js';
 import { sendTunnelRequest } from './tunnel.js';
-import { SEARCH_VERSION, mergeSearchInventories, searchRoute, createSearchController } from './session-search-state.js';
+import { SEARCH_VERSION, inventoryPresentation, mergeSearchInventories, searchRoute, createSearchController } from './session-search-state.js';
 
 let installed = false, timer, controller, current = null, owner = null, reading = 0;
 
@@ -46,14 +46,14 @@ function showResults(state) {
     const status = document.getElementById('session-search-status');
     const normal = document.getElementById('sessions-list');
     const empty = document.getElementById('empty-state');
-    const active = Boolean(state.query) || Boolean(state.sessions?.length);
+    const presentation = inventoryPresentation(state);
+    const active = presentation.visible;
     if (!state.query && !state.loading) setCoordinatorFleet(state);
     results.hidden = !active;
-    if (normal) normal.hidden = active;
-    if (empty) empty.hidden = active;
+    if (normal) normal.hidden = active && !presentation.fallback;
+    if (empty) empty.hidden = active && !presentation.fallback;
     if (!active) { results.replaceChildren(); status.textContent = ''; return; }
-    status.textContent = state.loading ? 'Searching sessions…' :
-        (state.error || `${state.sessions.length} sessions · ${state.complete ? 'coverage complete' : 'coverage incomplete'}`);
+    status.textContent = presentation.status + (presentation.fallback && !state.loading ? ' · local inventory below may be cached' : '');
     results.innerHTML = '';
     if (state.loading) return;
     results.innerHTML = (state.sources || []).filter(source => !source.healthy).map(source =>
@@ -66,7 +66,7 @@ function showResults(state) {
                 `<p>${(row.routes || []).map(r => `<span class="search-route">${escapeHtml(r.kind === 'via' ? 'via ' + r.machine_label : 'direct')}${r.healthy ? '' : ' · unavailable'}</span>`).join(' ')}</p>` +
                 `<p class="text-dim">Matched: ${escapeHtml((row.match_fields || []).join(', '))}${row.search_incomplete ? ' · index incomplete' : ''}</p>` +
                 `<button type="button" data-search-open="${index}" ${route ? '' : 'disabled'}>Open session</button> <button type="button" data-search-read="${index}" ${route ? '' : 'disabled'}>Read transcript</button></article>`;
-        }).join('') + (!state.sessions.length ? '<p>No matching sessions in the sources checked.</p>' : '');
+        }).join('') + (!state.sessions?.length ? '<p>' + (state.complete ? 'No sessions matched in the successfully checked sources.' : 'Inventory coverage is incomplete. Reconnect or unlock the unavailable sources and refresh.') + '</p>' : '');
 }
 
 async function readResult(index) {

@@ -66,6 +66,15 @@ async function run() {
             await page.getByRole('button',{name:'Try again'}).click();
             await page.locator('#coordinator-home .thread-bubble').filter({hasText:'The test suite passed.'}).waitFor();
             assert.deepEqual(await page.evaluate(()=>caches.keys()),[]);
+            await page.evaluate(()=>{window.pwaInventoryFailure=true;});
+            await page.locator('#session-search-form button').click();
+            await page.waitForFunction(()=>document.getElementById('session-search-status').textContent.includes('coverage incomplete'));
+            assert.equal(await page.locator('#session-search-results').isVisible(),true);
+            assert.equal(await page.locator('.search-session').count(),0);
+            await page.screenshot({path:resolve(output,`pwa-inventory-unavailable-${viewport.width}x${viewport.height}.png`)});
+            await page.evaluate(()=>{window.pwaInventoryFailure=false;});
+            await page.locator('#session-search-form button').click();
+            await page.waitForFunction(()=>document.querySelectorAll('.search-session').length===2);
             assert.deepEqual(errors,[]);
             results.push({viewport,manifest:true,workerControls:true,offlineConstantPage:true,recovery:true,cacheEntries:0,encryptedFixtureCalls:callCount});
             await context.close();
