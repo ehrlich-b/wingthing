@@ -76,7 +76,7 @@ try {
   for(const outcome of ['pending','declined','abandoned']) {
    const value=outcome==='pending'?paymentBase:applyPaidAction(paymentBase,{op:'payment',checkoutId:'checkout-1',eventId:outcome,outcome});
    await stage(value);await go('upgrade','payment-pending');
-   if(outcome==='pending'){await click('Check payment');assert.equal((await state()).checkout.id,'checkout-1');assert.equal((await state()).paymentEvents.length,0);}
+   if(outcome==='pending'){await click('Check payment');assert.equal((await state()).checkout.id,'checkout-1');assert.equal((await state()).paymentEvents.length,0);assert.doesNotMatch(await page.locator('#paid-feedback').innerText(),/Fixture|Entitlement|version/);}
    assert.equal((await state()).pro,false);assert.equal((await state()).cloud,null);
    await page.screenshot({path:resolve(shots,`07-7-payment-${outcome}-${viewport.width}.png`),fullPage:true});
   }
@@ -89,7 +89,7 @@ try {
   await go('cloud','budget');await page.locator('[name="hours"]').fill('2');await page.locator('[name="capUSD"]').fill('5.00');assert.match(await page.locator('[data-cap-preview]').innerText(),/\$5\.00 USD/);await click('Save cloud budget');assert.equal((await state()).draft.capCents,500);await capture('cloud','budget');
   await launch();await capture('cloud','launch');
   await go('cloud','workspace');assert.equal((await state()).cloud.volumeId,'fixture-volume-1');await capture('cloud','workspace');
-  await go('cloud','repository');await page.locator('[name="repository"]').selectOption('sample/docs');await page.locator('[name="branch"]').fill('cloud/review-docs');await page.screenshot({path:resolve(shots,`10-8-before-authorize-${viewport.width}.png`),fullPage:true});await click('Authorize selected fixture repository');assert.equal((await state()).draft.repository,'sample/docs');await capture('cloud','repository');
+  await go('cloud','repository');await page.locator('[name="repository"]').selectOption('sample/docs');await page.locator('[name="branch"]').fill('main');assert.equal(await page.locator('form[data-operation="repo-connect"] button').isDisabled(),true);await page.locator('[name="branch"]').fill('cloud/review-docs');const summary=await page.locator('[data-repository-summary]').innerText();assert.match(summary,/Sample GitHub account/);assert.match(summary,/Clone sample\/docs/);assert.match(summary,/Push to cloud\/review-docs in sample\/docs/);assert.doesNotMatch(summary,/sample\/project/);assert.equal((await state()).draft.repository,'sample/project');await page.screenshot({path:resolve(shots,`10-8-before-authorize-${viewport.width}.png`),fullPage:true});await click('Authorize selected repository');assert.equal((await state()).draft.repository,'sample/docs');await capture('cloud','repository');
   await go('cloud','git');await click('Record fixture clone');await click('Prepare review-branch PR');assert.match((await state()).draft.gitStatus,/fixture PR ready/);await capture('cloud','git');
   await go('cloud','vault');await page.locator('.paid-tile').filter({hasText:'DEPLOY_TOKEN'}).getByRole('button').click();assert.equal((await state()).draft.vault.DEPLOY_TOKEN,true);assert.equal(await page.locator('#paid-root input').count(),0);await capture('cloud','vault');
   await go('cloud','model');await page.locator('[name="agent"]').selectOption('codex');await click('Confirm BYO model fixture');assert.equal((await state()).draft.agent,'codex');await capture('cloud','model');

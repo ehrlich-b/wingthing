@@ -52,7 +52,7 @@ test('07-6 expiry requests confirmed shutdown, preserves local grants and dated 
 test('07-7 abandoned, declined and delayed payments preserve draft and no paid actions',()=>{
  for(const outcome of ['abandoned','declined','delayed']){
   const s=payment(checkout(),outcome);assert.equal(s.pro,false);assert.equal(s.cloud,null);assert.equal(s.draft.task,'Review pairing implementation');
-  assert.match(act(s,{op:'payment-check'}).message,/checkout/);
+  assert.match(act(s,{op:'payment-check'}).message, outcome==='delayed' ? /Payment pending/ : /checkout/);
  }
 });
 test('07-8 owner entitlement is exact-ID, operator-only, audited and revocable',()=>{

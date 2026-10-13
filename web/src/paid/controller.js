@@ -1,7 +1,7 @@
 import { cards } from './cards.js';
 import { createPaidState, applyPaidAction, fixtureDownload, FIXTURE_VERSION } from './model.js';
 import { parseUSD } from './currency.js';
-import { renderPaidView, visiblePaidCards } from './view.js';
+import { renderPaidView, visiblePaidCards, repositoryAuthorizationSummary } from './view.js';
 import './paid.css';
 const STORAGE = 'wingthing-dormant-paid-fixture-v1';
 export function paidFixtureAllowed(user) { return user?.paid_fixture === true; }
@@ -28,6 +28,12 @@ export function mountPaidFixture(user) {
         catch (e) { error = e.message; }
         render();
     }
+    function previewRepository(form) {
+        if (form?.dataset.operation !== 'repo-connect') return;
+        const repository=form.elements.repository.value, branch=form.elements.branch.value;
+        form.querySelector('[data-repository-summary]').innerHTML=repositoryAuthorizationSummary(repository,branch);
+        form.querySelector('[type="submit"]').disabled=!/^cloud\/[a-zA-Z0-9_-]{1,60}$/.test(branch);
+    }
     function download(kind) {
         try {
             const value = fixtureDownload(s,kind), blob = new Blob([value], {type:'application/json'});
@@ -44,11 +50,13 @@ export function mountPaidFixture(user) {
         if (target.dataset.download) download(target.dataset.download);
     });
     root.addEventListener('change', event => {
+        previewRepository(event.target.closest('form'));
         if (event.target.id === 'paid-route') location.hash = event.target.value;
         if (event.target.dataset.preference) dispatch({op:'notification',name:event.target.dataset.preference,enabled:event.target.checked});
     });
     root.addEventListener('input', event => {
         const form=event.target.closest('form'); if (!form) return;
+        previewRepository(form);
         if (event.target.name==='capUSD') {
             const output=form.querySelector('[data-cap-preview]'), submit=form.querySelector('[type="submit"]');
             try { const cents=parseUSD(event.target.value); output.textContent='$'+(cents/100).toFixed(2)+' USD'; submit.disabled=false; }

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPaidState, applyPaidAction } from '../../src/paid/model.js';
 import { cards } from '../../src/paid/cards.js';
-import { cardContent } from '../../src/paid/view.js';
+import { cardContent, repositoryAuthorizationSummary } from '../../src/paid/view.js';
 const content=(key,s)=>cardContent(cards.find(c=>c.group==='cloud'&&c.key===key),s);
 test('cloud launch lists exact authorized scope and operator visibility before create',()=>{
  const s=createPaidState('active');s.draft.task='Run pairing tests';s.draft.vault.DEPLOY_TOKEN=true;
@@ -21,10 +21,20 @@ test('budget uses dollar amounts and exposes model costs before review',()=>{
 test('repository and secret consent identify account, target and operation',()=>{
  const s=createPaidState('active');s.draft.task='Run pairing tests';
  const repository=content('repository',s).body;
- for(const text of ['sample-installation-42','sample/project','cloud/review','Clone','pull request','default branch'])assert.ok(repository.includes(text),text);
+ for(const text of ['Sample GitHub account','sample/project','cloud/review','Clone','pull request','default branch','Currently authorized'])assert.ok(repository.includes(text),text);
  const vault=content('vault',s).body;
  for(const text of ['project','Run pairing tests','process','DEPLOY_TOKEN'])assert.ok(vault.includes(text),text);
  assert.doesNotMatch(vault,/value="(?:secret|token)/);
+});
+test('pending repository rights name the edited scope without changing the previous grant',()=>{
+ const s=createPaidState('active'),before=structuredClone(s.draft);
+ const preview=repositoryAuthorizationSummary('sample/docs','cloud/review-docs');
+ assert.match(preview,/Clone sample\/docs/);assert.match(preview,/Push to cloud\/review-docs in sample\/docs/);
+ assert.doesNotMatch(preview,/sample\/project|cloud\/review</);assert.match(preview,/protected branch/);
+ assert.deepEqual(s.draft,before);
+ assert.throws(()=>applyPaidAction(s,{op:'repo-connect',repository:'sample/docs',branch:'main'}),/review branch/);
+ assert.throws(()=>applyPaidAction(s,{op:'repo-connect',repository:'other/private',branch:'cloud/review-docs'}),/installation/);
+ assert.ok(!repositoryAuthorizationSummary('<script>','cloud/<img>').includes('<script>'));
 });
 test('running Large cost starts with time left and money used',()=>{
  let s=applyPaidAction(createPaidState('active'),{op:'draft',size:'large'});

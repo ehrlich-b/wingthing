@@ -44,7 +44,7 @@ export function createPaidState(scenario = 'free') {
         entitlementSource: scenario === 'free' ? 'none' : 'fixture-payment', paidThrough: '2026-11-12T21:00:00Z', cancellation: false,
         exportUntil: null, checkout: null, paymentEvents: [], invoiceEvents: [], meterEvents: [], pendingIntervals: {}, stopEvents: {}, settledRuns: {},
         intent: null, offersSeen: [], accountCapCents: 0, consumedSeconds: 0, consumedCents: 0,
-        invoice: { id: 'fixture-invoice-1', status: 'draft', cents: 2900, lines: [{ label: 'Pro subscription (proposal)', cents: 2900 }], events: [] },
+        invoice: { id: 'fixture-invoice-1', number: 'WT-2026-001', status: 'draft', cents: 2900, lines: [{ label: 'Pro subscription (proposal)', cents: 2900 }], events: [] },
         billingBlocked: false, meterFresh: true,
         draft: { task: 'Review pairing implementation', workspace: 'project', size: 'standard', hours: 2, capCents: 0, overage: false,
             repository: 'sample/project', branch: 'cloud/review', repoAuthorized: true, cloned: false, gitStatus: 'not cloned',
@@ -147,7 +147,7 @@ export function applyPaidAction(original, action) {
         id(action.requestId); demand(!s.pro, 'Already entitled; no second subscription');
         if (s.checkout) { s.message = 'Existing checkout retained. Check its payment status before paying.'; break; }
         s.checkout = { id: action.requestId, status: 'pending', accountId: s.accountId };
-        s.message = 'Fixture checkout handoff created. Waiting for a verified fixture payment event.'; break;
+        s.message = 'Payment pending. Check this payment before trying again.'; break;
     case 'checkout-return': s.message = 'Return received; entitlement still depends on the verified payment event.'; break;
     case 'payment':
         id(action.eventId); id(action.checkoutId);
@@ -161,10 +161,10 @@ export function applyPaidAction(original, action) {
             s.message = 'Pro confirmed in this fixture; continue your original action explicitly. No VM created.';
         } else if (s.checkout.status !== 'confirmed') {
             s.checkout.status = action.outcome === 'delayed' ? 'pending' : action.outcome;
-            s.message = `Payment ${action.outcome}. Draft saved; no paid action executed.`;
+            s.message = {delayed:'Payment pending. Check this payment before trying again.',declined:'Payment declined. Update your payment method in this checkout.',abandoned:'Checkout unfinished. Resume this checkout to continue.'}[action.outcome];
         }
         break;
-    case 'payment-check': s.message = `Fixture checkout: ${s.checkout?.status || 'not started'}. Entitlement version ${s.entitlementVersion}.`; break;
+    case 'payment-check': s.message = {pending:'Payment pending. Check this payment before trying again.',declined:'Payment declined. Update your payment method in this checkout.',abandoned:'Checkout unfinished. Resume this checkout to continue.',confirmed:'Payment confirmed. Pro is active; your task has not started.'}[s.checkout?.status] || 'No payment started. Review the price before checkout.'; break;
     case 'owner-grant':
         demand(action.accountId === s.accountId, 'Account ID does not match verified fixture account'); text(action.reason, 120);
         s.pro = true; s.entitlementSource = 'owner-grant'; s.entitlementVersion++;
@@ -340,7 +340,7 @@ export function applyPaidAction(original, action) {
         s.invoice.issuedAt=s.asOf; s.invoice.events = [...s.meterEvents]; s.message = 'Fixture invoice finalized from settled event IDs. BYO usage is not a Wingthing charge.'; break;
     case 'billing-fail':
         demand(action.invoiceId === s.invoice.id, 'Invoice ID mismatch'); s.invoice.status = 'unpaid'; s.billingBlocked = true;
-        if (s.cloud && ['allocating','booting','ready','failed'].includes(s.cloud.status)) beginStop(s, 'unpaid invoice'); s.message = `Invoice ${s.invoice.id} unpaid. New starts blocked; stop policy applies; local work continues. Fixture deadline ${s.paidThrough}.`; break;
+        if (s.cloud && ['allocating','booting','ready','failed'].includes(s.cloud.status)) beginStop(s, 'unpaid invoice'); s.message = 'Invoice unpaid. Update your payment method. New cloud starts are blocked; local work continues.'; break;
     case 'billing-recover': s.billingBlocked = false; s.invoice.status = 'paid'; s.message = 'Fixture payment-method recovery recorded. Cap unchanged; no automatic launch or duplicate charge.'; break;
     case 'notification': demand(Object.hasOwn(s.notifications, action.name) && typeof action.enabled === 'boolean', 'Unknown notification preference'); s.notifications[action.name] = action.enabled; s.notificationsSavedAt=s.asOf; s.message = 'Preference saved for the explicit fixture owner; no notification sent.'; break;
     case 'support':

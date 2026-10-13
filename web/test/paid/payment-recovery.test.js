@@ -13,6 +13,7 @@ test('pending checkout only checks its original payment',()=>{
  assert.match(html,/Do not pay again/);
  const checked=applyPaidAction(s,{op:'payment-check'});
  assert.deepEqual(checked.checkout,s.checkout);assert.deepEqual(checked.paymentEvents,s.paymentEvents);assert.equal(checked.pro,false);
+ assert.match(checked.message,/Payment pending/);assert.doesNotMatch(checked.message,/Fixture|version|Entitlement/);
 });
 test('declined and abandoned payments each have one state-specific recovery',()=>{
  for(const [outcome,title,action] of [['declined','Payment declined','Update payment method'],['abandoned','Checkout unfinished','Resume checkout']]) {
@@ -27,6 +28,8 @@ test('unpaid invoice shows amount and dated export deadline',()=>{
  const html=renderPaidView(cards.find(c=>c.key==='payment-failed'),s);
  assert.match(html,/Amount due/);assert.match(html,/\$29\.00/);assert.match(html,/Export deadline/);
  assert.match(html,/paid-feedback error/);assert.match(html,/role="alert"/);
+ assert.match(html,/WT-2026-001/);assert.doesNotMatch(html,/fixture-invoice-1|Fixture deadline/);
+ assert.doesNotMatch(s.message,/\d{4}-\d{2}-\d{2}T|fixture/i);
 });
 test('payment and access outcomes carry a visible semantic tone',()=>{
  let s=pending();
