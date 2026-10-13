@@ -73,6 +73,7 @@ type linuxSandbox struct {
 	cfg           Config
 	tmpDir        string
 	cgroup        *cgroupManager
+	cgroupFile    *os.File
 	networkBridge *networkBridge
 	userNamespace bool
 	destroyOnce   sync.Once
@@ -82,6 +83,10 @@ type linuxSandbox struct {
 // newPlatform tries to create a namespace+seccomp sandbox.
 // Returns an error if capabilities are insufficient so the factory falls back.
 func newPlatform(cfg Config) (Sandbox, error) {
+	return newLinuxSandbox(cfg, namespaceCapabilityError, newCgroupManager)
+}
+
+func newLinuxSandbox(cfg Config, checkNamespace func(bool) error, createCgroup func(string, uint64, uint32) (*cgroupManager, error)) (Sandbox, error) {
 	if _, err := ValidateLaunchPreparation(cfg); err != nil {
 		return nil, err
 	}
@@ -97,7 +102,7 @@ func newPlatform(cfg Config) (Sandbox, error) {
 		}
 	}
 	hasNamespaceCapability := hasEffectiveCAPSYSADMIN()
-	if err := namespaceCapabilityError(hasNamespaceCapability); err != nil {
+	if err := checkNamespace(hasNamespaceCapability); err != nil {
 		return nil, fmt.Errorf("linux sandbox capability probe: %w", err)
 	}
 
@@ -106,10 +111,18 @@ func newPlatform(cfg Config) (Sandbox, error) {
 		return nil, fmt.Errorf("create sandbox tmpdir: %w", err)
 	}
 
-	// Create cgroup for real memory/PID limits (graceful fallback to rlimits only).
+	// Configured RSS and process-tree limits require cgroups. RLIMIT_AS
+	// cannot replace either control.
 	var cg *cgroupManager
 	if cfg.MemLimit > 0 || cfg.PidLimit > 0 {
-		cg, _ = newCgroupManager(cfg.SessionID, cfg.MemLimit, cfg.PidLimit)
+		cg, err = createCgroup(cfg.SessionID, cfg.MemLimit, cfg.PidLimit)
+		if err != nil || cg == nil {
+			os.RemoveAll(dir)
+			if err == nil {
+				err = fmt.Errorf("cgroup support is unavailable")
+			}
+			return nil, fmt.Errorf("sandbox memory/process limits unavailable; no agent started: %w", err)
+		}
 	}
 
 	log.Printf("linux sandbox: created tmpdir=%s network=%s cgroup=%v", dir, cfg.NetworkNeed, cg != nil)
@@ -401,6 +414,19 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		// the PID namespace when spawning the agent instead.
 		attr.Cloneflags &^= syscall.CLONE_NEWPID
 	}
+	if s.cgroup != nil {
+		if s.cgroupFile == nil {
+			file, err := os.Open(s.cgroup.path)
+			if err != nil {
+				return nil, fmt.Errorf("open required sandbox cgroup: %w", err)
+			}
+			s.cgroupFile = file
+		}
+		// clone3 places the child in its cgroup before it executes. If the
+		// kernel cannot do this, process start fails without a fallback.
+		attr.UseCgroupFD = true
+		attr.CgroupFD = int(s.cgroupFile.Fd())
+	}
 	cmd.SysProcAttr = attr
 	if needsNetworkRelay {
 		if s.networkBridge != nil {
@@ -436,7 +462,7 @@ func (s *linuxSandbox) PostStart(pid int) error {
 	// Cgroup — real memory (RSS) and PID tree limits.
 	if s.cgroup != nil {
 		if err := s.cgroup.AddPID(pid); err != nil {
-			log.Printf("linux sandbox: cgroup AddPID(%d) failed: %v", pid, err)
+			return fmt.Errorf("attach required sandbox cgroup: %w", err)
 		}
 	}
 	return nil
@@ -459,6 +485,9 @@ func (s *linuxSandbox) Destroy() error {
 	s.destroyOnce.Do(func() {
 		if s.networkBridge != nil {
 			s.networkBridge.Close()
+		}
+		if s.cgroupFile != nil {
+			s.cgroupFile.Close()
 		}
 		if s.cgroup != nil {
 			if err := s.cgroup.Destroy(); err != nil {

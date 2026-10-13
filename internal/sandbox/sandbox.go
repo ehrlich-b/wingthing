@@ -105,12 +105,12 @@ func newEnforcementError(cfg Config, platformErr error) *EnforcementError {
 	if len(cfg.Deny) > 0 {
 		gaps = append(gaps, fmt.Sprintf("deny paths (%d)", len(cfg.Deny)))
 	}
-	if cfg.CPULimit > 0 || cfg.MemLimit > 0 || cfg.MaxFDs > 0 {
+	if cfg.CPULimit > 0 || cfg.MemLimit > 0 || cfg.MaxFDs > 0 || cfg.PidLimit > 0 {
 		gaps = append(gaps, "resource limits")
 	}
 	return &EnforcementError{
 		Gaps:     gaps,
-		Platform: platformHelp(),
+		Platform: platformErr.Error() + ". " + platformHelp(),
 	}
 }
 
