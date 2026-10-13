@@ -110,6 +110,11 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 		err error
 	}
 	actionDone := make(chan actionResult, 1)
+	type diagnosticReply struct {
+		sequence uint64
+		lines    []string
+	}
+	diagnosticDone := make(chan diagnosticReply, 1)
 	inv.refresh(ctx, s)
 	for {
 		if !suspended {
@@ -119,7 +124,7 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 				}
 			}
 			width, height := terminal.size()
-			if s.mode == details || s.mode == help || s.mode == runDetails || s.mode == runResult {
+			if s.isOverlay() {
 				lineCount := 0
 				for _, line := range overlayLines(s, time.Now()) {
 					lineCount += len(wrap(line, max(1, width)))
@@ -191,6 +196,11 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			}
 			inv.refresh(ctx, s)
 			continue
+		case result := <-diagnosticDone:
+			if result.sequence == s.diagnostic.sequence {
+				s.diagnostic.lines, s.diagnostic.loading = result.lines, false
+			}
+			continue
 		case <-escapeTimer.C:
 			keys = decoder.escape()
 		case event := <-inputEvents:
@@ -223,6 +233,26 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 				return nil
 			}
 			if act == nil {
+				continue
+			}
+			if act.kind == diagnosticReport {
+				sequence := s.diagnostic.sequence
+				args := append([]string{}, act.args...)
+				actions.Add(1)
+				go func() {
+					defer actions.Done()
+					reportCtx, stop := context.WithTimeout(ctx, 30*time.Second)
+					defer stop()
+					var output diagnosticBuffer
+					err := validateDiagnosticArgs(args)
+					if err == nil {
+						err = backgroundCommand(reportCtx, command, args, remotepkg.IO{Out: &output, ErrOut: &output})
+					}
+					select {
+					case diagnosticDone <- diagnosticReply{sequence, diagnosticResult(&output, err)}:
+					case <-ctx.Done():
+					}
+				}()
 				continue
 			}
 			if act.kind == runResult {

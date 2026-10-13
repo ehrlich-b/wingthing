@@ -30,6 +30,10 @@ type runRow struct {
 	FailureKind        string `json:"failure_kind"`
 	CreatedAt          string `json:"created_at"`
 	ParentID           string `json:"parent_id"`
+	RequestKey         string `json:"idempotency_key"`
+	Phase              string `json:"phase"`
+	Isolation          string `json:"isolation"`
+	TimeoutSeconds     int    `json:"timeout_seconds"`
 	Cleanup            string `json:"cleanup"`
 	OutputAvailability string `json:"output_availability"`
 	Terminal           bool   `json:"terminal"`
@@ -54,15 +58,16 @@ type runRoute struct {
 	remote       config.Remote
 }
 type runPage struct {
-	Runs     []runRow `json:"runs"`
-	Count    int      `json:"count"`
-	WingID   string   `json:"wing_id"`
-	Next     string   `json:"next_cursor"`
-	Revision string   `json:"snapshot_revision"`
-	route    runRoute
-	cursor   string
-	err      string
-	liveErr  string
+	Runs       []runRow `json:"runs"`
+	Count      int      `json:"count"`
+	WingID     string   `json:"wing_id"`
+	Next       string   `json:"next_cursor"`
+	Revision   string   `json:"snapshot_revision"`
+	ObservedAt string   `json:"observed_at"`
+	route      runRoute
+	cursor     string
+	err        string
+	liveErr    string
 }
 type runDirectoryEntry struct {
 	WingID  string `json:"wing_id"`
@@ -590,15 +595,36 @@ func (s *state) runOverlay() []string {
 	live := false
 	for _, current := range p.Runs {
 		if current.ID == r.ID && current.SessionID == r.SessionID && current.route == r.route {
+			r = current
 			live = current.live
 		}
 	}
-	lines := []string{"Run details: " + r.key(), "Session: " + r.WingID + ":" + r.SessionID, "Status: " + r.status() + "  Failure: " + r.FailureKind, "Agent: " + r.Agent, "Cwd: " + r.CWD, "Created: " + r.CreatedAt, "Output: " + r.OutputAvailability, "Parent: " + r.ParentID, "Cleanup attention: " + r.Cleanup, "Route: " + r.route.name + "  " + r.route.remote.SSHTarget, "Live session verified: " + fmt.Sprint(live && h.err == "" && p.err == "")}
+	key := r.RequestKey
+	if key == "" {
+		key = "not recorded; recover from the original caller receipt"
+	}
+	deadline := "no execution deadline"
+	if r.TimeoutSeconds > 0 {
+		deadline = fmt.Sprintf("%d seconds", r.TimeoutSeconds)
+	}
+	lines := []string{"Run details: " + r.key(), "Session: " + r.WingID + ":" + r.SessionID, "Original admission key: " + key, "Status: " + r.status() + "  Failure: " + r.FailureKind, "Phase: " + r.Phase, "Agent: " + r.Agent, "Cwd: " + r.CWD, "Isolation: " + r.Isolation, "Execution deadline: " + deadline, "Created: " + r.CreatedAt, "Observed: " + p.ObservedAt, "Output: " + r.OutputAvailability, "Parent: " + r.ParentID, "Cleanup attention: " + r.Cleanup, "Route: " + r.route.name + "  " + r.route.remote.SSHTarget, "Live session verified: " + fmt.Sprint(live && h.err == "" && p.err == "")}
 	if p.err != "" {
 		lines = append(lines, "Stale history: "+p.err)
 	}
 	if h.err != "" {
 		lines = append(lines, "History unavailable: "+h.err)
+	}
+	if r.status() == "unknown" {
+		lines = append(lines, "Admission/outcome needs evidence: reconcile the original key on this exact wing.")
+	}
+	if r.Status == "pending" && r.FailureKind != "unknown_outcome" {
+		lines = append(lines, "Admission recorded; result pending. Keep this receipt while waiting.")
+	}
+	if r.Terminal && r.Status == "done" && r.FailureKind != "unknown_outcome" && r.OutputAvailability != "available" {
+		lines = append(lines, "Terminal outcome retained; unavailable output is not a failed task and is not reconstructed.")
+	}
+	if r.Cleanup == "unknown" || r.Cleanup == "required" || r.Cleanup == "attention" {
+		lines = append(lines, "Check descendants on the owning host; terminal completion does not prove cleanup.")
 	}
 	lines = append(lines, "o: read an authorized result, bounded to 8192 characters", "Recovery guidance: "+runRecoveryCommand(r.route), "Use the original admission key for unknown outcomes; never resend automatically.", "Offline: wt run-inspect --snapshot PATH", "PATH must be an explicit completed, hash-verified snapshot inside this workspace.", "The dashboard never snapshots or inspects mutable live state.")
 	return lines

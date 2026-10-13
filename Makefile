@@ -410,3 +410,14 @@ test-coordinator-role-native: | web/dist
 
 test-coordinator-role-race: | web/dist
 	$(GO) test -race -p 2 -count=1 ./internal/sessionrole ./internal/egg ./internal/eggclient ./internal/localmcp ./internal/dashboard ./internal/control ./internal/wingpolicy ./cmd/wt -run 'Role|Pin|Pinned|SessionPS|RegistryDefines|ScopedParent|IsUnderPathsRoot' -timeout 180s
+
+# Storyboard machine/runs journeys: production CLI/TUI with isolated fixture wings.
+.PHONY: test-storyboard-machines-runs
+test-storyboard-machines-runs: | web/dist
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 ./internal/dashboard ./internal/launchplan ./cmd/wt -run '^Test(Diagnostics|MachineDetails|RunReceipt|LaunchPlanHumanReach|StoryboardMachinesRunsPTY|BuiltWTConnectRememberedSSHRunSurvivesDrop|MCPConnect(Verifies|Upgrade))' -v -count=1 -timeout=3m
+
+.PHONY: test-storyboard-runs-offline
+test-storyboard-runs-offline: | web/dist
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -tags runinspectfixture ./cmd/wt -run '^TestStoryboard(RunsOffline|TerminalTask)PTY$$' -v -count=1 -timeout=3m

@@ -59,8 +59,20 @@ func addConnectMCPCmd(client *string, timeout *time.Duration) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		if _, ok := remotes[args[0]]; ok {
-			return fmt.Errorf("remote %q already exists; remove it before adding it again", args[0])
+		previous, upgrading := remotes[args[0]]
+		if upgrading {
+			if previous.WingID != "" || previous.ControlSocket != "" || previous.ControlVersion != "" {
+				return fmt.Errorf("remote %q already has a verified pin; verify any intended replacement before removing and re-adding it", args[0])
+			}
+			if previous.SSHTarget != host {
+				return fmt.Errorf("remote %q uses another SSH target; refusing to replace its route", args[0])
+			}
+			if !cmd.Flags().Changed("wt-binary") {
+				binary = previous.WTBinary
+			}
+			if !cmd.Flags().Changed("wingthing-dir") {
+				dir = previous.WingthingDir
+			}
 		}
 		if *timeout <= 0 {
 			return fmt.Errorf("connect-timeout must be positive")
@@ -80,8 +92,9 @@ func addConnectMCPCmd(client *string, timeout *time.Duration) *cobra.Command {
 			return err
 		}
 		return config.UpdateRemotes(state, func(remotes map[string]config.Remote) error {
-			if _, ok := remotes[args[0]]; ok {
-				return fmt.Errorf("remote %q already exists", args[0])
+			current, exists := remotes[args[0]]
+			if exists != upgrading || upgrading && current != previous {
+				return fmt.Errorf("remote %q changed during verification; saved route was not overwritten", args[0])
 			}
 			remotes[args[0]] = r
 			return nil

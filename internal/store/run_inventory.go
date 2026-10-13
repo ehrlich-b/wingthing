@@ -295,7 +295,7 @@ func (s *Store) ListRunInventory(ctx context.Context, q RunInventoryQuery) (RunI
  COALESCE(NULLIF(json_extract(a.record,'$.isolation'),''),t.isolation),t.status,
  COALESCE(json_extract(a.record,'$.phase'),'terminal'), COALESCE(t.parent_id,''),COALESCE(a.request_key,''),
  strftime('%Y-%m-%dT%H:%M:%SZ',t.created_at),COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ',t.started_at),''),COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ',t.finished_at),''),t.timeout_seconds,
- COALESCE(json_extract(a.record,'$.result.failure_kind'),CASE WHEN t.status!='done' THEN 'unknown_outcome' ELSE '' END),
+ COALESCE(json_extract(a.record,'$.result.failure_kind'),CASE WHEN t.status IN ('failed','timeout','stopped') THEN 'unknown_outcome' ELSE '' END),
  t.status IN ('done','failed','timeout','stopped'),a.rowid IS NULL,
  CASE WHEN COALESCE(json_array_length(json_extract(a.record,'$.result.surviving_descendants')),0)>0
  OR COALESCE(json_extract(a.record,'$.result.containment_error'),'')!='' THEN 'attention' ELSE 'unknown' END,

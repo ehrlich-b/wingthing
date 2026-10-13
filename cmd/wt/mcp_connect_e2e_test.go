@@ -133,6 +133,14 @@ func testBuiltWTConnectRememberedSSHRun(t *testing.T, nativeTask bool) {
 	if err != nil || len(registry) != 0 {
 		t.Fatalf("failed verification wrote registry: %v %v", registry, err)
 	}
+	// The storyboard prepares a CLI profile first, then verifies that same alias
+	// for parent orchestration. Existing pins are never replaced by this upgrade.
+	prepare := exec.Command(binary, "remote", "add", "forge", "forge", "--wingthing-dir", remoteState)
+	prepare.Env = environment(localState)
+	prepare.Dir = work
+	if output, err := prepare.CombinedOutput(); err != nil {
+		t.Fatalf("prepare CLI profile: %v\n%s", err, output)
+	}
 	add = exec.Command(binary, "mcp", "connect", "add", "forge", "--ssh", "forge", "--wingthing-dir", remoteState, "--wt-binary", remoteBinary)
 	add.Env = environment(localState)
 	add.Dir = work
@@ -252,6 +260,9 @@ func testBuiltWTConnectRememberedSSHRun(t *testing.T, nativeTask bool) {
 	defer readyCancel()
 	if err := gate.WaitReady(readyCtx); err != nil {
 		t.Fatal(err)
+	}
+	if !nativeTask {
+		storyboardParentReceipt(t, binary, localState, remoteState, work, environment(localState), id, "built-original")
 	}
 	forward := <-h.Started
 	h.Offline(t, "forge", true)

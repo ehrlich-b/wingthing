@@ -68,3 +68,72 @@ func TestMCPConnectAddRejectsInvalidBinaryBeforeSSHOrWrites(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPConnectVerifiesPreparedCLIProfileWithoutReplacingPins(t *testing.T) {
+	h := testssh.New(t)
+	state := t.TempDir()
+	t.Setenv("WINGTHING_DIR", state)
+	h.Host(t, "host", sshcontrol.Metadata{WingID: "pinned-wing", Version: control.ContractVersion, WingthingDir: "/remote/canonical", ControlSocket: "/remote/control.sock"})
+	old := config.Remote{SSHTarget: "host", WTBinary: "/selected/wt", WingthingDir: "/selected/state"}
+	if err := config.SaveRemotes(state, map[string]config.Remote{"fixture": old}); err != nil {
+		t.Fatal(err)
+	}
+	run := func(host string) error {
+		return executeCLI(context.Background(), []string{"mcp", "connect", "add", "fixture", "--ssh", host}, remotepkg.IO{SSHPath: h.SSHPath, Out: io.Discard, ErrOut: io.Discard})
+	}
+	if err := run("other-host"); err == nil || !strings.Contains(err.Error(), "another SSH target") {
+		t.Fatal("route replacement accepted", err)
+	}
+	h.Offline(t, "host", true)
+	if err := run("host"); err == nil {
+		t.Fatal("offline verification accepted")
+	}
+	remotes, err := config.LoadRemotes(state)
+	if err != nil || remotes["fixture"] != old {
+		t.Fatal("failed handshake changed profile", remotes, err)
+	}
+	h.Offline(t, "host", false)
+	if err := run("host"); err != nil {
+		t.Fatal(err)
+	}
+	remotes, err = config.LoadRemotes(state)
+	if err != nil || remotes["fixture"].WingID != "pinned-wing" || remotes["fixture"].WTBinary != old.WTBinary {
+		t.Fatal(remotes, err)
+	}
+	inspected, err := os.ReadFile(filepath.Join(h.Root, "host.inspect"))
+	if err != nil || !strings.Contains(string(inspected), old.WingthingDir) || !strings.Contains(string(inspected), old.WTBinary) {
+		t.Fatal("saved binary/state not reused", err)
+	}
+	h.Host(t, "host", sshcontrol.Metadata{WingID: "replacement-wing", Version: control.ContractVersion, WingthingDir: "/replacement", ControlSocket: "/replacement/control.sock"})
+	if err := run("host"); err == nil {
+		t.Fatal("existing pin replaced")
+	}
+	unchanged, err := config.LoadRemotes(state)
+	if err != nil || unchanged["fixture"] != remotes["fixture"] {
+		t.Fatal("pin changed", unchanged, err)
+	}
+}
+
+func TestMCPConnectUpgradeRejectsConcurrentRegistryChange(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("WINGTHING_DIR", state)
+	original := config.Remote{SSHTarget: "host"}
+	if err := config.SaveRemotes(state, map[string]config.Remote{"fixture": original}); err != nil {
+		t.Fatal(err)
+	}
+	// Only this fixture transport changes the disposable registry during the
+	// handshake. The production compare/update must preserve that new route.
+	transport := filepath.Join(t.TempDir(), "ssh")
+	script := "#!/bin/sh\nprintf '%s\\n' 'remotes:' '  fixture:' '    ssh_target: concurrent-host' > " + remotepkg.ShellQuote(filepath.Join(state, "remotes.yaml")) + "\nprintf '%s\\n' '{\"wing_id\":\"verified-host\",\"version\":\"" + control.ContractVersion + "\",\"wingthing_dir\":\"/remote/state\",\"control_socket\":\"/remote/control.sock\"}'\n"
+	if err := os.WriteFile(transport, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	err := executeCLI(context.Background(), []string{"mcp", "connect", "add", "fixture", "--ssh", "host"}, remotepkg.IO{SSHPath: transport, Out: io.Discard, ErrOut: io.Discard})
+	if err == nil || !strings.Contains(err.Error(), "changed during verification") {
+		t.Fatal(err)
+	}
+	saved, err := config.LoadRemotes(state)
+	if err != nil || saved["fixture"].SSHTarget != "concurrent-host" || saved["fixture"].WingID != "" {
+		t.Fatal(saved, err)
+	}
+}
