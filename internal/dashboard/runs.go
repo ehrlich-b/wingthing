@@ -629,11 +629,11 @@ func (s *state) runOverlay() []string {
 		return runRecoveryLines(title, r)
 	}
 	label, _ := runStatus(r)
-	when := "Started: "
+	what, when := "Ran: ", "Started: "
 	if r.status() == "pending" {
-		when = "Queued: "
+		what, when = "Will run: ", "Queued: "
 	}
-	lines := []string{title, "", "Ran: " + runWhat(r), "Result: " + label, when + humanTime(r.CreatedAt), "Checked: " + humanTime(p.ObservedAt)}
+	lines := []string{title, "", what + runWhat(r), "Result: " + label, when + humanTime(r.CreatedAt), "Checked: " + humanTime(p.ObservedAt)}
 	if r.Isolation == "privileged" {
 		lines = append(lines, "! Sandbox off. This run had full access to your account.")
 	} else if label := isolationLabel(r.Isolation); label != "Not reported" {
@@ -648,6 +648,10 @@ func (s *state) runOverlay() []string {
 	lines = append(lines, "")
 	if stale {
 		lines = append(lines, "History is offline. This is the last saved state.")
+	}
+	// A queued run has no result yet, so it offers no result key.
+	if r.status() == "pending" && !(live && !stale) {
+		return append(lines, "Next: "+runNextStep(r, false))
 	}
 	keys := "o result"
 	if runNeedsRecovery(r) {
@@ -686,7 +690,7 @@ func runNextStep(r runRow, live bool) string {
 			return "press Esc, then Enter to open the live session."
 		}
 		if r.status() == "pending" {
-			return "press o once it has run."
+			return "wait for it to start."
 		}
 		return "wait for it to finish, then press o for the result."
 	case "done":

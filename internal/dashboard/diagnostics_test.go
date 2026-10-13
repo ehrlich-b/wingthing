@@ -148,7 +148,7 @@ func TestRunReceiptPendingAdmissionIsNotUnknownCompletion(t *testing.T) {
 	s.history().target = r
 	s.history().pages["wing"] = runPage{Runs: []runRow{r}}
 	text := strings.Join(s.runOverlay(), "\n")
-	if !strings.Contains(text, "Result: ! Pending") || !strings.Contains(text, "press o once it has run") || strings.Contains(text, "recovery steps") || !strings.Contains(text, "Queued: ") || strings.Contains(text, "? Unknown") || strings.Contains(text, "check its work") {
+	if !strings.Contains(text, "Result: ! Pending") || !strings.Contains(text, "Next: wait for it to start") || strings.Contains(text, "o result") || !strings.Contains(text, "Will run: ") || strings.Contains(text, "recovery steps") || !strings.Contains(text, "Queued: ") || strings.Contains(text, "? Unknown") || strings.Contains(text, "check its work") {
 		t.Fatal(text)
 	}
 }
