@@ -40,7 +40,7 @@ func TestOnboardingPTYStoryboard(t *testing.T) {
 	binary := northstarBuild(t, f, "stable")
 	// Provider discovery is part of this fixture. Expose the real installer
 	// utilities without inheriting an already installed host Claude or Codex.
-	for _, tool := range []string{"awk", "basename", "cat", "chmod", "cp", "cut", "date", "dirname", "grep", "head", "id", "ls", "mkdir", "mktemp", "mv", "ps", "readlink", "rm", "sed", "sh", "sleep", "sort", "tr", "uname", "wc", "sha256sum", "shasum"} {
+	for _, tool := range []string{"awk", "basename", "bash", "cat", "chmod", "cp", "cut", "date", "dirname", "grep", "head", "id", "ls", "mkdir", "mktemp", "mv", "ps", "readlink", "rm", "sed", "sh", "sleep", "sort", "tr", "uname", "wc", "sha256sum", "shasum"} {
 		path, err := exec.LookPath(tool)
 		if err != nil {
 			if tool == "sha256sum" || tool == "shasum" {
