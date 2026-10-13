@@ -71,7 +71,7 @@ body.paper-on #app { display: none; }
 .pp-meta { font-size: 14px; color: var(--pp-ink-2); font-variant: all-small-caps; letter-spacing: .08em; text-align: right; }
 .pp-meta b { color: var(--pp-ink); font-weight: 600; }
 .pp-meta em { color: var(--pp-red); font-style: normal; font-weight: 600; }
-.pp-meta .pp-st { font-size: 14px; }
+.pp-meta .pp-st { font-size: 14px; margin-left: .7em; }
 .pp-meta .pp-away-word { color: var(--pp-ochre); font-weight: 600; }
 .pp-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); gap: 56px; align-items: start; }
 .pp-split { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; }
@@ -96,6 +96,7 @@ body.paper-on #app { display: none; }
 .pp-who { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .pp-who b, .pp-who a { font-weight: 600; font-size: 16px; overflow-wrap: anywhere; }
 .pp-row-you .pp-who b { color: var(--pp-slate); }
+@media (prefers-color-scheme: dark) { .pp-row-you { background: none; border-left: 2px solid var(--pp-rule-2); margin-left: -18px; padding-left: 16px; } }
 .pp-row-wing .pp-who b { color: var(--pp-red); }
 .pp-who a:hover { text-decoration: underline; text-decoration-color: var(--pp-rule-2); }
 .pp-who .pp-st { font-size: 13px; }

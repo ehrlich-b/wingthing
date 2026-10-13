@@ -215,7 +215,7 @@ function viewSession(route) {
     const w = wingOf(s.wing_id), st = sessionState(s), entry = read(s), term = terminal(s);
     const msgs = lines(s).slice(-24).map(l => '<div class="pp-row pp-row-' + (l.who === 'you' ? 'you' : 'session') + '"><div class="pp-who"><b>' + (l.who === 'you' ? 'you' : 'session') + '</b><small>' + esc(clock(l.at)) + '</small></div><div class="pp-say">' + prose(l.text) + '</div></div>').join('');
     const live = machineState(w) === 'connected';
-    const meta = esc([agentName(s.agent), machineName(w), project(s)].filter(Boolean).join(' · ')) + ' · ' + chip(st);
+    const meta = esc([agentName(s.agent), machineName(w), project(s)].filter(Boolean).join(' · ')) + chip(st);
     return head(esc(sessionDisplayName(s)), meta) + '<div class="pp-cols pp-split"><div class="pp-col-main">' + kicker('Messages', entry.error ? esc(entry.error) : '') +
         (msgs || '<p class="pp-quiet">' + (entry.at ? 'No messages in this session yet.' : 'Reading the session…') + '</p>') +
         (st.key === 'need' ? needCard(s) : '') + (machineState(w) === 'connected' ? composer('Message ' + sessionDisplayName(s), s) : '') + '</div>' +
