@@ -1142,6 +1142,8 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		log.Printf("wing: local control ready (wing_id=%s)", cfg.WingID)
 		daemonctl.WriteWingStatusForRoost("local", "", roostURL)
 	}
+	browserAttachments := newBrowserFleetAttachments(ctx, sessions, ownerUserID)
+	defer browserAttachments.Close()
 	var phoneServer *phonepair.Server
 	if !sharedHost && localOwner != nil && orgFlag == "" {
 		phoneServer, err = phonepair.Listen(ctx, cfg.Dir, cfg.WingID, strings.TrimSuffix(cfg.Hostname, ".local"), func() string {
@@ -1214,7 +1216,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		}
 
 		req.SenderUserID = localOwner.OwnerForRelay(roostURL, req.SenderUserID)
-		tunnel.HandleTunnelRequest(tunnel.References{Version: version, WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowedKeys, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs, Sessions: sessions, BrowserTools: func() []*config.ToolConfig {
+		tunnel.HandleTunnelRequest(tunnel.References{Version: version, WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowedKeys, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs, Sessions: sessions, BrowserFleetAttachment: browserAttachments.Execute, BrowserTools: func() []*config.ToolConfig {
 			wingToolsMu.Lock()
 			defer wingToolsMu.Unlock()
 			return append([]*config.ToolConfig(nil), wingTools...)

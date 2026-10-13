@@ -23,6 +23,7 @@ type Attachment struct {
 	Session        string `json:"session"`
 	Exact          bool   `json:"exact,omitempty"`
 	ReadOnly       bool   `json:"read_only,omitempty"`
+	RequireLease   bool   `json:"require_lease,omitempty"`
 	Takeover       bool   `json:"takeover,omitempty"`
 	Rows           uint32 `json:"rows,omitempty"`
 	Cols           uint32 `json:"cols,omitempty"`

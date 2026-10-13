@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -20,6 +21,7 @@ type References struct {
 	AllowedKeys               *[]config.AllowKey
 	WingEggMu                 *sync.Mutex
 	WingEggCfg                **egg.EggConfig
+	BrowserFleetAttachment    func(context.Context, ws.TunnelRequest, string, json.RawMessage) (map[string]any, error)
 	BrowserTools              func() []*config.ToolConfig
 	ListAliveEggSessions      func(*config.Config) []ws.SessionInfo
 	ResizeBrowserInput        func(context.Context, string, string, string, string, uint32, uint32) error

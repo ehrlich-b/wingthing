@@ -94,7 +94,7 @@ Use `session.control` with `operation: "session_launch"` for qualified launch;
 this owner-bound personal path preserves socket client and passkey restrictions
 even when the origin is local. An existing browser passkey token does not bypass
 the socket path's unavailable MCP passkey ceremony.
-Live phone terminal commands are `fleet_attach`, `fleet_read` and `fleet_input`.
+Live phone terminal commands are `fleet_attach`, `fleet_read`, `fleet_input` and exact `fleet_detach`.
 Each `input` envelope includes `origin_wing_id` and the full `session_id`.
 Attach additionally accepts `read_only` or explicit `takeover`; input additionally
 accepts the terminal bytes as `input`. For example:
@@ -107,7 +107,7 @@ The encrypted response includes the selected `route`, exact identity and mode.
 Read returns bounded `output`, a rendered terminal `screen`, `ended` and
 `truncated`. Attach waits for the actual egg acknowledgement, retains one route
 for its lifetime, and never retries a takeover or input through another route.
-The client explicitly detaches/reconnects after reading state. Generic `detach`
+The client explicitly detaches/reconnects after reading state. Exact `fleet_detach` requires the current origin/session and releases input without stopping the agent. Generic `detach`
 and connection close release either attachment type. Legacy local `input` cannot
 write through a qualified attachment; qualified input cannot cross origins even
 when two sessions have the same ID. A read-only attachment cannot input.

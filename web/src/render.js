@@ -1,4 +1,5 @@
 import { S, DOM, TERM_THUMB_PREFIX } from './state.js';
+import { openSessionViewer } from './session-viewer.js';
 import { initSessionSearch } from './session-search.js';
 import { escapeHtml, wingDisplayName, shortenPath, projectName, sessionDisplayName, validSessionName, formatRelativeTime, semverCompare, nestedRepoCount, agentIcon, agentWithIcon, dirParent, setupCopyable } from './helpers.js';
 import { identityPubKey } from './crypto.js';
@@ -2555,6 +2556,7 @@ export function renderSessionInventory() {
             '</div>' +
             (wingName ? '<div class="egg-wing">' + escapeHtml(wingName) + '</div>' : '') +
             '<button type="button" class="egg-activity btn-sm">Activity</button>' +
+            '<button type="button" class="btn-sm egg-open-session">Open session</button>' +
             (error ? '<div class="inventory-action-status" role="status">' + escapeHtml(error) + '</div>' : '') +
         '</div>';
     }
@@ -2593,13 +2595,18 @@ export function renderSessionInventory() {
     DOM.sessionsList.querySelectorAll('.egg-box').forEach(function(card) {
         var session = findSessionResource(S.sessionsData, card.dataset.sid, card.dataset.wingId);
         card.addEventListener('click', function(e) {
-            if (e.target.closest('.box-menu-btn, .egg-delete, .egg-activity')) return;
+            
+            if (e.target.closest('.box-menu-btn, .egg-delete, .egg-open-session, .egg-activity')) return;
             if (!session || !sessionInventoryActions(session, sessionWing(session), S.currentUser).attach) {
                 var label = card.querySelector('.egg-label');
                 if (label) { var orig = label.innerHTML; label.textContent = 'wing offline'; setTimeout(function() { label.innerHTML = orig; }, 1500); }
                 return;
             }
             switchToSession(session.id, undefined, session.wing_id);
+        });
+        card.querySelector('.egg-open-session').addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (session) openSessionViewer({ origin_wing_id: session.wing_id, session_id: session.id });
         });
         card.querySelector('.box-menu-btn').addEventListener('click', function(e) {
             e.stopPropagation();
