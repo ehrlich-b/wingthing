@@ -63,6 +63,7 @@ async function run() {
         assert.equal(await page.locator('#session-viewer').isVisible(),false);
         const groups=await page.locator('.fleet-machine').allTextContents();assert.equal(groups.length,2);
         const inventoryBounds=await page.locator('.session-search').boundingBox();for(const row of await page.locator('.search-session').all()){const box=await row.boundingBox();assert.ok(box&&box.y>=inventoryBounds.y&&box.y+box.height<=inventoryBounds.y+inventoryBounds.height,'both inventory rows fit the focused capture');}
+        const inventoryText=await page.locator('.session-search').innerText();assert.doesNotMatch(inventoryText,/\.scratch|\/work\/lanes|Matched:/);assert.match(inventoryText,/dns-helper/);assert.doesNotMatch(inventoryText,new RegExp(localOrigin+'|'+remoteOrigin+'|'+sessionID));
         await page.locator('.session-search').screenshot({ path: resolve(shots, '13-5-takeover-inventory-desktop.png') });
         await liveInventory.getByRole('button', { name: 'Open session', exact: true }).click();
         await page.waitForFunction(() => document.querySelector('[data-transcript]').textContent.includes('Desktop DNS helper is ready'));

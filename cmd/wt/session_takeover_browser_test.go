@@ -51,9 +51,13 @@ func TestBuiltSessionTakeoverDashboard(t *testing.T) {
 	}
 	ssh := testssh.New(t)
 	homes := []string{filepath.Join(ssh.Root, "local-home"), filepath.Join(ssh.Root, "remote-home")}
+	workspaces := []string{filepath.Join(homes[0], "dns-helper"), filepath.Join(homes[1], "dns-helper")}
 	states := []string{testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch")), testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))}
 	for i := range states {
 		if err := os.Mkdir(homes[i], 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(workspaces[i], 0700); err != nil {
 			t.Fatal(err)
 		}
 		initialize := exec.Command(binary, "session", "inventory", "--json")
@@ -188,7 +192,7 @@ func TestBuiltSessionTakeoverDashboard(t *testing.T) {
 	if err := config.SaveRemotes(states[0], map[string]config.Remote{"takeover-peer": {SSHTarget: "takeover-peer", WTBinary: binary, WingID: remoteMeta.WingID, WingthingDir: states[1], ControlSocket: remoteMeta.ControlSocket, ControlVersion: control.ContractVersion}}); err != nil {
 		t.Fatal(err)
 	}
-	launch, _ := json.Marshal(map[string]any{"agent": "claude", "cwd": homes[1], "model": "fixture", "label": "DNS-repair"})
+	launch, _ := json.Marshal(map[string]any{"agent": "claude", "cwd": workspaces[1], "model": "fixture", "label": "DNS-repair"})
 	started, err := localmcp.CallLocalWingTool(t.Context(), states[1], "", "agent_start", launch)
 	if err != nil {
 		t.Fatal(err)
@@ -243,7 +247,7 @@ func TestBuiltSessionTakeoverDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	event, _ := json.Marshal(map[string]any{"sequence": 1, "type": "message", "source": "claude_transcript", "role": "assistant", "text": "Local DNS helper is a separate session."})
-	for file, text := range map[string]string{"egg.meta": "agent=claude\ncwd=" + homes[0] + "\nprovider_home=" + homes[0] + "\n", "lifecycle.jsonl": string(event) + "\n"} {
+	for file, text := range map[string]string{"egg.meta": "agent=claude\ncwd=" + workspaces[0] + "\nprovider_home=" + homes[0] + "\n", "lifecycle.jsonl": string(event) + "\n"} {
 		if err := os.WriteFile(filepath.Join(dir, file), []byte(text), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -286,7 +290,7 @@ func TestBuiltSessionTakeoverDashboard(t *testing.T) {
 		t.Fatalf("takeover journey: %v\n%s", err, output)
 	}
 	metadata := eggclient.ReadEggMetaValues(filepath.Join(states[1], "eggs", id))
-	transcript := filepath.Join(metadata["provider_home"], ".claude", "projects", strings.ReplaceAll(homes[1], "/", "-"), metadata["provider_session_id"]+".jsonl")
+	transcript := filepath.Join(metadata["provider_home"], ".claude", "projects", strings.ReplaceAll(workspaces[1], "/", "-"), metadata["provider_session_id"]+".jsonl")
 	data, err := os.ReadFile(transcript)
 	if err != nil {
 		t.Fatal(err)

@@ -63,10 +63,10 @@ function showResults(state) {
         groupedRows(state.sessions).map(({ row, index, heading }) => {
             const route = searchRoute(row, S.wingsData);
             return heading + `<article class="search-session" data-origin="${escapeHtml(row.origin_wing_id)}" data-session="${escapeHtml(row.session_id)}"><h3>${row.pinned && row.role === 'coordinator' ? 'Pinned wing · ' : ''}${escapeHtml(row.name || row.session_id)} · ${escapeHtml(row.agent || 'agent')}</h3>` +
-                `<p>${escapeHtml(row.machine_label)} · ${escapeHtml(row.cwd || '')} · ${escapeHtml(row.status)}${row.possible_duplicate ? ' · possible duplicate' : ''}</p>` +
-                `<div class="search-identity">${escapeHtml(row.origin_wing_id)} / ${escapeHtml(row.session_id)}</div>` +
+                `<p>${escapeHtml(row.machine_label)} · ${escapeHtml(row.cwd ? row.cwd.replace(/\/+$/, '').split('/').pop() || '/' : 'Unknown folder')} · ${escapeHtml(row.status)}${row.possible_duplicate ? ' · possible duplicate' : ''}</p>` +
+                `<details class="search-identity"><summary>Session details</summary><p>Working folder: ${escapeHtml(row.cwd || 'Unknown')}</p><p>Wing: ${escapeHtml(row.origin_wing_id)}<br>Session: ${escapeHtml(row.session_id)}</p></details>` +
                 `<p>${(row.routes || []).map(r => `<span class="search-route">${escapeHtml(r.kind === 'via' ? 'via ' + r.machine_label : 'direct')}${r.healthy ? '' : ' · unavailable'}</span>`).join(' ')}</p>` +
-                `<p class="text-dim">Matched: ${escapeHtml((row.match_fields || []).join(', '))}${row.search_incomplete ? ' · index incomplete' : ''}</p>` +
+                ((row.match_fields || []).length ? `<p class="text-dim">Matched: ${escapeHtml(row.match_fields.join(', '))}${row.search_incomplete ? ' · index incomplete' : ''}</p>` : row.search_incomplete ? '<p class="text-dim">Index incomplete</p>' : '') +
                 `<button type="button" data-search-open="${index}" ${route ? '' : 'disabled'}>Open session</button> <button type="button" data-search-read="${index}" ${route ? '' : 'disabled'}>Read transcript</button></article>`;
         }).join('') + (!state.sessions?.length ? '<p>' + (state.complete ? 'No sessions matched in the successfully checked sources.' : 'Connect the unavailable computers, then retry.') + '</p>' : '');
 }
