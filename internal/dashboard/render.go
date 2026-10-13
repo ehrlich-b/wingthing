@@ -853,9 +853,9 @@ func connection(m machine, now time.Time) string {
 		return "Loading sessions..."
 	}
 	if m.loading {
-		return "Connected / Refreshing sessions..."
+		return "Connected · refreshing sessions..."
 	}
-	return "Connected / Updated " + age(int64(now.Sub(m.updated)/time.Second)) + " ago"
+	return "Connected · updated " + age(int64(now.Sub(m.updated)/time.Second)) + " ago"
 }
 
 // Wrap sanitized metadata by display cells so details expose complete values
