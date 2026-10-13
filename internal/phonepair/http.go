@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/ehrlich-b/wingthing/internal/pake"
-	"github.com/grandcat/zeroconf"
+	"github.com/libp2p/zeroconf/v2"
 	"io"
 	"log"
 	"net"

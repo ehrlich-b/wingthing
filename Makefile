@@ -508,3 +508,8 @@ test-session-search-regression: | web/dist
 	$(stable-build)
 	$(preview-build)
 	WT_TEST_BINARY="$(CURDIR)/wt" WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=5 ./cmd/wt -run '^Test(NorthstarSSHLogSnapshotJoinsInProgressAppend|NorthstarPTYRemoteReload)$$' -timeout=3m
+
+# Finite phone listener startup/shutdown, including immediate context cancellation.
+.PHONY: test-phone-discovery-lifecycle
+test-phone-discovery-lifecycle: | web/dist
+	$(GO) test -p 2 -race ./internal/phonepair -run '^TestPhoneListenerImmediateShutdown$$' -count=5 -timeout=60s
