@@ -104,3 +104,19 @@ func TestSessionSearchCatalogNativePromptAndRemovedSessionPrivacy(t *testing.T) 
 		t.Fatal("deleted cached content survived", err)
 	}
 }
+
+func TestSessionSearchCatalogLongNamesPathsAndTranscriptRemainSearchable(t *testing.T) {
+	cfg := &config.Config{Dir: t.TempDir()}
+	path := "/home/example/projects/a-long-public-repository-path"
+	name := "a-long-human-session-name-for-the-project"
+	catalogFixture(t, cfg, "session", name, "unsupported", `{"sequence":1,"type":"message","source":"native_import","role":"assistant","text":"Changed /home/example/projects/a-long-public-repository-path. Commit aabbccddeeff0011223344556677889900112233445566778899."}`+"\n")
+	if err := os.WriteFile(filepath.Join(cfg.Dir, "eggs", "session", "egg.meta"), []byte("agent=unsupported\ncwd="+path+"\nprovider_home="+cfg.Dir+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{"public-repository", "human-session", "aabbccddeeff"} {
+		rows, full, err := SessionCatalog(t.Context(), cfg, "origin", "Laptop", query, nil)
+		if err != nil || !full || len(rows) != 1 || rows[0].CWD != path || rows[0].Name != name {
+			t.Fatalf("ordinary metadata/text was redacted: q=%q rows=%+v full=%t err=%v", query, rows, full, err)
+		}
+	}
+}
