@@ -26,7 +26,7 @@ reader selects a fresh healthy direct route first, otherwise a verified gateway,
 and calls the existing qualified read handler. It displays the selected route and
 never sends session input. Expired routes require a refreshed search.
 
-The private disposable cache is `session-search-v1/index.sqlite` under the wing
+The private disposable cache is `session-search-v2/index.sqlite` under the wing
 state directory (directory 0700, database 0600). It is separate from durable task
 storage. SQLite FTS5 trigrams accelerate literal substring matching; one- and
 two-character words use bounded scans. Every query checks current ownership and

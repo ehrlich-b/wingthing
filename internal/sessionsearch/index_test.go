@@ -212,7 +212,7 @@ func TestSessionSearchIndexGzipAndRecognizedSecretsNeverPersistOrMatch(t *testin
 	want[0] = true
 	assertMatches(t, index, words, want)
 	_ = index.Close()
-	data, err := os.ReadFile(filepath.Join(state, "session-search-v1", "index.sqlite"))
+	data, err := os.ReadFile(filepath.Join(state, "session-search-v2", "index.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestSessionSearchIndexGzipAndRecognizedSecretsNeverPersistOrMatch(t *testin
 			t.Fatal("recognized secret persisted")
 		}
 	}
-	info, err := os.Stat(filepath.Join(state, "session-search-v1", "index.sqlite"))
+	info, err := os.Stat(filepath.Join(state, "session-search-v2", "index.sqlite"))
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatal("cache permissions")
 	}
