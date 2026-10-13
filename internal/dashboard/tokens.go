@@ -20,6 +20,7 @@ const (
 	failure
 	separator
 	selection
+	caution
 )
 
 type terminalTheme struct {
@@ -73,7 +74,7 @@ func (t terminalTheme) sheet() string {
 	if t.colors == 1<<24 {
 		return "\x1b[48;2;243;237;224;38;2;31;26;21m"
 	}
-	return "\x1b[48;5;230;38;5;234m"
+	return "\x1b[48;5;255;38;5;234m"
 }
 func (t terminalTheme) style(role tone) string {
 	if t.dumb {
@@ -89,7 +90,7 @@ func (t terminalTheme) style(role tone) string {
 		if role == selection {
 			return "\x1b[39;7m"
 		}
-		return "\x1b[39m"
+		return "\x1b[" + strconv.Itoa(ansiRoles[role]) + "m"
 	}
 	if role == selection {
 		if t.colors == 1<<24 {
@@ -97,8 +98,8 @@ func (t terminalTheme) style(role tone) string {
 		}
 		return "\x1b[48;5;234;38;5;230m"
 	}
-	colors := []int{234, 239, 24, 65, 130, 130, 246}
-	rgb := [][3]int{{31, 26, 21}, {90, 80, 71}, {47, 76, 107}, {78, 106, 72}, {155, 58, 29}, {155, 58, 29}, {168, 156, 134}}
+	colors := []int{234, 239, 24, 65, 124, 124, 246, 234, 136}
+	rgb := [][3]int{{31, 26, 21}, {90, 80, 71}, {47, 76, 107}, {78, 106, 72}, {155, 58, 29}, {155, 58, 29}, {168, 156, 134}, {31, 26, 21}, {160, 112, 16}}
 	if t.colors == 1<<24 {
 		c := rgb[role]
 		return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", c[0], c[1], c[2])
@@ -112,14 +113,18 @@ func (t terminalTheme) selectedState(role tone) string {
 	if t.colors < 256 {
 		return t.style(role)
 	}
-	rgb := [][3]int{{243, 237, 224}, {203, 192, 173}, {199, 214, 230}, {188, 211, 175}, {243, 198, 181}, {243, 198, 181}, {200, 188, 166}}
-	colors := []int{230, 250, 153, 151, 217, 217, 250}
+	rgb := [][3]int{{243, 237, 224}, {203, 192, 173}, {199, 214, 230}, {188, 211, 175}, {243, 198, 181}, {243, 198, 181}, {200, 188, 166}, {243, 237, 224}, {236, 206, 140}}
+	colors := []int{230, 250, 153, 151, 217, 217, 250, 230, 222}
 	if t.colors == 1<<24 {
 		c := rgb[role]
 		return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", c[0], c[1], c[2])
 	}
 	return fmt.Sprintf("\x1b[38;5;%dm", colors[role])
 }
+
+// Basic terminals: needs you and failed red, done green, last seen yellow.
+// Working keeps the terminal's own ink so it stays readable on any canvas.
+var ansiRoles = []int{39, 39, 39, 32, 31, 31, 39, 39, 33}
 
 func stateLabel(r row) (string, tone) {
 	switch r.Status {

@@ -15,7 +15,7 @@ func TestTerminalPaletteFallbacks(t *testing.T) {
 	t.Setenv("WT_TUI_THEME", "light")
 	// Extended palettes use the Paper sheet on either host theme.
 	p := detectTheme()
-	if p.colors != 256 || !p.light || p.style(warning) != "\x1b[38;5;130m" {
+	if p.colors != 256 || !p.light || p.style(warning) != "\x1b[38;5;124m" {
 		t.Fatal(p)
 	}
 	t.Setenv("COLORTERM", "truecolor")
