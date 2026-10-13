@@ -632,12 +632,12 @@ func TestNorthstarPTYSessionNavigator(t *testing.T) {
 	})
 	h.expect("clear filter", h.send("/\x15\r"), "local-parent", "disposable")
 	h.expect("stop filter", h.send("/disposable\r"), "disposable", "> W")
-	h.expect("captured stop confirmation", h.send("x"), "Stop forge:stop-me (disposable)? [y/N]")
+	h.expect("captured stop confirmation", h.send("x"), "Stop \"disposable\" on \"forge\"")
 	h.expect("stop cancelled", h.send("n"), "Enter attach", "disposable")
 	if disposable.killed.Load() != 0 {
 		t.Fatal("cancel stopped the fixture")
 	}
-	h.expect("stop confirmation again", h.send("x"), "Stop forge:stop-me")
+	h.expect("stop confirmation again", h.send("x"), "on \"forge\"")
 	rev = h.send("y")
 	h.waitScreen("confirmed stop / no matches", rev, func(s string) bool {
 		return strings.Contains(s, "(no matches)") && strings.Contains(s, "Enter attach") && !strings.Contains(s, "> W disposable")

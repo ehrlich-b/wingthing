@@ -25,10 +25,11 @@ import { unseenSessionCompletions, acknowledgeSessionCompletions } from './sessi
 import { browserLocalStorage } from './storage-scope.js';
 import { unreadSessionOutput, acknowledgeSessionOutput } from './session-unread.js';
 import { unreadOutputBadge } from './session-inventory.js';
-import { stopSessionVerified } from './session-stop.js';
+import { stopSessionVerified, stopConfirmationText, checkStoppedSession } from './session-stop.js';
 
 var sessionStopPending = new Set();
 var sessionStopConfirm = new Map();
+var sessionStopUnverified = new Map();
 var sessionActionErrors = new Map();
 var sidebarListenerContainers = new WeakSet();
 
@@ -2572,14 +2573,16 @@ export function renderSessionInventory() {
                 '<span class="egg-label">' + escapeHtml(name) + ' · ' + agentWithIcon(s.agent || '?') +
                     (dotClass === 'attention' ? ' · !' : '') + '</span>' +
                 '<button class="box-menu-btn" title="details">⋯</button>' +
-                (sessionInventoryActions(s, wing, S.currentUser).stop ? '<button class="btn-sm btn-danger egg-delete" data-session-action="stop" title="Stop session">' + ((sessionStopConfirm.get(sessionResourceKey(s)) || 0) > Date.now() ? 'confirm stop' : 'x') + '</button>' : '') +
+                '' +
             '</div>' +
             (wingName ? '<div class="egg-wing">' + escapeHtml(wingName) + '</div>' : '') +
             '<div class="inventory-session-path" title="' + escapeHtml(s.cwd || '') + '">' + escapeHtml(shortenPath(s.cwd || 'no project')) + '</div>' +
             '<div class="inventory-session-state"><span class="inventory-status status-' + state.tone + '">' + escapeHtml(state.agentLabel) + '</span><span>' + escapeHtml(state.connectionLabel + ' · ' + state.attachment) + '</span>' + unseenCompletionBadge(unseen) + unreadOutputBadge(inventoryFilters.unread.has(sessionResourceKey(s))) + '</div>' +
-            '<button type="button" class="egg-activity btn-sm">Activity</button>' +
-            '<button type="button" class="btn-sm egg-open-session">Open session</button>' +
-            (error ? '<div class="inventory-action-status" role="status">' + escapeHtml(error) + '</div>' : '') +
+            '<div class="inventory-session-actions"><button type="button" class="egg-activity btn-sm">Activity</button>' +
+            '<button type="button" class="btn-sm egg-open-session">' + (sessionStopUnverified.has(sessionResourceKey(s)) ? 'Inspect session' : 'Open session') + '</button>' +
+            (sessionInventoryActions(s, wing, S.currentUser).stop ? '<button type="button" class="btn-sm btn-danger egg-delete" data-session-action="stop">' + ((sessionStopConfirm.get(sessionResourceKey(s)) || 0) > Date.now() ? 'Confirm stop' : 'Stop session') + '</button>' : '') +
+            (sessionStopUnverified.has(sessionResourceKey(s)) ? '<button type="button" class="btn-sm check-stop">Check status</button>' : '') + '</div>' +
+            (error ? '<div class="inventory-action-status" role="status">' + escapeHtml(error) + ((sessionStopConfirm.get(sessionResourceKey(s)) || 0) > Date.now() ? '<button type="button" class="btn-sm keep-running">Keep running</button>' : '') + '</div>' : '') +
         '</div>';
     }
 
@@ -2653,6 +2656,18 @@ export function renderSessionInventory() {
             event.stopPropagation();
             if (showSessionChat(session.id, session.wing_id)) document.querySelector('[data-session-view="activity"]').click();
         });
+        var keep=card.querySelector('.keep-running');
+        if (keep && session) keep.onclick=function(event){event.stopPropagation();cancelSessionStop(session);};
+        var check=card.querySelector('.check-stop');
+        if (check && session) check.onclick=async function(event){
+            event.stopPropagation(); check.disabled=true;
+            var key=sessionResourceKey(session);
+            try {
+                var result=await checkStoppedSession(session,sendTunnelRequest,sessionStopUnverified.get(key));
+                if (result.verified) { sessionStopUnverified.delete(key);sessionActionErrors.delete(key);deleteSession(session.id,true,session.wing_id); }
+                else {sessionActionErrors.set(key,result.listed ? 'Stop requested; process exit unverified. Session is still listed. Inspect it before another stop.' : 'Session is no longer listed; process exit remains unverified.');renderSessionInventory();}
+            } catch(error) {sessionActionErrors.set(key,error.message);renderSessionInventory();}
+        };
         var stop = card.querySelector('.egg-delete');
         if (stop && session) bindStopCancellation(session, stop);
         if (stop && session) stop.addEventListener('click', function(e) {
@@ -2664,16 +2679,18 @@ export function renderSessionInventory() {
     restoreSessionFocus(DOM.sessionsList, focus);
 }
 
+function cancelSessionStop(session, button) {
+    var key=sessionResourceKey(session);
+    sessionStopConfirm.delete(key);
+    if (sessionStopUnverified.has(key)) sessionActionErrors.set(key,'Stop requested; process exit remains unverified. Check status.');
+    else sessionActionErrors.delete(key);
+    if (button) {button.textContent='Stop session';button.classList.remove('btn-armed');var row=button.closest('[data-sid]');if(row){var prompt=row.querySelector('.inventory-action-status');if(prompt)prompt.remove();}}
+    renderSessionInventory();
+}
 function bindStopCancellation(session, button) {
-    button.onkeydown = function(event) {
-        var key = sessionResourceKey(session);
-        if ((event.key !== 'Enter' && event.key !== 'Escape') || !sessionStopConfirm.has(key)) return;
-        event.preventDefault(); event.stopPropagation();
-        sessionStopConfirm.delete(key); sessionActionErrors.delete(key);
-        button.textContent = button.classList.contains('egg-delete') ? 'x' : 'stop session';
-        button.classList.remove('btn-armed');
-        var row = button.closest('[data-sid]');
-        if (row) { var prompt = row.querySelector('.inventory-action-status'); if (prompt) prompt.remove(); }
+    button.onkeydown=function(event){
+        if ((event.key!=='Enter' && event.key!=='Escape') || !sessionStopConfirm.has(sessionResourceKey(session))) return;
+        event.preventDefault();event.stopPropagation();cancelSessionStop(session,button);
     };
 }
 
@@ -2683,21 +2700,25 @@ function stopInventorySession(session, button, onStopped) {
     if ((sessionStopConfirm.get(key) || 0) <= Date.now()) {
         sessionStopConfirm.set(key, Date.now() + 4000);
         var restLabel = button.textContent;
-        button.textContent = 'confirm stop';
-        sessionActionErrors.set(key, 'Stop ' + sessionDisplayName(session) + ' on ' + wingNameById(session.wing_id) + ' · ' + session.id + '? Click confirm stop again. Enter or Escape cancels.');
+        button.textContent = 'Confirm stop';
+        sessionActionErrors.set(key, stopConfirmationText(session,wingNameById(session.wing_id),shortenPath(session.cwd || '')) + ' Session ID: ' + session.id);
         var row = button.closest('[data-sid]');
         if (row) {
             var prompt = row.querySelector('.inventory-action-status');
             if (!prompt) { prompt = document.createElement('div'); prompt.className = 'inventory-action-status'; prompt.setAttribute('role', 'status'); row.appendChild(prompt); }
             prompt.textContent = sessionActionErrors.get(key);
+            var keep=document.createElement('button');keep.type='button';keep.className='btn-sm keep-running';keep.textContent='Keep running';keep.onclick=function(event){event.stopPropagation();cancelSessionStop(session,button);};prompt.appendChild(keep);
         }
         button.classList.add('btn-armed');
         setTimeout(function() {
             if ((sessionStopConfirm.get(key) || 0) > Date.now() || sessionStopPending.has(key)) return;
+            sessionStopConfirm.delete(key);
             button.textContent = restLabel;
             button.classList.remove('btn-armed');
-            sessionActionErrors.delete(key);
+            if (sessionStopUnverified.has(key)) sessionActionErrors.set(key,'Stop requested; process exit remains unverified. Check status.');
+            else sessionActionErrors.delete(key);
             if (row) { var prompt = row.querySelector('.inventory-action-status'); if (prompt) prompt.remove(); }
+            renderSessionInventory();
         }, 4100);
         return;
     }
@@ -2710,15 +2731,17 @@ function stopInventorySession(session, button, onStopped) {
     // Verification never repeats the mutation.
     stopSessionVerified(session, sendTunnelRequest).then(function() {
         sessionStopPending.delete(key);
+        sessionStopUnverified.delete(key);
         var selected = sessionIsSelected(session, S.ptySessionId, S.ptyWingId);
         deleteSession(session.id, true, session.wing_id);
         if (onStopped) onStopped();
         if (selected) showHome();
     }).catch(function(error) {
         sessionStopPending.delete(key);
+        sessionStopUnverified.set(key,error && error.processExited===true);
         sessionActionErrors.set(key, (error && error.message) || 'Could not stop the session. Try again.');
         button.disabled = false;
-        button.textContent = 'retry stop';
+        button.textContent = 'Stop session';
         button.title = sessionActionErrors.get(key);
         renderSessionInventory();
     });

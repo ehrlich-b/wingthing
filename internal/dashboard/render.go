@@ -303,7 +303,15 @@ func render(s *state, width, height int, now time.Time) string {
 	case newCWD:
 		message = "Cwd on " + s.target.machine + ": " + s.input + "_"
 	case confirmStop:
-		message = "Stop " + s.target.key() + " (" + s.target.name() + ")? [y/N]"
+		name := s.target.Name
+		if name == "" {
+			name = "unnamed session"
+		}
+		folder := "unknown folder"
+		if s.target.CWD != "" {
+			folder = path.Base(s.target.CWD)
+		}
+		message = fmt.Sprintf("Stop %q on %q in %q. [y/N] ID: %s", name, s.target.machine, folder, s.target.ID)
 	case confirmTakeover:
 		message = "Take input control of " + s.target.key() + " from " + s.target.WriterOwner + "? [y/N]"
 	}
@@ -317,6 +325,7 @@ func render(s *state, width, height int, now time.Time) string {
 		footer = []string{"Enter accept  Esc cancel  Ctrl-C quit", message}
 		if s.mode == confirmStop {
 			footer[0] = "y stop  Enter/Esc cancel  Ctrl-C quit"
+			footer = append(footer[:1], wrap(message, width)...)
 		}
 		if s.mode == confirmTakeover {
 			footer[0] = "y take control  Enter/Esc cancel  Ctrl-C quit"

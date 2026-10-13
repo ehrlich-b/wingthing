@@ -2929,3 +2929,8 @@ button:disabled { cursor: not-allowed; }
     #coordinator-home .coordinator-home-actions { margin-top: 8px; }
     #coordinator-home .coordinator-recent { display: none; }
 }
+
+.inventory-session-actions .egg-delete{opacity:1}
+.inventory-session-actions .btn-sm,.inventory-action-status .keep-running{min-height:44px;padding:10px 12px}
+.inventory-action-status .keep-running{display:block;margin-top:10px}
+.inventory-action-status{overflow-wrap:anywhere;line-height:1.5}

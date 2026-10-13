@@ -26,3 +26,21 @@ test('signal ack, missing inventory, request denial and still-live inventory nev
         assert.equal(kills, 1);
     }
 });
+
+import {checkStoppedSession,stopConfirmationText} from '../src/session-stop.js';
+test('checking a stop is read-only and needs both exit receipt and fresh absence',async()=>{
+ const calls=[];
+ const request=async(wing,payload)=>{calls.push({wing,...payload});return {sessions:[]};};
+ assert.deepEqual(await checkStoppedSession(session,request,false),{listed:false,verified:false});
+ assert.deepEqual(await checkStoppedSession(session,request,true),{listed:false,verified:true});
+ assert.ok(calls.every(call=>call.type==='sessions.list'&&call.wing==='a'));
+ assert.deepEqual(await checkStoppedSession(session,async()=>({sessions:[{session_id:'same-id'}]}),true),{listed:true,verified:false});
+ await assert.rejects(checkStoppedSession(session,async()=>({}),true));
+});
+test('failed inventory read retains the original exit receipt for later checking',async()=>{
+ await assert.rejects(stopSessionVerified(session,async(_wing,payload)=>{if(payload.type==='pty.kill')return {process_exited:true};throw new Error('connection lost');}),error=>error.processExited===true);
+});
+test('stop confirmation uses name, computer and folder with ID outside the sentence',()=>{
+ const text=stopConfirmationText({id:'same-id',name:'pairing'},'Studio Mac','~/pairing');
+ assert.match(text,/pairing.*Studio Mac.*~\/pairing/);assert.doesNotMatch(text,/same-id|Click|\?/);
+});

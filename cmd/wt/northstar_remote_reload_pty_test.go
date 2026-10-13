@@ -128,7 +128,7 @@ func TestNorthstarPTYRemoteReload(t *testing.T) {
 	save()
 	h.expect("cadence cancels original rename", 0, "Cancelled: saved profile forge", "changed or was removed")
 	h.expect("clear old filter for replacement", h.send("/\x15forge\rR"), "replacement-profile")
-	h.expect("capture stop against replacement", h.send("x"), "Stop forge:same")
+	h.expect("capture stop against replacement", h.send("x"), "on \"forge\"", "ID: same")
 	profiles["forge"] = config.Remote{SSHTarget: "ns-delayed", WTBinary: custom, WingthingDir: mirror}
 	save()
 	h.expect("replacement refuses old stop", 0, "Cancelled: saved profile forge")
@@ -145,7 +145,7 @@ func TestNorthstarPTYRemoteReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	northstarInventoryWait(t, "retired SSH joined", func() bool { return syscall.Kill(pid, 0) == syscall.ESRCH })
-	h.expect("capture pending stop before removal", h.send("x"), "Stop forge:same")
+	h.expect("capture pending stop before removal", h.send("x"), "on \"forge\"", "ID: same")
 	cli("remote", "rm", "forge")
 	h.expect("removed generation cancels confirmation", 0, "Cancelled: saved profile forge")
 	h.expect("confirmation key cannot mutate removed target", h.send("y/\x15\rR"), "healthy-local", "2 machines")

@@ -100,7 +100,7 @@ func TestDashboardRendersAgeStatusAndPrompts(t *testing.T) {
 	for _, test := range []struct {
 		mode mode
 		want string
-	}{{filter, "Filter: /"}, {rename, "Name: "}, {newAgent, "Agent (blank = shell): "}, {newCWD, "Cwd on local:"}, {confirmStop, "Stop local:aged (old)? [y/N]"}} {
+	}{{filter, "Filter: /"}, {rename, "Name: "}, {newAgent, "Agent (blank = shell): "}, {newCWD, "Cwd on local:"}, {confirmStop, "Stop \"old\" on \"local\" in \"app\". [y/N] ID: aged"}} {
 		s.mode, s.target, s.input = test.mode, s.rows()[0], "input"
 		if !strings.Contains(render(s, 80, 24, time.Now()), test.want) {
 			t.Errorf("mode %v missing prompt %q", test.mode, test.want)

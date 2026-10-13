@@ -411,7 +411,7 @@ func TestNorthstarPTYRemoteAttach(t *testing.T) {
 	if eggclient.ReadSessionName(forge.dir) != "forge-renamed" {
 		t.Fatal("unvalidated stale rename dispatched")
 	}
-	h.expect("stale stop confirmation", h.send("x"), "Stop forge:"+id)
+	h.expect("stale stop confirmation", h.send("x"), "on \"forge\"", "ID: "+id)
 	h.expect("stale stop refused", h.send("y"), "cannot validate", "forge")
 	assertSurvives(forge)
 	// Local work remains reachable while both forge and the offline peer fail.
@@ -459,7 +459,7 @@ func TestNorthstarPTYRemoteAttach(t *testing.T) {
 	h = northstarStartPTY(t, f, binary, 80, 24)
 	h.expect("fresh fleet", 0, "forge-renamed", "shared-name")
 	h.expect("stop exact forge selection", h.send("/forge\r"), "forge-renamed")
-	h.expect("stop exact forge confirmation", h.send("x"), "Stop forge:"+id)
+	h.expect("stop exact forge confirmation", h.send("x"), "on \"forge\"", "ID: "+id)
 	h.waitScreen("stop exact forge", h.send("y"), func(s string) bool {
 		return strings.Contains(s, "(no matches)") && strings.Contains(s, "Enter attach") && !strings.Contains(s, "forge-renamed") && !strings.Contains(s, "Running")
 	})

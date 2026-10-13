@@ -117,7 +117,7 @@ async function screenshot(page, flow, card, slug, suffix = '') {
                 await page.waitForTimeout(100);
             }
         }
-        if (slug === 'stop-unverified') assert.match(await target.innerText(), /process exit unverified/);
+        if (slug === 'stop-unverified') {assert.match(await target.innerText(), /still listed|process exit unverified/);assert.ok(await target.locator('.check-stop').isVisible());}
         if (slug === 'stop-verified') {
             assert.equal(await page.locator('.egg-box[data-sid="same-id"][data-wing-id="fixture-mac"]').count(), 0);
             assert.match(await target.innerText(), /forge/);
@@ -303,9 +303,12 @@ try {
         await page.click('#reach-close');
         const stop = page.locator('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"] .egg-delete');
         await stop.click();
-        assert.match(await page.locator('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"]').innerText(), /Stop pairing on EhrlichMac · same-id/);
+        assert.match(await page.locator('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"]').innerText(), /Stop.*pairing.*EhrlichMac/);
+        await page.locator('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"] .keep-running').waitFor({timeout:2000});
         await screenshot(page, 3, 7, 'qualified-stop-confirmation', suffix);
-        await stop.press('Enter');
+        await page.locator('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"] .keep-running').click();
+        assert.equal(requests.filter(r => r.type === 'pty.kill').length, 0);
+        await stop.click();await stop.press('Enter');
         assert.equal(requests.filter(r => r.type === 'pty.kill').length, 0);
         await verifyNoOverflow(page);
         await context.close();
@@ -317,10 +320,13 @@ try {
     const stop = page.locator('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"] .egg-delete');
     await stop.waitFor(); await stop.click(); await stop.click();
     await page.waitForFunction(() => document.querySelector('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"]')?.textContent.includes('process exit unverified'));
+    const killCount=requests.filter(r=>r.type==='pty.kill').length;
+    await page.locator('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"] .check-stop').click();
+    assert.equal(requests.filter(r=>r.type==='pty.kill').length,killCount);
     assert.equal(await page.locator('.egg-box[data-sid="same-id"]').count(), 2);
     for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }, { width: 430, height: 932 }]) {
         await page.setViewportSize(viewport);
-        await screenshot(page, 3, 7, 'stop-unverified', viewport.width === 390 ? '-mobile' : '');
+        await screenshot(page, 3, 7, 'stop-unverified', viewport.width === 390 ? '-mobile' : viewport.width===430 ? '-430' : '');
     }
     record('legacy signal acknowledgement preserves the session and reports unverified exit');
     stopMode = 'verified';
