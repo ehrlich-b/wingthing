@@ -9,6 +9,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/onboarding"
 )
 
 type machine struct {
@@ -69,21 +70,34 @@ const (
 	runDetails
 	runResult
 	runAttach
+	agentSetup
+	installConsent
+	providerReady
+	setupFailure
+	setupInvoke
 )
 
 type action struct {
-	run      runRow
-	kind     mode
-	row      row
-	agent    string
-	cwd      string
-	name     string
-	attach   bool
-	readOnly bool
-	takeover bool
+	run        runRow
+	kind       mode
+	row        row
+	agent      string
+	cwd        string
+	name       string
+	attach     bool
+	readOnly   bool
+	takeover   bool
+	setupStage string
 }
 
 type state struct {
+	persistAttention  bool
+	readSeen          map[string]int64
+	agents            []onboarding.Agent
+	setupAgent        onboarding.Agent
+	setupStage        string
+	setupCompleted    string
+	setupError        string
 	recent            bool
 	runs              *runHistory
 	machines          map[string]machine
@@ -237,6 +251,9 @@ func (s *state) handle(key string) (act *action, quit bool) {
 	if key == "ctrl-c" {
 		return nil, true
 	}
+	if s.mode >= agentSetup {
+		return s.setupHandle(key)
+	}
 	if s.recent && s.mode != help {
 		return s.runHandle(key)
 	}
@@ -310,6 +327,14 @@ func (s *state) handle(key string) (act *action, quit bool) {
 				act = &action{kind: rename, row: s.target, name: s.input}
 			case newAgent:
 				s.agent = strings.TrimSpace(s.input)
+				if s.target.machine == "local" && s.agents != nil {
+					for _, a := range s.agents {
+						if a.ID == s.agent && a.Path == "" {
+							s.setupAgent, s.mode = a, installConsent
+							return nil, false
+						}
+					}
+				}
 				s.mode, s.input = newCWD, s.target.CWD
 				if s.input == "" && s.target.machine == "local" {
 					s.input = s.defaultCWD
@@ -346,6 +371,8 @@ func (s *state) handle(key string) (act *action, quit bool) {
 		return nil, false
 	}
 	switch key {
+	case "a":
+		s.openSetup()
 	case "h":
 		s.recent = true
 		h := s.history()

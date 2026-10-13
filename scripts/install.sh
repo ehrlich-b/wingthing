@@ -42,7 +42,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 300 --retry 2 -o "$TMP" "$URL"
+curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 300 --retry 2 -o "$TMP" "$URL" || {
+    echo "error: binary download failed for ${OS}/${ARCH}; check your network and retry the installer" >&2
+    exit 1
+}
 if [ "$(wc -c < "$TMP" | tr -d ' ')" -gt 268435456 ]; then
     echo "error: downloaded binary exceeds 256 MiB" >&2
     exit 1
@@ -86,8 +89,14 @@ if ! "$TMP" mcp connect --help >/dev/null 2>&1 || \
 fi
 
 # Install
-mkdir -p "$INSTALL_DIR"
-INSTALL_TMP=$(mktemp "${INSTALL_DIR}/.wt-install.XXXXXX")
+mkdir -p "$INSTALL_DIR" || {
+    echo "error: cannot create ${INSTALL_DIR}; choose a writable WT_INSTALL_DIR (no automatic sudo)" >&2
+    exit 1
+}
+INSTALL_TMP=$(mktemp "${INSTALL_DIR}/.wt-install.XXXXXX") || {
+    echo "error: cannot write ${INSTALL_DIR}; choose a writable WT_INSTALL_DIR (no automatic sudo)" >&2
+    exit 1
+}
 cp "$TMP" "$INSTALL_TMP"
 chmod 0755 "$INSTALL_TMP"
 mv "$INSTALL_TMP" "${INSTALL_DIR}/wt"
@@ -104,6 +113,10 @@ case ":$PATH:" in
        ;;
 esac
 
+echo ""
+echo "open the session navigator (no Wingthing account required):"
+echo "  wt"
+echo "  # Press a to detect or install an agent; n to review agent and cwd."
 echo ""
 echo "give your local Codex or Claude tools to manage agents (no account required):"
 echo "  codex mcp add wingthing -- wt mcp stdio --client codex"

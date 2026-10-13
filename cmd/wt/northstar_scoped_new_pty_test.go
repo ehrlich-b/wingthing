@@ -266,6 +266,7 @@ func TestNorthstarPTYScopedNew(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = server.Close() })
+			northstarWrite(t, filepath.Join(f.bin, "claude"), "#!/bin/sh\nexit 0\n", 0700)
 			h := scopedNewFromDashboard(t, f, binary, machine, cwd, marker)
 			launch := <-launches
 			if launch.Agent != "claude" || launch.CWD != cwd || launch.Role != "parent" || !launch.ScopedMCP || len(launch.Args) != 0 {

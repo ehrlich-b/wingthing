@@ -420,3 +420,19 @@ test-multiwing: | web/dist
 
 test-multiwing-race: | web/dist
 	$(GO) test -p 2 -race ./internal/fleet ./internal/egg ./internal/eggclient ./internal/sessionrole ./internal/localmcp ./internal/wing -run 'Test(Registry|LifecycleSourceCompleteness|Merge|SessionCatalog|CoordinatorPresence|SessionInventory|QualifiedSession|CoordinatorHeartbeat|OwnerFleet|PhoneFleet|BuiltMultiwing|RemoteInventoryOrigin)' -count=1 -timeout=3m
+
+# Isolated terminal onboarding and storyboard contract; no vendor login/install.
+.PHONY: test-tui-start test-tui-start-race
+test-tui-start: | web/dist
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -count=1 ./internal/onboarding ./internal/dashboard ./cmd/wt -run 'Onboarding|Setup|CodexShortcut|NorthstarPTY|Dashboard' -timeout 10m -v
+
+test-tui-start-race: | web/dist
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -race -p 2 -count=1 ./internal/onboarding ./internal/dashboard ./cmd/wt -run 'Onboarding|Setup|CodexShortcut|Dashboard' -timeout 5m
+
+.PHONY: capture-tui-start
+capture-tui-start: | web/dist
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -count=1 ./cmd/wt -run '^TestOnboardingPTYStoryboard$$' -v -timeout 3m
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -count=1 ./cmd/wt -run '^TestOnboardingCodexPTYSession$$' -v -timeout 1m

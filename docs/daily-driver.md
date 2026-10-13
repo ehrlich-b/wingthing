@@ -57,6 +57,11 @@ without that metadata do not offer takeover. An unknown transport outcome is not
 a successful provider exit. Reconnect advice preserves exact route/state/binary;
 retry is an explicit user action.
 
+Interactive local launches (`wt codex` and `wt egg <agent>`) negotiate the same
+native terminal presentation as reattachment. They preserve provider mouse and
+bracketed paste modes, then join the output stream and reset presentation on
+detach or provider exit. Piped output keeps the legacy presentation.
+
 Native wheel input follows provider mouse mode; with mouse mode disabled, normal
 terminal history/scrollback remains available. Use your terminal's selection
 modifier when the provider captures the mouse (the modifier varies by terminal).
