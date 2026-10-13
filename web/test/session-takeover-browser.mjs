@@ -16,6 +16,24 @@ async function run() {
         const errors = [];
         page.on('pageerror', error => errors.push(error.message));
         await page.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+        let holdNext = false, held = null, captured = null, captureNext = false;
+        let heldReady, heldAnswered, replayAnswered;
+        let capturedReplies = 0;
+        await page.routeWebSocket(base.replace('http:', 'ws:') + '/ws/relay?*', route => {
+            const server = route.connectToServer();
+            route.onMessage(message => {
+                const wire = typeof message === 'string' ? JSON.parse(message) : {};
+                if (wire.type === 'tunnel.req' && holdNext) { holdNext = false; held = { server, message, id: wire.request_id }; heldReady?.(); return; }
+                if (wire.type === 'tunnel.req' && captureNext) { captureNext = false; captured = { server, message, id: wire.request_id }; capturedReplies = 0; }
+                server.send(message);
+            });
+            server.onMessage(message => {
+                route.send(message);
+                const wire = typeof message === 'string' ? JSON.parse(message) : {};
+                if (held && wire.request_id === held.id) heldAnswered?.();
+                if (captured && wire.request_id === captured.id && ++capturedReplies === 2) replayAnswered?.();
+            });
+        });
         await page.goto(base);
         await page.waitForFunction(() => document.querySelectorAll('.wing-box').length === 2);
         const search = async () => {
@@ -47,6 +65,14 @@ async function run() {
         await page.setViewportSize({ width: 390, height: 844 });
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
         await page.screenshot({ path: resolve(shots, '13-5-takeover-transcript-mobile.png') });
+        await dialog.locator('#viewer-message').fill('Private unsent remote draft');
+        await dialog.locator('[data-close]').click();
+        await rows.filter({ hasText: localOrigin }).getByRole('button', { name: 'Open session', exact: true }).click();
+        await page.waitForFunction(origin => document.querySelector('[data-identity]').textContent.includes(origin), localOrigin);
+        assert.equal(await dialog.locator('#viewer-message').inputValue(), '');
+        await dialog.locator('[data-close]').click();
+        await target.getByRole('button', { name: 'Open session', exact: true }).click();
+        await page.waitForFunction(() => document.querySelector('[data-transcript]').textContent.includes('Desktop DNS helper'));
         await dialog.locator('#viewer-message').fill('Check the new DNS record first.');
         await dialog.locator('[data-send]').click();
         await page.waitForFunction(() => document.querySelector('[data-status]').textContent === 'Message text observed by provider');
@@ -55,10 +81,34 @@ async function run() {
         await dialog.locator('[data-tab="terminal"]').click();
         await dialog.locator('[data-take]').click();
         await page.waitForFunction(() => document.querySelector('[data-status]').textContent === 'You control terminal input');
+        await dialog.locator('[data-input]').fill('Old delayed terminal input');
+        const paused = new Promise(resolve => { heldReady = resolve; });
+        holdNext = true;
+        await dialog.locator('[data-terminal-send]').click();
+        await paused;
+        await dialog.locator('[data-close]').click();
+        await target.getByRole('button', { name: 'Open session', exact: true }).click();
+        await page.waitForFunction(() => document.querySelector('[data-transcript]').textContent.includes('Desktop DNS helper'));
+        await dialog.locator('[data-tab="terminal"]').click();
+        await dialog.locator('[data-take]').click();
+        await page.waitForFunction(() => document.querySelector('[data-status]').textContent === 'You control terminal input');
+        assert.equal(await dialog.locator('[data-input]').inputValue(), '');
+        await dialog.locator('[data-input]').fill('New selection terminal draft');
+        const answered = new Promise(resolve => { heldAnswered = resolve; });
+        held.server.send(held.message);
+        await answered;
+        await page.waitForTimeout(50);
+        assert.equal(await dialog.locator('[data-input]').inputValue(), 'New selection terminal draft');
+        assert.equal(await dialog.locator('[data-status]').textContent(), 'You control terminal input');
+        captureNext = true;
         await dialog.locator('[data-input]').fill('Human takeover input');
         await dialog.locator('[data-terminal-send]').click();
         await page.waitForFunction(() => document.querySelector('[data-terminal] .xterm-accessibility')?.textContent.includes('Human takeover input'));
         await page.waitForFunction(() => document.querySelector('[data-transcript]').textContent.includes('Human takeover input'));
+        const replayed = new Promise(resolve => { replayAnswered = resolve; });
+        captured.server.send(captured.message);
+        await replayed;
+
         await page.screenshot({ path: resolve(shots, '13-5-takeover-control-mobile.png') });
         await page.setViewportSize({ width: 1440, height: 900 });
         await page.screenshot({ path: resolve(shots, '13-5-takeover-control-desktop.png') });
@@ -74,6 +124,7 @@ async function run() {
         await target.getByRole('button', { name: 'Open session', exact: true }).click();
         await page.waitForFunction(() => document.querySelector('[data-route]').textContent === 'via Laptop');
         await page.waitForFunction(() => document.querySelector('[data-transcript]').textContent.includes('Human takeover input'));
+
         await page.screenshot({ path: resolve(shots, '13-5-takeover-gateway-desktop.png') });
         await page.setViewportSize({ width: 390, height: 844 });
         await dialog.locator('[data-tab="terminal"]').click();
@@ -95,7 +146,7 @@ async function run() {
         await page.locator('#session-search-input').fill('');
         await page.waitForFunction(() => document.getElementById('session-search-results').hidden);
         assert.deepEqual(errors, []);
-        console.log(JSON.stringify({ checks: ['session-list-entry', 'two-qualified-origins', 'direct-via-merge', 'live-transcript', 'native-message-text-receipt', 'real-PTY-takeover', 'hand-back-keeps-agent', 'direct-down-via-up', 'gateway-PTY-input', 'honest-approval-gap', 'desktop-mobile-layout'], machines: 2, real_build: true, real_encrypted_tunnels: true, fixture_provider: true, fixture_ssh: true, native_iphone: false }));
+        console.log(JSON.stringify({ checks: ['session-list-entry', 'cross-session-draft-reset', 'delayed-input-selection-fence', 'encrypted-browser-input-replay-denied', 'two-qualified-origins', 'direct-via-merge', 'live-transcript', 'native-message-text-receipt', 'real-PTY-takeover', 'hand-back-keeps-agent', 'direct-down-via-up', 'gateway-PTY-input', 'honest-approval-gap', 'desktop-mobile-layout'], machines: 2, real_build: true, real_encrypted_tunnels: true, fixture_provider: true, fixture_ssh: true, native_iphone: false }));
     } finally { await browser.close(); }
 }
 if (!process.env.NODE_TEST_CONTEXT) await run();

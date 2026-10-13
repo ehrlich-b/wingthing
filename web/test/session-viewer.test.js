@@ -18,7 +18,7 @@ function fixture() {
     let reply = async (wing, envelope) => {
         const a = envelope.arguments;
         const qualified = { origin_wing_id: a.origin_wing_id, session_id: a.session_id, route: route(wing, wing === a.origin_wing_id ? 'direct' : 'via') };
-        if (envelope.operation.startsWith('fleet_')) return { ...qualified, attachment_id: a.attachment_id, ok: true, screen: 'Real terminal output', read_only: false };
+        if (envelope.operation.startsWith('fleet_')) return { ...qualified, attachment_id: a.attachment_id, sequence: a.sequence, ok: true, screen: 'Real terminal output', read_only: false };
         if (a.operation === 'session_read') return { ...qualified, result: { lifecycle: { events: [], cursor: a.arguments.after_cursor, has_more: false, state: 'idle' } } };
         if (a.operation === 'terminal_read') return { ...qualified, result: { ansi: 'Terminal snapshot' } };
         return { ...qualified, result: { receipt: { session_id: a.session_id, request_id: a.arguments.request_id, native_receipt_observed: true } } };
@@ -94,7 +94,7 @@ test('late owner/session reads and an old delayed close cannot replace a newly s
     const first = f.viewer.open(f.rows[0]);
     await Promise.resolve();
     await f.viewer.open(f.rows[1]);
-    release({ origin_wing_id: 'desktop', session_id: 'same-full-session-id', attachment_id: 'attachment-00000001', route: { wing_id: 'desktop' } });
+    release({ origin_wing_id: 'desktop', session_id: 'same-full-session-id', attachment_id: 'attachment-00000001', sequence: 2, route: { wing_id: 'desktop' } });
     await first;
     assert.equal(f.viewer.current().row.origin_wing_id, 'laptop');
     f.switchOwner();

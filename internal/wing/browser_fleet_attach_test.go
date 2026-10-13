@@ -26,18 +26,18 @@ func TestBrowserFleetAttachmentCapabilityTakeoverHandBackAndIdle(t *testing.T) {
 	manager := newBrowserFleetAttachments(f.ctx, f.sessions, "alice")
 	defer manager.Close()
 	req := ws.TunnelRequest{SenderUserID: "alice", SenderPub: "tab-key"}
-	wire := func(session, token, input string, takeover bool) json.RawMessage {
-		raw, _ := json.Marshal(map[string]any{"origin_wing_id": "fixture-wing", "session_id": session, "attachment_id": token, "input": input, "takeover": takeover})
+	wire := func(session, token, input string, takeover bool, sequence uint64) json.RawMessage {
+		raw, _ := json.Marshal(map[string]any{"origin_wing_id": "fixture-wing", "session_id": session, "attachment_id": token, "input": input, "takeover": takeover, "sequence": sequence})
 		return raw
 	}
 	token := "attachment-00000001"
-	args := wire(id, token, "", true)
+	args := wire(id, token, "", true, 1)
 	foreign := req
 	foreign.SenderUserID = "bob"
 	if _, err := manager.Execute(f.ctx, foreign, "fleet_attach", args); err == nil {
 		t.Fatal("foreign owner attached")
 	}
-	if _, err := manager.Execute(f.ctx, req, "fleet_attach", wire(id[:6], token, "", true)); err == nil {
+	if _, err := manager.Execute(f.ctx, req, "fleet_attach", wire(id[:6], "attachment-short00001", "", true, 1)); err == nil {
 		t.Fatal("short ID attached")
 	}
 	response, err := manager.Execute(f.ctx, req, "fleet_attach", args)
@@ -61,13 +61,13 @@ func TestBrowserFleetAttachmentCapabilityTakeoverHandBackAndIdle(t *testing.T) {
 	}
 	another := req
 	another.SenderPub = "other-tab"
-	if _, err := manager.Execute(f.ctx, another, "fleet_input", wire(id, token, "never", false)); err == nil {
+	if _, err := manager.Execute(f.ctx, another, "fleet_input", wire(id, token, "never", false, 2)); err == nil {
 		t.Fatal("tab stole attachment")
 	}
-	if _, err := manager.Execute(f.ctx, req, "fleet_detach", wire(id, "attachment-00000002", "", false)); err == nil {
+	if _, err := manager.Execute(f.ctx, req, "fleet_detach", wire(id, "attachment-00000002", "", false, 2)); err == nil {
 		t.Fatal("stale token detached writer")
 	}
-	if _, err := manager.Execute(f.ctx, req, "fleet_input", wire(id, token, "typed-once", false)); err != nil {
+	if _, err := manager.Execute(f.ctx, req, "fleet_input", wire(id, token, "typed-once", false, 2)); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -78,11 +78,19 @@ func TestBrowserFleetAttachmentCapabilityTakeoverHandBackAndIdle(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("missing input")
 	}
-	response, err = manager.Execute(f.ctx, req, "fleet_detach", wire(id, token, "", false))
+	if _, err := manager.Execute(f.ctx, req, "fleet_input", wire(id, token, "typed-once", false, 2)); err == nil {
+		t.Fatal("duplicate browser input replayed")
+	}
+	select {
+	case input := <-f.egg(id).input:
+		t.Fatalf("replay wrote %q", input)
+	default:
+	}
+	response, err = manager.Execute(f.ctx, req, "fleet_detach", wire(id, token, "", false, 3))
 	if err != nil || response["session_id"] != id {
 		t.Fatalf("hand-back=%+v %v", response, err)
 	}
-	if _, err := manager.Execute(f.ctx, req, "fleet_input", wire(id, token, "never", false)); err == nil {
+	if _, err := manager.Execute(f.ctx, req, "fleet_input", wire(id, token, "never", false, 2)); err == nil {
 		t.Fatal("writer retained after hand-back")
 	}
 	select {
@@ -90,16 +98,31 @@ func TestBrowserFleetAttachmentCapabilityTakeoverHandBackAndIdle(t *testing.T) {
 		t.Fatal("hand-back killed agent")
 	default:
 	}
+	if _, err := manager.Execute(f.ctx, req, "fleet_attach", args); err == nil {
+		t.Fatal("consumed takeover replayed after hand-back")
+	}
+	token = "attachment-new000001"
+	args = wire(id, token, "", true, 1)
 	if _, err := manager.Execute(f.ctx, req, "fleet_attach", args); err != nil {
 		t.Fatal(err)
 	}
 	manager.expire(time.Now().Add(browserAttachmentIdle + time.Second))
-	if _, err := manager.Execute(f.ctx, req, "fleet_read", wire(id, token, "", false)); err == nil {
+	if _, err := manager.Execute(f.ctx, req, "fleet_read", wire(id, token, "", false, 3)); err == nil {
 		t.Fatal("quiet writer retained")
 	}
 	if len(manager.snapshot()) != 0 {
 		t.Fatal("expired attachment leaked")
 	}
+	if _, err := manager.Execute(f.ctx, req, "fleet_attach", args); err == nil {
+		t.Fatal("consumed takeover replayed after expiry")
+	}
+	manager.Close()
+	restarted := newBrowserFleetAttachments(f.ctx, f.sessions, "alice")
+	defer restarted.Close()
+	if _, err := restarted.Execute(f.ctx, req, "fleet_attach", args); err == nil {
+		t.Fatal("consumed takeover replayed after manager restart")
+	}
+
 }
 
 func TestPhoneFleetHandBackRequiresExactIdentity(t *testing.T) {
@@ -160,11 +183,11 @@ func TestBrowserFleetTakeoverRejectsMissingEggLeaseAcknowledgement(t *testing.T)
 	manager := newBrowserFleetAttachments(f.ctx, f.sessions, "alice")
 	defer manager.Close()
 	req := ws.TunnelRequest{SenderUserID: "alice", SenderPub: "tab-key"}
-	args, _ := json.Marshal(map[string]any{"attachment_id": "attachment-00000001", "origin_wing_id": "fixture-wing", "session_id": id})
+	args, _ := json.Marshal(map[string]any{"attachment_id": "attachment-00000001", "origin_wing_id": "fixture-wing", "session_id": id, "sequence": uint64(1)})
 	if _, err := manager.Execute(f.ctx, req, "fleet_attach", args); err == nil {
 		t.Fatal("implicit writer claim accepted")
 	}
-	args, _ = json.Marshal(map[string]any{"attachment_id": "attachment-00000001", "origin_wing_id": "fixture-wing", "session_id": id, "takeover": true})
+	args, _ = json.Marshal(map[string]any{"attachment_id": "attachment-00000001", "origin_wing_id": "fixture-wing", "session_id": id, "takeover": true, "sequence": uint64(1)})
 	if _, err := manager.Execute(f.ctx, req, "fleet_attach", args); err == nil {
 		t.Fatal("old egg acknowledged exclusive takeover without a lease")
 	}

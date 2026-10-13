@@ -12,6 +12,7 @@ function render(value) {
         if (dialog?.open) dialog.close();
         clearTimeout(poll);
         terminal?.reset(); lastTerminal = '';
+        if (dialog) { dialog.querySelector('#viewer-message').value = ''; dialog.querySelector('[data-input]').value = ''; }
         previousFocus?.focus?.({ preventScroll: true });
         return;
     }
@@ -87,7 +88,8 @@ export function initSessionViewer(inventory) {
     const click = (attribute, action) => dialog.querySelector(`[${attribute}]`).addEventListener('click', action);
     async function closeWithNotice() {
         const identity = dialog.querySelector('[data-identity]').textContent;
-        if (!await viewer.close()) {
+        const closingOwner = S.currentUser?.id;
+        if (!await viewer.close() && S.currentUser?.id === closingOwner) {
             const status = document.getElementById('session-search-status');
             if (status) status.textContent = `Hand-back unconfirmed for ${identity}. Input releases after 15 seconds without activity.`;
         }
@@ -103,15 +105,18 @@ export function initSessionViewer(inventory) {
     click('data-terminal-send', async () => {
         const input = dialog.querySelector('[data-input]');
         const text = input.value;
+        const selection = state;
         await viewer.terminalInput(text + '\r');
-        if (state?.mode === 'control') input.value = '';
+        if (state?.generation === selection?.generation && state?.owner === selection?.owner && state?.mode === 'control' && input.value === text) input.value = '';
     });
     click('data-interrupt', () => viewer.terminalInput('\x03'));
     dialog.querySelector('[data-composer]').addEventListener('submit', async event => {
         event.preventDefault();
         const input = dialog.querySelector('#viewer-message');
-        await viewer.sendMessage(input.value);
-        if (state?.receipt?.native_receipt_observed) input.value = '';
+        const text = input.value;
+        const selection = state;
+        await viewer.sendMessage(text);
+        if (state?.generation === selection?.generation && state?.owner === selection?.owner && state?.receipt?.native_receipt_observed === true && input.value === text) input.value = '';
     });
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') viewer.read(); });
     window.addEventListener('pagehide', () => viewer.close());

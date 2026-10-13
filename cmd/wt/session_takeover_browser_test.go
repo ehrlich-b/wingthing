@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -249,6 +250,32 @@ func TestBuiltSessionTakeoverDashboard(t *testing.T) {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("takeover journey: %v\n%s", err, output)
+	}
+	metadata := eggclient.ReadEggMetaValues(filepath.Join(states[1], "eggs", id))
+	transcript := filepath.Join(metadata["provider_home"], ".claude", "projects", strings.ReplaceAll(homes[1], "/", "-"), metadata["provider_session_id"]+".jsonl")
+	data, err := os.ReadFile(transcript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	humanInputs := 0
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		var record struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(line, &record) == nil && record.Type == "user" {
+			if record.Message.Content == "Human takeover input" {
+				humanInputs++
+			}
+			if record.Message.Content == "Old delayed terminal input" {
+				t.Fatal("input crossed retired attachment after selection changed")
+			}
+		}
+	}
+	if humanInputs != 1 {
+		t.Fatalf("encrypted browser input dispatched %d times", humanInputs)
 	}
 	if !pake.Available {
 		t.Fatal("required encrypted phone fixture needs CGO PAKE")

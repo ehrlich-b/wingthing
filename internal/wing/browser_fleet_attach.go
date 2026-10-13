@@ -29,15 +29,20 @@ type browserFleetEntry struct {
 // encryption key and client-generated ID. A quiet/disconnected tab loses its
 // writer; reads never reattach or replay a prior takeover.
 type browserFleetAttachments struct {
-	mu      sync.Mutex
-	ctx     context.Context
-	service *wingsession.Service
-	owner   string
-	entries map[string]*browserFleetEntry
+	mu        sync.Mutex
+	ctx       context.Context
+	service   *wingsession.Service
+	owner     string
+	entries   map[string]*browserFleetEntry
+	ledger    *browserAttachmentLedger
+	ledgerErr error
 }
 
 func newBrowserFleetAttachments(ctx context.Context, service *wingsession.Service, owner string) *browserFleetAttachments {
 	b := &browserFleetAttachments{ctx: ctx, service: service, owner: owner, entries: map[string]*browserFleetEntry{}}
+	if owner != "" && service != nil && !service.SharedHost {
+		b.ledger, b.ledgerErr = openBrowserAttachmentLedger(service.Config.Dir)
+	}
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
@@ -68,6 +73,7 @@ func (b *browserFleetAttachments) Execute(ctx context.Context, req ws.TunnelRequ
 		return nil, errors.New("unsupported browser attachment operation")
 	}
 	var args struct {
+		Sequence     uint64 `json:"sequence"`
 		AttachmentID string `json:"attachment_id"`
 		OriginWingID string `json:"origin_wing_id"`
 		SessionID    string `json:"session_id"`
@@ -92,13 +98,27 @@ func (b *browserFleetAttachments) Execute(ctx context.Context, req ws.TunnelRequ
 	if operation == "fleet_attach" && !args.ReadOnly && !args.Takeover {
 		return nil, errors.New("choose read_only observation or explicit takeover")
 	}
+	if b.ledgerErr != nil || b.ledger == nil {
+		return nil, errors.New("browser replay fence unavailable")
+	}
+	if args.Sequence == 0 || operation == "fleet_attach" && args.Sequence != 1 {
+		return nil, errors.New("browser attachment sequence required")
+	}
 	key := browserAttachmentKey(req)
 	b.mu.Lock()
 	entry := b.entries[key]
+	if entry != nil && operation == "fleet_attach" {
+		b.mu.Unlock()
+		return nil, errors.New("browser takeover already admitted; hand back before another attach")
+	}
 	if entry == nil && operation == "fleet_attach" {
 		if len(b.entries) >= maxBrowserAttachments {
 			b.mu.Unlock()
 			return nil, errors.New("browser attachment limit reached")
+		}
+		if err := b.ledger.Consume(ctx, key, args.AttachmentID, args.Sequence, true); err != nil {
+			b.mu.Unlock()
+			return nil, err
 		}
 		entry = &browserFleetEntry{id: args.AttachmentID, last: time.Now(), phone: &phoneSessions{service: b.service, owner: b.owner}}
 		b.entries[key] = entry
@@ -116,14 +136,16 @@ func (b *browserFleetAttachments) Execute(ctx context.Context, req ws.TunnelRequ
 		b.remove(key, entry)
 		return nil, errors.New("attachment expired; explicitly attach again")
 	}
+	if operation != "fleet_attach" {
+		if err := b.ledger.Consume(ctx, key, args.AttachmentID, args.Sequence, false); err != nil {
+			return nil, err
+		}
+	}
 	// All options and execution selectors pass through the same phone/runtime
 	// contract, which rechecks exact identity, grants and verified remote pins.
 	wire, _ := json.Marshal(map[string]any{"origin_wing_id": args.OriginWingID, "session_id": args.SessionID, "input": args.Input, "read_only": args.ReadOnly, "takeover": args.Takeover})
 	callCtx := ctx
 	if operation == "fleet_attach" {
-		if len(entry.phone.fleetAttachments) > 0 {
-			return nil, errors.New("already attached; hand back before attaching again")
-		}
 		callCtx = b.ctx // readiness remains bounded by OwnerFleetAttach, lifetime by wing + idle lease
 	}
 	result, err := entry.phone.Execute(callCtx, "browser", operation, "", string(wire))
@@ -138,6 +160,7 @@ func (b *browserFleetAttachments) Execute(ctx context.Context, req ws.TunnelRequ
 		return nil, errors.New("attachment contract mismatch")
 	}
 	response["attachment_id"] = entry.id
+	response["sequence"] = args.Sequence
 	if operation == "fleet_detach" {
 		b.remove(key, entry)
 	}
@@ -174,6 +197,7 @@ func (b *browserFleetAttachments) expire(now time.Time) {
 	}
 }
 func (b *browserFleetAttachments) Close() {
+	defer b.ledger.Close()
 	for key, entry := range b.snapshot() {
 		entry.mu.Lock()
 		if !entry.closed {

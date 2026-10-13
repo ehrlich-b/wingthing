@@ -13,9 +13,9 @@ export function createSessionViewer({ inventory, request, user, wings, update, u
             origin_wing_id: row.origin_wing_id, session_id: row.session_id, operation, arguments: args,
         } };
     }
-    function check(result, row, route, attachment) {
+    function check(result, row, route, attachment, sequence) {
         if (!qualifiedSessionEquals(row, result) || result.route?.wing_id !== route.wing_id ||
-            (attachment && result.attachment_id !== attachment)) throw Error('Session response identity mismatch');
+            (attachment && (result.attachment_id !== attachment || result.sequence !== sequence))) throw Error('Session response identity mismatch');
         return result;
     }
     function fresh() {
@@ -25,13 +25,17 @@ export function createSessionViewer({ inventory, request, user, wings, update, u
         return check(await request(route.wing_id, envelope(active.row, operation, args)), active.row, route);
     }
     function attachmentEnvelope(operation, state, extra = {}) {
-        return { type: 'session.control', operation, arguments: { attachment_id: state.attachment,
+        return { type: 'session.control', operation, arguments: { attachment_id: state.attachment, sequence: ++state.attachmentSequence,
             origin_wing_id: state.row.origin_wing_id, session_id: state.row.session_id, ...extra } };
+    }
+    async function attachmentAction(operation, state, extra = {}) {
+        const body = attachmentEnvelope(operation, state, extra);
+        return check(await request(state.route.wing_id, body), state.row, state.route, state.attachment, body.arguments.sequence);
     }
     async function release(state) {
         if (!state?.attachment) return;
         // Cleanup uses the old capability and selected route, even after selection changes.
-        check(await request(state.route.wing_id, attachmentEnvelope('fleet_detach', state)), state.row, state.route, state.attachment);
+        await attachmentAction('fleet_detach', state);
     }
     async function close() {
         const old = active;
@@ -49,7 +53,7 @@ export function createSessionViewer({ inventory, request, user, wings, update, u
         const ticket = ++generation;
         let pendingPrompt = null, promptStorageError = false;
         try { pendingPrompt = prompts?.get(owner, row) || null; } catch (error) { promptStorageError = true; }
-        active = { releaseWarning: !released, row: { ...row }, route: null, events: [], cursor: 0, hasMore: false, terminal: '', mode: 'observe', status: released ? 'Opening session…' : 'Prior hand-back unconfirmed; its idle lease will expire. Opening session…', pendingPrompt, promptStorageError, attachment: null };
+        active = { generation: ticket, owner, attachmentSequence: 0, releaseWarning: !released, row: { ...row }, route: null, events: [], cursor: 0, hasMore: false, terminal: '', mode: 'observe', status: released ? 'Opening session…' : 'Prior hand-back unconfirmed; its idle lease will expire. Opening session…', pendingPrompt, promptStorageError, attachment: null };
         publish();
         try {
             const found = (await inventory(row.session_id)).sessions.filter(candidate => qualifiedSessionEquals(candidate, row));
@@ -85,7 +89,7 @@ export function createSessionViewer({ inventory, request, user, wings, update, u
             state.route = { ...result.route, healthy: true, observed_at: new Date(now()).toISOString() };
             if (state.row.live || state.attachment) {
                 if (state.attachment) {
-                    const output = check(await request(state.route.wing_id, attachmentEnvelope('fleet_read', state)), state.row, state.route, state.attachment);
+                    const output = await attachmentAction('fleet_read', state);
                     if (!valid(ticket)) return;
                     state.terminal = output.screen || '';
                     if (output.ended) { state.mode = 'lost'; state.status = 'Terminal attachment ended. Refresh and explicitly attach again.'; }
@@ -118,7 +122,7 @@ export function createSessionViewer({ inventory, request, user, wings, update, u
             if (new TextEncoder().encode(prompt.input).length > 65536) throw Error('Message exceeds 64 KiB.');
             // Save before dispatch. Failure cannot become an untracked mutation.
             prompts?.set(owner, active.row, prompt);
-            active.pendingPrompt = prompt;
+            active.pendingPrompt = prompt; active.receipt = null;
             active.status = 'Sending message…'; publish();
             let response;
             try { response = await action('session_prompt', { request_id: prompt.request_id, input: prompt.input, timeout_seconds: prompt.timeout_seconds }, prompt.route); }
@@ -138,9 +142,9 @@ export function createSessionViewer({ inventory, request, user, wings, update, u
         return mutate(async ticket => {
             if (!fresh() || !active.row.live || active.attachment) throw Error('Refresh this live session before taking control.');
             const state = active;
-            state.attachment = uuid(); state.status = 'Taking terminal control…'; publish();
+            state.attachment = uuid(); state.attachmentSequence = 0; state.status = 'Taking terminal control…'; publish();
             try {
-                const result = check(await request(state.route.wing_id, attachmentEnvelope('fleet_attach', state, { takeover: true })), state.row, state.route, state.attachment);
+                const result = await attachmentAction('fleet_attach', state, { takeover: true });
                 if (!valid(ticket)) { try { await release(state); } catch (error) {} return; }
                 state.route = result.route; state.mode = 'control'; state.status = 'You control terminal input';
             } catch (error) {
@@ -162,7 +166,7 @@ export function createSessionViewer({ inventory, request, user, wings, update, u
             const state = active;
             if (new TextEncoder().encode(input).length > 16384) throw Error('Terminal input exceeds 16 KiB.');
             try {
-                check(await request(state.route.wing_id, attachmentEnvelope('fleet_input', state, { input })), state.row, state.route, state.attachment);
+                await attachmentAction('fleet_input', state, { input });
                 if (valid(ticket)) state.status = 'Terminal input submitted · provider receipt not confirmed';
             } catch (error) { if (valid(ticket)) { state.mode = 'lost'; state.status = 'Input outcome unknown. Read state before deliberately retrying; no input was replayed.'; } }
         });

@@ -24,10 +24,13 @@ attachment fallback is used. Existing ordinary phone attachments remain
 compatible, while explicit phone takeover requires this same lease proof.
 
 Take control uses `session.control` operation `fleet_attach`, then `fleet_read`
-and `fleet_input`. All carry `attachment_id`, `origin_wing_id` and the exact
+and `fleet_input`. All carry a strictly increasing `sequence` (attach begins at 1), `attachment_id`, `origin_wing_id` and the exact
 `session_id`; attach additionally uses explicit `takeover: true`. The attachment
 ID is generated once by the client and bound to its authenticated user and
-X25519 tab key. A route is retained for the attachment lifetime. No egg token
+X25519 tab key. A wing-owned private durable receipt consumes each sequence
+before dispatch. Each takeover ID is single-use, including after detach, idle
+expiry or restart; duplicate/old commands are refused. The receipt limit is
+4,096 takeover attempt IDs and fails closed without evicting consumed IDs. A route is retained for the attachment lifetime. No egg token
 leaves the wing. Existing personal-owner, clients, path, passkey and remote-pin
 checks remain; organization/shared wings cannot use this personal attachment
 adapter. A locked wing may refuse the local owner control bridge even after a
