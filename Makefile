@@ -393,3 +393,20 @@ build-launch-plan: | web/dist
 .PHONY: accept-launch-plan-native
 accept-launch-plan-native:
 	python3 -B scripts/launch-plan-native-gate.py --go '$(shell command -v go)'
+
+# Pinned role contracts and installed Claude SessionStart/compaction proof.
+.PHONY: test-coordinator-role test-coordinator-role-vendor
+test-coordinator-role: | web/dist
+	$(GO) test -p 2 -count=1 ./internal/sessionrole ./internal/egg ./internal/eggclient ./internal/localmcp ./internal/dashboard ./internal/control ./internal/wingpolicy ./cmd/wt -run 'Role|Pin|Pinned|SessionPS|RegistryDefines|ScopedParent|IsUnderPathsRoot' -timeout 180s
+
+test-coordinator-role-vendor: | web/dist
+	WT_REQUIRE_REAL_CLAUDE=1 $(GO) test -p 2 -count=1 -tags integration -v ./cmd/wt -run '^TestRealClaudeRoleContextAfterCompaction$$' -timeout 120s
+
+.PHONY: test-coordinator-role-native test-coordinator-role-race
+test-coordinator-role-native: | web/dist
+	@test "$$(uname -s)" = Darwin || { echo 'protected coordinator acceptance requires macOS'; exit 1; }
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -count=1 -v ./cmd/wt -run '^TestBuiltWTPinnedCoordinatorScopedMailbox$$' -timeout 180s
+
+test-coordinator-role-race: | web/dist
+	$(GO) test -race -p 2 -count=1 ./internal/sessionrole ./internal/egg ./internal/eggclient ./internal/localmcp ./internal/dashboard ./internal/control ./internal/wingpolicy ./cmd/wt -run 'Role|Pin|Pinned|SessionPS|RegistryDefines|ScopedParent|IsUnderPathsRoot' -timeout 180s

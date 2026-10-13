@@ -287,7 +287,7 @@ func ValidateRemoteCommand(args []string) error {
 			return fmt.Errorf("%s subcommand %q is not available over SSH", command, args[1])
 		}
 		return nil
-	case "claude", "terminal", "new", "attach", "channel", "help", "--help", "-h", "--version":
+	case "pin", "unpin", "claude", "terminal", "new", "attach", "channel", "help", "--help", "-h", "--version":
 		return nil
 	case "session":
 		if len(args) == 1 || remoteSessionCommand(args[1]) {
@@ -295,7 +295,7 @@ func ValidateRemoteCommand(args []string) error {
 		}
 		return fmt.Errorf("session subcommand %q is not available over SSH; supported subcommands: list, ps, active, read, send, wait, rename, kill, and stop", args[1])
 	}
-	return fmt.Errorf("command %q is not available over SSH; supported commands: claude, egg, terminal, attach, session, and channel", command)
+	return fmt.Errorf("command %q is not available over SSH; supported commands: claude, egg, terminal, attach, pin, unpin, session, and channel", command)
 }
 
 func remoteSessionCommand(command string) bool {

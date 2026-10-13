@@ -40,6 +40,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/sessionrole"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
@@ -67,7 +68,7 @@ var conversationBrokerTools = []string{
 // Mutations pause while the wing is locked, as host wake delivery does. Only
 // these calls are journaled: initialize, list, read and wait polling never
 // consume the mutation journal and are never replayed after a restart.
-var conversationBrokerMutations = map[string]bool{"agent_start": true, "agent_run": true, "agent_stop": true, "agent_steer": true, "session_prompt": true, "conversation_checkpoint": true}
+var conversationBrokerMutations = map[string]bool{"session_pin": true, "agent_start": true, "agent_run": true, "agent_stop": true, "agent_steer": true, "session_prompt": true, "conversation_checkpoint": true}
 
 // A journaled mutation that was dispatched but not answered is replayed after a
 // broker restart only when its durable tool-level request_id makes the replay
@@ -138,6 +139,7 @@ type conversationBrokerRegistration struct {
 	Mailbox           string              `json:"mailbox"`
 	EggConfig         string              `json:"egg_config"`
 	Executable        string              `json:"executable"`
+	Role              string              `json:"role,omitempty"`
 	Scoped            bool                `json:"scoped,omitempty"`
 	Wings             map[string][]string `json:"wings,omitempty"`
 	RegisteredAt      int64               `json:"registered_at"`
@@ -193,6 +195,9 @@ func (s *Server) brokerToolCeiling() ([]string, int, int) {
 	ceiling := conversationBrokerTools
 	if s.scopedParent {
 		ceiling = scopedParentTools
+		if s.parentRole == "coordinator" {
+			ceiling = coordinatorParentTools
+		}
 	}
 	for _, name := range ceiling {
 		if s.toolAllowed(name) {
@@ -292,6 +297,7 @@ func (s *Server) prepareBrokerParentMCP(c *store.Conversation, eggCfg *egg.EggCo
 			return nil, nil, errors.New("scoped parent requires wing-owned mailbox dispatch")
 		}
 		reg.Scoped = true
+		reg.Role = s.parentRole
 		reg.Wings, err = s.captureWings(s)
 		if err != nil {
 			return nil, nil, err
@@ -453,7 +459,17 @@ func loadConversationBrokerRegistration(cfg *config.Config, session string) (con
 		return reg, errors.New("host mailbox registration lacks a finite authority ceiling")
 	}
 	allowed := map[string]bool{}
-	for _, name := range scopedParentTools {
+	ceiling := scopedParentTools
+	if err := sessionrole.Validate(reg.Role); err != nil {
+		return reg, err
+	}
+	if reg.Role != "" && !reg.Scoped {
+		return reg, errors.New("role mailbox requires scoped registration")
+	}
+	if reg.Role == "coordinator" {
+		ceiling = coordinatorParentTools
+	}
+	for _, name := range ceiling {
 		allowed[name] = true
 	}
 	for _, name := range reg.Tools {
@@ -539,13 +555,18 @@ func (r *conversationBrokerRegistration) server(version string, cfg *config.Conf
 	home, _ := os.UserHomeDir()
 	paths, enforce := intersectBrokerPaths(r.AllowedPaths, r.EnforcePathBounds, wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wc.Paths, r.Email, "owner", home)))
 	reg := *r
+	bound := r.ConversationID
+	if r.Scoped && r.Role == "coordinator" {
+		bound = ""
+	}
 	return &Server{Version: version,
 		Cfg: cfg, Logs: os.Stderr, Principal: r.Principal, Actor: brokerActor(r.ConversationID, r.SessionID),
 		Surface: control.SurfaceLocalMCP, Grants: grants, tools: tools, sessionRole: "owner",
 		MaxSessions: maxSessions, MaxSpawnsPerHour: maxSpawns, admission: admission,
 		identity:     eggclient.EggIdentity{UserID: r.UserID, Email: r.Email},
 		allowedPaths: paths, enforcePathBounds: enforce,
-		BoundConversation: r.ConversationID, broker: &reg,
+		BoundConversation: bound, broker: &reg,
+		legacyLocalDefault: r.Scoped && r.Role == "coordinator" && r.UserID != "" && r.Principal == wingsession.UserPrincipal(r.UserID),
 		Sessions: func() *wingsession.Service {
 			if admission != nil {
 				return admission.Sessions
@@ -623,7 +644,7 @@ func (s *Server) preflightBrokerChild(eggCfg *egg.EggConfig, agentName, cwd, ses
 // terminal contract; these rules apply only to broker-dispatched calls.
 var boundSessionTargetTools = map[string]bool{
 	"session_status": true, "session_read": true, "session_wait": true, "session_prompt": true,
-	"terminal_read": true, "terminal_send": true, "terminal_wait": true, "terminal_rename": true, "terminal_stop": true,
+	"session_pin": true, "terminal_read": true, "terminal_send": true, "terminal_wait": true, "terminal_rename": true, "terminal_stop": true,
 }
 
 func (s *Server) checkBoundSessionTarget(tool string, arguments json.RawMessage) error {
