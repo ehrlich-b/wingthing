@@ -13,6 +13,9 @@
     <link rel="apple-touch-icon" href="%BASE_URL%icons/wt-180.png">
     <link rel="icon" type="image/svg+xml" href="%BASE_URL%icons/wt.svg">
     <link rel="manifest" href="%BASE_URL%manifest.json">
+    <!-- Same files the disconnected page uses; served with a cache lifetime so it renders offline. -->
+    <link rel="preload" href="%BASE_URL%fonts/newsreader-latin.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="%BASE_URL%fonts/ibm-plex-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="style.css">
     <title>wingthing</title>
 <link rel="stylesheet" href="src/session-search.css">

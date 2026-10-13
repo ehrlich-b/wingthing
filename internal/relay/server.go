@@ -259,6 +259,12 @@ func (s *Server) registerStaticRoutes() {
 	sub, _ := fs.Sub(web.FS, "dist")
 	fileServer := http.FileServer(http.FS(sub))
 	s.mux.Handle("GET /app/", http.StripPrefix("/app/", fileServer))
+	// Public font files only. A cache lifetime lets the worker's constant
+	// disconnected page render in the app's type without the worker caching.
+	s.mux.Handle("GET /app/fonts/", http.StripPrefix("/app/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=604800")
+		fileServer.ServeHTTP(w, r)
+	})))
 	s.mux.HandleFunc("GET /app", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/app/", http.StatusMovedPermanently)
 	})
