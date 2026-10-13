@@ -245,7 +245,7 @@ func TestNorthstarPTYInventoryBudget(t *testing.T) {
 		phaseMetrics := fmt.Sprintf("first_frame=%s local_metadata=%s key_response=%s\n", firstFrame, localReady, keyReaction)
 		northstarWrite(t, h.artifact+".phases", phaseMetrics, 0600)
 		t.Log(strings.TrimSpace(phaseMetrics))
-		h.expect("healthy remote independent of slow SSH", h.send("/\x15healthy-remote\r"), "healthy-remote", "offline could not be searched")
+		h.expect("healthy remote independent of slow SSH", h.send("/\x15healthy-remote\r"), "healthy-remote", "offline not searched")
 		northstarInventoryWait(t, "one SSH per machine", func() bool { return len(northstarInventoryRecords(t, mailbox)) >= 3 })
 		records := northstarInventoryRecords(t, mailbox)
 		// Initial dispatch has one request per saved machine. Later refreshes may

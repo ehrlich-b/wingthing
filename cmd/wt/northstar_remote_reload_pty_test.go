@@ -158,7 +158,7 @@ func TestNorthstarPTYRemoteReload(t *testing.T) {
 	northstarWrite(t, filepath.Join(f.local, "remotes.yaml"), "remotes: [malformed", 0600)
 	h.expect("malformed registry retains stale rows and local work", h.send("R"), "Saved machines could not be loaded", "replacement-profile", "Last seen", "healthy-local")
 	h.expect("local attach while registry malformed", h.send("/healthy-local\r\r"), "RELOAD_LOCAL_READY")
-	h.expect("local detach preserves healthy work", h.send("\x02q"), "healthy-local", "forge could not be searched")
+	h.expect("local detach preserves healthy work", h.send("\x02q"), "healthy-local", "forge not searched")
 	h.expect("malformed remote mutation selection", h.send("/\x15replacement-profile\rr\x15forbidden-name\r"), "Saved machine changed", "R refresh")
 	save()
 	h.waitScreen("valid registry recovers without restart", h.send("/\x15\rR"), func(s string) bool {
@@ -285,7 +285,8 @@ func TestNorthstarPTYDailyLoop(t *testing.T) {
 	fresh := northstarStartPTY(t, f, binary, 160, 36)
 	fresh.expect("fresh navigator after client loss", 0, "daily-parent", "daily-forge", "! Needs you")
 	fresh.expect("discover original durable run", fresh.send("h/"+runID+"\r"), "Recent runs", "Done", "Codex")
-	fresh.expect("terminal run metadata and explicit recovery", fresh.send("i"), "Codex run in", "Original request retained", "agent", "recover", "--json", "--snapshot PATH")
+	fresh.expect("terminal run metadata and explicit recovery", fresh.send("i"), "Ran: Codex in", "Result: + Done", "r recovery steps")
+	fresh.expect("recovery steps behind r", fresh.send("r"), "Recovery steps", "original request", "agent", "recover", "--snapshot FILE")
 	fresh.expect("bounded same-run result", fresh.send("o"), "Result / Read only", "Fake Codex fixture-model")
 	fresh.expect("return from result", fresh.send("\x1b"), "Recent runs")
 	fresh.exit("q")

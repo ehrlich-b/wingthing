@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/mattn/go-runewidth"
 )
 
 func (s *state) machineStrip() string {
@@ -47,37 +49,38 @@ func lastLine(s *state, r row) string {
 // Reports follow the visible work rows. At compact sizes the selected row gets
 // the available line, while wing remains outside the scrollable session list.
 func (s *state) paperReports(lines []viewLine, work []row, pin *row, start, count, end, width int, wide bool, now time.Time) {
+	// Compact layouts keep the selected block and a blank row above the footer.
+	limit := len(lines) - 8
+	if wide {
+		limit = len(lines) - 5
+	}
 	set := func(y int, text string, role tone) {
-		if y >= 0 && (y < len(lines)-6 || (wide && y < len(lines)-5)) {
+		if y >= 0 && y < limit {
 			lines[y].text, lines[y].tone = text, role
 		}
 	}
 	y := end + 1
-	set(y, " LAST LINE", secondary)
-	y++
-	if wide {
+	// The compact selected block already carries the selected session's last line.
+	if wide && len(work) > 0 {
+		set(y, "LAST LINE", secondary)
+		y++
 		for i := start; i < min(start+count, len(work)); i++ {
 			r := work[i]
 			titleWidth := min(24, max(12, width/3))
-			set(y, " "+field(r.name(), titleWidth)+" "+lastLine(s, r), plain)
+			set(y, field(r.name(), titleWidth)+" "+lastLine(s, r), plain)
 			y++
 		}
-	} else if r, ok := s.selection(); ok {
-		set(y, " "+lastLine(s, r), plain)
 		y++
 	}
-	if wide {
-		y++
-	}
-	set(y, " FROM WING", secondary)
+	set(y, "FROM WING", secondary)
 	y++
 	if pin == nil {
-		set(y, " No wing session reported.", secondary)
+		set(y, "No wing session reported.", secondary)
 		return
 	}
 	value := s.preview(*pin)
 	if len(value.messages) == 0 {
-		set(y, " "+lastLine(s, *pin), plain)
+		set(y, lastLine(s, *pin), plain)
 		return
 	}
 	for i := len(value.messages) - 1; i >= 0; i-- {
@@ -89,9 +92,9 @@ func (s *state) paperReports(lines []viewLine, work []row, pin *row, start, coun
 		if stamp != "" {
 			stamp += "  "
 		}
-		set(y, " "+stamp+msg.text, plain)
-		if y < len(lines)-6 || (wide && y < len(lines)-5) {
-			lines[y].statusAt = 1
+		set(y, stamp+msg.text, plain)
+		if y < limit {
+			lines[y].statusAt = 0
 			lines[y].statusWidth = len(stamp)
 			lines[y].statusTone = warning
 		}
@@ -117,30 +120,76 @@ func (s *state) paperPane(r row, now time.Time, width, height int) []string {
 	if s.stale(r.machine) {
 		label = "? Last seen"
 	}
-	lines := []string{"SELECTED", r.name(), agentLabel(r.Agent) + " · " + machineLabel(r.machine) + " · " + r.project(), label}
-	if r.attention == "unread" {
-		lines[3] += " · * unread"
+	status := label
+	// wing reports through its messages; an idle cell beside them misleads.
+	if r.Pinned && r.Status != "blocked" && !s.stale(r.machine) {
+		status = "pinned"
 	}
+	if !s.stale(r.machine) {
+		status += " · " + age(r.UptimeSecs)
+	}
+	if r.attention == "unread" {
+		status += " · * unread"
+	}
+	lines := []string{"SELECTED", r.name(), agentLabel(r.Agent) + " · " + machineLabel(r.machine) + " · " + r.project(), status}
 	appendText := func(text string, limit int) {
 		parts := wrap(text, width)
 		if len(parts) > limit {
 			parts = parts[:limit]
-			parts[limit-1] = clip(parts[limit-1], max(0, width-3)) + "..."
+			parts[limit-1] = clip(parts[limit-1]+" ...", width)
 		}
 		lines = append(lines, parts...)
 	}
-	lines = append(lines, "")
+	// Speaker and time sit in fixed columns; text wraps under itself.
+	appendMessage := func(speaker, stamp, text string, limit int) {
+		parts := wrap(text, max(1, width-12))
+		if len(parts) > limit {
+			parts = parts[:limit]
+			parts[limit-1] = clip(parts[limit-1]+" ...", width-12)
+		}
+		for i, part := range parts {
+			if i == 0 {
+				lines = append(lines, field(speaker, 6)+field(stamp, 6)+part)
+			} else {
+				lines = append(lines, strings.Repeat(" ", 12)+part)
+			}
+		}
+	}
+	value := s.preview(r)
 	if s.stale(r.machine) {
+		lines = append(lines, "")
 		appendText(connection(s.machines[r.machine], now), 3)
-		appendText(routeCause(s.machines[r.machine].err)+" R retry.", 3)
-	} else if value := s.preview(r); value.next != "" {
-		appendText(value.next, 3)
+		appendText(routeCause(s.machines[r.machine].err), 3)
+	} else if len(value.messages) > 0 {
+		lines = append(lines, "", "RECENT")
+		messages := value.messages
+		if len(messages) > 3 {
+			messages = messages[len(messages)-3:]
+		}
+		for i := len(messages) - 1; i >= 0; i-- {
+			msg := messages[i]
+			speaker := strings.ToLower(msg.speaker)
+			if r.Pinned && msg.speaker != "You" {
+				speaker = "wing"
+			}
+			appendMessage(speaker, paperStamp(msg.timestamp, now), msg.text, 3)
+		}
 	} else {
+		lines = append(lines, "")
 		appendText(lastLine(s, r), 3)
 	}
-	action := "Enter open   i full details"
-	if s.stale(r.machine) {
-		action = "R reconnect   i full details"
+	action := "Enter open   i details"
+	switch {
+	case s.stale(r.machine):
+		action = "R reconnect   i details"
+	case r.Status == "blocked":
+		request := value.next
+		if request == "" {
+			request = "Waiting for your answer."
+		}
+		lines = append(lines, "", "ASKING")
+		appendText(request, 3)
+		action = "Enter answer in the session   i details"
 	}
 	lines = append(lines, "", action, "", "MACHINES")
 	names := s.machineNames()
@@ -157,16 +206,19 @@ func (s *state) paperPane(r row, now time.Time, width, height int) []string {
 		if s.stale(name) {
 			state = "unreachable"
 			if accessDenied(m.err) {
-				state = "access denied"
+				state = accessState(m.err)
+			}
+			if !m.updated.IsZero() {
+				state = "last seen " + paperStamp(m.updated.Format(time.RFC3339), now)
 			}
 		} else if m.updated.IsZero() {
 			state = "loading"
 		}
-		count := machineCount(m)
-		appendText(machineLabel(name)+" · "+state+" · "+count, 2)
-		if s.stale(name) && !m.updated.IsZero() {
-			appendText("Last seen "+paperStamp(m.updated.Format(time.RFC3339), now), 1)
+		entry := field(machineLabel(name), 14) + field(state, 17) + machineCount(m)
+		if runewidth.StringWidth(entry) > width {
+			entry = machineLabel(name) + " · " + state + " · " + machineCount(m)
 		}
+		appendText(entry, 2)
 	}
 	done, failed := 0, 0
 	for name, m := range s.machines {
@@ -186,22 +238,12 @@ func (s *state) paperPane(r row, now time.Time, width, height int) []string {
 			}
 		}
 	}
-	lines = append(lines, "", "TODAY", fmt.Sprintf("%d done · %d failed reported", done, failed))
+	lines = append(lines, "", "TODAY", fmt.Sprintf("%d done · %d failed", done, failed))
 	for _, m := range s.machines {
 		if m.err != "" || m.updated.IsZero() || s.registryError != "" {
-			lines = append(lines, "Some machines unavailable.")
+			lines = append(lines, "Counts skip unavailable machines.")
 			break
 		}
-	}
-	lines = append(lines, "", "RECENT")
-	for _, msg := range s.preview(r).messages {
-		stamp := paperStamp(msg.timestamp, now)
-		header := msg.speaker
-		if stamp != "" {
-			header += " · " + stamp
-		}
-		appendText(header, 1)
-		appendText(msg.text, 2)
 	}
 	if len(lines) > height {
 		lines = lines[:height]

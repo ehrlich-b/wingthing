@@ -127,7 +127,7 @@ func TestPaperPaneKeepsStateColorAndUnreadSeparate(t *testing.T) {
 			t.Fatalf("missing %q", want)
 		}
 	}
-	if !strings.Contains(output, "48;5;230") || !strings.Contains(output, "48;5;234") || strings.Contains(text, "[unread]") {
+	if !strings.Contains(output, "48;5;255") || !strings.Contains(output, "48;5;234") || strings.Contains(text, "[unread]") {
 		t.Fatal("row recolored or unread in title")
 	}
 	if !strings.Contains(output, "\x1b[38;5;217m! Needs you") {
@@ -151,7 +151,7 @@ func TestWorklistPositionAccountsForPinnedSession(t *testing.T) {
 	s.machines["local"] = m
 	s.reconcile()
 	text := strings.Join(renderedLines(t, render(s, 80, 24, time.Now()), 80, 24), "\n")
-	if !strings.Contains(text, "28 sessions") || !strings.Contains(text, "of 27 sessions + 1 pinned") {
+	if !strings.Contains(text, "27 sessions   ") || !strings.Contains(text, "of 27 sessions") || strings.Contains(text, "pinned") {
 		t.Fatal("header and position disagree", text)
 	}
 }

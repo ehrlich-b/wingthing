@@ -591,7 +591,7 @@ func TestNorthstarPTYSessionNavigator(t *testing.T) {
 	h.expect("attention off", h.send("!"), "local-parent", "disposable")
 	rev = h.send("/FORGE\r")
 	h.waitScreen("qualified filter / colliding IDs", rev, func(s string) bool {
-		return strings.Contains(s, "forge-parent") && !strings.Contains(s, "local-parent") && strings.Contains(s, "> forge-parent")
+		return strings.Contains(s, "forge-parent") && !strings.Contains(s, "local-parent") && northstarContainsRow(s, "> forge-parent")
 	})
 	h.expect("full details / exact route", h.send("i"), "Machine: forge", "Project: work", "Permissions: Not reported")
 	h.expect("details close", h.send("\x1b"), "forge-parent", "Enter open")
@@ -622,13 +622,13 @@ func TestNorthstarPTYSessionNavigator(t *testing.T) {
 		t.Fatal("detach stopped the egg")
 	}
 	northstarWrite(t, filepath.Join(f.home, "forge-offline"), "offline", 0600)
-	h.expect("retained remote rows / stale query failure", h.send("R"), "forge could not be searched", "Last seen", "> forge-renamed")
+	h.expect("retained remote rows / stale query failure", h.send("R"), "forge not searched", "Last seen", "> forge-renamed")
 	if err := os.Remove(filepath.Join(f.home, "forge-offline")); err != nil {
 		t.Fatal(err)
 	}
 	rev = h.send("R")
 	h.waitScreen("remote recovery / same qualified selection", rev, func(s string) bool {
-		return strings.Contains(s, "> forge-renamed") && strings.Contains(s, "! Needs you") && !strings.Contains(s, "forge unreachable")
+		return northstarContainsRow(s, "> forge-renamed") && strings.Contains(s, "! Needs you") && !strings.Contains(s, "forge unreachable")
 	})
 	h.expect("clear filter", h.send("/\x15\r"), "local-parent", "disposable")
 	h.expect("stop filter", h.send("/disposable\r"), "> disposable", "* Working")
@@ -640,7 +640,7 @@ func TestNorthstarPTYSessionNavigator(t *testing.T) {
 	h.expect("stop confirmation again", h.send("x"), "disposable on forge")
 	rev = h.send("y")
 	h.waitScreen("confirmed stop / no matches", rev, func(s string) bool {
-		return strings.Contains(s, "No matching sessions") && strings.Contains(s, "Enter open") && !strings.Contains(s, "> disposable")
+		return strings.Contains(s, "No matching sessions") && strings.Contains(s, "Enter open") && !northstarContainsRow(s, "> disposable")
 	})
 	if disposable.killed.Load() != 1 || local.killed.Load() != 0 || forge.killed.Load() != 0 {
 		t.Fatal("stop addressed wrong exact target")
@@ -685,8 +685,14 @@ func northstarContainsRow(screen, text string) bool {
 	if strings.HasSuffix(text, " *") {
 		return northstarNamedState(screen, text, "")
 	}
+	// The selection marker sits in a row's first cell, before the state.
+	name, selected := strings.CutPrefix(text, "> ")
 	for _, line := range strings.Split(screen, "\n") {
-		if strings.Contains(strings.Join(strings.Fields(line), " "), text) {
+		line = strings.Join(strings.Fields(strings.Trim(line, "│| ")), " ")
+		if selected && strings.HasPrefix(line, "> ") && strings.Contains(line+" ", " "+name) {
+			return true
+		}
+		if strings.Contains(line, text) {
 			return true
 		}
 	}

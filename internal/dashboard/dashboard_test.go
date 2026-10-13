@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -659,7 +660,7 @@ func TestDashboardManualRefreshRequestsInventory(t *testing.T) {
 		return []eggclient.LocalSession{session("same", "parent", "/src/app", "blocked")}, nil
 	})
 	output := writerFunc(func(p []byte) (int, error) {
-		if strings.Contains(string(p), "> parent") {
+		if regexp.MustCompile(`> .{0,200}parent`).MatchString(string(p)) {
 			select {
 			case updated <- struct{}{}:
 			default:

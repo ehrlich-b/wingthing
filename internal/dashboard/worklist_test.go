@@ -109,7 +109,7 @@ func TestLongTitlePreservesIdentityAndRecovery(t *testing.T) {
 	s.machines["work"] = m
 	s.selected = "work:one"
 	lines := renderedLines(t, render(s, 80, 24, time.Now()), 80, 24)
-	if !strings.Contains(lines[19], "work") || !strings.Contains(lines[20], "i full details") {
+	if !strings.Contains(lines[18], "work") || !strings.Contains(lines[20], "i details") {
 		t.Fatal("long title hid target or recovery")
 	}
 	s.handle("i")
@@ -164,13 +164,27 @@ func TestRunRecoveryPreservesSavedRouteAndClient(t *testing.T) {
 	s.history().target = r
 	s.history().pages["studio"] = runPage{Runs: []runRow{r}}
 	text := strings.Join(s.runOverlay(), "\n")
-	for _, want := range []string{"Outcome unknown", "Sandbox off", "full OS-user access", runRecoveryCommand(r.route), "--client 'personal'"} {
+	for _, want := range []string{"Result: ? Unknown", "Sandbox off", "full access to your account", "check its work before you run it again", "r recovery steps"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("details lost %q", want)
+		}
+	}
+	s.handle("r")
+	text = strings.Join(s.runOverlay(), "\n")
+	for _, want := range []string{"Recovery steps", "never sends it again", "On Studio, run:", "  " + runRecoveryCommand(), "wt agent recover --client personal"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("recovery lost %q", want)
 		}
 	}
-	if strings.Contains(text, "\nwt agent recover --json\n") {
-		t.Fatal("remote recovery substituted local work")
+	// Recovery names the owning machine; it never prints saved route flags, IDs or shell quoting.
+	for _, banned := range []string{"--remote", "studio-demo", "'", "In a terminal, run:"} {
+		if strings.Contains(text, banned) {
+			t.Errorf("recovery printed %q", banned)
+		}
+	}
+	s.handle("r")
+	if strings.Contains(strings.Join(s.runOverlay(), "\n"), "Recovery steps") {
+		t.Fatal("r did not return to details")
 	}
 	if s.history().target.RequestKey != "original" {
 		t.Fatal("receipt lost original request")

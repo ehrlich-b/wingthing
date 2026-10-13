@@ -139,7 +139,7 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 				for _, line := range overlayLines(s, time.Now()) {
 					lineCount += len(wrap(line, max(1, width)))
 				}
-				s.overlayLimit = max(0, lineCount-max(0, height-5))
+				s.overlayLimit = max(0, lineCount-max(0, height-6))
 				s.overlayOffset = min(s.overlayOffset, s.overlayLimit)
 			}
 			if _, err := io.WriteString(streams.Out, render(s, width, height, time.Now())); err != nil {

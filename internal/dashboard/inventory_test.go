@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -49,7 +50,7 @@ func TestDashboardInventorySlowRemoteDoesNotBlockLocal(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("slow remote blocked local inventory")
 	}
-	if s.selected != "local:live" || !s.machines["work"].loading || !strings.Contains(render(s, 80, 24, time.Now()), "> local") {
+	if s.selected != "local:live" || !s.machines["work"].loading || !regexp.MustCompile(`> .{0,120}local`).MatchString(render(s, 80, 24, time.Now())) {
 		t.Fatal("local result was not renderable while remote was pending")
 	}
 	inv.refresh(ctx, s)

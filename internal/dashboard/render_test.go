@@ -47,7 +47,7 @@ func TestDashboardLayout80x24And40x12(t *testing.T) {
 			output := render(s, w, h, time.Unix(1000, 0))
 			lines := renderedLines(t, output, w, h)
 			text := strings.Join(lines, "\n")
-			for _, want := range []string{"3 sessions", "1 needs you", "> review", "Needs you", "work", "Enter open", "/ search", "? help"} {
+			for _, want := range []string{"3 sessions", "1 needs you", "Needs you", "work", "Enter open", "/ search", "? help"} {
 				if !strings.Contains(text, want) {
 					t.Errorf("missing %q:\n%s", want, text)
 				}
@@ -57,7 +57,7 @@ func TestDashboardLayout80x24And40x12(t *testing.T) {
 					t.Errorf("internal chrome %q", bad)
 				}
 			}
-			if !strings.Contains(output, "> review") || strings.Index(text, "review") > strings.Index(text, "build") {
+			if !regexp.MustCompile(`(?m)> .*review`).MatchString(text) || strings.Index(text, "review") > strings.Index(text, "build") {
 				t.Fatal("selection or initial attention order lost")
 			}
 			if !strings.Contains(lines[h-2], "Enter open") || !strings.Contains(lines[h-1], "q quit") {
@@ -84,7 +84,7 @@ func TestDashboardScrollKeepsSelectionVisible(t *testing.T) {
 	s.selected = "local:id-49"
 	for _, dim := range [][2]int{{40, 12}, {80, 24}, {132, 36}} {
 		text := strings.Join(renderedLines(t, render(s, dim[0], dim[1], time.Now()), dim[0], dim[1]), "\n")
-		if !strings.Contains(text, "> name-49") || !strings.Contains(text, "of 53 sessions") {
+		if !regexp.MustCompile(`(?m)> .*name-49`).MatchString(text) || !strings.Contains(text, "of 53 sessions") {
 			t.Fatalf("selection or position lost:\n%s", text)
 		}
 	}
@@ -95,7 +95,7 @@ func TestDashboardRendersAgeStatusAndPrompts(t *testing.T) {
 	s.reconcile()
 	s.selected = "local:aged"
 	text := render(s, 80, 24, time.Unix(220, 0))
-	if !strings.Contains(text, "> old") || !strings.Contains(text, "4m") {
+	if !regexp.MustCompile(`> .{0,120}old`).MatchString(text) || !strings.Contains(text, "4m") {
 		t.Fatal("cached uptime lost")
 	}
 	for _, test := range []struct {
@@ -138,14 +138,14 @@ func TestDashboardFreshnessDetailsHelpAndAttention(t *testing.T) {
 	s.remotes = map[string]config.Remote{"work": {SSHTarget: "fake-forge", WTBinary: "/opt/wing thing/wt", WingthingDir: "/remote/state"}}
 	s.selected = "work:one"
 	text := render(s, 80, 24, now)
-	for _, want := range []string{"work unreachable", "Last seen 5m ago", "Retried 0s ago", "> remote", "? Last seen", "R retry", "? help"} {
+	for _, want := range []string{"work unreachable", "Last seen 5m ago", "remote · ", "? Last seen", "R retry", "? help"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("missing %q", want)
 		}
 	}
 	drive(s, "i")
 	detail := strings.Join(renderedLines(t, render(s, 80, 24, now), 80, 24), "\n")
-	for _, want := range []string{"Machine: work", "Project: app", "Permissions:", "Verify the machine before attaching"} {
+	for _, want := range []string{"Machine: work", "Project: app", "Permissions:", "Esc, then R to retry."} {
 		if !strings.Contains(detail, want) {
 			t.Errorf("missing %q", want)
 		}
@@ -171,13 +171,13 @@ func TestDashboardUnreadAndContentFreeLifecycleDetails(t *testing.T) {
 	attentionApply(s, "local", r)
 	for _, dim := range [][2]int{{80, 24}, {40, 12}} {
 		text := strings.Join(renderedLines(t, render(s, dim[0], dim[1], time.Now()), dim[0], dim[1]), "\n")
-		if !regexp.MustCompile(`(?m)^ +o Idle +\* +> agent`).MatchString(text) || !strings.Contains(text, "1 unread") || strings.Contains(text, "PRIVATE") {
+		if !regexp.MustCompile(`(?m)^> o Idle +\* +agent`).MatchString(text) || !strings.Contains(text, "1 unread") || strings.Contains(text, "PRIVATE") {
 			t.Fatalf("unread projection: %s", text)
 		}
 	}
 	drive(s, "i")
 	text := render(s, 100, 24, time.Now())
-	for _, want := range []string{"State: o Idle", "Unread response", "Foreground response completed", "descendants may continue"} {
+	for _, want := range []string{"State: o Idle", "Unread response", "replied", "Background work may still run"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("details missing %q", want)
 		}

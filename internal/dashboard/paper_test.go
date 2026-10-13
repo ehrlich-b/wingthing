@@ -13,13 +13,13 @@ func TestPaperLayoutKeepsReportsAndExactTargetAtBothSizes(t *testing.T) {
 	s.previews = map[attentionIdentity]sessionPreview{r.identity: {messages: []previewMessage{{speaker: "Codex", text: "The DNS test is ready."}}, next: "Run the DNS tests."}}
 	for _, dim := range [][2]int{{80, 24}, {132, 36}} {
 		text := strings.Join(renderedLines(t, render(s, dim[0], dim[1], time.Now()), dim[0], dim[1]), "\n")
-		for _, want := range []string{"State", "Unread", "Title", "Agent", "Machine", "Age", "LAST LINE", "FROM WING", "The DNS test is ready.", "Enter open", "? help"} {
+		for _, want := range []string{"State", "Unread", "Title", "Agent", "Machine", "Age", "FROM WING", "SELECTED", "Run the DNS tests.", "Enter open", "? help"} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("%v missing %q", dim, want)
 			}
 		}
 		if dim[0] >= 120 {
-			for _, want := range []string{"SELECTED", "MACHINES", "TODAY", "RECENT", "Run the DNS tests."} {
+			for _, want := range []string{"LAST LINE", "The DNS test is ready.", "MACHINES", "TODAY", "RECENT", "ASKING"} {
 				if !strings.Contains(text, want) {
 					t.Fatalf("missing wide context %q", want)
 				}
@@ -57,11 +57,11 @@ func TestPaperOfflinePinnedStateIsLastSeen(t *testing.T) {
 			h = 36
 		}
 		lines := renderedLines(t, render(s, w, h, time.Now()), w, h)
-		if w == 80 && (!strings.Contains(lines[4], "? Last seen") || strings.Contains(lines[4], "o Idle")) {
+		if !strings.Contains(lines[4], "Last seen") || strings.Contains(lines[4], "o Idle") {
 			t.Fatal("cached coordinator advertised as live idle")
 		}
-		if w == 132 && !strings.Contains(lines[4], "Cached wing") {
-			t.Fatal("stale coordinator lost cached label")
+		if !strings.Contains(lines[4], "Reconnect work") {
+			t.Fatal("stale coordinator lost its reconnect step")
 		}
 	}
 }
