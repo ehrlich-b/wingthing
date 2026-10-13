@@ -166,7 +166,7 @@ function viewSessions() {
         '<p>' + (n ? (n === 1 ? 'Its session is' : 'Its ' + (numberWords[n] || n) + ' sessions are') + ' shown as last seen. Nothing on ' + esc(name) + ' can be opened or messaged until it reconnects.' : 'Nothing on ' + esc(name) + ' can be opened until it reconnects.') + '</p>' +
         '<div class="pp-actions"><button type="button" class="pp-btn" data-retry>Retry ' + esc(name) + '</button></div></section>'; }).join('');
     const away = work.filter(s => sessionState(s).key === 'asleep');
-    const meta = '<b>' + work.length + '</b> on ' + S.wingsData.length + (S.wingsData.length === 1 ? ' machine' : ' machines') + ' · ' + awake.length + ' connected' + (asleepWings.length ? ' · <span class="pp-away-word">' + esc(asleepWings.map(w => machineName(w) + ' ' + awayText(w)).join(', ')) + '</span>' : '');
+    const meta = '<b>' + work.length + '</b> on ' + S.wingsData.length + (S.wingsData.length === 1 ? ' machine' : ' machines') + ' · ' + awake.length + ' connected' + (asleepWings.length ? ' · <span class="pp-away-word">' + asleepWings.map(w => esc(machineName(w) + ' ' + awayLabel(machineState(w))) + (w.last_seen ? '<span class="pp-since"> since ' + esc(clock(w.last_seen)) + '</span>' : '')).join(', ') + '</span>' : '');
     const coord = coordinator(), coordLast = coord && lines(coord).filter(l => l.who === 'agent').pop();
     return head('Sessions', meta) + '<div class="pp-cols"><div class="pp-col-main">' + banner +
         '<div class="pp-searchbar"><label class="pp-sr" for="pp-filter">Search sessions</label><input id="pp-filter" type="search" placeholder="Search work or machines" autocomplete="off"><button type="button" class="pp-btn" data-new-session>New session</button></div>' +
@@ -196,7 +196,7 @@ function viewMachines() {
 // at that machine starts pairing and allows it there.
 function viewPair() {
     return head('Pair <i>a phone</i>', '<b>wt pair</b> · on the computer') + '<div class="pp-cols pp-pair"><div class="pp-col-main">' +
-        '<p class="pp-lead">Pairing starts on the computer you want to reach. Only someone at that computer can start it, so this page has no code to scan.</p>' +
+        '<p class="pp-lead">Run <code>wt pair</code> on the computer you want to reach, then scan its code with the Wingthing app on your phone.</p>' +
         kicker('On your computer') + '<pre class="pp-cmd"><span class="pp-prompt">$</span> wt pair</pre>' +
         '<div class="pp-actions"><button type="button" class="pp-btn" data-copy="wt pair">Copy command</button></div>' +
         '<p class="pp-gap">Run it in a terminal on that machine. It shows a code to scan, good for five minutes.</p>' +

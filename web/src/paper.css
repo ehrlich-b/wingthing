@@ -205,6 +205,7 @@ body.paper-on #app { display: none; }
     .pp-hdr { flex-direction: column; align-items: flex-start; gap: 4px; padding-top: 14px; }
     .pp-hdr h1 { font-size: 30px; }
     .pp-meta { text-align: left; }
+    .pp-meta .pp-since { display: none; }
     .pp-main[data-view="machines"] .pp-hdr .pp-meta { display: none; }
     .pp-cols, .pp-split { grid-template-columns: minmax(0, 1fr); gap: 0; }
     .pp-col-rail { position: static; }
