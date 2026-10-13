@@ -15,6 +15,7 @@ public struct PhonePairingView: View {
     @State private var drafts: [String: String] = [:]
     @State private var draftID: String?
     @FocusState private var composing: Bool
+    @FocusState private var searching: Bool
     @State private var stopTarget: PhoneFleetSession?
     @State private var showingReach = false
     @State private var showingNotifications = false
@@ -184,7 +185,7 @@ public struct PhonePairingView: View {
                 if let notice = model.inventoryNotice { Text(notice).font(.caption).foregroundStyle(.secondary) }
                 if let carrier = model.carrier { Text(carrier).font(.caption).foregroundStyle(.secondary) }
                 if let error = model.error { Text(error).foregroundStyle(.red).accessibilityIdentifier("phone-error") }
-                TextField("Search names, projects or transcript", text: $search).accessibilityIdentifier("phone-search").autocorrectionDisabled()
+                TextField("Search names, projects or transcript", text: $search).accessibilityIdentifier("phone-search").autocorrectionDisabled().focused($searching).submitLabel(.search).onSubmit { searching = false }
             }
             if model.searchBusy { ProgressView("Searching native messages…") }
             if !search.isEmpty, !model.searchBusy, let results = model.searchResults { Text("\(results.count) matching sessions").font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("phone-search-status") }

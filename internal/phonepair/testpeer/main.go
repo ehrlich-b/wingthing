@@ -97,8 +97,13 @@ func (f *fixture) execute(op, origin, id, input string) (any, error) {
 			text = "The pairing coverage is ready for review."
 		}
 		events := []map[string]any{{"sequence": int64(1), "type": "message", "role": "assistant", "text": text, "timestamp": "2026-10-12T21:00:00Z"}}
-		for i, text := range f.input {
-			events = append(events, map[string]any{"sequence": int64(2 + i*2), "type": "message", "role": "user", "text": strings.TrimSuffix(strings.SplitN(text, "|", 3)[2], "\r")}, map[string]any{"sequence": int64(3 + i*2), "type": "message", "role": "assistant", "text": "I received your direction. I will run the pairing tests first and report the result here."})
+		for _, text := range f.input {
+			fields := strings.SplitN(text, "|", 3)
+			if fields[0] != origin || fields[1] != id {
+				continue
+			}
+			sequence := int64(len(events) + 1)
+			events = append(events, map[string]any{"sequence": sequence, "type": "message", "role": "user", "text": strings.TrimSuffix(fields[2], "\r")}, map[string]any{"sequence": sequence + 1, "type": "message", "role": "assistant", "text": "I received your direction. I will run the pairing tests first and report the result here."})
 		}
 		head := int64(len(events))
 		filtered := []map[string]any{}
@@ -109,7 +114,14 @@ func (f *fixture) execute(op, origin, id, input string) (any, error) {
 		}
 		return map[string]any{"session_id": id, "agent": "claude", "provider_session_id": "fixture-native", "state": "idle", "status": "idle", "state_source": "claude_hook", "ready": true, "process_alive": id != "archived-run", "cursor": head, "head_cursor": head, "has_more": false, "events": filtered}, nil
 	case "read":
-		return map[string]any{"screen": fmt.Sprintf("%s / %s\n\nDisposable acceptance session\nReady for your direction.\n\n%s", origin, id, strings.Join(f.input, "\n")), "ended": false}, nil
+		var lines []string
+		for _, value := range f.input {
+			fields := strings.SplitN(value, "|", 3)
+			if fields[0] == origin && fields[1] == id {
+				lines = append(lines, strings.TrimSuffix(fields[2], "\r"))
+			}
+		}
+		return map[string]any{"screen": fmt.Sprintf("%s / %s\n\nDisposable acceptance session\nReady for your direction.\n\n%s", origin, id, strings.Join(lines, "\n")), "ended": false}, nil
 	case "input":
 		f.input = append(f.input, origin+"|"+id+"|"+input)
 		if f.dropInput {

@@ -101,11 +101,14 @@ final class NativePhoneStoryboardTests: XCTestCase {
         wait("All machine refreshes finish", { app.buttons["phone-refresh"].isEnabled })
         let search = app.textFields["phone-search"]; search.tap(); search.typeText("resolver retries")
         wait("Native body search returns live and archived results", { app.staticTexts["phone-search-status"].label == "2 matching sessions" })
+        app.keyboards.buttons["Search"].tap()
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
         capture("13-4-search-every-session-everywhere")
         let archive = rows.matching(NSPredicate(format: "label CONTAINS 'Resolver follow-up'")).firstMatch
         for _ in 0..<5 { if archive.exists && archive.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(archive.isHittable); archive.tap()
         XCTAssertTrue(app.staticTexts["Archived session · transcript only"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Run the pairing tests first.'")).firstMatch.exists, "Archive cannot show a different session's messages")
         XCTAssertFalse(app.buttons["phone-send"].isEnabled)
         XCTAssertFalse(app.buttons["phone-stop"].isEnabled)
         capture("13-10-archived-native-transcript")
