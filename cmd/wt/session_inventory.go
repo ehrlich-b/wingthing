@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -83,6 +84,15 @@ func renderSessionInventory(out io.Writer, inv fleet.Inventory) error {
 		}
 		if s.NeedsAttention {
 			fmt.Fprintln(out, "  needs your attention")
+		}
+		if s.MatchExcerpt != "" {
+			excerpt := s.MatchExcerpt
+			for _, word := range strings.Fields(strings.ToLower(inv.Query)) {
+				excerpt = strings.ReplaceAll(excerpt, word, "["+word+"]")
+			}
+			fmt.Fprintf(out, "  %s\n", escapeSessionField(excerpt))
+			quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'" }
+			fmt.Fprintf(out, "  Open: wt session action --wing %s --session %s --operation session_read\n", quote(s.OriginWingID), quote(s.SessionID))
 		}
 		if len(s.MatchFields) > 0 {
 			fmt.Fprintf(out, "  matched: %v\n", s.MatchFields)

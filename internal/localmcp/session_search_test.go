@@ -22,10 +22,10 @@ func TestSessionSearchSchemaStrictArgumentsAndActualDispatch(t *testing.T) {
 	calls := 0
 	s.remoteToolCall = func(ctx context.Context, name, operation string, args []byte) (map[string]any, error) {
 		calls++
-		if name != "desktop" || operation != "session_inventory" || strings.Contains(string(args), `"include_remotes":true`) {
+		if name != "desktop" || operation != "session_search" || strings.Contains(string(args), `"include_remotes":true`) {
 			t.Fatal("unbounded remote search")
 		}
-		return peer.ToolSessionInventory(ctx, args)
+		return peer.ToolSessionSearch(ctx, args)
 	}
 	tool, ok := control.Lookup("session_search")
 	if !ok || tool.InputSchema["additionalProperties"] != false || tool.Grant != "terminal.read" || tool.Annotations["readOnlyHint"] != true {

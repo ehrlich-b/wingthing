@@ -45,6 +45,7 @@ type Session struct {
 	Presence          *Presence `json:"presence,omitempty"`
 	Routes            []Route   `json:"routes"`
 	PossibleDuplicate bool      `json:"possible_duplicate,omitempty"`
+	MatchExcerpt      string    `json:"match_excerpt,omitempty"`
 	MatchFields       []string  `json:"match_fields,omitempty"`
 	SearchIncomplete  bool      `json:"search_incomplete,omitempty"`
 }

@@ -226,3 +226,22 @@ func TestSessionSearchIndexGzipAndRecognizedSecretsNeverPersistOrMatch(t *testin
 		t.Fatal("cache permissions")
 	}
 }
+
+func TestSearchExcerptIsBoundedAndSessionQualified(t *testing.T) {
+	index, _, dir := indexFixture(t)
+	if err := os.WriteFile(filepath.Join(dir, "lifecycle.jsonl"), record(strings.Repeat("context ", 40)+"dns helper fixed"+strings.Repeat(" context", 40)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	refresh(t, index, dir, "lifecycle.jsonl")
+	text, err := index.Excerpt(t.Context(), "id", []string{"dns", "helper"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "dns helper fixed") || len([]rune(text)) > 240 {
+		t.Fatalf("excerpt: %q", text)
+	}
+	other, err := index.Excerpt(t.Context(), "not-admitted", []string{"dns"})
+	if err != nil || other != "" {
+		t.Fatalf("cross-session excerpt: %q %v", other, err)
+	}
+}
