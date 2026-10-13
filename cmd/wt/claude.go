@@ -16,7 +16,7 @@ import (
 )
 
 func claudeCmd() *cobra.Command {
-	var name, cwd string
+	var name, cwd, role string
 	cmd := &cobra.Command{
 		Use:   "claude [--name NAME] [--cwd DIR] [-- claude args]",
 		Short: "Start and attach to a wing-owned Claude parent with scoped MCP",
@@ -38,7 +38,7 @@ func claudeCmd() *cobra.Command {
 			if err != nil {
 				return diagnoseClaudeFailure(err, "admission/policy", "invalid_workspace", "")
 			}
-			wire, err := json.Marshal(map[string]any{"agent": "claude", "cwd": launchCWD, "label": name, "args": args, "conversation_role": "parent", "request_id": uuid.NewString(), "scoped_mcp": true})
+			wire, err := json.Marshal(map[string]any{"agent": "claude", "cwd": launchCWD, "label": name, "args": args, "conversation_role": "parent", "request_id": uuid.NewString(), "scoped_mcp": true, "role": role})
 			if err != nil {
 				return err
 			}
@@ -83,6 +83,7 @@ func claudeCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "persistent session name")
+	cmd.Flags().StringVar(&role, "role", "", "pin this session with automatically refreshed role context")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "working directory (default: current directory)")
 	return cmd
 }
