@@ -420,3 +420,16 @@ test-multiwing: | web/dist
 
 test-multiwing-race: | web/dist
 	$(GO) test -p 2 -race ./internal/fleet ./internal/egg ./internal/eggclient ./internal/sessionrole ./internal/localmcp ./internal/wing -run 'Test(Registry|LifecycleSourceCompleteness|Merge|SessionCatalog|CoordinatorPresence|SessionInventory|QualifiedSession|CoordinatorHeartbeat|OwnerFleet|PhoneFleet|BuiltMultiwing|RemoteInventoryOrigin)' -count=1 -timeout=3m
+
+# Incremental search cache and serialized qualified CLI/MCP contracts.
+.PHONY: test-session-search test-session-search-race test-session-search-web
+test-session-search: | web/dist
+	$(GO) test -p 2 ./internal/sessionsearch ./internal/egg ./internal/eggclient ./internal/localmcp ./internal/control ./internal/tunnel ./internal/wing -run 'SessionSearch|LifecycleBounded|SessionCatalog|SessionInventory|Registry|OwnerFleet|PhoneFleetEncryptedSearch' -count=1 -timeout=3m
+	$(MAKE) --no-print-directory test-multiwing
+
+test-session-search-race: | web/dist
+	$(GO) test -p 2 -race ./internal/sessionsearch ./internal/egg ./internal/eggclient ./internal/localmcp ./internal/control -run 'SessionSearch|LifecycleBounded|SessionCatalog|SessionInventory|Registry' -count=1 -timeout=3m
+
+test-session-search-web: web
+	$(stable-build)
+	WT_SESSION_SEARCH_BROWSER=1 WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -count=1 ./cmd/wt -run '^TestBuiltSessionSearchDashboard$$' -v -timeout=90s

@@ -294,6 +294,12 @@ func buildTools() []Tool {
 			Grant: "terminal.read", Surfaces: both,
 		},
 		{
+			Name: "session_search", Title: "Search sessions everywhere",
+			Description: "Search authorized live and past sessions by name, repo, machine, agent or redacted transcript text using the wing's incremental index. Returns exact origin/session IDs, routes and incomplete coverage. Includes verified personal remotes by default; set include_remotes=false for local or scoped access. No transcript snippets or recursive fanout.",
+			InputSchema: objectSchema(map[string]any{"query": map[string]any{"type": "string", "minLength": 1, "maxLength": 256}, "include_remotes": map[string]any{"type": "boolean", "default": true}}, "query"), Annotations: readOnly,
+			Grant: "terminal.read", Surfaces: both,
+		},
+		{
 			Name: "session_action", Title: "Act on an exact qualified session",
 			Description: "Route one operation to an exact (origin_wing_id, session_id). Rechecks current verified routes and underlying operation grants. Never replays a dispatched action after transport failure; reconcile the original request. Uses existing ownership, path, passkey and writer gates.",
 			InputSchema: objectSchema(map[string]any{

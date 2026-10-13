@@ -273,11 +273,22 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 		t.Fatalf("built merge: %+v", merged)
 	}
 	must(macState, "fleet", "session", "inventory", "--remotes")
-	must(macState, "search", "session", "inventory", "--remotes", "--query", "DNS helper")
-	searched := parse(must(macState, "", "session", "inventory", "--remotes", "--query", "DNS helper", "--json"))
+	must(macState, "search", "search", "DNS helper")
+	searched := parse(must(macState, "", "search", "DNS helper", "--json"))
 	if len(searched.Sessions) != 1 || searched.Sessions[0].SessionID != "past-dns-run" || searched.Sessions[0].Live {
 		t.Fatalf("archive search: %+v", searched)
 	}
+	localSearch := parse(must(macState, "", "search", "DNS helper", "--local", "--json"))
+	if !localSearch.Complete || len(localSearch.Sessions) != 0 {
+		t.Fatalf("local search crossed origin: %+v", localSearch)
+	}
+	for _, origin := range []string{macState, remoteState} {
+		collisions := parse(must(origin, "", "search", "codex", "--json"))
+		if origin == macState && (len(collisions.Sessions) != 2 || collisions.Sessions[0].OriginWingID == collisions.Sessions[1].OriginWingID) {
+			t.Fatalf("search conflated overlapping IDs: %+v", collisions)
+		}
+	}
+
 	must(macState, "steer", "session", "action", "--wing", remoteMeta.WingID, "--session", "past-dns-run", "--operation", "session_read", "--arguments", `{"limit":1}`)
 	must(macState, "rename", "session", "action", "--wing", remoteMeta.WingID, "--session", "same-short-id", "--operation", "terminal_rename", "--arguments", `{"name":"wing-renamed"}`)
 	if eggclient.ReadSessionName(filepath.Join(macState, "eggs", "same-short-id")) != "local-run" || eggclient.ReadSessionName(filepath.Join(remoteState, "eggs", "same-short-id")) != "wing-renamed" {
