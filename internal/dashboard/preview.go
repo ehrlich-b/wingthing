@@ -380,7 +380,9 @@ func (s *state) messageLines(r row, width int) []string {
 	if value.update != "" {
 		lines = append(lines, "Last update", value.update, "")
 	}
-	for _, message := range value.messages {
+	// Newest first, as in the selected pane, so a short screen keeps the latest.
+	for i := len(value.messages) - 1; i >= 0; i-- {
+		message := value.messages[i]
 		label := message.speaker
 		if stamp := previewStamp(message.timestamp); stamp != "" {
 			label += " · " + stamp
@@ -398,7 +400,7 @@ func (s *state) messageLines(r row, width int) []string {
 		return []string{"Loading messages..."}
 	}
 	if len(lines) == 0 {
-		return []string{"No recent messages reported.", "Enter opens the terminal."}
+		return []string{"Nothing new yet.", "Enter opens the terminal."}
 	}
 	return lines
 }

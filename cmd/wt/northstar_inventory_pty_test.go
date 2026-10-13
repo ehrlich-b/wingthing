@@ -240,12 +240,12 @@ func TestNorthstarPTYInventoryBudget(t *testing.T) {
 		keyReaction := time.Since(reactionStart)
 		rev = h.send("\x1b")
 		h.expect("leave filter", rev, "R refresh")
-		h.expect("healthy local metadata", h.send("/local-19\r"), "local-19", "? Unknown")
+		h.expect("healthy local metadata", h.send("/local-19\r"), "local 19", "? Unknown")
 		localReady := time.Since(start)
 		phaseMetrics := fmt.Sprintf("first_frame=%s local_metadata=%s key_response=%s\n", firstFrame, localReady, keyReaction)
 		northstarWrite(t, h.artifact+".phases", phaseMetrics, 0600)
 		t.Log(strings.TrimSpace(phaseMetrics))
-		h.expect("healthy remote independent of slow SSH", h.send("/\x15healthy-remote\r"), "healthy-remote", "offline not searched")
+		h.expect("healthy remote independent of slow SSH", h.send("/\x15healthy-remote\r"), "healthy remote", "offline not searched")
 		northstarInventoryWait(t, "one SSH per machine", func() bool { return len(northstarInventoryRecords(t, mailbox)) >= 3 })
 		records := northstarInventoryRecords(t, mailbox)
 		// Initial dispatch has one request per saved machine. Later refreshes may
@@ -263,14 +263,14 @@ func TestNorthstarPTYInventoryBudget(t *testing.T) {
 			}
 		}
 		rev = h.send("/\x15local-1\r")
-		h.expect("filter local metadata", rev, "> local-10")
+		h.expect("filter local metadata", rev, "> local 10")
 		// Start a second local query and coalesce repeated R while slow SSH
 		// remains in flight. Quit with RPC and SSH readers still outstanding.
 		rev = h.send("RRRR")
 		h.expect("explicit refresh", rev, "R refresh")
 		northstarInventoryWait(t, "new local status RPC", func() bool { return active.Load() > 0 && calls.Load() > 20 })
 		rev = h.send("j")
-		h.expect("navigate while refresh waits", rev, "> local-11")
+		h.expect("navigate while refresh waits", rev, "> local 11")
 		h.exit("q")
 		northstarInventoryWait(t, "all status readers canceled", func() bool { return active.Load() == 0 })
 		records = northstarInventoryRecords(t, mailbox)

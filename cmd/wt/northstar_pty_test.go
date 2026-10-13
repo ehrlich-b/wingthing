@@ -579,24 +579,24 @@ func TestNorthstarPTYSessionNavigator(t *testing.T) {
 	h := northstarStartPTY(t, f, binary, 80, 24)
 	h.expect("first dashboard frame", 0, "wt   ", "m machines")
 	t.Logf("fixture launch-to-first-frame: %s", time.Since(started))
-	h.expect("all machines / initial inventory", 0, "local-parent", "forge-parent", "disposable", "offline unreachable", "Claude", "2m", "? help")
+	h.expect("all machines / initial inventory", 0, "local parent", "forge parent", "disposable", "offline unreachable", "Claude", "2m", "? help")
 	t.Logf("fixture launch-to-full-inventory: %s", time.Since(started))
 	rev := h.send("?")
 	h.expect("help / detach and legend", rev, "Ctrl+B then q", "Move", "Manage", "keeps sessions running")
-	h.expect("help close", h.send("\x1b"), "local-parent", "forge-parent", "Enter open")
+	h.expect("help close", h.send("\x1b"), "local parent", "forge parent", "Enter open")
 	rev = h.send("!")
 	h.waitScreen("attention filter", rev, func(s string) bool {
-		return strings.Contains(s, "forge-parent") && !strings.Contains(s, "local-parent") && !strings.Contains(s, "disposable")
+		return strings.Contains(s, "forge parent") && !strings.Contains(s, "local parent") && !strings.Contains(s, "disposable")
 	})
-	h.expect("attention off", h.send("!"), "local-parent", "disposable")
+	h.expect("attention off", h.send("!"), "local parent", "disposable")
 	rev = h.send("/FORGE\r")
 	h.waitScreen("qualified filter / colliding IDs", rev, func(s string) bool {
-		return strings.Contains(s, "forge-parent") && !strings.Contains(s, "local-parent") && northstarContainsRow(s, "> forge-parent")
+		return strings.Contains(s, "forge parent") && !strings.Contains(s, "local parent") && northstarContainsRow(s, "> forge parent")
 	})
 	h.expect("full details / exact route", h.send("i"), "Machine: forge", "Project: work", "Permissions: Not reported")
-	h.expect("details close", h.send("\x1b"), "forge-parent", "Enter open")
+	h.expect("details close", h.send("\x1b"), "forge parent", "Enter open")
 	h.expect("rename prompt", h.send("r\x15forge-renamed"), "Name: forge-renamed")
-	h.expect("rename refresh", h.send("\r"), "> forge-renamed")
+	h.expect("rename refresh", h.send("\r"), "> forge renamed")
 	if got := eggclient.ReadSessionName(local.dir); got != "local-parent" {
 		t.Fatalf("colliding local ID renamed: %s", got)
 	}
@@ -617,20 +617,20 @@ func TestNorthstarPTYSessionNavigator(t *testing.T) {
 	}
 	// The split prefix crosses separate PTY writes; no list key intercepts q.
 	h.send("\x02")
-	h.expect("detached / same qualified selection", h.send("q"), "> forge-renamed", "Enter open")
+	h.expect("detached / same qualified selection", h.send("q"), "> forge renamed", "Enter open")
 	if forge.killed.Load() != 0 {
 		t.Fatal("detach stopped the egg")
 	}
 	northstarWrite(t, filepath.Join(f.home, "forge-offline"), "offline", 0600)
-	h.expect("retained remote rows / stale query failure", h.send("R"), "forge not searched", "Last seen", "> forge-renamed")
+	h.expect("retained remote rows / stale query failure", h.send("R"), "forge not searched", "Last seen", "> forge renamed")
 	if err := os.Remove(filepath.Join(f.home, "forge-offline")); err != nil {
 		t.Fatal(err)
 	}
 	rev = h.send("R")
 	h.waitScreen("remote recovery / same qualified selection", rev, func(s string) bool {
-		return northstarContainsRow(s, "> forge-renamed") && strings.Contains(s, "! Needs you") && !strings.Contains(s, "forge unreachable")
+		return northstarContainsRow(s, "> forge renamed") && strings.Contains(s, "! Needs you") && !strings.Contains(s, "forge unreachable")
 	})
-	h.expect("clear filter", h.send("/\x15\r"), "local-parent", "disposable")
+	h.expect("clear filter", h.send("/\x15\r"), "local parent", "disposable")
 	h.expect("stop filter", h.send("/disposable\r"), "> disposable", "* Working")
 	h.expect("captured stop confirmation", h.send("x"), "disposable on forge", "Enter keep running")
 	h.expect("stop cancelled", h.send("n"), "Enter open", "disposable")
@@ -645,28 +645,28 @@ func TestNorthstarPTYSessionNavigator(t *testing.T) {
 	if disposable.killed.Load() != 1 || local.killed.Load() != 0 || forge.killed.Load() != 0 {
 		t.Fatal("stop addressed wrong exact target")
 	}
-	h.expect("clear filter after stop", h.send("/\x15\r"), "local-parent", "forge-renamed")
+	h.expect("clear filter after stop", h.send("/\x15\r"), "local parent", "forge renamed")
 	h.expect("machine picker includes empty/offline", h.send("m"), "All machines", "empty", "offline", "Enter select")
 	h.expect("selected empty remote", h.send("jj\r"), "empty", "No sessions yet on empty")
 	h.expect("empty remote new agent", h.send("n"), "Agent (blank = shell)")
 	h.expect("empty remote requires remote cwd", h.send("\r"), "Machine: empty", "Working directory", "_")
 	h.expect("empty cwd rejected", h.send("\r"), "Working directory cannot be empty")
 	h.expect("cancel new / no launch", h.send("\x1b"), "empty", "n new session")
-	h.expect("restore all machines", h.send("m\x1b[H\r"), "local-parent", "forge-renamed")
+	h.expect("restore all machines", h.send("m\x1b[H\r"), "local parent", "forge renamed")
 	rev = h.resize(40, 12)
-	h.expect("40x12 compact navigator", rev, "local-parent", "Working", "! attention", "m scope")
+	h.expect("40x12 compact navigator", rev, "local parent", "Working", "! attention", "m scope")
 	rev = h.send("?")
 	h.expect("40x12 help", rev, "Help", "Esc back")
 	h.expect("40x12 help scroll / detach", h.send("\x1b[6~"), "Ctrl+B then q")
-	h.expect("40x12 return", h.send("\x1b"), "local-parent")
+	h.expect("40x12 return", h.send("\x1b"), "local parent")
 	rev = h.resize(120, 40)
-	h.expect("120x40 restored", rev, "local-parent", "forge-renamed", "offline unreachable", "R refresh")
+	h.expect("120x40 restored", rev, "local parent", "forge renamed", "offline unreachable", "R refresh")
 	h.exit("q")
 	if local.killed.Load() != 0 || forge.killed.Load() != 0 {
 		t.Fatal("quitting stopped surviving sessions")
 	}
 	h2 := northstarStartPTY(t, f, binary, 40, 12)
-	h2.expect("reopen / sessions survive", 0, "local-parent", "Working")
+	h2.expect("reopen / sessions survive", 0, "local parent", "Working")
 	h2.exit("\x03")
 	// Test alias was used by every actual application child, not ambient TMPDIR.
 	resolved, err := filepath.EvalSymlinks(f.tmp)

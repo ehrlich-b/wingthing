@@ -114,28 +114,28 @@ func TestNorthstarPTYRemoteReload(t *testing.T) {
 	}
 	save()
 	h := northstarStartPTY(t, f, binary, 160, 40)
-	h.expect("healthy local before machine changes", 0, "healthy-local", "1 machine")
+	h.expect("healthy local before machine changes", 0, "healthy local", "1 machine")
 	cli("remote", "add", "empty", "ns-mirror", "--wt-binary", custom, "--wingthing-dir", filepath.Join(f.home, "e"))
 	h.expect("new empty machine without restart or R", h.send("m"), "empty", "Machines")
-	h.expect("back from live picker", h.send("\x1b"), "healthy-local", "Enter open")
+	h.expect("back from live picker", h.send("\x1b"), "healthy local", "Enter open")
 	profiles["empty"] = config.Remote{SSHTarget: "ns-mirror", WTBinary: custom, WingthingDir: filepath.Join(f.home, "e")}
 	profiles["forge"] = config.Remote{SSHTarget: "ns-forge", WTBinary: binary, WingthingDir: f.remote}
 	save()
-	h.expect("R loads added forge", h.send("R"), "old-profile", "healthy-local")
+	h.expect("R loads added forge", h.send("R"), "old profile", "healthy local")
 	h.expect("capture rename against original generation", h.send("/old-profile\rr\x15forbidden-name"), "Name: forbidden-name")
 	// Replace only binary/state; the SSH alias and session ID still collide.
 	profiles["forge"] = config.Remote{SSHTarget: "ns-forge", WTBinary: custom, WingthingDir: mirror}
 	save()
 	h.expect("cadence cancels original rename", 0, "Saved machine changed", "R refresh")
-	h.expect("clear old filter for replacement", h.send("/\x15forge\rR"), "replacement-profile")
-	h.expect("capture stop against replacement", h.send("x"), "replacement-profile on forge")
+	h.expect("clear old filter for replacement", h.send("/\x15forge\rR"), "replacement profile")
+	h.expect("capture stop against replacement", h.send("x"), "replacement profile on forge")
 	profiles["forge"] = config.Remote{SSHTarget: "ns-delayed", WTBinary: custom, WingthingDir: mirror}
 	save()
 	h.expect("replacement refuses old stop", 0, "Saved machine changed")
 	northstarInventoryWait(t, "old query in flight", func() bool { _, err := os.Stat(filepath.Join(mailbox, "started")); return err == nil })
 	profiles["forge"] = config.Remote{SSHTarget: "ns-forge", WTBinary: custom, WingthingDir: mirror}
 	save()
-	h.expect("replace profile while old SSH is outstanding", h.send("R"), "replacement-profile", "forge")
+	h.expect("replace profile while old SSH is outstanding", h.send("R"), "replacement profile", "forge")
 	data, err := os.ReadFile(filepath.Join(mailbox, "started"))
 	if err != nil {
 		t.Fatal(err)
@@ -145,27 +145,27 @@ func TestNorthstarPTYRemoteReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	northstarInventoryWait(t, "retired SSH joined", func() bool { return syscall.Kill(pid, 0) == syscall.ESRCH })
-	h.expect("capture pending stop before removal", h.send("x"), "replacement-profile on forge")
+	h.expect("capture pending stop before removal", h.send("x"), "replacement profile on forge")
 	cli("remote", "rm", "forge")
 	h.expect("removed generation cancels confirmation", 0, "Saved machine changed")
-	h.expect("confirmation key cannot mutate removed target", h.send("y/\x15\rR"), "healthy-local", "2 machines")
+	h.expect("confirmation key cannot mutate removed target", h.send("y/\x15\rR"), "healthy local", "2 machines")
 	h.waitScreen("no retired result can resurrect machine", h.send("R"), func(s string) bool {
-		return strings.Contains(s, "healthy-local") && !strings.Contains(s, "replacement-profile") && !strings.Contains(s, "retired-host-result") && !strings.Contains(s, "forge  ")
+		return strings.Contains(s, "healthy local") && !strings.Contains(s, "replacement profile") && !strings.Contains(s, "retired host result") && !strings.Contains(s, "forge  ")
 	})
 	profiles = map[string]config.Remote{"forge": {SSHTarget: "ns-forge", WTBinary: custom, WingthingDir: mirror}}
 	save()
-	h.expect("route restored", h.send("R"), "replacement-profile", "forge")
+	h.expect("route restored", h.send("R"), "replacement profile", "forge")
 	northstarWrite(t, filepath.Join(f.local, "remotes.yaml"), "remotes: [malformed", 0600)
-	h.expect("malformed registry retains stale rows and local work", h.send("R"), "Saved machines could not be loaded", "replacement-profile", "Last seen", "healthy-local")
+	h.expect("malformed registry retains stale rows and local work", h.send("R"), "Saved machines could not be loaded", "replacement profile", "Last seen", "healthy local")
 	h.expect("local attach while registry malformed", h.send("/healthy-local\r\r"), "RELOAD_LOCAL_READY")
-	h.expect("local detach preserves healthy work", h.send("\x02q"), "healthy-local", "forge not searched")
+	h.expect("local detach preserves healthy work", h.send("\x02q"), "healthy local", "forge not searched")
 	h.expect("malformed remote mutation selection", h.send("/\x15replacement-profile\rr\x15forbidden-name\r"), "Saved machine changed", "R refresh")
 	save()
 	h.waitScreen("valid registry recovers without restart", h.send("/\x15\rR"), func(s string) bool {
-		return strings.Contains(s, "machines connected") && strings.Contains(s, "replacement-profile") && !strings.Contains(s, "Saved machines could not be loaded") && !strings.Contains(s, "Last seen")
+		return strings.Contains(s, "machines connected") && strings.Contains(s, "replacement profile") && !strings.Contains(s, "Saved machines could not be loaded") && !strings.Contains(s, "Last seen")
 	})
 	h.expect("attach exact replacement route", h.send("/replacement-profile\r\r"), "RELOAD_NEW_READY")
-	h.expect("replacement detach", h.send("\x02q"), "replacement-profile", "Enter open")
+	h.expect("replacement detach", h.send("\x02q"), "replacement profile", "Enter open")
 	h.exit("q")
 	for _, fixture := range []*northstarEgg{local, old, replacement} {
 		if fixture.killed.Load() != 0 {
@@ -192,9 +192,9 @@ func TestNorthstarPTYRemoteReload(t *testing.T) {
 	}
 	northstarWrite(t, filepath.Join(f.local, "remotes.yaml"), "remotes: [bad", 0600)
 	startup := northstarStartPTY(t, f, binary, 160, 40)
-	startup.expect("malformed registry at startup keeps local inventory", 0, "healthy-local", "Saved machines could not be loaded", "1 machine")
+	startup.expect("malformed registry at startup keeps local inventory", 0, "healthy local", "Saved machines could not be loaded", "1 machine")
 	save()
-	startup.expect("startup registry recovers", startup.send("R"), "replacement-profile", "forge")
+	startup.expect("startup registry recovers", startup.send("R"), "replacement profile", "forge")
 	startup.exit("q")
 	northstarWrite(t, filepath.Join(f.local, "config.yaml"), "wing_id: [bad", 0600)
 	invalid := northstarStartPTY(t, f, binary, 160, 40)
@@ -249,14 +249,14 @@ func TestNorthstarPTYDailyLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := northstarStartPTY(t, f, binary, 160, 36)
-	h.expect("bare navigator retains cold local parent", 0, "daily-parent", "daily-forge")
+	h.expect("bare navigator retains cold local parent", 0, "daily parent", "daily forge")
 	h.expect("exact forge attach", h.send("/daily-forge\r\r"), "DAILY_FORGE_READY")
 	if receiveNorthstarID(t, forge.attached) != "forge" {
 		t.Fatal("daily loop attached wrong remote")
 	}
-	h.expect("forge detach returns to navigator", h.send("\x02q"), "daily-forge", "Enter open")
+	h.expect("forge detach returns to navigator", h.send("\x02q"), "daily forge", "Enter open")
 	hooks.emit(t, "PermissionRequest")
-	h.expect("native forge attention", h.send("R"), "daily-forge", "! Needs you")
+	h.expect("native forge attention", h.send("R"), "daily forge", "! Needs you")
 	if err := syscall.Kill(-h.cmd.Process.Pid, syscall.SIGKILL); err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestNorthstarPTYDailyLoop(t *testing.T) {
 		t.Fatalf("daily child result: %v %v", result, err)
 	}
 	fresh := northstarStartPTY(t, f, binary, 160, 36)
-	fresh.expect("fresh navigator after client loss", 0, "daily-parent", "daily-forge", "! Needs you")
+	fresh.expect("fresh navigator after client loss", 0, "daily parent", "daily forge", "! Needs you")
 	fresh.expect("discover original durable run", fresh.send("h/"+runID+"\r"), "Recent runs", "Done", "Codex")
 	fresh.expect("terminal run metadata", fresh.send("i"), "Ran: Codex in", "Result: + Done", "o result")
 	fresh.expect("recovery steps behind r", fresh.send("r"), "Recovery steps", "original request", "agent", "recover", "--snapshot FILE")

@@ -235,8 +235,8 @@ func (s *state) selectedLines(r row, now time.Time, width int) []string {
 	case r.Status == "exited" || r.Status == "done":
 		action = "Enter open   h runs   i details"
 	case r.attention == "unknown":
-		metadata = label + " · No activity reported."
-		action = "Enter check the session   i details"
+		metadata = label + " · " + agentLabel(r.Agent) + " does not say what it is doing."
+		action = "Enter open to check   i details"
 	}
 	if s.stale(r.machine) {
 		metadata = "? Last seen · " + routeCause(s.machines[r.machine].err)
@@ -283,12 +283,26 @@ func accessDenied(err string) bool {
 	return false
 }
 
+// setupRetryLabel names what r returns to after a failed setup step.
+func setupRetryLabel(stage string) string {
+	switch stage {
+	case "install":
+		return "try install again"
+	case "login":
+		return "try sign-in again"
+	}
+	return "try again"
+}
+
 func keyHints(s *state) []string {
 	switch s.mode {
 	case runFilter:
 		return []string{"Enter keep search   Ctrl-U clear", "Esc back   Ctrl-C quit"}
 	case actionMenu:
-		return []string{"r rename   x review stop   t review input control", "Esc back   Ctrl-C quit"}
+		if takeoverAvailable(s.target) {
+			return []string{"r rename   x stop   t take control", "Esc back   Ctrl-C quit"}
+		}
+		return []string{"r rename   x stop", "Esc back   Ctrl-C quit"}
 	case filter:
 		return []string{"Type to search   Enter keep search   Ctrl-U clear", "Esc restore selection   Ctrl-C quit"}
 	case help:
@@ -315,7 +329,7 @@ func keyHints(s *state) []string {
 	case providerReady:
 		return []string{"v verify   l sign in   Enter new session   R rescan", "Esc back   Ctrl-C quit"}
 	case setupFailure:
-		return []string{"r review " + s.setupStage + "   R rescan   a choose agent", "Esc back   Ctrl-C quit"}
+		return []string{"r " + setupRetryLabel(s.setupStage) + "   R rescan   a choose agent", "Esc back   Ctrl-C quit"}
 	case diagnostics:
 		return []string{"1 launch readiness   2 session reach   3 saved result", "Esc back   Ctrl-C quit"}
 	case diagnosticInput:
@@ -488,6 +502,10 @@ func render(s *state, width, height int, now time.Time) string {
 		listEnd = listStart + min(7, max(0, (height-13)/2))
 	}
 	listStart, listEnd = listStart-shift, listEnd-shift
+	// A compact list gives up a row when wing's newest message wraps.
+	if height >= 18 && !wide {
+		listEnd -= s.newestWingLines(pin, listWidth, now) - 1
+	}
 	if height < 18 {
 		listStart = 2
 		if pin != nil {
@@ -497,6 +515,12 @@ func render(s *state, width, height int, now time.Time) string {
 		set(7, "", plain)
 	}
 	count := max(0, listEnd-listStart)
+	// The position line and a blank row before the next heading both fit in the window.
+	positionAt := listEnd
+	if height >= 18 && len(work) > count && count > 2 {
+		count--
+		positionAt = listEnd - 1
+	}
 	selectedIndex := 0
 	for i, r := range work {
 		if r.key() == s.selected {
@@ -508,7 +532,7 @@ func render(s *state, width, height int, now time.Time) string {
 		lines[listStart+i] = sessionLine(s, work[start+i], listWidth-3*boolCell(wide), now)
 	}
 	if len(work) > count && count > 0 {
-		set(listEnd, fmt.Sprintf("  %d-%d of %d sessions", start+1, min(start+count, len(work)), len(work)), secondary)
+		set(positionAt, fmt.Sprintf("  %d-%d of %d sessions", start+1, min(start+count, len(work)), len(work)), secondary)
 	}
 	if r, ok := s.selection(); ok {
 		detailWidth := width
@@ -895,7 +919,11 @@ func wrap(text string, width int) []string {
 func promptLines(s *state) []string {
 	switch s.mode {
 	case actionMenu:
-		return []string{"Session actions", "", s.target.name() + " on " + machineLabel(s.target.machine), agentLabel(s.target.Agent) + " · " + s.target.project(), "", "Rename session", "Stop session", "Take input control (when available)"}
+		lines := []string{"Session actions", "", s.target.name() + " on " + machineLabel(s.target.machine), agentLabel(s.target.Agent) + " · " + s.target.project(), "", "r  Rename session", "x  Stop session"}
+		if takeoverAvailable(s.target) {
+			lines = append(lines, "t  Take control and type here")
+		}
+		return lines
 	case confirmStop:
 		if err := s.machines[s.target.machine].err; accessDenied(err) {
 			return []string{"Stop session", "", accessLine(s.target.machine, err)}
@@ -931,10 +959,10 @@ func overlayLines(s *state, now time.Time) []string {
 			"Open", "  Enter open terminal   v read only   i session details",
 			"  Ctrl+B then q returns here; Ctrl+B twice sends Ctrl+B.", "",
 			"Find", "  / search sessions   ! needs you   m machine scope", "",
-			"Manage", "  n new   a agents   . actions   r rename   x review stop",
+			"Manage", "  n new   a agents   . actions   r rename   x stop",
 			"  h recent runs   M machine details   d diagnostics   R refresh",
 			"  b bell " + s.bellSetting() + " in this window", "",
-			"Leave", "  q or Ctrl-C quits. Leaving keeps sessions running.", "Unread * marks a new response. Unknown means activity is not reported."}
+			"Leave", "  q or Ctrl-C quits. Leaving keeps sessions running.", "* marks a new reply. Unknown means the agent does not say if it is working."}
 	}
 
 	r := s.target
@@ -958,11 +986,16 @@ func overlayLines(s *state, now time.Time) []string {
 	if s.stale(r.machine) {
 		lines = append(lines, "", routeCause(m.err), "Esc, then R to retry.")
 	} else {
-		lines = append(lines, "", lifecycleDescription(r))
+		// ASKING already says the agent is waiting; RECENT needs the rows.
 		if r.Status == "blocked" {
 			lines = append(lines, "", "ASKING", s.askingText(r), s.askingWhere(r))
+		} else {
+			lines = append(lines, "", lifecycleDescription(r))
 		}
-		lines = append(lines, "", "Enter opens this session. Ctrl+B then q comes back here.")
+		// The footer already offers Enter; RECENT gets the rows on short screens.
+		if s.mode != details {
+			lines = append(lines, "", "Enter opens this session. Ctrl+B then q comes back here.")
+		}
 	}
 	if s.mode == details {
 		lines = append(lines, "", "RECENT")

@@ -410,25 +410,25 @@ func TestNorthstarPTYAttachReturn(t *testing.T) {
 
 	t.Run("navigator-return-selection-filter-and-removal", func(t *testing.T) {
 		h := northstarStartPTY(t, f, binary, 120, 30)
-		h.expect("initial navigator", 0, "local-return", "remote-return")
-		h.expect("keep qualified filter", h.send("/remote-return\r"), "> remote-return")
+		h.expect("initial navigator", 0, "local return", "remote return")
+		h.expect("keep qualified filter", h.send("/remote-return\r"), "> remote return")
 		h.expect("paste cannot run actions", h.send("\x1b[200~q\rxyvt\x03\x1b[201~?"), "Help")
-		h.expect("new navigation key after paste", h.send("\x1b"), "remote-return", "Enter open")
+		h.expect("new navigation key after paste", h.send("\x1b"), "remote return", "Enter open")
 		h.expect("navigator hands off", h.send("\r"), "REMOTE_RETURN_READY")
 		northstarReturnAttached(t, remote)
-		h.expect("EOF returns to previous filter and selection", h.send("E"), "remote-return", "Enter open", "Enter retries")
+		h.expect("EOF returns to previous filter and selection", h.send("E"), "remote return", "Enter open", "Enter retries")
 		connections := remote.connections.Load()
 		h.expect("old attach reader cannot steal new key", h.send("?"), "Help")
 		if remote.connections.Load() != connections {
 			t.Fatal("navigator automatically relaunched attachment")
 		}
-		h.expect("close help", h.send("\x1b"), "remote-return", "Enter open")
+		h.expect("close help", h.send("\x1b"), "remote return", "Enter open")
 		h.expect("user retry resolves remote afresh", h.send("\r"), "REMOTE_RETURN_READY")
 		northstarReturnAttached(t, remote)
 		h.expect("provider removal returns safely", h.send("X"), "No matching sessions", "Enter open")
 		h.expect("navigation after selected-session removal", h.send("?"), "Help")
 		h.expect("return after removal", h.send("\x1b"), "No matching sessions")
-		h.expect("clear retained filter", h.send("/\x15\r"), "local-return")
+		h.expect("clear retained filter", h.send("/\x15\r"), "local return")
 		h.exit("q")
 	})
 
@@ -477,16 +477,16 @@ func TestNorthstarPTYAttachReturn(t *testing.T) {
 			t.Fatalf("native ownership unavailable: %+v %v", before, err)
 		}
 		h := northstarStartPTY(t, preview, previewBinary, 120, 30)
-		h.expect("preview ownership inventory", 0, "preview-return", "Enter open")
+		h.expect("preview ownership inventory", 0, "preview return", "Enter open")
 		h.expect("v observes", h.send("v"), "NATIVE_RETURN_READY", "PROTECTED_OK")
 		h.resize(90, 25)
-		h.expect("observer returns", h.send("\x02q"), "preview-return", "Enter open")
+		h.expect("observer returns", h.send("\x02q"), "preview return", "Enter open")
 		after, err := ec.Status(t.Context())
 		if err != nil || after.WriterId != before.WriterId || after.InputEpoch != before.InputEpoch {
 			t.Fatalf("observer changed ownership: %+v %v", after, err)
 		}
 		h.expect("takeover requires confirmation", h.send("t"), "Current input owner: browser")
-		h.expect("Enter cancels takeover", h.send("\r"), "preview-return", "Enter open")
+		h.expect("Enter cancels takeover", h.send("\r"), "preview return", "Enter open")
 		// A real wing handshake refusal must never fall back to the egg.
 		path, err := controlsocket.Path(preview.local)
 		if err != nil {
@@ -507,14 +507,14 @@ func TestNorthstarPTYAttachReturn(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = wing.Close() })
 		h.expect("confirm takeover again", h.send("t"), "Current input owner: browser")
-		h.expect("denied takeover returns", h.send("y"), "preview-return", "Enter open", "Enter retries")
+		h.expect("denied takeover returns", h.send("y"), "preview return", "Enter open", "Enter retries")
 		h.waitNativeBytes("fixture takeover denied")
 		after, err = ec.Status(t.Context())
 		if err != nil || denied.Load() != 1 || after.WriterId != before.WriterId {
 			t.Fatalf("denied takeover bypassed wing authority: %+v %v", after, err)
 		}
 		h.expect("new reader after denial", h.send("?"), "Help")
-		h.expect("back after denial", h.send("\x1b"), "preview-return")
+		h.expect("back after denial", h.send("\x1b"), "preview return")
 		if err := wing.Close(); err != nil {
 			t.Fatal(err)
 		}
@@ -524,9 +524,9 @@ func TestNorthstarPTYAttachReturn(t *testing.T) {
 		if err != nil || after.WriterId == before.WriterId || after.InputEpoch <= before.InputEpoch {
 			t.Fatalf("confirmed takeover did not acquire a new lease: %+v %v", after, err)
 		}
-		h.expect("takeover detach returns", h.send("\x02q"), "preview-return", "Enter open")
+		h.expect("takeover detach returns", h.send("\x02q"), "preview return", "Enter open")
 		h.expect("new reader after takeover", h.send("?"), "Help")
-		h.expect("close help", h.send("\x1b"), "preview-return")
+		h.expect("close help", h.send("\x1b"), "preview return")
 		h.exit("q")
 	})
 

@@ -43,7 +43,7 @@ func lastLine(s *state, r row) string {
 	if s.stale(r.machine) {
 		return "Last seen. R reconnect."
 	}
-	return "No recent message reported. Enter open."
+	return "Nothing new yet."
 }
 
 // Reports follow the visible work rows. At compact sizes the selected row gets
@@ -88,21 +88,55 @@ func (s *state) paperReports(lines []viewLine, work []row, pin *row, start, coun
 		if msg.speaker == "You" {
 			continue
 		}
-		stamp := paperStamp(msg.timestamp, now)
-		if stamp != "" {
-			stamp += "  "
+		stamp, parts := wingLines(msg, width, now)
+		for j, part := range parts {
+			if j == 0 {
+				set(y, stamp+part, plain)
+				if y < limit {
+					lines[y].statusAt = 0
+					lines[y].statusWidth = len(stamp)
+					lines[y].statusTone = warning
+				}
+			} else {
+				set(y, strings.Repeat(" ", len(stamp))+part, plain)
+			}
+			y++
 		}
-		set(y, stamp+msg.text, plain)
-		if y < limit {
-			lines[y].statusAt = 0
-			lines[y].statusWidth = len(stamp)
-			lines[y].statusTone = warning
-		}
-		y++
 		if !wide {
 			break
 		}
 	}
+}
+
+// wingLines wraps one wing message under its time so a request is never cut
+// mid-sentence; past two lines the rest stays in the session.
+func wingLines(msg previewMessage, width int, now time.Time) (string, []string) {
+	stamp := paperStamp(msg.timestamp, now)
+	if stamp != "" {
+		stamp += "  "
+	}
+	room := max(1, width-len(stamp))
+	parts := wrap(msg.text, room)
+	if len(parts) > 2 {
+		parts = parts[:2]
+		parts[1] = clip(parts[1]+" ...", room)
+	}
+	return stamp, parts
+}
+
+// newestWingLines is how many rows wing's newest message needs in a compact list.
+func (s *state) newestWingLines(pin *row, width int, now time.Time) int {
+	if pin == nil {
+		return 1
+	}
+	messages := s.preview(*pin).messages
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].speaker != "You" {
+			_, parts := wingLines(messages[i], width, now)
+			return max(1, len(parts))
+		}
+	}
+	return 1
 }
 func paperStamp(value string, now time.Time) string {
 	stamp, err := time.Parse(time.RFC3339Nano, value)
@@ -265,6 +299,9 @@ func (s *state) visibleReports(width, height int) []row {
 	count := max(0, max(13, height-12)-8)
 	if width >= 120 && height >= 30 {
 		count = min(7, max(0, (height-13)/2))
+	}
+	if len(work) > count && count > 2 {
+		count--
 	}
 	index := 0
 	for i, r := range work {

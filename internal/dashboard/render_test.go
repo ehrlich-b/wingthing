@@ -84,7 +84,7 @@ func TestDashboardScrollKeepsSelectionVisible(t *testing.T) {
 	s.selected = "local:id-49"
 	for _, dim := range [][2]int{{40, 12}, {80, 24}, {132, 36}} {
 		text := strings.Join(renderedLines(t, render(s, dim[0], dim[1], time.Now()), dim[0], dim[1]), "\n")
-		if !regexp.MustCompile(`(?m)> .*name-49`).MatchString(text) || !strings.Contains(text, "of 53 sessions") {
+		if !regexp.MustCompile(`(?m)> .*name 49`).MatchString(text) || !strings.Contains(text, "of 53 sessions") {
 			t.Fatalf("selection or position lost:\n%s", text)
 		}
 	}

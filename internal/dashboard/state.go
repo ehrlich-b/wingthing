@@ -39,7 +39,8 @@ func (r row) name() string {
 	if r.Name == "" || strings.Contains(r.Name, "/") || r.Name == r.ID {
 		return "Untitled session"
 	}
-	return clean(r.Name)
+	// Names are stored as slugs; titles read as words.
+	return clean(strings.ReplaceAll(r.Name, "-", " "))
 }
 
 // A remote cwd is presentation data, never resolved on this machine.
@@ -177,7 +178,7 @@ func (s *state) rows() []row {
 				continue
 			}
 			if !r.Pinned && query != "" && !strings.Contains(strings.ToLower(strings.Join([]string{
-				name, session.ID, session.Name, session.Role, session.Agent, session.Command, session.CWD, session.Status, r.attention,
+				name, r.name(), session.ID, session.Name, session.Role, session.Agent, session.Command, session.CWD, session.Status, r.attention,
 			}, " ")), query) {
 				continue
 			}

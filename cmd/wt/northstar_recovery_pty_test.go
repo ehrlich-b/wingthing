@@ -172,7 +172,7 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 		t.Cleanup(func() { _ = remoteServer.Close() })
 
 		h := northstarStartPTY(t, f, binary, 160, 36)
-		h.expect("original parent / surviving egg", 0, "surviving-parent")
+		h.expect("original parent / surviving egg", 0, "surviving parent")
 		h.expect("find durable runs without remembered IDs", h.send("h"), "Recent runs", "Newest first", "legacy has no run history", "N next page")
 		h.expect("qualified local run query", h.send("/wing-local:same-run"), "Search runs /wing-local:same-run_", "* Working")
 		h.expect("keep qualified local run", h.send("\r"), "Newest first", "Enter open")
@@ -200,7 +200,7 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 			t.Fatal("parent loss killed surviving egg")
 		}
 		fresh := northstarStartPTY(t, f, binary, 160, 36)
-		fresh.expect("fresh parent inventory", 0, "surviving-parent")
+		fresh.expect("fresh parent inventory", 0, "surviving parent")
 		fresh.expect("fresh wt recovers same durable IDs", fresh.send("h"), "This machine", "forge", "Working")
 		fresh.expect("same ID on another wing", fresh.send("/wing-forge:same-run"), "Search runs /wing-forge:same-run_", "* Working")
 		fresh.expect("keep qualified forge run", fresh.send("\r"), "Newest first", "Enter open")
