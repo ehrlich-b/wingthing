@@ -134,6 +134,8 @@ func (s *Server) Close() {
 			s.discovery.Shutdown()
 		}
 		_ = s.http.Close()
+		// Close can precede Serve registering this listener with net/http.
+		_ = s.listener.Close()
 		s.Manager.Close()
 		_ = os.Remove(s.controlPath)
 	})
