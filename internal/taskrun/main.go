@@ -312,7 +312,7 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		}
 		sb, sbErr := sandbox.New(sbCfg)
 		if sbErr != nil {
-			return fmt.Errorf("task refused: sandbox unavailable; no agent started: %w", sbErr)
+			return &sandboxRefusal{cause: sbErr, verbose: options.Verbose}
 		}
 		if sbCfg.NetworkNeed == sandbox.NetworkHTTPS && sbCfg.NetworkMode == "observe" {
 			sandboxNotice = "WARNING: Network allowlist is not enforced. Requests are only recorded."

@@ -121,7 +121,7 @@ func newLinuxSandbox(cfg Config, checkNamespace func(bool) error, createCgroup f
 			if err == nil {
 				err = fmt.Errorf("cgroup support is unavailable")
 			}
-			return nil, fmt.Errorf("sandbox memory/process limits unavailable; no agent started: %w", err)
+			return nil, &ResourceLimitError{Cause: err}
 		}
 	}
 

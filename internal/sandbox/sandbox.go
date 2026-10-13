@@ -72,7 +72,18 @@ type Config struct {
 type EnforcementError struct {
 	Gaps     []string
 	Platform string
+	Cause    error
 }
+
+func (e *EnforcementError) Unwrap() error { return e.Cause }
+
+// ResourceLimitError identifies a failed memory/process cgroup setup.
+type ResourceLimitError struct{ Cause error }
+
+func (e *ResourceLimitError) Error() string {
+	return "sandbox memory/process limits unavailable; no agent started: " + e.Cause.Error()
+}
+func (e *ResourceLimitError) Unwrap() error { return e.Cause }
 
 func (e *EnforcementError) Error() string {
 	msg := "system incapable of enforcing: " + strings.Join(e.Gaps, ", ")
@@ -112,6 +123,7 @@ func newEnforcementError(cfg Config, platformErr error) *EnforcementError {
 	return &EnforcementError{
 		Gaps:     gaps,
 		Platform: platformErr.Error() + ". " + platformHelp(),
+		Cause:    platformErr,
 	}
 }
 

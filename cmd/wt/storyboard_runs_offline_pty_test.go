@@ -143,7 +143,7 @@ func TestStoryboardTerminalTaskRefusalPTY(t *testing.T) {
 	policy := filepath.Join(f.work, "egg.yaml")
 	northstarWrite(t, policy, "base: none\nfs: ['ro:/', 'rw:"+f.work+"']\nnetwork: {agent_domains: none}\nresources: {memory: 64MB, max_pids: 8}\n", 0600)
 	h := northstarStartPTY(t, f, binary, 120, 36, "run", "Run project tests", "--agent", "claude", "--config", policy)
-	h.expect("sandbox refusal before provider start", 0, "task refused: sandbox unavailable; no agent started")
+	h.expect("sandbox refusal before provider start", 0, "Task refused:", "Nothing ran.")
 	select {
 	case err := <-h.done:
 		if err == nil {
@@ -153,6 +153,12 @@ func TestStoryboardTerminalTaskRefusalPTY(t *testing.T) {
 		t.Fatal("refusal did not finish")
 	}
 	storyboardCapture(t, h, "06-1-terminal-task-refused")
+	h.mu.Lock()
+	text := h.transcript.String()
+	h.mu.Unlock()
+	if strings.Contains(text, "/sys/fs/cgroup/") || strings.Contains(text, "namespace or mount") {
+		t.Fatal("quiet refusal exposed host diagnostics or the wrong cause")
+	}
 	s, err := store.Open(filepath.Join(f.local, "wt.db"))
 	if err != nil {
 		t.Fatal(err)
