@@ -87,7 +87,7 @@ func DiscoverWingProjects(resolvedPaths []string, cwd string) []ws.WingProject {
 func IsUnderPaths(path string, resolvedPaths []string) bool {
 	cleaned := filepath.Clean(path)
 	for _, rp := range resolvedPaths {
-		if cleaned == rp || strings.HasPrefix(cleaned, rp+string(filepath.Separator)) {
+		if cleaned == rp || (rp == string(filepath.Separator) && filepath.IsAbs(cleaned)) || strings.HasPrefix(cleaned, rp+string(filepath.Separator)) {
 			return true
 		}
 	}

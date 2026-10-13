@@ -450,6 +450,9 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 	// Handle --resume: restore chat history and get agent session ID
 	var agentResumeID string
 	if resumeID != "" {
+		if err := eggclient.ValidateStandaloneRoleResume(cfg, resumeID); err != nil {
+			return err
+		}
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return fmt.Errorf("resolve user home: %w", err)
