@@ -8,11 +8,25 @@ existing browser trust boundary, TOFU identity pins and persistent wing keys.
 
 The dashboard groups sessions by exact wing and nearest catalogued project.
 Search matches name, agent, project, machine and ID. Attention filtering follows
-native lifecycle and existing attention signals. Completion markers are local
-per-viewer **unseen completions**, not arbitrary unread output. Offline rows
-retain last reported lifecycle and disable runtime actions. Stop asks for the
-machine and exact session; Enter/Escape cancels an armed confirmation. A wing
-acknowledgement remains distinct from an independently observed process exit.
+native lifecycle and existing attention signals. **Unread output** uses the
+egg's real PTY byte counter, separate from native **unseen completions**. Read
+cursors persist per account/browser and exact wing/session/execution, for up to
+1,000 sessions over 30 days. **Mark read** acknowledges the displayed cursor;
+newer bytes in another tab remain unread. Blocked groups precede unread groups,
+then working groups. **Unread output** filtering leaves blocked state intact.
+These markers are browser-local; they do not synchronize across devices or
+authorize input. Wings without fresh counters cannot establish new unread state.
+
+Offline rows retain last reported lifecycle and disable runtime actions. Stop
+asks for the machine and exact session; Enter/Escape cancels an armed
+confirmation. The browser requires an explicit process-exit receipt and a fresh
+exact-wing inventory without the session before removing its row. Verification
+performs at most five reads with 250 ms between reads and never repeats the stop.
+The orphan fallback waits up to two seconds for verified PID exit; a process
+that ignores SIGTERM returns an error and remains inspectable. Normal egg RPC
+termination already waits for the owned process group. Old browsers accept the
+additional fields; old wings lacking the receipt display an unverified-stop
+message with an upgrade instruction instead of claiming success.
 
 ## Dormant paid UI
 

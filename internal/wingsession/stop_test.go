@@ -2,15 +2,18 @@ package wingsession
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
@@ -21,6 +24,9 @@ import (
 func TestOrphanStopProcessFixture(t *testing.T) {
 	if os.Getenv("WT_ORPHAN_STOP_FIXTURE") != "1" {
 		return
+	}
+	if os.Getenv("WT_ORPHAN_STOP_IGNORE_TERM") == "1" {
+		signal.Ignore(syscall.SIGTERM)
 	}
 	fmt.Println("ready")
 	input := bufio.NewScanner(os.Stdin)
@@ -181,6 +187,21 @@ func TestStopUnreachableOwnedSessionTerminatesVerifiedPID(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestStopUnreachableOwnedSessionCannotConfirmIgnoringProcess(t *testing.T) {
+	t.Setenv("WT_ORPHAN_STOP_IGNORE_TERM", "1")
+	p := startOrphanStopProcess(t, "fixture")
+	s, dir, web, _ := unreachableStopSession(t, p.cmd.Process.Pid, false)
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+	defer cancel()
+	if _, err := s.Stop(ctx, web, "fixture"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("TERM-ignoring session reported stopped: %v", err)
+	}
+	p.assertAlive(t)
+	if _, err := os.Stat(filepath.Join(dir, "egg.pid")); err != nil {
+		t.Fatalf("unverified stop discarded runtime metadata: %v", err)
 	}
 }
 

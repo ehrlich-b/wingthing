@@ -45,6 +45,8 @@ function encrypt(key, value) {
 }
 const fixtureRows = new Map();
 const requests = [];
+let stopMode = 'legacy';
+let stopVerificationReads = 0;
 async function fixtureWing(id, name, platform, rows) {
     fixtureRows.set(id, rows);
     // Only device_tokens are touched in this disposable DB. Key files and
@@ -70,20 +72,38 @@ async function fixtureWing(id, name, platform, rows) {
         requests.push({ wingId: id, type: inner.type, sessionId: inner.session_id });
         let response;
         if (inner.type === 'wing.info') response = { hostname: name, wing_label: name, platform, agents: ['claude', 'codex'], projects: [{ name: 'pairing', path: platform === 'darwin' ? '/Users/example/pairing' : '/home/example/pairing' }], capabilities: ['session.rename.v1'] };
-        else if (inner.type === 'sessions.list') response = { sessions: fixtureRows.get(id) };
+        else if (inner.type === 'sessions.list') {
+            if (id === 'fixture-mac' && stopMode === 'verifying' && ++stopVerificationReads >= 2) {
+                fixtureRows.set(id, fixtureRows.get(id).filter(row => row.session_id !== 'same-id'));
+            }
+            response = { sessions: fixtureRows.get(id) };
+        }
         else if (inner.type === 'sessions.history') response = { sessions: [] };
         else if (inner.type === 'conversations.list') response = { conversations: [] };
         else if (inner.type === 'pty.kill') {
             assert.ok(fixtureRows.get(id).some(row => row.session_id === inner.session_id));
-            fixtureRows.set(id, fixtureRows.get(id).filter(row => row.session_id !== inner.session_id));
-            response = { stopped: true };
+            if (stopMode === 'legacy') response = { ok: 'true' };
+            else {
+                stopMode = 'verifying'; stopVerificationReads = 0;
+                response = { ok: 'true', process_exited: true };
+            }
         } else response = { error: 'unsupported fixture request' };
         socket.send(JSON.stringify({ type: 'tunnel.res', request_id: outer.request_id, payload: encrypt(key, response) }));
     };
     return socket;
 }
-const row = (id, name, status, cwd) => ({ session_id: id, name, agent: 'claude', cwd, user_id: 'local', email: 'owner@example.test', lifecycle: { status, state: status === 'blocked' ? 'needs_input' : status, state_source: 'claude_hook', state_cursor: 1 } });
+const row = (id, name, status, cwd) => ({ session_id: id, name, agent: 'claude', cwd, user_id: 'local', email: 'owner@example.test', output: { epoch: 'fixture-execution', cursor: 0 }, lifecycle: { status, state: status === 'blocked' ? 'needs_input' : status, state_source: 'claude_hook', state_cursor: 1 } });
 async function screenshot(page, flow, card, slug, suffix = '') {
+    // Fixed viewport captures must show the behavior being reviewed, including
+    // dashboard rows below the mobile fold. Companion frames cover unread and
+    // blocked separately without changing the running UI or viewport contract.
+    if (flow === 3 || flow === 5) {
+        let target = page.locator('#sessions-list');
+        if (slug === 'unread-output') target = page.locator('.egg-box[data-sid="review"]');
+        else if (card === 7) target = page.locator('.egg-box[data-sid="same-id"][data-wing-id="' + (slug === 'stop-verified' ? 'fixture-remote' : 'fixture-mac') + '"]');
+        else if (card === 6) target = page.locator('.egg-box[data-wing-id="fixture-remote"]').first();
+        await target.scrollIntoViewIfNeeded();
+    }
     await page.waitForTimeout(100);
     const file = `${String(flow).padStart(2, '0')}-${card}-${slug}${suffix}.png`;
     await page.screenshot({ path: path.join(shots, file) });
@@ -119,8 +139,30 @@ try {
         await page.click('#inventory-clear');
         await page.selectOption('#inventory-status', 'attention');
         assert.equal(await page.locator('.egg-box').count(), 1);
-        await screenshot(page, 3, 3, 'dashboard-attention', suffix);
         await page.click('#inventory-clear');
+        const reviewRow = fixtureRows.get(remoteID).find(row => row.session_id === 'review');
+        reviewRow.output.cursor += 64;
+        await page.reload();
+        await page.locator('.egg-box[data-sid="review"][data-output-cursor="' + reviewRow.output.cursor + '"]').waitFor();
+        assert.match(await page.locator('.egg-box[data-sid="review"]').innerText(), /unread output/);
+        assert.match(await page.locator('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"]').innerText(), /blocked/);
+        assert.doesNotMatch(await page.locator('.egg-box[data-sid="review"]').innerText(), /unseen completion/);
+        await screenshot(page, 3, 3, 'dashboard-attention', suffix);
+        await screenshot(page, 3, 3, 'unread-output', suffix);
+        await page.selectOption('#inventory-status', 'unread');
+        assert.equal(await page.locator('.egg-box').count(), 1);
+        assert.equal(await page.locator('.egg-box[data-sid="review"]').count(), 1);
+        await page.getByRole('button', { name: /^Mark displayed output/ }).click();
+        assert.equal(await page.locator('.egg-box').count(), 0);
+        await page.click('#inventory-clear');
+        await page.reload();
+        await page.waitForSelector('.egg-box[data-sid="review"]');
+        assert.doesNotMatch(await page.locator('.egg-box[data-sid="review"]').innerText(), /unread output/);
+        reviewRow.output.cursor += 64;
+        await page.reload();
+        await page.locator('.egg-box[data-sid="review"][data-output-cursor="' + reviewRow.output.cursor + '"]').waitFor();
+        assert.match(await page.locator('.egg-box[data-sid="review"]').innerText(), /unread output/);
+        record(`${viewport.width}: output cursor, explicit read, reload persistence and new unread without completion`);
         await screenshot(page, 5, 5, 'dashboard-sessions', suffix);
         await page.click('#reach-open');
         await page.selectOption('#reach-wing', macID);
@@ -234,10 +276,24 @@ try {
     await page.goto(base + '/app/');
     const stop = page.locator('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"] .egg-delete');
     await stop.waitFor(); await stop.click(); await stop.click();
+    await page.waitForFunction(() => document.querySelector('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"]')?.textContent.includes('process exit unverified'));
+    assert.equal(await page.locator('.egg-box[data-sid="same-id"]').count(), 2);
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+        await page.setViewportSize(viewport);
+        await screenshot(page, 3, 7, 'stop-unverified', viewport.width === 390 ? '-mobile' : '');
+    }
+    record('legacy signal acknowledgement preserves the session and reports unverified exit');
+    stopMode = 'verified';
+    await stop.click(); await stop.click();
     await page.waitForFunction(() => !document.querySelector('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"]'));
-    assert.deepEqual(requests.filter(r => r.type === 'pty.kill'), [{ wingId: 'fixture-mac', type: 'pty.kill', sessionId: 'same-id' }]);
+    assert.deepEqual(requests.filter(r => r.type === 'pty.kill'), Array(2).fill({ wingId: 'fixture-mac', type: 'pty.kill', sessionId: 'same-id' }));
+    assert.ok(stopVerificationReads >= 2);
     assert.equal(await page.locator('.egg-box[data-wing-id="fixture-remote"][data-sid="same-id"]').count(), 1);
-    record('confirmed stop routes to exact wing and does not affect colliding session');
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+        await page.setViewportSize(viewport);
+        await screenshot(page, 3, 7, 'stop-verified', viewport.width === 390 ? '-mobile' : '');
+    }
+    record('exit receipt plus fresh disappearance routes to exact wing; verification never resends');
     remote.close();
     await page.waitForFunction(() => document.querySelector('.egg-box[data-wing-id="fixture-remote"]')?.textContent.includes('wing offline'));
     await page.selectOption('#inventory-status', 'offline');

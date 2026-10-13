@@ -20,6 +20,9 @@ import { refreshConversationInventory } from './conversation-view.js';
 import { refreshParentDot } from './parent-dot.js';
 import { unseenSessionCompletions, acknowledgeSessionCompletions } from './session-completion.js';
 import { browserLocalStorage } from './storage-scope.js';
+import { unreadSessionOutput, acknowledgeSessionOutput } from './session-unread.js';
+import { unreadOutputBadge } from './session-inventory.js';
+import { stopSessionVerified } from './session-stop.js';
 
 var sessionStopPending = new Set();
 var sessionStopConfirm = new Map();
@@ -1672,33 +1675,16 @@ function wireActiveSessionRows() {
         });
     });
     DOM.wingDetailContent.querySelectorAll('.wd-kill-btn').forEach(function(btn) {
+        var row = btn.closest('[data-sid]');
+        var session = findSessionResource(S.sessionsData, row.dataset.sid, row.dataset.wingId);
+        if (!session) return;
+        bindStopCancellation(session, btn);
         btn.addEventListener('click', function(e) {
             e.stopPropagation();
-            if (btn.dataset.confirming) {
-                var sid = btn.dataset.sid;
-                var wingId = S.currentWingId;
-                btn.disabled = true;
-                btn.textContent = '...';
-                sendTunnelRequest(wingId, { type: 'pty.kill', session_id: sid })
-                    .then(function() {
-                        deleteSession(sid, true, wingId);
-                        updateWingDetailSessions(wingId);
-                        loadWingPastSessions(wingId, 0);
-                    }).catch(function(error) {
-                        btn.disabled = false;
-                        btn.textContent = 'retry stop';
-                        btn.title = (error && error.message) || 'Stop failed';
-                    });
-            } else {
-                btn.dataset.confirming = '1';
-                btn.textContent = 'sure?';
-                btn.classList.add('confirming');
-                setTimeout(function() {
-                    delete btn.dataset.confirming;
-                    btn.textContent = 'stop';
-                    btn.classList.remove('confirming');
-                }, 3000);
-            }
+            stopInventorySession(session, btn, function() {
+                updateWingDetailSessions(session.wing_id);
+                loadWingPastSessions(session.wing_id, 0);
+            });
         });
     });
     DOM.wingDetailContent.querySelectorAll('.wd-session-row .wd-replay-btn').forEach(function(btn) {
@@ -2532,7 +2518,8 @@ function initInventoryFilters() {
 
 function renderProjectGroups(sessions, renderCard) {
     var unseen = unseenSessionCompletions(browserLocalStorage(), S.currentUser.id);
-    return groupSessionInventory(sessions, S.wingsData, S.sessionNotifications, unseen).map(function(group) {
+    var unread = unreadSessionOutput(browserLocalStorage(), S.currentUser.id);
+    return groupSessionInventory(sessions, S.wingsData, S.sessionNotifications, unseen, undefined, unread).map(function(group) {
         return '<section class="inventory-project-group">' + sessionGroupHeader(group) + '<div class="egg-grid">' + group.sessions.map(renderCard).join('') + '</div></section>';
     }).join('');
 }
@@ -2543,6 +2530,7 @@ export function renderSessionInventory() {
     var focus = captureSessionFocus(DOM.sessionsList, document.activeElement);
     var allVisibleSessions = visibleInventorySessions();
     initInventoryFilters();
+    inventoryFilters.unread = unreadSessionOutput(browserLocalStorage(), S.currentUser.id);
     var visibleSessions = filterSessionInventory(allVisibleSessions, S.wingsData, S.sessionNotifications, inventoryFilters);
     document.getElementById('session-inventory-count').textContent = visibleSessions.length + ' of ' + allVisibleSessions.length;
     var hasWings = S.wingsData.some(function(wing) { return wingDisplayName(wing); });
@@ -2570,7 +2558,7 @@ export function renderSessionInventory() {
         var state = sessionInventoryState(s, wing, notificationForSession(S.sessionNotifications, s));
         var unseen = unseenSessionCompletions(browserLocalStorage(), S.currentUser.id).has(sessionResourceKey(s));
         var error = sessionActionErrors.get(sessionResourceKey(s));
-        return '<div class="egg-box inventory-session" tabindex="0" role="group" aria-label="' + escapeHtml(name + ' on ' + wingName) + '" data-sid="' + escapeHtml(s.id) + '" data-wing-id="' + escapeHtml(s.wing_id || '') + '" data-kind="' + escapeHtml(s.kind || 'terminal') + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
+        return '<div class="egg-box inventory-session" tabindex="0" role="group" aria-label="' + escapeHtml(name + ' on ' + wingName) + '" data-sid="' + escapeHtml(s.id) + '" data-wing-id="' + escapeHtml(s.wing_id || '') + '" data-output-cursor="' + escapeHtml(s.output && s.output.cursor != null ? String(s.output.cursor) : '') + '" data-kind="' + escapeHtml(s.kind || 'terminal') + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
             '<div class="egg-preview">' + (thumbUrl ? '<img src="' + thumbUrl + '" alt="">' : '') + '</div>' +
             '<div class="egg-footer">' +
                 '<span class="session-dot ' + dotClass + '"></span>' +
@@ -2581,7 +2569,7 @@ export function renderSessionInventory() {
             '</div>' +
             (wingName ? '<div class="egg-wing">' + escapeHtml(wingName) + '</div>' : '') +
             '<div class="inventory-session-path" title="' + escapeHtml(s.cwd || '') + '">' + escapeHtml(shortenPath(s.cwd || 'no project')) + '</div>' +
-            '<div class="inventory-session-state"><span class="inventory-status status-' + state.tone + '">' + escapeHtml(state.agentLabel) + '</span><span>' + escapeHtml(state.connectionLabel + ' · ' + state.attachment) + '</span>' + unseenCompletionBadge(unseen) + '</div>' +
+            '<div class="inventory-session-state"><span class="inventory-status status-' + state.tone + '">' + escapeHtml(state.agentLabel) + '</span><span>' + escapeHtml(state.connectionLabel + ' · ' + state.attachment) + '</span>' + unseenCompletionBadge(unseen) + unreadOutputBadge(inventoryFilters.unread.has(sessionResourceKey(s))) + '</div>' +
             (error ? '<div class="inventory-action-status" role="status">' + escapeHtml(error) + '</div>' : '') +
         '</div>';
     }
@@ -2619,7 +2607,10 @@ export function renderSessionInventory() {
     DOM.sessionsList.querySelectorAll('.inventory-acknowledge').forEach(function(button) {
         button.onclick = function() {
             var group = groupSessionInventory(visibleSessions, S.wingsData).find(function(item) { return item.key === button.dataset.focusKey.slice(4); });
-            if (group) acknowledgeSessionCompletions(browserLocalStorage(), S.currentUser.id, group.sessions);
+            if (group) {
+                acknowledgeSessionCompletions(browserLocalStorage(), S.currentUser.id, group.sessions);
+                acknowledgeSessionOutput(browserLocalStorage(), S.currentUser.id, group.sessions);
+            }
             renderSessionInventory();
         };
     });
@@ -2697,9 +2688,9 @@ function stopInventorySession(session, button, onStopped) {
     sessionActionErrors.delete(key);
     button.disabled = true;
     button.textContent = 'stopping…';
-    // Remove the row only after the wing acknowledges the stop. A failed request
-    // must leave the session inspectable instead of optimistically losing it.
-    sendTunnelRequest(session.wing_id, { type: 'pty.kill', session_id: session.id }).then(function() {
+    // Require process exit and a fresh absence from the exact wing inventory.
+    // Verification never repeats the mutation.
+    stopSessionVerified(session, sendTunnelRequest).then(function() {
         sessionStopPending.delete(key);
         var selected = sessionIsSelected(session, S.ptySessionId, S.ptyWingId);
         deleteSession(session.id, true, session.wing_id);

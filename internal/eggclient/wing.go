@@ -204,8 +204,20 @@ func KillOrphanEggContext(ctx context.Context, cfg *config.Config, sessionID str
 			if signalErr := proc.Signal(syscall.SIGTERM); signalErr != nil {
 				return fmt.Errorf("terminate orphan egg process %d: %w", pid, signalErr)
 			}
-			// Leave runtime files until the egg exits and cleans up itself.
-			log.Printf("pty session %s: orphan termination requested (pid)", sessionID)
+			// A signal alone does not prove exit. Never report a TERM-ignoring
+			// orphan stopped or signal a recycled PID again.
+			waitCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			ticker := time.NewTicker(20 * time.Millisecond)
+			defer ticker.Stop()
+			for procinfo.OwnedProcessIsAlive(pid) && EggPidMatchesSession(pid, sessionID) {
+				select {
+				case <-waitCtx.Done():
+					return fmt.Errorf("orphan stop requested; process exit unverified: %w", waitCtx.Err())
+				case <-ticker.C:
+				}
+			}
+			log.Printf("pty session %s: orphan process exited (pid)", sessionID)
 			return nil
 		}
 	}

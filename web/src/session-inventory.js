@@ -83,6 +83,7 @@ export function filterSessionInventory(sessions, wings, notifications, filters) 
         if (filters.wing && session.wing_id !== filters.wing) return false;
         if (filters.agent && session.agent !== filters.agent) return false;
         if (filters.status === 'attention' && !state.attention) return false;
+        if (filters.status === 'unread' && !(filters.unread && filters.unread.has(sessionResourceKey(session)))) return false;
         if (filters.status === 'available' && !state.canAttach) return false;
         if (filters.status === 'offline' && state.connection === 'available') return false;
         var text = [sessionDisplayName(session), session.id, session.agent, session.cwd, session.email,
@@ -108,7 +109,7 @@ export function attentionPriority(status, unseen) {
     return status === 'blocked' ? 0 : unseen ? 1 : status === 'working' ? 2 : 3;
 }
 
-export function groupSessionInventory(sessions, wings, notifications = {}, unseen = new Set(), statusForSession) {
+export function groupSessionInventory(sessions, wings, notifications = {}, unseen = new Set(), statusForSession, unreadOutput = new Set()) {
     var groups = new Map();
     var wingById = new Map(wings.map(function(wing) { return [wing.wing_id, wing]; }));
     var priorities = new Map();
@@ -117,15 +118,17 @@ export function groupSessionInventory(sessions, wings, notifications = {}, unsee
         var project = sessionProjectRoot(session, wing);
         var key = JSON.stringify([session.wing_id || '', project]);
         if (!groups.has(key)) groups.set(key, { key: key, wingId: session.wing_id || '', wing: wing, project: project,
-            sessions: [], rollup: { blocked: 0, working: 0, idle: 0, unseen: 0 }, priority: 3 });
+            sessions: [], rollup: { blocked: 0, working: 0, idle: 0, unseen: 0, unread: 0 }, priority: 3 });
         var group = groups.get(key);
         var status = statusForSession ? statusForSession(session) : sessionInventoryState(session, wing, notificationForSession(notifications, session)).status;
         var unread = unseen.has(sessionResourceKey(session));
-        var priority = attentionPriority(status, unread);
+        var outputUnread = unreadOutput.has(sessionResourceKey(session));
+        var priority = attentionPriority(status, unread || outputUnread);
         priorities.set(session, priority);
         group.sessions.push(session);
         if (['blocked', 'working', 'idle'].includes(status)) group.rollup[status]++;
         if (unread) group.rollup.unseen++;
+        if (outputUnread) group.rollup.unread++;
         group.priority = Math.min(group.priority, priority);
     });
     return Array.from(groups.values()).sort(function(a, b) { return a.priority - b.priority; }).map(function(group) {
@@ -138,6 +141,10 @@ export function unseenCompletionBadge(unseen) {
     return unseen ? '<span class="unseen-completion">' + (typeof unseen === 'number' ? unseen + ' ' : '') + 'unseen completion' + (unseen > 1 ? 's' : '') + '</span>' : '';
 }
 
+export function unreadOutputBadge(unread) {
+    return unread ? '<span class="unseen-completion">' + (typeof unread === 'number' ? unread + ' ' : '') + 'unread output</span>' : '';
+}
+
 export function sessionGroupHeader(group) {
     var counts = group.rollup;
     // The wing ID stays in the tooltip; the visible label is the wing's name.
@@ -145,11 +152,11 @@ export function sessionGroupHeader(group) {
     var path = group.project ? shortenPath(group.project) : 'no project';
     var rollup = ['blocked', 'working', 'idle'].filter(function(status) { return counts[status] > 0; }).map(function(status) {
         return '<span' + (status === 'blocked' ? ' class="rollup-blocked"' : '') + '>' + counts[status] + ' ' + status + '</span>';
-    }).join('') + unseenCompletionBadge(counts.unseen);
+    }).join('') + unseenCompletionBadge(counts.unseen) + unreadOutputBadge(counts.unread);
     return '<header class="inventory-group-header"><h4><span class="inventory-group-project" title="' + escapeHtml(group.project) + '">' + escapeHtml(path) + '</span>' +
         '<span class="inventory-group-wing" title="' + escapeHtml(wing + ' · ' + group.wingId) + '">' + escapeHtml(wing) + '</span></h4>' +
         (rollup ? '<div class="inventory-rollup">' + rollup + '</div>' : '') +
-        (counts.unseen ? '<button class="btn-sm inventory-acknowledge" type="button" data-focus-key="ack:' + escapeHtml(group.key) + '" aria-label="Acknowledge completions in ' + escapeHtml(path + ' on ' + wing) + '">mark seen</button>' : '') + '</header>';
+        (counts.unseen || counts.unread ? '<button class="btn-sm inventory-acknowledge" type="button" data-focus-key="ack:' + escapeHtml(group.key) + '" aria-label="Mark displayed output and completions read in ' + escapeHtml(path + ' on ' + wing) + '">mark read</button>' : '') + '</header>';
 }
 
 // Keep focus on the same qualified row/action after a status refresh. Do not
