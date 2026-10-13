@@ -12,6 +12,8 @@ ENV WT_TEST_PREVIEW_BINARY=/root/wt-preview-fixture
 # The compiled run-inspect CLI tests consume this read-only source fixture
 # relative to /root, just as ordinary go test consumes it from cmd/wt.
 COPY runinspect-orphan /internal/runinspect/testdata/orphan
+# Real checksum installer used by the compiled onboarding PTY fixture.
+COPY install.sh /scripts/install.sh
 COPY mock-agent /usr/local/bin/claude
 COPY run-tests /root/run-tests
 COPY sandbox-tests /root/sandbox-tests

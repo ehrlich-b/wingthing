@@ -33,3 +33,5 @@ test/web/claude
 web/fixtures/session-inventory.html
 /test/linux/wt-preview
 /test/linux/runinspect-orphan/
+
+/test/linux/install.sh

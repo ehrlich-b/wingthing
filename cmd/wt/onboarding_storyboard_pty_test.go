@@ -81,7 +81,7 @@ while [ "$#" -gt 0 ]; do
 done
 case "$url" in
  */releases/latest) printf '{"tag_name":"fixture-build"}\n';;
- */SHA256SUMS) shasum -a 256 "$STORYBOARD_BINARY" | awk '{print $1 "  wt-linux-amd64"}' > "$out";;
+ */SHA256SUMS) if command -v sha256sum >/dev/null 2>&1; then sha256sum "$STORYBOARD_BINARY"; else shasum -a 256 "$STORYBOARD_BINARY"; fi | awk '{print $1 "  wt-linux-amd64"}' > "$out";;
  */wt-linux-amd64) cp "$STORYBOARD_BINARY" "$out";;
  *) exit 99;;
 esac

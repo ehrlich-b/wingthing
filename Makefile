@@ -249,6 +249,7 @@ endif
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) build -p 2 -buildvcs=false -ldflags "-X main.version=test -X github.com/ehrlich-b/wingthing/internal/config.ReleaseChannel=preview" -o test/linux/wt-preview ./cmd/wt
 	@mkdir -p test/linux/runinspect-orphan
 	@cp -R internal/runinspect/testdata/orphan/. test/linux/runinspect-orphan/
+	@cp scripts/install.sh test/linux/install.sh
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) build -p 2 -o test/linux/mock-agent ./test/mock-agent/
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) test -p 2 -c -tags 'e2e linux' -o test/linux/run-tests ./test/linux/
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) test -p 2 -c -tags integration -o test/linux/sandbox-tests ./internal/sandbox/
@@ -340,7 +341,7 @@ serve: | web/dist
 clean:
 	rm -f wt wt-preview
 	rm -rf dist/ dist-preview/
-	rm -f test/linux/wt test/linux/mock-agent test/linux/run-tests test/linux/sandbox-tests test/linux/wt-tests test/web/wt test/web/claude
+	rm -f test/linux/wt test/linux/mock-agent test/linux/run-tests test/linux/sandbox-tests test/linux/wt-tests test/linux/install.sh test/web/wt test/web/claude
 
 # Offline metadata inventory gates: no daemon, browser, provider or listener.
 RUN_INVENTORY_TESTS ?= RunInventory|AgentList|ServerLiteralsSetVersion|Dashboard|RootHelp
