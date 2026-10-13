@@ -14,11 +14,12 @@ import { applyConversationRead, restoredConversationState } from './conversation
 import { switchToSession, showSessionChat, showHome } from './nav.js';
 import { showPalette } from './palette.js';
 import { loadHome } from './data.js';
-import { paperRoute as route, machineState, sessionState as stateOf, projectName, agentName, requestedCommand } from './paper-state.js';
+import { paperRoute as route, machineState, sessionState as stateOf, projectName, agentName, requestedCommand, answerKeys, awayLabel } from './paper-state.js';
 
 const reads = new Map();
 const terminals = new Map();
-let root, main, side, lastSignature = '';
+const answers = new Map();
+let root, main, side, lastSignature = '', showEarlier = false;
 
 export function paperRoute(hash = location.hash) { return route(hash); }
 export function isPaperRoute(hash) { return !!paperRoute(hash); }
@@ -34,6 +35,7 @@ const clock = t => { const ms = typeof t === 'number' ? t : Date.parse(t); retur
 const ago = t => { const ms = Date.parse(t); if (!Number.isFinite(ms)) return ''; const m = Math.max(0, Math.round((Date.now() - ms) / 60000)); return m < 60 ? m + 'm' : m < 1440 ? Math.round(m / 60) + 'h' : Math.round(m / 1440) + 'd'; };
 // Inline code for commands and file names; everything else stays prose.
 const prose = text => esc(text || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/(^|\s)(\.\/[\w./-]+|[\w-]+\/[\w./-]+\.\w+)/g, '$1<code>$2</code>');
+const awayText = w => awayLabel(machineState(w), clock(w.last_seen));
 const squares = () => S.wingsData.filter(w => wingDisplayName(w)).map(w => { const m = machineState(w); return '<span class="pp-sq pp-sq-' + m + '" title="' + esc(machineName(w) + ' · ' + m) + '"><i aria-hidden="true"></i>' + esc(machineName(w)) + '<span class="pp-sr"> ' + m + '</span></span>'; }).join('');
 
 function sessions() { return S.sessionsData.filter(s => (s.kind || 'terminal') !== 'chat' && wingOf(s.wing_id)); }
@@ -100,7 +102,7 @@ function viewEmpty() {
     const names = S.wingsData.map(machineName).join(', ');
     return head('wing', '') + '<div class="pp-cols"><section class="pp-empty"><h2>No sessions on ' + esc(names) + '</h2><p>Start an agent from here or run <code>wt claude</code> on the machine. Wing reports on it in this thread.</p>' +
         '<div class="pp-actions"><button type="button" class="pp-btn pp-btn-ink" data-new-session>New session</button></div></section>' +
-        '<aside class="pp-col-rail">' + kicker('Machines', String(S.wingsData.length)) + S.wingsData.map(machineRow).join('') +
+        '<aside class="pp-col-rail">' + kicker('Machines', String(S.wingsData.length)) + S.wingsData.map(w => machineRow(w)).join('') +
         kicker('From a terminal') + '<pre class="pp-cmd"><span class="pp-prompt">$</span> wt claude\n<span class="pp-prompt">$</span> wt codex</pre><p class="pp-quiet pp-gap">Sessions started on a machine show up here on their own.</p></aside></div>';
 }
 
@@ -150,44 +152,48 @@ function viewSessions() {
     const asleepWings = S.wingsData.filter(w => machineState(w) === 'asleep' || machineState(w) === 'unreachable');
     const awake = S.wingsData.filter(w => machineState(w) === 'connected').map(machineName);
     const banner = asleepWings.map(w => { const n = work.filter(s => s.wing_id === w.wing_id).length; const name = machineName(w);
-        return '<section class="pp-away"><div class="pp-need-top"><span class="pp-st pp-st-asleep">' + esc(name) + (machineState(w) === 'asleep' ? ' is asleep' : ' is unreachable') + '</span><time>' + esc(w.last_seen ? 'since ' + clock(w.last_seen) : '') + '</time></div>' +
+        return '<section class="pp-away"><div class="pp-need-top"><span class="pp-st pp-st-asleep">' + esc(name + ' is ' + awayLabel(machineState(w))) + '</span><time>' + esc(w.last_seen ? 'since ' + clock(w.last_seen) : '') + '</time></div>' +
         '<p>' + (n ? 'Its ' + n + (n === 1 ? ' session is' : ' sessions are') + ' shown as last seen. Nothing on ' + esc(name) + ' can be opened or messaged until it reconnects.' : 'Nothing on ' + esc(name) + ' can be opened until it reconnects.') + '</p>' +
         '<div class="pp-actions"><button type="button" class="pp-btn" data-retry>Retry ' + esc(name) + '</button></div></section>'; }).join('');
     const away = work.filter(s => sessionState(s).key === 'asleep');
-    const meta = '<b>' + work.length + '</b> on ' + S.wingsData.length + (S.wingsData.length === 1 ? ' machine' : ' machines') + ' · ' + awake.length + ' connected' + (asleepWings.length ? ' · <span class="pp-away-word">' + esc(asleepWings.map(machineName).join(', ')) + ' away</span>' : '');
+    const meta = '<b>' + work.length + '</b> on ' + S.wingsData.length + (S.wingsData.length === 1 ? ' machine' : ' machines') + ' · ' + awake.length + ' connected' + (asleepWings.length ? ' · <span class="pp-away-word">' + esc(asleepWings.map(w => machineName(w) + ' ' + awayText(w)).join(', ')) + '</span>' : '');
     const coord = coordinator(), coordLast = coord && lines(coord).filter(l => l.who === 'agent').pop();
     return head('Sessions', meta) + '<div class="pp-cols"><div class="pp-col-main">' + banner +
         '<div class="pp-searchbar"><label class="pp-sr" for="pp-filter">Search sessions</label><input id="pp-filter" type="search" placeholder="Search work or machines" autocomplete="off"><button type="button" class="pp-btn" data-new-session>New session</button></div>' +
         group('Needs you', by('need')) + group('Working', by('work')) + group('Idle and done', [...by('idle'), ...by('done'), ...by('ended'), ...by('unknown')]) +
         asleepWings.map(w => group('Last seen on ' + esc(machineName(w)), away.filter(s => s.wing_id === w.wing_id), 'Cached')).join('') + '</div>' +
         '<aside class="pp-col-rail">' + (coord ? kicker('Pinned') + '<div class="pp-pin"><p><b class="pp-wing">wing</b> <small>' + esc(clock(coordLast && coordLast.at)) + '</small></p><p>' + prose(coordLast ? coordLast.text : 'No update yet.') + '</p><a class="pp-btn" href="#">Open wing</a></div>' : '') +
-        kicker('Machines', String(S.wingsData.length)) + S.wingsData.map(machineRow).join('') + '</aside></div>';
+        kicker('Machines', String(S.wingsData.length)) + S.wingsData.map(w => machineRow(w)).join('') + '</aside></div>';
 }
 
-function machineRow(w) {
+function machineRow(w, detail = '') {
     const m = machineState(w), n = workSessions().filter(s => s.wing_id === w.wing_id).length;
-    const label = { connected: 'Connected', asleep: 'Asleep', unreachable: 'Unreachable', checking: 'Checking', unknown: 'Unknown' }[m];
-    return '<div class="pp-mrow"><span class="pp-sq pp-sq-' + m + '"><i aria-hidden="true"></i></span><span class="pp-mname"><b>' + esc(machineName(w)) + '</b><i>' + esc(label + (m === 'asleep' && w.last_seen ? ' since ' + clock(w.last_seen) : '')) + '</i></span><small>' + n + (n === 1 ? ' session' : ' sessions') + '</small></div>';
+    const label = m === 'asleep' || m === 'unreachable' ? awayText(w).replace(/^./, c => c.toUpperCase()) : { connected: 'Connected', checking: 'Checking', unknown: 'Unknown' }[m];
+    return '<div class="pp-mrow"><span class="pp-sq pp-sq-' + m + '"><i aria-hidden="true"></i></span><span class="pp-mname"><b>' + esc(machineName(w)) + '</b><i>' + esc(label) + '</i>' + (detail ? '<span class="pp-mdetail">' + esc(detail) + '</span>' : '') + '</span><small>' + n + (n === 1 ? ' session' : ' sessions') + '</small></div>';
 }
 
 function viewMachines() {
     if (!S.wingsData.length) return viewEmpty();
     const rows = S.wingsData.map(w => { const m = machineState(w), list = workSessions().filter(s => s.wing_id === w.wing_id);
-        return '<section class="pp-machine">' + machineRow(w) + '<p class="pp-quiet">' + esc([w.platform === 'darwin' ? 'macOS' : w.platform === 'linux' ? 'Linux' : w.platform, (w.agents || []).map(agentName).join(', ')].filter(Boolean).join(' · ')) + '</p>' +
+        return '<section class="pp-machine">' + machineRow(w, [w.platform === 'darwin' ? 'macOS' : w.platform === 'linux' ? 'Linux' : w.platform, (w.agents || []).map(agentName).join(', ')].filter(Boolean).join(' · ')) +
         (list.length ? '<ul>' + list.map(s => '<li><a href="' + sessionHref(s) + '">' + esc(sessionDisplayName(s)) + '</a> ' + chip(sessionState(s)) + '</li>').join('') + '</ul>' : '<p class="pp-quiet">No sessions on ' + esc(machineName(w)) + '.</p>') +
         (m === 'asleep' || m === 'unreachable' ? '<button type="button" class="pp-btn" data-retry>Retry ' + esc(machineName(w)) + '</button>' : '') + '</section>'; }).join('');
     return head('Machines', '<span class="pp-squares">' + squares() + '</span>') + '<div class="pp-cols"><div class="pp-col-main">' + kicker('Your machines', String(S.wingsData.length)) + rows + '</div>' +
         '<aside class="pp-col-rail">' + kicker('Add a device') + '<p>Run <code>wt start</code> on another computer to add it here. To read and answer from your phone, pair it with a machine.</p><a class="pp-btn pp-btn-ink" href="#pair">Pair a phone</a></aside></div>';
 }
 
+// The pairing code and symbols live only in the computer's terminal: the person
+// at that machine starts pairing and allows it there.
 function viewPair() {
-    return head('Pair a phone', '<b>wt pair</b> · on the computer') + '<div class="pp-cols"><div class="pp-col-main">' +
+    return head('Pair <i>a phone</i>', '<b>wt pair</b> · on the computer') + '<div class="pp-cols pp-pair"><div class="pp-col-main">' +
         kicker('On your computer') + '<pre class="pp-cmd"><span class="pp-prompt">$</span> wt pair</pre>' +
         '<div class="pp-actions"><button type="button" class="pp-btn" data-copy="wt pair">Copy command</button></div>' +
-        '<ol class="pp-steps"><li>Run it in a terminal on the machine you want to reach. It shows a code to scan and four symbols.</li><li>Your phone shows four symbols too. They must be the same four, in the same order.</li><li>When the phone says they match, the terminal asks you to confirm. Type <code>y</code> to finish.</li></ol>' +
-        kicker('What pairing allows') + '<p>The phone can read this machine\'s sessions and message wing. It cannot type into a terminal until you take control from the phone.</p><p class="pp-quiet">Pairing lasts until you revoke it on the computer or unpair on the phone.</p></div>' +
-        '<aside class="pp-col-rail">' + kicker('On your phone', 'Example') + '<div class="pp-phone" aria-hidden="true"><p class="pp-kick-sm">Pair a machine</p><p>Open Wingthing and scan the code.</p><div class="pp-symbols" aria-label="Example symbols"><span>🦉</span><span>⚓</span><span>🌲</span><span>🔑</span></div><p class="pp-quiet">Compare these with the terminal.</p><span class="pp-btn pp-btn-ink pp-btn-block">Match and pair</span><span class="pp-btn pp-btn-block">They differ</span></div>' +
-        '<p class="pp-quiet">If the symbols differ, tap They differ. Nothing is paired and the code stops working.</p></aside></div>';
+        '<p class="pp-gap">Run it in a terminal on the machine you want to reach. It shows a code to scan, good for five minutes.</p>' +
+        kicker('Then, in that terminal') + '<p>After the scan, the terminal shows four symbols and the phone\'s name. If the phone shows the same four in the same order, press <code>Enter</code> to allow. <code>Ctrl-C</code> cancels.</p>' +
+        kicker('What pairing allows') + '<p>The phone can read this machine\'s sessions and message wing. It cannot type into a terminal until you take control from the phone.</p>' +
+        '<p class="pp-quiet pp-gap">Pairing lasts until you revoke it. <code>wt devices</code> lists paired phones and <code>wt devices revoke</code> removes one.</p></div>' +
+        '<aside class="pp-col-rail">' + kicker('On the phone') + '<ol class="pp-steps"><li>Open the Wingthing app and scan the code in the terminal.</li><li>Check that its four symbols match the terminal\'s, in the same order.</li><li>Press <code>Enter</code> in the terminal to allow, then confirm on the phone.</li></ol>' +
+        '<p class="pp-quiet">Nothing is paired until both sides agree. If the symbols differ, cancel on both.</p></aside></div>';
 }
 
 function findSession(route) { return sessions().find(s => s.id === route.sessionId && s.wing_id === route.wingId); }
@@ -203,25 +209,52 @@ function viewSession(route) {
         (msgs || '<p class="pp-quiet">' + (entry.at ? 'No messages in this session yet.' : 'Reading the session…') + '</p>') +
         (st.key === 'need' ? needCard(s) : '') + (machineState(w) === 'connected' ? composer('Message ' + sessionDisplayName(s), s) : '') + '</div>' +
         '<aside class="pp-col-rail pp-term-rail">' + kicker('Terminal', live ? 'Agent has control' : 'Last seen') +
-        '<pre class="pp-term" aria-label="Terminal preview">' + esc((term.text || '').split('\n').slice(-18).join('\n').trimEnd() || term.error || (live ? 'Waiting for terminal output…' : machineName(w) + ' is away. The last screen is not cached.')) + '</pre>' +
+        '<pre class="pp-term" aria-label="Terminal preview">' + esc((term.text || '').split('\n').slice(-18).join('\n').trimEnd() || term.error || (live ? 'Waiting for terminal output…' : machineName(w) + ' is ' + awayText(w) + '. The last screen is not cached.')) + '</pre>' +
         (live ? '<button type="button" class="pp-btn" data-takeover="' + esc(s.wing_id + '/' + s.id) + '">Take over terminal</button><p class="pp-quiet">Your keys go to the session until you hand control back. Messages wait while you have control.</p>' : '') + '</aside></div>';
 }
 
 function viewApprove(route) {
     const s = findSession(route); if (!s) return missing();
-    const w = wingOf(s.wing_id), r = request(s), st = sessionState(s);
+    const w = wingOf(s.wing_id), r = request(s), st = sessionState(s), where = machineName(w);
     const why = lines(s).filter(l => l.who === 'agent').slice(-3);
-    const live = machineState(w) === 'connected';
-    const facts = [['Where', '<b>' + esc(machineName(w)) + '</b>' + (project(s) ? ' · ' + esc(project(s)) : '')], ['Agent', esc(agentName(s.agent))], ['Asked', esc(clock(r.at) || 'Time not recorded')]];
-    return head('Approve request', esc(sessionDisplayName(s)) + ' · ' + esc(machineName(w))) + '<div class="pp-cols"><div class="pp-col-main">' +
+    const live = machineState(w) === 'connected', keys = answerKeys(s.agent), sent = answers.get(s.wing_id + '/' + s.id);
+    const facts = [['Where', '<b>' + esc(where) + '</b>' + (project(s) ? ' · ' + esc(project(s)) : '')], ['Agent', esc(agentName(s.agent))], ['Asked', esc(clock(r.at) || 'Time not recorded')]];
+    const id = esc(s.wing_id + '/' + s.id);
+    let actions, note;
+    if (sent && sent.state === 'sent') { actions = '<a class="pp-btn" href="' + sessionHref(s) + '">Open session</a>'; note = (sent.choice === 'approve' ? 'Approved' : 'Declined') + ' at ' + clock(sent.at) + '. ' + where + ' has the answer; the session reports what happens next.'; }
+    else if (sent && sent.state === 'failed') { actions = '<a class="pp-btn pp-btn-ink" href="' + sessionHref(s) + '">Open session</a>'; note = 'Could not confirm the answer reached ' + where + ' (' + sent.error + '). Check the session before answering again.'; }
+    else if (!live) { actions = '<a class="pp-btn" href="' + sessionHref(s) + '">Open session</a>'; note = where + ' is ' + awayText(w) + '. You can answer when it reconnects.'; }
+    else if (st.key !== 'need') { actions = '<a class="pp-btn" href="' + sessionHref(s) + '">Open session</a>'; note = ''; }
+    else if (keys) {
+        const busy = sent && sent.state === 'sending' ? ' disabled' : '';
+        actions = '<button type="button" class="pp-btn pp-btn-ink" data-answer="approve" data-session="' + id + '"' + busy + '>' + esc(r.command ? 'Approve, run on ' + where : 'Approve') + '</button>' +
+            '<button type="button" class="pp-btn" data-answer="decline" data-session="' + id + '"' + busy + '>Decline</button><a class="pp-btn pp-btn-quiet" href="' + sessionHref(s) + '">Open session</a>';
+        note = 'Your answer goes to the session on ' + where + ', the same as answering in its terminal.';
+    } else {
+        actions = '<button type="button" class="pp-btn pp-btn-ink" data-takeover="' + id + '">Answer in terminal</button><a class="pp-btn" href="' + sessionHref(s) + '">Open session</a>';
+        note = agentName(s.agent) + ' takes its answer in the terminal.';
+    }
+    return head('Approve request', esc(sessionDisplayName(s)) + ' · ' + esc(where)) + '<div class="pp-cols"><div class="pp-col-main">' +
         kicker('Request from ' + esc(sessionDisplayName(s)), chip(st)) +
-        '<p class="pp-lead">' + (st.key === 'need' ? 'The session is waiting for your answer. Nothing runs until you give it.' : 'This request is no longer waiting. The session state is shown above.') + '</p>' +
+        '<p class="pp-lead">' + (sent && sent.state === 'sent' ? 'You answered this request. The session picks it up from here.' : st.key === 'need' ? 'The session is waiting for your answer. Nothing runs until you approve.' : 'This request is no longer waiting. The session state is shown above.') + '</p>' +
         kicker('Will run') + (r.command ? '<pre class="pp-cmd"><span class="pp-prompt">$</span> ' + esc(r.command) + '</pre>' : '<p>' + prose(r.reason || 'The session did not say what it will run.') + '</p>') +
         '<dl class="pp-facts">' + facts.map(f => '<dt>' + f[0] + '</dt><dd>' + f[1] + '</dd>').join('') + '</dl>' +
-        kicker('Then') + '<p>You answer in the session\'s terminal on ' + esc(machineName(w)) + '. The session reports the result in its messages and in the wing thread.</p>' +
-        '<div class="pp-actions">' + (live ? '<button type="button" class="pp-btn pp-btn-ink" data-takeover="' + esc(s.wing_id + '/' + s.id) + '">Answer in terminal</button>' : '') + '<a class="pp-btn" href="' + sessionHref(s) + '">Open session</a></div>' +
-        (live ? '' : '<p class="pp-quiet">' + esc(machineName(w)) + ' is away. You can answer when it reconnects.</p>') + '</div>' +
+        kicker('Then') + '<p class="pp-quiet">The session keeps running and reports the result in its messages and in the wing thread.</p>' +
+        '<div class="pp-actions">' + actions + '</div>' + (note ? '<p class="pp-quiet pp-note" role="status">' + esc(note) + '</p>' : '') + '</div>' +
         '<aside class="pp-col-rail">' + kicker('Why it asked') + (why.length ? why.map(l => '<div class="pp-why"><small>' + esc(clock(l.at)) + '</small><p>' + prose(l.text) + '</p></div>').join('') : '<p class="pp-quiet">No earlier messages were recorded.</p>') + '</aside></div>';
+}
+
+// Answer a waiting permission prompt with the agent's own key. Never resent on
+// failure: a lost reply may still have reached the terminal.
+function answer(button) {
+    const [wingId, sessionId] = button.dataset.session.split('/'), s = findSession({ wingId, sessionId }); if (!s) return;
+    const keys = answerKeys(s.agent), k = wingId + '/' + sessionId, choice = button.dataset.answer; if (!keys) return;
+    answers.set(k, { state: 'sending', choice });
+    render(true);
+    sendTunnelRequest(wingId, { type: 'session.control', operation: 'terminal_send', arguments: { session: sessionId, input: keys[choice] } })
+        .then(result => { if (result && result.error) throw Error(result.error); answers.set(k, { state: 'sent', choice, at: Date.now() }); const entry = reads.get(k); if (entry) entry.at = 0; })
+        .catch(error => answers.set(k, { state: 'failed', choice, error: (error && error.message) || 'the machine did not answer' }))
+        .finally(() => { lastSignature = ''; render(true); });
 }
 
 function nav(route) {
@@ -237,6 +270,9 @@ function frame() {
     document.body.prepend(root);
     main = root.querySelector('.pp-main'); side = root.querySelector('.pp-side');
     root.addEventListener('click', event => {
+        if (event.target.closest('[data-earlier]')) { showEarlier = true; lastSignature = ''; render(true); return; }
+        const pick = event.target.closest('[data-answer]');
+        if (pick) { answer(pick); return; }
         const take = event.target.closest('[data-takeover]');
         if (take) { const [wingId, sessionId] = take.dataset.takeover.split('/'); show(false); switchToSession(sessionId, true, wingId); return; }
         if (event.target.closest('[data-new-session]')) { showPalette(); return; }
@@ -266,6 +302,20 @@ function show(on) {
     document.body.classList.toggle('paper-on', on);
 }
 
+// On a desktop screen the thread shows the newest rows that fit whole, under
+// its title; older rows open on request.
+function fitThread() {
+    if (showEarlier || !matchMedia('(min-width: 761px)').matches) return;
+    const rows = [...main.querySelectorAll('.pp-col-main > .pp-row')]; if (!rows.length) return;
+    main.querySelector('[data-earlier]')?.remove(); rows.forEach(r => { r.hidden = false; });
+    const more = document.createElement('button');
+    more.type = 'button'; more.className = 'pp-earlier'; more.dataset.earlier = '';
+    rows[0].before(more);
+    let hidden = 0;
+    while (document.documentElement.scrollHeight > innerHeight && hidden < rows.length - 1) rows[hidden++].hidden = true;
+    if (hidden) more.textContent = hidden + (hidden === 1 ? ' earlier update' : ' earlier updates'); else more.remove();
+}
+
 export function render(force) {
     const route = paperRoute();
     const on = !!route && S.activeView === 'home';
@@ -282,7 +332,9 @@ export function render(force) {
     main.innerHTML = html;
     main.dataset.view = route.view; main.dataset.hash = location.hash;
     // The wing thread opens on its newest line, like a conversation.
-    if (pinned && route.view === 'wing') requestAnimationFrame(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    // A session opens on its terminal and take-over button, above the composer.
+    if (route.view === 'wing') { fitThread(); document.fonts?.ready.then(() => { if (main.dataset.view === 'wing') fitThread(); }); }
+    if (pinned && (route.view === 'wing' || route.view === 'session')) requestAnimationFrame(() => window.scrollTo(0, document.documentElement.scrollHeight));
     const nv = nav(route);
     side.querySelector('.pp-nav').innerHTML = nv;
     root.querySelector('.pp-tabs').innerHTML = nv;

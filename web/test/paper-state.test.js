@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { machineState, sessionState, projectName, requestedCommand, paperRoute } from '../src/paper-state.js';
+import { machineState, sessionState, projectName, requestedCommand, paperRoute, answerKeys, awayLabel } from '../src/paper-state.js';
 
 const row = (status, extra = {}) => ({ lifecycle: { status }, ...extra });
 const online = { online: true };
@@ -41,4 +41,17 @@ test('paper routes are separate from legacy routes', () => {
     assert.deepEqual(paperRoute('#approve/studio/a%2Fb'), { view: 'approve', wingId: 'studio', sessionId: 'a/b' });
     assert.equal(paperRoute('#chat/x?wing=y'), null);
     assert.equal(paperRoute('#w/abc'), null);
+});
+
+test('approve and decline send each agent its own prompt keys', () => {
+    assert.deepEqual(answerKeys('claude'), { approve: '1', decline: '\u001b' });
+    assert.deepEqual(answerKeys('codex'), { approve: 'y', decline: '\u001b' });
+    assert.equal(answerKeys('gemini'), null);
+    assert.equal(answerKeys(undefined), null);
+});
+
+test('a machine that stopped reporting has one word and a since time', () => {
+    assert.equal(awayLabel('asleep', '1:42 PM'), 'asleep since 1:42 PM');
+    assert.equal(awayLabel('asleep', ''), 'asleep');
+    assert.equal(awayLabel('unreachable', '1:42 PM'), 'unreachable since 1:42 PM');
 });
