@@ -2,6 +2,7 @@ package wing
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -61,5 +62,40 @@ func TestBrowserFleetLedgerRefusesUnsafeDirectory(t *testing.T) {
 	if ledger, err := openBrowserAttachmentLedger(dir); err == nil {
 		ledger.Close()
 		t.Fatal("symlink receipt directory accepted")
+	}
+}
+
+func TestBrowserFleetLedgerShortWritePreservesConsumedFence(t *testing.T) {
+	ledger, err := openBrowserAttachmentLedger(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ledger.Close()
+	if err := ledger.Consume(t.Context(), "owner-tab", "opaque-attachment", 1, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Consume(t.Context(), "owner-tab", "opaque-attachment", 9, false); err != nil {
+		t.Fatal(err)
+	}
+	ledger.write = func(f *os.File, _ uint64) error {
+		if _, err := f.Write([]byte("1")); err != nil {
+			return err
+		}
+		return io.ErrShortWrite
+	}
+	if err := ledger.Consume(t.Context(), "owner-tab", "opaque-attachment", 10, false); err == nil {
+		t.Fatal("short receipt write acknowledged")
+	}
+	ledger.write = nil
+	// The active attachment's old sequence 9 remains fenced after the failed
+	// update to 10, even though the temporary receipt contained a valid 1.
+	if err := ledger.Consume(t.Context(), "owner-tab", "opaque-attachment", 2, false); err == nil {
+		t.Fatal("failed replacement lowered replay fence")
+	}
+	if err := ledger.Consume(t.Context(), "owner-tab", "opaque-attachment", 9, false); err == nil {
+		t.Fatal("consumed input replayed after storage failure")
+	}
+	if err := ledger.Consume(t.Context(), "owner-tab", "opaque-attachment", 10, false); err != nil {
+		t.Fatal(err)
 	}
 }

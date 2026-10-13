@@ -2,6 +2,7 @@ package wing
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -23,8 +24,9 @@ const maxBrowserAttachmentReceipts = 4096
 // terminal bytes, provider text, credentials or input lease tokens. Capacity
 // fails closed rather than evicting a consumed takeover and accepting replay.
 type browserAttachmentLedger struct {
-	root *os.Root
-	once sync.Once
+	root  *os.Root
+	write func(*os.File, uint64) error
+	once  sync.Once
 }
 
 func openBrowserAttachmentLedger(dir string) (*browserAttachmentLedger, error) {
@@ -132,29 +134,55 @@ func (l *browserAttachmentLedger) Consume(ctx context.Context, key, id string, s
 			return errors.New("browser attachment sequence already consumed; replay refused")
 		}
 	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	if err := f.Truncate(0); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(f, "%d\n", sequence); err != nil {
-		return err
-	}
-	// The receipt must be durable before any takeover or terminal input effect.
-	if err := f.Sync(); err != nil {
-		return err
+	writer := l.write
+	if writer == nil {
+		writer = writeBrowserReceipt
 	}
 	if attach {
-		directory, err := l.root.Open(".")
+		// The initial single-use ID was created exclusively. No previous
+		// high-water mark can be lowered by an initial publication failure.
+		if err := writer(f, sequence); err != nil {
+			return err
+		}
+	} else {
+		// Preserve the previous fence if writing or syncing a replacement
+		// fails. A short decimal prefix can never replace a consumed sequence.
+		temporary := ".pending-" + rand.Text()
+		replacement, err := receiptFile(l.root, temporary, os.O_CREATE|os.O_EXCL|os.O_RDWR)
 		if err != nil {
 			return err
 		}
-		err = directory.Sync()
-		_ = directory.Close()
+		defer l.root.Remove(temporary)
+		err = writer(replacement, sequence)
+		closeErr := replacement.Close()
 		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		if err := l.root.Rename(temporary, name); err != nil {
 			return err
 		}
 	}
-	return nil
+	// Persist the new name/replacement before any terminal effect. Directory
+	// sync failure may consume a sequence, but can never lower its prior fence.
+	directory, err := l.root.Open(".")
+	if err != nil {
+		return err
+	}
+	err = directory.Sync()
+	_ = directory.Close()
+	return err
+}
+func writeBrowserReceipt(f *os.File, sequence uint64) error {
+	data := []byte(fmt.Sprintf("%d\n", sequence))
+	n, err := f.Write(data)
+	if err != nil {
+		return err
+	}
+	if n != len(data) {
+		return io.ErrShortWrite
+	}
+	return f.Sync()
 }
