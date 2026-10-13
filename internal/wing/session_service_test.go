@@ -60,7 +60,49 @@ type sessionEggFixture struct {
 }
 
 func (f *sessionEggFixture) Status(context.Context, *pb.StatusRequest) (*pb.StatusResponse, error) {
-	return &pb.StatusResponse{Agent: f.agent, RenderedConfig: "fixture-policy"}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return &pb.StatusResponse{SessionId: filepath.Base(f.dir), Agent: f.agent, RenderedConfig: "fixture-policy", TotalWritten: int64(len(f.snapshot))}, nil
+}
+
+func TestWebInventoryOutputCursorAndVerifiedStopReceipt(t *testing.T) {
+	f := newSessionTransportFixture(t)
+	owner := f.mcp("http", "alice")
+	id := callSessionMCP(t, owner, "terminal_start", map[string]any{"command": []string{"fixture-command"}, "cwd": f.work})["session"].(string)
+	var epoch string
+	for _, text := range []string{"first output", "first output plus more"} {
+		ef := f.egg(id)
+		ef.mu.Lock()
+		ef.snapshot = []byte(text)
+		ef.mu.Unlock()
+		result := f.tunnel("alice", map[string]any{"type": "sessions.list"})
+		rows := result["sessions"].([]any)
+		output := rows[0].(map[string]any)["output"].(map[string]any)
+		if output["cursor"] != float64(len(text)) || output["epoch"] == "" {
+			t.Fatalf("encrypted cursor: %v", output)
+		}
+		if epoch != "" && output["epoch"] != epoch {
+			t.Fatal("same execution changed epoch")
+		}
+		epoch = output["epoch"].(string)
+	}
+	if rows := f.tunnel("bob", map[string]any{"type": "sessions.list"})["sessions"].([]any); len(rows) != 0 {
+		t.Fatal("foreign caller received output metadata")
+	}
+	if result := f.tunnel("bob", map[string]any{"type": "pty.kill", "session_id": id}); result["process_exited"] != nil || result["error"] == nil {
+		t.Fatalf("foreign stop receipt: %v", result)
+	}
+	if result := f.tunnel("alice", map[string]any{"type": "pty.kill", "session_id": id}); result["process_exited"] != true {
+		t.Fatalf("stop receipt: %v", result)
+	}
+	select {
+	case <-f.egg(id).killed:
+	default:
+		t.Fatal("receipt preceded egg termination")
+	}
+	if rows := f.tunnel("alice", map[string]any{"type": "sessions.list"})["sessions"].([]any); len(rows) != 0 {
+		t.Fatal("stopped session remains active")
+	}
 }
 func (f *sessionEggFixture) Kill(context.Context, *pb.KillRequest) (*pb.KillResponse, error) {
 	f.mu.Lock()

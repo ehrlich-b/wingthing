@@ -109,7 +109,10 @@ func (s *Server) handleAppMe(w http.ResponseWriter, r *http.Request) {
 		"relay_allowed":      relayAccess.Allowed,
 		"relay_reason":       relayAccess.Reason,
 		"default_transport":  "direct",
-		"release_channel":    config.Channel(), "executable": config.BinaryName(), "channel_label": config.ChannelLabel(),
+		// Paid storyboard controls are non-authoritative, local development
+		// previews. Never expose them on an authenticated hosted dev server.
+		"reach_share_preview": s.DevMode && s.LocalMode,
+		"release_channel":     config.Channel(), "executable": config.BinaryName(), "channel_label": config.ChannelLabel(),
 	})
 }
 

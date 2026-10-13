@@ -1565,6 +1565,9 @@ func ListAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 			Email:     eggclient.ReadEggOwnerEmail(dir),
 		}
 		link := eggclient.SessionConversationLink(cfg, sessionID)
+		if statusErr == nil && statusResponse.SessionId == sessionID {
+			info.Output = &ws.SessionOutput{Epoch: strconv.Itoa(pid) + ":" + eggclient.ReadEggMetaValues(dir)["started_at"], Cursor: statusResponse.TotalWritten}
+		}
 		info.ConversationID, info.RootConversationID, info.ParentConversationID, info.ConversationRole = link.ConversationID, link.RootConversationID, link.ParentConversationID, link.ConversationRole
 		info.Lifecycle = eggclient.SessionLifecycleSummary(context.Background(), cfg, sessionID)
 		if _, ok := wingAttention.Load(sessionID); ok {

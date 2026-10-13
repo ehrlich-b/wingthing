@@ -362,6 +362,7 @@ type SessionAttention struct {
 
 // SessionInfo describes one active session on a wing (used in tunnel sessions.list responses).
 type SessionInfo struct {
+	Output                *SessionOutput `json:"output,omitempty"`
 	ConversationID        string         `json:"conversation_id,omitempty"`
 	RootConversationID    string         `json:"root_conversation_id,omitempty"`
 	ParentConversationID  string         `json:"parent_conversation_id,omitempty"`
@@ -380,6 +381,13 @@ type SessionInfo struct {
 	Email                 string         `json:"email,omitempty"`
 	Forkable              bool           `json:"forkable,omitempty"`
 	ForkUnavailableReason string         `json:"fork_unavailable_reason,omitempty"`
+}
+
+// SessionOutput is a content-free PTY byte cursor scoped to one execution.
+// Nil means the egg's Status RPC did not establish a fresh cursor.
+type SessionOutput struct {
+	Epoch  string `json:"epoch"`
+	Cursor int64  `json:"cursor"`
 }
 
 // DirEntry is a single entry in a directory listing.

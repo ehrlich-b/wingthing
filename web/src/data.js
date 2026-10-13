@@ -11,6 +11,7 @@ import { notificationForSession, sessionResourceKey, orderSessionReferences } fr
 import { sessionIsSelected, sessionIsViewed, sessionInventoryState } from './session-inventory.js';
 import { chatSnapshot } from './chat-view.js';
 import { trackSessionCompletions, sessionCompletionObservation } from './session-completion.js';
+import { trackSessionOutput } from './session-unread.js';
 import { browserLocalStorage } from './storage-scope.js';
 
 // localStorage CRUD
@@ -220,12 +221,13 @@ export async function fetchWingSessions(wingId) {
     try {
         var result = await sendTunnelRequest(wingId, { type: 'sessions.list' }, { skipPasskey: true });
         return (result.sessions || []).map(function(s) {
-            return { id: s.session_id, name: s.name, title: s.title, wing_id: (S.wingsData.find(function(w) { return w.wing_id === wingId; }) || {}).wing_id || '', agent: s.agent, cwd: s.cwd, status: 'detached', needs_attention: s.needs_attention, audit: s.audit, user_id: s.user_id, email: s.email, lifecycle: s.lifecycle, lifecycle_seen_at: Date.now(), conversation_id: s.conversation_id, root_conversation_id: s.root_conversation_id, parent_conversation_id: s.parent_conversation_id, conversation_role: s.conversation_role, forkable: s.forkable, fork_unavailable_reason: s.fork_unavailable_reason };
+            return { id: s.session_id, name: s.name, title: s.title, wing_id: (S.wingsData.find(function(w) { return w.wing_id === wingId; }) || {}).wing_id || '', agent: s.agent, cwd: s.cwd, status: 'detached', needs_attention: s.needs_attention, audit: s.audit, user_id: s.user_id, email: s.email, output: s.output, lifecycle: s.lifecycle, lifecycle_seen_at: Date.now(), conversation_id: s.conversation_id, root_conversation_id: s.root_conversation_id, parent_conversation_id: s.parent_conversation_id, conversation_role: s.conversation_role, forkable: s.forkable, fork_unavailable_reason: s.fork_unavailable_reason };
         });
     } catch (e) { return null; }
 }
 
 export function mergeWingSessions(wingId, remoteSessions) {
+	trackSessionOutput(browserLocalStorage(), S.currentUser && S.currentUser.id, remoteSessions);
     S.sessionsData = sortSessionsByOrder(reconcileWingSessions(S.sessionsData, wingId, remoteSessions));
     var wing = S.wingsData.find(function(wing) { return wing.wing_id === wingId; });
     var chat = chatSnapshot();

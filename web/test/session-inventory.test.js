@@ -41,7 +41,7 @@ test('rollups count statuses and unseen completions separately without double-co
     const sessions = ['blocked', 'working', 'idle', 'done', 'exited', 'unknown'].map((status, index) => ({ ...session, id: String(index), needs_attention: true, lifecycle: { status, state_source: 'claude_hook' } }));
     const unseen = new Set([sessionResourceKey(sessions[0]), sessionResourceKey(sessions[3])]);
     const [group] = groupSessionInventory(sessions, [wing], {}, unseen);
-    assert.deepEqual(group.rollup, { blocked: 1, working: 1, idle: 1, unseen: 2 });
+    assert.deepEqual(group.rollup, { blocked: 1, working: 1, idle: 1, unseen: 2, unread: 0 });
     assert.deepEqual(group.sessions.map(session => session.lifecycle.status), ['blocked', 'done', 'working', 'idle', 'exited', 'unknown']);
 });
 
@@ -67,7 +67,7 @@ test('blocked keeps the attention tone offline and group headers escape remote p
     assert.match(markup, /1 blocked/);
     assert.doesNotMatch(markup, /0 working|0 idle/, 'zero counts are omitted');
     assert.match(markup, /1 unseen completion/);
-    assert.match(markup, />mark seen</);
+    assert.match(markup, />mark read</);
     assert.match(markup, /&lt;img&gt;<\/span>/, 'the visible wing label is its name');
     assert.match(markup, /title="&lt;img&gt; · mac&lt;svg&gt;"/, 'the wing ID stays in the tooltip');
 });

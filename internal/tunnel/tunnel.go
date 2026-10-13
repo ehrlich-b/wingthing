@@ -621,7 +621,7 @@ func HandleTunnelRequest(refs References, ctx context.Context, cfg *config.Confi
 			return
 		}
 
-		ws.TunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"ok": "true", "process_exited": true}, write)
 
 	case "pty.resize":
 		if inner.SessionID == "" || inner.Rows <= 0 || inner.Cols <= 0 {

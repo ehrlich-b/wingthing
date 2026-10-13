@@ -447,3 +447,10 @@ test-storyboard-machines-runs: | web/dist
 test-storyboard-runs-offline: | web/dist
 	$(stable-build)
 	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -tags runinspectfixture ./cmd/wt -run '^TestStoryboard(RunsOffline|TerminalTask)PTY$$' -v -count=1 -timeout=3m
+
+# Real built loopback roost plus encrypted fixture wings. Optional Playwright
+# module/executable selectors let hosts reuse their installed browser tooling.
+.PHONY: test-web-reach-share
+test-web-reach-share: web
+	$(stable-build)
+	$(NODE) test/web/reach-share.mjs

@@ -25,6 +25,7 @@ export function reconcileWingSessions(existingSessions, wingId, remoteSessions) 
         session.user_id = remote.user_id;
         session.email = remote.email;
         session.lifecycle = remote.lifecycle;
+        session.output = remote.output;
         session.lifecycle_seen_at = remote.lifecycle_seen_at;
         session.conversation_id = remote.conversation_id;
         session.root_conversation_id = remote.root_conversation_id;

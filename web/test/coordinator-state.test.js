@@ -13,7 +13,7 @@ test('phone and desktop coordinator groups share qualified projects, rollups and
         const groups = groupCoordinatorInventory(rows, mobile, unseen, 1000);
         assert.deepEqual(groups.map(group => group.wingId), ['mac', 'other', 'linux']);
         assert.equal(groups[0].project, '/repo');
-        assert.deepEqual(groups[0].rollup, { blocked: 1, working: 0, idle: 1, unseen: 1 });
+        assert.deepEqual(groups[0].rollup, { blocked: 1, working: 0, idle: 1, unseen: 1, unread: 0 });
         assert.deepEqual(groups[0].sessions.map(session => session.id), ['blocked-child', 'done-child', 'idle-root']);
         assert.equal(groups[0].sessions[0].row.depth, 1);
     }
@@ -24,7 +24,7 @@ test('cached coordinator lifecycle never invents live rollup counts but retains 
     const row = { wing: { wing_id: 'mac' }, error: 'Offline', task: { observedAt: 1000, lifecycle: { status: 'working' }, conversation: { conversation_id: 'root', session_id: 'execution', cwd: '/repo' } } };
     const unseen = new Set([sessionResourceKey({ id: 'execution', wing_id: 'mac' })]);
     const [group] = groupCoordinatorInventory([row], true, unseen, 1000);
-    assert.deepEqual(group.rollup, { blocked: 0, working: 0, idle: 0, unseen: 1 });
+    assert.deepEqual(group.rollup, { blocked: 0, working: 0, idle: 0, unseen: 1, unread: 0 });
     assert.equal(group.sessions[0].agentStatus, 'unknown');
 });
 

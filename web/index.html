@@ -86,6 +86,7 @@
             </div>
 
             <section id="home-section">
+                <div id="reach-share"></div>
                 <details id="phone-help">
                     <summary>Use Wingthing on your phone</summary>
                     <p>In Safari, tap Share, then Add to Home Screen. Open a coordinator below to read status, send a message, or stop its execution.</p>
@@ -104,6 +105,14 @@
                 </div>
                 <div id="wing-status"></div>
                 <section id="conversation-inventory" aria-label="Conversations"></section>
+                <section id="session-inventory-controls" aria-label="Session filters">
+                    <div class="inventory-heading"><h3 class="section-label">sessions</h3><span id="session-inventory-count"></span></div>
+                    <div class="inventory-filters">
+                        <label class="inventory-search"><input id="inventory-query" aria-label="Search sessions" placeholder="Search name, agent, project, machine or ID"></label>
+                        <label><select id="inventory-status" aria-label="Filter session status"><option value="">All statuses</option><option value="attention">Needs attention</option><option value="unread">Unread output</option><option value="available">Available</option><option value="offline">Offline or stale</option></select></label>
+                        <button id="inventory-clear" type="button" class="btn-sm">Clear filters</button>
+                    </div>
+                </section>
                 <div id="sessions-list"></div>
                 <div id="empty-state" style="display:none;">
                     <div class="empty-icon">~</div>

@@ -20,6 +20,9 @@ import { refreshConversationInventory } from './conversation-view.js';
 import { refreshParentDot } from './parent-dot.js';
 import { unseenSessionCompletions, acknowledgeSessionCompletions } from './session-completion.js';
 import { browserLocalStorage } from './storage-scope.js';
+import { unreadSessionOutput, acknowledgeSessionOutput } from './session-unread.js';
+import { unreadOutputBadge } from './session-inventory.js';
+import { stopSessionVerified } from './session-stop.js';
 
 var sessionStopPending = new Set();
 var sessionStopConfirm = new Map();
@@ -1672,33 +1675,16 @@ function wireActiveSessionRows() {
         });
     });
     DOM.wingDetailContent.querySelectorAll('.wd-kill-btn').forEach(function(btn) {
+        var row = btn.closest('[data-sid]');
+        var session = findSessionResource(S.sessionsData, row.dataset.sid, row.dataset.wingId);
+        if (!session) return;
+        bindStopCancellation(session, btn);
         btn.addEventListener('click', function(e) {
             e.stopPropagation();
-            if (btn.dataset.confirming) {
-                var sid = btn.dataset.sid;
-                var wingId = S.currentWingId;
-                btn.disabled = true;
-                btn.textContent = '...';
-                sendTunnelRequest(wingId, { type: 'pty.kill', session_id: sid })
-                    .then(function() {
-                        deleteSession(sid, true, wingId);
-                        updateWingDetailSessions(wingId);
-                        loadWingPastSessions(wingId, 0);
-                    }).catch(function(error) {
-                        btn.disabled = false;
-                        btn.textContent = 'retry stop';
-                        btn.title = (error && error.message) || 'Stop failed';
-                    });
-            } else {
-                btn.dataset.confirming = '1';
-                btn.textContent = 'sure?';
-                btn.classList.add('confirming');
-                setTimeout(function() {
-                    delete btn.dataset.confirming;
-                    btn.textContent = 'stop';
-                    btn.classList.remove('confirming');
-                }, 3000);
-            }
+            stopInventorySession(session, btn, function() {
+                updateWingDetailSessions(session.wing_id);
+                loadWingPastSessions(session.wing_id, 0);
+            });
         });
     });
     DOM.wingDetailContent.querySelectorAll('.wd-session-row .wd-replay-btn').forEach(function(btn) {
@@ -2337,6 +2323,7 @@ export function showEggDetail(sessionId, wingId) {
     });
 
     var delBtn = document.getElementById('detail-egg-delete');
+    if (delBtn) bindStopCancellation(s, delBtn);
     if (delBtn) delBtn.addEventListener('click', function() {
         stopInventorySession(s, delBtn, hideDetailModal);
     });
@@ -2394,6 +2381,7 @@ export function showSessionInfo() {
 }
 
 export function renderDashboard() {
+    refreshReachShare();
     refreshConversationInventory();
     var visibleWings = S.wingsData.filter(function(w) {
         return wingDisplayName(w);
@@ -2511,10 +2499,40 @@ function visibleInventorySessions() {
     });
 }
 
+var inventoryFilters = { query: '', status: '' };
+var inventoryFiltersReady = false;
+function initInventoryFilters() {
+    if (inventoryFiltersReady) return;
+    inventoryFiltersReady = true;
+    var query = document.getElementById('inventory-query');
+    var status = document.getElementById('inventory-status');
+    query.addEventListener('input', function() { inventoryFilters.query = query.value; renderSessionInventory(); });
+    status.addEventListener('change', function() { inventoryFilters.status = status.value; renderSessionInventory(); });
+    document.getElementById('inventory-clear').onclick = function() {
+        inventoryFilters.query = query.value = '';
+        inventoryFilters.status = status.value = '';
+        renderSessionInventory();
+        query.focus();
+    };
+}
+
+function renderProjectGroups(sessions, renderCard) {
+    var unseen = unseenSessionCompletions(browserLocalStorage(), S.currentUser.id);
+    var unread = unreadSessionOutput(browserLocalStorage(), S.currentUser.id);
+    return groupSessionInventory(sessions, S.wingsData, S.sessionNotifications, unseen, undefined, unread).map(function(group) {
+        return '<section class="inventory-project-group">' + sessionGroupHeader(group) + '<div class="egg-grid">' + group.sessions.map(renderCard).join('') + '</div></section>';
+    }).join('');
+}
+
 export function renderSessionInventory() {
     // Preserve the active editor while background status probes finish.
     if (DOM.sessionsList.querySelector('.renaming, .forking')) return;
-    var visibleSessions = visibleInventorySessions();
+    var focus = captureSessionFocus(DOM.sessionsList, document.activeElement);
+    var allVisibleSessions = visibleInventorySessions();
+    initInventoryFilters();
+    inventoryFilters.unread = unreadSessionOutput(browserLocalStorage(), S.currentUser.id);
+    var visibleSessions = filterSessionInventory(allVisibleSessions, S.wingsData, S.sessionNotifications, inventoryFilters);
+    document.getElementById('session-inventory-count').textContent = visibleSessions.length + ' of ' + allVisibleSessions.length;
     var hasWings = S.wingsData.some(function(wing) { return wingDisplayName(wing); });
     DOM.emptyState.style.display = visibleSessions.length ? 'none' : '';
     var noWings = document.getElementById('empty-no-wings');
@@ -2527,7 +2545,7 @@ export function renderSessionInventory() {
         signedIn.textContent = account ? 'signed in as ' + account : '';
         signedIn.style.display = account ? '' : 'none';
     }
-    if (!visibleSessions.length) { DOM.sessionsList.innerHTML = ''; return; }
+    if (!visibleSessions.length) { DOM.sessionsList.innerHTML = allVisibleSessions.length ? '<p class="inventory-no-results">No sessions match these filters.</p>' : ''; return; }
 
     function renderEggCard(s) {
         var name = sessionDisplayName(s);
@@ -2537,17 +2555,21 @@ export function renderSessionInventory() {
         try { thumbUrl = readSessionContent(localStorage, TERM_THUMB_PREFIX, s.wing_id, s.id) || ''; } catch (e) {}
         thumbUrl = safeTerminalThumbnail(thumbUrl);
         var wingName = wing ? wingDisplayName(wing) : '';
+        var state = sessionInventoryState(s, wing, notificationForSession(S.sessionNotifications, s));
+        var unseen = unseenSessionCompletions(browserLocalStorage(), S.currentUser.id).has(sessionResourceKey(s));
         var error = sessionActionErrors.get(sessionResourceKey(s));
-        return '<div class="egg-box" data-sid="' + escapeHtml(s.id) + '" data-wing-id="' + escapeHtml(s.wing_id || '') + '" data-kind="' + escapeHtml(s.kind || 'terminal') + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
+        return '<div class="egg-box inventory-session" tabindex="0" role="group" aria-label="' + escapeHtml(name + ' on ' + wingName) + '" data-sid="' + escapeHtml(s.id) + '" data-wing-id="' + escapeHtml(s.wing_id || '') + '" data-output-cursor="' + escapeHtml(s.output && s.output.cursor != null ? String(s.output.cursor) : '') + '" data-kind="' + escapeHtml(s.kind || 'terminal') + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
             '<div class="egg-preview">' + (thumbUrl ? '<img src="' + thumbUrl + '" alt="">' : '') + '</div>' +
             '<div class="egg-footer">' +
                 '<span class="session-dot ' + dotClass + '"></span>' +
                 '<span class="egg-label">' + escapeHtml(name) + ' · ' + agentWithIcon(s.agent || '?') +
                     (dotClass === 'attention' ? ' · !' : '') + '</span>' +
                 '<button class="box-menu-btn" title="details">⋯</button>' +
-                (sessionInventoryActions(s, wing, S.currentUser).stop ? '<button class="btn-sm btn-danger egg-delete" title="Stop session">x</button>' : '') +
+                (sessionInventoryActions(s, wing, S.currentUser).stop ? '<button class="btn-sm btn-danger egg-delete" data-session-action="stop" title="Stop session">' + ((sessionStopConfirm.get(sessionResourceKey(s)) || 0) > Date.now() ? 'confirm stop' : 'x') + '</button>' : '') +
             '</div>' +
             (wingName ? '<div class="egg-wing">' + escapeHtml(wingName) + '</div>' : '') +
+            '<div class="inventory-session-path" title="' + escapeHtml(s.cwd || '') + '">' + escapeHtml(shortenPath(s.cwd || 'no project')) + '</div>' +
+            '<div class="inventory-session-state"><span class="inventory-status status-' + state.tone + '">' + escapeHtml(state.agentLabel) + '</span><span>' + escapeHtml(state.connectionLabel + ' · ' + state.attachment) + '</span>' + unseenCompletionBadge(unseen) + unreadOutputBadge(inventoryFilters.unread.has(sessionResourceKey(s))) + '</div>' +
             (error ? '<div class="inventory-action-status" role="status">' + escapeHtml(error) + '</div>' : '') +
         '</div>';
     }
@@ -2575,16 +2597,31 @@ export function renderSessionInventory() {
             var label = (S.currentUser.id && uid === S.currentUser.id) ? 'my eggs' : g.email;
             eggHtml += '<div class="egg-group">' +
                 '<h4 class="egg-group-label">' + escapeHtml(label) + ' (' + g.sessions.length + ')</h4>' +
-                '<div class="egg-grid">' + g.sessions.map(renderEggCard).join('') + '</div>' +
+                renderProjectGroups(g.sessions, renderEggCard) +
                 '</div>';
         });
     } else {
-        eggHtml = '<h3 class="section-label">eggs</h3><div class="egg-grid">' + visibleSessions.map(renderEggCard).join('') + '</div>';
+        eggHtml = renderProjectGroups(visibleSessions, renderEggCard);
     }
     DOM.sessionsList.innerHTML = eggHtml;
+    DOM.sessionsList.querySelectorAll('.inventory-acknowledge').forEach(function(button) {
+        button.onclick = function() {
+            var group = groupSessionInventory(visibleSessions, S.wingsData).find(function(item) { return item.key === button.dataset.focusKey.slice(4); });
+            if (group) {
+                acknowledgeSessionCompletions(browserLocalStorage(), S.currentUser.id, group.sessions);
+                acknowledgeSessionOutput(browserLocalStorage(), S.currentUser.id, group.sessions);
+            }
+            renderSessionInventory();
+        };
+    });
 
     DOM.sessionsList.querySelectorAll('.egg-box').forEach(function(card) {
         var session = findSessionResource(S.sessionsData, card.dataset.sid, card.dataset.wingId);
+        card.addEventListener('keydown', function(event) {
+            if (event.target !== card) return;
+            if (navigateSessionRows(event, Array.from(DOM.sessionsList.querySelectorAll('.egg-box')), card)) return;
+            if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); card.click(); }
+        });
         card.addEventListener('click', function(e) {
             if (e.target.closest('.box-menu-btn, .egg-delete')) return;
             if (!session || !sessionInventoryActions(session, sessionWing(session), S.currentUser).attach) {
@@ -2599,12 +2636,27 @@ export function renderSessionInventory() {
             showEggDetail(card.dataset.sid, card.dataset.wingId);
         });
         var stop = card.querySelector('.egg-delete');
+        if (stop && session) bindStopCancellation(session, stop);
         if (stop && session) stop.addEventListener('click', function(e) {
             e.stopPropagation();
             stopInventorySession(session, stop);
         });
     });
     setupEggDrag();
+    restoreSessionFocus(DOM.sessionsList, focus);
+}
+
+function bindStopCancellation(session, button) {
+    button.onkeydown = function(event) {
+        var key = sessionResourceKey(session);
+        if ((event.key !== 'Enter' && event.key !== 'Escape') || !sessionStopConfirm.has(key)) return;
+        event.preventDefault(); event.stopPropagation();
+        sessionStopConfirm.delete(key); sessionActionErrors.delete(key);
+        button.textContent = button.classList.contains('egg-delete') ? 'x' : 'stop session';
+        button.classList.remove('btn-armed');
+        var row = button.closest('[data-sid]');
+        if (row) { var prompt = row.querySelector('.inventory-action-status'); if (prompt) prompt.remove(); }
+    };
 }
 
 function stopInventorySession(session, button, onStopped) {
@@ -2613,12 +2665,21 @@ function stopInventorySession(session, button, onStopped) {
     if ((sessionStopConfirm.get(key) || 0) <= Date.now()) {
         sessionStopConfirm.set(key, Date.now() + 4000);
         var restLabel = button.textContent;
-        button.textContent = button.classList.contains('egg-delete') ? 'sure?' : 'stop now?';
+        button.textContent = 'confirm stop';
+        sessionActionErrors.set(key, 'Stop ' + sessionDisplayName(session) + ' on ' + wingNameById(session.wing_id) + ' · ' + session.id + '? Click confirm stop again. Enter or Escape cancels.');
+        var row = button.closest('[data-sid]');
+        if (row) {
+            var prompt = row.querySelector('.inventory-action-status');
+            if (!prompt) { prompt = document.createElement('div'); prompt.className = 'inventory-action-status'; prompt.setAttribute('role', 'status'); row.appendChild(prompt); }
+            prompt.textContent = sessionActionErrors.get(key);
+        }
         button.classList.add('btn-armed');
         setTimeout(function() {
             if ((sessionStopConfirm.get(key) || 0) > Date.now() || sessionStopPending.has(key)) return;
             button.textContent = restLabel;
             button.classList.remove('btn-armed');
+            sessionActionErrors.delete(key);
+            if (row) { var prompt = row.querySelector('.inventory-action-status'); if (prompt) prompt.remove(); }
         }, 4100);
         return;
     }
@@ -2627,9 +2688,9 @@ function stopInventorySession(session, button, onStopped) {
     sessionActionErrors.delete(key);
     button.disabled = true;
     button.textContent = 'stopping…';
-    // Remove the row only after the wing acknowledges the stop. A failed request
-    // must leave the session inspectable instead of optimistically losing it.
-    sendTunnelRequest(session.wing_id, { type: 'pty.kill', session_id: session.id }).then(function() {
+    // Require process exit and a fresh absence from the exact wing inventory.
+    // Verification never repeats the mutation.
+    stopSessionVerified(session, sendTunnelRequest).then(function() {
         sessionStopPending.delete(key);
         var selected = sessionIsSelected(session, S.ptySessionId, S.ptyWingId);
         deleteSession(session.id, true, session.wing_id);
@@ -2646,3 +2707,4 @@ function stopInventorySession(session, button, onStopped) {
 }
 
 import { saveWingCache } from './data.js';
+import { refreshReachShare } from './reach-share.js';
