@@ -55,6 +55,9 @@ type Config struct {
 	// refused with ProtectedWriteTargetError on any overlap, and backends that
 	// cannot verify their final policy refuse a nonempty set. Empty = no contract.
 	ProtectedWriteTargets []string
+	// ReadOnlyFiles are host-generated runtime artifacts exposed by an exact
+	// read-only bind inside a protected directory mask, never a directory grant.
+	ReadOnlyFiles []string
 
 	// RoostPolicyPaths lists configured policy files whose absence must be checked.
 	RoostPolicyPaths []string

@@ -257,7 +257,9 @@ endif
 	@set -e; for distro in $(LINUX_DISTROS); do \
 		case "$$distro" in debian) dockerfile= testimage=wt-test-linux ;; ubuntu) dockerfile=.ubuntu2404 testimage=wt-test-ubuntu ;; *) echo "Unknown distro: $$distro"; exit 1 ;; esac; \
 		docker build -t "$$testimage" -f "test/linux/Dockerfile$$dockerfile" test/linux/; \
-		docker run --rm --privileged "$$testimage" sh -lc \
+		docker run --rm --privileged \
+   --tmpfs /provider-guard-fixtures:rw,exec,size=64m --tmpfs /tmp:rw,exec \
+   -e WT_PROVIDER_GUARD_FIXTURE_ROOT=/provider-guard-fixtures "$$testimage" sh -lc \
 			'/root/run-tests -test.v -test.timeout 120s && /root/sandbox-tests -test.v -test.timeout 120s && /root/wt-tests -test.v -test.timeout 120s && sh /root/roost-pin-tests.sh /root/eggclient-tests'; \
 	done
 
@@ -462,3 +464,22 @@ test-paid-gate: | web/dist
 
 test-paid-ui:
 	$(NODE) web/test/paid-ui.mjs
+
+# Real Linux kernel required; missing Landlock/userns and every skip fail this gate.
+.PHONY: test-linux-provider-guard accept-linux-provider-guard
+test-linux-provider-guard: | web/dist
+	$(GO) test -p 2 ./internal/sandbox ./internal/localmcp -run 'LinuxProtected|LinuxProviderWrite' -count=1
+
+accept-linux-provider-guard:
+	@test "$$(uname -s)" = Linux || { echo 'accept-linux-provider-guard requires Linux'; exit 1; }
+	python3 -B scripts/linux-provider-guard-gate.py --go '$(shell command -v go)'
+
+.PHONY: test-linux-provider-guard-portability
+test-linux-provider-guard-portability: | web/dist
+	@mkdir -p .scratch/linux-provider-guard-cross
+	@set -eu; for platform in darwin/amd64 darwin/arm64 linux/arm64; do \
+		os=$${platform%/*}; arch=$${platform#*/}; \
+		for package in sandbox egg localmcp; do \
+			CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) test -p 2 -c -o .scratch/linux-provider-guard-cross/$$os-$$arch-$$package ./internal/$$package; \
+		done; \
+	done

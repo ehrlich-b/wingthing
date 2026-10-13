@@ -538,3 +538,75 @@ Required native checks that cannot execute are REQUIRED-UNRUN with the exact
 command and reason. Final integration additionally runs one full
 `go test -p 2 -count=1 -timeout=25m ./...` and compares named failures with its
 recorded dependency baseline, targeting zero new failures.
+
+## Linux provider write protection
+
+`make test-linux-provider-guard` checks declaration conflicts, broker write regions
+and refusal on missing Landlock or ABI 1/2. `make accept-linux-provider-guard`
+requires a real Linux kernel with namespaces/mounts and enabled Landlock ABI 3 or
+newer. Every skip, missing fixture or failed operation fails that acceptance
+command. Run it directly on the Linux host; a CI worker that blocks user namespaces
+cannot establish this boundary. Its JSON log and receipt are under `.scratch`.
+
+The native fixtures observe write, truncate, creation, unlink, link, symlink write,
+metadata change and ancestor rename denial while workspace writes, atomic updates
+and provider configuration writes succeed. Both read-only HOME and overlay HOME
+are covered, including the overlay's saved HOME alias. A separate Landlock fixture
+checks denial in a new provider thread and forked child. The sandbox uses only ABI
+3 write rights on newer kernels; missing required rights never cause a downgrade.
+Recursive read-only binds and directory pins seal protected state/controller
+objects before provider execution; Landlock adds a write allowlist. Existing
+namespace, seccomp, network and macOS protection gates remain required.
+
+Protected sessions refuse writable-rule overlaps, nonidentity mounts, missing or
+nonregular targets, and multiply linked non-directory inodes anywhere in a protected tree, external or
+unresolved symlink referents, and existing external bind aliases. They retain the existing
+Linux HOME overlay for adjacent provider files. These tests use synthetic files;
+a real provider admission/write drill is a separate acceptance step. Native
+macOS protection still requires `make e2e-mac` on macOS.
+
+The supported filesystem contract for protected Linux providers is bounded:
+protected state/controller trees, every writable mount tree, temporary write
+grants, `/dev/shm` and the HOME backing tree must use plain local ext4, xfs, btrfs, zfs
+datasets or tmpfs. Every containing mount and nested submount is checked.
+Preexisting OverlayFS, bind aliases, FUSE, network filesystems and all unknown
+types are refused with the path, filesystem type and migration guidance.
+This also applies to read-only aliases and nested unsupported mounts. Move the
+affected tree to a supported local filesystem and remove its aliases before
+launch. Btrfs filesystem UUIDs normalize per-subvolume device identities;
+overlapping mounted subvolume roots are refused, while disjoint roots are allowed.
+Unavailable backing identities fail closed. No general layered-filesystem
+support is claimed.
+
+Admission checks repeat inside the private mount namespace before Wingthing
+constructs any mounts. Only Wingthing's subsequent verified HOME overlay is
+allowed; its backing tree and temporary upper/work location pass these checks
+first. Mandatory native fixtures construct both protected upper/lower trees
+behind writable merged views and protected merged state with writable backing,
+plus an unrelated writable bind alias and the non-allowlisted kernel type ramfs.
+Each fixture tests admission and a mount added after admission, observes a
+path/type refusal before provider execution, and fails acceptance on any skip.
+
+The host `/dev` directory receives no recursive write grant. Device I/O uses
+only exact-file grants to the standard null, zero, random, urandom and tty
+character devices, checked for their expected device numbers at both admission
+and wrapper recheck. Shared-memory storage is a separate validated `/dev/shm`
+tree. Mandatory fixtures reject OverlayFS and ramfs beneath that implicit grant.
+
+Protected Linux providers also use the jail's existing init/drop stages to replace
+host procfs and hide the wrapper's saved HOME and overlay backing directories in
+the provider's mount namespace. The trusted parent retains its separate mounts
+for persistence. One host-generated Claude lifecycle settings file is exposed as
+an exact read-only bind within the masked state tree; sibling state remains hidden.
+The scoped native fixture checks that exception, hidden synthetic secrets, and
+UID/PID namespace identity. Missing/nonregular targets, preexisting hardlinks,
+and directory/controller bind aliases have separate refusal fixtures.
+
+`make test-linux-provider-guard-portability` cross-compiles the touched package
+tests for macOS and Linux arm64. It is build evidence, not native macOS acceptance.
+
+The provider cwd is re-entered through the final namespace after masks are
+installed; the native fixtures check relative paths and `/proc/self/cwd` as well
+as absolute paths. Docker batteries stage these fixtures on private tmpfs mounts, including
+temporary grants, so their backing trees satisfy the contract and the fixtures
+can construct overlays without using Docker's preexisting OverlayFS as an upper.

@@ -59,9 +59,8 @@ routes. Named MCP clients retain their local attachment scope. Configured SSH
 remotes use the `wt remote` registry; the fleet MCP uses verified wings from
 `wt mcp connect`. These existing configuration surfaces remain separate.
 
-The protected parent currently requires macOS; Linux worker wings are supported.
-Pin records have no platform dependency, but hosted Linux coordinator execution
-still needs the existing protected-parent boundary to support Linux.
+The protected parent requires macOS Seatbelt or the Linux protected-provider
+boundary described below. Pin records have no platform dependency.
 
 `make test-coordinator-role` covers both role and ordinary sessions, pin/unpin,
 resume/fork, fleet MCP, CLI/TUI order, and unreachable remotes.
@@ -73,11 +72,25 @@ account requirement.
 See [Claude's hook reference](https://code.claude.com/docs/en/hooks#sessionstart)
 for the `SessionStart` matcher and `additionalContext` contract.
 
-The protected parent mailbox currently requires macOS. An SSH worker wing can
-run on Linux with its supported sandbox. Install a compatible Wingthing build
+
+The protected parent mailbox requires macOS Seatbelt or a Linux host with
+namespace/mount support and enabled Landlock ABI 3 or newer. Linux protected
+sessions seal controller state, pin its ancestors, and retain a write allowlist;
+unsupported hosts refuse admission. Run `make accept-linux-provider-guard` on
+the Linux host before promotion. A restricted outer sandbox's existing launch
+gates still apply. An SSH worker wing uses its supported sandbox. Install a compatible Wingthing build
 and authenticate the provider CLI on each execution machine beforehand. Each
 machine needs its own existing workspace and personal credentials. Authorize
 the `forge` SSH alias before proceeding.
+
+On Linux, protected state, writable workspaces/configuration, temporary grants
+and HOME backing must use plain local ext4, xfs, btrfs without shared subvolume
+aliases, zfs datasets or tmpfs. Preexisting OverlayFS, bind aliases, FUSE,
+network filesystems and unknown types (including nested mounts) refuse launch
+with the affected path and filesystem type. Move that tree to a supported local
+filesystem and remove aliases before retrying. Wingthing validates these trees
+before constructing its own verified HOME overlay. See the
+[filesystem contract and native acceptance](testing.md#linux-provider-write-protection).
 
 ## Start two independent wings
 

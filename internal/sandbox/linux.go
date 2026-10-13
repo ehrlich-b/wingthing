@@ -85,10 +85,16 @@ func newPlatform(cfg Config) (Sandbox, error) {
 	if _, err := ValidateLaunchPreparation(cfg); err != nil {
 		return nil, err
 	}
-	// Writes outside HOME and through overlay prefixes are not a closed rule
-	// list here, so a protected set cannot be verified against final policy.
-	if err := refuseProtectedWriteTargets(cfg, "linux"); err != nil {
-		return nil, err
+	if len(cfg.ProtectedWriteTargets) > 0 {
+		if err := CheckProviderWriteProtection(); err != nil {
+			return nil, err
+		}
+		if err := validateLinuxProtectedAliases(cfg.ProtectedWriteTargets); err != nil {
+			return nil, err
+		}
+		if err := validateLinuxProviderFilesystems(cfg.ProtectedWriteTargets, providerWritablePaths(cfg), providerHome(cfg)); err != nil {
+			return nil, err
+		}
 	}
 	hasNamespaceCapability := hasEffectiveCAPSYSADMIN()
 	if err := namespaceCapabilityError(hasNamespaceCapability); err != nil {
@@ -312,6 +318,12 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		}
 		for _, p := range s.cfg.RoostPolicyPaths {
 			wrapArgs = append(wrapArgs, "--roost-policy-path", p)
+		}
+		for _, file := range s.cfg.ReadOnlyFiles {
+			wrapArgs = append(wrapArgs, "--readonly-file", file)
+		}
+		for _, target := range s.cfg.ProtectedWriteTargets {
+			wrapArgs = append(wrapArgs, "--protected-write-target", target)
 		}
 		for _, d := range s.cfg.DenyWrite {
 			wrapArgs = append(wrapArgs, "--deny-write", d)
