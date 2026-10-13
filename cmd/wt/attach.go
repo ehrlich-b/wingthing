@@ -56,6 +56,22 @@ func attachCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if sessionID == "coordinator" && remoteName == "" && os.Getenv("WT_MCP_CLIENT") == "" {
+				rows, err := eggclient.DiscoverMachineSessions(version, cmd.Context(), &config.Config{Dir: dir}, remotepkg.Streams(cmd.Context()))
+				if err != nil {
+					return err
+				}
+				selected, found, err := pinnedCoordinator(rows)
+				if err != nil {
+					return err
+				}
+				if found {
+					sessionID, remoteSession = selected.ID, selected.ID
+					if selected.Machine != "local" {
+						remoteName = selected.Machine
+					}
+				}
+			}
 			if remoteName != "" {
 				remote, err := remotepkg.ConfiguredRemote(dir, remoteName)
 				if err != nil {

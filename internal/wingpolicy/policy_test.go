@@ -329,6 +329,22 @@ func TestIsUnderPaths(t *testing.T) {
 	}
 }
 
+func TestIsUnderPathsRootCeilingStillRequiresAbsolutePath(t *testing.T) {
+	for _, path := range []string{"/", "/home/user/project", "/tmp/../home/user/project"} {
+		if !IsUnderPaths(path, []string{"/"}) {
+			t.Fatalf("root excluded %s", path)
+		}
+	}
+	for _, path := range []string{"relative/project", "../project", ""} {
+		if IsUnderPaths(path, []string{"/"}) {
+			t.Fatalf("root accepted relative %q", path)
+		}
+	}
+	if IsUnderPaths("/home/user/work-foreign", []string{"/home/user/work"}) {
+		t.Fatal("bounded prefix escaped")
+	}
+}
+
 func TestDiscoverProjects_GroupsParentsWithMultipleRepos(t *testing.T) {
 	root := t.TempDir()
 	container := filepath.Join(root, "repos")
