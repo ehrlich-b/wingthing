@@ -31,7 +31,7 @@ type Index struct{ db *sql.DB }
 // Open uses a private cache separate from the durable task database. A cache
 // failure cannot invalidate the sessions; callers report incomplete coverage.
 func Open(dir string) (*Index, error) {
-	path := filepath.Join(dir, "session-search-v1")
+	path := filepath.Join(dir, "session-search-v2")
 	if err := os.Mkdir(path, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 		return nil, err
 	}

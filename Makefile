@@ -444,3 +444,8 @@ test-session-takeover-race: | web/dist
 test-session-takeover-web: web
 	$(preview-build)
 	WT_SESSION_TAKEOVER_BROWSER=1 WT_TEST_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 ./cmd/wt -run '^TestBuiltSessionTakeoverDashboard$$' -v -timeout=180s
+.PHONY: test-session-search-regression
+test-session-search-regression: | web/dist
+	$(stable-build)
+	$(preview-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=5 ./cmd/wt -run '^Test(NorthstarSSHLogSnapshotJoinsInProgressAppend|NorthstarPTYRemoteReload)$$' -timeout=3m

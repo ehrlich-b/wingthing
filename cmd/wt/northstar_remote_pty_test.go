@@ -22,6 +22,7 @@ import (
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 	"google.golang.org/grpc"
 )
@@ -72,6 +73,10 @@ parsed:
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 94
+	}
+	if err := unix.Flock(int(log.Fd()), unix.LOCK_EX); err != nil {
+		_ = log.Close()
+		return 95
 	}
 	data, _ := json.Marshal(record)
 	_, err = log.Write(append(data, '\n'))
@@ -238,7 +243,7 @@ func northstarRemoteSession(t *testing.T, f *northstarFixture, state, id, marker
 
 func northstarSSHRecords(t *testing.T, path string) []northstarSSHRecord {
 	t.Helper()
-	data, err := os.ReadFile(path)
+	data, err := northstarReadSSHLog(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,6 +256,61 @@ func northstarSSHRecords(t *testing.T, path string) []northstarSSHRecord {
 		records = append(records, record)
 	}
 	return records
+}
+
+// Read a consistent fixture log snapshot while concurrent SSH helpers append.
+// The strict JSON assertions still examine every complete recorded operation.
+func northstarReadSSHLog(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_SH); err != nil {
+		return nil, err
+	}
+	return io.ReadAll(file)
+}
+
+func TestNorthstarSSHLogSnapshotJoinsInProgressAppend(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ssh.jsonl")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write([]byte(`{"target":"fixture",`)); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		data []byte
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() { data, err := northstarReadSSHLog(path); done <- result{data, err} }()
+	select {
+	case <-done:
+		t.Fatal("snapshot read an in-progress record")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if _, err := file.Write([]byte("\"batch_mode\":true}\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case result := <-done:
+		var record northstarSSHRecord
+		if result.err != nil || json.Unmarshal(result.data, &record) != nil || record.Target != "fixture" || !record.Batch {
+			t.Fatalf("snapshot=%q err=%v", result.data, result.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("snapshot did not join append")
+	}
 }
 
 func TestNorthstarPTYRemoteAttach(t *testing.T) {
