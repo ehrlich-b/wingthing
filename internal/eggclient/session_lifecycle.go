@@ -168,3 +168,14 @@ func WaitSessionLifecycle(ctx context.Context, cfg *config.Config, session Local
 		}
 	}
 }
+
+func tryCatalogLifecycleView(ctx context.Context, cfg *config.Config, session LocalSession, budget *int64) (egg.SessionView, error) {
+	dir := filepath.Join(cfg.Dir, "eggs", session.ID)
+	meta := ReadEggMetaValues(dir)
+	home, err := LifecycleProviderHome(cfg, meta["provider_home"])
+	if err != nil {
+		return egg.SessionView{}, err
+	}
+	_, alive := ReadAliveEggPID(dir)
+	return egg.TryReadSessionLifecycleBounded(ctx, dir, session.Agent, session.CWD, home, meta["provider_session_id"], alive, 0, 1, budget)
+}

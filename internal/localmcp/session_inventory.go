@@ -79,6 +79,11 @@ func (s *Server) ToolSessionInventory(ctx context.Context, arguments json.RawMes
 			return nil, err
 		}
 		names := eggclient.SortedRemoteNames(remotes)
+		if len(names) > 32 {
+			inv.Complete = false
+			inv.Sources = append(inv.Sources, fleet.Source{MachineLabel: "Other configured remotes", Healthy: false, ObservedAt: at, Error: "remote search limit reached (32); search other wings directly"})
+			names = names[:32]
+		}
 		// Fixed worker bound; one request reaches each origin, never a recursive fanout.
 		type result struct {
 			inv fleet.Inventory
@@ -144,6 +149,10 @@ func (s *Server) ToolSessionInventory(ctx context.Context, arguments json.RawMes
 	// Merge repeated configured aliases to the same proven origin, then pin first.
 	merged := fleet.Merge([]fleet.Inventory{inv})
 	inv.Sessions = merged.Sessions
+	if len(inv.Sessions) > 200 {
+		inv.Sessions = inv.Sessions[:200]
+		inv.Complete = false
+	}
 	return inventoryMap(inv), nil
 }
 func inventoryMap(inv fleet.Inventory) map[string]any {

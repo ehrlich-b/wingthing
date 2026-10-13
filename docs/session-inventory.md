@@ -1,10 +1,19 @@
 # Qualified personal session inventory
 
+`wt search 'DNS helper' --json` searches every verified configured personal remote
+by default; use `--local` for only this wing. MCP `session_search` takes required
+`query` and optional `include_remotes` (default true). The home dashboard has the
+same search across authorized connected wings and explicitly delegated remotes,
+with origin IDs, route chips, coverage status and a qualified transcript reader.
+Browser tunnels keep remote delegation explicit; disabled fleet delegation still
+permits local search and marks remote coverage incomplete.
+
 `wt session inventory --remotes --query 'DNS helper' --json` searches live and
 archived sessions through the running personal wing. `session_inventory` exposes
 the same contract through MCP. `query` matches all words across session name,
 repository path, machine label, provider and recorded transcript text. The wing
-checks session ownership and path scope before reading content. The response
+checks session ownership and path scope before reading content. The [incremental search index](session-search.md) refreshes changed sources and
+redacts recognized credentials before indexing or matching metadata. The response
 contains match field names, never transcript snippets or raw provider records.
 
 Inventories use version `wingthing.session-inventory.v1`. The top-level `wing_id`

@@ -1,0 +1,13 @@
+.session-search { margin: 20px 0; }
+.session-search label { display: block; margin-bottom: 8px; }
+.search-input-row { display: flex; gap: 8px; }
+.search-input-row input { flex: 1; min-width: 0; padding: 12px; border: 1px solid var(--border, #444); border-radius: 6px; background: var(--bg, #111); color: inherit; font: inherit; }
+.search-input-row button, .search-session button { padding: 10px 14px; }
+.search-session { padding: 16px; margin: 12px 0; border: 1px solid var(--border, #444); border-radius: 8px; }
+.search-session h3 { margin: 0 0 8px; }
+.search-session p, .search-identity { overflow-wrap: anywhere; }
+.search-identity { font-size: 12px; opacity: .75; }
+.search-route { display: inline-block; border: 1px solid var(--border, #444); padding: 3px 7px; border-radius: 10px; font-size: 12px; }
+.search-source-error { color: var(--warning, #d9ab6d); }
+#session-search-transcript { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; border: 1px solid var(--border, #444); max-height: 60vh; overflow: auto; }
+[hidden] { display: none !important; }

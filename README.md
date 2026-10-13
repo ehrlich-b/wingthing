@@ -25,6 +25,10 @@ Choose the smallest route that fits:
 5. A person who needs a browser runs a self-hosted roost.
 6. An entitled account may optionally use the hosted `wingthing.ai` browser relay.
 
+Find live and past sessions everywhere with `wt search 'DNS helper' --json`, the
+MCP `session_search` tool, or the dashboard search box. Results carry full origin
+wing and session IDs, routes, and explicit coverage; see [session search](docs/session-search.md).
+
 ## 1. Local agent control: stdio MCP
 
 Install Wingthing, start a personal wing, then register its local MCP client with
