@@ -425,3 +425,4 @@ test-tui-start-race: | web/dist
 capture-tui-start: | web/dist
 	$(stable-build)
 	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -count=1 ./cmd/wt -run '^TestOnboardingPTYStoryboard$$' -v -timeout 3m
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -count=1 ./cmd/wt -run '^TestOnboardingCodexPTYSession$$' -v -timeout 1m

@@ -408,7 +408,7 @@ func eggExplainCmd() *cobra.Command {
 }
 
 // eggSpawn starts an agent session in a per-session egg and optionally attaches the terminal.
-func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, resumeID, name, cwd string, detach, jsonOutput, unsandboxed, preserveEmptyAgentArgs bool, agentArgs []string) error {
+func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, resumeID, name, cwd string, detach, jsonOutput, unsandboxed, preserveEmptyAgentArgs bool, agentArgs []string) (returnErr error) {
 	if trace && runtime.GOOS != "linux" {
 		return fmt.Errorf("--trace requires Linux (strace is not available on %s)", runtime.GOOS)
 	}
@@ -492,7 +492,17 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 	}
 	defer cmdutil.CloseWithLog("egg client", ec)
 
-	stream, err := ec.AttachSessionWithOptions(ctx, sessionID, egg.AttachOptions{Claim: true, Owner: "cli"})
+	nativeTerminal := term.IsTerminal(fd) && term.IsTerminal(int(os.Stdout.Fd()))
+	if nativeTerminal {
+		defer func() {
+			if _, err := os.Stdout.Write(egg.NativeTerminalReset()); err != nil {
+				returnErr = errors.Join(returnErr, fmt.Errorf("reset terminal modes: %w", err))
+			}
+		}()
+	}
+	attachCtx, cancelAttach := context.WithCancel(ctx)
+	defer cancelAttach()
+	stream, err := ec.AttachSessionWithOptions(attachCtx, sessionID, egg.AttachOptions{Claim: true, Owner: "cli", NativeTerminal: nativeTerminal})
 	if err != nil {
 		return fmt.Errorf("attach session: %w", err)
 	}
@@ -547,6 +557,12 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 				return
 			}
 		}
+	}()
+	// Stop and join the output reader before resetting presentation. Otherwise
+	// in-flight provider output could re-enable a mode after the reset on detach.
+	defer func() {
+		cancelAttach()
+		<-done
 	}()
 
 	// Read stdin → egg input. Ctrl+B Q detaches the local client while the
