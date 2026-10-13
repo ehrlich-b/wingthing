@@ -415,6 +415,19 @@ func HandleTunnelRequest(refs References, ctx context.Context, cfg *config.Confi
 		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions}, write)
 
 	case "session.control":
+		if inner.Operation == "fleet_attach" || inner.Operation == "fleet_read" || inner.Operation == "fleet_input" || inner.Operation == "fleet_detach" {
+			if refs.BrowserFleetAttachment == nil {
+				ws.TunnelRespond(gcm, req.RequestID, map[string]any{"error": "browser attachment unavailable"}, write)
+				return
+			}
+			result, err := refs.BrowserFleetAttachment(ctx, req, inner.Operation, inner.Arguments)
+			if err != nil {
+				ws.TunnelRespond(gcm, req.RequestID, map[string]any{"error": err.Error()}, write)
+				return
+			}
+			ws.TunnelRespond(gcm, req.RequestID, result, write)
+			return
+		}
 		wingEggMu.Lock()
 		var currentEggCfg *egg.EggConfig
 		if wingEggCfg != nil {

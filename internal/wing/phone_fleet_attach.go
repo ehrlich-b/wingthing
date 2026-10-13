@@ -90,6 +90,14 @@ func (h *phoneSessions) executeFleetAttachment(ctx context.Context, connection, 
 	if a == nil || a.bridge.Identity != id {
 		return nil, errors.New("not attached to this exact origin/session")
 	}
+	if op == "fleet_detach" {
+		if args.Input != "" {
+			return nil, errors.New("detach does not accept input")
+		}
+		route := a.bridge.Route
+		h.detachFleet(connection)
+		return map[string]any{"ok": true, "origin_wing_id": id.OriginWingID, "session_id": id.SessionID, "route": route, "read_only": true}, nil
+	}
 	if err := a.bridge.Check(ctx, op == "fleet_input"); err != nil {
 		h.detachFleet(connection)
 		return nil, err
@@ -106,7 +114,7 @@ func (h *phoneSessions) executeFleetAttachment(ctx context.Context, connection, 
 			h.detachFleet(connection)
 			return nil, errors.New("attachment input outcome unknown; read state before explicit retry")
 		}
-		return map[string]any{"ok": true, "route": a.bridge.Route}, nil
+		return map[string]any{"ok": true, "origin_wing_id": id.OriginWingID, "session_id": id.SessionID, "route": a.bridge.Route}, nil
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()

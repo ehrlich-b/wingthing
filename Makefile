@@ -504,6 +504,16 @@ test-session-search-web: web
 	$(stable-build)
 	WT_SESSION_SEARCH_BROWSER=1 WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -count=1 ./cmd/wt -run '^TestBuiltSessionSearchDashboard$$' -v -timeout=90s
 
+.PHONY: test-session-takeover test-session-takeover-race test-session-takeover-web
+test-session-takeover: | web/dist
+	$(GO) test -p 2 ./internal/wing ./internal/localmcp ./internal/tunnel ./internal/phonepair -run 'BrowserFleet|PhoneFleet|QualifiedSession' -count=1 -timeout=3m
+
+test-session-takeover-race: | web/dist
+	$(GO) test -p 2 -race ./internal/wing ./internal/localmcp ./internal/tunnel ./internal/phonepair -run 'BrowserFleet|PhoneFleet|QualifiedSession' -count=1 -timeout=3m
+
+test-session-takeover-web: web
+	$(preview-build)
+	WT_SESSION_TAKEOVER_BROWSER=1 WT_TEST_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 ./cmd/wt -run '^TestBuiltSessionTakeoverDashboard$$' -v -timeout=180s
 .PHONY: test-session-search-regression
 test-session-search-regression: | web/dist
 	$(stable-build)

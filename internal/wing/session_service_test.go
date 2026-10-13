@@ -44,19 +44,20 @@ import (
 // dispatch, ownership files, and egg-client RPCs are exercised unchanged.
 type sessionEggFixture struct {
 	pb.UnimplementedEggServer
-	mu         sync.Mutex
-	snapshot   []byte
-	input      chan []byte
-	attached   chan *pb.AttachOptions
-	killed     chan struct{}
-	killErr    error
-	stop       sync.Once
-	dir        string
-	agent      string
-	transcript string
-	spool      string
-	prompt     string
-	sequence   int
+	mu           sync.Mutex
+	snapshot     []byte
+	input        chan []byte
+	attached     chan *pb.AttachOptions
+	killed       chan struct{}
+	killErr      error
+	stop         sync.Once
+	dir          string
+	agent        string
+	transcript   string
+	spool        string
+	prompt       string
+	sequence     int
+	omitLeaseAck bool
 }
 
 func (f *sessionEggFixture) Status(context.Context, *pb.StatusRequest) (*pb.StatusResponse, error) {
@@ -121,8 +122,14 @@ func (f *sessionEggFixture) Session(stream grpc.BidiStreamingServer[pb.SessionMs
 	}
 	f.mu.Lock()
 	snapshot := append([]byte(nil), f.snapshot...)
+	omitLeaseAck := f.omitLeaseAck
 	f.mu.Unlock()
-	if err = stream.Send(&pb.SessionMsg{SessionId: first.SessionId, Payload: &pb.SessionMsg_Output{Output: snapshot}}); err != nil {
+	var info *pb.AttachmentInfo
+	if first.AttachOptions.GetTakeover() && !omitLeaseAck {
+		// Protocol acknowledgement only; built kernel PTY fixtures prove the lease.
+		info = &pb.AttachmentInfo{AttachmentId: "fixture-attachment", WriterId: "fixture-attachment", AttachmentToken: "fixture-capability", InputEpoch: 1}
+	}
+	if err = stream.Send(&pb.SessionMsg{SessionId: first.SessionId, AttachmentInfo: info, Payload: &pb.SessionMsg_Output{Output: snapshot}}); err != nil {
 		return err
 	}
 	f.attached <- first.AttachOptions

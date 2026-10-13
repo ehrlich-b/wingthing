@@ -436,7 +436,7 @@ func TestPhoneFleetOperationsRetainEncryptedReplayAndRevocationGates(t *testing.
 	f := fixture(t)
 	f.pairPhone(t)
 	c := f.connect(t)
-	for i, op := range []string{"inventory", "search", "action", "launch", "fleet_attach", "fleet_read", "fleet_input"} {
+	for i, op := range []string{"inventory", "search", "action", "launch", "fleet_attach", "fleet_read", "fleet_input", "fleet_detach"} {
 		sequence := uint64(i + 1)
 		response := f.m.Handle(t.Context(), c.request(sequence, op))
 		if response.Error != "" || f.handler.calls != i+1 {
@@ -450,12 +450,12 @@ func TestPhoneFleetOperationsRetainEncryptedReplayAndRevocationGates(t *testing.
 	if e := f.m.Revoke("Bryan's iPhone"); e != nil {
 		t.Fatal(e)
 	}
-	for _, op := range []string{"inventory", "search", "action", "launch", "fleet_attach", "fleet_read", "fleet_input"} {
-		if response := f.m.Handle(t.Context(), c.request(8, op)); response.Error != "revoked" {
+	for _, op := range []string{"inventory", "search", "action", "launch", "fleet_attach", "fleet_read", "fleet_input", "fleet_detach"} {
+		if response := f.m.Handle(t.Context(), c.request(9, op)); response.Error != "revoked" {
 			t.Fatalf("revoked device used %s: %+v", op, response)
 		}
 	}
-	if f.handler.calls != 7 {
+	if f.handler.calls != 8 {
 		t.Fatal("revocation dispatched fleet content")
 	}
 }
