@@ -123,7 +123,7 @@ body.paper-on #app { display: none; }
 .pp-cmd { margin: 12px 0 0; padding: 12px 16px; background: var(--pp-folio); border-left: 3px solid var(--pp-rule-2); font-size: 14px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--pp-ink); }
 .pp-prompt { color: var(--pp-red); }
 .pp-term { margin: 0 0 12px; padding: 14px 16px; min-height: 280px; max-height: calc(100vh - 300px); overflow: auto; background: var(--pp-desk); color: var(--pp-desk-ink); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 2px; }
-.pp-term-rail .pp-quiet { font-size: 15px; margin-top: 8px; }
+#paper .pp-term-rail .pp-quiet { font-size: 15px; margin-top: 14px; }
 
 /* Buttons */
 .pp-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
@@ -152,7 +152,7 @@ body.paper-on #app { display: none; }
 .pp-mini .pp-st { font-size: 13px; width: 96px; }
 .pp-mini small { color: var(--pp-ink-3); font-size: 14px; margin-left: auto; }
 .pp-pin p + p { margin-top: 4px; }
-.pp-pin .pp-btn { margin-top: 12px; }
+.pp-pin .pp-btn, .pp-col-rail > p + .pp-btn { margin-top: 12px; }
 .pp-wing { color: var(--pp-red); font-variant: all-small-caps; letter-spacing: .08em; }
 
 /* Machines */
@@ -178,11 +178,9 @@ body.paper-on #app { display: none; }
 .pp-why small { font-family: var(--pp-mono); font-size: 12px; color: var(--pp-ink-3); }
 
 /* Pair */
+#paper .pp-pair .pp-lead { margin-top: 26px; }
 .pp-steps { margin: 18px 0 0; padding-left: 22px; }
 .pp-steps li { margin: 0 0 10px; max-width: 60ch; }
-.pp-phone { border: 1px solid var(--pp-ink); box-shadow: 4px 4px 0 var(--pp-rule); padding: 16px; margin-bottom: 14px; }
-.pp-phone > p { margin-bottom: 6px; }
-.pp-symbols { display: flex; justify-content: space-around; border: 1px solid var(--pp-ink); background: var(--pp-field); padding: 10px 0; margin: 10px 0 6px; font-size: 32px; }
 
 /* Empty */
 .pp-empty { max-width: 640px; padding-top: 28px; }
@@ -222,7 +220,7 @@ body.paper-on #app { display: none; }
     .pp-facts { grid-template-columns: 90px minmax(0, 1fr); }
     .pp-lead { font-size: 19px; }
     .pp-term { min-height: 0; max-height: 40vh; font-size: 12px; }
-    .pp-pair .pp-col-rail { order: -1; }
+    .pp-pair .pp-col-rail { margin-top: 24px; }
     .pp-composer { position: fixed; left: 0; right: 0; bottom: calc(60px + env(safe-area-inset-bottom)); margin: 0; padding: 10px 16px; z-index: 5; }
     .pp-main:has(.pp-composer) { padding-bottom: 90px; }
     .pp-composer textarea { font-size: 17px; }

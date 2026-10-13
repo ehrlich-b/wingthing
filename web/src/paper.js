@@ -19,6 +19,7 @@ import { paperRoute as route, machineState, sessionState as stateOf, projectName
 const reads = new Map();
 const terminals = new Map();
 const answers = new Map();
+const numberWords = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
 let root, main, side, lastSignature = '', showEarlier = false;
 
 export function paperRoute(hash = location.hash) { return route(hash); }
@@ -29,7 +30,6 @@ const machineName = w => wingDisplayName(w, S.wingsData) || 'Machine';
 const sessionHref = (s, view = 'session') => '#' + view + '/' + encodeURIComponent(s.wing_id) + '/' + encodeURIComponent(s.id);
 const isCoordinator = s => s.pinned === true && s.role === 'coordinator';
 const project = s => projectName(s.cwd);
-const sessionState = s => stateOf(s, wingOf(s.wing_id));
 const chip = st => '<span class="pp-st pp-st-' + st.key + '">' + esc(st.label) + '</span>';
 const clock = t => { const ms = typeof t === 'number' ? t : Date.parse(t); return Number.isFinite(ms) && ms > 0 ? new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''; };
 const ago = t => { const ms = Date.parse(t); if (!Number.isFinite(ms)) return ''; const m = Math.max(0, Math.round((Date.now() - ms) / 60000)); return m < 60 ? m + 'm' : m < 1440 ? Math.round(m / 60) + 'h' : Math.round(m / 1440) + 'd'; };
@@ -41,6 +41,16 @@ const squares = () => S.wingsData.filter(w => wingDisplayName(w)).map(w => { con
 function sessions() { return S.sessionsData.filter(s => (s.kind || 'terminal') !== 'chat' && wingOf(s.wing_id)); }
 function coordinator() { return sessions().find(isCoordinator); }
 function workSessions() { return sessions().filter(s => !isCoordinator(s)); }
+// A request answered from this page reads as answered until the session asks again.
+function answered(s) {
+    const a = answers.get(s.wing_id + '/' + s.id); if (!a || a.state !== 'sent') return null;
+    const asked = Date.parse(request(s).at);
+    return Number.isFinite(asked) && asked > a.at ? null : a;
+}
+function sessionState(s) {
+    const st = stateOf(s, wingOf(s.wing_id)), a = st.key === 'need' && answered(s);
+    return a ? { key: 'work', label: (a.choice === 'approve' ? 'Approved ' : 'Declined ') + clock(a.at) } : st;
+}
 function needing() { return workSessions().filter(s => sessionState(s).key === 'need'); }
 
 // Read the session's own transcript evidence; cached briefly per session.
@@ -153,7 +163,7 @@ function viewSessions() {
     const awake = S.wingsData.filter(w => machineState(w) === 'connected').map(machineName);
     const banner = asleepWings.map(w => { const n = work.filter(s => s.wing_id === w.wing_id).length; const name = machineName(w);
         return '<section class="pp-away"><div class="pp-need-top"><span class="pp-st pp-st-asleep">' + esc(name + ' is ' + awayLabel(machineState(w))) + '</span><time>' + esc(w.last_seen ? 'since ' + clock(w.last_seen) : '') + '</time></div>' +
-        '<p>' + (n ? 'Its ' + n + (n === 1 ? ' session is' : ' sessions are') + ' shown as last seen. Nothing on ' + esc(name) + ' can be opened or messaged until it reconnects.' : 'Nothing on ' + esc(name) + ' can be opened until it reconnects.') + '</p>' +
+        '<p>' + (n ? (n === 1 ? 'Its session is' : 'Its ' + (numberWords[n] || n) + ' sessions are') + ' shown as last seen. Nothing on ' + esc(name) + ' can be opened or messaged until it reconnects.' : 'Nothing on ' + esc(name) + ' can be opened until it reconnects.') + '</p>' +
         '<div class="pp-actions"><button type="button" class="pp-btn" data-retry>Retry ' + esc(name) + '</button></div></section>'; }).join('');
     const away = work.filter(s => sessionState(s).key === 'asleep');
     const meta = '<b>' + work.length + '</b> on ' + S.wingsData.length + (S.wingsData.length === 1 ? ' machine' : ' machines') + ' · ' + awake.length + ' connected' + (asleepWings.length ? ' · <span class="pp-away-word">' + esc(asleepWings.map(w => machineName(w) + ' ' + awayText(w)).join(', ')) + '</span>' : '');
@@ -186,13 +196,14 @@ function viewMachines() {
 // at that machine starts pairing and allows it there.
 function viewPair() {
     return head('Pair <i>a phone</i>', '<b>wt pair</b> · on the computer') + '<div class="pp-cols pp-pair"><div class="pp-col-main">' +
+        '<p class="pp-lead">Pairing starts on the computer you want to reach. Only someone at that computer can start it, so this page has no code to scan.</p>' +
         kicker('On your computer') + '<pre class="pp-cmd"><span class="pp-prompt">$</span> wt pair</pre>' +
         '<div class="pp-actions"><button type="button" class="pp-btn" data-copy="wt pair">Copy command</button></div>' +
-        '<p class="pp-gap">Run it in a terminal on the machine you want to reach. It shows a code to scan, good for five minutes.</p>' +
+        '<p class="pp-gap">Run it in a terminal on that machine. It shows a code to scan, good for five minutes.</p>' +
         kicker('Then, in that terminal') + '<p>After the scan, the terminal shows four symbols and the phone\'s name. If the phone shows the same four in the same order, press <code>Enter</code> to allow. <code>Ctrl-C</code> cancels.</p>' +
         kicker('What pairing allows') + '<p>The phone can read this machine\'s sessions and message wing. It cannot type into a terminal until you take control from the phone.</p>' +
         '<p class="pp-quiet pp-gap">Pairing lasts until you revoke it. <code>wt devices</code> lists paired phones and <code>wt devices revoke</code> removes one.</p></div>' +
-        '<aside class="pp-col-rail">' + kicker('On the phone') + '<ol class="pp-steps"><li>Open the Wingthing app and scan the code in the terminal.</li><li>Check that its four symbols match the terminal\'s, in the same order.</li><li>Press <code>Enter</code> in the terminal to allow, then confirm on the phone.</li></ol>' +
+        '<aside class="pp-col-rail">' + kicker('In the Wingthing phone app') + '<ol class="pp-steps"><li>Scan the code the terminal shows.</li><li>Check that the app\'s four symbols match the terminal\'s, in the same order.</li><li>Press <code>Enter</code> in the terminal to allow, then confirm in the app.</li></ol>' +
         '<p class="pp-quiet">Nothing is paired until both sides agree. If the symbols differ, cancel on both.</p></aside></div>';
 }
 
@@ -237,7 +248,7 @@ function viewApprove(route) {
     return head('Approve request', esc(sessionDisplayName(s)) + ' · ' + esc(where)) + '<div class="pp-cols"><div class="pp-col-main">' +
         kicker('Request from ' + esc(sessionDisplayName(s)), chip(st)) +
         '<p class="pp-lead">' + (sent && sent.state === 'sent' ? 'You answered this request. The session picks it up from here.' : st.key === 'need' ? 'The session is waiting for your answer. Nothing runs until you approve.' : 'This request is no longer waiting. The session state is shown above.') + '</p>' +
-        kicker('Will run') + (r.command ? '<pre class="pp-cmd"><span class="pp-prompt">$</span> ' + esc(r.command) + '</pre>' : '<p>' + prose(r.reason || 'The session did not say what it will run.') + '</p>') +
+        kicker(sent && sent.state === 'sent' ? (sent.choice === 'approve' ? 'Approved to run' : 'Declined, will not run') : 'Will run') + (r.command ? '<pre class="pp-cmd"><span class="pp-prompt">$</span> ' + esc(r.command) + '</pre>' : '<p>' + prose(r.reason || 'The session did not say what it will run.') + '</p>') +
         '<dl class="pp-facts">' + facts.map(f => '<dt>' + f[0] + '</dt><dd>' + f[1] + '</dd>').join('') + '</dl>' +
         kicker('Then') + '<p class="pp-quiet">The session keeps running and reports the result in its messages and in the wing thread.</p>' +
         '<div class="pp-actions">' + actions + '</div>' + (note ? '<p class="pp-quiet pp-note" role="status">' + esc(note) + '</p>' : '') + '</div>' +
@@ -258,7 +269,7 @@ function answer(button) {
 }
 
 function nav(route) {
-    const need = needing().length, here = route.view === 'wing' ? 'wing' : route.view === 'machines' || route.view === 'pair' ? 'machines' : 'sessions';
+    const need = needing().length, here = route.view === 'wing' || route.view === 'approve' ? 'wing' : route.view === 'machines' || route.view === 'pair' ? 'machines' : 'sessions';
     const item = (key, label, href, count, hot) => '<a href="' + href + '" class="pp-nav-' + key + '"' + (here === key ? ' aria-current="page"' : '') + '><span>' + label + '</span><small' + (hot ? ' class="pp-hot"' : '') + '>' + count + '</small></a>';
     return item('wing', 'wing', '#', need ? need + ' needs you' : '', !!need) + item('sessions', 'Sessions', '#sessions', workSessions().length || '', false) + item('machines', 'Machines', '#machines', S.wingsData.length || '', false);
 }
