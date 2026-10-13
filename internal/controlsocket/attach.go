@@ -21,6 +21,7 @@ import (
 type Attachment struct {
 	NativeTerminal bool   `json:"native_terminal,omitempty"`
 	Session        string `json:"session"`
+	Exact          bool   `json:"exact,omitempty"`
 	ReadOnly       bool   `json:"read_only,omitempty"`
 	Takeover       bool   `json:"takeover,omitempty"`
 	Rows           uint32 `json:"rows,omitempty"`

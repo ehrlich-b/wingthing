@@ -431,3 +431,31 @@ func TestRevocationInterruptsInFlightSessionWithoutWaiting(t *testing.T) {
 		t.Fatal("revocation didn't close live access")
 	}
 }
+
+func TestPhoneFleetOperationsRetainEncryptedReplayAndRevocationGates(t *testing.T) {
+	f := fixture(t)
+	f.pairPhone(t)
+	c := f.connect(t)
+	for i, op := range []string{"inventory", "search", "action", "fleet_attach", "fleet_read", "fleet_input"} {
+		sequence := uint64(i + 1)
+		response := f.m.Handle(t.Context(), c.request(sequence, op))
+		if response.Error != "" || f.handler.calls != i+1 {
+			t.Fatalf("qualified operation not dispatched: %s %+v", op, response)
+		}
+		replay := f.m.Handle(t.Context(), c.request(sequence, op))
+		if replay.Error != "replay" || f.handler.calls != i+1 {
+			t.Fatalf("qualified operation replayed: %s %+v", op, replay)
+		}
+	}
+	if e := f.m.Revoke("Bryan's iPhone"); e != nil {
+		t.Fatal(e)
+	}
+	for _, op := range []string{"inventory", "search", "action", "fleet_attach", "fleet_read", "fleet_input"} {
+		if response := f.m.Handle(t.Context(), c.request(7, op)); response.Error != "revoked" {
+			t.Fatalf("revoked device used %s: %+v", op, response)
+		}
+	}
+	if f.handler.calls != 6 {
+		t.Fatal("revocation dispatched fleet content")
+	}
+}

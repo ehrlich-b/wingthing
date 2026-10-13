@@ -150,3 +150,27 @@ func TestRemoteSessionFreshIdentityUsesExactBatchRoute(t *testing.T) {
 		})
 	}
 }
+
+func TestRemoteInventoryOriginIdentityAndLegacyUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		wing, pin string
+		fail      bool
+	}{{"origin", "origin", false}, {"changed", "origin", true}, {"", "origin", false}} {
+		root := t.TempDir()
+		ssh := filepath.Join(root, "ssh")
+		payload, _ := json.Marshal(RemoteSessionInventory{WingID: tc.wing, MachineLabel: "forge", Version: "fixture", ContractVersion: RemoteSessionContractVersion, Sessions: []LocalSession{{ID: "same-short-id", OriginWingID: "forged-row-origin"}}})
+		if e := os.WriteFile(ssh, []byte("#!/bin/sh\nprintf '%s' "+remotepkg.ShellQuote(string(payload))+"\n"), 0700); e != nil {
+			t.Fatal(e)
+		}
+		rows, e := QueryRemoteSessions("fixture", t.Context(), "fixture", config.Remote{SSHTarget: "fixture-host", WingID: tc.pin}, remotepkg.IO{SSHPath: ssh})
+		if tc.fail {
+			if e == nil {
+				t.Fatal("changed wing pin accepted")
+			}
+			continue
+		}
+		if e != nil || len(rows) != 1 || rows[0].OriginWingID != tc.wing || rows[0].MachineLabel != "forge" {
+			t.Fatalf("origin guessed or row spoof accepted: %+v %v", rows, e)
+		}
+	}
+}

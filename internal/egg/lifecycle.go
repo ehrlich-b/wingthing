@@ -63,10 +63,11 @@ type SessionView struct {
 	Ready             bool   `json:"ready"`
 	ProcessAlive      bool   `json:"process_alive"`
 	// Cursor is the last delivered event, not the journal head when paginated.
-	Cursor     int64          `json:"cursor"`
-	HeadCursor int64          `json:"head_cursor"`
-	HasMore    bool           `json:"has_more"`
-	Events     []SessionEvent `json:"events"`
+	Cursor         int64          `json:"cursor"`
+	HeadCursor     int64          `json:"head_cursor"`
+	HasMore        bool           `json:"has_more"`
+	SourceComplete bool           `json:"source_complete"` // false when native hooks/transcript import has not reached its source head
+	Events         []SessionEvent `json:"events"`
 }
 
 type lifecycleJournal struct {
@@ -496,7 +497,7 @@ func TryReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID s
 }
 
 func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID string, processAlive bool, after int64, limit, lockFlags int) (SessionView, error) {
-	view := SessionView{SessionID: filepath.Base(eggDir), Agent: agent, ProviderSessionID: exactProviderID, State: "unknown", Status: "unknown", StateSource: "unsupported", ProcessAlive: processAlive, Events: []SessionEvent{}, Cursor: after}
+	view := SessionView{SessionID: filepath.Base(eggDir), Agent: agent, ProviderSessionID: exactProviderID, State: "unknown", Status: "unknown", StateSource: "unsupported", ProcessAlive: processAlive, Events: []SessionEvent{}, Cursor: after, SourceComplete: true}
 	if after < 0 || limit < 1 || limit > 200 {
 		return view, errors.New("after_cursor must be non-negative and limit between 1 and 200")
 	}
@@ -570,6 +571,7 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		view.HeadCursor = event.Sequence
 	}
 	if j.transcriptPending || j.hooksPending {
+		view.SourceComplete = false
 		view.HasMore = true
 	}
 	// Native hooks report provider transitions directly. Transcript flush may
