@@ -541,7 +541,7 @@ func (m *Manager) handle(ctx context.Context, r Request) (Response, error) {
 			_ = m.save()
 		}
 		switch cmd.Op {
-		case "sessions", "attach", "read", "input", "stop", "detach", "close":
+		case "sessions", "attach", "read", "input", "stop", "detach", "close", "inventory", "search", "action":
 		default:
 			return Response{}, failure("denied")
 		}

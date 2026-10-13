@@ -581,6 +581,12 @@ func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMe
 		data, err = s.toolLocalWingList(arguments)
 	case "sandbox_explain":
 		data, err = s.toolSandboxExplain(arguments)
+	case "session_inventory":
+		data, err = s.ToolSessionInventory(ctx, arguments)
+	case "session_action":
+		data, err = s.ToolSessionAction(ctx, arguments)
+	case "coordinator_heartbeat":
+		data, err = s.ToolCoordinatorHeartbeat(ctx, arguments)
 	case "terminal_list":
 		data, err = s.ToolTerminalList(ctx, arguments)
 	case "terminal_read":

@@ -41,6 +41,7 @@ type WingConfig struct {
 	IdleTimeout      string         `yaml:"idle_timeout,omitempty"`    // kill sessions idle for this long (e.g. "4h")
 	ConnectionMode   string         `yaml:"connection_mode,omitempty"` // "relay" (default), "p2p", "p2p_only", "direct"
 	HostedRelay      string         `yaml:"hosted_relay,omitempty"`    // "allow" (default) or "deny"
+	PhoneFleet       bool           `yaml:"phone_fleet,omitempty"`     // explicit owner phone delegation to verified personal remotes
 	Conversations    string         `yaml:"conversations,omitempty"`   // opt-in stable host mailbox: "enabled" or "disabled" (default)
 
 	// P2P / Direct mode settings

@@ -28,6 +28,8 @@ const (
 // Only the internal inventory response is versioned. Public session ps --json
 // remains an array, with machine and error fields added to its rows.
 type RemoteSessionInventory struct {
+	WingID          string         `json:"wing_id,omitempty"`
+	MachineLabel    string         `json:"machine_label,omitempty"`
 	Version         string         `json:"version"`
 	ContractVersion string         `json:"contract_version"`
 	Sessions        []LocalSession `json:"sessions"`
@@ -129,6 +131,16 @@ func QueryRemoteSessions(localVersion string, ctx context.Context, name string, 
 		}
 		return nil, mismatch(remoteVersion, contract, "session inventory contract is incompatible")
 	}
+	if remote.WingID != "" && inventory.WingID != "" && remote.WingID != inventory.WingID {
+		return nil, fmt.Errorf("remote %q wing identity changed; verify and pair again", name)
+	}
+	for i := range inventory.Sessions {
+		inventory.Sessions[i].OriginWingID = inventory.WingID
+		inventory.Sessions[i].MachineLabel = inventory.MachineLabel
+		if inventory.MachineLabel == "" {
+			inventory.Sessions[i].MachineLabel = name
+		}
+	}
 	return inventory.Sessions, nil
 }
 
@@ -155,6 +167,8 @@ func DiscoverMachineSessions(localVersion string, ctx context.Context, cfg *conf
 	}
 	rows := make([]MachineSession, 0, len(local))
 	for _, session := range local {
+		session.OriginWingID = cfg.WingID
+		session.MachineLabel = "local"
 		rows = append(rows, MachineSession{LocalSession: session, Machine: "local"})
 	}
 	names := SortedRemoteNames(remotes)

@@ -324,7 +324,7 @@ func HandleTunnelRequest(refs References, ctx context.Context, cfg *config.Confi
 			},
 		}
 		visibleExports := wingCfg.ExportsForUser(req.SenderEmail, req.SenderOrgRole)
-		resp["capabilities"] = append(sessionfiles.BrowserSessionCapabilities(len(visibleExports) > 0), "session.lifecycle.v1", "session.fork.v1")
+		resp["capabilities"] = append(sessionfiles.BrowserSessionCapabilities(len(visibleExports) > 0), "session.lifecycle.v1", "session.fork.v1", "session.inventory.v1", "session.action.v1")
 		if wingCfg.Org == "" && !sharedHost {
 			resp["capabilities"] = append(resp["capabilities"].([]string), "conversation.personal.v1")
 		}
@@ -388,6 +388,14 @@ func HandleTunnelRequest(refs References, ctx context.Context, cfg *config.Confi
 		}
 		log.Printf("[P2P] webrtc.offer accepted from %s, answer SDP %d bytes", cmdutil.ShortLogValue(req.SenderPub), len(answerSDP))
 		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"sdp": answerSDP}, write)
+
+	case "sessions.inventory", "sessions.search":
+		result, err := localmcp.BrowserSessionControl(version, ctx, cfg, wingCfg, req, "session_inventory", inner.Arguments, home, sharedHost, localmcp.BrowserLaunchConfig{Sessions: refs.Sessions, PublicKey: req.SenderPub, AuthToken: inner.AuthToken})
+		if err != nil {
+			ws.TunnelRespond(gcm, req.RequestID, map[string]any{"error": err.Error()}, write)
+			return
+		}
+		ws.TunnelRespond(gcm, req.RequestID, result, write)
 
 	case "sessions.list":
 		sessionsService := refs.Sessions

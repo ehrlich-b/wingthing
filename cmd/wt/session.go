@@ -27,6 +27,10 @@ func sessionCmd() *cobra.Command {
 		Use:   "session",
 		Short: "Inspect and automate persistent terminal sessions",
 	}
+	cmd.AddCommand(sessionInventoryCmd())
+	cmd.AddCommand(sessionMergeCmd())
+	cmd.AddCommand(sessionActionCmd())
+	cmd.AddCommand(sessionHeartbeatCmd())
 	cmd.AddCommand(sessionSyncCmd())
 	cmd.AddCommand(sessionListCmd())
 	cmd.AddCommand(sessionPSCmd())
@@ -68,7 +72,19 @@ func sessionPSCmd() *cobra.Command {
 				}
 				encoder := json.NewEncoder(cmd.OutOrStdout())
 				encoder.SetIndent("", "  ")
-				return encoder.Encode(eggclient.RemoteSessionInventory{Version: version, ContractVersion: eggclient.RemoteSessionContractVersion, Sessions: sessions})
+				wc, err := config.LoadWingConfig(cfg.Dir)
+				if err != nil {
+					return err
+				}
+				wingID := wc.WingID
+				if wingID == "" {
+					wingID = cfg.WingID
+				}
+				for i := range sessions {
+					sessions[i].OriginWingID = wingID
+					sessions[i].MachineLabel = wc.Label
+				}
+				return encoder.Encode(eggclient.RemoteSessionInventory{WingID: wingID, MachineLabel: wc.Label, Version: version, ContractVersion: eggclient.RemoteSessionContractVersion, Sessions: sessions})
 			}
 			remotes, err := config.LoadRemotes(cfg.Dir)
 			if err != nil {
