@@ -145,6 +145,11 @@ func TestQualifiedSessionActionExactTargetAndNoReplay(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	// Optional arguments survive forwarding without becoming JSON null.
+	if _, err := mac.ToolSessionAction(t.Context(), json.RawMessage(`{"origin_wing_id":"forge-wing","session_id":"same-short-id","operation":"session_read"}`)); err != nil {
+		t.Fatal(err)
+	}
+	calls--
 	data, _ := json.Marshal(result)
 	if calls != 1 || !strings.Contains(string(data), `"kind":"via"`) {
 		t.Fatalf("route receipt %s", data)

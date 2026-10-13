@@ -16,12 +16,15 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
+	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/fleet"
+	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	"github.com/ehrlich-b/wingthing/internal/sessionrole"
 	"github.com/ehrlich-b/wingthing/internal/sshcontrol"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
 	"github.com/ehrlich-b/wingthing/internal/testssh"
+	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
 // This fixture runs two built wings, the actual CLI/MCP socket contracts, and
@@ -236,6 +239,48 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 		t.Fatalf("finite egg identity: %+v", started)
 	}
 	t.Cleanup(func() { _ = eggclient.KillOrphanEggContext(t.Context(), &config.Config{Dir: remoteState}, stopID) })
+	// The same phone gateway bridge reaches a real PTY, without exposing egg
+	// tokens or starting anything on a live machine.
+	owner, err := config.EnsureLocalOwner(macState, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wc, err := config.LoadWingConfig(macState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &wingsession.Service{Config: &config.Config{Dir: macState, WingID: macMeta.WingID}, Home: home, Policy: func() wingsession.Policy { return wingsession.Policy{Wing: wc} }}
+	// Fixture forwarding uses PATH only inside this test process.
+	t.Setenv("PATH", path)
+	t.Setenv("WT_FAKE_SSH_ROOT", h.Root)
+	bridge, err := localmcp.OwnerFleetAttach(t.Context(), service, owner.ID, fleet.Identity{OriginWingID: remoteMeta.WingID, SessionID: stopID}, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = bridge.Close() })
+	if bridge.Route.Kind != "via" || bridge.Route.Remote != "remote-fixture" {
+		t.Fatalf("PTY route: %+v", bridge.Route)
+	}
+	streamReady := time.AfterFunc(5*time.Second, func() { _ = bridge.Close() })
+	if _, err := bridge.Recv(); err != nil {
+		t.Fatal(err)
+	}
+	if err := bridge.Send(&pb.SessionMsg{SessionId: stopID, Payload: &pb.SessionMsg_Input{Input: []byte("qualified live PTY through the gateway\r")}}); err != nil {
+		t.Fatal(err)
+	}
+	var liveOutput strings.Builder
+	for !strings.Contains(liveOutput.String(), "qualified live PTY through the gateway") {
+		msg, err := bridge.Recv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if data, ok := msg.Payload.(*pb.SessionMsg_Output); ok {
+			liveOutput.Write(data.Output)
+		}
+	}
+	streamReady.Stop()
+	_ = bridge.Close()
+	must(macState, "attach", "session", "action", "--wing", remoteMeta.WingID, "--session", stopID, "--operation", "terminal_read")
 	must(macState, "stop", "session", "action", "--wing", remoteMeta.WingID, "--session", stopID, "--operation", "terminal_stop")
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -298,6 +343,7 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 		t.Fatal(e)
 	}
 	must(remoteState, "coordinator-dead", "session", "inventory")
+	must(remoteState, "coordinator-evidence", "session", "action", "--wing", remoteMeta.WingID, "--session", "same-short-id", "--operation", "session_read", "--arguments", `{"limit":1}`)
 	if e = os.WriteFile(filepath.Join(macState, "clients.yaml"), []byte("require_client: true\nclients: {}\n"), 0600); e != nil {
 		t.Fatal(e)
 	}

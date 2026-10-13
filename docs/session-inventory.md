@@ -39,8 +39,9 @@ arguments omit `session`; names and prefixes are refused. The result includes th
 selected route and execution identity. Controller and execution wing both check
 the underlying operation grant. Current saved pins, ownership, path, passkey and
 writer gates still apply. A forwarded action cannot recursively route onward.
-This contract does not add remote PTY attachment, provider launch or a typed
-approval protocol; those remain separate runtime capabilities.
+Provider launch and a typed approval protocol remain separate runtime
+capabilities. Qualified live phone attachment uses the same authenticated
+wing-control stream as the CLI, as described below.
 
 Only explicitly configured, verified personal remotes participate. Configure
 through the existing `wt mcp connect add` handshake. No recursive fanout occurs.
@@ -55,6 +56,33 @@ checks. Use `op: "inventory"` or `"search"`, with `input` holding JSON
 `{"origin_wing_id":"...","session_id":"...","operation":"session_read","arguments":{}}`.
 Encrypted browser tunnels use `sessions.inventory` / `sessions.search` with
 `arguments` and `session.control` with `operation: "session_action"`.
+Live phone terminal commands are `fleet_attach`, `fleet_read` and `fleet_input`.
+Each `input` envelope includes `origin_wing_id` and the full `session_id`.
+Attach additionally accepts `read_only` or explicit `takeover`; input additionally
+accepts the terminal bytes as `input`. For example:
+
+```json
+{"op":"fleet_attach","input":"{\"origin_wing_id\":\"execution-wing\",\"session_id\":\"full-session-id\",\"read_only\":true}"}
+```
+
+The encrypted response includes the selected `route`, exact identity and mode.
+Read returns bounded `output`, a rendered terminal `screen`, `ended` and
+`truncated`. Attach waits for the actual egg acknowledgement, retains one route
+for its lifetime, and never retries a takeover or input through another route.
+The client explicitly detaches/reconnects after reading state. Generic `detach`
+and connection close release either attachment type. Legacy local `input` cannot
+write through a qualified attachment; qualified input cannot cross origins even
+when two sessions have the same ID. A read-only attachment cannot input.
+
+The gateway rechecks owner binding, current grants, path/passkey policy,
+`phone_fleet`, and the saved remote pin before each read/input. The execution wing
+also rechecks current policy before forwarding terminal frames; reads check the
+execution wing before returning buffered content. Failed checks close the
+attachment. Readiness is bounded to 5 seconds; output retention is 64 KiB and
+individual input is limited to 16 KiB. A returned input `ok` records transport
+submission, not a provider delivery receipt; after loss its outcome is unknown.
+No egg token is sent to the phone, and no remote software is provisioned.
+
 Remote phone delegation additionally requires `phone_fleet: true` in the personal
 gateway's wing.yaml and the authenticated durable local owner binding. Pairing
 alone does not enable remote access. The bridge retains clients.yaml restrictions;

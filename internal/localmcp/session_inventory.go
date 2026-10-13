@@ -157,7 +157,7 @@ type actionArgs struct {
 	OriginWingID string          `json:"origin_wing_id"`
 	SessionID    string          `json:"session_id"`
 	Operation    string          `json:"operation"`
-	Arguments    json.RawMessage `json:"arguments"`
+	Arguments    json.RawMessage `json:"arguments,omitempty"`
 	LocalOnly    bool            `json:"local_only"`
 }
 
