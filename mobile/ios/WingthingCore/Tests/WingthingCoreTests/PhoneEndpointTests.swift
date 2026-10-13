@@ -14,11 +14,12 @@ private actor EndpointFixture {
     private var reachable: URL?
     private let discovered: URL?
     private let corrupt: Bool
+    private let statusCode: Int
     private(set) var attempts: [String] = []
     var key: String { identity.publicKey }
 
-    init(reachable: URL? = nil, discovered: URL? = nil, corrupt: Bool = false) {
-        self.reachable = reachable; self.discovered = discovered; self.corrupt = corrupt
+    init(reachable: URL? = nil, discovered: URL? = nil, corrupt: Bool = false, statusCode: Int = 200) {
+        self.reachable = reachable; self.discovered = discovered; self.corrupt = corrupt; self.statusCode = statusCode
     }
     func setReachable(_ route: URL?) { reachable = route }
     func clearAttempts() { attempts = [] }
@@ -39,6 +40,7 @@ private actor EndpointFixture {
         #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
         #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
         guard origin == reachable else { throw URLError(.cannotConnectToHost) }
+        if statusCode != 200 { return (Data(), HTTPURLResponse(url: request.url!, statusCode: statusCode, httpVersion: "HTTP/1.1", headerFields: nil)!) }
         let box = try JSONDecoder().decode(JSONValue.self, from: request.httpBody!)
         #expect(box["op"]?.string == "phone.box")
         let response = corrupt ? JSONValue.object(["payload": .string("invalid-ciphertext")]) : try reply(box)
@@ -111,6 +113,25 @@ private actor EndpointFixture {
         do { _ = try await request(fixture, wire: wire); Issue.record("Unauthenticated carrier accepted") }
         catch { #expect(error as? PairingError == .badProof) }
         #expect(await fixture.attempts == [lanRoute.absoluteString])
+    }
+    @Test func unavailableDirectHandshakeCanTryRegisteredRelay() async throws {
+        let fixture = EndpointFixture(reachable: lanRoute, statusCode: 503), wire = await fixture.wire()
+        #expect(try await request(fixture, wire: wire)["ok"] == .bool(true))
+        #expect(await fixture.attempts == [lanRoute.absoluteString, "bonjour", "relay"])
+    }
+    @Test func forbiddenDirectHandshakeNeverDowngrades() async throws {
+        let fixture = EndpointFixture(reachable: lanRoute, statusCode: 403), wire = await fixture.wire()
+        do { _ = try await request(fixture, wire: wire); Issue.record("Forbidden carrier accepted") }
+        catch { #expect(error as? PairingError == .protocolFailure) }
+        #expect(await fixture.attempts == [lanRoute.absoluteString])
+    }
+    @Test func invalidCurvePinHardStopsBeforeAnyCarrierRequest() async throws {
+        let fixture = EndpointFixture(reachable: lanRoute), wire = await fixture.wire()
+        do {
+            _ = try await wire.request(.object(["op": .string("pair.start")]), local: lanRoute, relay: relayRoute, wingID: "fixture-wing", wingKey: Data(repeating: 0, count: 32).base64EncodedString())
+            Issue.record("Low-order curve pin accepted")
+        } catch { #expect(error as? PairingError == .badProof) }
+        #expect(await fixture.attempts.isEmpty)
     }
     @Test func newHandshakeRetriesLANBeforeCachedTailnet() async throws {
         let fixture = EndpointFixture(reachable: tailnetRoute), wire = await configured(fixture)

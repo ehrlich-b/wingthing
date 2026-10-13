@@ -139,9 +139,15 @@ public struct PhoneKeychainStore: PhoneSecretStore {
     }
 }
 
-public struct PhoneSession: Codable, Identifiable, Sendable {
+public struct PhoneSession: Codable, Identifiable, Equatable, Sendable {
     public let id, name, agent, status: String
     public let blocked, unread: Bool
+    public let originWingID, machine, cwd, role: String?
+    public let pinned: Bool?
+    enum CodingKeys: String, CodingKey {
+        case id, name, agent, status, blocked, unread, machine, cwd, role, pinned
+        case originWingID = "origin_wing_id"
+    }
     public var title: String { name.isEmpty ? id : name }
 }
 public actor PhoneConnection {
@@ -179,16 +185,21 @@ public actor PhoneConnection {
         cipher = channel; connectionID = id
     }
     public func sessions() async throws -> [PhoneSession] { try JSONDecoder().decode([PhoneSession].self, from: JSONEncoder().encode(await command("sessions"))) }
-    public func command(_ op: String, session: String = "", input: String = "") async throws -> JSONValue {
+    public func carrierDescription() async -> String? { await wire.carrierDescription() }
+    public func command(_ op: String, session: String = "", input: String = "", originWingID: String? = nil) async throws -> JSONValue {
         let previous = commandTail
-        let task = Task { await previous?.value; try Task.checkCancellation(); return try await self.execute(op, session: session, input: input) }
+        let task = Task { await previous?.value; try Task.checkCancellation(); return try await self.execute(op, session: session, input: input, originWingID: originWingID) }
         commandTail = Task { _ = try? await task.value }
         return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }
-    private func execute(_ op: String, session: String, input: String) async throws -> JSONValue {
-        guard !flight, let cipher, let id = connectionID, ["sessions", "attach", "read", "input", "stop", "detach", "close"].contains(op) else { throw PairingError.denied }
+    private func execute(_ op: String, session: String, input: String, originWingID: String?) async throws -> JSONValue {
+        guard !flight, let cipher, let id = connectionID, ["sessions", "attach", "read", "thread", "input", "stop", "detach", "close"].contains(op) else { throw PairingError.denied }
         flight = true; defer { flight = false }; sequence += 1; let seq = sequence
-        let value: JSONValue = .object(["op": .string(op), "connection_id": .string(id), "sequence": .integer(seq), "session_id": .string(session), "input": .string(input)])
+        // Older wings reject origin.* instead of silently treating a remote ID as local.
+        let remote = originWingID != nil && originWingID != wing.wingID
+        var fields: [String: JSONValue] = ["op": .string(remote ? "origin." + op : op), "connection_id": .string(id), "sequence": .integer(seq), "session_id": .string(session), "input": .string(input)]
+        if let originWingID { fields["origin_wing_id"] = .string(originWingID) }
+        let value = JSONValue.object(fields)
         do {
             let reply = try await send(.object(["op": .string("device.command"), "connection_id": .string(id), "payload": .string(try cipher.seal(JSONEncoder().encode(value)))]))
             guard let payload = reply["payload"]?.string else { throw PairingError.badProof }

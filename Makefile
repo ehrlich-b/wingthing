@@ -410,3 +410,12 @@ test-coordinator-role-native: | web/dist
 
 test-coordinator-role-race: | web/dist
 	$(GO) test -race -p 2 -count=1 ./internal/sessionrole ./internal/egg ./internal/eggclient ./internal/localmcp ./internal/dashboard ./internal/control ./internal/wingpolicy ./cmd/wt -run 'Role|Pin|Pinned|SessionPS|RegistryDefines|ScopedParent|IsUnderPathsRoot' -timeout 180s
+
+.PHONY: test-phone-native build-phone-testpeer
+test-phone-native: | web/dist
+	$(GO) test -p 2 -count=1 ./internal/phonepair
+	$(GO) test -p 2 -count=1 ./internal/wing -run '^TestPhone' -timeout 120s
+
+build-phone-testpeer:
+	@mkdir -p .scratch/bin
+	$(GO) build -p 2 -buildvcs=false -o .scratch/bin/phone-testpeer ./internal/phonepair/testpeer

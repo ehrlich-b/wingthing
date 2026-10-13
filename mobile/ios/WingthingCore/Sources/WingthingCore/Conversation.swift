@@ -62,6 +62,7 @@ public struct ConversationRead: Codable, Sendable {
 
 public struct SessionEvent: Codable, Equatable, Sendable, Identifiable {
     public let sequence: Int64
+    public var timestamp: String? = nil
     public let type: String
     public let source: String?
     public let role: String?

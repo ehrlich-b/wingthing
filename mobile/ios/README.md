@@ -6,6 +6,18 @@ Use [IOS-INSTALL.md](../../IOS-INSTALL.md), [STORYBOARD.html](../../docs/pairing
 
 October 11 QR validation: 133 Swift tests (including real Go SPAKE2/device proof interoperability), mocked installer checks and an unsigned simulator build pass. Invocation-local manifest sandbox flags are needed in this managed environment; no global Xcode or signing setting changed. Actual camera, Local Network permission, Secure Enclave/Keychain on Bryan's phone and cellular acceptance remain required. Counts below describe earlier conversation milestones.
 
+## Native fleet and pinned thread
+
+The paired-device inventory combines independently paired wings by `(origin_wing_id, session_id)`. Proven copies share a row with direct/via route chips. Equal display IDs on different origins remain separate. A remote machine label without an origin stays a possible duplicate and cannot receive actions. Healthy direct routes take precedence; opening a view can fall back to a healthy intermediary. Input and Stop never replay after a transport failure. Stop confirmation captures the exact selected row.
+
+A pinned session with `role: coordinator` opens as the **wing** message thread above machine groups. Messages come from the existing native lifecycle journal through the owned, read-only `thread` operation; terminal output is not presented as conversation text. The terminal button is one tap away. Sending explicitly claims the existing terminal attachment before the phone input command. There is no provider approval action or invented read receipt. File attachments, remote SSH forwarding, transcript search and background notification delivery require further backend support.
+
+`origin.attach/read/thread/input/stop/detach` carry an exact origin in the encrypted device envelope. The distinct operation prefix lets older wings reject a remote action rather than treating its session ID as local. A wing must implement `phonepair.OriginHandler` with its own authorized forwarding adapter before accepting these operations. The native client and loopback fixture implement the contract; this change does not enable production remote forwarding.
+
+Notifications require explicit consent and use generic content for attention observed while the app is open. There is no APNs or background-delivery claim. A simulator-only paid fixture flag, `WT_IOS_PAID_FIXTURE_ENABLED=1`, exposes a labeled dormant cloud-request form on the coordinator. It sends only an ordinary session request; it cannot call a VM/billing API or raise a spending cap. Release/device startup does not expose this fixture.
+
+Run `make test-phone-native build-phone-testpeer` at the repository root, then `make simulator-phone-check` here with an explicit `IOS_QA_DEVICE`, `IOS_DERIVED_DATA`, `IOS_QA_RESULTS` and `PHONE_TEST_PEER`. The dedicated iPhone 17 Pro / iOS 26.3 simulator uses real Go SPAKE2 pairing and device proof over loopback with synthetic session content. The runner restores the simulator's appearance and text size and exports screenshots from XCTest. It never signs, installs on a physical phone, contacts a provider or touches an existing wing.
+
 ## Implemented slice
 
 A newly configured home with no saved selection shows its existing conversation

@@ -14,7 +14,7 @@ public enum PairingError: Error, LocalizedError, Equatable, Sendable {
         case .emojiMismatch: "The check emoji differ. Pairing cancelled on both sides."
         case .revoked: "This phone's access was revoked. Scan a fresh QR to pair again."
         case .badProof: "The private pairing check failed. Scan a fresh QR."
-        case .unreachable(let name): "\(name) isn't reachable from here. On the Mac, run `wt login` once to enable remote access."
+        case .unreachable(let name): "\(name) isn't reachable from here. Use the same Wi-Fi or your existing tailnet for free. If you use a registered relay, check it on the computer with `wt login`."
         case .denied: "This wing refused the request."
         case .protocolFailure: "The wing returned an invalid pairing response."
         }
@@ -162,9 +162,13 @@ public struct PairingCipher: Sendable {
 
 public protocol PhoneWire: Sendable {
     func configure(endpoints: [URL]) async
+    func carrierDescription() async -> String?
     func request(_ value: JSONValue, local: URL, relay: URL?, wingID: String, wingKey: String) async throws -> JSONValue
 }
-public extension PhoneWire { func configure(endpoints: [URL]) async {} }
+public extension PhoneWire {
+    func configure(endpoints: [URL]) async {}
+    func carrierDescription() async -> String? { nil }
+}
 private final class PairingNoRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) { completionHandler(nil) }
 }
@@ -181,6 +185,11 @@ public actor URLSessionPhoneWire: PhoneWire {
     private var endpoints: [URL] = []
     private var selectedDirect: URL?
     public func configure(endpoints: [URL]) async { self.endpoints = endpoints; selectedDirect = nil; remoteSelected = false }
+    public func carrierDescription() -> String? {
+        if remoteSelected { return "Relay · encrypted to pinned wing" }
+        guard let selectedDirect else { return nil }
+        return Self.isTailnet(selectedDirect) ? "Tailnet · Free" : "LAN · Free"
+    }
     public static func isTailnet(_ url: URL) -> Bool {
         guard let host = url.host?.lowercased() else { return false }; if host.hasSuffix(".ts.net") { return true }
         let octets = host.split(separator: ".").compactMap { Int($0) }
@@ -213,7 +222,9 @@ public actor URLSessionPhoneWire: PhoneWire {
         return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }
     private func boxed(_ value: JSONValue, local: URL, relay: URL?, wingID: String, wingKey: String) async throws -> JSONValue {
-        let cipher = try carrierIdentity.cipher(peerPublicKey: wingKey, domain: "wt-phone-carrier-v1")
+        let cipher: TunnelCipher
+        do { cipher = try carrierIdentity.cipher(peerPublicKey: wingKey, domain: "wt-phone-carrier-v1") }
+        catch { throw PairingError.badProof }
         let box: JSONValue = .object(["op": .string("phone.box"), "sender_pub": .string(carrierIdentity.publicKey), "payload": .string(try cipher.seal(JSONEncoder().encode(value)))])
         let response = try await perform(box, local: local, relay: relay, wingID: wingID, wingKey: wingKey, mayChangeCarrier: value["op"]?.string == "pair.start" || value["op"]?.string == "device.hello")
         guard let payload = response["payload"]?.string else { throw PairingError.badProof }
@@ -237,7 +248,9 @@ public actor URLSessionPhoneWire: PhoneWire {
                         let (data, response): (Data, URLResponse)
                         if let directExchange { (data, response) = try await directExchange(request) }
                         else { (data, response) = try await session.data(for: request) }
-                        guard let http = response as? HTTPURLResponse, http.statusCode == 200, http.url == url, data.count <= 256 << 10 else { throw PairingError.protocolFailure }
+                        guard let http = response as? HTTPURLResponse, http.url == url, data.count <= 256 << 10 else { throw PairingError.protocolFailure }
+                        if [404, 503].contains(http.statusCode) { throw URLError(.cannotConnectToHost) }
+                        guard http.statusCode == 200 else { throw PairingError.protocolFailure }
                         let reply = try JSONDecoder().decode(JSONValue.self, from: data); selectedDirect = origin; return reply
                     } catch let error as URLError {
                         guard mayChangeCarrier, [.cannotConnectToHost, .cannotFindHost, .networkConnectionLost, .notConnectedToInternet, .timedOut].contains(error.code) else { throw error }

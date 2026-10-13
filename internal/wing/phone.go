@@ -2,6 +2,7 @@ package wing
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"sync"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
@@ -58,9 +60,23 @@ func (h *phoneSessions) Execute(ctx context.Context, connection, op, id, input s
 		defer h.mu.Unlock()
 		for _, s := range sessions {
 			seen := h.seen[connection][s.ID]
-			out = append(out, map[string]any{"id": s.ID, "name": s.Name, "agent": s.Agent, "status": s.Status, "blocked": attention[s.ID], "unread": s.TotalWritten > seen})
+			out = append(out, map[string]any{"id": s.ID, "name": s.Name, "agent": s.Agent, "status": s.Status, "blocked": attention[s.ID], "unread": s.TotalWritten > seen, "cwd": s.CWD, "role": s.Role, "pinned": s.Pinned})
 		}
 		return out, nil
+	case "thread":
+		var page struct {
+			After int64 `json:"after"`
+		}
+		if input != "" && json.Unmarshal([]byte(input), &page) != nil || page.After < 0 {
+			return nil, errors.New("invalid thread cursor")
+		}
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		session, e := h.service.Resolve(ctx, h.authority(), id, true)
+		if e != nil || session.ID != id {
+			return nil, errors.New("exact owned session required")
+		}
+		return eggclient.LifecycleViewForSession(h.service.Config, session, page.After, 20)
 	case "attach":
 		h.detach(connection)
 		session, e := h.service.Resolve(ctx, h.authority(), id, false)

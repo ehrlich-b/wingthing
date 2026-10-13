@@ -100,3 +100,9 @@ simulator-first-connection-check: simulator-ui-build
 
 simulator-creation-check: simulator-ui-build
 	python3 scripts/simulator_fixture_acceptance.py --device "$(IOS_QA_DEVICE)" --derived-data "$(IOS_DERIVED_DATA)" --results "$(IOS_QA_RESULTS)" --suite creation
+
+# Real SPAKE2/device proof on loopback, with a disposable synthetic fleet.
+PHONE_TEST_PEER ?= ../../.scratch/bin/phone-testpeer
+.PHONY: simulator-phone-check
+simulator-phone-check: simulator-ui-build
+	python3 scripts/simulator_phone_acceptance.py --device "$(IOS_QA_DEVICE)" --derived-data "$(IOS_DERIVED_DATA)" --results "$(IOS_QA_RESULTS)" --peer "$(PHONE_TEST_PEER)"

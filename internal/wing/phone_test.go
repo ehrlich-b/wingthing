@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/egg"
 )
 
 func TestPhoneSessionInventoryAttachmentInputAndStop(t *testing.T) {
@@ -20,6 +22,22 @@ func TestPhoneSessionInventoryAttachmentInputAndStop(t *testing.T) {
 	rows := result.([]map[string]any)
 	if len(rows) != 1 || rows[0]["id"] != id {
 		t.Fatal("phone didn't list main wing session")
+	}
+	result, e = h.Execute(f.ctx, "phone-connection", "thread", id, `{"after":0}`)
+	if e != nil || result.(egg.SessionView).SessionID != id {
+		t.Fatal("phone couldn't read exact owned native lifecycle", e)
+	}
+	for _, input := range []string{`{"after":-1}`, `not-json`} {
+		if _, e = h.Execute(f.ctx, "phone-connection", "thread", id, input); e == nil {
+			t.Fatal("invalid thread cursor accepted")
+		}
+	}
+	if _, e = h.Execute(f.ctx, "phone-connection", "thread", id[:4], ""); e == nil {
+		t.Fatal("thread accepted a display-only prefix")
+	}
+	foreign := &phoneSessions{service: f.sessions, owner: ""}
+	if _, e = foreign.Execute(f.ctx, "foreign-phone", "thread", id, ""); e == nil {
+		t.Fatal("thread accepted an unbound owner identity")
 	}
 	ctx, cancel := context.WithCancel(f.ctx)
 	defer cancel()

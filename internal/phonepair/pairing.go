@@ -107,11 +107,18 @@ type command struct {
 	ConnectionID string `json:"connection_id,omitempty"`
 	Sequence     uint64 `json:"sequence,omitempty"`
 	SessionID    string `json:"session_id,omitempty"`
+	OriginWingID string `json:"origin_wing_id,omitempty"`
 	Input        string `json:"input,omitempty"`
 }
 type Handler interface {
 	Execute(context.Context, string, string, string, string) (any, error)
 	Close(string)
+}
+
+// OriginHandler must authorize and resolve a qualified resource before acting.
+// The distinct operation prefix makes old wings fail closed on remote actions.
+type OriginHandler interface {
+	ExecuteOrigin(context.Context, string, string, string, string, string) (any, error)
 }
 type connection struct {
 	id, challenge, sender, device string
@@ -541,7 +548,17 @@ func (m *Manager) handle(ctx context.Context, r Request) (Response, error) {
 			_ = m.save()
 		}
 		switch cmd.Op {
-		case "sessions", "attach", "read", "input", "stop", "detach", "close":
+		case "sessions", "attach", "read", "thread", "input", "stop", "detach", "close":
+			if cmd.OriginWingID != "" && cmd.OriginWingID != m.wingID {
+				return Response{}, failure("denied")
+			}
+		case "origin.attach", "origin.read", "origin.thread", "origin.input", "origin.stop", "origin.detach":
+			if cmd.OriginWingID == "" {
+				return Response{}, failure("denied")
+			}
+			if _, ok := m.handler.(OriginHandler); !ok {
+				return Response{}, failure("denied")
+			}
 		default:
 			return Response{}, failure("denied")
 		}
@@ -551,7 +568,11 @@ func (m *Manager) handle(ctx context.Context, r Request) (Response, error) {
 		} else if m.handler != nil {
 			c.inFlight = true
 			m.mu.Unlock()
-			result, e = m.handler.Execute(c.ctx, c.id, cmd.Op, cmd.SessionID, cmd.Input)
+			if strings.HasPrefix(cmd.Op, "origin.") {
+				result, e = m.handler.(OriginHandler).ExecuteOrigin(c.ctx, c.id, strings.TrimPrefix(cmd.Op, "origin."), cmd.OriginWingID, cmd.SessionID, cmd.Input)
+			} else {
+				result, e = m.handler.Execute(c.ctx, c.id, cmd.Op, cmd.SessionID, cmd.Input)
+			}
 			m.mu.Lock()
 			c.inFlight = false
 			if m.connections[c.id] != c || m.device(c.device) == nil || c.ctx.Err() != nil {

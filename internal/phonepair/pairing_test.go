@@ -431,3 +431,45 @@ func TestRevocationInterruptsInFlightSessionWithoutWaiting(t *testing.T) {
 		t.Fatal("revocation didn't close live access")
 	}
 }
+
+type originFixtureHandler struct {
+	fixtureHandler
+	callsByOrigin []string
+}
+
+func (h *originFixtureHandler) ExecuteOrigin(_ context.Context, connection, op, origin, session, input string) (any, error) {
+	h.callsByOrigin = append(h.callsByOrigin, op+"|"+origin+"|"+session+"|"+input)
+	return map[string]bool{"ok": true}, nil
+}
+func TestQualifiedPhoneActionsFailClosedWithoutOriginAdapter(t *testing.T) {
+	f := fixture(t)
+	f.pairPhone(t)
+	c := f.connect(t)
+	request := func(sequence uint64, op, origin string) Request {
+		payload, _ := auth.Encrypt(c.cipher, encode(command{ConnectionID: c.id, Sequence: sequence, Op: op, OriginWingID: origin, SessionID: "same"}))
+		return Request{Op: "device.command", ConnectionID: c.id, Payload: payload}
+	}
+	if r := f.m.Handle(context.Background(), request(1, "input", "another-wing")); r.Error != "denied" {
+		t.Fatal("remote origin silently used local input", r)
+	}
+	if r := f.m.Handle(context.Background(), request(2, "origin.input", "another-wing")); r.Error != "denied" {
+		t.Fatal("unimplemented origin adapter accepted", r)
+	}
+	if f.handler.calls != 0 {
+		t.Fatal("unqualified handler received remote action")
+	}
+	h := &originFixtureHandler{}
+	f.m.handler = h
+	if r := f.m.Handle(context.Background(), request(3, "origin.stop", "")); r.Error != "denied" {
+		t.Fatal("origin action accepted without identity", r)
+	}
+	if r := f.m.Handle(context.Background(), request(4, "origin.input", "another-wing")); r.Error != "" {
+		t.Fatal(r)
+	}
+	if len(h.callsByOrigin) != 1 || h.callsByOrigin[0] != "input|another-wing|same|" || h.calls != 0 {
+		t.Fatal("qualified action lost origin", h.callsByOrigin)
+	}
+	if r := f.m.Handle(context.Background(), request(4, "origin.input", "another-wing")); r.Error != "replay" {
+		t.Fatal("qualified input replayed", r)
+	}
+}

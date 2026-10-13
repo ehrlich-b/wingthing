@@ -6,243 +6,306 @@ import UIKit
 import AVFoundation
 #endif
 
-@MainActor public final class PhonePairingModel: ObservableObject {
-    @Published public private(set) var wings: [PairedWing] = []
-    @Published public private(set) var selected: PairedWing?
-    @Published public private(set) var invitation: PairingInvitation?
-    @Published public private(set) var emoji: String?
-    @Published public private(set) var sessions: [PhoneSession] = []
-    @Published public private(set) var busy = false
-    @Published public private(set) var waitingForTerminal = false
-    @Published public private(set) var error: String?
-    @Published public private(set) var hardStop = false
-    @Published public private(set) var scanning = true
-    @Published public private(set) var attached: PhoneSession?
-    @Published public private(set) var output = ""
-    @Published public private(set) var online = false
-    private let vault: any PhoneSecretStore
-    private let file: URL
-    private var enrollment: PhoneEnrollment?
-    private var connection: PhoneConnection?
-    private var epoch = UUID()
-    private var restored = false
-    private var readTask: Task<Void, Never>?
-    private var confirmTask: Task<Void, Never>?
-    public init(vault: any PhoneSecretStore = PhoneKeychainStore(), file: URL? = nil) {
-        self.vault = vault
-        self.file = file ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Wingthing/paired-wings.json")
-    }
-    public func restore() async {
-        guard !restored else { return }; restored = true
-        do {
-            if FileManager.default.fileExists(atPath: file.path) {
-                wings = try JSONDecoder().decode([PairedWing].self, from: Data(contentsOf: file))
-                guard Set(wings.map(\.id)).count == wings.count, wings.allSatisfy({ PairingInvitation.localAllowed($0.local) && ($0.endpoints?.allSatisfy(PairingInvitation.localAllowed) ?? true) && ($0.relay.map(PairingInvitation.relayAllowed) ?? true) }) else { throw PairingError.invalidQR }
-            }
-            if let first = wings.first { scanning = false; await select(first) }
-        } catch { self.error = "Could not restore paired machines. \(error.localizedDescription)" }
-    }
-    public func scan(_ link: String) async {
-        guard !busy, invitation == nil else { return }
-        epoch = UUID(); let request = epoch; error = nil; hardStop = false; busy = true
-        do {
-            let q = try PairingInvitation(link: link); invitation = q
-            let enrollment = try PhoneEnrollment(invitation: q); self.enrollment = enrollment
-            try await enrollment.start()
-            guard epoch == request else { return }
-            emoji = enrollment.emoji; busy = false
-        } catch {
-            guard epoch == request else { return }; fail(error); busy = false
-            if let enrollment { try? await enrollment.cancel() }; self.enrollment = nil
-        }
-    }
-    public func confirm() {
-        guard !busy, let emoji, let enrollment else { return }
-        let request = epoch; busy = true; waitingForTerminal = true
-        confirmTask = Task {
-            do {
-                var result = try await enrollment.confirm(emoji: emoji)
-                while result == nil {
-                    try await Task.sleep(for: .seconds(1)); try Task.checkCancellation()
-                    result = try await enrollment.status()
-                }
-                guard epoch == request, let (wing, secret) = result else { return }
-                // Save secrets first; no public profile is published before its vault write.
-                try vault.save(secret, for: wing)
-                var saved = wings; saved.removeAll { $0.wingID == wing.wingID }; saved.append(wing)
-                do {
-                    try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    try JSONEncoder().encode(saved).write(to: file, options: .atomic)
-                } catch { try? vault.forget(wing); throw error }
-                wings = saved; invitation = nil; self.emoji = nil; self.enrollment = nil; busy = false; waitingForTerminal = false; scanning = false
-                await select(wing)
-            } catch {
-                guard epoch == request else { return }; fail(error); busy = false; waitingForTerminal = false
-                try? await enrollment.cancel(); self.enrollment = nil
-            }
-        }
-    }
-    public func cancel() async {
-        epoch = UUID(); confirmTask?.cancel(); confirmTask = nil
-        if let enrollment { try? await enrollment.cancel() }
-        enrollment = nil; invitation = nil; emoji = nil; busy = false; waitingForTerminal = false; error = nil; hardStop = false
-        scanning = true
-    }
-    public func scanAnother() async {
-        await detach(); await connection?.close(); connection = nil; selected = nil; online = false; sessions = []
-        await cancel()
-    }
-    public func select(_ wing: PairedWing) async {
-        epoch = UUID(); let request = epoch; readTask?.cancel(); await connection?.close(); connection = nil
-        selected = wing; scanning = false; error = nil; output = ""; attached = nil; online = false; busy = true
-        do {
-            guard let secret = try vault.load(for: wing) else { throw PairingError.revoked }
-            let client = PhoneConnection(wing: wing, secret: secret); connection = client
-            try await client.connect(); let inventory = try await client.sessions()
-            guard epoch == request else { await client.close(); return }; sessions = inventory; online = true; busy = false
-            let refreshed = await client.wing
-            if refreshed != wing {
-                var saved = wings; if let index = saved.firstIndex(where: { $0.wingID == wing.wingID }) { saved[index] = refreshed }
-                try JSONEncoder().encode(saved).write(to: file, options: .atomic); wings = saved; selected = refreshed
-            }
-        } catch { guard epoch == request else { return }; fail(error); busy = false }
-    }
-    public func refresh() async {
-        guard !busy, let connection else { return }; busy = true; let request = epoch
-        do { let list = try await connection.sessions(); guard epoch == request else { return }; sessions = list; online = true }
-        catch { guard epoch == request else { return }; fail(error) }; busy = false
-    }
-    public func attach(_ session: PhoneSession) async {
-        guard !busy, let connection else { return }; busy = true; error = nil; let request = epoch
-        do {
-            _ = try await connection.command("attach", session: session.id)
-            guard epoch == request else { return }; attached = session; output = ""; busy = false
-            readTask = Task {
-                do {
-                    while !Task.isCancelled {
-                        if busy { try await Task.sleep(for: .milliseconds(250)); continue }
-                        let result = try await connection.command("read", session: session.id)
-                        guard epoch == request, attached?.id == session.id else { return }
-                        if let screen = result["screen"]?.string { output = screen } else { output += result["output"]?.string ?? "" }; if output.utf8.count > 128 << 10 { output = String(output.suffix(64 << 10)) }
-                        if result["truncated"] == .bool(true) { error = "Some output was skipped while this phone was away." }
-                        if result["ended"] == .bool(true) { error = "This session ended."; return }
-                        try await Task.sleep(for: .milliseconds(500))
-                    }
-                } catch {
-                    guard epoch == request else { return }
-                    if !(error is CancellationError) { fail(error) }
-                }
-            }
-        } catch { guard epoch == request else { return }; fail(error); busy = false }
-    }
-    public func input(_ text: String) async -> Bool {
-        guard !busy, let connection, let attached else { return false }; busy = true; let request = epoch
-        do { _ = try await connection.command("input", session: attached.id, input: text + "\r"); guard epoch == request else { return false }; busy = false; return true }
-        catch { guard epoch == request else { return false }; fail(error); self.error = "Input delivery is unconfirmed. Reconnect and inspect the session before sending again. \(error.localizedDescription)"; busy = false; return false }
-    }
-    public func stop() async {
-        guard !busy, let connection, let attached else { return }; busy = true; let request = epoch
-        do { _ = try await connection.command("stop", session: attached.id); guard epoch == request else { return }; readTask?.cancel(); self.attached = nil; output = "" }
-        catch { guard epoch == request else { return }; fail(error) }; busy = false
-    }
-    public func detach() async {
-        let request = epoch; busy = true
-        // Queue after an outstanding read, then cancel the idle poller.
-        if let attached { _ = try? await connection?.command("detach", session: attached.id) }
-        guard epoch == request else { return }
-        readTask?.cancel(); readTask = nil; attached = nil; output = ""; busy = false
-    }
-    private func fail(_ error: Error) {
-        self.error = error.localizedDescription; online = false
-        if error as? PairingError == .identityMismatch || error as? PairingError == .badProof { hardStop = true }
-    }
-}
-
 public struct PhonePairingView: View {
     @ObservedObject var model: PhonePairingModel
     let legacySetup: () -> Void
     @State private var paste = ""
     @State private var showingPaste = false
     @State private var input = ""
-    @State private var confirmingStop = false
+    @State private var drafts: [String: String] = [:]
+    @State private var draftID: String?
+    @FocusState private var composing: Bool
+    @State private var stopTarget: PhoneFleetSession?
+    @State private var showingReach = false
+    @State private var showingNotifications = false
+    @State private var showingCloud = false
+    @State private var search = ""
     public init(model: PhonePairingModel, legacySetup: @escaping () -> Void) { self.model = model; self.legacySetup = legacySetup }
-    public var body: some View {
-        VStack(spacing: 16) {
-            HStack {
-                if model.attached != nil { Button { Task { await model.detach(); await model.refresh() } } label: { Label("Sessions", systemImage: "chevron.left") } }
-                Text(model.scanning ? "Scan to pair" : model.selected?.name ?? "Machines").font(.title2.bold())
-                Spacer()
-                Menu {
-                    ForEach(model.wings) { wing in Button(wing.name) { Task { await model.select(wing) } } }
-                    Button("Scan another wing") { Task { await model.scanAnother() } }
-                    Button("Paste pairing link") { showingPaste = true }
-                    Button("Existing Home setup", action: legacySetup)
-                } label: { Image(systemName: "ellipsis.circle").font(.title2).frame(width: 44, height: 44) }.accessibilityLabel("Machines and fallback setup")
-            }.padding(.horizontal)
-            if model.hardStop {
-                VStack(spacing: 20) { Image(systemName: "xmark.shield.fill").font(.system(size: 50)); Text("Identity check failed").font(.title.bold()); Text(model.error ?? "Pairing stopped."); Button("Cancel") { Task { await model.cancel() } } }.padding(24).foregroundStyle(.white).background(.red, in: RoundedRectangle(cornerRadius: 18)).padding()
-            } else if let invitation = model.invitation {
-                ScrollView {
-                    VStack(spacing: 20) {
-                        Text("Pair with \(invitation.name)?").font(.largeTitle.bold())
-                        Text("See and control the sessions on this machine.")
-                        Text("Wing fingerprint").font(.caption).foregroundStyle(.secondary)
-                        Text(invitation.fingerprint).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-                        if let emoji = model.emoji {
-                            Text(emoji).font(.system(size: 38)).accessibilityLabel("Check code: \(emoji)")
-                            Text("Compare all four emoji with the terminal on \(invitation.name).")
-                            if model.waitingForTerminal { ProgressView(); Text("Waiting for Enter on \(invitation.name)…") }
-                            else { Button("Emoji match · Pair") { model.confirm() }.buttonStyle(.borderedProminent).disabled(model.busy) }
-                        } else if model.busy { ProgressView("Checking the wing…") }
-                        if let error = model.error { Text(error).foregroundStyle(.red) }
-                        Button("Cancel · emoji differ") { Task { await model.cancel() } }.buttonStyle(.bordered)
-                    }.padding(24).multilineTextAlignment(.center)
-                }
-            } else if model.scanning {
-                if let error = model.error { Text(error).foregroundStyle(.red).padding(.horizontal) }
-                #if os(iOS)
-                PairingCamera { link in Task { await model.scan(link) } }.clipShape(RoundedRectangle(cornerRadius: 20)).padding(.horizontal)
-                #else
-                Image(systemName: "qrcode.viewfinder").resizable().scaledToFit().padding(40)
-                #endif
-                Text(model.wings.isEmpty ? "On EhrlichMac, run **wt pair**.\nPoint at the QR in the terminal." : "On the computer you want to pair, run **wt pair**.\nPoint at its QR in the terminal.").multilineTextAlignment(.center).padding()
-                if !model.wings.isEmpty { Button("Back to machines") { if let first = model.wings.first { Task { await model.select(first) } } } }
-            } else if let attached = model.attached {
-                Text(attached.title).font(.headline)
-                if let error = model.error { Text(error).foregroundStyle(.red).padding(.horizontal) }
-                ScrollView([.horizontal, .vertical]) { Text(model.output.isEmpty ? "Waiting for session output…" : model.output).font(.system(.footnote, design: .monospaced)).fixedSize(horizontal: true, vertical: false).textSelection(.enabled).padding() }
-                HStack { TextField("Type into this session", text: $input, axis: .vertical).textFieldStyle(.roundedBorder); Button("Send") { let text = input; Task { if await model.input(text), input == text { input = "" } } }.disabled(model.busy || !model.online || input.isEmpty) }.padding(.horizontal)
-                Button("Stop session", role: .destructive) { confirmingStop = true }.disabled(model.busy || !model.online).padding(.bottom)
-            } else {
-                List {
-                    Section {
-                        Label(model.online ? "Connected · this machine only" : "Disconnected", systemImage: model.online ? "lock.fill" : "wifi.slash")
-                        if let error = model.error { Text(error).foregroundStyle(.red) }
-                        if !model.online, let wing = model.selected { Button("Reconnect") { Task { await model.select(wing) } }.disabled(model.busy) }
-                    }
-                    Section("Sessions") {
-                        if model.sessions.isEmpty { Text(model.busy ? "Loading sessions…" : "No active sessions on this wing.").foregroundStyle(.secondary) }
-                        ForEach(model.sessions) { session in
-                            Button { Task { await model.attach(session) } } label: {
-                                VStack(alignment: .leading, spacing: 5) {
-                                    Text(session.title).font(.headline)
-                                    Text("\(session.agent) · \(session.status)").font(.caption).foregroundStyle(.secondary)
-                                    HStack { if session.blocked { Label("Blocked", systemImage: "exclamationmark.bubble").foregroundStyle(.orange) }; if session.unread { Label("Unread", systemImage: "circle.fill").foregroundStyle(.blue) } }.font(.caption)
-                                }.foregroundStyle(.primary)
-                            }.disabled(model.busy || !model.online)
-                        }
-                    }
-                    Section("Machines") { ForEach(model.wings) { wing in Button(wing.name) { Task { await model.select(wing) } } }; Button("Scan another wing") { Task { await model.scanAnother() } } }
-                }.refreshable { await model.refresh() }
-            }
-            Spacer(minLength: 0)
+    private var visible: [PhoneFleetSession] {
+        model.fleet.filter { row in
+            let machineMatches = model.selected == nil || row.routes.contains { $0.wingID == model.selected?.id }
+            let terms = [row.session.title, row.session.agent, row.machine, row.session.cwd ?? "", row.session.id].joined(separator: " ")
+            return machineMatches && (search.isEmpty || terms.localizedCaseInsensitiveContains(search))
         }
-        .task { await model.restore() }
-        .sheet(isPresented: $showingPaste) { NavigationStack { Form { TextField("wingthing://pair#…", text: $paste, axis: .vertical).autocorrectionDisabled(); Button("Read pairing link") { showingPaste = false; Task { await model.scan(paste); paste = "" } } }.navigationTitle("Pairing fallback").toolbar { Button("Cancel") { showingPaste = false; paste = "" } } } }
-        .confirmationDialog("Stop this session on \(model.selected?.name ?? "the wing")?", isPresented: $confirmingStop, titleVisibility: .visible) { Button("Stop session", role: .destructive) { Task { await model.stop() } } }
+    }
+    private func checkNames(_ emoji: String) -> String {
+        emoji.split(separator: " ").map { glyph in
+            String(glyph).applyingTransform(.toUnicodeName, reverse: false)?.replacingOccurrences(of: "\\N{", with: "").replacingOccurrences(of: "}", with: "").lowercased() ?? String(glyph)
+        }.joined(separator: " · ")
+    }
+    private func timestamp(_ item: TranscriptItem) -> String? {
+        guard let event = model.thread.events.first(where: { item.id.hasPrefix("\($0.sequence):") }),
+              let stamp = event.timestamp, let date = ISO8601DateFormatter().date(from: stamp) else { return nil }
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+    private var messages: [TranscriptItem] {
+        model.thread.events.flatMap(TranscriptItem.items).filter { ["user", "assistant"].contains($0.kind) && !$0.content.isEmpty }
+    }
+    public var body: some View {
+        VStack(spacing: 0) {
+            header
+            if model.hardStop { identityFailure }
+            else if let invitation = model.invitation { pairing(invitation) }
+            else if model.scanning { scanner }
+            else if let row = model.attached { session(row) }
+            else { inventory }
+        }
+        .task {
+            await model.restore()
+            #if DEBUG && targetEnvironment(simulator)
+            if let link = ProcessInfo.processInfo.environment["WT_IOS_PHONE_TEST_LINK"],
+               ProcessInfo.processInfo.environment["WT_IOS_PHONE_FIXTURE_ID"] != nil {
+                await model.scanAnother(); await model.scan(link)
+            }
+            #endif
+        }
+        .onChange(of: model.attached?.id) { newID in
+            if let draftID { drafts[draftID] = input }
+            draftID = newID
+            input = newID.flatMap { drafts[$0] } ?? ""
+        }
+        .onChange(of: input) { value in if let draftID { drafts[draftID] = value } }
+        .sheet(isPresented: $showingPaste) {
+            NavigationStack {
+                Form {
+                    Text("Paste the complete one-time invitation from the computer. It includes its address, public identity and six-word code.")
+                    TextField("wingthing://pair#…", text: $paste, axis: .vertical).autocorrectionDisabled().accessibilityIdentifier("phone-pairing-link")
+                    Button("Read pairing link") { showingPaste = false; let link = paste; paste = ""; Task { await model.scan(link) } }.accessibilityIdentifier("phone-read-link")
+                }.navigationTitle("Pairing invitation").toolbar { Button("Cancel") { showingPaste = false; paste = "" } }
+            }
+        }
+        .sheet(isPresented: $showingReach) { reach }
+        .sheet(isPresented: $showingNotifications) { notifications }
+        .sheet(isPresented: $showingCloud) { cloud }
+        .confirmationDialog("Stop \(stopTarget?.session.title ?? "session") on \(stopTarget?.machine ?? "machine")?", isPresented: Binding(get: { stopTarget != nil }, set: { if !$0 { stopTarget = nil } }), titleVisibility: .visible) {
+            if let target = stopTarget { Button("Stop this session", role: .destructive) { Task { await model.stop(expectedRowID: target.id) }; stopTarget = nil } }
+            Button("Keep running", role: .cancel) { stopTarget = nil }
+        } message: { Text("Other sessions keep running. Detach only closes this view.") }
+    }
+    private var header: some View {
+        HStack(spacing: 8) {
+            if model.attached != nil {
+                Button { Task { await model.detach(); await model.refresh() } } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44) }.accessibilityLabel("Sessions").accessibilityIdentifier("phone-sessions-back")
+            }
+            Text(model.scanning ? "Scan to pair" : model.attached?.coordinator == true ? "wing" : model.attached?.session.title ?? model.selected?.name ?? "Everywhere").font(.title2.bold()).lineLimit(1)
+            Spacer()
+            if model.attached?.coordinator == true {
+                Button { if model.threadVisible { Task { await model.showTerminal() } } else { model.showThread() } } label: {
+                    Image(systemName: model.threadVisible ? "terminal" : "bubble.left.and.bubble.right").frame(width: 44, height: 44)
+                }.accessibilityLabel(model.threadVisible ? "Open terminal" : "Open wing thread").accessibilityIdentifier("phone-thread-terminal")
+            }
+            Menu {
+                Button("Everywhere") { Task { await model.showAll() } }
+                ForEach(model.wings) { wing in Button(wing.name) { Task { await model.select(wing) } } }
+                Button("Scan another wing") { Task { await model.scanAnother() } }
+                Button("Paste pairing link") { showingPaste = true }
+                Button("Connection and privacy") { showingReach = true }
+                Button("Notifications") { showingNotifications = true }
+                #if DEBUG && targetEnvironment(simulator)
+                if ProcessInfo.processInfo.environment["WT_IOS_PAID_FIXTURE_ENABLED"] == "1", model.attached?.coordinator == true {
+                    Button("Run in cloud") { showingCloud = true }
+                }
+                #endif
+                Button("Existing Home setup", action: legacySetup)
+            } label: { Image(systemName: "ellipsis.circle").font(.title2).frame(width: 44, height: 44) }.accessibilityLabel("Machines and fallback setup").accessibilityIdentifier("phone-machines-menu")
+        }.padding(.horizontal, 16).padding(.vertical, 6)
+    }
+    private var identityFailure: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                Image(systemName: "xmark.shield.fill").font(.system(size: 50))
+                Text("Identity check failed").font(.title.bold())
+                Text(model.error ?? "Pairing stopped.")
+                Button("Cancel") { Task { await model.cancel() } }.buttonStyle(.bordered)
+            }.padding(24).foregroundStyle(.white).background(.red, in: RoundedRectangle(cornerRadius: 18)).padding()
+        }
+    }
+    private func pairing(_ invitation: PairingInvitation) -> some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                if model.simulatorFixture { Text("Simulator fixture · software key storage").font(.caption).foregroundStyle(.secondary) }
+                Image(systemName: "lock.shield").font(.system(size: 44)).foregroundStyle(.tint)
+                Text(model.savingPairing ? "Saving this machine securely…" : model.recoverablePairing ? "Finishing pairing" : "Pair with \(invitation.name)?").font(.largeTitle.bold())
+                Text("See and control the sessions on this machine.")
+                Text("Wing fingerprint").font(.caption).foregroundStyle(.secondary)
+                Text(invitation.fingerprint).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                if model.savingPairing { ProgressView(); Text("Your private key stays on this iPhone.") }
+                else if let emoji = model.emoji {
+                    Text(emoji).font(.system(size: 32))
+                            Text(checkNames(emoji)).font(.footnote).foregroundStyle(.secondary).accessibilityLabel("Check code: \(emoji)").accessibilityIdentifier("phone-pairing-emoji")
+                    Text("Compare all four emoji with the terminal on \(invitation.name).")
+                    if model.waitingForTerminal { ProgressView(); Text("Waiting for Enter on \(invitation.name)…").accessibilityIdentifier("phone-waiting-terminal") }
+                    else if model.recoverablePairing {
+                        Button("Check pairing result") { model.checkPairingResult() }.buttonStyle(.borderedProminent).accessibilityIdentifier("phone-check-pairing")
+                    } else {
+                        Button("Emoji match · Pair") { model.confirm() }.buttonStyle(.borderedProminent).disabled(model.busy).accessibilityIdentifier("phone-confirm-pairing")
+                    }
+                } else if model.busy { ProgressView("Checking the wing…") }
+                if let error = model.error { Text(error).foregroundStyle(.red).accessibilityIdentifier("phone-error") }
+                Button(model.emoji == nil ? "Scan again" : "Cancel · emoji differ") { Task { await model.cancel() } }.buttonStyle(.bordered).accessibilityIdentifier("phone-cancel-pairing")
+            }.padding(24).multilineTextAlignment(.center)
+        }
+    }
+    private var scanner: some View {
+        VStack(spacing: 16) {
+            if let error = model.error { Text(error).foregroundStyle(.red).padding(.horizontal).accessibilityIdentifier("phone-error") }
+            #if os(iOS)
+            PairingCamera { link in Task { await model.scan(link) } }.clipShape(RoundedRectangle(cornerRadius: 20)).padding(.horizontal).accessibilityIdentifier("phone-camera")
+            #else
+            Image(systemName: "qrcode.viewfinder").resizable().scaledToFit().padding(40)
+            #endif
+            Text("On the computer you want to pair, run **wt pair**.\nPoint at its QR in the terminal.").multilineTextAlignment(.center).padding(.horizontal)
+            HStack {
+                Button("Enter invitation details") { showingPaste = true }.accessibilityIdentifier("phone-manual-pairing")
+                #if os(iOS)
+                Button("Open Settings") { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } }
+                #endif
+            }.font(.footnote).padding(.bottom)
+            if !model.wings.isEmpty { Button("Back to machines") { Task { await model.showAll() } }.padding(.bottom) }
+        }
+    }
+    private var inventory: some View {
+        List {
+            Section {
+                HStack {
+                    Label(model.online ? "Connected" : "Disconnected", systemImage: model.online ? "lock.fill" : "wifi.slash")
+                    Spacer()
+                    Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise").frame(width: 44, height: 44) }.accessibilityLabel("Refresh machines").accessibilityValue("\(model.fleet.count) sessions").accessibilityIdentifier("phone-refresh").disabled(model.busy)
+                }
+                if let carrier = model.carrier { Text(carrier).font(.caption).foregroundStyle(.secondary) }
+                if let error = model.error { Text(error).foregroundStyle(.red).accessibilityIdentifier("phone-error") }
+                TextField("Search sessions, projects or machines", text: $search).accessibilityIdentifier("phone-search").autocorrectionDisabled()
+            }
+            if let coordinator = visible.first(where: \.coordinator) {
+                Section { row(coordinator) }
+            }
+            ForEach(Array(Set(visible.filter { !$0.coordinator }.map(\.machine))).sorted(), id: \.self) { machine in
+                Section(machine) { ForEach(visible.filter { !$0.coordinator && $0.machine == machine }) { row($0) } }
+            }
+            if visible.isEmpty { Text(model.busy ? "Loading sessions…" : search.isEmpty ? "No active sessions on these wings." : "No matching sessions.").foregroundStyle(.secondary) }
+            Section("Machines · paired separately") {
+                ForEach(model.wings) { wing in
+                    Button { Task { await model.select(wing) } } label: {
+                        HStack { Label(wing.name, systemImage: "desktopcomputer"); Spacer(); Image(systemName: "lock.shield").foregroundStyle(.secondary) }
+                    }.accessibilityIdentifier("phone-machine-" + wing.wingID)
+                }
+                Button("Scan another wing") { Task { await model.scanAnother() } }
+            }
+        }.phoneInventoryStyle().refreshable { await model.refresh() }
+    }
+    private func row(_ row: PhoneFleetSession) -> some View {
+        Button { Task { await model.attach(row) } } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 12) {
+                    if row.coordinator { Image(systemName: "bubble.left.and.bubble.right.fill").font(.title2).foregroundStyle(.tint) }
+                    Text(row.coordinator ? "wing" : row.session.title).font(.headline)
+                    Spacer()
+                    if row.coordinator { Image(systemName: "pin.fill").foregroundStyle(.secondary) }
+                }
+                Text("\(row.session.agent) · \(row.session.status)\(row.coordinator ? " · " + row.machine : "")").font(.subheadline).foregroundStyle(.secondary)
+                if row.coordinator { Text("Message your coordinator").font(.subheadline).foregroundStyle(.secondary) }
+                HStack {
+                    ForEach(row.routes) { route in
+                        Text(route.label + (route.healthy ? "" : " · offline")).font(.caption).padding(.horizontal, 8).padding(.vertical, 4).background(.quaternary, in: Capsule())
+                    }
+                }
+                if row.possibleDuplicate { Label("Possible duplicate · identity unverified", systemImage: "questionmark.circle").font(.caption).foregroundStyle(.orange) }
+                HStack {
+                    if row.session.blocked { Label("Needs you", systemImage: "exclamationmark.bubble").foregroundStyle(.orange) }
+                    if row.session.unread { Label("Unread", systemImage: "circle.fill").foregroundStyle(.blue) }
+                }.font(.caption)
+            }.padding(.vertical, 5).foregroundStyle(.primary)
+        }.disabled(model.busy || row.preferredRoute == nil || row.identity == nil).accessibilityIdentifier("phone-session-" + row.id)
+    }
+    private func session(_ row: PhoneFleetSession) -> some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text(row.machine + " · " + (model.activeRoute?.label ?? "disconnected")).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if !model.online { Button("Reconnect") { Task { await model.reconnectAttached() } }.accessibilityIdentifier("phone-reconnect") }
+            }.padding(.horizontal)
+            if let error = model.error { Text(error).foregroundStyle(.red).font(.footnote).padding(.horizontal).accessibilityIdentifier("phone-error") }
+            if model.threadVisible {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 18) {
+                            if messages.isEmpty { Text("No native messages yet. Open the terminal to inspect this session.").foregroundStyle(.secondary) }
+                            ForEach(messages) { item in
+                                HStack {
+                                    if item.kind == "user" { Spacer(minLength: 48) }
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(item.content).textSelection(.enabled).accessibilityIdentifier("phone-message-" + item.id)
+                                        Text((item.kind == "user" ? "You" : "wing") + (timestamp(item).map { " · " + $0 } ?? "")).font(.caption2).foregroundStyle(.secondary)
+                                    }.padding(14).background(item.kind == "user" ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
+                                    if item.kind != "user" { Spacer(minLength: 32) }
+                                }.id(item.id)
+                            }
+                        }.padding()
+                    }.accessibilityIdentifier("phone-wing-thread").onChange(of: messages.last?.id) { id in if let id { proxy.scrollTo(id, anchor: .bottom) } }
+                }
+            } else {
+                ScrollView([.horizontal, .vertical]) { Text(model.output.isEmpty ? "Waiting for session output…" : model.output).font(.system(.footnote, design: .monospaced)).fixedSize(horizontal: true, vertical: false).textSelection(.enabled).padding() }.accessibilityIdentifier("phone-terminal")
+            }
+            HStack(alignment: .bottom) {
+                TextField(model.threadVisible ? "Message wing" : "Type into this session", text: $input, axis: .vertical).lineLimit(1...6).padding(12).background(.quaternary, in: RoundedRectangle(cornerRadius: 18)).accessibilityIdentifier("phone-input").focused($composing)
+                Button { let text = input; Task { if await model.input(text), input == text { input = ""; composing = false } } } label: { Image(systemName: "arrow.up.circle.fill").font(.system(size: 32)).frame(width: 44, height: 44) }.accessibilityLabel("Send").accessibilityIdentifier("phone-send").disabled(model.busy || !model.online || input.isEmpty)
+            }.padding(.horizontal)
+            Button("Stop session", role: .destructive) { stopTarget = row }.disabled(model.busy || !model.online).accessibilityIdentifier("phone-stop").padding(.bottom, 10)
+        }
+    }
+    private var notifications: some View {
+        NavigationStack {
+            Form {
+                Section("Attention") {
+                    Text("Wingthing needs your attention.").font(.headline)
+                    Text("Lock-screen notifications hide session names, messages and project details.")
+                    if model.notificationsEnabled {
+                        Button("Disable notifications") { model.disableNotifications() }
+                    } else {
+                        Button("Enable notifications") { Task { await model.enableNotifications() } }.accessibilityIdentifier("phone-enable-notifications")
+                    }
+                    if let notice = model.notificationNotice { Text(notice).font(.footnote).foregroundStyle(.secondary) }
+                }
+                Section { Text("This phone can notify you about new attention while Wingthing is open. Background delivery is not available yet.") }
+            }.navigationTitle("Notifications").toolbar { Button("Done") { showingNotifications = false } }
+        }
+    }
+    private var cloud: some View {
+        NavigationStack {
+            Form {
+                Section { Label("Dormant · development fixture", systemImage: "moon.zzz").foregroundStyle(.orange) }
+                Section("Run in cloud") {
+                    Text((model.attached?.machine ?? "Machine") + " · coordinator")
+                    LabeledContent("Approved template", value: "workspace / Claude / standard")
+                    LabeledContent("Spending cap", value: "Owner preauthorized in fixture")
+                    Text("The phone sends a request to the paired coordinator. Cloud launch and spending remain subject to its preauthorized template and cap.")
+                    Button("Send cloud request") {
+                        Task {
+                            if await model.input("Request cloud work using the owner-preauthorized workspace / Claude / standard template and its existing spending cap. Do not raise the cap.") { showingCloud = false }
+                        }
+                    }.disabled(model.busy || !model.online).accessibilityIdentifier("phone-cloud-request")
+                }
+            }.navigationTitle("Run in cloud").toolbar { Button("Cancel") { showingCloud = false } }
+        }
+    }
+    private var reach: some View {
+        NavigationStack {
+            List {
+                Section("Connection") {
+                    Text(model.carrier ?? "No route connected")
+                    if let latency = model.latencyMilliseconds { Text("Last inventory request: \(latency) ms").font(.footnote) }
+                    Text("The phone tries LAN, then your existing tailnet, then a registered relay. LAN and tailnet need no Wingthing account.")
+                }
+                Section("Privacy") {
+                    Label("Pinned wing identity", systemImage: "lock.shield")
+                    Text("Session commands and results are encrypted to the paired wing. A relay sees routing IDs, traffic size and timing. Your sessions stay on their machines.")
+                    Text("Each machine has its own pairing. Revoke a lost phone on every paired wing with wt devices revoke.")
+                }
+                Section("When disconnected") { Text("Reconnect only reads state. An unconfirmed message stays in the composer; inspect the session before sending it again.") }
+            }.navigationTitle("Connection and privacy").toolbar { Button("Done") { showingReach = false } }
+        }
     }
 }
-
 #if os(iOS)
 private struct PairingCamera: UIViewControllerRepresentable {
     let scan: (String) -> Void
@@ -292,3 +355,13 @@ private final class PairingCameraEngine: NSObject, AVCaptureMetadataOutputObject
     }
 }
 #endif
+
+private extension View {
+    @ViewBuilder func phoneInventoryStyle() -> some View {
+        #if os(iOS)
+        self.listStyle(.insetGrouped)
+        #else
+        self.listStyle(.inset)
+        #endif
+    }
+}
