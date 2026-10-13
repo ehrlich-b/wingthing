@@ -11,7 +11,7 @@ func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 	local := []string{
 		"wingthing_capabilities",
 		"sandbox_explain",
-		"session_inventory", "session_action", "coordinator_heartbeat", "terminal_list", "terminal_read", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "terminal_wait",
+		"session_inventory", "session_action", "session_launch", "coordinator_heartbeat", "terminal_list", "terminal_read", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "terminal_wait",
 		"session_fork", "terminal_start", "agent_start",
 		"agent_run", "agent_list", "agent_status", "agent_wait", "agent_wait_any", "agent_result",
 		"agent_events", "agent_steer", "agent_stop",
@@ -22,7 +22,7 @@ func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 	http := []string{
 		"wingthing_capabilities",
 		"sandbox_explain",
-		"session_inventory", "session_action", "coordinator_heartbeat", "terminal_list", "terminal_read", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "terminal_wait",
+		"session_inventory", "session_action", "session_launch", "coordinator_heartbeat", "terminal_list", "terminal_read", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "terminal_wait",
 		"session_fork", "terminal_start", "agent_start",
 		"agent_run", "agent_list", "agent_status", "agent_wait", "agent_wait_any", "agent_result",
 		"agent_events", "agent_steer", "agent_stop",

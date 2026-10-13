@@ -74,7 +74,7 @@ func SessionCatalog(ctx context.Context, cfg *config.Config, wingID, label, quer
 		}
 		row := fleet.Session{Identity: fleet.Identity{OriginWingID: wingID, SessionID: s.ID}, MachineLabel: label, Name: s.Name, Agent: s.Agent, CWD: s.CWD, Status: s.Status, Live: live, Pinned: s.Pinned, Role: s.Role, NeedsAttention: s.State == "needs_input", Routes: []fleet.Route{}}
 		if s.Role == "coordinator" {
-			row.Presence = sessionrole.ReadPresence(dir, live, s.State, s.StateSource, now)
+			row.Presence = sessionrole.ReadPresence(dir, live, s.State, s.StateSource, now, s.StateObservedAt)
 		}
 		found := make([]bool, len(words))
 		fields := map[string]bool{}

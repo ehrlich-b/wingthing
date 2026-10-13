@@ -305,6 +305,17 @@ func buildTools() []Tool {
 			Grant: "terminal.read", Surfaces: both, AuditTargetKeys: []string{"origin_wing_id", "session_id"},
 		},
 		{
+			Name: "session_launch", Title: "Launch on an explicit personal wing",
+			Description: "Start one terminal or agent on an explicit origin_wing_id through existing launch policy, quotas and grants. Uses a verified saved route, never recursive routing or automatic retry. Transport failure may mean the launch succeeded; inspect the origin inventory before deliberately retrying. Existing linked-conversation request IDs retain their native retry contract.",
+			InputSchema: objectSchema(map[string]any{
+				"origin_wing_id": stringProperty("Stable execution wing ID"),
+				"operation":      map[string]any{"type": "string", "enum": []string{"terminal_start", "agent_start"}},
+				"arguments":      map[string]any{"type": "object", "description": "Existing launch arguments; cwd refers to a path on the execution wing"},
+				"local_only":     map[string]any{"type": "boolean", "default": false},
+			}, "origin_wing_id", "operation"), Annotations: modelCall,
+			Grant: "terminal.start", Surfaces: both, AuditTargetKeys: []string{"origin_wing_id", "session_id"},
+		},
+		{
 			Name: "coordinator_heartbeat", Title: "Record coordinator presence",
 			Description: "Record awake/asleep plus optional RFC3339 last/next wake and last note times on an owned exact coordinator session. Records data only; does not arm a timer. Missing or stale heartbeat is unknown.",
 			InputSchema: objectSchema(map[string]any{"session": stringProperty("Full exact coordinator session ID"), "state": map[string]any{"type": "string", "enum": []string{"awake", "asleep"}}, "last_wake": stringProperty("RFC3339 time"), "next_wake": stringProperty("RFC3339 time"), "last_note": stringProperty("RFC3339 time")}, "session", "state"), Annotations: mutating,

@@ -75,9 +75,6 @@ func (p *builtFleetPhone) wire(request phonepair.Request) phonepair.Response {
 	if err := json.Unmarshal(data, &response); err != nil {
 		p.t.Fatal(err)
 	}
-	if response.Error != "" {
-		p.t.Fatalf("fixture protocol error=%s", response.Error)
-	}
 	return response
 }
 func (p *builtFleetPhone) encrypted(op string, fields map[string]any, key cipher.AEAD) map[string]any {
@@ -88,6 +85,9 @@ func (p *builtFleetPhone) encrypted(op string, fields map[string]any, key cipher
 		p.t.Fatal(err)
 	}
 	response := p.wire(phonepair.Request{Op: op, ID: stringField(fields, "id"), ConnectionID: stringField(fields, "connection_id"), Payload: payload})
+	if response.Error != "" {
+		return map[string]any{"error": response.Error}
+	}
 	decoded, err := auth.Decrypt(key, response.Payload)
 	if err != nil {
 		p.t.Fatal("fixture encrypted response failed")

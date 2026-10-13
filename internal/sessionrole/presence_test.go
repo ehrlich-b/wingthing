@@ -33,3 +33,32 @@ func TestCoordinatorPresenceRecordedStaleDeadAndUnknown(t *testing.T) {
 		t.Fatal("bad date accepted")
 	}
 }
+
+func TestCoordinatorPresenceNativeEvidenceDoesNotRefreshOnRead(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	old := now.Add(-time.Hour).Format(time.RFC3339Nano)
+	for _, readAt := range []time.Time{now, now.Add(time.Minute)} {
+		p := ReadPresence(dir, true, "working", "codex_hook", readAt, old)
+		if p.State != "unknown" || !p.Stale || p.ObservedAt != old || p.Source != "native_lifecycle" {
+			t.Fatalf("old native hook refreshed: %+v", p)
+		}
+	}
+	for _, timestamp := range []string{"", "invalid", now.Add(time.Minute).Format(time.RFC3339Nano)} {
+		p := ReadPresence(dir, true, "idle", "claude_hook", now, timestamp)
+		if p.State != "unknown" || !p.Stale {
+			t.Fatalf("unproven native age became asleep: %+v", p)
+		}
+	}
+	for _, state := range []string{"working", "starting", "idle"} {
+		at := now.Add(-time.Second).Format(time.RFC3339Nano)
+		p := ReadPresence(dir, true, state, "claude_hook", now, at)
+		want := "awake"
+		if state == "idle" {
+			want = "asleep"
+		}
+		if p.State != want || p.Stale || p.ObservedAt != at {
+			t.Fatalf("fresh native hook lost: %+v", p)
+		}
+	}
+}
