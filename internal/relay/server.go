@@ -24,6 +24,7 @@ import (
 )
 
 type ServerConfig struct {
+	PaidFixture          bool // default OFF; local development UI only, never a paid entitlement
 	BaseURL              string
 	AppHost              string // e.g. "app.wingthing.ai" — serve SPA at root
 	WSHost               string // e.g. "ws.wingthing.ai" — WebSocket only

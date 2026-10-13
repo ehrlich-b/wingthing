@@ -454,3 +454,11 @@ test-storyboard-runs-offline: | web/dist
 test-web-reach-share: web
 	$(stable-build)
 	$(NODE) test/web/reach-share.mjs
+
+# Dormant UI fixtures. No provider, payment, real account or VM acceptance.
+.PHONY: test-paid-gate test-paid-ui
+test-paid-gate: | web/dist
+	$(GO) test -p 2 ./internal/relay ./cmd/wt -run '^TestPaidFixture' -count=1 -timeout=2m
+
+test-paid-ui:
+	$(NODE) web/test/paid-ui.mjs

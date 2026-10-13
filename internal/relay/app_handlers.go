@@ -105,6 +105,7 @@ func (s *Server) handleAppMe(w http.ResponseWriter, r *http.Request) {
 		"personal_pro":       hasPersonalSub,
 		"roost_mode":         s.RoostMode,
 		"self_service_plans": s.selfServicePlansEnabled(),
+		"paid_fixture":       s.paidFixtureEnabled(),
 		"has_passkeys":       len(creds) > 0,
 		"relay_allowed":      relayAccess.Allowed,
 		"relay_reason":       relayAccess.Reason,
