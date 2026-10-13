@@ -193,6 +193,12 @@ func builtScopedParentProtocol(t *testing.T, exitParent bool) {
 					return nil, err
 				}
 			}
+			// Production Spawn publishes startup identity before the child PID.
+			// The raw egg-run fixture must preserve that order for the broker.
+			metadata := fmt.Sprintf("agent=%s\nkind=agent\ncwd=%s\nprovider_home=%s\n", opts.Agent, launch.CWD, home)
+			if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte(metadata), 0600); err != nil {
+				return nil, err
+			}
 			args := []string{"egg", "run", "--session-id", opts.SessionID, "--agent", opts.Agent, "--kind", "agent", "--cwd", launch.CWD, "--outer-boundary", "--network", "*", "--agent-domains", "none", "--omit-browser-bridge", "--env", "HOME=" + home, "--env", "PATH=" + path}
 			for _, arg := range opts.Egg.AgentArgs {
 				args = append(args, "--agent-arg="+arg)
