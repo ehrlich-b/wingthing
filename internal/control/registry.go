@@ -541,6 +541,30 @@ func buildTools() []Tool {
 			Grant: "agent.stop", Surfaces: both, AuditTargetKeys: []string{"run_id"},
 		},
 		{
+			Name: "session_report", Title: "Report session goal and activity",
+			Description: "Record an owned session's goal, update, next action, artifacts, links and optional wake plan. This never schedules work, changes native readiness or grants approval.",
+			InputSchema: objectSchema(map[string]any{
+				"session": stringProperty("Owned session ID or label"),
+				"report": objectSchema(map[string]any{
+					"goal":        map[string]any{"type": "string", "minLength": 1, "maxLength": 2048},
+					"update":      map[string]any{"type": "string", "minLength": 1, "maxLength": 4096},
+					"next_action": map[string]any{"type": "string", "minLength": 1, "maxLength": 2048},
+					"presence":    map[string]any{"type": "string", "enum": []string{"awake", "asleep"}},
+					"last_wake":   map[string]any{"type": "string", "format": "date-time"},
+					"next_wake":   map[string]any{"type": "string", "format": "date-time"},
+					"artifacts": map[string]any{"type": "array", "maxItems": 8, "items": objectSchema(map[string]any{
+						"label": map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+						"path":  map[string]any{"type": "string", "minLength": 1, "maxLength": 1024},
+					}, "label", "path")},
+					"links": map[string]any{"type": "array", "maxItems": 8, "items": objectSchema(map[string]any{
+						"label": map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+						"url":   map[string]any{"type": "string", "minLength": 1, "maxLength": 2048},
+					}, "label", "url")},
+				}, "goal", "update", "next_action"),
+			}, "session", "report"), Annotations: mutating,
+			Grant: "terminal.send", Surfaces: both, AuditTargetKeys: []string{"session"},
+		},
+		{
 			Name: "session_pin", Title: "Pin persistent session",
 			Description: "Pin or unpin an owned session in fleet inventories without changing its role or permissions.",
 			InputSchema: objectSchema(map[string]any{

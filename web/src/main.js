@@ -2,7 +2,7 @@ import '@xterm/xterm/css/xterm.css';
 import { S, DOM, initDOM } from './state.js';
 import { loginRedirect } from './helpers.js';
 import { initTerminal, sendPTYInput } from './terminal.js';
-import { showHome, showTerminal, showCanvas, switchToSession, navigateToWingDetail, navigateToAccount, deleteSession } from './nav.js';
+import { showHome, showTerminal, showCanvas, switchToSession, restoreSessionChatRoute, navigateToWingDetail, navigateToAccount, deleteSession } from './nav.js';
 import { initCanvas, isCanvasActive, canvasSpawnAtCenter, toggleCanvasMode } from './canvas.js';
 import { setCanvasLaunchCallback } from './palette.js';
 import { initChatView, refreshChat } from './chat-view.js';
@@ -20,6 +20,7 @@ import { initSessionFiles } from './session-files.js';
 import { sessionRoute, parseSessionRoute } from './session-route.js';
 import { restoreConversationRoute } from './conversation-view.js';
 import { initParentDot } from './parent-dot.js';
+import { initCoordinatorHome } from './coordinator-home.js';
 import { conversationViewport } from './mobile-viewport.js';
 import { createForegroundRefresh } from './phone-refresh.js';
 
@@ -82,7 +83,7 @@ async function init() {
         });
     }
 
-    if (!location.hash.startsWith('#s/') && !location.hash.startsWith('#w/') && !location.hash.startsWith('#account') && location.hash !== '#canvas' && !location.hash.startsWith('#conversation/')) {
+    if (!location.hash.startsWith('#s/') && !location.hash.startsWith('#w/') && !location.hash.startsWith('#account') && location.hash !== '#canvas' && !location.hash.startsWith('#conversation/') && !location.hash.startsWith('#chat/')) {
         history.replaceState({ view: 'home' }, '', location.pathname);
     }
 
@@ -389,6 +390,7 @@ async function init() {
     }
     initNotifyListeners();
     initParentDot();
+    initCoordinatorHome();
     // The open session's agent took a new title; show it without waiting for the poll.
     window.addEventListener('wt-terminal-title', function() {
         var wingId = S.ptyWingId;
@@ -405,6 +407,7 @@ async function init() {
     connectAppWS();
 
     await restoreConversationRoute();
+    restoreSessionChatRoute();
 
     // Deep links
     var sessionLink = parseSessionRoute(location.hash);
@@ -436,6 +439,7 @@ async function init() {
 // Hash change (user pastes #s/ URL while page is already loaded)
 window.addEventListener('hashchange', function() {
     if (location.hash.startsWith('#conversation/')) { restoreConversationRoute(); return; }
+    if (restoreSessionChatRoute()) return;
     var sessionLink = parseSessionRoute(location.hash);
     if (sessionLink) {
         if (S.currentUser && S.currentUser.relay_allowed === false) {
@@ -475,6 +479,7 @@ window.addEventListener('popstate', function(e) {
         return;
     }
     if (location.hash.startsWith('#conversation/')) { restoreConversationRoute(); return; }
+    if (restoreSessionChatRoute()) return;
     var state = e.state;
     if (!state || state.view === 'home') {
         showHome(false);

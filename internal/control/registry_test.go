@@ -15,7 +15,7 @@ func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 		"session_fork", "terminal_start", "agent_start",
 		"agent_run", "agent_list", "agent_status", "agent_wait", "agent_wait_any", "agent_result",
 		"agent_events", "agent_steer", "agent_stop",
-		"session_pin", "terminal_rename", "terminal_stop",
+		"session_report", "session_pin", "terminal_rename", "terminal_stop",
 		"conversation_bootstrap", "conversation_list", "conversation_read", "conversation_checkpoint", "conversation_wake",
 		"wing_list",
 	}
@@ -26,7 +26,7 @@ func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 		"session_fork", "terminal_start", "agent_start",
 		"agent_run", "agent_list", "agent_status", "agent_wait", "agent_wait_any", "agent_result",
 		"agent_events", "agent_steer", "agent_stop",
-		"session_pin", "terminal_rename", "terminal_stop",
+		"session_report", "session_pin", "terminal_rename", "terminal_stop",
 		"conversation_bootstrap", "conversation_list", "conversation_read", "conversation_checkpoint", "conversation_wake",
 		"wing_list",
 	}

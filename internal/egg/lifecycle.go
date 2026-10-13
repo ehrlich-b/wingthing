@@ -32,6 +32,7 @@ const maxLifecycleResponse = 350 << 10
 const maxLifecycleEvent = 128 << 10
 
 type SessionEvent struct {
+	Report            *SessionReport  `json:"report,omitempty"`
 	Sequence          int64           `json:"sequence"`
 	Type              string          `json:"type"`
 	Source            string          `json:"source"`
@@ -53,17 +54,20 @@ type SessionEvent struct {
 }
 
 type SessionView struct {
-	SessionID         string `json:"session_id"`
-	Agent             string `json:"agent"`
-	ProviderSessionID string `json:"provider_session_id,omitempty"`
-	State             string `json:"state"`
-	Status            string `json:"status"`
-	StateSource       string `json:"state_source"`
-	StateCursor       int64  `json:"state_cursor"`
-	StateObservedAt   string `json:"state_observed_at,omitempty"`
-	Reason            string `json:"reason,omitempty"`
-	Ready             bool   `json:"ready"`
-	ProcessAlive      bool   `json:"process_alive"`
+	ReportCursor      int64          `json:"report_cursor,omitempty"`
+	Report            *SessionReport `json:"report,omitempty"`
+	ReportedAt        string         `json:"reported_at,omitempty"`
+	SessionID         string         `json:"session_id"`
+	Agent             string         `json:"agent"`
+	ProviderSessionID string         `json:"provider_session_id,omitempty"`
+	State             string         `json:"state"`
+	Status            string         `json:"status"`
+	StateSource       string         `json:"state_source"`
+	StateCursor       int64          `json:"state_cursor"`
+	StateObservedAt   string         `json:"state_observed_at,omitempty"`
+	Reason            string         `json:"reason,omitempty"`
+	Ready             bool           `json:"ready"`
+	ProcessAlive      bool           `json:"process_alive"`
 	// Cursor is the last delivered event, not the journal head when paginated.
 	Cursor         int64          `json:"cursor"`
 	HeadCursor     int64          `json:"head_cursor"`
@@ -561,6 +565,9 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 	var hookState SessionEvent
 	hookEvidence, sessionEnded := false, false
 	for _, event := range j.events {
+		if event.Type == "session_report" && event.Report != nil {
+			view.Report, view.ReportedAt, view.ReportCursor = event.Report, event.Timestamp, event.Sequence
+		}
 		if event.State != "" && event.Type != "session_exit" {
 			view.State = event.State
 			view.StateSource = event.Source

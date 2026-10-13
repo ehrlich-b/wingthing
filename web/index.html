@@ -21,6 +21,7 @@
         <nav id="sidebar" aria-label="Session navigation">
             <button id="home-btn" title="Home (Ctrl+.)"><span class="nav-symbol">~</span><span class="nav-label">home</span></button>
             <button id="new-session-btn" title="New session (Cmd+K)"><span class="nav-symbol">+</span><span class="nav-label">new session</span></button>
+            <div id="coordinator-nav" hidden></div>
             <div id="session-tabs"></div>
         </nav>
         <div id="main">
@@ -87,6 +88,7 @@
             </div>
 
             <section id="home-section">
+                <section id="coordinator-home" aria-label="Pinned coordinator" hidden></section>
                 <details id="phone-help">
                     <summary>Use Wingthing on your phone</summary>
                     <p>In Safari, tap Share, then Add to Home Screen. Open a coordinator below to read status, send a message, or stop its execution.</p>
@@ -133,7 +135,9 @@
             <section id="terminal-section" style="display:none;">
                 <div id="terminal-container"></div>
                 <div id="chat-view" style="display:none;">
+                    <div id="chat-view-tabs" role="group" aria-label="Session view"><button type="button" data-session-view="conversation" aria-pressed="true">Conversation</button><button type="button" data-session-view="activity" aria-pressed="false">Activity</button></div>
                     <div id="chat-messages"></div>
+                    <div id="session-activity" aria-label="Session activity" hidden></div>
                     <details id="chat-state-details"><summary id="chat-view-status"></summary><p id="chat-view-detail"></p></details>
                     <div id="chat-input-bar">
                         <textarea id="chat-input" rows="1" aria-label="Message to the coordinator" placeholder="send a message..."></textarea>

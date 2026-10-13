@@ -16,6 +16,8 @@ export function reconcileWingSessions(existingSessions, wingId, remoteSessions) 
         var remote = remoteMap.get(session.id);
         if (!remote) return; // The wing says this session is gone.
 
+        session.pinned = remote.pinned;
+        session.role = remote.role;
         session.agent = remote.agent;
         session.name = remote.name;
         session.title = remote.title;

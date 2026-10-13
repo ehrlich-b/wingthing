@@ -5,10 +5,12 @@ import { clearTermBuffer } from './terminal.js';
 import { clearNotification } from './notify.js';
 import { sendTunnelRequest } from './tunnel.js';
 import { loadHome, saveSessionCache, setEggOrder } from './data.js';
-import { stopChatPolling } from './chat-view.js';
+import { stopChatPolling, startChatPolling, setViewPreference } from './chat-view.js';
+import { refreshSessionFilesButton } from './session-files.js';
 import { showCanvasView, hideCanvasView } from './canvas.js';
 import { findSessionResource, sessionResourceKey } from './session-inventory.js';
 import { sessionRoute } from './session-route.js';
+import { wingDisplayName } from './helpers.js';
 
 function hideCanvasChrome() {
     if (DOM.canvasToolbar) DOM.canvasToolbar.style.display = 'none';
@@ -111,6 +113,38 @@ export function switchToSession(sessionId, pushHistory, wingId) {
         history.pushState({ view: 'terminal', sessionId: sessionId, wingId: wingId || (sess && sess.wing_id) }, '', sessionRoute(sessionId, wingId || (sess && sess.wing_id)));
     }
     return true;
+}
+
+// The text reader opens without attaching a PTY writer or sending input.
+export function showSessionChat(sessionId, wingId, pushHistory = true) {
+    if (!wingId || !sessionId || hostedRelayUnavailable()) return false;
+    detachPTY();
+    if (!showTerminal()) return false;
+    S.ptySessionId = sessionId;
+    S.ptyWingId = wingId;
+    const session = findSessionResource(S.sessionsData, sessionId, wingId);
+    const wing = S.wingsData.find(item => item.wing_id === wingId);
+    DOM.headerTitle.textContent = (session && session.name || 'Session') + ' · ' + (wingDisplayName(wing) || wingId);
+    DOM.sessionCloseBtn.style.display = 'none';
+    document.getElementById('terminal-section').classList.add('chat-active');
+    let toolbar = document.getElementById('conversation-toolbar');
+    if (!toolbar) { toolbar = document.createElement('div'); toolbar.id = 'conversation-toolbar'; document.getElementById('chat-view').prepend(toolbar); }
+    toolbar.className = 'conversation-toolbar';
+    toolbar.innerHTML = '<div class="conversation-actions"><button type="button" class="session-chat-back">Back</button><button type="button" class="session-chat-terminal">Open terminal</button></div>';
+    toolbar.querySelector('.session-chat-back').addEventListener('click', () => showHome());
+    toolbar.querySelector('.session-chat-terminal').addEventListener('click', () => switchToSession(sessionId, true, wingId));
+    setViewPreference('chat');
+    startChatPolling({ sessionId, wingId });
+    refreshSessionFilesButton();
+    if (pushHistory) history.pushState({ view: 'session-chat', sessionId, wingId }, '', '#chat/' + encodeURIComponent(sessionId) + '?wing=' + encodeURIComponent(wingId));
+    return true;
+}
+
+export function restoreSessionChatRoute() {
+    const match = location.hash.match(/^#chat\/([^?]+)\?wing=([^&]+)$/);
+    if (!match) return false;
+    try { return showSessionChat(decodeURIComponent(match[1]), decodeURIComponent(match[2]), false); }
+    catch { return false; }
 }
 
 export function navigateToWingDetail(wingId, pushHistory) {

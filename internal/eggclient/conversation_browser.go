@@ -11,5 +11,5 @@ func SessionLifecycleSummary(ctx context.Context, cfg *config.Config, id string)
 	if err != nil {
 		return nil
 	}
-	return map[string]any{"state": view.State, "status": view.Status, "state_source": view.StateSource, "ready": view.Ready, "process_alive": view.ProcessAlive, "head_cursor": view.HeadCursor}
+	return map[string]any{"report": view.Report, "reported_at": view.ReportedAt, "provider_session_id": view.ProviderSessionID, "state_cursor": view.StateCursor, "reason": view.Reason, "state": view.State, "status": view.Status, "state_source": view.StateSource, "ready": view.Ready, "process_alive": view.ProcessAlive, "head_cursor": view.HeadCursor}
 }

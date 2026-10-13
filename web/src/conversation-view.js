@@ -16,6 +16,7 @@ import { sessionGroupHeader, sessionIsViewed } from './session-inventory.js';
 import { sessionResourceKey } from './session-reference.js';
 import { trackSessionCompletions, sessionCompletionObservation, unseenSessionCompletions, acknowledgeSessionCompletions } from './session-completion.js';
 import './conversation-recovery.css';
+import { refreshSessionFilesButton } from './session-files.js';
 
 var TREE_REFRESH_MS = 5000;
 var STOP_CONFIRM_MS = 6000;
@@ -535,6 +536,9 @@ export function openConversationTranscript(conversation, wingId, pushHistory, co
     ensureSnapshotListener();
     if (panel && panel.treeTimer) clearTimeout(panel.treeTimer);
     document.getElementById('terminal-section').classList.add('chat-active');
+    S.ptySessionId = conversation.session_id;
+    S.ptyWingId = wingId;
+    refreshSessionFilesButton();
     DOM.headerTitle.textContent = conversation.title || 'Conversation';
     DOM.sessionCloseBtn.style.display = 'none';
     panel = {

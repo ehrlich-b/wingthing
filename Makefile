@@ -439,3 +439,9 @@ test-session-search-regression: | web/dist
 	$(stable-build)
 	$(preview-build)
 	WT_TEST_BINARY="$(CURDIR)/wt" WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=5 ./cmd/wt -run '^Test(NorthstarSSHLogSnapshotJoinsInProgressAppend|NorthstarPTYRemoteReload)$$' -timeout=3m
+.PHONY: test-session-report test-coordinator-home-web
+test-session-report: | web/dist
+	$(GO) test -p 2 -count=1 ./internal/egg ./internal/localmcp ./internal/control ./internal/wing ./cmd/wt -run 'SessionReport|RegistryDefinesExpectedSurfaceOperations' -timeout 180s
+
+test-coordinator-home-web:
+	cd web && $(NODE) test/coordinator-home-browser.mjs

@@ -525,3 +525,28 @@ Historical designs and dated evidence are preserved in `docs/archive/`.
 ## License
 
 MIT
+
+### Coordinator home and session activity
+
+The web Home leads with explicitly pinned coordinator sessions. Open a pinned
+thread to read and message it; the terminal is available from that same session.
+The Activity tab shows native state changes, human input requests, reported
+updates, artifacts and links. Opening a thread only reads; it never grants
+approval. Artifact access retains the session's existing file permissions.
+
+A coordinator can publish its current intent through the owner-scoped
+`session_report` MCP tool (qualified by `wing_id` on direct connections), or
+from the CLI:
+
+```sh
+wt session report SESSION --json <<'JSON'
+{"goal":"Finish the release review","update":"Checks passed; results are ready","next_action":"Review the results","presence":"asleep","last_wake":"2026-10-12T22:00:00Z","next_wake":"2026-10-12T23:00:00Z","artifacts":[{"label":"Results","path":"results.md"}],"links":[{"label":"Documentation","url":"https://wingthing.ai/docs"}]}
+JSON
+```
+
+Reports persist in the session journal and survive browser reloads. Goal,
+update and next action are required; wake times and up to eight artifacts and
+links are optional. Native work and process exit override reported presence.
+Missing or stale heartbeat evidence is unknown; a missed reported wake is
+overdue. Wake times describe a plan: reporting does not create a timer or
+change provider readiness, grants, approval gates or scheduling policy.
