@@ -55,6 +55,7 @@
 
             <div id="channel-banner" style="display:none;" role="status"></div>
             <div id="parent-dot-message" class="parent-dot-message" role="status" aria-live="polite" hidden></div>
+            <div id="pwa-connection" role="status" hidden>Disconnected · reconnect before sending a message or approving a request.</div>
             <div id="reconnect-banner" style="display:none;" role="status" aria-live="polite">
                 <span id="reconnect-text">reconnecting...</span>
                 <button id="reconnect-btn" class="btn-sm" style="display:none">retry</button>
@@ -93,6 +94,7 @@
                     <summary>Use Wingthing on your phone</summary>
                     <p>In Safari, tap Share, then Add to Home Screen. Open a coordinator below to read status, send a message, or stop its execution.</p>
                     <p>Return here and refresh after reconnecting. Unconfirmed messages stay saved for you to check.</p>
+                    <button id="pwa-install" type="button" hidden>Install Wingthing</button>
                     <button id="phone-refresh" type="button">Refresh agents</button>
                     <a id="phone-access-link" href="/phone/login" hidden>Phone access and sign out</a>
                     <span id="phone-refresh-status" role="status" aria-live="polite"></span>

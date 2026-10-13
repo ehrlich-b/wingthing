@@ -55,6 +55,10 @@ func roostStartCmd() *cobra.Command {
 			if err := localrelay.ValidateAuthProviderEnvironment(); err != nil {
 				return err
 			}
+			if _, err := localrelay.TunnSSOFromEnv(); err != nil {
+				return err
+			}
+
 			var lifecycleLock *os.File
 			if !foregroundFlag {
 				var err error

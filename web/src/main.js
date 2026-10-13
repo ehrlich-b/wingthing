@@ -1,3 +1,4 @@
+import { initPWA } from './pwa.js';
 import '@xterm/xterm/css/xterm.css';
 import { S, DOM, initDOM } from './state.js';
 import { loginRedirect } from './helpers.js';
@@ -497,14 +498,6 @@ window.addEventListener('popstate', function(e) {
     }
 });
 
-// Unregister stale service workers that cache old assets
-if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.getRegistrations().then(function(regs) {
-        regs.forEach(function(r) { r.unregister(); });
-    });
-    caches.keys().then(function(names) {
-        names.forEach(function(n) { caches.delete(n); });
-    });
-}
+initPWA();
 
 init();

@@ -967,6 +967,12 @@ func wingConfigSetCmd() *cobra.Command {
 				}
 
 				switch key {
+				case "phone_fleet":
+					b, err := strconv.ParseBool(value)
+					if err != nil {
+						return fmt.Errorf("phone_fleet: expected true or false")
+					}
+					wingCfg.PhoneFleet = b
 				case "audit":
 					b, err := strconv.ParseBool(value)
 					if err != nil {

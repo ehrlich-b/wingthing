@@ -1,3 +1,5 @@
+import { showSessionChat } from './nav.js';
+import { coordinatorThreadMarkup } from './coordinator-thread.js';
 import { sessionPromptStore } from './session-viewer-prompts.js';
 import { Terminal } from '@xterm/xterm';
 import { S } from './state.js';
@@ -19,9 +21,15 @@ function render(value) {
     dialog.querySelector('[data-title]').textContent = value.row.name || value.row.session_id;
     dialog.querySelector('[data-identity]').textContent = `${value.row.machine_label || 'Wing'} · ${value.row.origin_wing_id} / ${value.row.session_id}`;
     dialog.querySelector('[data-route]').textContent = value.route ? value.route.kind === 'via' ? 'via ' + value.route.machine_label : 'direct' : 'no route';
-    dialog.querySelector('[data-status]').textContent = value.status;
+    dialog.querySelector('[data-status]').textContent = value.receipt?.native_receipt_observed === true && value.mode === 'observe' && !value.pendingPrompt && value.status.startsWith('Viewing') ? 'Message text observed by provider' : value.status;
     dialog.querySelector('[data-handoff-warning]').hidden = !value.releaseWarning;
-    dialog.querySelector('[data-transcript]').textContent = (value.trimmedEvents ? 'Showing the last 400 events. Earlier events remain on the wing.\n\n' : '') + value.events.filter(event => event.role || event.text).map(event => `${event.role || event.type}: ${event.text || event.reason || ''}`).join('\n\n') || 'No recorded conversation text.';
+    const messages = value.events.filter(event => ['user', 'assistant'].includes(event.role) || event.report).map(event => ({ ...event, type: event.role || 'assistant', content: event.text }));
+    dialog.querySelector('[data-transcript]').innerHTML = messages.length ? coordinatorThreadMarkup(messages, { update: '' }, 400) : '<p>No recorded conversation text.</p>';
+
+    dialog.querySelectorAll('[data-artifact-path]').forEach(button => {
+        button.disabled = value.route?.kind !== 'direct';
+        if (button.disabled) button.title = 'File download requires a direct connection to this machine';
+    });
     const attention = value.lifecycle?.state === 'needs_input' || value.row.needs_attention;
     dialog.querySelector('[data-attention]').hidden = !attention;
     dialog.querySelector('[data-more]').hidden = !value.hasMore;
@@ -77,7 +85,7 @@ export function initSessionViewer(inventory) {
     dialog.innerHTML = `<header class="viewer-header"><div><span data-route class="search-route"></span><h2 id="session-viewer-title" data-title></h2></div><button type="button" data-close aria-label="Close session viewer">Close</button></header>
         <p data-identity class="search-identity"></p><p data-handoff-warning class="viewer-attention" hidden>A previous hand-back was unconfirmed. Its idle lease will release input after 15 seconds without activity.</p><p data-status role="status" aria-live="polite"></p>
         <div class="viewer-tabs" role="tablist" aria-label="Session view"><button data-tab="transcript" role="tab" aria-selected="true">Transcript</button><button data-tab="terminal" role="tab" aria-selected="false">Terminal</button><button data-refresh>Refresh route</button></div>
-        <pre data-transcript aria-label="Live conversation transcript"></pre><button data-more hidden>Load more events</button>
+        <div data-transcript aria-label="Live conversation transcript"></div><button data-more hidden>Load more events</button>
         <section data-terminal-panel hidden><div data-terminal aria-label="Live terminal output"></div><label for="viewer-terminal-input">Type into the controlled terminal</label><input id="viewer-terminal-input" data-input autocomplete="off"><button data-terminal-send>Send + Enter</button><button data-interrupt>Ctrl+C</button></section>
         <div class="viewer-control"><button data-take>Take control</button><button data-back hidden>Hand back</button><span>Hand back keeps the agent running.</span></div>
         <p data-attention class="viewer-attention" hidden>Permission or input attention. This provider has no connected approval responder. Inspect the terminal, take control, and enter your decision there.</p>
@@ -114,6 +122,17 @@ export function initSessionViewer(inventory) {
         if (state?.receipt?.native_receipt_observed) input.value = '';
     });
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') viewer.read(); });
+    dialog.querySelector('[data-transcript]').addEventListener('click', async event => {
+        const chip = event.target.closest('[data-artifact-path]');
+        const row = state?.row;
+        if (!chip || chip.disabled || !row || state.route?.kind !== 'direct') return;
+        const path = chip.dataset.artifactPath;
+        if (!await viewer.close()) return;
+        if (!showSessionChat(row.session_id, row.origin_wing_id)) return;
+        const input = document.getElementById('session-file-path');
+        if (input) input.value = path;
+        if (document.getElementById('session-files-panel').style.display === 'none') document.getElementById('session-files-btn').click();
+    });
     window.addEventListener('pagehide', () => viewer.close());
     showTab(tab);
     return viewer;

@@ -1,3 +1,6 @@
+import { coordinatorThreadMarkup } from './coordinator-thread.js';
+import { searchRoute } from './session-search-state.js';
+import { openSessionViewer } from './session-viewer.js';
 import { S, DOM } from './state.js';
 import { wingDisplayName } from './helpers.js';
 import { escapeMarkup } from './security.js';
@@ -13,11 +16,30 @@ const inflight = new Set();
 let selected = '';
 let selectionUser = '';
 let initialized = false;
+let fleet = null, fleetOwner = null;
 
 function key(session) { return JSON.stringify([S.currentUser && S.currentUser.id, session.wing_id, session.id]); }
 function storageKey(session) { return 'wt_coordinator_home_v1:' + key(session); }
-function candidates() { return pinnedCoordinators(S.sessionsData, S.wingsData, S.currentUser); }
-function wingFor(session) { return S.wingsData.find(wing => wing.wing_id === session.wing_id); }
+export function setCoordinatorFleet(inventory) {
+    fleet = inventory; fleetOwner = S.currentUser?.id;
+    renderCoordinatorHome();
+}
+function candidates() {
+    const native = pinnedCoordinators(S.sessionsData, S.wingsData, S.currentUser);
+    if (!S.currentUser || S.currentUser.relay_allowed === false || fleetOwner !== S.currentUser.id) return native;
+    const rows = new Map(native.map(row => [JSON.stringify([row.wing_id, row.id]), row]));
+    for (const row of fleet?.sessions || []) {
+        if (!row.pinned || row.role !== 'coordinator' || !row.origin_wing_id || !row.session_id) continue;
+        const id = JSON.stringify([row.origin_wing_id, row.session_id]);
+        rows.set(id, { ...rows.get(id), ...row, id: row.session_id, wing_id: row.origin_wing_id, fleetRow: row });
+    }
+    return [...rows.values()];
+}
+function wingFor(session) {
+    const route = session.fleetRow && searchRoute(session.fleetRow, S.wingsData);
+    return S.wingsData.find(wing => wing.wing_id === (route?.wing_id || session.wing_id));
+}
+function machineName(session) { return session.machine_label || wingDisplayName(wingFor(session)) || session.wing_id; }
 function selectionKey() { return 'wt_coordinator_selection_v1:' + JSON.stringify(S.currentUser && S.currentUser.id); }
 
 function choose() {
@@ -61,7 +83,16 @@ async function readHome(session) {
     const user = S.currentUser && S.currentUser.id;
     const issuedAt = Date.now();
     try {
-        const result = await sendTunnelRequest(session.wing_id, { type: 'session.control', operation: 'session_read', arguments: { session: session.id, after_cursor: previous.cursor || 0, limit: 100 } });
+        let result;
+        if (session.fleetRow) {
+            const route = searchRoute(session.fleetRow, S.wingsData);
+            if (!route) throw Error('No current route to coordinator');
+            const response = await sendTunnelRequest(route.wing_id, { type: 'session.control', operation: 'session_action', arguments: {
+                origin_wing_id: session.wing_id, session_id: session.id, operation: 'session_read', arguments: { after_cursor: previous.cursor || 0, limit: 100 },
+            } });
+            if (response.origin_wing_id !== session.wing_id || response.session_id !== session.id || response.route?.wing_id !== route.wing_id) throw Error('Coordinator route identity mismatch');
+            result = response.result;
+        } else result = await sendTunnelRequest(session.wing_id, { type: 'session.control', operation: 'session_read', arguments: { session: session.id, after_cursor: previous.cursor || 0, limit: 100 } });
         if (user !== (S.currentUser && S.currentUser.id) || !candidates().some(candidate => key(candidate) === resource)) return;
         if (!result.lifecycle || result.lifecycle.session_id !== session.id || (result.session && result.session !== session.id)) throw Error('Session identity did not match the coordinator');
         const next = applyConversationRead(previous, result.lifecycle, { expected: { sessionId: session.id, providerSessionId: previous.lifecycle && previous.lifecycle.provider_session_id } });
@@ -73,6 +104,7 @@ async function readHome(session) {
 }
 
 async function open(session) {
+    if (session.fleetRow) return openSessionViewer(session.fleetRow);
     if (session.conversation_id) return openConversationReference({ wingId: session.wing_id, conversationId: session.conversation_id });
     return showSessionChat(session.id, session.wing_id);
 }
@@ -92,6 +124,9 @@ export function renderCoordinatorHome(read = true) {
     const mount = document.getElementById('coordinator-home'), nav = document.getElementById('coordinator-nav');
     if (!mount || !nav) return;
     const sessions = candidates(), session = choose();
+    if (session && mount.parentElement.firstElementChild !== mount) mount.parentElement.prepend(mount);
+    const otherCoordinators = document.getElementById('conversation-inventory');
+    if (session && otherCoordinators && otherCoordinators.parentElement === mount.parentElement) mount.parentElement.append(otherCoordinators);
     nav.hidden = !sessions.length;
     const navSignature = JSON.stringify(sessions.map(item => [key(item), item.name]));
     if (nav.dataset.signature !== navSignature) {
@@ -103,16 +138,16 @@ export function renderCoordinatorHome(read = true) {
     if (!session) { mount.innerHTML = ''; return; }
     const evidence = evidenceFor(session), wing = wingFor(session);
     const summary = coordinatorHomeSummary(session, wing, { ...evidence, reportSequence: evidence.lifecycle && evidence.lifecycle.report_cursor });
-    const signature = JSON.stringify([key(session), summary, evidence.cursor, sessions.length, evidence.readError]);
+    const signature = JSON.stringify([key(session), summary, evidence.cursor, evidence.messages, sessions.length, evidence.readError]);
     if (mount.dataset.signature !== signature) {
         mount.dataset.signature = signature;
         const expanded = !!mount.querySelector('details[open]');
         const focus = mount.contains(document.activeElement) && document.activeElement.dataset.homeAction;
         mount.innerHTML = '<div class="coordinator-home-kicker"><span>YOUR COORDINATOR</span><span class="coordinator-presence" data-presence="' + summary.presence + '"><i aria-hidden="true"></i>' + escapeMarkup(summary.presence) + '</span></div>' +
-            '<div class="coordinator-home-heading"><span class="coordinator-avatar" aria-hidden="true">w</span><div><h2>' + escapeMarkup(summary.title) + '</h2><p>' + escapeMarkup(wingDisplayName(wing) || session.wing_id) + ' · pinned thread</p></div></div>' +
-            '<h1>' + escapeMarkup(summary.goal) + '</h1><span class="coordinator-task-state" data-status="' + summary.status + '">' + escapeMarkup(summary.status) + '</span>' +
-            '<div class="coordinator-home-update"><h3>Latest update</h3><p>' + escapeMarkup(summary.update) + '</p>' + reportChips(summary) + (summary.reportedAt ? '<small>Reported ' + escapeMarkup(activityTime(summary.reportedAt)) + '</small>' : '') + '</div>' +
-            '<div class="coordinator-next-action"><h3>Next action</h3><p>' + escapeMarkup(summary.nextAction) + '</p></div>' +
+            '<div class="coordinator-home-heading"><span class="coordinator-avatar" aria-hidden="true">w</span><div><h2>' + escapeMarkup(summary.title) + '</h2><p>' + escapeMarkup(machineName(session)) + ' · pinned thread</p></div></div>' +
+            '<h1 class="coordinator-goal">' + escapeMarkup(summary.goal) + '</h1>' +
+            '<span class="coordinator-task-state" data-status="' + summary.status + '">' + escapeMarkup(summary.status) + '</span>' +
+            coordinatorThreadMarkup(evidence.messages, summary, 2) +
             '<div class="coordinator-heartbeat"><div><span>Last wake</span><strong>' + (summary.lastWake ? escapeMarkup(activityTime(summary.lastWake)) : 'Not reported') + '</strong></div><div><span>Next wake</span><strong>' + (summary.nextWake ? escapeMarkup(activityTime(summary.nextWake)) : 'Not reported') + '</strong></div></div>' +
             '<p class="coordinator-heartbeat-detail">' + escapeMarkup(summary.detail) + (summary.observedAt ? ' · checked ' + escapeMarkup(activityTime(summary.observedAt)) : '') + '</p>' +
             '<div class="coordinator-home-actions"><button type="button" class="coordinator-message" data-home-action="message">Message ' + escapeMarkup(summary.title) + ' <span aria-hidden="true">↗</span></button>' +
@@ -122,7 +157,7 @@ export function renderCoordinatorHome(read = true) {
         const select = mount.querySelector('select');
         if (select) select.addEventListener('change', () => { selected = select.value; try { localStorage.setItem(selectionKey(), selected); } catch {} renderCoordinatorHome(); });
         mount.querySelectorAll('[data-artifact-path]').forEach(button => button.addEventListener('click', async () => {
-            try { if (!showSessionChat(session.id, session.wing_id)) return; DOM.sessionFilePath.value = button.dataset.artifactPath; if (DOM.sessionFilesPanel.style.display === 'none') DOM.sessionFilesBtn.click(); } catch (error) { const status = document.getElementById('coordinator-home-error'); if (status) status.textContent = error.message || 'Could not open artifact'; }
+            try { if (session.fleetRow && !searchRoute(session.fleetRow, S.wingsData)) throw Error('Reconnect to open this file'); if (session.fleetRow && searchRoute(session.fleetRow, S.wingsData).kind === 'via') throw Error('File download requires a direct connection to this machine'); if (!showSessionChat(session.id, session.wing_id)) return; DOM.sessionFilePath.value = button.dataset.artifactPath; if (DOM.sessionFilesPanel.style.display === 'none') DOM.sessionFilesBtn.click(); } catch (error) { const status = document.getElementById('coordinator-home-error'); if (status) status.textContent = error.message || 'Could not open artifact'; }
         }));
         if (focus) mount.querySelector('[data-home-action="' + focus + '"]')?.focus({ preventScroll: true });
     }
