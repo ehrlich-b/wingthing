@@ -26,8 +26,9 @@ func TestDashboardPinsLeadAcrossMachinesAndKeepExplicitSelection(t *testing.T) {
 	if rows[0].key() != "remote:parent" || s.selected != "remote:parent" {
 		t.Fatalf("first=%v selected=%s", rows[0], s.selected)
 	}
-	text := strings.Join(renderedLines(t, render(s, 100, 24, time.Now()), 100, 24), "\n")
-	if strings.Index(text, "[coordinator]") > strings.Index(text, "local  ") || !strings.Contains(text, "@ remote") {
+	lines := renderedLines(t, render(s, 100, 24, time.Now()), 100, 24)
+	text := strings.Join(lines[3:], "\n")
+	if strings.Index(text, "wing") > strings.Index(text, "This machine") || !strings.Contains(text, "remote") {
 		t.Fatal(text)
 	}
 	act, _ := s.handle("enter")
@@ -42,7 +43,7 @@ func TestDashboardPinsLeadAcrossMachinesAndKeepExplicitSelection(t *testing.T) {
 	}
 	pin.Pinned = false
 	s.machines["remote"] = machine{sessions: []eggclient.LocalSession{pin}}
-	if s.rows()[0].machine != "local" {
+	if s.rows()[0].Pinned {
 		t.Fatal("unpinned changed ordinary machine order")
 	}
 }
@@ -53,8 +54,9 @@ func TestDashboardCachedPinFromUnreachableRemoteRemainsStale(t *testing.T) {
 	pin.Metadata = sessionrole.Metadata{Pinned: true, Role: "coordinator"}
 	s.machines["remote"] = machine{sessions: []eggclient.LocalSession{pin}, err: "unreachable", updated: time.Now().Add(-time.Minute)}
 	s.reconcile()
-	text := strings.Join(renderedLines(t, render(s, 100, 24, time.Now()), 100, 24), "\n")
-	if !strings.Contains(text, "@ remote stale") || !strings.Contains(text, "unreachable") {
+	lines := renderedLines(t, render(s, 100, 24, time.Now()), 100, 24)
+	text := strings.Join(lines, "\n")
+	if !strings.Contains(text, "Last seen 1m ago") || !strings.Contains(text, "unreachable") {
 		t.Fatal(text)
 	}
 }

@@ -136,6 +136,7 @@ func (s *state) attentionFor(r row) string {
 }
 
 func (s *state) acknowledge(r row) {
+	s.selectionTouched = true
 	record, ok := s.attention[r.identity]
 	if ok {
 		// The captured view acknowledges exactly what it showed, even if a

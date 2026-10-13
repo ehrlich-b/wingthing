@@ -6,14 +6,12 @@ import (
 	"strings"
 	"time"
 	"unicode"
-
-	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
 type diagnosticField struct{ label, flag, value string }
 
 func (s *state) isOverlay() bool {
-	return s.mode == help || s.mode == details || s.mode == runDetails || s.mode == runResult || s.mode == machineDetails || s.mode == diagnostics || s.mode == diagnosticInput || s.mode == diagnosticReport
+	return s.mode == confirmStop || s.mode == confirmTakeover || s.mode == help || s.mode == details || s.mode == runDetails || s.mode == runResult || s.mode == machineDetails || s.mode == diagnostics || s.mode == diagnosticInput || s.mode == diagnosticReport
 }
 
 type diagnosticState struct {
@@ -190,38 +188,38 @@ func validateDiagnosticArgs(args []string) error {
 func (s *state) machineLines(now time.Time) []string {
 	name := s.target.machine
 	m, exists := s.machines[name]
-	lines := []string{"Machines / " + name}
+	lines := []string{"Machines / " + machineLabel(name), ""}
 	if !exists {
-		return append(lines, "Saved machine was removed; return and select the current route.")
+		return append(lines, "Saved machine was removed. Select its current profile.")
 	}
-	lines = append(lines, "Inventory: "+connection(m, now), "Inventory availability is separate from provider readiness.")
-	if m.err != "" {
-		lines = append(lines, "Query diagnostic: "+m.err)
-	}
+	lines = append(lines, "Inventory: "+connection(m, now), machineCount(m))
 	if s.registryError != "" {
-		lines = append(lines, "Saved registry invalid; remote actions are refused.")
+		lines = append(lines, "Saved machines could not be loaded. Remote actions are blocked.")
+	}
+	if s.stale(name) {
+		lines = append(lines, "", routeCause(m.err), "Cached sessions do not prove this machine is empty.", "Verify this machine before attaching. R retries from the list.")
 	}
 	if name == "local" {
-		return append(lines, "Route: local", "State: "+s.localDir, "", "Prepare a second machine once:", "On that host: wt wing start --local-only --paths /absolute/workspace", "Install a compatible wt and authenticate its provider on that host first.", "Back here: wt mcp connect add NAME --ssh SSH_ALIAS", "This verifies an already running wing; it does not provision or copy files.")
+		return append(lines, "", "Route: Local", "", "Add a machine with a saved SSH profile:", "wt remote add Studio SSH_ALIAS")
 	}
 	r := s.remotes[name]
-	lines = append(lines, "SSH alias: "+r.SSHTarget, "Executable: "+r.Binary(), "State: "+r.WingthingDir)
-	if r.WingID == "" || r.ControlSocket == "" || r.ControlVersion == "" {
-		lines = append(lines, "Parent MCP: not verified; this profile only supports CLI inventory/attach.")
-	} else {
-		lines = append(lines, "Pinned wing ID: "+r.WingID, "Pinned control contract: "+r.ControlVersion, "Pinned socket: "+r.ControlSocket, "Parent MCP: saved verified route; every connection must still pass identity checks.")
+	verification := "not verified"
+	if r.WingID != "" && r.ControlSocket != "" && r.ControlVersion != "" {
+		verification = "Saved identity verified; checked on every connection"
 	}
-	lines = append(lines, "", "Attach exact execution: wt attach -- "+remotepkg.ShellQuote(name+":SESSION_ID"), "Observe only: wt attach --read-only -- "+remotepkg.ShellQuote(name+":SESSION_ID"), "A plain name stays local; use the full receiving session ID when names collide.")
+	return append(lines, "", "Route: SSH", "Identity: "+verification, "", "Check the saved profile in your terminal:", "wt remote ls", "", "An identity change requires manual verification.", "Never bypass SSH host-key checks.")
+}
+
+func machineCount(m machine) string {
+	if accessDenied(m.err) {
+		return "Sessions unavailable"
+	}
+	if m.updated.IsZero() {
+		return "Sessions not reported"
+	}
+	label := plural(len(m.sessions), "session")
 	if m.err != "" {
-		diagnostic := strings.ToLower(m.err)
-		switch {
-		case strings.Contains(diagnostic, "host key"), strings.Contains(diagnostic, "host identification"), strings.Contains(diagnostic, "identity"), strings.Contains(diagnostic, "pinned"):
-			lines = append(lines, "Identity hard stop: verify the intended host and wing out of band.", "Do not bypass host-key checking or silently replace the saved wing.")
-		case strings.Contains(diagnostic, "version mismatch"), strings.Contains(diagnostic, "too old"), strings.Contains(diagnostic, "incompatible"):
-			lines = append(lines, "Compatibility blocked: upgrade the receiving wt or select --wt-binary /absolute/wt.")
-		default:
-			lines = append(lines, "Inventory unavailable: reconnect and inspect before launching again.", "Cached sessions do not authorize a replacement launch or prove an empty machine.")
-		}
+		label += " cached"
 	}
-	return append(lines, "", "Prepare on receiving host: compatible wt + authenticated provider + allowed workspace + running wing.", "Verified parent setup: wt mcp connect add NAME --ssh SSH_ALIAS", "Add --wt-binary /absolute/wt when it is outside remote PATH.", "Saved CLI profiles: wt remote add NAME SSH_ALIAS; wt remote ls", "Verify any intended replacement before explicitly removing and re-adding its profile.")
+	return label
 }

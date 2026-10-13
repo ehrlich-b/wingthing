@@ -32,6 +32,7 @@ type inventory struct {
 	nextQuery    map[string]time.Time
 	now          func() time.Time
 	workers      sync.WaitGroup
+	readGates    machineReads
 }
 
 func newInventory(query func(context.Context, string) ([]eggclient.LocalSession, error)) *inventory {
@@ -81,6 +82,7 @@ func (i *inventory) start(ctx context.Context, s *state, name string) {
 	queryCtx, cancel := context.WithCancel(ctx)
 	i.cancel[name] = cancel
 	profile := s.remotes[name]
+	gate := i.readGates.gate(name)
 	i.inFlight[name] = true
 	machine.loading = true
 	s.machines[name] = machine
@@ -95,6 +97,12 @@ func (i *inventory) start(ctx context.Context, s *state, name string) {
 					result.err = fmt.Errorf("inventory panic: %v", recovered)
 				}
 			}()
+			release, err := acquireMachineRead(queryCtx, gate)
+			if err != nil {
+				result.err = err
+				return
+			}
+			defer release()
 			if i.queryProfile != nil {
 				result.sessions, result.err = i.queryProfile(queryCtx, name, profile)
 			} else {
@@ -119,8 +127,29 @@ func (i *inventory) apply(s *state, result inventoryResult) bool {
 	delete(i.inFlight, result.name)
 	delete(i.cancel, result.name)
 	machine.loading = false
+	machine.attempted = result.updated
 	if result.err != nil {
 		machine.err = result.err.Error()
+		if accessDenied(machine.err) {
+			machine.sessions = nil
+			if s.target.machine == result.name {
+				switch s.mode {
+				case details, rename, confirmStop, confirmTakeover, actionMenu, newAgent, newCWD:
+					s.target = row{}
+					s.mode, s.input = navigate, ""
+					s.message = "Access denied. R refresh."
+				}
+			}
+			if s.draftMachine == result.name {
+				s.draftAgent, s.draftCWD, s.draftMachine = "", "", ""
+			}
+
+			for identity := range s.previews {
+				if identity.machine == result.name {
+					delete(s.previews, identity)
+				}
+			}
+		}
 		i.failures[result.name] = min(i.failures[result.name]+1, 5)
 		delay := min(2*time.Second<<(i.failures[result.name]-1), 30*time.Second)
 		i.nextQuery[result.name] = i.now().Add(delay)
@@ -163,7 +192,7 @@ func (i *inventory) reload(s *state, remotes map[string]config.Remote, err error
 		delete(i.failures, name)
 		delete(i.nextQuery, name)
 		delete(s.machines, name)
-		if s.target.machine == name && (s.mode == rename || s.mode == confirmStop || s.mode == confirmTakeover || s.mode == newAgent || s.mode == newCWD || s.mode == details) {
+		if s.target.machine == name && (s.mode == rename || s.mode == confirmStop || s.mode == confirmTakeover || s.mode == newAgent || s.mode == newCWD || s.mode == details || s.mode == actionMenu) {
 			s.mode, s.input = navigate, ""
 			s.message = "Cancelled: saved profile " + name + " changed or was removed; select the current machine before acting"
 		}

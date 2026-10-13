@@ -173,8 +173,9 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 
 		h := northstarStartPTY(t, f, binary, 160, 36)
 		h.expect("original parent / surviving egg", 0, "surviving-parent")
-		h.expect("find durable runs without remembered IDs", h.send("h"), "Recent runs", "same-run", "legacy SSH-only profile", "N loads the next page")
-		h.expect("captured qualified local run", h.send("/wing-local:same-run\r"), "> running wing-local:same-run")
+		h.expect("find durable runs without remembered IDs", h.send("h"), "Recent runs", "Ready", "legacy has no run history", "N next page")
+		h.expect("qualified local run query", h.send("/wing-local:same-run"), "Search runs /wing-local:same-run_", "* Working")
+		h.expect("keep qualified local run", h.send("\r"), "Saved outcomes.", "Enter open")
 		h.expect("attach surviving exact local egg", h.send("\r"), "RECOVERY_LOCAL_LIVE")
 		select {
 		case id := <-local.attached:
@@ -184,7 +185,7 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("local run attachment did not execute")
 		}
-		northstarRecoveryDetach(t, h, "detach preserves qualified run", "> running wing-local:same-run")
+		northstarRecoveryDetach(t, h, "detach preserves qualified run", "* Working")
 		// Simulate coordinator/terminal loss with the exact owned child, while the
 		// wing metadata fixture and verified egg identities remain independent.
 		if err := syscall.Kill(-h.cmd.Process.Pid, syscall.SIGKILL); err != nil {
@@ -200,8 +201,9 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 		}
 		fresh := northstarStartPTY(t, f, binary, 160, 36)
 		fresh.expect("fresh parent inventory", 0, "surviving-parent")
-		fresh.expect("fresh wt recovers same durable IDs", fresh.send("h"), "wing-local:same-run", "wing-forge:same-run")
-		fresh.expect("same ID on another wing", fresh.send("/wing-forge:same-run\r"), "> running wing-forge:same-run")
+		fresh.expect("fresh wt recovers same durable IDs", fresh.send("h"), "This machine", "forge", "Working")
+		fresh.expect("same ID on another wing", fresh.send("/wing-forge:same-run"), "Search runs /wing-forge:same-run_", "* Working")
+		fresh.expect("keep qualified forge run", fresh.send("\r"), "Saved outcomes.", "Enter open")
 		fresh.expect("saved exact forge route attach", fresh.send("\r"), "RECOVERY_FORGE_LIVE")
 		select {
 		case id := <-forge.attached:
@@ -211,7 +213,7 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("qualified forge attachment did not execute")
 		}
-		northstarRecoveryDetach(t, fresh, "forge detach", "> running wing-forge:same-run")
+		northstarRecoveryDetach(t, fresh, "forge detach", "* Working")
 		if len(local.attached) != 0 {
 			t.Fatal("forge attach hit colliding local egg")
 		}
@@ -223,37 +225,39 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 			}
 		}
 		refreshAfter := fresh.send("/\x15record\rR")
-		fresh.expect("terminal records after egg metadata loss", refreshAfter, "done wing-local:complete-record", "failed wing-local:failed-record", "stopped wing-local:cancelled-record", "unknown wing-local:unknown-record")
+		fresh.expect("terminal records after egg metadata loss", refreshAfter, "+ Done", "x Failed", "- Stopped", "? Unknown")
 		fresh.waitScreen("completed refresh confirms live metadata gone", refreshAfter, func(screen string) bool {
-			return strings.Contains(screen, "4 visible") && strings.Contains(screen, "unknown-record") && !strings.Contains(screen, "cleanup:unknown live")
+			return strings.Contains(screen, "4 runs") && strings.Contains(screen, "? Unknown") && !strings.Contains(screen, "Live session verified")
 		})
-		fresh.expect("cancelled run filter", fresh.send("/\x15cancelled-record\r"), "> stopped wing-local:cancelled-record")
-		fresh.expect("terminal Enter opens metadata", fresh.send("\r"), "Run details: wing-local:cancelled-record", "Live session verified: false", "wt agent recover", "--snapshot PATH")
-		fresh.expect("explicit bounded result / sanitized controls", fresh.send("o"), "Result: wing-local:cancelled-record", "METADATA_ONLY_RESULT", "?]52;fake??", "cancellation is not completion")
-		fresh.expect("unknown admission never launches", fresh.send("\x1b/\x15unknown-record\r\rn"), "Run details: wing-local:unknown-record", "Status: unknown", "never resend automatically")
-		fresh.expect("pagination target first page", fresh.send("\x1b/\x15wing-local:same-run\r"), "same-run", "N loads the next page")
+		fresh.expect("cancelled run filter", fresh.send("/\x15cancelled-record\r"), "- Stopped")
+		fresh.expect("terminal Enter opens metadata", fresh.send("\r"), "State: - Stopped", "Live session not verified", "wt agent recover", "--snapshot PATH")
+		fresh.expect("explicit bounded result / sanitized controls", fresh.send("o"), "Result / Read only", "METADATA_ONLY_RESULT", "?]52;fake??", "cancellation is not completion")
+		fresh.expect("unknown admission never launches", fresh.send("\x1b/\x15unknown-record\r\rn"), "State: ? Unknown", "Outcome unknown", "Never resend automatically")
+		fresh.expect("pagination target first page", fresh.send("\x1b/\x15wing-local:same-run\r"), "* Working", "N next page")
 		mu.Lock()
 		beforePages := callCount["agent_list"]
 		mu.Unlock()
-		fresh.expect("explicit next page", fresh.send("/\x15\rN"), "older-record")
+		pageRev := fresh.send("/\x15\rN")
+		northstarInventoryWait(t, "explicit next page request", func() bool { mu.Lock(); defer mu.Unlock(); return callCount["agent_list"] == beforePages+1 })
+		fresh.expect("explicit next page", pageRev, "+ Done")
 		mu.Lock()
 		afterPages := callCount["agent_list"]
 		mu.Unlock()
 		if afterPages != beforePages+1 {
 			t.Fatalf("next page made %d inventory calls; want one", afterPages-beforePages)
 		}
-		fresh.expect("restart first pages", fresh.send("R/\x15unknown-record\r"), "unknown-record")
+		fresh.expect("restart first pages", fresh.send("R/\x15unknown-record\r"), "? Unknown")
 		mu.Lock()
 		mode = "incomplete"
 		mu.Unlock()
-		fresh.expect("incomplete projection retains stale known row", fresh.send("R"), "history unavailable; stale", "unknown-record")
-		fresh.expect("incomplete Enter cannot attach", fresh.send("\r"), "Run details: wing-local:unknown-record", "Stale history", "Live session verified: false")
+		fresh.expect("incomplete projection retains stale known row", fresh.send("R"), "history unavailable", "Last seen")
+		fresh.expect("incomplete Enter cannot attach", fresh.send("\r"), "State: ? Unknown", "History unavailable", "Live session not verified")
 		fresh.expect("return from stale metadata", fresh.send("\x1b"), "Recent runs")
 		mu.Lock()
 		mode = "denied"
 		mu.Unlock()
-		fresh.expect("policy denial remains unavailable", fresh.send("R"), "policy denied history", "unknown-record")
-		fresh.expect("result denial shown without cached content", fresh.send("o"), "Result unavailable: policy denied result")
+		fresh.expect("policy denial remains unavailable", fresh.send("R"), "history read denied", "Last seen")
+		fresh.expect("result denial shown without cached content", fresh.send("o"), "Result unavailable. Access denied.")
 		screen, _ := fresh.screen()
 		if strings.Contains(screen, "METADATA_ONLY_RESULT") {
 			t.Fatal("prior result cached across policy denial")

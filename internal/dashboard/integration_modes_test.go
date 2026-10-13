@@ -25,7 +25,7 @@ func TestDiagnosticsCoexistsWithOnboardingAndMachineDetails(t *testing.T) {
 	}
 	s.handle("escape")
 	s.handle("M")
-	if s.mode != machineDetails || !strings.Contains(render(s, 120, 36, time.Now()), "Machines / local") {
+	if s.mode != machineDetails || !strings.Contains(render(s, 120, 36, time.Now()), "Machines / This machine") {
 		t.Fatal("machine details were captured by onboarding")
 	}
 	s.handle("escape")

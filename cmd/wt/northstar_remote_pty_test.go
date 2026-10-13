@@ -373,10 +373,10 @@ func TestNorthstarPTYRemoteAttach(t *testing.T) {
 	started := time.Now()
 	h := northstarStartPTY(t, f, binary, 80, 24)
 	h.waitScreen("colliding local and two peers / one offline", 0, func(s string) bool {
-		return strings.Count(s, "shared-name") == 3 && strings.Contains(s, "offline  offline") && strings.Contains(s, "forge  connected") && strings.Contains(s, "mirror  connected")
+		return strings.Count(s, "shared-name") == 4 && strings.Contains(s, "offline unreachable") && strings.Contains(s, "mirror") && strings.Contains(s, "forge")
 	})
 	t.Logf("launch-to-fleet inventory: %s", time.Since(started))
-	h.expect("select exact forge", h.send("/forge\r"), "> W shared-name")
+	h.expect("select exact forge", h.send("/forge\r"), "> shared-name")
 	h.expect("attach forge only", h.send("\r"), "FORGE_ONLY")
 	select {
 	case attached := <-forge.attached:
@@ -399,30 +399,30 @@ func TestNorthstarPTYRemoteAttach(t *testing.T) {
 		t.Fatal("remote PTY never resized")
 	}
 	h.send("\x02")
-	h.expect("detach returns to exact forge row", h.send("q"), "> W shared-name", "Enter attach")
+	h.expect("detach returns to exact forge row", h.send("q"), "> shared-name", "Enter open")
 	assertSurvives(forge)
-	h.expect("rename exact forge", h.send("r\x15forge-renamed\r"), "> W forge-renamed")
+	h.expect("rename exact forge", h.send("r\x15forge-renamed\r"), "> forge-renamed")
 	if eggclient.ReadSessionName(local.dir) != "shared-name" || eggclient.ReadSessionName(peer.dir) != "shared-name" || eggclient.ReadSessionName(forge.dir) != "forge-renamed" {
 		t.Fatal("rename crossed exact machine identity")
 	}
 	northstarWrite(t, filepath.Join(f.home, "forge-offline"), "fixture offline", 0600)
-	h.expect("retain stale forge row", h.send("R"), "forge  offline", "stale", "forge-renamed")
-	h.expect("stale rename refused", h.send("r\x15must-not-rename\r"), "cannot validate", "forge")
+	h.expect("retain stale forge row", h.send("R"), "Last seen", "forge-renamed")
+	h.expect("stale rename refused", h.send("r\x15must-not-rename\r"), "Saved machine changed", "forge")
 	if eggclient.ReadSessionName(forge.dir) != "forge-renamed" {
 		t.Fatal("unvalidated stale rename dispatched")
 	}
-	h.expect("stale stop confirmation", h.send("x"), "Stop forge:"+id)
-	h.expect("stale stop refused", h.send("y"), "cannot validate", "forge")
+	h.expect("stale stop confirmation", h.send("x"), "forge-renamed on forge")
+	h.expect("stale stop refused", h.send("y"), "Saved machine changed", "forge")
 	assertSurvives(forge)
 	// Local work remains reachable while both forge and the offline peer fail.
 	h.expect("select healthy local", h.send("/\x15local\r"), "shared-name")
 	h.expect("attach local despite offline peers", h.send("\r"), "LOCAL_ONLY")
-	h.expect("detach local", h.send("\x02q"), "shared-name", "Enter attach")
+	h.expect("detach local", h.send("\x02q"), "shared-name", "Enter open")
 	assertSurvives(local)
 	if err := os.Remove(filepath.Join(f.home, "forge-offline")); err != nil {
 		t.Fatal(err)
 	}
-	h.expect("recover exact forge", h.send("/\x15forge\rR"), "forge  connected", "forge-renamed")
+	h.expect("recover exact forge", h.send("/\x15forge\rR"), "* Working", "forge-renamed")
 	h.exit("q")
 	// Exercise both receiving CLI paths on real PTYs, including the delimiter.
 	for _, test := range []struct {
@@ -459,9 +459,9 @@ func TestNorthstarPTYRemoteAttach(t *testing.T) {
 	h = northstarStartPTY(t, f, binary, 80, 24)
 	h.expect("fresh fleet", 0, "forge-renamed", "shared-name")
 	h.expect("stop exact forge selection", h.send("/forge\r"), "forge-renamed")
-	h.expect("stop exact forge confirmation", h.send("x"), "Stop forge:"+id)
+	h.expect("stop exact forge confirmation", h.send("x"), "forge-renamed on forge")
 	h.waitScreen("stop exact forge", h.send("y"), func(s string) bool {
-		return strings.Contains(s, "(no matches)") && strings.Contains(s, "Enter attach") && !strings.Contains(s, "forge-renamed") && !strings.Contains(s, "Running")
+		return strings.Contains(s, "No matching sessions") && strings.Contains(s, "Enter open") && !strings.Contains(s, "forge-renamed") && !strings.Contains(s, "Running")
 	})
 	h.exit("q")
 	if forge.killed.Load() != 1 || local.killed.Load() != 0 || peer.killed.Load() != 0 {

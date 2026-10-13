@@ -83,12 +83,12 @@ func TestDashboardReadOnlyAndConfirmedTakeoverUseExactRoutes(t *testing.T) {
 			t.Fatal("takeover was not confirmed")
 		}
 		if channel == "stable" {
-			if s.mode != navigate || !strings.Contains(s.message, "preview") {
+			if s.mode != navigate || !strings.Contains(s.message, "not available") {
 				t.Fatal("stable ownership behavior changed")
 			}
 			continue
 		}
-		if s.mode != confirmTakeover || !strings.Contains(render(s, 120, 24, time.Now()), "from browser? [y/N]") {
+		if s.mode != confirmTakeover || !strings.Contains(render(s, 120, 24, time.Now()), "Current input owner: browser") {
 			t.Fatal("missing owner/confirmation")
 		}
 		if act, _ := s.handle("enter"); act != nil || s.mode != navigate {
@@ -374,7 +374,9 @@ func TestDashboardAttachRestoresOriginalStateAfterChildExit(t *testing.T) {
 			go func() {
 				var got result
 				defer func() { got.panic = recover(); finished <- got }()
-				inv := newInventory(func(context.Context, string) ([]eggclient.LocalSession, error) { return nil, errors.New("offline") })
+				inv := newInventory(func(context.Context, string) ([]eggclient.LocalSession, error) {
+					return []eggclient.LocalSession{session("two", "review", "/src/app", "blocked")}, nil
+				})
 				got.err = run(ctx, fixture(), inv, nil, terminal, remotepkg.IO{In: input, Out: &output}, command, nil)
 			}()
 			if previous := receive(t, entered); previous != 0 {
@@ -575,7 +577,9 @@ func TestDashboardStopRunsInBackground(t *testing.T) {
 	defer cancel()
 	finished := make(chan error, 1)
 	s := fixture()
-	inv := newInventory(func(context.Context, string) ([]eggclient.LocalSession, error) { return nil, errors.New("offline") })
+	inv := newInventory(func(context.Context, string) ([]eggclient.LocalSession, error) {
+		return []eggclient.LocalSession{session("two", "review", "/src/app", "blocked")}, nil
+	})
 	go func() {
 		finished <- run(ctx, s, inv, map[string]config.Remote{}, fakeTerminal(io.Discard, &restored), remotepkg.IO{In: input, Out: io.Discard}, command, nil)
 	}()
@@ -617,7 +621,9 @@ func TestDashboardQuitWaitsForBackgroundProcessCleanup(t *testing.T) {
 	defer cancel()
 	defer close(reaped)
 	finished := make(chan error, 1)
-	inv := newInventory(func(context.Context, string) ([]eggclient.LocalSession, error) { return nil, errors.New("offline") })
+	inv := newInventory(func(context.Context, string) ([]eggclient.LocalSession, error) {
+		return []eggclient.LocalSession{session("two", "review", "/src/app", "blocked")}, nil
+	})
 	go func() {
 		finished <- run(ctx, fixture(), inv, nil, fakeTerminal(io.Discard, &restored), remotepkg.IO{In: input, Out: io.Discard}, command, nil)
 	}()
@@ -653,7 +659,7 @@ func TestDashboardManualRefreshRequestsInventory(t *testing.T) {
 		return []eggclient.LocalSession{session("same", "parent", "/src/app", "blocked")}, nil
 	})
 	output := writerFunc(func(p []byte) (int, error) {
-		if strings.Contains(string(p), "> B parent") {
+		if strings.Contains(string(p), "> parent") {
 			select {
 			case updated <- struct{}{}:
 			default:

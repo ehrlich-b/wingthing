@@ -52,10 +52,10 @@ func launchFailureNoSecrets(t *testing.T, h *northstarPTY, state string) {
 func launchFailureDashboard(t *testing.T, f *northstarFixture, binary, cwd string) *northstarPTY {
 	t.Helper()
 	h := northstarStartPTY(t, f, binary, 120, 35)
-	h.expect("navigator ready", 0, "wt |", "n new")
+	h.expect("navigator ready", 0, "wt   ", "m machines")
 	h.expect("provider prompt", h.send("n"), "Agent (blank = shell)")
-	h.expect("cwd prompt", h.send("\x15claude\r"), "Cwd on local:")
-	h.expect("denial returned to navigator", h.send("\x15"+cwd+"\r"), "wt |", "admission/policy", "provider executable", "Doctor launch-plan")
+	h.expect("cwd prompt", h.send("\x15claude\r"), "Working directory")
+	h.expect("denial returned to navigator", h.send("\x15"+cwd+"\r"), "wt   ", "Session did not start", "Policy refused launch", "d diagnostics")
 	return h
 }
 
@@ -199,7 +199,7 @@ func TestNorthstarPTYLaunchFailure(t *testing.T) {
 		}
 		launchFailureNoSecrets(t, h, f.local)
 		dashboard := launchFailureDashboard(t, f, binary, nested)
-		dashboard.expect("dashboard policy provenance", 0, selected, inherited)
+		dashboard.expect("dashboard policy refusal", 0, "Session did not start", "Policy refused launch")
 		if starts.Load() != 2 {
 			t.Fatalf("dashboard admission repeated: %d", starts.Load())
 		}
@@ -263,15 +263,15 @@ exec /bin/sh -c "$1"
 				}
 				defer server.Close()
 				h := northstarStartPTY(t, f, binary, 120, 35)
-				h.expect("remote navigator ready", 0, "wt |", "n new")
-				h.expect("select fixture remote", h.send("mjj\r"), "forge", "(no sessions)")
+				h.expect("remote navigator ready", 0, "wt   ", "m machines")
+				h.expect("select fixture remote", h.send("mjj\r"), "forge", "No sessions yet")
 				h.expect("remote provider prompt", h.send("n"), "Agent (blank = shell)")
-				h.expect("remote cwd prompt", h.send("\x15claude\r"), "Cwd on forge:")
+				h.expect("remote cwd prompt", h.send("\x15claude\r"), "Working directory")
 				mark := h.send("\x15" + cwd + "\r")
 				if admitted {
-					h.expect("remote exact reattach returned to navigator", mark, "wt |", "attach-after-admission", "wt attach forge:admitted-parent")
+					h.expect("remote exact reattach returned to navigator", mark, "wt   ", "Session started", "Attachment failed", "Check it before retrying")
 				} else {
-					h.expect("remote policy returned to navigator", mark, "wt |", "admission/policy", selected, inherited, "Doctor launch-plan")
+					h.expect("remote policy returned to navigator", mark, "wt   ", "Session did not start", "Policy refused launch", "d diagnostics")
 				}
 				if starts.Load() != 1 {
 					t.Fatalf("remote launch repeated: %d", starts.Load())

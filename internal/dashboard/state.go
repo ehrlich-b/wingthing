@@ -1,7 +1,7 @@
 package dashboard
 
 import (
-	"path"
+	"context"
 	"sort"
 	"strings"
 	"time"
@@ -16,6 +16,7 @@ type machine struct {
 	generation string
 	sessions   []eggclient.LocalSession
 	updated    time.Time
+	attempted  time.Time
 	err        string
 	loading    bool
 }
@@ -32,26 +33,17 @@ type row struct {
 func (r row) key() string { return r.machine + ":" + r.ID }
 
 func (r row) name() string {
-	name := r.Name
-	if name == "" {
-		name = r.ID
+	if r.Pinned && r.Role == "coordinator" {
+		return "wing"
 	}
-	if r.Role != "" {
-		name = "[" + r.Role + "] " + name
+	if r.Name == "" || strings.Contains(r.Name, "/") || r.Name == r.ID {
+		return "Untitled session"
 	}
-	if r.Pinned {
-		name = "* " + name
-	}
-	return name
+	return clean(r.Name)
 }
 
-// A remote cwd is a remote path: never inspect or resolve it on this machine.
-func (r row) project() string {
-	if r.CWD == "" {
-		return "(no cwd)"
-	}
-	return path.Clean(r.CWD)
-}
+// A remote cwd is presentation data, never resolved on this machine.
+func (r row) project() string { return projectName(r.CWD) }
 
 type mode int
 
@@ -79,6 +71,7 @@ const (
 	diagnostics
 	diagnosticInput
 	diagnosticReport
+	actionMenu
 )
 
 type action struct {
@@ -96,44 +89,50 @@ type action struct {
 }
 
 type state struct {
-	persistAttention  bool
-	readSeen          map[string]int64
-	agents            []onboarding.Agent
-	setupAgent        onboarding.Agent
-	setupStage        string
-	setupCompleted    string
-	setupError        string
-	recent            bool
-	runs              *runHistory
-	machines          map[string]machine
-	registryError     string
-	registrySequence  uint64
-	selectionTouched  bool
-	selected          string
-	filter            string
-	mode              mode
-	input             string
-	previous          string
-	target            row
-	agent             string
-	defaultAgent      string
-	defaultCWD        string
-	message           string
-	busy              bool
-	machineFilter     string
-	attentionOnly     bool
-	picker            int
-	overlayOffset     int
-	overlayLimit      int
-	refresh           bool
-	localDir          string
-	remotes           map[string]config.Remote
-	attention         map[attentionIdentity]attentionRecord
-	attentionProfiles map[string]attentionProfile
-	attached          *attentionIdentity
-	bell              bool
-	pendingBells      int
-	diagnostic        diagnosticState
+	previews                           map[attentionIdentity]sessionPreview
+	previewReader                      func(context.Context, row) (sessionPreview, error)
+	theme                              terminalTheme
+	rowOrder                           []string
+	previousSelected                   string
+	draftAgent, draftCWD, draftMachine string
+	persistAttention                   bool
+	readSeen                           map[string]int64
+	agents                             []onboarding.Agent
+	setupAgent                         onboarding.Agent
+	setupStage                         string
+	setupCompleted                     string
+	setupError                         string
+	recent                             bool
+	runs                               *runHistory
+	machines                           map[string]machine
+	registryError                      string
+	registrySequence                   uint64
+	selectionTouched                   bool
+	selected                           string
+	filter                             string
+	mode                               mode
+	input                              string
+	previous                           string
+	target                             row
+	agent                              string
+	defaultAgent                       string
+	defaultCWD                         string
+	message                            string
+	busy                               bool
+	machineFilter                      string
+	attentionOnly                      bool
+	picker                             int
+	overlayOffset                      int
+	overlayLimit                       int
+	refresh                            bool
+	localDir                           string
+	remotes                            map[string]config.Remote
+	attention                          map[attentionIdentity]attentionRecord
+	attentionProfiles                  map[string]attentionProfile
+	attached                           *attentionIdentity
+	bell                               bool
+	pendingBells                       int
+	diagnostic                         diagnosticState
 }
 
 func needsAttention(attention string) bool {
@@ -164,31 +163,48 @@ func (s *state) machineNames() []string {
 func (s *state) rows() []row {
 	var rows []row
 	query := strings.ToLower(s.filter)
-	blocked := make(map[string]bool)
+	order := make(map[string]int)
+	for i, key := range s.rowOrder {
+		order[key] = i
+	}
 	for name, machine := range s.machines {
-		if s.machineFilter != "" && name != s.machineFilter {
-			continue
-		}
 		for _, session := range machine.sessions {
 			r := s.sessionRow(name, session)
-			if s.attentionOnly && !needsAttention(r.attention) {
+			if !r.Pinned && s.machineFilter != "" && name != s.machineFilter {
 				continue
 			}
-			if query != "" && !strings.Contains(strings.ToLower(strings.Join([]string{
+			if !r.Pinned && s.attentionOnly && !needsAttention(r.attention) {
+				continue
+			}
+			if !r.Pinned && query != "" && !strings.Contains(strings.ToLower(strings.Join([]string{
 				name, session.ID, session.Name, session.Role, session.Agent, session.Command, session.CWD, session.Status, r.attention,
 			}, " ")), query) {
 				continue
 			}
 			rows = append(rows, r)
-			if needsAttention(r.attention) {
-				blocked[name+"\x00"+r.project()] = true
-			}
+
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		left, right := rows[i], rows[j]
 		if left.Pinned != right.Pinned {
 			return left.Pinned
+		}
+		li, lk := order[left.key()]
+		ri, rk := order[right.key()]
+		if s.selectionTouched {
+			if lk && rk {
+				return li < ri
+			}
+			if lk != rk {
+				return lk
+			}
+		}
+		if needsAttention(left.attention) != needsAttention(right.attention) {
+			return needsAttention(left.attention)
+		}
+		if rank := sessionRank(left.Status) - sessionRank(right.Status); rank != 0 {
+			return rank < 0
 		}
 		if left.machine != right.machine {
 			if left.machine == "local" || right.machine == "local" {
@@ -197,14 +213,7 @@ func (s *state) rows() []row {
 			return left.machine < right.machine
 		}
 		if left.project() != right.project() {
-			lb, rb := blocked[left.machine+"\x00"+left.project()], blocked[right.machine+"\x00"+right.project()]
-			if lb != rb {
-				return lb
-			}
 			return left.project() < right.project()
-		}
-		if needsAttention(left.attention) != needsAttention(right.attention) {
-			return needsAttention(left.attention)
 		}
 		if left.name() != right.name() {
 			return left.name() < right.name()
@@ -212,6 +221,19 @@ func (s *state) rows() []row {
 		return left.ID < right.ID
 	})
 	return rows
+}
+
+func sessionRank(status string) int {
+	switch status {
+	case "working":
+		return 0
+	case "idle":
+		return 1
+	case "done", "exited":
+		return 2
+	default:
+		return 3
+	}
 }
 
 func (s *state) selection() (row, bool) {
@@ -222,6 +244,13 @@ func (s *state) selection() (row, bool) {
 		}
 	}
 	if len(rows) > 0 {
+		if s.filter != "" || s.attentionOnly {
+			for _, r := range rows {
+				if !r.Pinned {
+					return r, true
+				}
+			}
+		}
 		return rows[0], true
 	}
 	return row{}, false
@@ -229,6 +258,11 @@ func (s *state) selection() (row, bool) {
 
 func (s *state) reconcile() {
 	s.observeAttention()
+	ordered := s.rows()
+	s.rowOrder = nil
+	for _, r := range ordered {
+		s.rowOrder = append(s.rowOrder, r.key())
+	}
 	if rows := s.rows(); !s.selectionTouched && len(rows) > 0 && rows[0].Pinned {
 		s.selected = rows[0].key()
 	}
@@ -263,6 +297,23 @@ func (s *state) handle(key string) (act *action, quit bool) {
 	if s.mode == diagnostics || s.mode == diagnosticInput || s.mode == diagnosticReport {
 		return s.diagnosticHandle(key)
 	}
+	if s.mode == actionMenu {
+		switch key {
+		case "escape", "q", ".":
+			s.mode = navigate
+		case "x":
+			s.mode, s.overlayOffset = confirmStop, 0
+		case "r":
+			s.mode, s.input = rename, s.target.Name
+		case "t":
+			if takeoverAvailable(s.target) {
+				s.mode, s.overlayOffset = confirmTakeover, 0
+			} else {
+				s.message = "Input control is not available for this session."
+			}
+		}
+		return nil, false
+	}
 	if s.mode == machineDetails {
 		if key == "escape" || key == "enter" || key == "q" || key == "M" {
 			s.mode = navigate
@@ -292,6 +343,7 @@ func (s *state) handle(key string) (act *action, quit bool) {
 				s.mode, s.overlayOffset = machineDetails, 0
 			}
 		case "enter":
+			s.selectionTouched = true
 			s.machineFilter = ""
 			if s.picker > 0 {
 				s.machineFilter = s.machineNames()[s.picker-1]
@@ -320,11 +372,19 @@ func (s *state) handle(key string) (act *action, quit bool) {
 	}
 	if s.mode != navigate {
 		if key == "escape" {
+			if s.mode == newCWD {
+				s.draftAgent, s.draftCWD, s.draftMachine = s.agent, s.input, s.target.machine
+			}
 			if s.mode == filter {
 				s.filter = s.previous
+				s.selected = s.previousSelected
 				s.reconcile()
 			}
 			s.mode, s.message = navigate, ""
+			return nil, false
+		}
+		if (s.mode == confirmStop || s.mode == confirmTakeover) && (key == "j" || key == "k" || key == "up" || key == "down" || key == "pageup" || key == "pagedown" || key == "home") {
+			s.scrollOverlay(key)
 			return nil, false
 		}
 		if s.mode == confirmStop || s.mode == confirmTakeover {
@@ -358,6 +418,9 @@ func (s *state) handle(key string) (act *action, quit bool) {
 					}
 				}
 				s.mode, s.input = newCWD, s.target.CWD
+				if s.draftMachine == s.target.machine && s.draftAgent == s.agent {
+					s.input = s.draftCWD
+				}
 				if s.input == "" && s.target.machine == "local" {
 					s.input = s.defaultCWD
 				}
@@ -388,11 +451,24 @@ func (s *state) handle(key string) (act *action, quit bool) {
 		s.message = ""
 		if s.mode == filter {
 			s.filter = s.input
+			if r, ok := s.selection(); ok && r.Pinned && s.filter != "" {
+				for _, match := range s.rows() {
+					if !match.Pinned {
+						s.selected = match.key()
+						break
+					}
+				}
+			}
 			s.reconcile()
 		}
 		return nil, false
 	}
 	switch key {
+	case ".":
+		s.selectionTouched = true
+		if r, ok := s.selection(); ok {
+			s.target, s.mode, s.overlayOffset = r, actionMenu, 0
+		}
 	case "a":
 		s.openSetup()
 	case "d":
@@ -412,6 +488,14 @@ func (s *state) handle(key string) (act *action, quit bool) {
 		h.requested, h.next = true, false
 	case "q":
 		return nil, true
+	case "pageup":
+		s.move(-8)
+	case "pagedown":
+		s.move(8)
+	case "home":
+		s.move(-len(s.rows()))
+	case "end":
+		s.move(len(s.rows()))
 	case "up", "left", "k":
 		s.move(-1)
 	case "down", "right", "j":
@@ -424,6 +508,7 @@ func (s *state) handle(key string) (act *action, quit bool) {
 			}
 		}
 	case "i":
+		s.selectionTouched = true
 		if r, ok := s.selection(); ok {
 			s.target, s.mode, s.overlayOffset = r, details, 0
 			s.acknowledge(r)
@@ -431,21 +516,30 @@ func (s *state) handle(key string) (act *action, quit bool) {
 	case "?":
 		s.mode, s.overlayOffset = help, 0
 	case "!":
+		s.selectionTouched = true
 		s.attentionOnly = !s.attentionOnly
 		s.reconcile()
 	case "b":
 		s.bell = !s.bell
 		s.message = "Bell " + s.bellSetting() + " for this dashboard"
 	case "R":
+		s.selectionTouched = true
+		s.rowOrder = nil
+		s.reconcile()
 		s.refresh = true
 	case "/":
+		s.selectionTouched = true
 		s.mode, s.previous, s.input = filter, s.filter, s.filter
+		s.previousSelected = s.selected
 	case "enter", "v", "t", "r", "x", "n":
 		s.selectionTouched = true
 		if s.busy {
 			return nil, false
 		}
 		r, ok := s.selection()
+		if key == "n" && s.machineFilter != "" && (!ok || r.machine != s.machineFilter) {
+			r, ok = row{machine: s.machineFilter}, true
+		}
 		if key != "n" && !ok {
 			return nil, false
 		}
@@ -455,24 +549,36 @@ func (s *state) handle(key string) (act *action, quit bool) {
 				r.machine = "local"
 			}
 		}
+		if accessDenied(s.machines[r.machine].err) {
+			s.message = "Access denied. R refresh."
+			return nil, false
+		}
 		r.generation = s.machines[r.machine].generation
 		r.identity = s.attentionIdentity(r.machine, r.ID)
 		s.target, s.message = r, ""
 		switch key {
 		case "enter":
+			if s.stale(r.machine) {
+				s.message = machineLabel(r.machine) + " unreachable. R retries this machine."
+				return nil, false
+			}
 			return &action{row: r, attach: true}, false
 		case "v":
+			if s.stale(r.machine) {
+				s.message = machineLabel(r.machine) + " unreachable. R retries this machine."
+				return nil, false
+			}
 			return &action{row: r, attach: true, readOnly: true}, false
 		case "t":
 			if !takeoverAvailable(r) {
-				s.message = "Takeover requires preview input ownership reported by this session"
+				s.message = "Input control is not available for this session"
 				return nil, false
 			}
-			s.mode = confirmTakeover
+			s.mode, s.overlayOffset = confirmTakeover, 0
 		case "r":
 			s.mode, s.input = rename, r.Name
 		case "x":
-			s.mode = confirmStop
+			s.mode, s.overlayOffset = confirmStop, 0
 		case "n":
 			s.mode, s.input = newAgent, s.defaultAgent
 		}

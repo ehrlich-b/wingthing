@@ -76,8 +76,9 @@ func TestSetupRejectsNonInteractiveExecution(t *testing.T) {
 }
 func TestSetupEmptyNavigatorAndConnectionGuide(t *testing.T) {
 	s := setupFixture()
+	s.machines["local"] = machine{updated: time.Now()}
 	screen := render(s, 120, 36, time.Now())
-	for _, want := range []string{"n new session", "a detect / install agents", "model provider may need internet", "Claude Code: not installed"} {
+	for _, want := range []string{"Install an agent", "a install an agent", "1 machine", "Claude Code   Missing"} {
 		if !strings.Contains(screen, want) {
 			t.Fatalf("missing %s", want)
 		}

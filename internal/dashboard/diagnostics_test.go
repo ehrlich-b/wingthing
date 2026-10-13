@@ -73,10 +73,10 @@ func TestDiagnosticsRequiredFieldsCancellationAndBoundedSanitizedOutput(t *testi
 
 func TestMachineDetailsFreshnessTrustFailureAndRemovedProfile(t *testing.T) {
 	for _, tc := range []struct{ err, want string }{
-		{"REMOTE HOST IDENTIFICATION HAS CHANGED", "Identity hard stop"},
-		{"Host key verification failed", "Identity hard stop"},
-		{"remote version mismatch", "Compatibility blocked"},
-		{"connection refused", "Inventory unavailable"},
+		{"REMOTE HOST IDENTIFICATION HAS CHANGED", "Identity changed"},
+		{"Host key verification failed", "Identity changed"},
+		{"remote version mismatch", "Update wt"},
+		{"connection refused", "Connection refused"},
 	} {
 		s := fixture()
 		s.mode = machineDetails
@@ -84,8 +84,8 @@ func TestMachineDetailsFreshnessTrustFailureAndRemovedProfile(t *testing.T) {
 		s.machines["remote"] = machine{err: tc.err, updated: time.Now().Add(-time.Minute)}
 		s.remotes = map[string]config.Remote{"remote": {SSHTarget: "fixture-remote", WingID: "remote-id", ControlVersion: "1", ControlSocket: "/fixture/socket", WingthingDir: "/fixture/state"}}
 		text := strings.Join(overlayLines(s, time.Now()), "\n")
-		for _, want := range []string{tc.want, "cached rows stale", "Pinned wing ID: remote-id", "prove an empty"} {
-			if want == "prove an empty" && tc.want != "Inventory unavailable" {
+		for _, want := range []string{tc.want, "Last seen 1m ago", "Saved identity verified", "prove this machine is empty"} {
+			if want == "prove this machine is empty" && tc.want != "Connection refused" {
 				continue
 			}
 			if !strings.Contains(text, want) {
@@ -124,12 +124,12 @@ func TestRunReceiptRefreshKeepsOriginalKeyAndCurrentOutcome(t *testing.T) {
 	r.Status, r.Terminal, r.Cleanup, r.OutputAvailability = "done", true, "unknown", "expired"
 	h.pages[r.WingID] = runPage{Runs: []runRow{r}, ObservedAt: "2026-10-12T20:00:00Z"}
 	text := strings.Join(s.runOverlay(), "\n")
-	for _, want := range []string{"Original admission key: original-key", "Status: done", "no execution deadline", "Terminal outcome retained", "does not prove cleanup", "Observed: 2026"} {
+	for _, want := range []string{"Original request retained", "State: + Done", "no execution deadline", "Terminal outcome retained", "does not prove cleanup", "Last checked:"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %s in %s", want, text)
 		}
 	}
-	if strings.Contains(text, "Status: running") {
+	if h.target.RequestKey != "original-key" || h.target.ID != "same" || strings.Contains(text, "State: * Working") {
 		t.Fatal("open receipt stayed on old outcome")
 	}
 }
@@ -141,7 +141,7 @@ func TestRunReceiptPendingAdmissionIsNotUnknownCompletion(t *testing.T) {
 	s.history().target = r
 	s.history().pages["wing"] = runPage{Runs: []runRow{r}}
 	text := strings.Join(s.runOverlay(), "\n")
-	if !strings.Contains(text, "Admission recorded; result pending") || strings.Contains(text, "Admission/outcome needs evidence:") || strings.Contains(text, "Terminal outcome retained") {
+	if !strings.Contains(text, "Admission recorded. Result pending") || strings.Contains(text, "Admission/outcome needs evidence:") || strings.Contains(text, "Terminal outcome retained") {
 		t.Fatal(text)
 	}
 }

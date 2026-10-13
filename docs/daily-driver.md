@@ -17,13 +17,28 @@ Press **Ctrl+B then q** (or Q) to detach. Press **Ctrl+B twice** to send a liter
 Ctrl+B to the provider. Bracketed paste passes through literally in an attachment;
 the navigator ignores it. Detach and leaving wt preserve running sessions.
 
-Run bare `wt` in a terminal to find work across local and saved machines. Non-TTY
-bare wt prints CLI help. Arrows or j/k move; Enter attaches the exact selected
-machine/session ID. `/` filters machine, name, ID, agent, cwd or status. `m` selects
-All, local, or a saved machine, including empty and offline ones. `i` shows full
-metadata and route; `?` opens scrollable help. `R` reloads machines and refreshes
-inventory. Saved profiles also reload every two seconds. Slow/offline queries run
-independently with bounded retry backoff; local work stays usable.
+Run `wt` in a terminal to open the work list. wing stays pinned above the list.
+Sessions that need a reply come first. Each row shows its state, agent, machine
+and age. Unread responses have a `*` in the Unread column.
+
+Arrows or j/k move; PageUp/PageDown page; Home/End select the first/last row.
+Enter opens the selected terminal. `/` searches session names, agents, machines,
+projects and states. Escape restores the previous search and selection. `!`
+filters work that needs attention. `m` selects a machine. `i` opens full details.
+`.` opens session actions. `?` opens help. `q` leaves sessions running.
+
+`R` reloads machines and refreshes inventory. Work needing a reply rises as
+machines load. Once you select work, rows stay in place until the next refresh. Slow machines do not block local work. Cached rows say
+Last seen; their date stays fixed when a retry fails. Reconnect before attaching.
+The wide view adds recent messages from the selected session and wing at 120
+columns and 30 rows. Smaller terminals use a detail area below the list. Messages
+load through the same saved route; they do not acknowledge unread responses.
+
+Extended-color terminals use a cream sheet with ink, red, slate and moss.
+Basic terminals keep their own canvas. `NO_COLOR=1 wt` keeps state words
+and selection markers.
+Borders use box drawing when the locale supports Unicode. `WT_TUI_ASCII=1 wt`
+uses ASCII borders. Bare `wt` without a terminal prints CLI help.
 
 Save an existing SSH destination, including its custom executable and state:
 
@@ -68,21 +83,19 @@ modifier when the provider captures the mouse (the modifier varies by terminal).
 Browser copy behavior remains separate. Kernel PTY fixtures cover mouse bytes and
 history; a physical trackpad and selection modifier still need a GUI canary.
 
-`!` filters native blocked, unread and failed work. `b` enables an optional bell
-for this dashboard instance; it starts off. `B` means native input is requested;
-viewing it does not clear blocking. `I*` and the `U` count mark an unread foreground
-response; details or a successful attachment acknowledge the response shown.
-The provider or descendants may continue after a response completes. `?` status
-means missing/unknown lifecycle evidence or disabled hooks, never a guess from
-screen text. Connection freshness is separate: stale rows are cached inventory.
+`b` enables a bell for this navigator instance; it starts off. Needs you comes
+from a native input request. Reading details does not clear it. Details or a
+successful attachment acknowledge the unread response shown. A response can end
+while the provider keeps running. Unknown means missing lifecycle evidence or
+disabled hooks; the navigator does not infer state from terminal text.
 
-`h` opens recent runs with qualified wing/run IDs, including terminal records that
-outlive the coordinator. `/` filters, `N` explicitly loads the next bounded page,
-`i` shows details, and `o` opens a bounded result. Enter attaches only a verified
-live session; otherwise it opens metadata. Esc returns to sessions. A result or
-archive is not a live session. Recover durable IDs and bounded results explicitly;
-Offline inspection is a separate read of an explicit, completed, hash-verified
-snapshot inside your workspace. Inspect the implemented commands before choosing them:
+`h` opens recent runs. Rows show outcome, output availability and cleanup.
+`/` searches loaded pages; `N` loads the next page. `i` opens details and `o`
+reads a bounded result. Enter checks an exact live session before attaching;
+otherwise it opens the receipt. Escape returns to sessions. A saved result is
+read only. Unknown outcomes retain the original request and are never replayed.
+
+Inspect the recovery and offline commands before using them:
 
 ```sh
 wt agent recover --json
@@ -92,7 +105,6 @@ wt run-inspect --help
 See [testing](testing.md) for the offline daily-loop gates,
 [SSH routes](ssh-remote-sessions.md) for transport limits, and
 [Claude parent conversations](wt-claude.md) for child work.
-Phone/tunn setup belongs to the other lane's eventual guide; the existing
-[browser overview](../README.md#4-browser-visibility-self-hosted-roost) is the current reference, not a
-phone deployment recipe. Real provider, real SSH and physical Mac GUI canaries
-are separate from isolated fixture acceptance.
+See the [browser overview](../README.md#4-browser-visibility-self-hosted-roost)
+for browser setup. Real provider, real SSH and physical terminal checks remain
+separate from isolated fixture tests.

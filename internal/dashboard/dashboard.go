@@ -38,8 +38,9 @@ func Run(ctx context.Context, version string, streams remotepkg.IO) error {
 	if err != nil {
 		return err
 	}
-	s := &state{machines: map[string]machine{"local": {}}, defaultAgent: cfg.DefaultAgent, defaultCWD: cwd, localDir: cfg.Dir, agents: onboarding.Discover(), persistAttention: true}
+	s := &state{machines: map[string]machine{"local": {}}, defaultAgent: cfg.DefaultAgent, defaultCWD: cwd, localDir: cfg.Dir, agents: onboarding.Discover(), persistAttention: true, theme: detectTheme()}
 	s.loadReadCursors()
+	s.previewReader = readSessionPreview
 	inv := newInventory(nil)
 	inv.reload(s, remotes, registryErr)
 	inv.queryProfile = func(ctx context.Context, name string, profile config.Remote) ([]eggclient.LocalSession, error) {
@@ -61,6 +62,10 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 	ctx, cancel := context.WithCancel(ctx)
 	var actions sync.WaitGroup
 	history := s.history()
+	previews := newPreviews()
+	reads := machineReads{}
+	inv.readGates, previews.readGates = reads, reads
+	defer func() { previews.stop(); previews.workers.Wait() }()
 	defer func() { cancel(); actions.Wait(); inv.workers.Wait(); history.workers.Wait() }()
 	defer func() { err = errors.Join(err, terminal.leave()) }()
 	if err := terminal.enter(); err != nil {
@@ -126,12 +131,15 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 				}
 			}
 			width, height := terminal.size()
+			if s.previewReader != nil && !suspended {
+				previews.request(ctx, s, width >= 120 && height >= 30, time.Now(), s.visibleReports(width, height)...)
+			}
 			if s.isOverlay() {
 				lineCount := 0
 				for _, line := range overlayLines(s, time.Now()) {
 					lineCount += len(wrap(line, max(1, width)))
 				}
-				s.overlayLimit = max(0, lineCount-max(0, height-3))
+				s.overlayLimit = max(0, lineCount-max(0, height-5))
 				s.overlayOffset = min(s.overlayOffset, s.overlayLimit)
 			}
 			if _, err := io.WriteString(streams.Out, render(s, width, height, time.Now())); err != nil {
@@ -143,6 +151,9 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 		select {
 		case <-ctx.Done():
 			return nil
+		case result := <-previews.results:
+			previews.apply(s, result)
+			continue
 		case sig := <-signals:
 			switch sig {
 			case syscall.SIGTSTP:
@@ -177,6 +188,9 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			}
 			continue
 		case result := <-inv.results:
+			if result.err != nil && accessDenied(result.err.Error()) && actionCancel != nil && activeAction.machine == result.name && activeAction.generation == result.generation && s.machines[result.name].generation == result.generation {
+				actionCancel()
+			}
 			if inv.apply(s, result) {
 				inv.start(ctx, s, result.name)
 			}
@@ -220,6 +234,10 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 				break
 			}
 			if key == "R" && s.mode == navigate {
+				for identity, read := range previews.reads {
+					read.next = time.Time{}
+					previews.reads[identity] = read
+				}
 				reload()
 			}
 			act, quit := s.handle(key)

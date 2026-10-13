@@ -49,7 +49,7 @@ func TestDashboardInventorySlowRemoteDoesNotBlockLocal(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("slow remote blocked local inventory")
 	}
-	if s.selected != "local:live" || !s.machines["work"].loading || !strings.Contains(render(s, 80, 24, time.Now()), "> B local") {
+	if s.selected != "local:live" || !s.machines["work"].loading || !strings.Contains(render(s, 80, 24, time.Now()), "> local") {
 		t.Fatal("local result was not renderable while remote was pending")
 	}
 	inv.refresh(ctx, s)
@@ -258,7 +258,7 @@ func TestDashboardRegistryReplacementCancelsAndRejectsLateResults(t *testing.T) 
 		t.Fatal("late result consumed replacement query")
 	}
 	inv.reload(s, nil, errors.New("malformed registry"))
-	if s.registryError == "" || s.remotes["work"] != next || !strings.Contains(render(s, 120, 30, time.Now()), "Registry error") {
+	if s.registryError == "" || s.remotes["work"] != next || !strings.Contains(render(s, 120, 30, time.Now()), "Saved machines could not be loaded") {
 		t.Fatal("malformed registry discarded last valid route")
 	}
 	inv.reload(s, map[string]config.Remote{}, nil)

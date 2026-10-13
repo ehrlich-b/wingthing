@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// Semantic terminal roles share the app palette without painting the user's
-// base foreground or background. Labels and ASCII marks also carry meaning.
+// Paper is a cream sheet with ink, red pencil, slate and moss. Basic
+// terminals retain their canvas; labels and marks carry the same meaning.
 type tone uint8
 
 const (
@@ -26,16 +26,25 @@ type terminalTheme struct {
 	light  bool
 	colors int
 	dumb   bool
+	ascii  bool
 }
 
 func detectTheme() terminalTheme {
+	locale := os.Getenv("LC_ALL")
+	if locale == "" {
+		locale = os.Getenv("LC_CTYPE")
+	}
+	if locale == "" {
+		locale = os.Getenv("LANG")
+	}
+	ascii := os.Getenv("WT_TUI_ASCII") == "1" || !strings.Contains(strings.ToLower(locale), "utf")
 	if os.Getenv("TERM") == "dumb" {
-		return terminalTheme{dumb: true}
+		return terminalTheme{dumb: true, ascii: true}
 	}
 	if _, ok := os.LookupEnv("NO_COLOR"); ok {
-		return terminalTheme{}
+		return terminalTheme{ascii: ascii}
 	}
-	t := terminalTheme{colors: 8}
+	t := terminalTheme{colors: 8, ascii: ascii}
 	if strings.Contains(os.Getenv("TERM"), "256color") {
 		t.colors = 256
 	}
@@ -56,8 +65,18 @@ func detectTheme() terminalTheme {
 	return t
 }
 
+// Extended-color terminals render the same paper sheet in either host theme.
+func (t terminalTheme) sheet() string {
+	if t.dumb || t.colors < 256 {
+		return ""
+	}
+	if t.colors == 1<<24 {
+		return "\x1b[48;2;243;237;224;38;2;31;26;21m"
+	}
+	return "\x1b[48;5;230;38;5;234m"
+}
 func (t terminalTheme) style(role tone) string {
-	if t.dumb || role == plain {
+	if t.dumb {
 		return ""
 	}
 	if t.colors == 0 {
@@ -66,34 +85,38 @@ func (t terminalTheme) style(role tone) string {
 		}
 		return ""
 	}
-	dark := []int{0, 250, 153, 151, 222, 217, 242, 24}
-	light := []int{0, 240, 24, 22, 94, 124, 244, 153}
-	ansi := []int{0, 39, 36, 32, 33, 31, 39, 7}
 	if t.colors == 8 {
-		if t.light && role == accent {
-			return "\x1b[34m"
+		if role == selection {
+			return "\x1b[39;7m"
 		}
-		return fmt.Sprintf("\x1b[%dm", ansi[role])
-	}
-	colors := dark
-	if t.light {
-		colors = light
+		return "\x1b[39m"
 	}
 	if role == selection {
-		fg := 255
-		if t.light {
-			fg = 235
+		if t.colors == 1<<24 {
+			return "\x1b[48;2;31;26;21;38;2;243;237;224m"
 		}
-		return fmt.Sprintf("\x1b[48;5;%d;38;5;%dm", colors[role], fg)
+		return "\x1b[48;5;234;38;5;230m"
 	}
+	colors := []int{234, 239, 24, 65, 130, 130, 246}
+	rgb := [][3]int{{31, 26, 21}, {90, 80, 71}, {47, 76, 107}, {78, 106, 72}, {155, 58, 29}, {155, 58, 29}, {168, 156, 134}}
 	if t.colors == 1<<24 {
-		darkRGB := [][3]int{{}, {178, 189, 197}, {173, 204, 224}, {156, 213, 179}, {243, 202, 120}, {255, 169, 174}, {60, 69, 77}}
-		lightRGB := [][3]int{{}, {89, 99, 106}, {49, 91, 118}, {36, 98, 70}, {128, 80, 0}, {164, 45, 50}, {216, 222, 217}}
-		rgb := darkRGB[role]
-		if t.light {
-			rgb = lightRGB[role]
-		}
-		return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", rgb[0], rgb[1], rgb[2])
+		c := rgb[role]
+		return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", c[0], c[1], c[2])
+	}
+	return fmt.Sprintf("\x1b[38;5;%dm", colors[role])
+}
+func (t terminalTheme) selectedState(role tone) string {
+	if t.colors == 8 {
+		return "\x1b[39m"
+	}
+	if t.colors < 256 {
+		return t.style(role)
+	}
+	rgb := [][3]int{{243, 237, 224}, {203, 192, 173}, {199, 214, 230}, {188, 211, 175}, {243, 198, 181}, {243, 198, 181}, {200, 188, 166}}
+	colors := []int{230, 250, 153, 151, 217, 217, 250}
+	if t.colors == 1<<24 {
+		c := rgb[role]
+		return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", c[0], c[1], c[2])
 	}
 	return fmt.Sprintf("\x1b[38;5;%dm", colors[role])
 }

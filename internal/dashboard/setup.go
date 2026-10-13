@@ -107,28 +107,47 @@ func (s *state) setupHandle(key string) (*action, bool) {
 
 func (s *state) setupLines() []string {
 	if s.mode == agentSetup {
-		lines := []string{"Agent setup on local machine", "PATH detection only; no network, execution or provider-auth check.", ""}
-		for i, a := range s.agents {
-			found := a.Path
-			if found == "" {
-				found = "not installed"
+		lines := []string{"Install an agent", "This machine", "", "Detection checks installed commands. Provider login is separate.", ""}
+		for _, a := range s.agents {
+			status := "Missing"
+			if a.Path != "" {
+				status = "Installed"
 			}
-			lines = append(lines, fmt.Sprintf("%d  %s: %s", i+1, a.Name, found))
+			lines = append(lines, a.Name+"   "+status)
 		}
-		return append(lines, "", "1 Claude Code | 2 Codex | R rescan PATH | Esc skip / sessions")
+		return lines
 	}
 	a := s.setupAgent
-	lines := []string{"Agent setup: " + a.Name + " on local machine", "Source: " + a.Source, ""}
+	lines := []string{a.Name + " / This machine", "Source: " + a.Source, ""}
 	if s.mode == installConsent {
-		return append(lines, "Download: selected vendor CLI and its runtime dependencies", "Exact installer:", "  "+a.Installer, "", "Run as current OS user; no automatic sudo or package-manager setup.", "Enter = consent and install this agent | Esc = cancel without changes")
+		return append(lines, "Install "+a.Name, "Downloads the agent and its runtime dependencies.", "", a.Installer, "", "Runs as your OS user. No automatic sudo.", "Nothing changes until you choose Install.")
 	}
 	if s.mode == setupFailure {
-		return append(lines, "Failed stage: "+s.setupStage, clean(s.setupError), "", "r review retry (installer always needs fresh consent)", "R rescan PATH | a choose another agent | Esc sessions", "Permission failure: fix the indicated directory; no automatic sudo.", "Admitted sessions remain in inventory; do not relaunch after uncertain admission.")
+		cause := "The command failed. Check its output in your terminal."
+		lower := strings.ToLower(s.setupError)
+		switch {
+		case strings.Contains(lower, "managed"), strings.Contains(lower, "ancestry"), strings.Contains(lower, "user terminal"), strings.Contains(lower, "context"):
+			cause = "Provider login requires a private user terminal."
+		case strings.Contains(lower, "download"), strings.Contains(lower, "curl"), s.setupStage == "install" && strings.Contains(lower, "exit status 22"):
+			cause = "Download failed. Check the network and source above."
+		case strings.Contains(lower, "permission"):
+			cause = "Access was denied. Check directory permissions."
+		case strings.Contains(lower, "absent"), strings.Contains(lower, "path"):
+			cause = "The agent command was not found. Check PATH, then rescan."
+		}
+		lines = append(lines, "Failed stage: "+s.setupStage, cause)
+		if strings.Contains(cause, "private user terminal") {
+			lines = append(lines, "", a.ID+" "+strings.Join(a.Login, " "))
+		}
+		if s.setupStage == "install" {
+			return append(lines, "", "Retry installation requires a new review.")
+		}
+		return lines
 	}
 	if s.setupCompleted != "" {
-		lines = append(lines, "Last completed native stage: "+s.setupCompleted+" (command exited 0)")
+		lines = append(lines, "Completed: "+s.setupCompleted)
 	}
-	return append(lines, "Found: "+a.Path, "v verify: "+a.ID+" --version", "l native provider login: "+a.ID+" "+strings.Join(a.Login, " "), "", "Provider login uses its own account; it may require a paid plan.", "A binary/version check does not prove authentication or session readiness.", "Enter review cwd and start | Esc sessions | R rescan PATH")
+	return append(lines, "Installed", "", a.ID+" --version", a.ID+" "+strings.Join(a.Login, " "), "", "Provider login uses your provider account.", "An installed command does not prove login or session readiness.")
 }
 
 // This human-only handoff does not capture installer/provider output or persist

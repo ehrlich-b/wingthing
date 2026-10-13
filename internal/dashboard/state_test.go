@@ -71,7 +71,7 @@ func TestDashboardSortMachineProjectBlockedFirst(t *testing.T) {
 	for _, row := range s.rows() {
 		got = append(got, row.key())
 	}
-	want := []string{"local:4", "local:1", "local:3", "local:2", "local:5", "a:a", "z:z"}
+	want := []string{"local:4", "local:3", "z:z", "local:1", "a:a", "local:2", "local:5"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("rows = %v, want %v", got, want)
 	}

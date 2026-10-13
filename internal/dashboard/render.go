@@ -20,43 +20,15 @@ func clean(text string) string {
 }
 
 func clip(text string, width int) string {
-	return runewidth.Truncate(clean(text), max(0, width), "…")
+	if width < 3 {
+		return runewidth.Truncate(clean(text), max(0, width), strings.Repeat(".", max(0, width)))
+	}
+	return runewidth.Truncate(clean(text), width, "...")
 }
 
 func field(text string, width int) string {
 	text = clip(text, width)
 	return text + strings.Repeat(" ", max(0, width-runewidth.StringWidth(text)))
-}
-
-func statusLetter(status string) string {
-	switch status {
-	case "working":
-		return "W"
-	case "blocked":
-		return "B"
-	case "idle":
-		return "I"
-	case "done":
-		return "D"
-	case "exited":
-		return "E"
-	case "failed":
-		return "F"
-	default:
-		return "?"
-	}
-}
-
-func shortCWD(cwd string) string {
-	if cwd == "" {
-		return "-"
-	}
-	cwd = path.Clean(cwd)
-	parent := path.Base(path.Dir(cwd))
-	if parent == "/" || parent == "." {
-		return cwd
-	}
-	return parent + "/" + path.Base(cwd)
 }
 
 func age(seconds int64) string {
@@ -73,342 +45,823 @@ func age(seconds int64) string {
 	}
 }
 
-func rowText(r row, width int, seconds int64) string {
-	status := statusLetter(r.Status)
-	if r.attention == "unread" {
-		status += "*"
-	}
-
-	if r.Pinned {
-		return "  " + status + " " + clip(r.name(), max(0, width-3-runewidth.StringWidth(status)))
-	}
-
-	// All columns remain available at 40 cells. Smaller terminals truncate the
-	// compact row; the status and name are always the first visible fields.
-	available := max(0, width-3-runewidth.StringWidth(status))
-	ageWidth := min(5, available/6)
-	agentWidth := min(12, available/5)
-	cwdWidth := available / 3
-	cwd := shortCWD(r.CWD)
-	if width < 60 {
-		ageWidth = min(4, available/6)
-		agentWidth = min(6, available/5)
-		cwdWidth = available / 4
-		if r.CWD != "" {
-			cwd = path.Base(path.Clean(r.CWD))
-		}
-	}
-	nameWidth := max(0, available-ageWidth-agentWidth-cwdWidth-3)
-	agent := r.Agent
-	if agent == "" {
-		agent = r.Kind
-	}
-	return "  " + status + " " + field(r.name(), nameWidth) + " " +
-		field(agent, agentWidth) + " " + field(cwd, cwdWidth) + " " + field(age(seconds), ageWidth)
-}
-
 type viewLine struct {
-	text     string
-	selected bool
+	text                  string
+	selected              bool
+	tone                  tone
+	statusAt, statusWidth int
+	statusTone            tone
+	unreadAt, unreadWidth int
+	rightTone             tone
+	split                 int
+	right                 string
+	frame                 bool
 }
 
-// render is pure: it only uses the inventory snapshot and a supplied clock.
-// Cursor addressing avoids newline-driven scrolling at the bottom edge.
-func render(s *state, width, height int, now time.Time) string {
-	width, height = max(1, width), max(1, height)
-	rows := s.rows()
-	counts := make(map[string]int)
-	total := 0
-	names := s.machineNames()
-	attention := 0
-	unread := 0
-	for name, machine := range s.machines {
-		for _, session := range machine.sessions {
-			counts[statusLetter(session.Status)]++
-			total++
-			attentionKind := s.sessionRow(name, session).attention
-			if attentionKind == "unread" {
-				unread++
-			}
-			if needsAttention(attentionKind) {
-				attention++
-			}
-		}
+func plural(n int, word string) string {
+	if n == 1 {
+		return fmt.Sprintf("1 %s", word)
 	}
-	scope := s.machineFilter
-	if scope == "" {
-		scope = "All"
+	return fmt.Sprintf("%d %ss", n, word)
+}
+
+func machineLabel(name string) string {
+	if name == "local" {
+		return "This machine"
+	}
+	return clean(name)
+}
+
+func ownerLabel(value string) string {
+	switch value {
+	case "browser", "agent", "terminal":
+		return value
+	default:
+		return "Another client"
+	}
+}
+
+func isolationLabel(value string) string {
+	switch value {
+	case "standard":
+		return "Standard"
+	case "strict":
+		return "Strict"
+	case "network":
+		return "Network"
+	case "privileged":
+		return "Sandbox off"
+	default:
+		return "Not reported"
+	}
+}
+
+func agentLabel(agent string) string {
+	switch agent {
+	case "claude":
+		return "Claude"
+	case "codex":
+		return "Codex"
+	case "":
+		return "Terminal"
+	}
+	return clean(agent)
+}
+
+// At 80 cells the columns fit exactly; below 80 drop age, then agent.
+func columns(width int) (title, state, agent, machine, elapsed int) {
+	state, machine = 13, 15
+	if width >= 75 {
+		return width - 2 - unreadWidth(width) - state - 9 - machine - 8 - columnGap(width), state, 9, machine, 8
+	}
+	if width >= 65 {
+		return width - 2 - unreadWidth(width) - state - 9 - machine, state, 9, machine, 0
+	}
+	state = 12
+	machine = min(12, max(8, width/5))
+	return max(1, width-2-3-state-machine), state, 0, machine, 0
+}
+
+func columnGap(width int) int { return min(2, max(0, width-78)) }
+func unreadWidth(width int) int {
+	if width >= 65 {
+		return 6
+	}
+	return 3
+}
+
+func ageField(text string, width, padding int) string {
+	if width == 0 {
+		return ""
+	}
+	return strings.Repeat(" ", padding) + field(text, width)
+}
+
+func tableLabel(width int) string {
+	t, st, a, m, e := columns(width)
+	return "  " + field("State", st) + field("Unread", unreadWidth(width)) + field("  Title", t) + field("Agent", a) + field("Machine", m) + ageField("Age", e, columnGap(width))
+}
+
+func sessionLine(s *state, r row, width int, now time.Time) viewLine {
+	t, st, a, m, e := columns(width)
+	unread := ""
+	if r.attention == "unread" {
+		unread = " *"
+	}
+	label, role := stateLabel(r)
+	if s.stale(r.machine) {
+		label, role = "? Last seen", warning
+	}
+	elapsed := r.UptimeSecs
+	if updated := s.machines[r.machine].updated; !updated.IsZero() {
+		elapsed += max(0, int64(now.Sub(updated)/time.Second))
+	}
+	selected := r.key() == s.selected
+	prefix := "  "
+	if selected {
+		prefix = "> "
+	}
+	return viewLine{text: "  " + field(label, st) + field(unread, unreadWidth(width)) + field(prefix+r.name(), t) + field(agentLabel(r.Agent), a) + field(machineLabel(r.machine), m) + ageField(age(elapsed), e, columnGap(width)), selected: selected, statusAt: 2, statusWidth: st, statusTone: role, unreadAt: 2 + st, unreadWidth: unreadWidth(width)}
+}
+
+func (s *state) stale(name string) bool {
+	m := s.machines[name]
+	return m.err != "" || (name != "local" && s.registryError != "")
+}
+
+func (s *state) scopeLine(now time.Time) string {
+	scope := "All machines"
+	if s.registryError != "" {
+		return "Saved machines could not be loaded. Local sessions remain available."
+	}
+	if s.machineFilter != "" {
+		scope = machineLabel(s.machineFilter)
 	}
 	if s.attentionOnly {
-		scope += " ! attention"
+		scope += " / Needs attention"
 	}
-	header := []string{
-		fmt.Sprintf("wt | %d sessions | %d machines", total, len(names)),
-		fmt.Sprintf("B:%d W:%d I:%d D:%d E:%d F:%d ?:%d U:%d | [%s] !:%d bell:%s", counts["B"], counts["W"], counts["I"], counts["D"], counts["E"], counts["F"], counts["?"], unread, scope, attention, s.bellSetting()),
-		"Local + saved SSH | no Wingthing login required | model provider may need internet",
-	}
-	if height < 30 || s.mode == help {
-		header = header[:2]
-	}
-	var body []viewLine
-	selectedLine := 0
-	for _, r := range rows {
-		if !r.Pinned {
-			continue
-		}
-		if len(body) == 0 {
-			body = append(body, viewLine{text: "Pinned"})
-		}
-		m := s.machines[r.machine]
-		suffix := " @ " + clean(r.machine)
-		if m.err != "" || (r.machine != "local" && s.registryError != "") {
-			suffix += " stale"
-		}
-		line := viewLine{text: rowText(r, max(0, width-len(suffix)), r.UptimeSecs) + suffix, selected: r.key() == s.selected}
-		if line.selected {
-			selectedLine = len(body)
-			line.text = ">" + line.text[1:]
-		}
-		body = append(body, line)
-	}
-	for _, name := range names {
+	var trouble []string
+	connected, loading := 0, 0
+	for _, name := range s.machineNames() {
 		if s.machineFilter != "" && name != s.machineFilter {
 			continue
 		}
-		machine := s.machines[name]
-		if name != "local" && s.registryError != "" {
-			machine.err = "registry invalid; last valid route stale"
-		}
-		label := name + "  " + connection(machine, now)
-		body = append(body, viewLine{text: label})
-		if machine.err != "" {
-			body = append(body, viewLine{text: "  ! " + machine.err})
-		}
-		project, found := "", false
-		for _, r := range rows {
-			if r.machine != name {
-				continue
+		m := s.machines[name]
+		if s.stale(name) {
+			cause := " unreachable"
+			if accessDenied(m.err) {
+				cause = " access denied"
 			}
-			if r.Pinned {
-				found = true
-				continue
-			}
-			found = true
-			if r.project() != project {
-				project = r.project()
-				body = append(body, viewLine{text: "  " + project})
-			}
-			seconds := r.UptimeSecs
-			if !machine.updated.IsZero() {
-				seconds += max(0, int64(now.Sub(machine.updated)/time.Second))
-			}
-			rowWidth := width
-			suffix := ""
-			if machine.err != "" {
-				suffix = " stale"
-				rowWidth -= len(suffix)
-			}
-			line := viewLine{text: rowText(r, rowWidth, seconds) + suffix, selected: r.key() == s.selected}
-			if line.selected {
-				selectedLine = len(body)
-				line.text = ">" + line.text[1:]
-			}
-			body = append(body, line)
-		}
-		if !found {
-			text := "  (no sessions)"
-			if s.filter != "" || s.attentionOnly {
-				text = "  (no matches)"
-			}
-			if machine.err != "" && machine.updated.IsZero() {
-				text = "  (inventory unavailable)"
-			}
-			body = append(body, viewLine{text: text})
+			trouble = append(trouble, machineLabel(name)+cause)
+		} else if m.updated.IsZero() {
+			loading++
+		} else {
+			connected++
 		}
 	}
-	if total == 0 && s.filter == "" && !s.attentionOnly {
-		body = append(body, viewLine{text: ""}, viewLine{text: "Start here: n new session | a detect / install agents | h recent runs"})
-		for _, a := range s.agents {
-			found := a.Path
-			if found == "" {
-				found = "not installed"
-			}
-			body = append(body, viewLine{text: "  " + a.Name + ": " + found})
-		}
-		body = append(body, viewLine{text: "Detection only searches PATH; provider authentication is separate."})
+	if len(trouble) > 0 {
+		return scope + "   " + strings.Join(trouble, "; ")
 	}
-	footer := []string{"arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop  a setup  M machine  d diagnostics",
-		"/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent"}
-	if width < 75 {
-		footer = []string{"Enter attach v view t take n r x stop a M d", "/ filter ! attention b bell m i ? R q h"}
+	if loading > 0 {
+		return scope + "   Loading sessions..."
+	}
+	return scope + "   " + plural(connected, "machine") + " connected"
+}
+
+func (s *state) selectedLines(r row, now time.Time, width int) []string {
+	label, _ := stateLabel(r)
+	title := r.name()
+	metadata := agentLabel(r.Agent) + " / " + machineLabel(r.machine) + " / " + r.project() + " / " + label
+	action := "Enter open   v read only   i full details"
+	switch {
+	case r.attention == "unread":
+		action = "Unread response. Enter opens the terminal. i full details."
+	case r.Status == "blocked":
+		action = "Waiting for input. Enter opens the terminal. i full details."
+		if next := s.preview(r).next; next != "" {
+			action = next + " Enter opens the terminal. i full details."
+		}
+	case r.Status == "failed":
+		action = "Session failed. i full details."
+	case r.Status == "exited" || r.Status == "done":
+		action = "Session ended. h recent runs. i full details."
+	case r.attention == "unknown":
+		action = "Activity not reported. Enter checks the session. i full details."
+	}
+	if s.stale(r.machine) {
+		metadata = machineLabel(r.machine) + " / " + connection(s.machines[r.machine], now)
+		action = routeCause(s.machines[r.machine].err) + " R retry."
+	}
+	// A normal title fits in full. Longer remote titles retain identity and an
+	// explicit route to their complete, scrollable detail instead of taking over.
+	if width == 0 {
+		return nil
+	}
+	return []string{title, metadata, action}
+}
+
+// Only classify diagnostics here; arbitrary remote payloads remain outside
+// ordinary UI chrome. The identity and compatibility failures stay distinct.
+func routeCause(err string) string {
+	text := strings.ToLower(err)
+	switch {
+	case strings.Contains(text, "host key"), strings.Contains(text, "host identification"), strings.Contains(text, "identity"), strings.Contains(text, "pinned"):
+		return "Identity changed. Verify the machine before reconnecting."
+	case strings.Contains(text, "version mismatch"), strings.Contains(text, "too old"), strings.Contains(text, "incompatible"):
+		return "Update wt on this machine before reconnecting."
+	case strings.Contains(text, "permission denied"), strings.Contains(text, "authentication"):
+		return "SSH access was denied. Check the saved SSH profile."
+	case strings.Contains(text, "timed out"), strings.Contains(text, "timeout"):
+		return "Connection timed out. Check the machine and network."
+	case strings.Contains(text, "refused"):
+		return "Connection refused. Check that wt is running on this machine."
+	default:
+		return "Sessions could not be loaded. Retry the machine."
+	}
+}
+
+func accessDenied(err string) bool {
+	text := strings.ToLower(err)
+	for _, cause := range []string{"denied", "authentication", "unauthenticated", "unauthorized", "not authorized", "not owned", "forbidden", "revoked", "access ended", "credential expired", "grant expired"} {
+		if strings.Contains(text, cause) {
+			return true
+		}
+	}
+	return false
+}
+
+func keyHints(s *state) []string {
+	switch s.mode {
+	case runFilter:
+		return []string{"Enter keep search   Ctrl-U clear", "Esc back   Ctrl-C quit"}
+	case actionMenu:
+		return []string{"r rename   x review stop   t review input control", "Esc back   Ctrl-C quit"}
+	case filter:
+		return []string{"Type to search   Enter keep search   Ctrl-U clear", "Esc restore selection   Ctrl-C quit"}
+	case help:
+		return []string{"j/k scroll   PgUp/PgDn page", "Esc back   q back   Ctrl-C quit"}
+	case machinePicker:
+		return []string{"j/k move   Enter select   i details", "Esc back   Ctrl-C quit"}
+	case confirmStop:
+		return []string{"Enter keep running   y stop session", "j/k scroll   Esc back   Ctrl-C quit"}
+	case confirmTakeover:
+		return []string{"Enter keep agent control   y take control", "j/k scroll   Esc back   Ctrl-C quit"}
+	case rename:
+		return []string{"Enter save name   Ctrl-U clear", "Esc back   Ctrl-C quit"}
+	case newAgent:
+		return []string{"Enter choose agent   Ctrl-U clear", "Esc back   Ctrl-C quit"}
+	case newCWD:
+		return []string{"Enter start session   Ctrl-U clear", "Esc back   Ctrl-C quit"}
+	case agentSetup:
+		return []string{"1 Claude Code   2 Codex   R rescan", "Esc back   Ctrl-C quit"}
+	case installConsent:
+		return []string{"Enter install " + s.setupAgent.Name, "Esc back   Ctrl-C quit"}
+	case providerReady:
+		return []string{"v verify   l provider login   Enter new session   R rescan", "Esc back   Ctrl-C quit"}
+	case setupFailure:
+		return []string{"r review " + s.setupStage + "   R rescan   a choose agent", "Esc back   Ctrl-C quit"}
+	case diagnostics:
+		return []string{"1 launch readiness   2 session reach   3 saved result", "Esc back   Ctrl-C quit"}
+	case diagnosticInput:
+		return []string{"Enter accept input   Ctrl-U clear", "Esc back   Ctrl-C quit"}
+	}
+	if s.isOverlay() {
+		return []string{"j/k scroll   PgUp/PgDn page", "Esc back   Enter back   Ctrl-C quit"}
 	}
 	if s.recent {
-		header, body, selectedLine, footer = s.runView(now)
+		return []string{"Enter open   o result   / search   N next page", "j/k move   h sessions   i details   ? help   q quit"}
+	}
+	if len(s.rows()) == 0 && s.filter == "" {
+		for name, m := range s.machines {
+			if (s.machineFilter == "" || name == s.machineFilter) && (s.stale(name) || m.updated.IsZero()) {
+				return []string{"R refresh   a agents   m machines   h runs", "? help   q quit"}
+			}
+		}
+	}
+	if len(s.rows()) == 0 && s.filter == "" && !s.hasAgent() && (s.machineFilter == "" || s.machineFilter == "local") {
+		return []string{"a install an agent   m machines   h runs", "? help   q quit"}
+	}
+	if len(s.rows()) == 0 && s.filter == "" {
+		return []string{"n new session   a agents   m machines   h runs", "? help   q quit"}
+	}
+	return []string{"Enter open   / search   n new   ! needs attention", "j/k move   m machines   h runs   . actions   R refresh   ? help   q quit"}
+}
+
+func (s *state) hasAgent() bool {
+	for _, a := range s.agents {
+		if a.Path != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// render uses a fixed cell grid. Search and notices never move the footer or
+// the pinned coordinator, and the selected detail has a dedicated region.
+func render(s *state, width, height int, now time.Time) string {
+	width, height = max(1, width), max(1, height)
+	lines := make([]viewLine, height)
+	set := func(y int, text string, role tone) {
+		if y >= 0 && y < height {
+			lines[y] = viewLine{text: text, tone: role}
+		}
+	}
+	total, blocked, unread, cached := 0, 0, 0, 0
+	for name, m := range s.machines {
+		for _, session := range m.sessions {
+			total++
+			r := s.sessionRow(name, session)
+			if s.stale(name) {
+				if r.attention == "unread" {
+					unread++
+				}
+				cached++
+				continue
+			}
+			if r.attention == "blocked" {
+				blocked++
+			}
+			if r.attention == "unread" {
+				unread++
+			}
+		}
+	}
+	counts := fmt.Sprintf("%d needs you", blocked)
+	counts += fmt.Sprintf("   %d unread", unread)
+	if cached > 0 {
+		counts += fmt.Sprintf("   %d cached", cached)
+	}
+	unknownSources := s.registryError != ""
+	loading := false
+	for _, m := range s.machines {
+		if m.err != "" || (m.updated.IsZero() && len(m.sessions) == 0) {
+			unknownSources = true
+		}
+		if m.loading {
+			loading = true
+		}
+	}
+	countLabel := plural(total, "session")
+	if unknownSources {
+		countLabel = fmt.Sprintf("%d known sessions", total)
+	}
+	if total == 0 && unknownSources && !loading {
+		countLabel = "Sessions unavailable"
+	}
+	if total == 0 && unknownSources && loading {
+		countLabel = "Loading sessions..."
+	}
+	title := "wt   " + countLabel + "   " + plural(len(s.machines), "machine")
+	if width >= 120 {
+		title = "wt   " + now.Local().Format("Mon Jan 2 · 15:04") + "   " + countLabel + "   " + plural(len(s.machines), "machine")
+	}
+	if width < 65 {
+		title = "wt   " + countLabel
+	}
+	set(0, title+strings.Repeat(" ", max(2, width-runewidth.StringWidth(title)-len(counts)))+counts, plain)
+	set(1, s.scopeLine(now)+"   "+s.machineStrip(), secondary)
+	rows := s.rows()
+	var work []row
+	var pin *row
+	for i := range rows {
+		if rows[i].Pinned && pin == nil {
+			r := rows[i]
+			pin = &r
+		} else {
+			work = append(work, rows[i])
+		}
+	}
+	listWidth := width
+	_, hasSelection := s.selection()
+	wide := width >= 120 && height >= 30 && hasSelection && (s.mode == navigate || s.mode == filter) && !s.recent
+	if wide {
+		listWidth = 78
+	}
+	if pin != nil {
+		set(3, "PINNED", secondary)
+		if height > 4 {
+			lines[4] = sessionLine(s, *pin, listWidth-boolCell(wide), now)
+		}
+		label, _ := stateLabel(*pin)
+		if s.stale(pin.machine) {
+			label = "? Last seen"
+		}
+		summary := "  " + label + ". Open wing to read the latest update."
+		if update := s.latestUpdate(*pin); update != "" {
+			summary = "  " + update
+		}
+		if s.stale(pin.machine) {
+			summary = "  Cached wing. Open after reconnecting " + machineLabel(pin.machine) + "."
+		}
+		set(5, summary, secondary)
+		prefix := "  "
+		if pin.key() == s.selected {
+			prefix = "> "
+		}
+		pinText := prefix + field("wing", 10) + field(machineLabel(pin.machine), 15) + field(age(pin.UptimeSecs), 5)
+		if wide {
+			pinText += strings.TrimSpace(summary)
+		} else {
+			pinText += label
+		}
+		lines[4] = viewLine{text: pinText, selected: pin.key() == s.selected, statusAt: 2, statusWidth: 10, statusTone: warning}
+
+		if wide {
+			set(5, "", plain)
+		}
+
+	} else {
+		set(3, "", secondary)
+		set(4, "", plain)
+	}
+	set(6, "SESSIONS", secondary)
+	set(7, tableLabel(listWidth-boolCell(wide)), secondary)
+	listStart, listEnd := 8, height-12
+	if height >= 18 {
+		listEnd = max(13, listEnd)
+	}
+	if wide {
+		listEnd = listStart + min(7, max(0, (height-13)/2))
+	}
+	if height < 18 {
+		listStart = 2
+		if pin != nil {
+			listStart = 5
+		}
+		listEnd = height - 3
+		set(7, "", plain)
+	}
+	count := max(0, listEnd-listStart)
+	selectedIndex := 0
+	for i, r := range work {
+		if r.key() == s.selected {
+			selectedIndex = i
+		}
+	}
+	start := max(0, min(selectedIndex-count/2, len(work)-count))
+	for i := 0; i < count && start+i < len(work); i++ {
+		lines[listStart+i] = sessionLine(s, work[start+i], listWidth-boolCell(wide), now)
+	}
+	if len(work) > count && count > 0 {
+		position := fmt.Sprintf("%d-%d of %d sessions", start+1, min(start+count, len(work)), len(work))
+		if pin != nil {
+			position += " + 1 pinned"
+		}
+		set(listEnd, position, secondary)
+	}
+	if r, ok := s.selection(); ok {
+		detailWidth := width
+		if wide {
+			detailWidth = width - listWidth - 4
+		}
+		details := s.selectedLines(r, now, detailWidth)
+		if wide {
+			for y := 3; y < height-4; y++ {
+				lines[y].split, lines[y].frame = listWidth, true
+			}
+			pane := s.paperPane(r, now, detailWidth, height-7)
+			for i, line := range pane {
+				if i+3 < height-4 {
+					lines[i+3].right = line
+					switch {
+					case line == "SELECTED" || line == "MACHINES" || line == "TODAY" || line == "RECENT":
+						lines[i+3].rightTone = secondary
+					case strings.HasPrefix(line, "! Needs you"):
+						lines[i+3].rightTone = warning
+					case strings.HasPrefix(line, "* Working"):
+						lines[i+3].rightTone = accent
+					case strings.HasPrefix(line, "+ Done"):
+						lines[i+3].rightTone = success
+					}
+				}
+			}
+
+		} else if height >= 18 {
+			for i, line := range details {
+				if i >= 3 {
+					break
+				}
+				set(height-6+i, line, plain)
+			}
+		}
+	} else if len(rows) == 0 && s.filter == "" && !s.attentionOnly {
+		unavailable := false
+		for name, m := range s.machines {
+			if s.machineFilter != "" && name != s.machineFilter {
+				continue
+			}
+			if m.err != "" || m.updated.IsZero() {
+				unavailable = true
+			}
+		}
+		if unavailable {
+			set(3, "Sessions unavailable", warning)
+			if loading {
+				set(3, "Loading sessions...", plain)
+			}
+			set(5, "R retry   m machines", plain)
+			set(6, "", plain)
+			set(7, "", plain)
+		} else if !s.hasAgent() && (s.machineFilter == "" || s.machineFilter == "local") {
+			set(3, "Install an agent", plain)
+			set(5, "a choose Claude Code or Codex", accent)
+			set(6, "", plain)
+			set(7, "", plain)
+			for i, a := range s.agents {
+				set(7+i, a.Name+"   Missing", secondary)
+			}
+		} else {
+			emptyMachine := s.machineFilter
+			if emptyMachine == "" {
+				emptyMachine = "local"
+			}
+			set(3, "No sessions yet on "+machineLabel(emptyMachine), plain)
+			set(5, "n new session", accent)
+			set(6, "", plain)
+			set(7, "", plain)
+			for _, a := range s.agents {
+				if a.Path != "" {
+					if emptyMachine != "local" {
+						set(7, "Agent not checked on "+machineLabel(emptyMachine), secondary)
+					} else {
+						set(7, agentLabel(a.ID)+" / "+machineLabel(emptyMachine)+" / "+projectName(s.defaultCWD), secondary)
+					}
+					break
+				}
+			}
+		}
+	} else {
+		set(8, "No matching sessions", plain)
+		set(10, "/ edit search   Ctrl-U clears the query", secondary)
+	}
+	if (s.filter != "" || s.mode == filter) && len(work) == 0 {
+		set(8, "No matching sessions", plain)
+		set(10, "Edit the query or clear it with Ctrl-U while searching.", secondary)
+	}
+	if s.filter != "" || s.mode == filter {
+		query := s.filter
+		if s.mode == filter {
+			query = s.input + "_"
+		}
+		set(1, "Search sessions /"+query+fmt.Sprintf("   %d matches", len(work)), plain)
+		for _, name := range s.machineNames() {
+			if s.stale(name) {
+				set(height-3, machineLabel(name)+" could not be searched. R retry.", warning)
+				break
+			}
+		}
+	}
+	if height >= 18 && (s.mode == navigate || s.mode == filter) && !s.recent && hasSelection {
+		s.paperReports(lines, work, pin, start, count, listEnd, listWidth-boolCell(wide), wide, now)
+	}
+	if wide {
+		set(2, paneBorder(s.theme, width, listWidth, true), separator)
+		set(height-4, paneBorder(s.theme, width, listWidth, false), separator)
 	}
 	if s.mode == machinePicker {
-		body = []viewLine{{text: "Machines (Enter selects)"}}
-		choices := append([]string{""}, names...)
+		body := []viewLine{{text: "Machines", tone: plain}, {}}
+		choices := append([]string{""}, s.machineNames()...)
 		for i, name := range choices {
 			text := "All machines"
 			if name != "" {
-				text = name + "  " + connection(s.machines[name], now)
-				if name != "local" && s.registryError != "" {
-					text += " (registry stale)"
-				}
+				text = machineLabel(name) + "   " + connection(s.machines[name], now)
 			}
 			prefix := "  "
 			if i == s.picker {
 				prefix = "> "
-				selectedLine = len(body)
 			}
 			body = append(body, viewLine{text: prefix + text, selected: i == s.picker})
 		}
-		footer = []string{"j/k move  Enter select  i machine details  Esc cancel"}
-	} else if s.isOverlay() {
-		body = nil
-		for _, line := range overlayLines(s, now) {
-			for _, wrapped := range wrap(line, width) {
-				body = append(body, viewLine{text: wrapped})
+		fillBody(lines, body, max(0, min(s.picker+2-max(0, height-5)/2, len(body)-max(0, height-5))))
+	} else if s.isOverlay() || s.isSetupMode() || s.mode == confirmStop || s.mode == confirmTakeover || s.mode == rename || s.mode == newAgent || s.mode == newCWD || s.mode == actionMenu {
+		body := overlayLines(s, now)
+		if s.isSetupMode() {
+			body = s.setupLines()
+		}
+
+		var content []viewLine
+		for _, line := range body {
+			for _, line := range wrap(line, width) {
+				content = append(content, viewLine{text: line})
 			}
 		}
-		footer = []string{"j/k scroll  Esc/Enter back  Ctrl-C quit"}
-		if s.mode == diagnostics {
-			footer = []string{"1 launch readiness  2 egg reach  3 completed copy  Esc back"}
+		offset := min(s.overlayOffset, max(0, len(content)-max(0, height-5)))
+		fillBody(lines, content, offset)
+	}
+	if s.recent && !s.isSetupMode() && (s.mode == navigate || s.mode == runFilter) {
+		header, body, selected, _ := s.runView(now, width)
+		for i, text := range header {
+			set(i, text, plain)
 		}
-		if s.mode == diagnosticInput {
-			footer = []string{"Enter accept explicit input  Ctrl-U clear  Esc cancel  Ctrl-C quit"}
+		offset := max(0, min(selected-(height-5)/2, len(body)-(height-5)))
+		fillBody(lines, body, offset)
+	}
+	if s.mode == runFilter {
+		set(1, "Search runs /"+s.input+"_", plain)
+	}
+	if s.message != "" && s.message != "Done" && s.mode != help {
+		noticeRow := height - 4
+		if wide {
+			noticeRow = height - 3
 		}
+		set(noticeRow, safeNotice(s.message), warning)
 	}
-	if s.isSetupMode() {
-		body = nil
-		for _, line := range s.setupLines() {
-			body = append(body, viewLine{text: line})
-		}
-		footer = []string{"Esc back to sessions | Ctrl-C quit"}
+	hints := keyHints(s)
+	if width < 65 && s.mode == navigate && !s.recent {
+		hints = []string{"Enter open  / search  ! attention  n new", "j/k move m scope R refresh ? help q quit"}
 	}
-	message := s.message
-	if s.registryError != "" {
-		message = "Registry error: " + s.registryError + "; last valid remote routes stale. " + message
+	for i, text := range hints {
+		set(height-2+i, text, secondary)
 	}
-	if s.filter != "" && s.mode != filter && message == "" {
-		message = "/" + s.filter + fmt.Sprintf(" (%d/%d)", len(rows), total)
-	}
-	switch s.mode {
-	case filter:
-		message = "Filter: /" + s.input + "_"
-	case rename:
-		message = "Name: " + s.input + "_"
-	case newAgent:
-		message = "Agent (blank = shell): " + s.input + "_"
-	case newCWD:
-		message = "Cwd on " + s.target.machine + ": " + s.input + "_"
-	case confirmStop:
-		message = "Stop " + s.target.key() + " (" + s.target.name() + ")? [y/N]"
-	case confirmTakeover:
-		message = "Take input control of " + s.target.key() + " from " + s.target.WriterOwner + "? [y/N]"
-	}
-	if s.isOverlay() || s.mode == machinePicker {
-		message = ""
-		if s.registryError != "" {
-			message = "Registry error: " + s.registryError + "; last valid remote routes stale"
-		}
-	}
-	if s.mode != navigate && !s.isOverlay() && s.mode != machinePicker && s.mode != runFilter {
-		footer = []string{"Enter accept  Esc cancel  Ctrl-C quit", message}
-		if s.mode == confirmStop {
-			footer[0] = "y stop  Enter/Esc cancel  Ctrl-C quit"
-		}
-		if s.mode == confirmTakeover {
-			footer[0] = "y take control  Enter/Esc cancel  Ctrl-C quit"
-		}
-	} else if message != "" {
-		// Keep the existing sanitization while making bounded launch metadata
-		// readable in the message area at ordinary terminal widths.
-		footer = append(footer, wrap(message, width)...)
-	}
-	if s.mode > navigate && s.mode < machinePicker && s.message != "" {
-		footer = append(footer, s.message)
-	}
-	// Preserve the prompt and escape guidance at tiny terminal heights.
-	if s.mode > navigate && s.mode < machinePicker && height <= 2 {
-		footer = []string{message, "Esc cancel Ctrl-C quit"}
-		if height == 1 {
-			footer = []string{clip(message, max(0, width-11)) + " Esc/Ctrl-C"}
-		}
-	}
-	// Preserve the current prompt even when the terminal is only a few rows.
-	if len(footer) > height {
-		footer = footer[len(footer)-height:]
-	}
-	header = header[:min(len(header), height-len(footer))]
-	bodyHeight := max(0, height-len(header)-len(footer))
-	start := max(0, min(selectedLine-bodyHeight/2, len(body)-bodyHeight))
-	if s.isOverlay() {
-		start = min(s.overlayOffset, max(0, len(body)-bodyHeight))
-	}
-	lines := make([]viewLine, 0, height)
-	for _, text := range header {
-		lines = append(lines, viewLine{text: text})
-	}
-	for i := 0; i < bodyHeight; i++ {
-		line := viewLine{}
-		if start+i < len(body) {
-			line = body[start+i]
-		}
-		lines = append(lines, line)
-	}
-	for _, text := range footer {
-		lines = append(lines, viewLine{text: text})
+	if height < 4 {
+		lines[0] = viewLine{text: "Resize terminal. Esc back; q quit"}
 	}
 	var output strings.Builder
 	for i, line := range lines {
 		fmt.Fprintf(&output, "\x1b[%d;1H\x1b[2K", i+1)
-		if line.selected {
-			output.WriteString("\x1b[7m")
-		}
-		output.WriteString(clip(line.text, width))
+		output.WriteString(paintLine(s.theme, line, width))
 		output.WriteString("\x1b[0m")
 	}
 	return output.String()
 }
 
+func fillBody(lines []viewLine, body []viewLine, offset int) {
+	for y := 3; y < len(lines)-2; y++ {
+		lines[y] = viewLine{}
+	}
+	for i := 0; i < len(lines)-5 && offset+i < len(body); i++ {
+		lines[3+i] = body[offset+i]
+	}
+}
+
+func boolCell(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func paneGlyphs(theme terminalTheme) (string, string, string, string, string, string) {
+	if theme.dumb || theme.ascii || runewidth.StringWidth("┌┬┐└┴┘│─") != 8 {
+		return "+", "+", "+", "+", "+", "+"
+	}
+	return "┌", "┬", "┐", "└", "┴", "┘"
+}
+func paneBorder(theme terminalTheme, width, split int, top bool) string {
+	a, b, c, d, e, f := paneGlyphs(theme)
+	horizontal := "─"
+	if a == "+" {
+		horizontal = "-"
+	}
+	if !top {
+		a, b, c = d, e, f
+	}
+	return a + strings.Repeat(horizontal, split-1) + b + strings.Repeat(horizontal, max(0, width-split-2)) + c
+}
+func paintLine(theme terminalTheme, line viewLine, width int) string {
+	leftWidth := width
+	if line.split > 0 {
+		leftWidth = line.split - boolCell(line.frame)
+	}
+	text := field(line.text, leftWidth)
+	base := theme.sheet() + theme.style(line.tone)
+	if line.selected {
+		base = theme.sheet() + theme.style(selection)
+	}
+	out := base
+	if line.statusWidth > 0 {
+		before := runewidth.Truncate(text, line.statusAt, "")
+		rest := strings.TrimPrefix(text, before)
+		status := runewidth.Truncate(rest, line.statusWidth, "")
+		after := strings.TrimPrefix(rest, status)
+		role := theme.style(line.statusTone)
+		if line.selected {
+			role = theme.selectedState(line.statusTone)
+		}
+		out += before + role + status + base
+		if line.unreadWidth > 0 {
+			gap := runewidth.Truncate(after, max(0, line.unreadAt-line.statusAt-line.statusWidth), "")
+			rest := strings.TrimPrefix(after, gap)
+			cell := runewidth.Truncate(rest, line.unreadWidth, "")
+			unreadRole := theme.style(warning)
+			if line.selected {
+				unreadRole = theme.selectedState(warning)
+			}
+			out += gap + unreadRole + cell + base + strings.TrimPrefix(rest, cell)
+		} else {
+			out += after
+		}
+	} else {
+		out += text
+	}
+	if line.split > 0 {
+		vertical := "│"
+		a, _, _, _, _, _ := paneGlyphs(theme)
+		if a == "+" {
+			vertical = "|"
+		}
+		rule := "\x1b[0m" + theme.sheet() + theme.style(separator) + vertical
+		if line.frame {
+			out = rule + out
+		}
+		out += rule + theme.sheet() + theme.style(line.rightTone) + "  " + field(line.right, width-line.split-3-boolCell(line.frame))
+		if line.frame {
+			out += rule
+		}
+	}
+	return out
+}
+
+func safeNotice(message string) string {
+	lower := strings.ToLower(message)
+	switch {
+	case strings.Contains(lower, "attach-after-admission"):
+		return "Session started. Attachment failed. Check it before retrying."
+	case strings.Contains(lower, "admission/policy"):
+		return "Session did not start. Policy refused launch. d diagnostics."
+	case strings.Contains(lower, "unknown") && strings.Contains(lower, "admission"):
+		return "Start not confirmed. Check the session before starting another."
+	case strings.Contains(lower, "cannot validate"), strings.Contains(lower, "changed or was removed"), strings.Contains(lower, "registry error"):
+		return "Saved machine changed or could not be loaded. R refresh."
+	case strings.Contains(lower, "enter retries"):
+		return "Attachment failed. Enter retries after checking the session."
+	}
+	// Action errors can contain arbitrary remote payloads. Only known local
+	// notices may supply literal chrome; everything else has a fixed safe label.
+	switch message {
+	case "Access denied. R refresh.", "Done", "Running...", "Running…", "Name cannot be empty", "Working directory cannot be empty",
+		"Bell on for this dashboard", "Bell off for this dashboard", "Native provider requested input.",
+		"New foreground response; provider or descendants may continue.", "Input control is not available for this session":
+		return message
+	}
+	if strings.Contains(lower, "unreachable") {
+		return "Machine unreachable. R retries its saved route."
+	}
+	return "Action could not finish. Check the session before retrying."
+}
+
+func projectName(cwd string) string {
+	if cwd == "" {
+		return "No project selected"
+	}
+	name := path.Base(path.Clean(cwd))
+	if name == "/" || name == "." {
+		return "Workspace"
+	}
+	return clean(name)
+}
+
 // Freshness describes the query, independently of the provider lifecycle state.
 func connection(m machine, now time.Time) string {
-	text := "connecting"
 	if m.err != "" {
-		text = "offline"
-		if !m.updated.IsZero() {
-			text += "  last success " + age(int64(now.Sub(m.updated)/time.Second)) + " ago; cached rows stale"
+		text := "Unreachable"
+		if accessDenied(m.err) {
+			text = "Access denied"
 		}
-	} else if !m.updated.IsZero() {
-		text = "connected  updated " + age(int64(now.Sub(m.updated)/time.Second)) + " ago"
+		if !m.updated.IsZero() {
+			text += " / Last seen " + age(int64(now.Sub(m.updated)/time.Second)) + " ago"
+		} else {
+			text += " / Sessions unavailable"
+		}
+		if !m.attempted.IsZero() {
+			text += " / Retried " + age(int64(now.Sub(m.attempted)/time.Second)) + " ago"
+		}
+		return text
+	}
+	if m.updated.IsZero() {
+		return "Loading sessions..."
 	}
 	if m.loading {
-		text += " (refreshing)"
+		return "Connected / Refreshing sessions..."
 	}
-	return text
+	return "Connected / Updated " + age(int64(now.Sub(m.updated)/time.Second)) + " ago"
 }
 
 // Wrap sanitized metadata by display cells so details expose complete values
 // without allowing terminal controls or splitting wide characters at an edge.
 func wrap(text string, width int) []string {
+	width = max(1, width)
+	text = clean(text)
 	var lines []string
-	var line strings.Builder
-	cells := 0
-	for _, r := range clean(text) {
-		size := runewidth.RuneWidth(r)
-		if cells+size > width && line.Len() > 0 {
-			lines = append(lines, line.String())
-			line.Reset()
-			cells = 0
+	for runewidth.StringWidth(text) > width {
+		prefix := runewidth.Truncate(text, width, "")
+		if prefix == "" {
+			prefix = string([]rune(text)[0])
 		}
-		line.WriteRune(r)
-		cells += size
+		split := strings.LastIndex(prefix, " ")
+		if split > 0 {
+			lines = append(lines, prefix[:split])
+			text = strings.TrimLeft(text[split+1:], " ")
+		} else {
+			lines = append(lines, prefix)
+			text = strings.TrimPrefix(text, prefix)
+		}
 	}
-	return append(lines, line.String())
+	return append(lines, text)
+}
+
+func promptLines(s *state) []string {
+	switch s.mode {
+	case actionMenu:
+		return []string{"Session actions", "", s.target.name() + " on " + machineLabel(s.target.machine), agentLabel(s.target.Agent) + " / " + s.target.project(), "", "Rename session", "Stop session", "Take input control (when available)"}
+	case confirmStop:
+		return []string{"Stop session", "", s.target.name() + " on " + machineLabel(s.target.machine), agentLabel(s.target.Agent) + " / " + s.target.project(), "", "The agent will stop. Unsaved work may be lost.", "Keep running is selected."}
+	case confirmTakeover:
+		return []string{"Take control", "Current input owner: " + ownerLabel(s.target.WriterOwner), "", s.target.name() + " on " + machineLabel(s.target.machine), "", "Typing will go to this terminal. The agent will lose input control.", "Keep agent control is selected."}
+	case rename:
+		return []string{"Rename session", s.target.name() + " on " + machineLabel(s.target.machine), "", "Name: " + s.input + "_"}
+	case newAgent:
+		return []string{"New session", "Machine: " + machineLabel(s.target.machine), "", "Agent (blank = shell): " + s.input + "_"}
+	case newCWD:
+		return []string{"New session", "Agent: " + agentLabel(s.agent), "Machine: " + machineLabel(s.target.machine), "Project: " + projectName(s.input), "", "Working directory", s.input + "_", "", "Session permissions follow this project's policy.", "The start command checks admission before launch."}
+	}
+	return nil
 }
 
 func overlayLines(s *state, now time.Time) []string {
+	if lines := promptLines(s); lines != nil {
+		return lines
+	}
 	if s.mode == machineDetails {
 		return s.machineLines(now)
 	}
@@ -419,98 +872,38 @@ func overlayLines(s *state, now time.Time) []string {
 		return s.runOverlay()
 	}
 	if s.mode == help {
-		return []string{
-			"Help / status legend",
-			"arrows or j/k: move; Enter: attach",
-			"v: read-only (no input or resize); t: confirm preview takeover when ownership is reported",
-			"Bracketed pastes are ignored in the navigator; attached pastes pass through literally.",
-			"n: new on selected machine; r: rename; x: confirm stop",
-			"/: filter machine, name, ID, agent, cwd or status",
-			"!: attention only (native blocked, unread response or failed)",
-			"b: bell " + s.bellSetting() + " (off by default; this dashboard only)",
-			"Attached: Ctrl+B then q returns here; Ctrl+B twice sends Ctrl+B.",
-			"Leaving wt keeps sessions running.",
-			"m: All, local, or a saved machine (including empty/offline)",
-			"i: full details; R: refresh; q or Ctrl-C: quit",
-			"W working  B blocked  I idle  D done  E exited  F failed  ? unknown",
-			"* unread foreground response; U counts unread. Details/attach acknowledge that response.",
-			"Blocked clears on native evidence; unknown: missing evidence or disabled hooks.",
-			"Connection/freshness is separate from session status; stale means a retained query result.",
-			"Remote setup: wt remote add NAME SSH_TARGET; wt remote ls",
-			"M: selected machine saved route, trust, preparation and failure guidance",
-			"d: read-only launch readiness, egg reach and completed snapshot forms",
-			"h: recent runs; / filter; N: next page; o: bounded result",
-			"Esc/Enter: back; j/k or PageUp/PageDown: scroll",
-			"Cold local Claude: wt claude --cwd PATH (starts a missing local wing).",
-			"Saved profiles: --wt-binary PATH --wingthing-dir PATH on wt remote add.",
-			"Remote cwd belongs to the receiving machine; local path resolution is never used.",
-			"Native wheel: provider mouse mode or terminal scrollback; use terminal modifier for selection.",
-			"Recent Enter: verified live attach or details; terminal records need explicit recovery.",
-			"Run recovery: wt agent recover --json; offline inspection: wt run-inspect --snapshot PATH.",
-			"Daily loop and limits: docs/daily-driver.md; browser/phone guide is a separate lane.",
-			"R reloads saved machines; automatic reload every 2s; invalid registry keeps stale routes and local work.",
-			"a: locally detect agents, review exact installer, verify and hand off to provider login.",
-			"Local and saved SSH control are Free; paired phones use their actual LAN/tailnet route.",
-			"Cloud model inference may require provider network/account; relay reach is a separate service.",
-		}
+		return []string{"Help", "Move", "  j/k or arrows move   PgUp/PgDn page   Home/End first/last", "",
+			"Open", "  Enter open terminal   v read only   i session details",
+			"  Ctrl+B then q returns here; Ctrl+B twice sends Ctrl+B.", "",
+			"Find", "  / search sessions   ! needs attention   m machine scope", "",
+			"Manage", "  n new   a agents   . actions   r rename   x review stop",
+			"  h recent runs   M machine details   d diagnostics   R refresh",
+			"  b bell " + s.bellSetting() + " (this navigator only)", "",
+			"Leave", "  q or Ctrl-C quits. Leaving keeps sessions running.", "Unread * marks a new response. Unknown means activity is not reported."}
 	}
+
 	r := s.target
 	m := s.machines[r.machine]
-	elapsed := r.UptimeSecs
-	if !m.updated.IsZero() {
-		elapsed += max(0, int64(now.Sub(m.updated)/time.Second))
+	label, _ := stateLabel(r)
+	isolation := isolationLabel(r.Isolation)
+	lines := []string{r.name(), "", "Machine: " + machineLabel(r.machine), "Agent: " + agentLabel(r.Agent), "Project: " + r.project(), "State: " + label, "Connection: " + connection(m, now), "", "Permissions: " + isolation}
+	if r.Isolation == "privileged" {
+		lines = append(lines, "! Sandbox off. This session has full user access.")
 	}
-	isolation := r.Isolation
-	if isolation == "" {
-		isolation = "not reported"
+	if r.attention == "unread" {
+		lines = append(lines, "Unread response.")
 	}
-	agent := r.Agent
-	if agent == "" {
-		agent = r.Kind
-	}
-	lines := []string{"Details: " + r.key(), "Name: " + r.name(), "Status: " + r.Status,
-		"Machine: " + r.machine + "  " + connection(m, now), "Cwd: " + r.CWD,
-		"Attention: " + r.attention,
-		fmt.Sprintf("Lifecycle source: %s  State cursor: %d", lifecycleSource(r.StateSource), r.StateCursor),
-		"Reason: " + lifecycleDescription(r),
-		"Agent/kind: " + agent + " / " + r.Kind, "Age: " + age(elapsed), "Isolation: " + isolation,
-		fmt.Sprintf("Readers: %d", r.Readers),
-	}
-	if takeoverAvailable(r) {
-		lines = append(lines, fmt.Sprintf("Writer: %s  Owner: %s  Epoch: %d", r.WriterID, r.WriterOwner, r.InputEpoch))
+	if s.stale(r.machine) {
+		lines = append(lines, "", routeCause(m.err), "R retry from the sessions list. Verify the machine before attaching.")
 	} else {
-		lines = append(lines, "Writer: ownership not reported for this channel; v observes without input or resize")
+		lines = append(lines, "", lifecycleDescription(r), "", "Return to the list to open this exact session.", "Ctrl+B then q returns from the terminal.")
 	}
-	if r.completion > 0 {
-		lines = append(lines, fmt.Sprintf("Completion cursor shown: %d", r.completion))
+	if s.mode == details {
+		lines = append(lines, "", "RECENT")
+		lines = append(lines, s.messageLines(r, 72)...)
 	}
-	if r.machine == "local" {
-		lines = append(lines, "Route: local; state: "+s.localDir)
-	} else if remote, ok := s.remotes[r.machine]; ok {
-		state := remote.WingthingDir
-		if state == "" {
-			state = "default remote state"
-		}
-		lines = append(lines, "SSH: "+remote.SSHTarget, "Executable: "+remote.Binary(), "State: "+state)
-	}
-	if m.err != "" {
-		lines = append(lines, "Query error: "+m.err, "This row is stale; refresh before acting.")
-	}
-	ref := r.key()
-	if r.machine == "local" {
-		ref = r.ID
-	}
-	lines = append(lines, "Controls: Enter attach; v view; t confirm takeover; r rename; x confirm stop; n new", "Attach: wt attach -- "+ref)
-	return lines
-}
 
-func lifecycleSource(source string) string {
-	switch source {
-	case "claude_hook", "codex_hook", "egg_process", "native_import", "unsupported":
-		return source
-	default:
-		return "not reported"
-	}
+	return lines
 }
 
 // Remote optional metadata is presentation input too: render descriptions

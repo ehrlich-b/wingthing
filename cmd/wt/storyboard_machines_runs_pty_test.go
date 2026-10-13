@@ -53,14 +53,14 @@ func storyboardParentReceipt(t *testing.T, binary, local, remote, work string, e
 	f := northstarNewFixture(t)
 	f.local, f.remote, f.work, f.env = local, remote, work, append(env, "TERM=xterm-256color", "LANG=en_US.UTF-8")
 	h := northstarStartPTY(t, f, binary, 120, 36)
-	h.expect("real wing inventory navigator", 0, "wt |", "n new")
-	h.expect("machine verified by actual handshake", h.send("mjj i"), "Machines / forge", "Pinned wing ID:")
+	h.expect("real wing inventory navigator", 0, "wt   ", "m machines", "h runs")
+	h.expect("machine verified by actual handshake", h.send("mjj i"), "Machines / forge", "Saved identity verified")
 	storyboardCapture(t, h, "04-2-verified-remote")
 	h.send("\x1b")
-	h.expect("return before history", 0, "Enter attach")
-	h.expect("owning wing history", h.send("h"), "Recent runs", runID)
+	h.expect("return before history", 0, "m machines")
+	h.expect("owning wing history", h.send("h"), "Recent runs", "forge", "Output")
 	h.waitScreen("qualified receipt", h.send("/"+runID+"\ri"), func(screen string) bool {
-		return strings.Contains(screen, "Original admission key: "+key) && strings.Contains(screen, "Execution deadline: 90 seconds") && (strings.Contains(screen, "Status: pending  Failure:") || strings.Contains(screen, "Status: running  Failure:")) && !strings.Contains(screen, "unknown_outcome")
+		return strings.Contains(screen, "Original request retained") && strings.Contains(screen, "Execution limit: 90 seconds") && (strings.Contains(screen, "State: ! Pending") || strings.Contains(screen, "State: * Working")) && !strings.Contains(screen, "unknown_outcome")
 	})
 	storyboardCapture(t, h, "06-2-parent-agent-receipt")
 	h.send("\x1b")
@@ -78,14 +78,14 @@ func TestStoryboardMachinesRunsPTY(t *testing.T) {
 	local := northstarStandaloneEgg(t, f, f.local, "same-id", "coordinator", "working", "EhrlichMac fixture / exact local session same-id")
 	remote := northstarStandaloneEgg(t, f, f.remote, "same-id", "coordinator", "working", "forge fixture / exact remote session same-id")
 	h := northstarStartPTY(t, f, binary, 120, 36)
-	h.expect("two isolated session origins", 0, "forge  connected", "coordinator")
-	h.expect("prepare second machine once", h.send("/local\rM"), "Machines / local", "Prepare a second machine once:")
+	h.expect("two isolated session origins", 0, "machines connected", "coordinator")
+	h.expect("prepare second machine once", h.send("/local\rM"), "Machines / This machine", "wt remote add Studio SSH_ALIAS")
 	storyboardCapture(t, h, "04-1-prepare-remote")
 	h.send("\x1b")
 	h.expect("exact remote selected", h.send("/\x15forge\r"), "coordinator")
 	h.expect("read-only remote attach", h.send("v"), "forge fixture / exact remote session same-id")
 	storyboardCapture(t, h, "04-3-exact-remote-session")
-	h.expect("detach remote", h.send("\x02q"), "Enter attach")
+	h.expect("detach remote", h.send("\x02q"), "Enter open")
 	select {
 	case id := <-remote.attached:
 		if id != "same-id" {
@@ -98,11 +98,11 @@ func TestStoryboardMachinesRunsPTY(t *testing.T) {
 		t.Fatal("attach crossed origin or detach stopped session")
 	}
 	northstarWrite(t, filepath.Join(f.home, "forge-offline"), "offline fixture", 0600)
-	h.expect("remote unavailable retains local", h.send("R"), "forge  offline", "stale")
+	h.expect("remote unavailable retains local", h.send("R"), "forge could not be searched", "Last seen")
 	storyboardCapture(t, h, "04-4-remote-offline")
 	// Change only the fixture SSH adapter, leaving host sshd/config untouched.
 	northstarWrite(t, filepath.Join(f.bin, "ssh"), "#!/bin/sh\nprintf 'REMOTE HOST IDENTIFICATION HAS CHANGED!\\n' >&2\nexit 255\n", 0700)
-	h.expect("identity refusal", h.send("RM"), "Machines / forge", "Identity hard stop")
+	h.expect("identity refusal", h.send("RM"), "Machines / forge", "Identity changed")
 	storyboardCapture(t, h, "04-5-host-key-version")
 	h.send("\x1b")
 	northstarWrite(t, filepath.Join(f.bin, "ssh"), `#!/bin/sh
@@ -110,7 +110,7 @@ case "$*" in *"'--version'"*) printf 'wt version fixture-old\n';exit 0;; esac
 printf 'Error: unknown flag: --remote-inventory\n' >&2
 exit 1
 `, 0700)
-	h.expect("incompatible receiver", h.send("RM"), "Machines / forge", "version mismatch", "Compatibility blocked")
+	h.expect("incompatible receiver", h.send("RM"), "Machines / forge", "Update wt", "before reconnecting")
 	storyboardCapture(t, h, "04-5-old-version")
 	h.send("\x1b")
 	h.expect("diagnostics menu", h.send("d"), "Runs / diagnostics", "Explain launch readiness")
@@ -140,6 +140,6 @@ exit 1
 	h.send("\x1b")
 	h.expect("report back", 0, "Runs / diagnostics")
 	h.send("\x1b")
-	h.expect("scope preserved", 0, "forge  offline")
+	h.expect("scope preserved", 0, "forge could not be searched")
 	h.exit("q")
 }

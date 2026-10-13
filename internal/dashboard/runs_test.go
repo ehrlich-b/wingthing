@@ -204,7 +204,7 @@ func TestRecentRunsLayoutAndTruthfulUnknown(t *testing.T) {
 		t.Run(fmt.Sprint(dim), func(t *testing.T) { renderedLines(t, render(s, dim[0], dim[1], time.Now()), dim[0], dim[1]) })
 	}
 	text := render(s, 120, 24, time.Now())
-	for _, want := range []string{"Recent runs", "> unknown one:same", "N next page", "output:unavailable", "cleanup:unknown"} {
+	for _, want := range []string{"Recent runs", "? Unknown", "N next page", "Missing", "Unknown"} {
 		if !strings.Contains(text, want) {
 			t.Fatal(want, text)
 		}
@@ -214,7 +214,7 @@ func TestRecentRunsLayoutAndTruthfulUnknown(t *testing.T) {
 		t.Fatal("unknown outcome caused action")
 	}
 	text = strings.Join(overlayLines(s, time.Now()), "\n")
-	for _, want := range []string{"wt agent recover", "--snapshot PATH", "completed, hash-verified", "never resend automatically"} {
+	for _, want := range []string{"wt agent recover", "--snapshot PATH", "completed, hash-verified", "Never resend automatically"} {
 		if !strings.Contains(text, want) {
 			t.Fatal(want)
 		}
@@ -242,7 +242,7 @@ func TestRecentRunDetailsUseLatestLivenessAfterRefresh(t *testing.T) {
 	h.target = r
 	r.live = false
 	h.pages["one"] = runPage{WingID: "one", Runs: []runRow{r}}
-	if !strings.Contains(strings.Join(s.runOverlay(), "\n"), "Live session verified: false") {
+	if !strings.Contains(strings.Join(s.runOverlay(), "\n"), "Live session not verified") {
 		t.Fatal("details retained stale live flag")
 	}
 }

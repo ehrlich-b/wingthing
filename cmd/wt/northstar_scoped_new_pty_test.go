@@ -180,12 +180,17 @@ exec /bin/sh -c "$1"
 func scopedNewFromDashboard(t *testing.T, f *northstarFixture, binary, machine, cwd, ready string) *northstarPTY {
 	t.Helper()
 	h := northstarStartPTY(t, f, binary, 120, 30)
-	h.expect("new scoped parent / dashboard", 0, "wt |", "n new", "m machines")
+	h.expect("new scoped parent / dashboard", 0, "wt   ", "n new", "m machines")
 	if machine == "forge" {
-		h.expect("select exact saved forge", h.send("mjj\r"), "forge", "(no sessions)")
+		h.expect("select exact saved forge", h.send("mjj\r"), "forge", "No sessions yet")
 	}
 	h.expect("n / provider prompt", h.send("n"), "Agent (blank = shell)")
-	h.expect("Claude / receiving cwd prompt", h.send("\x15claude\r"), "Cwd on "+machine+":")
+	h.expect("Claude / receiving cwd prompt", h.send("\x15claude\r"), "Machine: "+func() string {
+		if machine == "local" {
+			return "This machine"
+		}
+		return machine
+	}())
 	h.expect("scoped parent attached", h.send("\x15"+cwd+"\r"), ready)
 	return h
 }
@@ -275,7 +280,7 @@ func TestNorthstarPTYScopedNew(t *testing.T) {
 			if _, err := uuid.Parse(launch.RequestID); err != nil {
 				t.Fatal(err)
 			}
-			h.expect("detach / back to navigator", h.send("\x02q"), "wt |", "n new")
+			h.expect("detach / back to navigator", h.send("\x02q"), "wt   ", "n new")
 			h.exit("q")
 			ref := id
 			if machine == "forge" {
@@ -364,7 +369,7 @@ func TestNorthstarPTYScopedNew(t *testing.T) {
 			if !parentAlive || !childAlive {
 				t.Fatal("native parent/child did not become ready")
 			}
-			h.expect("native detach / parent and child retained", h.send("\x02q"), "wt |", "n new")
+			h.expect("native detach / parent and child retained", h.send("\x02q"), "wt   ", "n new")
 			h.exit("q")
 			ref := captured.ParentSessionID
 			if machine == "forge" {

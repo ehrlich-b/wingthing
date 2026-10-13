@@ -341,7 +341,7 @@ func (h *runHistory) apply(result runsResult) {
 		h.target = *result.target
 		h.content = result.content
 		if result.err != nil {
-			h.content = []string{"Result unavailable: " + result.err.Error()}
+			h.content = []string{resultFailureNotice(result.err.Error())}
 		}
 		return
 	}
@@ -581,13 +581,21 @@ func (s *state) runHandle(key string) (*action, bool) {
 	}
 	return nil, false
 }
+func humanTime(value string) string {
+	t, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return "Not reported"
+	}
+	return t.Local().Format("Jan 2, 2006 3:04 PM MST")
+}
 func (s *state) runOverlay() []string {
 	h := s.history()
 	r := h.target
+	title := agentLabel(r.Agent) + " run in " + projectName(r.CWD)
 	if s.mode == runResult {
-		lines := []string{"Result: " + r.key() + " (explicit read; not cached)"}
+		lines := []string{title, "Result / Read only", ""}
 		if h.loading {
-			return append(lines, "Reading authorized bounded result…")
+			return append(lines, "Reading the authorized result...")
 		}
 		return append(lines, h.content...)
 	}
@@ -599,116 +607,184 @@ func (s *state) runOverlay() []string {
 			live = current.live
 		}
 	}
-	key := r.RequestKey
-	if key == "" {
-		key = "not recorded; recover from the original caller receipt"
+	label, _ := runStatus(r)
+	lines := []string{title, "", "Machine: " + machineLabel(r.route.name), "State: " + label, "Output: " + outputLabel(r.OutputAvailability), "Cleanup: " + cleanupLabel(r.Cleanup), "Created: " + humanTime(r.CreatedAt), "Last checked: " + humanTime(p.ObservedAt), ""}
+	if r.Isolation == "privileged" {
+		lines = append(lines, "! Sandbox off. This run has full OS-user access.")
+	} else if r.Isolation != "" {
+		lines = append(lines, "Sandbox policy: "+isolationLabel(r.Isolation))
+	} else {
+		lines = append(lines, "Sandbox policy: Not reported")
 	}
-	deadline := "no execution deadline"
 	if r.TimeoutSeconds > 0 {
-		deadline = fmt.Sprintf("%d seconds", r.TimeoutSeconds)
+		lines = append(lines, fmt.Sprintf("Execution limit: %d seconds", r.TimeoutSeconds))
+	} else {
+		lines = append(lines, "Execution limit: no execution deadline")
 	}
-	lines := []string{"Run details: " + r.key(), "Session: " + r.WingID + ":" + r.SessionID, "Original admission key: " + key, "Status: " + r.status() + "  Failure: " + r.FailureKind, "Phase: " + r.Phase, "Agent: " + r.Agent, "Cwd: " + r.CWD, "Isolation: " + r.Isolation, "Execution deadline: " + deadline, "Created: " + r.CreatedAt, "Observed: " + p.ObservedAt, "Output: " + r.OutputAvailability, "Parent: " + r.ParentID, "Cleanup attention: " + r.Cleanup, "Route: " + r.route.name + "  " + r.route.remote.SSHTarget, "Live session verified: " + fmt.Sprint(live && h.err == "" && p.err == "")}
-	if p.err != "" {
-		lines = append(lines, "Stale history: "+p.err)
-	}
-	if h.err != "" {
-		lines = append(lines, "History unavailable: "+h.err)
+	if p.err != "" || h.err != "" {
+		lines = append(lines, "History unavailable. This is the last saved outcome.")
 	}
 	if r.status() == "unknown" {
-		lines = append(lines, "Admission/outcome needs evidence: reconcile the original key on this exact wing.")
+		lines = append(lines, "Outcome unknown. Check the original request before starting another.")
 	}
 	if r.Status == "pending" && r.FailureKind != "unknown_outcome" {
-		lines = append(lines, "Admission recorded; result pending. Keep this receipt while waiting.")
+		lines = append(lines, "Admission recorded. Result pending.")
 	}
 	if r.Terminal && r.Status == "done" && r.FailureKind != "unknown_outcome" && r.OutputAvailability != "available" {
-		lines = append(lines, "Terminal outcome retained; unavailable output is not a failed task and is not reconstructed.")
+		lines = append(lines, "Terminal outcome retained. Output is unavailable.")
 	}
 	if r.Cleanup == "unknown" || r.Cleanup == "required" || r.Cleanup == "attention" {
-		lines = append(lines, "Check descendants on the owning host; terminal completion does not prove cleanup.")
+		lines = append(lines, "Check descendants on the machine. Completion does not prove cleanup.")
 	}
-	lines = append(lines, "o: read an authorized result, bounded to 8192 characters", "Recovery guidance: "+runRecoveryCommand(r.route), "Use the original admission key for unknown outcomes; never resend automatically.", "Offline: wt run-inspect --snapshot PATH", "PATH must be an explicit completed, hash-verified snapshot inside this workspace.", "The dashboard never snapshots or inspects mutable live state.")
-	return lines
+	if r.RequestKey == "" {
+		lines = append(lines, "Original request key not recorded. Check the caller's receipt.")
+	} else {
+		lines = append(lines, "Original request retained. Nothing is resent automatically.")
+	}
+	if live && h.err == "" && p.err == "" {
+		lines = append(lines, "", "Live session verified. Enter checks it again before opening.")
+	} else {
+		lines = append(lines, "", "Live session not verified. This view does not start a replacement.")
+	}
+	return append(lines, "", "o read the authorized result", "", "Recovery uses the original request. Never resend automatically.", runRecoveryCommand(r.route), "", "Offline inspection requires a completed, hash-verified snapshot.", "wt run-inspect --snapshot PATH")
 }
-func (s *state) runView(now time.Time) ([]string, []viewLine, int, []string) {
+func runStatus(r runRow) (string, tone) {
+	switch r.status() {
+	case "running":
+		return "* Working", accent
+	case "pending":
+		return "! Pending", warning
+	case "done":
+		return "+ Done", success
+	case "failed":
+		return "x Failed", failure
+	case "timeout":
+		return "x Timeout", failure
+	case "stopped":
+		return "- Stopped", secondary
+	default:
+		return "? Unknown", warning
+	}
+}
+
+func outputLabel(value string) string {
+	switch value {
+	case "available":
+		return "Ready"
+	case "expired":
+		return "Expired"
+	case "unavailable":
+		return "Missing"
+	case "pending":
+		return "Pending"
+	default:
+		return "Unknown"
+	}
+}
+func cleanupLabel(value string) string {
+	switch value {
+	case "complete", "completed":
+		return "Done"
+	case "required", "attention":
+		return "Needs check"
+	case "none", "not_required":
+		return "Not needed"
+	default:
+		return "Unknown"
+	}
+}
+func resultFailureNotice(err string) string {
+	lower := strings.ToLower(err)
+	switch {
+	case strings.Contains(lower, "denied"):
+		return "Result unavailable. Access denied."
+	case strings.Contains(lower, "identity"):
+		return "Result identity changed. Check the original run before retrying."
+	default:
+		return "Result unavailable. Retry this exact run."
+	}
+}
+func historyFailureNotice(name, err string) string {
+	if strings.Contains(strings.ToLower(err), "denied") {
+		return machineLabel(name) + " history read denied"
+	}
+	return machineLabel(name) + " history unavailable"
+}
+
+func (s *state) runUnavailableNotice(text string) string {
+	name := strings.SplitN(text, ":", 2)[0]
+	if _, ok := s.remotes[name]; ok {
+		if strings.Contains(text, "legacy SSH-only profile") {
+			return machineLabel(name) + " has no run history. Its SSH sessions remain available."
+		}
+		return machineLabel(name) + " run history is unavailable. Retry before starting another."
+	}
+	if strings.Contains(text, "legacy SSH-only profile") {
+		return "Saved SSH profile has no run history. Other machines remain available."
+	}
+	return "A machine's run history is unavailable. Retry before starting another."
+}
+
+func (s *state) runView(now time.Time, dimensions ...int) ([]string, []viewLine, int, []string) {
+	width := 80
+	if len(dimensions) > 0 {
+		width = dimensions[0]
+	}
 	h := s.history()
 	rows := h.rows()
-	header := []string{fmt.Sprintf("wt | Recent runs | %d visible | pages <=%d rows", len(rows), runPageSize), "Durable records; liveness and terminal outcome are separate"}
-	for _, r := range s.rows() {
-		if r.Pinned {
-			header = append(header, "Pinned: "+r.name()+" @ "+r.machine)
-			break
-		}
-	}
-	partial := h.err != "" || len(h.unavailable) > 0
-	for _, page := range h.pages {
-		if page.err != "" {
-			partial = true
-		}
-	}
-	if partial {
-		header[1] = "Partial/unavailable history; liveness and terminal outcome are separate"
-	}
+	header := []string{"wt   Recent runs   " + plural(len(rows), "run"), "Saved outcomes. Enter checks the selected session."}
 	var body []viewLine
 	selected := 0
 	if h.loading {
-		body = append(body, viewLine{text: "Loading history…"})
+		body = append(body, viewLine{text: "Loading runs..."})
 	}
 	if h.err != "" {
-		body = append(body, viewLine{text: "History unavailable; retained rows stale: " + h.err})
+		body = append(body, viewLine{text: "History unavailable. Retained rows are dated.", tone: warning})
 	}
 	for _, text := range h.unavailable {
-		body = append(body, viewLine{text: text})
+		body = append(body, viewLine{text: s.runUnavailableNotice(text), tone: warning})
 	}
-	ids := make([]string, 0, len(h.pages))
-	for id := range h.pages {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		p := h.pages[id]
+	for _, p := range h.pages {
 		if p.err != "" {
-			body = append(body, viewLine{text: p.route.name + ": history unavailable; stale: " + p.err})
+			body = append(body, viewLine{text: historyFailureNotice(p.route.name, p.err), tone: warning})
 		}
 		if p.liveErr != "" {
-			body = append(body, viewLine{text: p.route.name + ": live sessions unavailable: " + p.liveErr})
+			body = append(body, viewLine{text: machineLabel(p.route.name) + " live sessions unavailable", tone: warning})
 		}
 	}
+	title, agent, machineWidth, elapsed := 16, 8, 14, 6
+	if width < 80 {
+		title = max(1, width-36)
+		agent, machineWidth, elapsed = 0, 0, 0
+	}
+	body = append(body, viewLine{text: "  " + field("Project", title) + field(" State", 12) + field("Agent", agent) + field("Machine", machineWidth) + field("Output", 10) + field("Cleanup", 12) + field("Age", elapsed), tone: secondary})
 	for _, r := range rows {
 		created, _ := time.Parse(time.RFC3339Nano, r.CreatedAt)
-		elapsed := "unknown"
+		when := "?"
 		if !created.IsZero() {
-			elapsed = age(int64(now.Sub(created) / time.Second))
+			when = age(int64(now.Sub(created) / time.Second))
 		}
-		suffix := ""
-		p := h.pages[r.WingID]
-		if p.err != "" || h.err != "" {
-			suffix = " stale"
-		} else if r.live {
-			suffix = " live"
+		label, role := runStatus(r)
+		if h.err != "" || h.pages[r.WingID].err != "" {
+			label = "? Last seen"
+			role = warning
 		}
-		text := fmt.Sprintf("  %s %s %s %s %s output:%s parent:%s cleanup:%s%s", r.status(), r.key(), r.Agent, shortCWD(r.CWD), elapsed, r.OutputAvailability, r.ParentID, r.Cleanup, suffix)
-		line := viewLine{text: text, selected: r.key() == h.selected}
-		if line.selected {
+		prefix := "  "
+		isSelected := r.key() == h.selected
+		if isSelected {
+			prefix = "> "
 			selected = len(body)
-			line.text = ">" + line.text[1:]
 		}
-		body = append(body, line)
+		body = append(body, viewLine{text: prefix + field(projectName(r.CWD), title) + " " + field(label, 11) + field(agentLabel(r.Agent), agent) + field(machineLabel(r.route.name), machineWidth) + field(outputLabel(r.OutputAvailability), 10) + field(cleanupLabel(r.Cleanup), 12) + field(when, elapsed), selected: isSelected, statusAt: 2 + title, statusWidth: 12, statusTone: role})
 	}
 	if len(rows) == 0 {
-		text := "(no matching runs on the loaded pages)"
-		if h.err != "" {
-			text = "(history unavailable; absence is not confirmed)"
+		text := "No runs on the loaded pages"
+		if h.err != "" || len(h.unavailable) > 0 {
+			text = "Runs unavailable. Retry before starting another."
 		}
 		body = append(body, viewLine{text: text})
 	}
-	footer := []string{"Enter live attach/details  i details  o bounded result  N next page", "/ history filter  R first pages  h sessions  ? help  q quit"}
-	if p := h.pagingPage(); p.Next != "" {
-		footer = append(footer, "More history on "+p.route.name+"; N loads the next page explicitly")
-	}
-	if s.mode == runFilter {
-		footer = []string{"History filter: /" + s.input + "_", "Enter accept  Esc cancel  Ctrl-C quit"}
-	}
-	return header, body, selected, footer
+	return header, body, selected, keyHints(s)
 }
 
 func verifyRunAttach(ctx context.Context, dir string, r runRow) error {

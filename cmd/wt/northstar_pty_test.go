@@ -511,7 +511,7 @@ func (h *northstarPTY) expect(label string, after uint64, contains ...string) st
 	return h.waitScreen(label, after, func(screen string) bool {
 		flat := strings.NewReplacer("\r", "", "\n", "").Replace(screen)
 		for _, text := range contains {
-			if !strings.Contains(flat, text) {
+			if !strings.Contains(flat, text) && !northstarContainsRow(screen, text) {
 				return false
 			}
 		}
@@ -577,13 +577,13 @@ func TestNorthstarPTYSessionNavigator(t *testing.T) {
 	}
 	started := time.Now()
 	h := northstarStartPTY(t, f, binary, 80, 24)
-	h.expect("first dashboard frame", 0, "wt |", "m machines")
+	h.expect("first dashboard frame", 0, "wt   ", "m machines")
 	t.Logf("fixture launch-to-first-frame: %s", time.Since(started))
-	h.expect("all machines / initial inventory", 0, "local-parent", "forge-parent", "disposable", "empty", "(no sessions)", "offline", "claude", "2m", "work", "? help")
+	h.expect("all machines / initial inventory", 0, "local-parent", "forge-parent", "disposable", "offline unreachable", "Claude", "2m", "? help")
 	t.Logf("fixture launch-to-full-inventory: %s", time.Since(started))
 	rev := h.send("?")
-	h.expect("help / detach and legend", rev, "Ctrl+B then q", "B blocked", "wt remote add", "keeps sessions running")
-	h.expect("help close", h.send("\x1b"), "local-parent", "forge-parent", "Enter attach")
+	h.expect("help / detach and legend", rev, "Ctrl+B then q", "Move", "Manage", "keeps sessions running")
+	h.expect("help close", h.send("\x1b"), "local-parent", "forge-parent", "Enter open")
 	rev = h.send("!")
 	h.waitScreen("attention filter", rev, func(s string) bool {
 		return strings.Contains(s, "forge-parent") && !strings.Contains(s, "local-parent") && !strings.Contains(s, "disposable")
@@ -591,12 +591,12 @@ func TestNorthstarPTYSessionNavigator(t *testing.T) {
 	h.expect("attention off", h.send("!"), "local-parent", "disposable")
 	rev = h.send("/FORGE\r")
 	h.waitScreen("qualified filter / colliding IDs", rev, func(s string) bool {
-		return strings.Contains(s, "forge-parent") && !strings.Contains(s, "local-parent") && strings.Contains(s, "> B")
+		return strings.Contains(s, "forge-parent") && !strings.Contains(s, "local-parent") && strings.Contains(s, "> forge-parent")
 	})
-	h.expect("full details / exact route", h.send("i"), "forge:same", "Cwd: "+f.work, "SSH: ns-forge", "State: "+f.remote, "Isolation: fixture")
-	h.expect("details close", h.send("\x1b"), "forge-parent", "Enter attach")
+	h.expect("full details / exact route", h.send("i"), "Machine: forge", "Project: work", "Permissions: Not reported")
+	h.expect("details close", h.send("\x1b"), "forge-parent", "Enter open")
 	h.expect("rename prompt", h.send("r\x15forge-renamed"), "Name: forge-renamed")
-	h.expect("rename refresh", h.send("\r"), "> B forge-renamed")
+	h.expect("rename refresh", h.send("\r"), "> forge-renamed")
 	if got := eggclient.ReadSessionName(local.dir); got != "local-parent" {
 		t.Fatalf("colliding local ID renamed: %s", got)
 	}
@@ -613,60 +613,60 @@ func TestNorthstarPTYSessionNavigator(t *testing.T) {
 		t.Fatal("remote fixture did not attach")
 	}
 	if len(local.attached) != 0 {
-		t.Fatal("Enter attached the colliding local ID")
+		t.Fatal("Enter opened the colliding local ID")
 	}
 	// The split prefix crosses separate PTY writes; no list key intercepts q.
 	h.send("\x02")
-	h.expect("detached / same qualified selection", h.send("q"), "> B forge-renamed", "Enter attach")
+	h.expect("detached / same qualified selection", h.send("q"), "> forge-renamed", "Enter open")
 	if forge.killed.Load() != 0 {
 		t.Fatal("detach stopped the egg")
 	}
 	northstarWrite(t, filepath.Join(f.home, "forge-offline"), "offline", 0600)
-	h.expect("retained remote rows / stale query failure", h.send("R"), "forge  offline", "last success", "> B forge-renamed", "stale")
+	h.expect("retained remote rows / stale query failure", h.send("R"), "forge could not be searched", "Last seen", "> forge-renamed")
 	if err := os.Remove(filepath.Join(f.home, "forge-offline")); err != nil {
 		t.Fatal(err)
 	}
 	rev = h.send("R")
 	h.waitScreen("remote recovery / same qualified selection", rev, func(s string) bool {
-		return strings.Contains(s, "forge  connected") && strings.Contains(s, "> B forge-renamed") && !strings.Contains(s, "stale")
+		return strings.Contains(s, "> forge-renamed") && strings.Contains(s, "! Needs you") && !strings.Contains(s, "forge unreachable")
 	})
 	h.expect("clear filter", h.send("/\x15\r"), "local-parent", "disposable")
-	h.expect("stop filter", h.send("/disposable\r"), "disposable", "> W")
-	h.expect("captured stop confirmation", h.send("x"), "Stop forge:stop-me (disposable)? [y/N]")
-	h.expect("stop cancelled", h.send("n"), "Enter attach", "disposable")
+	h.expect("stop filter", h.send("/disposable\r"), "> disposable", "* Working")
+	h.expect("captured stop confirmation", h.send("x"), "disposable on forge", "Enter keep running")
+	h.expect("stop cancelled", h.send("n"), "Enter open", "disposable")
 	if disposable.killed.Load() != 0 {
 		t.Fatal("cancel stopped the fixture")
 	}
-	h.expect("stop confirmation again", h.send("x"), "Stop forge:stop-me")
+	h.expect("stop confirmation again", h.send("x"), "disposable on forge")
 	rev = h.send("y")
 	h.waitScreen("confirmed stop / no matches", rev, func(s string) bool {
-		return strings.Contains(s, "(no matches)") && strings.Contains(s, "Enter attach") && !strings.Contains(s, "> W disposable")
+		return strings.Contains(s, "No matching sessions") && strings.Contains(s, "Enter open") && !strings.Contains(s, "> disposable")
 	})
 	if disposable.killed.Load() != 1 || local.killed.Load() != 0 || forge.killed.Load() != 0 {
 		t.Fatal("stop addressed wrong exact target")
 	}
 	h.expect("clear filter after stop", h.send("/\x15\r"), "local-parent", "forge-renamed")
 	h.expect("machine picker includes empty/offline", h.send("m"), "All machines", "empty", "offline", "Enter select")
-	h.expect("selected empty remote", h.send("jj\r"), "empty", "(no sessions)")
+	h.expect("selected empty remote", h.send("jj\r"), "empty", "No sessions yet on empty")
 	h.expect("empty remote new agent", h.send("n"), "Agent (blank = shell)")
-	h.expect("empty remote requires remote cwd", h.send("\r"), "Cwd on empty: _")
+	h.expect("empty remote requires remote cwd", h.send("\r"), "Machine: empty", "Working directory", "_")
 	h.expect("empty cwd rejected", h.send("\r"), "Working directory cannot be empty")
-	h.expect("cancel new / no launch", h.send("\x1b"), "empty", "Enter attach")
+	h.expect("cancel new / no launch", h.send("\x1b"), "empty", "n new session")
 	h.expect("restore all machines", h.send("m\x1b[H\r"), "local-parent", "forge-renamed")
 	rev = h.resize(40, 12)
-	h.expect("40x12 compact navigator", rev, "local-parent", "claude", "2m", "! attention", "m i ?")
+	h.expect("40x12 compact navigator", rev, "local-parent", "Working", "! attention", "m scope")
 	rev = h.send("?")
-	h.expect("40x12 help", rev, "Help / status legend", "Esc/Enter back")
-	h.expect("40x12 help scroll / detach", h.send("\x1b[6~\x1b[6~"), "Ctrl+B then q")
+	h.expect("40x12 help", rev, "Help", "Esc back")
+	h.expect("40x12 help scroll / detach", h.send("\x1b[6~"), "Ctrl+B then q")
 	h.expect("40x12 return", h.send("\x1b"), "local-parent")
 	rev = h.resize(120, 40)
-	h.expect("120x40 restored", rev, "local-parent", "forge-renamed", "empty", "offline", "R refresh")
+	h.expect("120x40 restored", rev, "local-parent", "forge-renamed", "offline unreachable", "R refresh")
 	h.exit("q")
 	if local.killed.Load() != 0 || forge.killed.Load() != 0 {
 		t.Fatal("quitting stopped surviving sessions")
 	}
 	h2 := northstarStartPTY(t, f, binary, 40, 12)
-	h2.expect("reopen / sessions survive", 0, "local-parent", "claude")
+	h2.expect("reopen / sessions survive", 0, "local-parent", "Working")
 	h2.exit("\x03")
 	// Test alias was used by every actual application child, not ambient TMPDIR.
 	resolved, err := filepath.EvalSymlinks(f.tmp)
@@ -677,4 +677,18 @@ func TestNorthstarPTYSessionNavigator(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(f.local, "wing.pid")); !os.IsNotExist(err) {
 		t.Fatalf("navigator started a wing: %v", err)
 	}
+}
+
+// Column padding changes with terminal width; preserve each expected row's
+// words and unread/state markers while allowing its inter-column spacing.
+func northstarContainsRow(screen, text string) bool {
+	if strings.HasSuffix(text, " *") {
+		return northstarNamedState(screen, text, "")
+	}
+	for _, line := range strings.Split(screen, "\n") {
+		if strings.Contains(strings.Join(strings.Fields(line), " "), text) {
+			return true
+		}
+	}
+	return false
 }
