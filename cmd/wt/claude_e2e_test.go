@@ -116,7 +116,14 @@ func TestBuiltWTClaudeScopedMailboxTwoLocalOnlyWings(t *testing.T) {
 	}
 }
 
-func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool) {
+func TestBuiltWTPinnedCoordinatorScopedMailbox(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("protected coordinator parent requires the native macOS sandbox")
+	}
+	testBuiltWTClaudeScopedMailbox(t, false, "coordinator")
+}
+
+func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool, roles ...string) {
 	h := testssh.New(t)
 	repo, err := filepath.Abs("../..")
 	if err != nil {
@@ -222,7 +229,15 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	viewer, _ := startSliceCProcess(t, binary, []string{"claude", "--name", "weekend", "--", "--model", "fake-parent", "--fixture-control", controlPath, "--fixture-state-file", filepath.Join(localState, "wing.yaml"), "--fixture-ssh-key", keyFile}, environment(localState), work, "PARENT_READY", in)
+	claudeArgs := []string{"claude", "--name", "weekend"}
+	if len(roles) > 0 {
+		claudeArgs = append(claudeArgs, "--role", roles[0])
+	}
+	claudeArgs = append(claudeArgs, "--", "--model", "fake-parent", "--fixture-control", controlPath, "--fixture-state-file", filepath.Join(localState, "wing.yaml"), "--fixture-ssh-key", keyFile)
+	if len(roles) > 0 {
+		claudeArgs = append(claudeArgs, "--fixture-role")
+	}
+	viewer, _ := startSliceCProcess(t, binary, claudeArgs, environment(localState), work, "PARENT_READY", in)
 	t.Cleanup(func() { _ = out.Close(); _ = viewer.cmd.Process.Kill(); <-viewer.done })
 	t.Cleanup(func() {
 		if t.Failed() {
@@ -260,6 +275,17 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool) {
 	for _, raw := range list["sessions"].([]any) {
 		session := raw.(map[string]any)
 		if session["name"] == "weekend" {
+			if len(roles) > 0 {
+				if session["role"] != roles[0] || session["pinned"] != true {
+					t.Fatalf("parent role metadata absent: %v", session)
+				}
+				pokes := sliceCArtifact(t, work, "role-pokes.json", viewer)
+				if !strings.Contains(string(pokes), "compact") {
+					t.Fatal("role hook did not repoke after compaction fixture")
+				}
+			} else if session["role"] != nil || session["pinned"] != nil {
+				t.Fatalf("ordinary parent acquired role: %v", session)
+			}
 			parentID = session["id"].(string)
 		}
 	}

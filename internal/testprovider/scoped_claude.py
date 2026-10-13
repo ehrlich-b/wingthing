@@ -22,6 +22,21 @@ if "--fixture-unconfined" not in args:
  except (PermissionError,OSError): pass
  else: raise RuntimeError('parent received unrestricted control socket')
  finally: probe.close()
+# Optional role fixture exercises the actual generated scoped settings through
+# shell hooks; the vendor gate separately proves Claude fires after /compact.
+role_pokes=[]
+if '--fixture-role' in args:
+ with open(args[args.index('--settings')+1]) as f: hooks=json.load(f)['hooks']['SessionStart']
+ provider=args[args.index('--session-id')+1]
+ for source in ('startup','resume','clear','compact'):
+  contexts=[]
+  for entry in hooks:
+   if entry.get('matcher') and source not in entry['matcher'].split('|'): continue
+   for hook in entry['hooks']:
+    output=subprocess.check_output(hook['command'],shell=True,input=json.dumps({'hook_event_name':'SessionStart','session_id':provider,'source':source}).encode(),timeout=5)
+    if output.strip(): contexts.append(json.loads(output)['hookSpecificOutput']['additionalContext'])
+  assert any('you are the coordinator node' in context for context in contexts)
+  role_pokes.append(source)
 tty.setraw(0)
 client=None; sequence=0
 def rpc(method,params):
@@ -51,6 +66,7 @@ def publish(name,data):
  with open(temporary,'w') as f: json.dump(data,f);f.flush();os.fsync(f.fileno())
  os.rename(temporary,name)
 connect()
+if role_pokes: publish('role-pokes.json',{'sources':role_pokes})
 wings=call('wing_list',{})['wings'];assert len(wings)==2
 receipts=[]
 for wing in wings:

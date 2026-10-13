@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	"sort"
 	"strings"
 	"sync"
 
@@ -177,6 +178,7 @@ func DiscoverMachineSessions(localVersion string, ctx context.Context, cfg *conf
 	for _, result := range results {
 		rows = append(rows, result...)
 	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Pinned && !rows[j].Pinned })
 	return rows, nil
 }
 
