@@ -43,4 +43,19 @@ func TestSessionCatalogCoordinatorNativeEvidenceRetainsItsAge(t *testing.T) {
 			t.Fatalf("stale hook refreshed on read: %+v", p)
 		}
 	}
+	// Malformed provider timestamp strings never enter content-free inventory.
+	const private = "provider-private-text-in-invalid-date"
+	events[0].Timestamp = private
+	journal = ""
+	for _, event := range events {
+		raw, _ := json.Marshal(event)
+		journal += string(raw) + "\n"
+	}
+	if err := os.WriteFile(filepath.Join(dir, "lifecycle.jsonl"), []byte(journal), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rows, _, err := SessionCatalog(t.Context(), cfg, "origin", "machine", "", nil)
+	if err != nil || len(rows) != 1 || rows[0].Presence.ObservedAt != "" || !rows[0].Presence.Stale {
+		t.Fatalf("invalid time leaked into presence: %v %v", rows, err)
+	}
 }

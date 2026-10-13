@@ -66,6 +66,9 @@ func ReadPresence(dir string, live bool, state, source string, now time.Time, st
 			p.ObservedAt = stateObservedAt[0]
 		}
 		at, err := time.Parse(time.RFC3339Nano, p.ObservedAt)
+		if err != nil {
+			p.ObservedAt = ""
+		}
 		p.Stale = err != nil || at.After(now) || now.Sub(at) > 2*time.Minute
 		if p.Stale {
 			return p

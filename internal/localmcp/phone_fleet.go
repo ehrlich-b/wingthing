@@ -58,12 +58,8 @@ func OwnerFleetControl(ctx context.Context, sessions *wingsession.Service, owner
 			return nil, e
 		}
 		if a.Operation == "agent_start" {
-			var fields map[string]json.RawMessage
-			if e := json.Unmarshal(a.Arguments, &fields); e != nil {
+			if e := validateLinkedUserLaunch(a.Arguments); e != nil {
 				return nil, e
-			}
-			if len(fields["conversation_role"]) == 0 && len(fields["parent_conversation_id"]) == 0 {
-				return nil, errors.New("phone/browser agent launch requires a linked personal conversation")
 			}
 		}
 		id := policy.Wing.WingID

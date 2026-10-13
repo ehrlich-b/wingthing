@@ -397,16 +397,16 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 		t.Fatal("built phone launch lacks session identity")
 	}
 	t.Cleanup(func() { _ = eggclient.KillOrphanEggContext(t.Context(), &config.Config{Dir: previewState}, phoneID) })
-	attachmentArgs := map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": stopID, "takeover": true}
+	attachmentArgs := map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": phoneID, "takeover": true}
 	if result := phone.command("fleet_attach", attachmentArgs); result["error"] != nil {
 		t.Fatalf("built phone attach: %v", result["error"])
 	}
-	if result := phone.command("fleet_input", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": stopID, "input": "paired phone typed into the exact remote PTY\r"}); result["error"] != nil {
+	if result := phone.command("fleet_input", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": phoneID, "input": "paired phone typed into the exact remote PTY\r"}); result["error"] != nil {
 		t.Fatal("paired phone input failed")
 	}
 	readUntil := time.Now().Add(3 * time.Second)
 	for {
-		result := phone.command("fleet_read", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": stopID})
+		result := phone.command("fleet_read", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": phoneID})
 		if result["error"] != nil {
 			t.Fatal("paired phone read failed")
 		}
@@ -422,8 +422,8 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	must(macState, "phone-attach", "session", "action", "--wing", writerMeta.WingID, "--session", stopID, "--operation", "terminal_read")
-	_, observedEgg, err := eggclient.OpenLocalEgg(t.Context(), &config.Config{Dir: previewState}, stopID)
+	must(macState, "phone-attach", "session", "action", "--wing", writerMeta.WingID, "--session", phoneID, "--operation", "terminal_read")
+	_, observedEgg, err := eggclient.OpenLocalEgg(t.Context(), &config.Config{Dir: previewState}, phoneID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -470,13 +470,13 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 	if result := phone.command("inventory", map[string]any{"include_remotes": true}); result["error"] == nil {
 		t.Fatal("saved/reloaded revocation retained inventory")
 	}
-	if result := phone.command("action", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": stopID, "operation": "terminal_read"}); result["error"] == nil {
+	if result := phone.command("action", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": phoneID, "operation": "terminal_read"}); result["error"] == nil {
 		t.Fatal("saved/reloaded revocation retained action")
 	}
 	if result := phone.command("launch", map[string]any{"origin_wing_id": writerMeta.WingID, "operation": "terminal_start", "arguments": map[string]any{"command": []string{"/bin/cat"}, "cwd": home}}); result["error"] == nil {
 		t.Fatal("saved/reloaded revocation retained launch")
 	}
-	if result := phone.command("fleet_read", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": stopID}); result["error"] == nil {
+	if result := phone.command("fleet_read", map[string]any{"origin_wing_id": writerMeta.WingID, "session_id": phoneID}); result["error"] == nil {
 		t.Fatal("saved/reloaded revocation retained attachment content")
 	}
 	if result := phone.command("fleet_attach", attachmentArgs); result["error"] == nil {
@@ -517,7 +517,7 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 			t.Fatalf("revoked phone used %s", op)
 		}
 	}
-	must(macState, "phone-revocation-independent", "session", "action", "--wing", writerMeta.WingID, "--session", stopID, "--operation", "terminal_read")
+	must(macState, "phone-revocation-independent", "session", "action", "--wing", writerMeta.WingID, "--session", phoneID, "--operation", "terminal_read")
 	must(macState, "phone-launch", "session", "action", "--wing", writerMeta.WingID, "--session", phoneID, "--operation", "terminal_send", "--arguments", `{"input":"phone launched this exact remote kernel PTY","enter":true}`)
 	must(macState, "phone-launch-read", "session", "action", "--wing", writerMeta.WingID, "--session", phoneID, "--operation", "terminal_read")
 	must(macState, "", "session", "action", "--wing", writerMeta.WingID, "--session", phoneID, "--operation", "terminal_stop")

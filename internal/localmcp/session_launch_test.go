@@ -44,6 +44,8 @@ func TestQualifiedSessionLaunchExactOriginPolicyAndNoReplay(t *testing.T) {
 		`{"operation":"terminal_start"}`, `{"origin_wing_id":"unknown","operation":"terminal_start"}`,
 		`{"origin_wing_id":"execution","operation":"terminal_stop"}`, `{"origin_wing_id":"execution","operation":"terminal_start","arguments":null}`,
 		`{"origin_wing_id":"execution","operation":"agent_start","arguments":{"resume_session":"short"}}`,
+		`{"origin_wing_id":"execution","operation":"agent_start","arguments":{"RESUME_SESSION":"short"}}`,
+		`{"origin_wing_id":"execution","operation":"agent_start","arguments":{"Resume_Session":null}}`,
 		`{"origin_wing_id":"execution","operation":"terminal_start","extra":true}`,
 		`{"origin_wing_id":"execution","operation":"terminal_start","local_only":true}`,
 	} {
