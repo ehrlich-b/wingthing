@@ -19,6 +19,7 @@ import (
 func serveCmd() *cobra.Command {
 	var addrFlag string
 	var devFlag bool
+	var paidFixtureFlag bool
 	var localFlag bool
 	var httpsFlag bool
 	var httpsAddrFlag string
@@ -28,6 +29,9 @@ func serveCmd() *cobra.Command {
 		Aliases: []string{"serve"},
 		Short:   "Start the relay server (web UI + WebSocket relay)",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if paidFixtureFlag && (!devFlag || !localFlag || httpsFlag) {
+				return fmt.Errorf("--paid-fixture requires explicit --local --dev without --https")
+			}
 			if !localFlag {
 				if err := localrelay.ValidateAuthProviderEnvironment(); err != nil {
 					return err
@@ -110,6 +114,7 @@ func serveCmd() *cobra.Command {
 			}
 
 			srvCfg := relay.ServerConfig{
+				PaidFixture:          paidFixtureFlag,
 				BaseURL:              localrelay.DefaultBaseURL(localHTTPS),
 				AppHost:              os.Getenv("WT_APP_HOST"),
 				WSHost:               os.Getenv("WT_WS_HOST"),
@@ -277,6 +282,7 @@ func serveCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&addrFlag, "addr", config.DefaultListenAddr(), "listen address")
 	cmd.Flags().BoolVar(&devFlag, "dev", false, "reload templates from disk on each request")
+	cmd.Flags().BoolVar(&paidFixtureFlag, "paid-fixture", false, "enable dormant paid UI fixtures (requires --local --dev)")
 	cmd.Flags().BoolVar(&localFlag, "local", false, "single-user mode, no login required")
 	cmd.Flags().BoolVar(&httpsFlag, "https", false, "serve the local browser UI over HTTPS using an on-demand, device-local CA")
 	cmd.Flags().StringVar(&httpsAddrFlag, "https-addr", localrelay.DefaultHTTPSAddr(), "loopback HTTPS address for the local browser UI")

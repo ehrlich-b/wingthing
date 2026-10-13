@@ -410,3 +410,11 @@ test-coordinator-role-native: | web/dist
 
 test-coordinator-role-race: | web/dist
 	$(GO) test -race -p 2 -count=1 ./internal/sessionrole ./internal/egg ./internal/eggclient ./internal/localmcp ./internal/dashboard ./internal/control ./internal/wingpolicy ./cmd/wt -run 'Role|Pin|Pinned|SessionPS|RegistryDefines|ScopedParent|IsUnderPathsRoot' -timeout 180s
+
+# Dormant UI fixtures. No provider, payment, real account or VM acceptance.
+.PHONY: test-paid-gate test-paid-ui
+test-paid-gate: | web/dist
+	$(GO) test -p 2 ./internal/relay ./cmd/wt -run '^TestPaidFixture' -count=1 -timeout=2m
+
+test-paid-ui:
+	$(NODE) web/test/paid-ui.mjs

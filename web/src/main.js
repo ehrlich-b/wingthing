@@ -44,6 +44,10 @@ async function init() {
         scopeBrowserStateToUser(S.currentUser.id);
         loadTunnelAuthTokens();
         DOM.userInfo.textContent = S.currentUser.display_name || 'user';
+        if (S.currentUser.paid_fixture === true) {
+            const paid = await import('./paid/controller.js');
+            if (paid.installPaidFixtureEntry(S.currentUser)) return;
+        }
     } catch (e) { loginRedirect(); return; }
 
     var refreshPhone = createForegroundRefresh(async function() {
@@ -435,6 +439,7 @@ async function init() {
 
 // Hash change (user pastes #s/ URL while page is already loaded)
 window.addEventListener('hashchange', function() {
+    if (document.getElementById('paid-root')) return;
     if (location.hash.startsWith('#conversation/')) { restoreConversationRoute(); return; }
     var sessionLink = parseSessionRoute(location.hash);
     if (sessionLink) {
@@ -469,6 +474,7 @@ window.addEventListener('hashchange', function() {
 
 // Browser history (back/forward)
 window.addEventListener('popstate', function(e) {
+    if (document.getElementById('paid-root')) return;
     var auditOverlay = document.getElementById('audit-overlay');
     if (auditOverlay && auditOverlay.style.display !== 'none') {
         closeAuditOverlay();
