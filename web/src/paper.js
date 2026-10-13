@@ -192,11 +192,12 @@ function viewMachines() {
         '<aside class="pp-col-rail">' + kicker('Add a device') + '<p>Run <code>wt start</code> on another computer to add it here. To read and answer from your phone, pair it with a machine.</p><a class="pp-btn pp-btn-ink" href="#pair">Pair a phone</a></aside></div>';
 }
 
-// The pairing code and symbols live only in the computer's terminal: the person
-// at that machine starts pairing and allows it there.
+// A machine starts pairing with wt pair and the phone app joins it. The browser
+// neither starts nor joins one, so this page only explains the two sides.
 function viewPair() {
     return head('Pair <i>a phone</i>', '<b>wt pair</b> · on the computer') + '<div class="pp-cols pp-pair"><div class="pp-col-main">' +
-        '<p class="pp-lead">Run <code>wt pair</code> on the computer you want to reach, then scan its code with the Wingthing app on your phone.</p>' +
+        '<p class="pp-lead">Pairing starts on the computer with <code>wt pair</code> and is joined from the Wingthing phone app.</p>' +
+        '<p class="pp-quiet">This page can\'t join a pairing. Use the phone app to scan the code.</p>' +
         kicker('On your computer') + '<pre class="pp-cmd"><span class="pp-prompt">$</span> wt pair</pre>' +
         '<div class="pp-actions"><button type="button" class="pp-btn" data-copy="wt pair">Copy command</button></div>' +
         '<p class="pp-gap">Run it in a terminal on that machine. It shows a code to scan, good for five minutes.</p>' +

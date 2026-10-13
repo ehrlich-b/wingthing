@@ -180,6 +180,7 @@ body.paper-on #app { display: none; }
 
 /* Pair */
 #paper .pp-pair .pp-lead { margin-top: 26px; }
+#paper .pp-pair .pp-lead + .pp-quiet { margin-top: 10px; }
 .pp-steps { margin: 18px 0 0; padding-left: 22px; }
 .pp-steps li { margin: 0 0 10px; max-width: 60ch; }
 
