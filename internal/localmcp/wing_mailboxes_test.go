@@ -49,7 +49,7 @@ func scopedRunFixture(t *testing.T, root, name string) (*runWingFixture, *contro
 	return f, listener
 }
 
-func scopedRegistration(t *testing.T, f *runWingFixture, wings map[string][]string, session string) conversationBrokerRegistration {
+func scopedRegistration(t *testing.T, f *runWingFixture, wings map[string][]string, session string, role ...string) conversationBrokerRegistration {
 	t.Helper()
 	db, err := store.Open(f.server.Cfg.DBPath())
 	if err != nil {
@@ -66,6 +66,12 @@ func scopedRegistration(t *testing.T, f *runWingFixture, wings map[string][]stri
 		t.Fatal(err)
 	}
 	reg := conversationBrokerRegistration{Version: 1, StateDir: wingpolicy.CanonicalPolicyPath(f.server.Cfg.Dir), ConversationID: c.ID, RootID: c.RootID, SessionID: c.SessionID, Principal: f.server.clientPrincipal(), LauncherActor: "default", LauncherSurface: string(control.SurfaceLocalMCP), UserID: "fixture-owner", Tools: scopedParentTools, MaxSessions: 8, MaxSpawnsPerHour: 60, AllowedPaths: []string{workspace}, EnforcePathBounds: true, Workspace: workspace, Mailbox: filepath.Join(".wingthing-conversations", c.ID, c.SessionID, "mailbox"), EggConfig: policy, Executable: "/fixture/wt", RegisteredAt: time.Now().Unix(), Scoped: true, Wings: wings}
+	if len(role) > 0 {
+		reg.Role = role[0]
+		if reg.Role == "coordinator" {
+			reg.Tools = coordinatorParentTools
+		}
+	}
 	if err := writeConversationBrokerRegistration(f.server.Cfg, reg); err != nil {
 		t.Fatal(err)
 	}

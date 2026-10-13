@@ -38,6 +38,12 @@ func writeMachineSessions(out io.Writer, rows []eggclient.MachineSession, jsonOu
 			continue
 		}
 		name, process, status, isolation := row.Name, row.Agent, row.Status, row.Isolation
+		if row.Pinned {
+			name = "* " + name
+		}
+		if row.Role != "" {
+			name = "[" + row.Role + "] " + name
+		}
 		if name == "" {
 			name = "-"
 		}

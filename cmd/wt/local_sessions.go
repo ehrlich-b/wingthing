@@ -49,6 +49,12 @@ func writeLocalSessions(out io.Writer, sessions []eggclient.LocalSession, jsonOu
 	}
 	for _, session := range sessions {
 		name := session.Name
+		if session.Pinned {
+			name = "* " + name
+		}
+		if session.Role != "" {
+			name = "[" + session.Role + "] " + name
+		}
 		if name == "" {
 			name = "-"
 		}
@@ -97,6 +103,12 @@ func selectSession(sessions []eggclient.LocalSession) (eggclient.LocalSession, e
 	fmt.Fprintln(os.Stderr, "Active sessions:")
 	for i, session := range sessions {
 		name := session.Name
+		if session.Pinned {
+			name = "* " + name
+		}
+		if session.Role != "" {
+			name = "[" + session.Role + "] " + name
+		}
 		if name == "" {
 			name = session.ID
 		}
