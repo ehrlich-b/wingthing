@@ -31,10 +31,17 @@ type row struct {
 func (r row) key() string { return r.machine + ":" + r.ID }
 
 func (r row) name() string {
-	if r.Name != "" {
-		return r.Name
+	name := r.Name
+	if name == "" {
+		name = r.ID
 	}
-	return r.ID
+	if r.Role != "" {
+		name = "[" + r.Role + "] " + name
+	}
+	if r.Pinned {
+		name = "* " + name
+	}
+	return name
 }
 
 // A remote cwd is a remote path: never inspect or resolve it on this machine.
@@ -82,6 +89,7 @@ type state struct {
 	machines          map[string]machine
 	registryError     string
 	registrySequence  uint64
+	selectionTouched  bool
 	selected          string
 	filter            string
 	mode              mode
@@ -147,7 +155,7 @@ func (s *state) rows() []row {
 				continue
 			}
 			if query != "" && !strings.Contains(strings.ToLower(strings.Join([]string{
-				name, session.ID, session.Name, session.Agent, session.Command, session.CWD, session.Status, r.attention,
+				name, session.ID, session.Name, session.Role, session.Agent, session.Command, session.CWD, session.Status, r.attention,
 			}, " ")), query) {
 				continue
 			}
@@ -159,6 +167,9 @@ func (s *state) rows() []row {
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		left, right := rows[i], rows[j]
+		if left.Pinned != right.Pinned {
+			return left.Pinned
+		}
 		if left.machine != right.machine {
 			if left.machine == "local" || right.machine == "local" {
 				return left.machine == "local"
@@ -198,6 +209,9 @@ func (s *state) selection() (row, bool) {
 
 func (s *state) reconcile() {
 	s.observeAttention()
+	if rows := s.rows(); !s.selectionTouched && len(rows) > 0 && rows[0].Pinned {
+		s.selected = rows[0].key()
+	}
 	if r, ok := s.selection(); ok {
 		s.selected = r.key()
 	} else {
@@ -206,6 +220,7 @@ func (s *state) reconcile() {
 }
 
 func (s *state) move(delta int) {
+	s.selectionTouched = true
 	rows := s.rows()
 	for i, r := range rows {
 		if r.key() == s.selected {
@@ -366,6 +381,7 @@ func (s *state) handle(key string) (act *action, quit bool) {
 	case "/":
 		s.mode, s.previous, s.input = filter, s.filter, s.filter
 	case "enter", "v", "t", "r", "x", "n":
+		s.selectionTouched = true
 		if s.busy {
 			return nil, false
 		}

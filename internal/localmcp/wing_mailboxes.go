@@ -30,6 +30,10 @@ import (
 var scopedParentTools = append(append([]string{}, conversationBrokerTools...),
 	"wing_list", "agent_run", "agent_status", "agent_wait", "agent_wait_any", "agent_result", "agent_events", "agent_stop", "agent_steer")
 
+// Coordinator authority is explicit at launch and kept in protected wing state.
+// It intersects the same owner grants, path ceilings and finite spawn bounds.
+var coordinatorParentTools = append(append([]string{}, scopedParentTools...), "agent_list", "terminal_list", "session_pin")
+
 func sealMailboxPolicy(cfg *config.Config, policy *egg.EggConfig) error {
 	state := wingpolicy.CanonicalPolicyPath(cfg.Dir)
 	socket, err := controlsocket.Path(cfg.Dir)
@@ -142,6 +146,15 @@ func (m *wingMailboxes) capture(s *Server) (map[string][]string, error) {
 	// Local children inherit the parent's policy and workspace, independently of
 	// wider owner paths. Remote workspaces are separate host-local paths.
 	wings := map[string][]string{local: {wingpolicy.CanonicalPolicyPath(s.sessionLaunch.CWD)}}
+	if s.parentRole == "coordinator" {
+		if s.enforcePathBounds && len(s.allowedPaths) == 0 {
+			return nil, errors.New("coordinator has no permitted local paths")
+		}
+		wings[local] = append([]string(nil), s.allowedPaths...)
+		if !s.enforcePathBounds && len(wings[local]) == 0 {
+			wings[local] = []string{"/"}
+		}
+	}
 	p, err := m.remotes.pool(controlsocket.Hello{Client: s.conversationMCPClient()})
 	if err != nil {
 		return nil, err
@@ -168,7 +181,13 @@ func (m *wingMailboxes) capture(s *Server) (map[string][]string, error) {
 		} // offline wings cannot add unknown paths
 		wire, _ := json.Marshal(data["paths"])
 		var paths []string
-		if json.Unmarshal(wire, &paths) == nil && len(paths) > 0 {
+		if json.Unmarshal(wire, &paths) == nil {
+			if s.parentRole == "coordinator" && len(paths) == 0 && data["path_bounds_enforced"] == false {
+				paths = []string{"/"}
+			}
+			if len(paths) == 0 {
+				continue
+			}
 			if s.restrictWings {
 				paths, _ = intersectBrokerPaths(s.wingGrants[id], true, paths)
 			}
@@ -203,6 +222,11 @@ func (m *wingMailboxes) call(ctx context.Context, reg conversationBrokerRegistra
 			// task methods that its envelope intentionally does not expose.
 			result["capabilities"] = map[string]any{"tools": map[string]any{}}
 			result["instructions"] = "Wingthing manages this parent's worker eggs. Call wing_list and use the selected wing's advertised workspace paths. Delegate worker tasks through agent_run. Preserve each wing_id, run_id, session_id and idempotency_key receipt; retry an ambiguous admission with the original key. Use agent_status, agent_wait and agent_result to recover recorded children across viewer, mailbox, SSH and parent exit. Native MCP task augmentation is unavailable on this scoped mailbox."
+		}
+		if reg.Scoped && reg.Role == "coordinator" && call.Method == "initialize" {
+			if result, ok := response.Result.(map[string]any); ok {
+				result["instructions"] = "You are the coordinator node. Call wing_list and use qualified wing IDs to inspect agents with agent_list and sessions with terminal_list, including work started outside this coordinator's child tree. Read session_read or conversation_read, and send bounded messages with session_prompt. Captured workspace ceilings, current grants and ownership still apply. Local worker launches stay inside the coordinator workspace; remote paths belong to their owning wing."
+			}
 		}
 		if reg.Scoped && call.Method == "tools/list" {
 			tools := []control.Tool{}
@@ -312,6 +336,9 @@ func (m *wingMailboxes) scopePaths(s *Server, id string) ([]string, error) {
 		return nil, errors.New("wing is outside this parent's captured grants")
 	}
 	if id == m.remotes.wingID {
+		if s.enforcePathBounds && len(s.allowedPaths) == 0 {
+			return nil, errors.New("workspace grant was revoked")
+		}
 		paths, _ = intersectBrokerPaths(paths, true, s.allowedPaths)
 	} else {
 		clients, err := LoadLocalMCPClientsConfig(s.Cfg)
@@ -400,7 +427,7 @@ func (m *wingMailboxes) dispatch(ctx context.Context, s *Server, request control
 	if err != nil {
 		return fail(err)
 	}
-	if strings.HasPrefix(request.Tool, "agent_") && request.Tool != "agent_run" && request.Tool != "agent_start" {
+	if s.broker.Role != "coordinator" && strings.HasPrefix(request.Tool, "agent_") && request.Tool != "agent_run" && request.Tool != "agent_start" {
 		var ids []string
 		if request.Tool == "agent_wait_any" {
 			if err := json.Unmarshal(fields["run_ids"], &ids); err != nil {
@@ -420,7 +447,7 @@ func (m *wingMailboxes) dispatch(ctx context.Context, s *Server, request control
 			}
 		}
 	}
-	if id != m.remotes.wingID && boundSessionTargetTools[request.Tool] {
+	if s.broker.Role != "coordinator" && id != m.remotes.wingID && boundSessionTargetTools[request.Tool] {
 		var session string
 		_ = json.Unmarshal(fields["session"], &session)
 		child, ok := children[childKey(id, session)]
@@ -489,7 +516,7 @@ func (m *wingMailboxes) dispatch(ctx context.Context, s *Server, request control
 			response.Result = control.QualifyResult(id, response.Result)
 		}
 	} else {
-		if strings.HasPrefix(request.Tool, "conversation_") {
+		if strings.HasPrefix(request.Tool, "conversation_") && s.broker.Role != "coordinator" {
 			return fail(errors.New("conversation tools are local to this parent's wing"))
 		}
 		p, err := m.remotes.pool(remoteMailboxHello(s, paths))
