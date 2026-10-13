@@ -145,6 +145,10 @@ func render(s *state, width, height int, now time.Time) string {
 	header := []string{
 		fmt.Sprintf("wt | %d sessions | %d machines", total, len(names)),
 		fmt.Sprintf("B:%d W:%d I:%d D:%d E:%d F:%d ?:%d U:%d | [%s] !:%d bell:%s", counts["B"], counts["W"], counts["I"], counts["D"], counts["E"], counts["F"], counts["?"], unread, scope, attention, s.bellSetting()),
+		"Local + saved SSH | no Wingthing login required | model provider may need internet",
+	}
+	if height < 30 || s.mode == help {
+		header = header[:2]
 	}
 	var body []viewLine
 	selectedLine := 0
@@ -222,8 +226,19 @@ func render(s *state, width, height int, now time.Time) string {
 			body = append(body, viewLine{text: text})
 		}
 	}
+	if total == 0 && s.filter == "" && !s.attentionOnly {
+		body = append(body, viewLine{text: ""}, viewLine{text: "Start here: n new session | a detect / install agents | h recent runs"})
+		for _, a := range s.agents {
+			found := a.Path
+			if found == "" {
+				found = "not installed"
+			}
+			body = append(body, viewLine{text: "  " + a.Name + ": " + found})
+		}
+		body = append(body, viewLine{text: "Detection only searches PATH; provider authentication is separate."})
+	}
 	footer := []string{"arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop",
-		"/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent"}
+		"/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent a setup"}
 	if width < 75 {
 		footer = []string{"Enter attach v view t take n r x stop", "/ filter ! attention b bell m i ? R q h"}
 	}
@@ -257,6 +272,13 @@ func render(s *state, width, height int, now time.Time) string {
 			}
 		}
 		footer = []string{"j/k scroll  Esc/Enter back  Ctrl-C quit"}
+	}
+	if s.mode >= agentSetup {
+		body = nil
+		for _, line := range s.setupLines() {
+			body = append(body, viewLine{text: line})
+		}
+		footer = []string{"Esc back to sessions | Ctrl-C quit"}
 	}
 	message := s.message
 	if s.registryError != "" {
@@ -413,6 +435,9 @@ func overlayLines(s *state, now time.Time) []string {
 			"Run recovery: wt agent recover --json; offline inspection: wt run-inspect --snapshot PATH.",
 			"Daily loop and limits: docs/daily-driver.md; browser/phone guide is a separate lane.",
 			"R reloads saved machines; automatic reload every 2s; invalid registry keeps stale routes and local work.",
+			"a: locally detect agents, review exact installer, verify and hand off to provider login.",
+			"Local and saved SSH control are Free; paired phones use their actual LAN/tailnet route.",
+			"Cloud model inference may require provider network/account; relay reach is a separate service.",
 		}
 	}
 	r := s.target

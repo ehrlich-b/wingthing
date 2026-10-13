@@ -8,7 +8,7 @@ import (
 
 // A saved name can later identify a different host, executable or state tree.
 // Snapshot the complete profile in rows so old views cannot acknowledge the
-// replacement's results. All records live only for this dashboard instance.
+// replacement's results. Read cursors persist per OS viewer; bells live only in this instance.
 type attentionIdentity struct {
 	machine, session, localDir string
 	profile                    config.Remote
@@ -87,6 +87,7 @@ func (s *state) observeAttention() {
 				// Baseline historical completions; known input requests remain
 				// visibly blocked without a startup storm of audible alerts.
 				record.seen = record.completion
+				record.seen = s.baselineReadCursor(key, record.completion)
 			}
 			attached := s.attached != nil && *s.attached == key
 			if attached {
@@ -141,6 +142,7 @@ func (s *state) acknowledge(r row) {
 		// newer completion arrived before this key/action was processed.
 		record.seen = max(record.seen, min(r.completion, record.completion))
 		s.attention[r.identity] = record
+		s.saveReadCursor(r.identity, record.seen)
 	}
 }
 

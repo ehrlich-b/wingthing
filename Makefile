@@ -410,3 +410,18 @@ test-coordinator-role-native: | web/dist
 
 test-coordinator-role-race: | web/dist
 	$(GO) test -race -p 2 -count=1 ./internal/sessionrole ./internal/egg ./internal/eggclient ./internal/localmcp ./internal/dashboard ./internal/control ./internal/wingpolicy ./cmd/wt -run 'Role|Pin|Pinned|SessionPS|RegistryDefines|ScopedParent|IsUnderPathsRoot' -timeout 180s
+
+# Isolated terminal onboarding and storyboard contract; no vendor login/install.
+.PHONY: test-tui-start test-tui-start-race
+test-tui-start: | web/dist
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -count=1 ./internal/onboarding ./internal/dashboard ./cmd/wt -run 'Onboarding|Setup|CodexShortcut|NorthstarPTY|Dashboard' -timeout 10m -v
+
+test-tui-start-race: | web/dist
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -race -p 2 -count=1 ./internal/onboarding ./internal/dashboard ./cmd/wt -run 'Onboarding|Setup|CodexShortcut|Dashboard' -timeout 5m
+
+.PHONY: capture-tui-start
+capture-tui-start: | web/dist
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 -count=1 ./cmd/wt -run '^TestOnboardingPTYStoryboard$$' -v -timeout 3m

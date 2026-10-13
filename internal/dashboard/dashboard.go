@@ -15,6 +15,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/onboarding"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"golang.org/x/term"
 )
@@ -37,7 +38,8 @@ func Run(ctx context.Context, version string, streams remotepkg.IO) error {
 	if err != nil {
 		return err
 	}
-	s := &state{machines: map[string]machine{"local": {}}, defaultAgent: cfg.DefaultAgent, defaultCWD: cwd, localDir: cfg.Dir}
+	s := &state{machines: map[string]machine{"local": {}}, defaultAgent: cfg.DefaultAgent, defaultCWD: cwd, localDir: cfg.Dir, agents: onboarding.Discover(), persistAttention: true}
+	s.loadReadCursors()
 	inv := newInventory(nil)
 	inv.reload(s, remotes, registryErr)
 	inv.queryProfile = func(ctx context.Context, name string, profile config.Remote) ([]eggclient.LocalSession, error) {
@@ -224,6 +226,44 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			}
 			if act == nil {
 				continue
+			}
+			if act.kind == setupInvoke {
+				if err := input.stop(); err != nil {
+					return err
+				}
+				if err := terminal.leave(); err != nil {
+					return err
+				}
+				setupErr := setupCommand(ctx, s.setupAgent, act.setupStage, streams)
+				s.setupStage = act.setupStage
+				if setupErr == nil {
+					s.setupCompleted = act.setupStage
+				}
+				s.agents = onboarding.Discover()
+				for _, a := range s.agents {
+					if a.ID == s.setupAgent.ID {
+						s.setupAgent = a
+					}
+				}
+				if setupErr != nil {
+					s.mode, s.setupError = setupFailure, setupErr.Error()
+				} else if s.setupAgent.Path == "" {
+					s.mode, s.setupStage, s.setupError = setupFailure, "PATH", "Binary absent on PATH. Check ~/.local/bin, then rescan; do not reinstall by default."
+				} else {
+					s.mode, s.setupError = providerReady, ""
+				}
+				if err := terminal.enter(); err != nil {
+					return err
+				}
+				input, err = readInput(ctx, streams.In)
+				if err != nil {
+					return err
+				}
+				inputEvents = input.events
+				decoder.pending = nil
+				escapeTimer.Stop()
+				inputErr = nil
+				break
 			}
 			if act.kind == runResult {
 				r := act.run

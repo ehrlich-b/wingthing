@@ -607,6 +607,12 @@ func (s *state) runView(now time.Time) ([]string, []viewLine, int, []string) {
 	h := s.history()
 	rows := h.rows()
 	header := []string{fmt.Sprintf("wt | Recent runs | %d visible | pages <=%d rows", len(rows), runPageSize), "Durable records; liveness and terminal outcome are separate"}
+	for _, r := range s.rows() {
+		if r.Pinned {
+			header = append(header, "Pinned: "+r.name()+" @ "+r.machine)
+			break
+		}
+	}
 	partial := h.err != "" || len(h.unavailable) > 0
 	for _, page := range h.pages {
 		if page.err != "" {
