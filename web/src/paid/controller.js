@@ -1,7 +1,7 @@
 import { cards } from './cards.js';
 import { createPaidState, applyPaidAction, fixtureDownload, FIXTURE_VERSION } from './model.js';
 import { parseUSD } from './currency.js';
-import { renderPaidView } from './view.js';
+import { renderPaidView, visiblePaidCards } from './view.js';
 import './paid.css';
 const STORAGE = 'wingthing-dormant-paid-fixture-v1';
 export function paidFixtureAllowed(user) { return user?.paid_fixture === true; }
@@ -17,7 +17,7 @@ export function mountPaidFixture(user) {
     document.getElementById('app').hidden = true;
     document.body.classList.add('paid-active');
     function save() { try { sessionStorage.setItem(STORAGE, JSON.stringify({state:s,profile})); } catch { /* Read-only/storage-denied browser remains usable. */ } }
-    function card() { return cards.find(c => location.hash === `#paid/${c.group}/${c.key}`) || cards[0]; }
+    function card() { const visible=visiblePaidCards(s); return visible.find(c => location.hash === `#paid/${c.group}/${c.key}`) || visible[0]; }
     function render(focus = false) {
         root.innerHTML = renderPaidView(card(),s,error);
         document.getElementById('paid-profile').value = profile;

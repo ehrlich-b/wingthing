@@ -186,7 +186,7 @@ test('11-2 invoices finalize settled intervals only, itemize models separately a
  let s=ready();rejects(s,{op:'invoice-finalize',eventId:'invoice',invoiceId:s.invoice.id},/settled usage/);
  s=stopped(act(s,{op:'meter',eventId:'use-1',seconds:1080,verified:true}));
  s=act(s,{op:'invoice-finalize',eventId:'invoice',invoiceId:s.invoice.id});assert.equal(s.invoice.status,'finalized');assert.ok(s.invoice.events.includes('use-1'));
- assert.ok(s.invoice.lines.some(l=>l.label.includes('BYO')&&l.cents===0));assert.equal(act(s,{op:'invoice-finalize',eventId:'invoice',invoiceId:s.invoice.id}).invoiceEvents.length,1);
+ assert.equal(s.invoice.lines.some(l=>l.label.includes('BYO')),false);assert.equal(s.invoice.lines.reduce((sum,l)=>sum+l.cents,0),s.invoice.cents);assert.equal(act(s,{op:'invoice-finalize',eventId:'invoice',invoiceId:s.invoice.id}).invoiceEvents.length,1);
  assert.match(fixtureDownload(s,'invoice'),/fixture-invoice-1/);
 });
 test('11-3 explicit preferences and metadata-only support omit task, transcripts and values',()=>{
@@ -208,7 +208,7 @@ test('12-1 later team permissions deny wrong tenant, revoked membership and phon
 });
 test('all 36 card routes render dormant UI with safe escaped user text and receipt context',()=>{
  assert.equal(cards.length,36);const counts={};
- for(const card of cards){counts[card.flow]=(counts[card.flow]||0)+1;const html=renderPaidView(card,active());assert.ok(html.includes('Dormant · dev fixture'));assert.ok(html.includes(card.title.replaceAll('&','&amp;')));assert.ok(html.includes('fixture-account-1'));}
+ for(const card of cards){counts[card.flow]=(counts[card.flow]||0)+1;const html=renderPaidView(card,createPaidState(card.key==='owner' ? 'operator' : 'active'));assert.ok(html.includes('Dormant · dev fixture'));assert.ok(html.includes(card.title.replaceAll('&','&amp;')));assert.ok(html.includes('fixture-account-1'));}
  assert.deepEqual(counts,{7:8,10:22,11:5,12:1});
  const s=act(active(),{op:'draft',task:'<img src=x onerror=alert(1)>'});assert.ok(!renderPaidView(cards.find(c=>c.key==='dashboard'),s).includes('<img src=x'));
 });

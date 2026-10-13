@@ -81,7 +81,7 @@ try {
    await page.screenshot({path:resolve(shots,`07-7-payment-${outcome}-${viewport.width}.png`),fullPage:true});
   }
   await stage(paymentBase);await go('upgrade','payment-pending');await capture('upgrade','payment-pending');
-  await go('upgrade','owner');assert.equal(await page.getByRole('button',{name:'Record fixture owner grant',exact:true}).isDisabled(),true);await reset('operator');await click('Record fixture owner grant');assert.equal((await state()).audit.at(-1).reason,'Owner dogfood fixture');await capture('upgrade','owner');
+  assert.equal(await page.locator('a[href="#paid/upgrade/owner"]').count(),0);await reset('operator');await go('upgrade','owner');await click('Record fixture owner grant');assert.equal((await state()).audit.at(-1).reason,'Owner dogfood fixture');await capture('upgrade','owner');
   await reset('active');await go('cloud','terminal');await page.locator('[name="task"]').fill('Review pairing from terminal');await click('Save terminal-origin draft');assert.equal((await state()).cloud,null);await capture('cloud','terminal');
   await go('cloud','dashboard');await page.locator('[name="task"]').fill('Review pairing and open a PR');await click('Save dashboard draft');assert.equal((await state()).draft.task,'Review pairing and open a PR');await capture('cloud','dashboard');
   await go('cloud','phone');await reset('unapproved-phone');await click('Send fixture cloud request');assert.equal((await state()).phoneRequest.status,'awaiting-owner-approval');await reset('phone');await click('Send fixture cloud request');assert.equal((await state()).phoneRequest.status,'queued-for-coordinator');assert.equal((await state()).cloud,null);await capture('cloud','phone');

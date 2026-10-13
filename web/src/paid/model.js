@@ -53,7 +53,7 @@ export function createPaidState(scenario = 'free') {
         cloud: null, launchRecords: {}, resumeRecords: {}, reservation: null, nextRun: 0, nextCloud: 1,
         template: { id: 'fixture-template-1', approved: scenario !== 'unapproved-phone', size: 'standard', hours: 2, capCents: 0, coordinatorWingId: 'fixture-coordinator-wing', coordinatorSessionId: 'fixture-coordinator-session' },
         phoneRequest: null, phonePairedWings: ['fixture-local-wing', 'fixture-coordinator-wing'], localSessions: ['fixture-local-session'], localDeviceGrants: ['fixture-local-wing'],
-        notifications: { budget: true, billing: true, workspace: true, attention: false }, report: null, deletionReview: false,
+        notificationDelivery: {email:'owner@example.test',verified:true}, notificationsSavedAt:null, notifications: { budget: true, billing: true, workspace: true, attention: false }, report: null, deletionReview: false,
         fault: null, audit: [], teamDecision: null, messageTone: 'info', message: 'Dormant fixture. All amounts are proposed; no providers are connected.',
     };
     return s;
@@ -336,13 +336,13 @@ export function applyPaidAction(original, action) {
         id(action.eventId); demand(action.invoiceId === s.invoice.id, 'Invoice ID mismatch'); demand(s.meterFresh && !s.reservation, 'Only reconciled, settled usage can be invoiced');
         if (s.invoiceEvents.includes(action.eventId) || s.invoice.status === 'finalized') { s.message = 'Duplicate invoice ignored.'; break; }
         s.invoiceEvents.push(action.eventId); s.invoice.status = 'finalized'; s.invoice.cents = TERMS.monthlyCents + s.consumedCents;
-        s.invoice.lines = [{ label: 'Pro subscription (proposal)', cents: TERMS.monthlyCents }, { label: 'Verified compute overage after credits', cents: s.consumedCents }, { label: 'Included 10 GB workspace storage', cents: 0 }, { label: 'BYO model invoices billed externally', cents: 0 }];
-        s.invoice.events = [...s.meterEvents]; s.message = 'Fixture invoice finalized from settled event IDs. BYO usage is not a Wingthing charge.'; break;
+        s.invoice.lines = [{ label: 'Pro subscription (proposal)', cents: TERMS.monthlyCents }, { label: 'Verified compute overage after credits', cents: s.consumedCents }, { label: 'Included 10 GB workspace storage', cents: 0 }, { label: 'Included outbound allowance', cents: 0 }];
+        s.invoice.issuedAt=s.asOf; s.invoice.events = [...s.meterEvents]; s.message = 'Fixture invoice finalized from settled event IDs. BYO usage is not a Wingthing charge.'; break;
     case 'billing-fail':
         demand(action.invoiceId === s.invoice.id, 'Invoice ID mismatch'); s.invoice.status = 'unpaid'; s.billingBlocked = true;
         if (s.cloud && ['allocating','booting','ready','failed'].includes(s.cloud.status)) beginStop(s, 'unpaid invoice'); s.message = `Invoice ${s.invoice.id} unpaid. New starts blocked; stop policy applies; local work continues. Fixture deadline ${s.paidThrough}.`; break;
     case 'billing-recover': s.billingBlocked = false; s.invoice.status = 'paid'; s.message = 'Fixture payment-method recovery recorded. Cap unchanged; no automatic launch or duplicate charge.'; break;
-    case 'notification': demand(Object.hasOwn(s.notifications, action.name) && typeof action.enabled === 'boolean', 'Unknown notification preference'); s.notifications[action.name] = action.enabled; s.message = 'Preference saved for the explicit fixture owner; no notification sent.'; break;
+    case 'notification': demand(Object.hasOwn(s.notifications, action.name) && typeof action.enabled === 'boolean', 'Unknown notification preference'); s.notifications[action.name] = action.enabled; s.notificationsSavedAt=s.asOf; s.message = 'Preference saved for the explicit fixture owner; no notification sent.'; break;
     case 'support':
         s.report = { accountId: s.accountId, requestId: s.cloud?.requestId || null, wingId: s.cloud?.wingId || null, version: 'paid-fixture-v1', route: 'fixture-local', classification: s.fault || (s.billingBlocked ? 'unpaid-invoice' : 'none'), usageEventIds: [...s.meterEvents], invoiceId: s.invoice.id };
         s.message = 'Metadata-only support report prepared for your review. Nothing sent.'; break;
