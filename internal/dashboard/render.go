@@ -240,7 +240,7 @@ func render(s *state, width, height int, now time.Time) string {
 	footer := []string{"arrows/j/k move  Enter attach  v view  t takeover  n new  r rename  x stop  a setup  M machine  d diagnostics",
 		"/ filter ! attention b bell m machines i details ? help R refresh q/Ctrl-C quit h recent"}
 	if width < 75 {
-		footer = []string{"Enter attach v view t take n r x stop M d", "/ filter ! attention b bell m i ? R q h"}
+		footer = []string{"Enter attach v view t take n r x stop a M d", "/ filter ! attention b bell m i ? R q h"}
 	}
 	if s.recent {
 		header, body, selectedLine, footer = s.runView(now)
@@ -279,7 +279,7 @@ func render(s *state, width, height int, now time.Time) string {
 			footer = []string{"Enter accept explicit input  Ctrl-U clear  Esc cancel  Ctrl-C quit"}
 		}
 	}
-	if s.mode >= agentSetup {
+	if s.isSetupMode() {
 		body = nil
 		for _, line := range s.setupLines() {
 			body = append(body, viewLine{text: line})

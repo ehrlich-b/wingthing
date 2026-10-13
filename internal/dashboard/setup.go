@@ -16,6 +16,15 @@ import (
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
+func (s *state) isSetupMode() bool {
+	switch s.mode {
+	case agentSetup, installConsent, providerReady, setupFailure, setupInvoke:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *state) openSetup() {
 	s.agents = onboarding.Discover()
 	s.mode, s.setupError, s.setupCompleted = agentSetup, "", ""

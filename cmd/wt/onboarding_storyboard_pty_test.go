@@ -20,7 +20,7 @@ import (
 
 // These captures contain real built CLI output and kernel PTY handoffs. Vendor,
 // SSH and inventory endpoints are disposable fixtures, never production state.
-func storyboardCapture(t *testing.T, h *northstarPTY, card string) {
+func onboardingStoryboardCapture(t *testing.T, h *northstarPTY, card string) {
 	t.Helper()
 	dir := os.Getenv("WT_STORYBOARD_CAPTURE_ROOT")
 	if dir == "" {
@@ -43,12 +43,12 @@ func TestOnboardingPTYStoryboard(t *testing.T) {
 	}
 	h := northstarStartPTY(t, f, binary, 120, 36)
 	h.expect("empty onboarding", 0, "no sessions", "a detect / install agents")
-	storyboardCapture(t, h, "01-2")
-	storyboardCapture(t, h, "01-8")
+	onboardingStoryboardCapture(t, h, "01-2")
+	onboardingStoryboardCapture(t, h, "01-8")
 	h.expect("local detection", h.send("a"), "PATH detection only", "not installed")
-	storyboardCapture(t, h, "01-3")
+	onboardingStoryboardCapture(t, h, "01-3")
 	h.expect("consent", h.send("1"), "Exact installer:", "https://claude.ai/install.sh", "Enter = consent")
-	storyboardCapture(t, h, "01-4")
+	onboardingStoryboardCapture(t, h, "01-4")
 	// No external download: the curl fixture emits an installer which writes only
 	// the selected fixture provider. Its --version/login paths have exact argv.
 	provider := filepath.Join(f.bin, "claude")
@@ -59,14 +59,14 @@ func TestOnboardingPTYStoryboard(t *testing.T) {
 	h.waitScreen("native login completes or refuses managed capture", h.send("l"), func(s string) bool {
 		return strings.Contains(s, "Failed stage: login") || strings.Contains(s, "Enter review cwd and start")
 	})
-	storyboardCapture(t, h, "01-5")
+	onboardingStoryboardCapture(t, h, "01-5")
 	// A missing second provider and failed pipe preserve the exact stage; retry
 	// returns to consent, while inventory remains available.
 	northstarWrite(t, filepath.Join(f.home, "fail-download"), "fixture", 0600)
 	h.expect("other provider", h.send("\x1b"), "wt | 0 sessions")
 	h.expect("fresh detection", h.send("a2"), "Agent setup: Codex", "Exact installer:")
 	h.expect("download failure", h.send("\r"), "Failed stage: install", "r review retry")
-	storyboardCapture(t, h, "01-6")
+	onboardingStoryboardCapture(t, h, "01-6")
 	h.expect("fresh consent after failure", h.send("r"), "Enter = consent and install")
 	h.exit("\x1bq")
 
@@ -88,13 +88,13 @@ esac
 `, "wt-linux-amd64", "wt-"+runtime.GOOS+"-"+runtime.GOARCH), 0700)
 	installer := northstarStartPTY(t, f, "/bin/sh", 120, 36, filepath.Join(f.repo, "scripts", "install.sh"))
 	installer.expect("checksum verified build installed", 0, "installed wt fixture-build", "open the session navigator", "add to your PATH")
-	storyboardCapture(t, installer, "01-1")
+	onboardingStoryboardCapture(t, installer, "01-1")
 	// Deterministic permission/path diagnostic without touching system directories.
 	f.env = append(f.env, "WT_INSTALL_DIR="+filepath.Join(f.home, "not-a-directory", "bin"))
 	northstarWrite(t, filepath.Join(f.home, "not-a-directory"), "fixture", 0600)
 	failed := northstarStartPTY(t, f, "/bin/sh", 120, 36, filepath.Join(f.repo, "scripts", "install.sh"))
 	failed.expect("installer writable path diagnosis", 0, "choose a writable WT_INSTALL_DIR", "no automatic sudo")
-	storyboardCapture(t, failed, "01-7")
+	onboardingStoryboardCapture(t, failed, "01-7")
 
 	// Cold launch diagnostics remain real. Native protected-parent acceptance is
 	// tested on macOS separately; this Linux capture does not claim Seatbelt.
@@ -102,9 +102,9 @@ esac
 	coldCleanup(t, f, binary)
 	launch := northstarStartPTY(t, f, binary, 120, 36, "claude", "--cwd", f.work, "--name", "cold-fixture")
 	launch.waitScreen("cold launch reached a ready provider or diagnostic", 0, func(s string) bool { return strings.Contains(s, "Error:") || strings.Contains(s, "fixture Claude") })
-	storyboardCapture(t, launch, "02-1")
-	storyboardCapture(t, launch, "02-2")
-	storyboardCapture(t, launch, "02-5")
+	onboardingStoryboardCapture(t, launch, "02-1")
+	onboardingStoryboardCapture(t, launch, "02-2")
+	onboardingStoryboardCapture(t, launch, "02-5")
 	// Two explicit launches use the production startup lock. Exact wing status
 	// is displayed after the pair; policy failures do not replace the daemon.
 	pairScript := filepath.Join(f.bin, "pair-starts")
@@ -126,7 +126,7 @@ subprocess.run([%q,'wing','status'])
 	pair.waitScreen("two explicit cold requests and wing status", 0, func(s string) bool {
 		return strings.Contains(s, "wing daemon is running (pid ") && strings.Count(s, "Error:") >= 2
 	})
-	storyboardCapture(t, pair, "02-6")
+	onboardingStoryboardCapture(t, pair, "02-6")
 	log, err := os.ReadFile(filepath.Join(f.local, "wing.log"))
 	if err != nil || strings.Count(string(log), "wing: local control ready") != 1 {
 		t.Fatalf("concurrent launches replaced daemon: %v %s", err, log)
@@ -148,30 +148,30 @@ subprocess.run([%q,'wing','status'])
 	northstarWrite(t, filepath.Join(f.local, "remotes.yaml"), fmt.Sprintf("remotes:\n  forge:\n    ssh_target: ns-forge\n    wingthing_dir: %s\n", f.remote), 0600)
 	nav := northstarStartPTY(t, f, binary, 120, 36)
 	nav.expect("qualified inventory with pin", 0, "[coordinator]", "pairing", "forge  connected")
-	storyboardCapture(t, nav, "03-1")
+	onboardingStoryboardCapture(t, nav, "03-1")
 	nav.expect("scoped new agent", nav.send("n\x15codex\r"), "Cwd on local: "+f.work)
-	storyboardCapture(t, nav, "02-3")
+	onboardingStoryboardCapture(t, nav, "02-3")
 	nav.expect("cancel scoped launch", nav.send("\x1b"), "[coordinator]")
 	nav.expect("choose colliding local row", nav.send("j\r"), "FIXTURE Claude pairing terminal")
-	storyboardCapture(t, nav, "03-2")
+	onboardingStoryboardCapture(t, nav, "03-2")
 	nav.expect("detach preserves session", nav.send("\x02q"), "[coordinator]", "pairing")
 	// Completion is sourced from the actual durable lifecycle journal and remains
 	// distinct from blocked. Native provider content is not part of the inventory.
 	northstarWrite(t, filepath.Join(local.dir, "lifecycle.jsonl"), "{\"sequence\":1,\"type\":\"session_ready\",\"source\":\"claude_hook\",\"state\":\"needs_input\"}\n{\"sequence\":2,\"type\":\"turn_completed\",\"source\":\"claude_hook\",\"state\":\"completed\",\"reason\":\"native Stop observed for foreground response; other Stop hooks or later prompts may continue the conversation\"}\n", 0600)
 	northstarWrite(t, filepath.Join(remote.dir, "lifecycle.jsonl"), "{\"sequence\":1,\"type\":\"session_ready\",\"source\":\"claude_hook\",\"state\":\"needs_input\"}\n", 0600)
 	nav.expect("native unread marker", nav.send("R"), "U:1", "I* pairing", "[coordinator]")
-	storyboardCapture(t, nav, "03-3")
+	onboardingStoryboardCapture(t, nav, "03-3")
 	nav.expect("qualified remote details", nav.send("j"), "[coordinator]")
 	nav.expect("remote attachment modes", nav.send("\r"), "FIXTURE remote pairing terminal")
-	storyboardCapture(t, nav, "03-4")
+	onboardingStoryboardCapture(t, nav, "03-4")
 	nav.expect("detach remote", nav.send("\x02q"), "[coordinator]", "forge  connected")
 	northstarWrite(t, filepath.Join(f.home, "forge-offline"), "fixture", 0600)
 	nav.expect("retained stale remote", nav.send("R"), "forge  offline", "stale", "[coordinator]")
-	storyboardCapture(t, nav, "03-6")
+	onboardingStoryboardCapture(t, nav, "03-6")
 	os.Remove(filepath.Join(f.home, "forge-offline"))
 	nav.expect("restore verified route", nav.send("R"), "forge  connected")
 	nav.expect("explicit qualified stop", nav.send("x"), "Stop forge:same (pairing)? [y/N]", "[coordinator]")
-	storyboardCapture(t, nav, "03-7")
+	onboardingStoryboardCapture(t, nav, "03-7")
 	nav.expect("enter cancels destructive action", nav.send("\r"), "forge  connected")
 	if remote.killed.Load() != 0 {
 		t.Fatal("Enter stopped the colliding remote")
@@ -183,7 +183,7 @@ subprocess.run([%q,'wing','status'])
 	// actual diagnostic instead of displaying a simulated successful provider.
 	codex := northstarStartPTY(t, f, binary, 120, 36, "codex", "--cwd", f.work, "--name", "review")
 	codex.expect("Codex native admission diagnostic", 0, "Error:")
-	storyboardCapture(t, codex, "02-4")
+	onboardingStoryboardCapture(t, codex, "02-4")
 
 	// Read-only recent runs endpoint with durable fixture records; no relaunch.
 	socket, err := controlsocket.Listen(t.Context(), f.local, "fixture-local", func(controlsocket.Hello) (controlsocket.Welcome, controlsocket.Handler, error) {
@@ -207,7 +207,7 @@ subprocess.run([%q,'wing','status'])
 	recent := northstarStartPTY(t, f, binary, 120, 36)
 	recent.expect("live inventory before recent", 0, "[coordinator]")
 	recent.expect("durable discovery", recent.send("h"), "Recent runs", "recent-run", "done")
-	storyboardCapture(t, recent, "03-5")
+	onboardingStoryboardCapture(t, recent, "03-5")
 	recent.exit("q")
 	t.Run("explicit_cwd_scoped_parent_transport", func(t *testing.T) {
 		chosen := northstarNewFixture(t)
@@ -245,7 +245,7 @@ subprocess.run([%q,'wing','status'])
 		t.Cleanup(func() { server.Close() })
 		h := northstarStartPTY(t, chosen, binary, 120, 36, "claude", "--cwd", chosen.work, "--name", "chosen")
 		h.expect("explicit workspace scoped parent", 0, "FIXTURE scoped Claude parent", "Chosen cwd: "+chosen.work)
-		storyboardCapture(t, h, "02-2")
+		onboardingStoryboardCapture(t, h, "02-2")
 		h.exit("\x02q")
 	})
 }

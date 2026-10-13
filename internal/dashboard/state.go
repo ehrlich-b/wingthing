@@ -257,7 +257,7 @@ func (s *state) handle(key string) (act *action, quit bool) {
 	if key == "ctrl-c" {
 		return nil, true
 	}
-	if s.mode >= agentSetup {
+	if s.isSetupMode() {
 		return s.setupHandle(key)
 	}
 	if s.mode == diagnostics || s.mode == diagnosticInput || s.mode == diagnosticReport {
