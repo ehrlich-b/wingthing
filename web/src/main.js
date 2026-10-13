@@ -22,6 +22,7 @@ import { restoreConversationRoute } from './conversation-view.js';
 import { initParentDot } from './parent-dot.js';
 import { conversationViewport } from './mobile-viewport.js';
 import { createForegroundRefresh } from './phone-refresh.js';
+import { initReachShare } from './reach-share.js';
 
 function denyBrowserRelayView() {
     history.replaceState({ view: 'home' }, '', location.pathname);
@@ -45,6 +46,8 @@ async function init() {
         loadTunnelAuthTokens();
         DOM.userInfo.textContent = S.currentUser.display_name || 'user';
     } catch (e) { loginRedirect(); return; }
+
+    initReachShare();
 
     var refreshPhone = createForegroundRefresh(async function() {
         await loadHome();

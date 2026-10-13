@@ -410,3 +410,10 @@ test-coordinator-role-native: | web/dist
 
 test-coordinator-role-race: | web/dist
 	$(GO) test -race -p 2 -count=1 ./internal/sessionrole ./internal/egg ./internal/eggclient ./internal/localmcp ./internal/dashboard ./internal/control ./internal/wingpolicy ./cmd/wt -run 'Role|Pin|Pinned|SessionPS|RegistryDefines|ScopedParent|IsUnderPathsRoot' -timeout 180s
+
+# Real built loopback roost plus encrypted fixture wings. Optional Playwright
+# module/executable selectors let hosts reuse their installed browser tooling.
+.PHONY: test-web-reach-share
+test-web-reach-share: web
+	$(stable-build)
+	$(NODE) test/web/reach-share.mjs
