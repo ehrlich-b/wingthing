@@ -148,6 +148,9 @@ func sessionActionCmd() *cobra.Command {
 		out := cmd.OutOrStdout()
 		fmt.Fprintf(out, "%s / %s\nOperation %s · route %s\n", origin, id, operation, label)
 		underlying, _ := result["result"].(map[string]any)
+		if operation == "terminal_read" {
+			return writeTerminalSnapshot(out, underlying)
+		}
 		if raw, ok := underlying["lifecycle"]; ok {
 			data, _ := json.Marshal(raw)
 			var view egg.SessionView
