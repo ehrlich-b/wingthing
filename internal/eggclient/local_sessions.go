@@ -46,6 +46,8 @@ var ErrSessionNameInUse = control.ErrSessionNameInUse
 type LocalSession struct {
 	ConversationLink
 	sessionrole.Metadata
+	OriginWingID     string `json:"origin_wing_id,omitempty"`
+	MachineLabel     string `json:"machine_label,omitempty"`
 	ID               string `json:"id"`
 	Name             string `json:"name,omitempty"`
 	Principal        string `json:"principal,omitempty"`

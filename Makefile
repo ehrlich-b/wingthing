@@ -410,3 +410,12 @@ test-coordinator-role-native: | web/dist
 
 test-coordinator-role-race: | web/dist
 	$(GO) test -race -p 2 -count=1 ./internal/sessionrole ./internal/egg ./internal/eggclient ./internal/localmcp ./internal/dashboard ./internal/control ./internal/wingpolicy ./cmd/wt -run 'Role|Pin|Pinned|SessionPS|RegistryDefines|ScopedParent|IsUnderPathsRoot' -timeout 180s
+
+# Qualified inventory, exact identity and outage routing acceptance; no providers.
+.PHONY: test-multiwing test-multiwing-race
+test-multiwing: | web/dist
+	$(stable-build)
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -v -p 2 ./internal/fleet ./internal/egg ./internal/eggclient ./internal/sessionrole ./internal/control ./internal/localmcp ./internal/wing ./internal/phonepair ./cmd/wt -run 'Test(Registry|LifecycleSourceCompleteness|Merge|SessionCatalog|CoordinatorPresence|SessionInventory|QualifiedSession|CoordinatorHeartbeat|OwnerFleet|PhoneFleet|BuiltMultiwing|RemoteInventoryOrigin)' -count=1 -timeout=3m
+
+test-multiwing-race: | web/dist
+	$(GO) test -p 2 -race ./internal/fleet ./internal/egg ./internal/eggclient ./internal/sessionrole ./internal/localmcp ./internal/wing -run 'Test(Registry|LifecycleSourceCompleteness|Merge|SessionCatalog|CoordinatorPresence|SessionInventory|QualifiedSession|CoordinatorHeartbeat|OwnerFleet|PhoneFleet|BuiltMultiwing|RemoteInventoryOrigin)' -count=1 -timeout=3m

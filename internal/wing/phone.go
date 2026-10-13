@@ -2,7 +2,9 @@ package wing
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	"path/filepath"
 	"sync"
 	"time"
@@ -41,6 +43,16 @@ func (h *phoneSessions) Execute(ctx context.Context, connection, op, id, input s
 		return nil, errors.New("unavailable")
 	}
 	switch op {
+	case "inventory", "search", "action":
+		operation := "session_inventory"
+		arguments := json.RawMessage(input)
+		if len(arguments) == 0 {
+			arguments = json.RawMessage(`{}`)
+		}
+		if op == "action" {
+			operation = "session_action"
+		}
+		return localmcp.OwnerFleetControl(ctx, h.service, h.owner, operation, arguments)
 	case "sessions":
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
@@ -58,7 +70,7 @@ func (h *phoneSessions) Execute(ctx context.Context, connection, op, id, input s
 		defer h.mu.Unlock()
 		for _, s := range sessions {
 			seen := h.seen[connection][s.ID]
-			out = append(out, map[string]any{"id": s.ID, "name": s.Name, "agent": s.Agent, "status": s.Status, "blocked": attention[s.ID], "unread": s.TotalWritten > seen})
+			out = append(out, map[string]any{"id": s.ID, "origin_wing_id": h.service.Config.WingID, "name": s.Name, "agent": s.Agent, "status": s.Status, "blocked": attention[s.ID], "unread": s.TotalWritten > seen})
 		}
 		return out, nil
 	case "attach":
