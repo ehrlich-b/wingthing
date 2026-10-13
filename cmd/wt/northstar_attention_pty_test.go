@@ -220,7 +220,7 @@ func TestNorthstarPTYAttention(t *testing.T) {
 		// Inventory refreshes can redraw that old view after send, so wait for
 		// the filtered header and complete rows in the same rendered snapshot.
 		h.waitScreen("attention filter excludes unknown", h.send("!"), func(screen string) bool {
-			return strings.Contains(screen, "Needs attention") &&
+			return strings.Contains(screen, "All machines · needs you") &&
 				strings.Contains(screen, "local-agent") && northstarContainsRow(screen, "forge-agent *") &&
 				!strings.Contains(screen, "hooks-off")
 		})

@@ -118,7 +118,7 @@ func (s *state) setupLines() []string {
 		return lines
 	}
 	a := s.setupAgent
-	lines := []string{a.Name + " / This machine", "Source: " + a.Source, ""}
+	lines := []string{a.Name + " · This machine", "Source: " + a.Source, ""}
 	if s.mode == installConsent {
 		return append(lines, "Install "+a.Name, "Downloads the agent and its runtime dependencies.", "", a.Installer, "", "Runs as your OS user. No automatic sudo.", "Nothing changes until you choose Install.")
 	}

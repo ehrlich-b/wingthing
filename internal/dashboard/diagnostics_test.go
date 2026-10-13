@@ -84,7 +84,7 @@ func TestMachineDetailsFreshnessTrustFailureAndRemovedProfile(t *testing.T) {
 		s.machines["remote"] = machine{err: tc.err, updated: time.Now().Add(-time.Minute)}
 		s.remotes = map[string]config.Remote{"remote": {SSHTarget: "fixture-remote", WingID: "remote-id", ControlVersion: "1", ControlSocket: "/fixture/socket", WingthingDir: "/fixture/state"}}
 		text := strings.Join(overlayLines(s, time.Now()), "\n")
-		for _, want := range []string{tc.want, "Last seen 1m ago", "Machine ID checked", "may be out of date"} {
+		for _, want := range []string{tc.want, "last seen 1m ago", "Machine ID checked", "may be out of date"} {
 			if want == "may be out of date" && tc.want != "Connection refused" {
 				continue
 			}

@@ -188,7 +188,7 @@ func validateDiagnosticArgs(args []string) error {
 func (s *state) machineLines(now time.Time) []string {
 	name := s.target.machine
 	m, exists := s.machines[name]
-	lines := []string{"Machines / " + machineLabel(name), ""}
+	lines := []string{"Machines · " + machineLabel(name), ""}
 	if !exists {
 		return append(lines, "Saved machine was removed. Select its current profile.")
 	}

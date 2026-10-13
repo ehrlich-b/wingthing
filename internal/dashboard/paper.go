@@ -142,16 +142,16 @@ func (s *state) paperPane(r row, now time.Time, width, height int) []string {
 	}
 	// Speaker and time sit in fixed columns; text wraps under itself.
 	appendMessage := func(speaker, stamp, text string, limit int) {
-		parts := wrap(text, max(1, width-12))
+		parts := wrap(text, max(1, width-13))
 		if len(parts) > limit {
 			parts = parts[:limit]
-			parts[limit-1] = clip(parts[limit-1]+" ...", width-12)
+			parts[limit-1] = clip(parts[limit-1]+" ...", width-13)
 		}
 		for i, part := range parts {
 			if i == 0 {
-				lines = append(lines, field(speaker, 6)+field(stamp, 6)+part)
+				lines = append(lines, field(speaker, 7)+field(stamp, 6)+part)
 			} else {
-				lines = append(lines, strings.Repeat(" ", 12)+part)
+				lines = append(lines, strings.Repeat(" ", 13)+part)
 			}
 		}
 	}

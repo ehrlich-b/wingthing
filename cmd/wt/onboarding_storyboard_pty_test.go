@@ -83,7 +83,7 @@ func TestOnboardingPTYStoryboard(t *testing.T) {
 	// returns to consent, while inventory remains available.
 	northstarWrite(t, filepath.Join(f.home, "fail-download"), "fixture", 0600)
 	h.expect("other provider", h.send("\x1b"), "0 sessions", "1 machine")
-	h.expect("fresh detection", h.send("a2"), "Codex / This machine", "Install Codex")
+	h.expect("fresh detection", h.send("a2"), "Codex · This machine", "Install Codex")
 	h.expect("download failure", h.send("\r"), "Install failed.", "r review install")
 	onboardingStoryboardCapture(t, h, "01-6")
 	h.expect("fresh consent after failure", h.send("r"), "Enter install")

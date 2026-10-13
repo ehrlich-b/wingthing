@@ -182,7 +182,7 @@ func (s *state) scopeLine(now time.Time) string {
 		scope = machineLabel(s.machineFilter)
 	}
 	if s.attentionOnly {
-		scope += " / Needs attention"
+		scope += " · needs you"
 	}
 	var trouble []string
 	connected, loading := 0, 0
@@ -581,7 +581,7 @@ func render(s *state, width, height int, now time.Time) string {
 					if emptyMachine != "local" {
 						set(7, "Agent not checked on "+machineLabel(emptyMachine), secondary)
 					} else {
-						set(7, agentLabel(a.ID)+" / "+machineLabel(emptyMachine)+" / "+projectName(s.defaultCWD), secondary)
+						set(7, agentLabel(a.ID)+" · "+machineLabel(emptyMachine)+" · "+projectName(s.defaultCWD), secondary)
 					}
 					break
 				}
@@ -840,12 +840,12 @@ func connection(m machine, now time.Time) string {
 			text = "Access denied"
 		}
 		if !m.updated.IsZero() {
-			text += " / Last seen " + age(int64(now.Sub(m.updated)/time.Second)) + " ago"
+			text += " · last seen " + age(int64(now.Sub(m.updated)/time.Second)) + " ago"
 		} else {
-			text += " / Sessions unavailable"
+			text += " · sessions unavailable"
 		}
 		if !m.attempted.IsZero() {
-			text += " / Retried " + age(int64(now.Sub(m.attempted)/time.Second)) + " ago"
+			text += " · retried " + age(int64(now.Sub(m.attempted)/time.Second)) + " ago"
 		}
 		return text
 	}
@@ -884,12 +884,12 @@ func wrap(text string, width int) []string {
 func promptLines(s *state) []string {
 	switch s.mode {
 	case actionMenu:
-		return []string{"Session actions", "", s.target.name() + " on " + machineLabel(s.target.machine), agentLabel(s.target.Agent) + " / " + s.target.project(), "", "Rename session", "Stop session", "Take input control (when available)"}
+		return []string{"Session actions", "", s.target.name() + " on " + machineLabel(s.target.machine), agentLabel(s.target.Agent) + " · " + s.target.project(), "", "Rename session", "Stop session", "Take input control (when available)"}
 	case confirmStop:
 		if err := s.machines[s.target.machine].err; accessDenied(err) {
 			return []string{"Stop session", "", accessLine(s.target.machine, err)}
 		}
-		return []string{"Stop session", "", s.target.name() + " on " + machineLabel(s.target.machine), agentLabel(s.target.Agent) + " / " + s.target.project(), "", "The agent will stop. Unsaved work may be lost.", "Keep running is selected."}
+		return []string{"Stop session", "", s.target.name() + " on " + machineLabel(s.target.machine), agentLabel(s.target.Agent) + " · " + s.target.project(), "", "The agent will stop. Unsaved work may be lost.", "Keep running is selected."}
 	case confirmTakeover:
 		return []string{"Take control", "Current input owner: " + ownerLabel(s.target.WriterOwner), "", s.target.name() + " on " + machineLabel(s.target.machine), "", "Typing will go to this terminal. The agent will lose input control.", "Keep agent control is selected."}
 	case rename:

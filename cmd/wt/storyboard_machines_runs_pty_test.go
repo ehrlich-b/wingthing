@@ -54,7 +54,7 @@ func storyboardParentReceipt(t *testing.T, binary, local, remote, work string, e
 	f.local, f.remote, f.work, f.env = local, remote, work, append(env, "TERM=xterm-256color", "LANG=en_US.UTF-8")
 	h := northstarStartPTY(t, f, binary, 120, 36)
 	h.expect("real wing inventory navigator", 0, "wt   ", "m machines", "h runs")
-	h.expect("machine verified by actual handshake", h.send("mjj i"), "Machines / forge", "Machine ID checked on every connect")
+	h.expect("machine verified by actual handshake", h.send("mjj i"), "Machines · forge", "Machine ID checked on every connect")
 	storyboardCapture(t, h, "04-2-verified-remote")
 	h.send("\x1b")
 	h.expect("return before history", 0, "m machines")
@@ -81,7 +81,7 @@ func TestStoryboardMachinesRunsPTY(t *testing.T) {
 	remote := northstarStandaloneEgg(t, f, f.remote, "same-id", "coordinator", "working", "forge fixture / exact remote session same-id")
 	h := northstarStartPTY(t, f, binary, 120, 36)
 	h.expect("two isolated session origins", 0, "machines connected", "coordinator")
-	h.expect("prepare second machine once", h.send("/local\rM"), "Machines / This machine", "wt remote add Studio SSH_ALIAS")
+	h.expect("prepare second machine once", h.send("/local\rM"), "Machines · This machine", "wt remote add Studio SSH_ALIAS")
 	storyboardCapture(t, h, "04-1-prepare-remote")
 	h.send("\x1b")
 	h.expect("exact remote selected", h.send("/\x15forge\r"), "coordinator")
@@ -104,7 +104,7 @@ func TestStoryboardMachinesRunsPTY(t *testing.T) {
 	storyboardCapture(t, h, "04-4-remote-offline")
 	// Change only the fixture SSH adapter, leaving host sshd/config untouched.
 	northstarWrite(t, filepath.Join(f.bin, "ssh"), "#!/bin/sh\nprintf 'REMOTE HOST IDENTIFICATION HAS CHANGED!\\n' >&2\nexit 255\n", 0700)
-	h.expect("identity refusal", h.send("RM"), "Machines / forge", "Identity changed")
+	h.expect("identity refusal", h.send("RM"), "Machines · forge", "Identity changed")
 	storyboardCapture(t, h, "04-5-host-key-version")
 	h.send("\x1b")
 	northstarWrite(t, filepath.Join(f.bin, "ssh"), `#!/bin/sh
@@ -112,7 +112,7 @@ case "$*" in *"'--version'"*) printf 'wt version fixture-old\n';exit 0;; esac
 printf 'Error: unknown flag: --remote-inventory\n' >&2
 exit 1
 `, 0700)
-	h.expect("incompatible receiver", h.send("RM"), "Machines / forge", "Update wt", "before reconnecting")
+	h.expect("incompatible receiver", h.send("RM"), "Machines · forge", "Update wt", "before reconnecting")
 	storyboardCapture(t, h, "04-5-old-version")
 	h.send("\x1b")
 	h.expect("diagnostics menu", h.send("d"), "Runs / diagnostics", "Explain launch readiness")
