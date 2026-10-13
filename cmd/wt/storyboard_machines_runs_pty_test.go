@@ -54,13 +54,15 @@ func storyboardParentReceipt(t *testing.T, binary, local, remote, work string, e
 	f.local, f.remote, f.work, f.env = local, remote, work, append(env, "TERM=xterm-256color", "LANG=en_US.UTF-8")
 	h := northstarStartPTY(t, f, binary, 120, 36)
 	h.expect("real wing inventory navigator", 0, "wt   ", "m machines", "h runs")
-	h.expect("machine verified by actual handshake", h.send("mjj i"), "Machines / forge", "Saved identity verified")
+	h.expect("machine verified by actual handshake", h.send("mjj i"), "Machines / forge", "Machine ID checked on every connect")
 	storyboardCapture(t, h, "04-2-verified-remote")
 	h.send("\x1b")
 	h.expect("return before history", 0, "m machines")
-	h.expect("owning wing history", h.send("h"), "Recent runs", "forge", "Output")
+	h.expect("owning wing history", h.send("h"), "Recent runs", "forge", "Project")
+	// Filter only after the run row has loaded; keys sent earlier act on an empty list.
+	h.expect("run row loaded", 0, "1 run")
 	h.waitScreen("qualified receipt", h.send("/"+runID+"\ri"), func(screen string) bool {
-		return strings.Contains(screen, "Original request retained") && strings.Contains(screen, "Execution limit: 90 seconds") && (strings.Contains(screen, "State: ! Pending") || strings.Contains(screen, "State: * Working")) && !strings.Contains(screen, "unknown_outcome")
+		return strings.Contains(screen, "Next: ") && strings.Contains(screen, "Time limit: 90 seconds") && (strings.Contains(screen, "Result: ! Pending") || strings.Contains(screen, "Result: * Working")) && !strings.Contains(screen, "unknown_outcome")
 	})
 	storyboardCapture(t, h, "06-2-parent-agent-receipt")
 	h.send("\x1b")
@@ -98,7 +100,7 @@ func TestStoryboardMachinesRunsPTY(t *testing.T) {
 		t.Fatal("attach crossed origin or detach stopped session")
 	}
 	northstarWrite(t, filepath.Join(f.home, "forge-offline"), "offline fixture", 0600)
-	h.expect("remote unavailable retains local", h.send("R"), "forge could not be searched", "Last seen")
+	h.expect("remote unavailable retains local", h.send("R"), "forge not searched", "Last seen")
 	storyboardCapture(t, h, "04-4-remote-offline")
 	// Change only the fixture SSH adapter, leaving host sshd/config untouched.
 	northstarWrite(t, filepath.Join(f.bin, "ssh"), "#!/bin/sh\nprintf 'REMOTE HOST IDENTIFICATION HAS CHANGED!\\n' >&2\nexit 255\n", 0700)
@@ -140,6 +142,6 @@ exit 1
 	h.send("\x1b")
 	h.expect("report back", 0, "Runs / diagnostics")
 	h.send("\x1b")
-	h.expect("scope preserved", 0, "forge could not be searched")
+	h.expect("scope preserved", 0, "forge not searched")
 	h.exit("q")
 }

@@ -25,6 +25,7 @@ type runRow struct {
 	ID                 string `json:"run_id"`
 	SessionID          string `json:"session_id"`
 	Agent              string `json:"agent"`
+	Label              string `json:"label"`
 	CWD                string `json:"cwd"`
 	Status             string `json:"status"`
 	FailureKind        string `json:"failure_kind"`
@@ -277,6 +278,7 @@ type runHistory struct {
 	next             bool
 	target           runRow
 	content          []string // Explicit result view only; erased as soon as the overlay closes.
+	recovery         bool     // Details overlay shows recovery steps; reset whenever details open or close.
 	results          chan runsResult
 	workers          sync.WaitGroup
 }
@@ -292,7 +294,7 @@ func (h *runHistory) rows() []runRow {
 	query := strings.ToLower(h.filter)
 	for _, page := range h.pages {
 		for _, r := range page.Runs {
-			if query == "" || strings.Contains(strings.ToLower(strings.Join([]string{r.key(), r.SessionID, r.route.name, r.Agent, r.CWD, r.status(), r.ParentID, r.Cleanup}, " ")), query) {
+			if query == "" || strings.Contains(strings.ToLower(strings.Join([]string{r.key(), r.SessionID, r.route.name, r.Agent, r.Label, r.CWD, r.status(), r.ParentID, r.Cleanup}, " ")), query) {
 				rows = append(rows, r)
 			}
 		}
@@ -491,6 +493,12 @@ func (s *state) runHandle(key string) (*action, bool) {
 		case "escape", "q", "enter", "i":
 			s.mode = navigate
 			h.content = nil
+			h.recovery = false
+		case "r":
+			if s.mode == runDetails {
+				h.recovery = !h.recovery
+				s.overlayOffset = 0
+			}
 		case "o":
 			if s.mode == runDetails && !h.loading {
 				s.mode = runResult
@@ -567,6 +575,7 @@ func (s *state) runHandle(key string) (*action, bool) {
 	case "enter", "i", "o":
 		if r, ok := h.selection(); ok {
 			h.target = r
+			h.recovery = false
 			s.overlayOffset = 0
 			if key == "o" && !h.loading {
 				s.mode = runResult
@@ -591,11 +600,11 @@ func humanTime(value string) string {
 func (s *state) runOverlay() []string {
 	h := s.history()
 	r := h.target
-	title := agentLabel(r.Agent) + " run in " + projectName(r.CWD)
+	title := s.runTitle(r)
 	if s.mode == runResult {
 		lines := []string{title, "Result / Read only", ""}
 		if h.loading {
-			return append(lines, "Reading the authorized result...")
+			return append(lines, "Reading the result...")
 		}
 		return append(lines, h.content...)
 	}
@@ -607,80 +616,128 @@ func (s *state) runOverlay() []string {
 			live = current.live
 		}
 	}
+	stale := p.err != "" || h.err != ""
+	if h.recovery {
+		return runRecoveryLines(title, r)
+	}
 	label, _ := runStatus(r)
-	lines := []string{title, "", "Machine: " + machineLabel(r.route.name), "State: " + label, "Output: " + outputLabel(r.OutputAvailability), "Cleanup: " + cleanupLabel(r.Cleanup), "Created: " + humanTime(r.CreatedAt), "Last checked: " + humanTime(p.ObservedAt), ""}
+	lines := []string{title, "", "Ran: " + runWhat(r), "Result: " + label, "Started: " + humanTime(r.CreatedAt), "Checked: " + humanTime(p.ObservedAt)}
 	if r.Isolation == "privileged" {
-		lines = append(lines, "! Sandbox off. This run has full OS-user access.")
-	} else if r.Isolation != "" {
-		lines = append(lines, "Sandbox policy: "+isolationLabel(r.Isolation))
+		lines = append(lines, "! Sandbox off. This run had full access to your account.")
 	} else {
-		lines = append(lines, "Sandbox policy: Not reported")
+		lines = append(lines, "Sandbox: "+isolationLabel(r.Isolation))
 	}
 	if r.TimeoutSeconds > 0 {
-		lines = append(lines, fmt.Sprintf("Execution limit: %d seconds", r.TimeoutSeconds))
+		lines = append(lines, fmt.Sprintf("Time limit: %d seconds", r.TimeoutSeconds))
 	} else {
-		lines = append(lines, "Execution limit: no execution deadline")
+		lines = append(lines, "Time limit: None")
 	}
-	if p.err != "" || h.err != "" {
-		lines = append(lines, "History unavailable. This is the last saved outcome.")
+	lines = append(lines, "Cleanup: "+cleanupLabel(r.Cleanup), "")
+	if stale {
+		lines = append(lines, "History is offline. This is the last saved state.")
 	}
-	if r.status() == "unknown" {
-		lines = append(lines, "Outcome unknown. Check the original request before starting another.")
+	return append(lines, "Next: "+runNextStep(r, live && !stale), "", "o result   r recovery steps")
+}
+
+func runWhat(r runRow) string {
+	what := agentLabel(r.Agent) + " in " + projectName(r.CWD)
+	if r.route.name != "" {
+		what += " on " + machineLabel(r.route.name)
 	}
-	if r.Status == "pending" && r.FailureKind != "unknown_outcome" {
-		lines = append(lines, "Admission recorded. Result pending.")
+	return what
+}
+
+// runNextStep names exactly one thing the person can do next.
+func runNextStep(r runRow, live bool) string {
+	switch r.status() {
+	case "unknown":
+		return "check its work before you run it again."
+	case "pending", "running":
+		if live {
+			return "press Esc, then Enter to open the live session."
+		}
+		if r.status() == "pending" {
+			return "wait for it to start. Press o later for the result."
+		}
+		return "wait for it to finish, then press o for the result."
+	case "done":
+		if r.OutputAvailability != "" && r.OutputAvailability != "available" && r.OutputAvailability != "pending" {
+			return "the output is gone. Press r for recovery steps."
+		}
+		return "press o to read the result."
+	case "failed", "timeout":
+		return "press o to see what went wrong."
+	default:
+		return "press o to read what it did before it stopped."
 	}
-	if r.Terminal && r.Status == "done" && r.FailureKind != "unknown_outcome" && r.OutputAvailability != "available" {
-		lines = append(lines, "Terminal outcome retained. Output is unavailable.")
+}
+
+// Recovery steps sit behind r. They never resend the run and never print
+// saved route flags or machine IDs.
+func runRecoveryLines(title string, r runRow) []string {
+	lines := []string{title, "Recovery steps", ""}
+	if r.RequestKey == "" {
+		lines = append(lines, "The original request was not saved. Check where you started it.")
+	} else {
+		lines = append(lines, "wt saved the original request. It never sends it again by itself.")
 	}
 	if r.Cleanup == "unknown" || r.Cleanup == "required" || r.Cleanup == "attention" {
-		lines = append(lines, "Check descendants on the machine. Completion does not prove cleanup.")
+		lines = append(lines, "Some processes may still run on "+machineLabel(r.route.name)+". Check before you clean up.")
 	}
-	if r.RequestKey == "" {
-		lines = append(lines, "Original request key not recorded. Check the caller's receipt.")
-	} else {
-		lines = append(lines, "Original request retained. Nothing is resent automatically.")
+	where := "In a terminal, run:"
+	if r.route.name != "local" {
+		where = "On " + machineLabel(r.route.name) + ", run:"
 	}
-	if live && h.err == "" && p.err == "" {
-		lines = append(lines, "", "Live session verified. Enter checks it again before opening.")
-	} else {
-		lines = append(lines, "", "Live session not verified. This view does not start a replacement.")
+	return append(lines, "", "To list runs that need recovery:", where, "  "+runRecoveryCommand(), "", "To read a saved copy of a finished run:", "  wt run-inspect --snapshot FILE", "", "r back to details")
+}
+
+// runTitle tells runs apart: the run's own label, then its session name, then a short run ID.
+func (s *state) runTitle(r runRow) string {
+	if label := clean(r.Label); strings.TrimSpace(label) != "" {
+		return label
 	}
-	return append(lines, "", "o read the authorized result", "", "Recovery uses the original request. Never resend automatically.", runRecoveryCommand(r.route), "", "Offline inspection requires a completed, hash-verified snapshot.", "wt run-inspect --snapshot PATH")
+	if s.machines != nil {
+		if m, ok := s.machines[r.route.name]; ok && r.SessionID != "" {
+			for _, session := range m.sessions {
+				if session.ID == r.SessionID {
+					if name := (row{LocalSession: session}).name(); name != "Untitled session" {
+						return name
+					}
+				}
+			}
+		}
+	}
+	id := clean(r.ID)
+	for _, prefix := range []string{"run-", "run_"} {
+		id = strings.TrimPrefix(id, prefix)
+	}
+	if len([]rune(id)) > 8 {
+		id = string([]rune(id)[:8])
+	}
+	if id == "" {
+		return agentLabel(r.Agent) + " run"
+	}
+	return "Run " + id
 }
 func runStatus(r runRow) (string, tone) {
 	switch r.status() {
 	case "running":
 		return "* Working", accent
 	case "pending":
-		return "! Pending", warning
+		return "! Pending", caution
 	case "done":
 		return "+ Done", success
 	case "failed":
 		return "x Failed", failure
 	case "timeout":
-		return "x Timeout", failure
+		return "x Timed out", caution
 	case "stopped":
 		return "- Stopped", secondary
 	default:
-		return "? Unknown", warning
+		return "? Unknown", caution
 	}
 }
 
-func outputLabel(value string) string {
-	switch value {
-	case "available":
-		return "Ready"
-	case "expired":
-		return "Expired"
-	case "unavailable":
-		return "Missing"
-	case "pending":
-		return "Pending"
-	default:
-		return "Unknown"
-	}
-}
 func cleanupLabel(value string) string {
 	switch value {
 	case "complete", "completed":
@@ -690,7 +747,7 @@ func cleanupLabel(value string) string {
 	case "none", "not_required":
 		return "Not needed"
 	default:
-		return "Unknown"
+		return "Not checked"
 	}
 }
 func resultFailureNotice(err string) string {
@@ -732,32 +789,40 @@ func (s *state) runView(now time.Time, dimensions ...int) ([]string, []viewLine,
 	}
 	h := s.history()
 	rows := h.rows()
-	header := []string{"wt   Recent runs   " + plural(len(rows), "run"), "Saved outcomes. Enter checks the selected session."}
+	// Same masthead shape as the sessions list: count, machines, then the machine strip.
+	title := "wt   Recent runs   " + plural(len(rows), "run") + "   " + plural(len(s.machines), "machine")
+	if width >= 120 {
+		title = "wt   " + now.Local().Format("Mon Jan 2 · 15:04") + "   Recent runs   " + plural(len(rows), "run") + "   " + plural(len(s.machines), "machine")
+	}
+	if width < 65 {
+		title = "wt   Recent runs   " + plural(len(rows), "run")
+	}
+	header := []string{title, "Newest first   " + s.machineStrip()}
 	var body []viewLine
 	selected := 0
 	if h.loading {
 		body = append(body, viewLine{text: "Loading runs..."})
 	}
 	if h.err != "" {
-		body = append(body, viewLine{text: "History unavailable. Retained rows are dated.", tone: warning})
+		body = append(body, viewLine{text: "History is offline. Rows show the last saved state.", tone: caution})
 	}
 	for _, text := range h.unavailable {
-		body = append(body, viewLine{text: s.runUnavailableNotice(text), tone: warning})
+		body = append(body, viewLine{text: s.runUnavailableNotice(text), tone: caution})
 	}
 	for _, p := range h.pages {
 		if p.err != "" {
-			body = append(body, viewLine{text: historyFailureNotice(p.route.name, p.err), tone: warning})
+			body = append(body, viewLine{text: historyFailureNotice(p.route.name, p.err), tone: caution})
 		}
 		if p.liveErr != "" {
-			body = append(body, viewLine{text: machineLabel(p.route.name) + " live sessions unavailable", tone: warning})
+			body = append(body, viewLine{text: machineLabel(p.route.name) + " live sessions unavailable", tone: caution})
 		}
 	}
-	title, agent, machineWidth, elapsed := 16, 8, 14, 6
+	name, project, agent, machineWidth, elapsed := min(40, max(22, width-58)), 13, 8, 14, 6
 	if width < 80 {
-		title = max(1, width-36)
-		agent, machineWidth, elapsed = 0, 0, 0
+		name = max(1, width-20)
+		project, agent, machineWidth = 0, 0, 0
 	}
-	body = append(body, viewLine{text: "  " + field("Project", title) + field(" State", 12) + field("Agent", agent) + field("Machine", machineWidth) + field("Output", 10) + field("Cleanup", 12) + field("Age", elapsed), tone: secondary})
+	body = append(body, viewLine{text: "  " + field("Run", name) + " " + field("State", 12) + field("Project", project) + field("Agent", agent) + field("Machine", machineWidth) + field("Age", elapsed), tone: secondary})
 	for _, r := range rows {
 		created, _ := time.Parse(time.RFC3339Nano, r.CreatedAt)
 		when := "?"
@@ -767,7 +832,7 @@ func (s *state) runView(now time.Time, dimensions ...int) ([]string, []viewLine,
 		label, role := runStatus(r)
 		if h.err != "" || h.pages[r.WingID].err != "" {
 			label = "? Last seen"
-			role = warning
+			role = caution
 		}
 		prefix := "  "
 		isSelected := r.key() == h.selected
@@ -775,7 +840,7 @@ func (s *state) runView(now time.Time, dimensions ...int) ([]string, []viewLine,
 			prefix = "> "
 			selected = len(body)
 		}
-		body = append(body, viewLine{text: prefix + field(projectName(r.CWD), title) + " " + field(label, 11) + field(agentLabel(r.Agent), agent) + field(machineLabel(r.route.name), machineWidth) + field(outputLabel(r.OutputAvailability), 10) + field(cleanupLabel(r.Cleanup), 12) + field(when, elapsed), selected: isSelected, statusAt: 2 + title, statusWidth: 12, statusTone: role})
+		body = append(body, viewLine{text: prefix + field(s.runTitle(r), name) + " " + field(label, 12) + field(projectName(r.CWD), project) + field(agentLabel(r.Agent), agent) + field(machineLabel(r.route.name), machineWidth) + field(when, elapsed), selected: isSelected, statusAt: 2 + name, statusWidth: 12, statusTone: role})
 	}
 	if len(rows) == 0 {
 		text := "No runs on the loaded pages"
@@ -824,16 +889,16 @@ func runAttachArgs(r runRow) []string {
 
 func staleRunPage(p runPage, err error) runPage { p.err = err.Error(); return p }
 
-func runRecoveryCommand(route runRoute) string {
-	prefix := "wt "
-	if route.name != "local" {
-		for _, arg := range remotepkg.ProfileArgs(route.remote) {
-			prefix += remotepkg.ShellQuote(arg) + " "
-		}
-	}
-	command := prefix + "agent recover --json"
+// runRecoveryCommand is shown only behind the details r key. It is run on the
+// machine that owns the run, so it carries no saved route flags or IDs.
+func runRecoveryCommand() string {
+	command := "wt agent recover"
 	if client := strings.TrimSpace(os.Getenv("WT_MCP_CLIENT")); client != "" {
-		command += " --client " + remotepkg.ShellQuote(client)
+		if strings.Trim(client, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-") == "" {
+			command += " --client " + client
+		} else {
+			command += " --client " + remotepkg.ShellQuote(client)
+		}
 	}
 	return command
 }

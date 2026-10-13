@@ -173,9 +173,9 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 
 		h := northstarStartPTY(t, f, binary, 160, 36)
 		h.expect("original parent / surviving egg", 0, "surviving-parent")
-		h.expect("find durable runs without remembered IDs", h.send("h"), "Recent runs", "Ready", "legacy has no run history", "N next page")
+		h.expect("find durable runs without remembered IDs", h.send("h"), "Recent runs", "Newest first", "legacy has no run history", "N next page")
 		h.expect("qualified local run query", h.send("/wing-local:same-run"), "Search runs /wing-local:same-run_", "* Working")
-		h.expect("keep qualified local run", h.send("\r"), "Saved outcomes.", "Enter open")
+		h.expect("keep qualified local run", h.send("\r"), "Newest first", "Enter open")
 		h.expect("attach surviving exact local egg", h.send("\r"), "RECOVERY_LOCAL_LIVE")
 		select {
 		case id := <-local.attached:
@@ -203,7 +203,7 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 		fresh.expect("fresh parent inventory", 0, "surviving-parent")
 		fresh.expect("fresh wt recovers same durable IDs", fresh.send("h"), "This machine", "forge", "Working")
 		fresh.expect("same ID on another wing", fresh.send("/wing-forge:same-run"), "Search runs /wing-forge:same-run_", "* Working")
-		fresh.expect("keep qualified forge run", fresh.send("\r"), "Saved outcomes.", "Enter open")
+		fresh.expect("keep qualified forge run", fresh.send("\r"), "Newest first", "Enter open")
 		fresh.expect("saved exact forge route attach", fresh.send("\r"), "RECOVERY_FORGE_LIVE")
 		select {
 		case id := <-forge.attached:
@@ -230,9 +230,10 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 			return strings.Contains(screen, "4 runs") && strings.Contains(screen, "? Unknown") && !strings.Contains(screen, "Live session verified")
 		})
 		fresh.expect("cancelled run filter", fresh.send("/\x15cancelled-record\r"), "- Stopped")
-		fresh.expect("terminal Enter opens metadata", fresh.send("\r"), "State: - Stopped", "Live session not verified", "wt agent recover", "--snapshot PATH")
+		fresh.expect("terminal Enter opens metadata", fresh.send("\r"), "Result: - Stopped", "Next: press o", "r recovery steps")
+		fresh.expect("recovery steps behind r", fresh.send("r"), "Recovery steps", "original request", "wt agent recover", "--snapshot FILE")
 		fresh.expect("explicit bounded result / sanitized controls", fresh.send("o"), "Result / Read only", "METADATA_ONLY_RESULT", "?]52;fake??", "cancellation is not completion")
-		fresh.expect("unknown admission never launches", fresh.send("\x1b/\x15unknown-record\r\rn"), "State: ? Unknown", "Outcome unknown", "Never resend automatically")
+		fresh.expect("unknown admission never launches", fresh.send("\x1b/\x15unknown-record\r\rn"), "Result: ? Unknown", "check its work before you run it again")
 		fresh.expect("pagination target first page", fresh.send("\x1b/\x15wing-local:same-run\r"), "* Working", "N next page")
 		mu.Lock()
 		beforePages := callCount["agent_list"]
@@ -251,7 +252,7 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 		mode = "incomplete"
 		mu.Unlock()
 		fresh.expect("incomplete projection retains stale known row", fresh.send("R"), "history unavailable", "Last seen")
-		fresh.expect("incomplete Enter cannot attach", fresh.send("\r"), "State: ? Unknown", "History unavailable", "Live session not verified")
+		fresh.expect("incomplete Enter cannot attach", fresh.send("\r"), "Result: ? Unknown", "History is offline", "check its work")
 		fresh.expect("return from stale metadata", fresh.send("\x1b"), "Recent runs")
 		mu.Lock()
 		mode = "denied"

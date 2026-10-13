@@ -204,7 +204,7 @@ func TestRecentRunsLayoutAndTruthfulUnknown(t *testing.T) {
 		t.Run(fmt.Sprint(dim), func(t *testing.T) { renderedLines(t, render(s, dim[0], dim[1], time.Now()), dim[0], dim[1]) })
 	}
 	text := render(s, 120, 24, time.Now())
-	for _, want := range []string{"Recent runs", "? Unknown", "N next page", "Missing", "Unknown"} {
+	for _, want := range []string{"Recent runs", "? Unknown", "N next page", "Run same"} {
 		if !strings.Contains(text, want) {
 			t.Fatal(want, text)
 		}
@@ -214,10 +214,28 @@ func TestRecentRunsLayoutAndTruthfulUnknown(t *testing.T) {
 		t.Fatal("unknown outcome caused action")
 	}
 	text = strings.Join(overlayLines(s, time.Now()), "\n")
-	for _, want := range []string{"wt agent recover", "--snapshot PATH", "completed, hash-verified", "Never resend automatically"} {
+	for _, want := range []string{"Run same", "Ran: ", "Result: ? Unknown", "Cleanup: Not checked", "Next: check its work", "o result   r recovery steps"} {
 		if !strings.Contains(text, want) {
-			t.Fatal(want)
+			t.Fatal(want, text)
 		}
+	}
+	lower := strings.ToLower(text)
+	for _, banned := range []string{"--remote", "admission", "descendants", "snapshot", "authorized", "path", "'"} {
+		if strings.Contains(lower, banned) {
+			t.Fatal("details printed", banned, text)
+		}
+	}
+	s.handle("r")
+	text = strings.Join(overlayLines(s, time.Now()), "\n")
+	for _, want := range []string{"wt agent recover", "--snapshot FILE", "original request was not saved", "In a terminal, run:", "Some processes may still run on This machine"} {
+		if !strings.Contains(text, want) {
+			t.Fatal(want, text)
+		}
+	}
+	s.handle("escape")
+	s.handle("enter")
+	if strings.Contains(strings.Join(overlayLines(s, time.Now()), "\n"), "Recovery steps") {
+		t.Fatal("recovery view survived closing details")
 	}
 }
 
@@ -238,11 +256,62 @@ func TestRecentRunDetailsUseLatestLivenessAfterRefresh(t *testing.T) {
 	s := fixture()
 	s.recent, s.mode = true, runDetails
 	h := s.history()
-	r := runRow{WingID: "one", ID: "same", SessionID: "egg", live: true, route: runRoute{name: "local", wingID: "one"}}
+	r := runRow{WingID: "one", ID: "same", SessionID: "egg", Status: "running", live: true, route: runRoute{name: "local", wingID: "one"}}
 	h.target = r
+	h.pages["one"] = runPage{WingID: "one", Runs: []runRow{r}}
+	if !strings.Contains(strings.Join(s.runOverlay(), "\n"), "open the live session") {
+		t.Fatal("details lost verified live session")
+	}
 	r.live = false
 	h.pages["one"] = runPage{WingID: "one", Runs: []runRow{r}}
-	if !strings.Contains(strings.Join(s.runOverlay(), "\n"), "Live session not verified") {
-		t.Fatal("details retained stale live flag")
+	text := strings.Join(s.runOverlay(), "\n")
+	if strings.Contains(text, "live session") || !strings.Contains(text, "Next: wait for it to finish") {
+		t.Fatal("details retained stale live flag", text)
+	}
+	h.pages["one"] = runPage{WingID: "one", Runs: []runRow{{WingID: "one", ID: "same", SessionID: "egg", Status: "running", live: true, route: r.route}}, err: "denied"}
+	if text := strings.Join(s.runOverlay(), "\n"); strings.Contains(text, "live session.") || !strings.Contains(text, "History is offline") {
+		t.Fatal("stale history offered a live session", text)
+	}
+}
+
+func TestRecentRunsRowsAreDistinctAndRedOnlyForFailed(t *testing.T) {
+	s := fixture()
+	s.recent = true
+	h := s.history()
+	route := runRoute{name: "local", wingID: "one"}
+	var runs []runRow
+	for i, status := range []string{"done", "running", "pending", "unknown", "failed", "timeout"} {
+		r := runRow{WingID: "one", ID: fmt.Sprintf("run-%d", i), SessionID: fmt.Sprintf("egg-%d", i), Agent: "codex", CWD: "/work/wingthing", Status: status, CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute).Format(time.RFC3339), Cleanup: "unknown", OutputAvailability: "unavailable", route: route}
+		if status == "unknown" {
+			r.FailureKind = "unknown_outcome"
+		}
+		if i == 0 {
+			r.Label = "Fix DNS retries"
+		}
+		runs = append(runs, r)
+	}
+	h.pages["one"] = runPage{WingID: "one", Runs: runs, route: route}
+	h.reconcile()
+	header, body, _, _ := s.runView(time.Now(), 80)
+	if !strings.Contains(header[1], "This machine") {
+		t.Fatal("runs header lost the machine strip", header)
+	}
+	seen := map[string]bool{}
+	for _, line := range body[1:] {
+		if seen[line.text[2:]] {
+			t.Fatal("rows read the same", line.text)
+		}
+		seen[line.text[2:]] = true
+		if line.statusTone == failure && !strings.Contains(line.text, "x Failed") {
+			t.Fatal("red on a run that is not Failed", line.text)
+		}
+		for _, banned := range []string{"Missing", "Output", "Cleanup"} {
+			if strings.Contains(line.text, banned) {
+				t.Fatal("list kept internal column", banned, line.text)
+			}
+		}
+	}
+	if !strings.Contains(body[1].text, "Fix DNS retries") || !strings.Contains(body[2].text, "Run 1") {
+		t.Fatal("title column missing label or fallback", body[1].text, body[2].text)
 	}
 }
