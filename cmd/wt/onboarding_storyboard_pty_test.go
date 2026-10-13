@@ -163,12 +163,21 @@ subprocess.run([%q,'wing','status'])
 	northstarWrite(t, filepath.Join(pin.dir, "session.role.json"), `{"pinned":true,"role":"coordinator"}`, 0600)
 	local := northstarStandaloneEgg(t, f, f.local, "same", "pairing", "needs_input", "FIXTURE Claude pairing terminal\r\nCtrl+B then q returns to navigator")
 	remote := northstarStandaloneEgg(t, f, f.remote, "same", "pairing", "working", "FIXTURE remote pairing terminal\r\nNative terminal modes and wheel input pass through")
+	// These protocol fixtures report a representative workspace, not the
+	// harness directory; no provider executes in this reported folder.
+	for _, dir := range []string{pin.dir, local.dir, remote.dir} {
+		metadata, err := os.ReadFile(filepath.Join(dir, "egg.meta"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		northstarWrite(t, filepath.Join(dir, "egg.meta"), strings.ReplaceAll(string(metadata), "cwd="+f.work, "cwd=/home/example/pairing"), 0600)
+	}
 	_ = remote
 	northstarWrite(t, filepath.Join(f.local, "remotes.yaml"), fmt.Sprintf("remotes:\n  forge:\n    ssh_target: ns-forge\n    wingthing_dir: %s\n", f.remote), 0600)
 	nav := northstarStartPTY(t, f, binary, 120, 36)
 	nav.expect("qualified inventory with pin", 0, "[coordinator]", "pairing", "forge  connected")
 	onboardingStoryboardCapture(t, nav, "03-1")
-	nav.expect("scoped new agent", nav.send("n\x15codex\r"), "Cwd on local: "+f.work)
+	nav.expect("scoped new agent", nav.send("n\x15codex\r"), "Cwd on local: /home/example/pairing")
 	onboardingStoryboardCapture(t, nav, "02-3")
 	nav.expect("cancel scoped launch", nav.send("\x1b"), "[coordinator]")
 	nav.expect("choose colliding local row", nav.send("j\r"), "FIXTURE Claude pairing terminal")
