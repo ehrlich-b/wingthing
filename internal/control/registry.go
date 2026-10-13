@@ -288,6 +288,29 @@ func buildTools() []Tool {
 			Grant: "sandbox.read", Surfaces: both,
 		},
 		{
+			Name: "session_inventory", Title: "Search qualified personal session inventory",
+			Description: "Search owned live and archived sessions by name, repo, machine or transcript text. Includes origin IDs, route chips, coordinator presence, source freshness and incomplete coverage. include_remotes requires an unrestricted personal connection and verified saved remotes; no recursive fanout.",
+			InputSchema: objectSchema(map[string]any{"query": map[string]any{"type": "string", "maxLength": 256}, "include_remotes": map[string]any{"type": "boolean", "default": false}}), Annotations: readOnly,
+			Grant: "terminal.read", Surfaces: both,
+		},
+		{
+			Name: "session_action", Title: "Act on an exact qualified session",
+			Description: "Route one operation to an exact (origin_wing_id, session_id). Rechecks current verified routes and underlying operation grants. Never replays a dispatched action after transport failure; reconcile the original request. Uses existing ownership, path, passkey and writer gates.",
+			InputSchema: objectSchema(map[string]any{
+				"origin_wing_id": stringProperty("Stable execution wing ID"), "session_id": stringProperty("Full exact session ID; no label or short prefix"),
+				"operation":  map[string]any{"type": "string", "enum": []string{"session_status", "session_read", "terminal_read", "session_prompt", "terminal_send", "terminal_stop", "terminal_rename"}},
+				"arguments":  map[string]any{"type": "object", "description": "Underlying operation arguments, excluding its session selector"},
+				"local_only": map[string]any{"type": "boolean", "default": false},
+			}, "origin_wing_id", "session_id", "operation"), Annotations: destructive,
+			Grant: "terminal.read", Surfaces: both, AuditTargetKeys: []string{"origin_wing_id", "session_id"},
+		},
+		{
+			Name: "coordinator_heartbeat", Title: "Record coordinator presence",
+			Description: "Record awake/asleep plus optional RFC3339 last/next wake and last note times on an owned exact coordinator session. Records data only; does not arm a timer. Missing or stale heartbeat is unknown.",
+			InputSchema: objectSchema(map[string]any{"session": stringProperty("Full exact coordinator session ID"), "state": map[string]any{"type": "string", "enum": []string{"awake", "asleep"}}, "last_wake": stringProperty("RFC3339 time"), "next_wake": stringProperty("RFC3339 time"), "last_note": stringProperty("RFC3339 time")}, "session", "state"), Annotations: mutating,
+			Grant: "terminal.rename", Surfaces: both, AuditTargetKeys: []string{"session"},
+		},
+		{
 			Name: "terminal_list", Title: "List persistent terminals",
 			Description: "List live Wingthing sessions with stable IDs, labels, process kind, agent, activity, working directory, and hook-derived status: working, blocked, idle, done, exited, or unknown. Older eggs and unsupported agents report unknown. Defaults to local sessions; remote selects one configured SSH name on an unrestricted MCP connection.",
 			InputSchema: objectSchema(map[string]any{

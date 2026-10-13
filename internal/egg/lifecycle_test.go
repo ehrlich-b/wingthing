@@ -1130,3 +1130,18 @@ func TestClaudeSessionStartBindsLegacyEgg(t *testing.T) {
 		t.Fatalf("legacy egg lost its own native binding: %+v", view)
 	}
 }
+
+func TestLifecycleSourceCompletenessSeparateFromDeliveryPagination(t *testing.T) {
+	dir, home, cwd, path := lifecycleFixture(t)
+	line := `{"type":"assistant","sessionId":"ours","message":{"role":"assistant","content":"recorded text"}}`
+	lifecycleWrite(t, path, line+"\n"+line)
+	partial := lifecycleRead(t, dir, home, cwd, 0, 1)
+	if partial.SourceComplete || !partial.HasMore {
+		t.Fatalf("partial native source claimed complete: %+v", partial)
+	}
+	lifecycleWrite(t, path, line+"\n"+line+"\n")
+	complete := lifecycleRead(t, dir, home, cwd, 0, 1)
+	if !complete.SourceComplete || !complete.HasMore {
+		t.Fatalf("source completeness confused with delivery pagination: %+v", complete)
+	}
+}

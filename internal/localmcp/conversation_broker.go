@@ -644,7 +644,7 @@ func (s *Server) preflightBrokerChild(eggCfg *egg.EggConfig, agentName, cwd, ses
 // terminal contract; these rules apply only to broker-dispatched calls.
 var boundSessionTargetTools = map[string]bool{
 	"session_status": true, "session_read": true, "session_wait": true, "session_prompt": true,
-	"session_pin": true, "terminal_read": true, "terminal_send": true, "terminal_wait": true, "terminal_rename": true, "terminal_stop": true,
+	"coordinator_heartbeat": true, "session_pin": true, "terminal_read": true, "terminal_send": true, "terminal_wait": true, "terminal_rename": true, "terminal_stop": true,
 }
 
 func (s *Server) checkBoundSessionTarget(tool string, arguments json.RawMessage) error {

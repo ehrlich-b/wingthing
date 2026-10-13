@@ -300,7 +300,7 @@ func ValidateRemoteCommand(args []string) error {
 
 func remoteSessionCommand(command string) bool {
 	switch command {
-	case "list", "ps", "active", "read", "send", "wait", "rename", "kill", "stop", "--help", "-h":
+	case "inventory", "action", "heartbeat", "list", "ps", "active", "read", "send", "wait", "rename", "kill", "stop", "--help", "-h":
 		return true
 	default:
 		return false
