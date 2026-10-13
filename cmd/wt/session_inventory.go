@@ -79,6 +79,7 @@ func renderSessionInventory(out io.Writer, inv fleet.Inventory) error {
 		if s.Presence != nil {
 			p := s.Presence
 			fmt.Fprintf(out, "  %s · last wake %s · next wake %s · stale=%t\n", p.State, p.LastWake, p.NextWake, p.Stale)
+			fmt.Fprintf(out, "  last note %s · source %s · observed %s\n", p.LastNote, p.Source, p.ObservedAt)
 		}
 		if s.NeedsAttention {
 			fmt.Fprintln(out, "  needs your attention")

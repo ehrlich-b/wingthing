@@ -93,3 +93,28 @@ func TestMergeFreshUnpinAndInvalidDirectRoute(t *testing.T) {
 		t.Fatal("direct route to another origin")
 	}
 }
+
+func TestMergeCurrentGatewayMetadataWinsOverOlderHealthyDirect(t *testing.T) {
+	now := time.Now().UTC()
+	old := Session{Identity: Identity{"origin", "run"}, Name: "old", Pinned: true, Role: "coordinator", Live: true, Status: "working", NeedsAttention: true, Routes: []Route{{WingID: "origin", Kind: "direct", Healthy: true, ObservedAt: now.Add(-time.Minute).Format(time.RFC3339Nano)}}}
+	current := old
+	current.Name, current.Pinned, current.Live, current.Status, current.NeedsAttention = "current", false, false, "exited", false
+	current.Routes = []Route{{WingID: "gateway", Kind: "via", Healthy: true, ObservedAt: now.Format(time.RFC3339Nano)}}
+	for _, inventories := range [][]Inventory{{{Complete: true, Sessions: []Session{old}}, {Complete: true, Sessions: []Session{current}}}, {{Complete: true, Sessions: []Session{current}}, {Complete: true, Sessions: []Session{old}}}} {
+		merged := Merge(inventories).Sessions[0]
+		if merged.Pinned || merged.Live || merged.NeedsAttention || merged.Name != "current" || merged.Status != "exited" {
+			t.Fatalf("stale metadata=%+v", merged)
+		}
+		route, err := SelectRoute(merged, now)
+		if err != nil || route.Kind != "via" {
+			t.Fatalf("expired direct selected: %+v %v", route, err)
+		}
+	}
+	// Fresh direct routes still win dispatch even when via metadata is newer.
+	old.Routes[0].ObservedAt = now.Add(-time.Second).Format(time.RFC3339Nano)
+	merged := Merge([]Inventory{{Complete: true, Sessions: []Session{old}}, {Complete: true, Sessions: []Session{current}}}).Sessions[0]
+	route, err := SelectRoute(merged, now)
+	if err != nil || route.Kind != "direct" || merged.Name != "current" {
+		t.Fatalf("metadata and route conflated: %+v %+v %v", merged, route, err)
+	}
+}

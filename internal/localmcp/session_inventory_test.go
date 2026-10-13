@@ -179,7 +179,7 @@ func TestQualifiedSessionActionExactTargetAndNoReplay(t *testing.T) {
 func TestCoordinatorHeartbeatUsesRoleAndPreservesWakeTimes(t *testing.T) {
 	s := inventoryFixture(t, "origin", "machine")
 	dir := filepath.Join(s.Cfg.Dir, "eggs", "same-short-id")
-	raw := json.RawMessage(`{"session":"same-short-id","state":"asleep","last_wake":"2026-10-12T20:00:00Z","next_wake":"2026-10-13T06:00:00Z"}`)
+	raw := json.RawMessage(`{"session":"same-short-id","state":"asleep","last_wake":"2026-10-12T20:00:00Z","next_wake":"2026-10-13T06:00:00Z","last_note":"2026-10-12T20:01:00Z"}`)
 	if _, e := s.ToolCoordinatorHeartbeat(t.Context(), raw); e == nil {
 		t.Fatal("ordinary session heartbeat")
 	}
@@ -192,7 +192,7 @@ func TestCoordinatorHeartbeatUsesRoleAndPreservesWakeTimes(t *testing.T) {
 		t.Fatal(e)
 	}
 	row := asInventory(t, inv).Sessions[0]
-	if !row.Pinned || row.Presence == nil || row.Presence.State != "dead" || row.Presence.NextWake == "" {
+	if !row.Pinned || row.Presence == nil || row.Presence.State != "dead" || row.Presence.NextWake == "" || row.Presence.LastNote != "2026-10-12T20:01:00Z" {
 		t.Fatalf("dead coordinator lost schedule %+v", row)
 	}
 }
