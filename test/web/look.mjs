@@ -164,12 +164,15 @@ try {
         await shoot(page, '03-session', v.suffix);
         await go(page, process.env.WT_LOOK_LEGACY ? '#chat/redirect?wing=studio' : '#approve/studio/redirect');
         await shoot(page, '04-approve', v.suffix);
-        if (index === 0 && !process.env.WT_LOOK_LEGACY) {
-            // Approve answers the agent's own prompt through terminal_send.
+        if (index < 2 && !process.env.WT_LOOK_LEGACY) {
+            // Approve answers the agent's own prompt through terminal_send,
+            // and the answered request leaves every Needs-you mark.
             await page.click('[data-answer="approve"]');
             await page.waitForFunction(() => /Approved at/.test(document.body.textContent), null, { timeout: 8000 }).catch(() => {});
             await shoot(page, '04-approve-sent', v.suffix);
-            if (JSON.stringify(sent) !== JSON.stringify([{ machine: 'studio', session: 'redirect', input: '1' }])) throw Error('approve sent ' + JSON.stringify(sent));
+            if (JSON.stringify(sent.slice(index)) !== JSON.stringify([{ machine: 'studio', session: 'redirect', input: '1' }])) throw Error('approve sent ' + JSON.stringify(sent));
+            const marks = await page.evaluate(() => document.querySelectorAll('#paper .pp-st-need, #paper .pp-hot').length);
+            if (marks) throw Error('answered request still shows ' + marks + ' Needs-you marks');
         }
         await go(page, '#pair');
         await shoot(page, '05-pair', v.suffix);
