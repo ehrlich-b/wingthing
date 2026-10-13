@@ -120,6 +120,9 @@ type Handler interface {
 type OriginHandler interface {
 	ExecuteOrigin(context.Context, string, string, string, string, string) (any, error)
 }
+type CapabilityHandler interface {
+	PhoneCapabilities() []string
+}
 type connection struct {
 	id, challenge, sender, device string
 	cipher                        cipher.AEAD
@@ -489,7 +492,11 @@ func (m *Manager) handle(ctx context.Context, r Request) (Response, error) {
 		if m.relay != nil {
 			relay = m.relay()
 		}
-		payload, e := auth.Encrypt(g, encode(map[string]any{"connection_id": id, "challenge": c.challenge, "wing_id": m.wingID, "key": m.key, "endpoints": direct, "relay": relay}))
+		var capabilities []string
+		if handler, ok := m.handler.(CapabilityHandler); ok {
+			capabilities = handler.PhoneCapabilities()
+		}
+		payload, e := auth.Encrypt(g, encode(map[string]any{"connection_id": id, "challenge": c.challenge, "wing_id": m.wingID, "key": m.key, "endpoints": direct, "relay": relay, "capabilities": capabilities}))
 		return Response{ConnectionID: id, Payload: payload}, e
 	case "device.auth", "device.command":
 		c := m.connections[r.ConnectionID]
@@ -548,7 +555,7 @@ func (m *Manager) handle(ctx context.Context, r Request) (Response, error) {
 			_ = m.save()
 		}
 		switch cmd.Op {
-		case "sessions", "attach", "read", "thread", "input", "stop", "detach", "close":
+		case "sessions", "history", "attach", "read", "thread", "input", "stop", "detach", "close":
 			if cmd.OriginWingID != "" && cmd.OriginWingID != m.wingID {
 				return Response{}, failure("denied")
 			}

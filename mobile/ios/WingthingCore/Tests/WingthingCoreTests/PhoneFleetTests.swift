@@ -35,6 +35,19 @@ private func session(_ id: String = "same", origin: String? = nil, machine: Stri
         #expect(rows.count == 2); #expect(rows.allSatisfy { $0.possibleDuplicate })
         #expect(rows.filter { $0.identity == nil }.count == 1)
     }
+    @Test func matchingMachineNamesDoNotProveAReportedOrigin() throws {
+        let rows = PhoneFleet.merge([PhoneInventory(wing: paired("a", "Mac"), sessions: [try session(machine: "Mac")], healthy: true)])
+        #expect(rows.count == 1); #expect(rows[0].identity == nil); #expect(rows[0].possibleDuplicate)
+    }
+    @Test func unprovenNamespaceCannotCollideWithARealOrigin() throws {
+        let rows = PhoneFleet.merge([PhoneInventory(wing: paired("a", "Mac"), sessions: [try session(machine: "Server")], healthy: true), PhoneInventory(wing: paired("unproven:a:Server", "Server"), sessions: [try session()], healthy: true)])
+        #expect(rows.count == 2); #expect(rows.filter { $0.identity != nil }.count == 1)
+    }
+    @Test func olderDirectInventoryDoesNotEraseVerifiedCoordinatorMetadata() throws {
+        let old = try JSONDecoder().decode(PhoneSession.self, from: Data("{\"id\":\"same\",\"name\":\"renamed\",\"agent\":\"claude\",\"status\":\"idle\",\"blocked\":false,\"unread\":false}".utf8))
+        let rows = PhoneFleet.merge([PhoneInventory(wing: paired("a", "Mac"), sessions: [try session(origin: "b", machine: "Server", pinned: true)], healthy: true), PhoneInventory(wing: paired("b", "Server"), sessions: [old], healthy: true)])
+        #expect(rows.count == 1); #expect(rows[0].coordinator); #expect(rows[0].preferredRoute?.direct == true)
+    }
     @Test func delimiterCharactersCannotCollideQualifiedIdentityKeys() {
         #expect(PhoneSessionIdentity(originWingID: "a:b", sessionID: "c").key != PhoneSessionIdentity(originWingID: "a", sessionID: "b:c").key)
     }
@@ -52,11 +65,12 @@ private final class MemoryPhoneVault: PhoneSecretStore, @unchecked Sendable {
 }
 private actor FleetTransport: PhoneSessionTransport {
     let rows: [PhoneSession]
+    let threadText: String?
     var down = false
     var uncertainInput = false
     var brokenAfterInput = false
     private(set) var calls: [String] = []
-    init(_ rows: [PhoneSession]) { self.rows = rows }
+    init(_ rows: [PhoneSession], threadText: String? = nil) { self.rows = rows; self.threadText = threadText }
     func setDown() { down = true }
     func loseInputReply() { uncertainInput = true }
     func connect() throws { if down { throw PairingError.unreachable("fixture") } }
@@ -66,7 +80,7 @@ private actor FleetTransport: PhoneSessionTransport {
         if op == "read" && brokenAfterInput { throw PairingError.denied }
         if down || op == "input" && uncertainInput { brokenAfterInput = op == "input"; throw PairingError.unreachable("fixture") }
         if op == "thread" {
-            return .object(["session_id": .string(session), "agent": .string("claude"), "state": .string("idle"), "state_source": .string("claude_hook"), "ready": .bool(true), "process_alive": .bool(true), "cursor": .integer(0), "events": .array([])])
+            return .object(["session_id": .string(session), "agent": .string("claude"), "state": .string("idle"), "state_source": .string("claude_hook"), "ready": .bool(true), "process_alive": .bool(true), "cursor": .integer(threadText == nil ? 0 : 1), "events": .array(threadText.map { [.object(["sequence": .integer(1), "type": .string("message"), "role": .string("assistant"), "text": .string($0)])] } ?? [])])
         }
         return .object(["ok": .bool(true), "screen": .string("fixture")])
     }
@@ -104,6 +118,22 @@ private actor FleetTransport: PhoneSessionTransport {
         #expect(await a.calls.filter { $0.hasPrefix("input|") }.isEmpty)
         await model.detach()
     }
+    @Test func coldTranscriptSearchSeparatesSameIDsAndSendsOnlyReads() async throws {
+        let a = FleetTransport([try session()], threadText: "Pairing coverage is ready."), b = FleetTransport([try session()], threadText: "The resolver retries are fixed.")
+        let model = try model(a,b); await model.restore(); await model.search("resolver retries")
+        #expect(model.searchResults?.count == 1)
+        #expect(model.searchResults?.first?.identity?.originWingID == "b")
+        #expect(model.searchPreviews.values.first?.contains("resolver retries") == true)
+        #expect(await a.calls.allSatisfy { $0.hasPrefix("thread|") })
+        #expect(await b.calls.allSatisfy { $0.hasPrefix("thread|") })
+        #expect(model.attached == nil)
+    }
+    @Test func unprovenTranscriptSearchDoesNotSendAnAmbiguousID() async throws {
+        let transport = FleetTransport([try session(machine: "Server")], threadText: "resolver retries"), model = try model(transport)
+        await model.restore(); await model.search("resolver retries")
+        #expect(model.searchResults?.isEmpty == true); #expect(model.searchNotice != nil)
+        #expect(await transport.calls.isEmpty)
+    }
     @Test func pollFailureCannotEraseUnconfirmedInputNotice() async throws {
         let transport = FleetTransport([try session()]), model = try model(transport)
         await model.restore(); await model.attach(model.fleet[0]); await transport.loseInputReply()
@@ -125,5 +155,38 @@ private actor FleetTransport: PhoneSessionTransport {
         let transport = FleetTransport([try session(machine: "Server")]), model = try model(transport)
         await model.restore(); await model.attach(model.fleet[0])
         #expect(model.attached == nil); #expect(await transport.calls.isEmpty)
+    }
+}
+
+private actor SlowPhoneRead: PhoneSessionTransport {
+    let rows: [PhoneSession]
+    private var valid = true
+    private var started = false
+    private var waiter: CheckedContinuation<Void, Never>?
+    init(_ rows: [PhoneSession]) { self.rows = rows }
+    func connect() { valid = true }
+    func sessions() throws -> [PhoneSession] { guard valid else { throw PairingError.denied }; return rows }
+    func waitForRead() async { if !started { await withCheckedContinuation { waiter = $0 } } }
+    func command(_ op: String, session: String, input: String, originWingID: String?) async throws -> JSONValue {
+        if op == "read" {
+            started = true; waiter?.resume(); waiter = nil
+            do { try await Task.sleep(for: .milliseconds(100)) }
+            catch { valid = false; throw error }
+        }
+        guard valid else { throw PairingError.denied }
+        return .object(["ok": .bool(true), "screen": .string("fixture")])
+    }
+    func close() { valid = false }
+}
+@Suite @MainActor struct PhoneReadRetirementTests {
+    @Test func leavingDuringAReadKeepsThePairedConnectionUsable() async throws {
+        let transport = SlowPhoneRead([try session()])
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("phone-read-\(UUID()).json")
+        try JSONEncoder().encode([paired("a", "Mac")]).write(to: file)
+        let model = PhonePairingModel(vault: MemoryPhoneVault(), file: file, makeConnection: { _, _ in transport })
+        await model.restore(); await model.attach(model.fleet[0]); await transport.waitForRead()
+        await model.detach(); await model.refresh()
+        #expect(model.online); #expect(model.fleet[0].preferredRoute != nil)
+        #expect(model.error == nil)
     }
 }

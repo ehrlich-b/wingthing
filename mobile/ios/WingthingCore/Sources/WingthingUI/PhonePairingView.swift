@@ -22,12 +22,14 @@ public struct PhonePairingView: View {
     @State private var search = ""
     public init(model: PhonePairingModel, legacySetup: @escaping () -> Void) { self.model = model; self.legacySetup = legacySetup }
     private var visible: [PhoneFleetSession] {
-        model.fleet.filter { row in
+        (search.isEmpty ? model.fleet : model.searchResults ?? model.fleet).filter { row in
             let machineMatches = model.selected == nil || row.routes.contains { $0.wingID == model.selected?.id }
             let terms = [row.session.title, row.session.agent, row.machine, row.session.cwd ?? "", row.session.id].joined(separator: " ")
-            return machineMatches && (search.isEmpty || terms.localizedCaseInsensitiveContains(search))
+            return machineMatches && (search.isEmpty || model.searchResults != nil || terms.localizedCaseInsensitiveContains(search))
         }
     }
+    private var globalCoordinator: PhoneFleetSession? { model.fleet.first(where: \.coordinator) }
+    private var groupedRows: [PhoneFleetSession] { visible.filter { $0.id != globalCoordinator?.id } }
     private func checkNames(_ emoji: String) -> String {
         emoji.split(separator: " ").map { glyph in
             String(glyph).applyingTransform(.toUnicodeName, reverse: false)?.replacingOccurrences(of: "\\N{", with: "").replacingOccurrences(of: "}", with: "").lowercased() ?? String(glyph)
@@ -35,7 +37,10 @@ public struct PhonePairingView: View {
     }
     private func timestamp(_ item: TranscriptItem) -> String? {
         guard let event = model.thread.events.first(where: { item.id.hasPrefix("\($0.sequence):") }),
-              let stamp = event.timestamp, let date = ISO8601DateFormatter().date(from: stamp) else { return nil }
+              let stamp = event.timestamp else { return nil }
+        let parser = ISO8601DateFormatter(); parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let fractional = parser.date(from: stamp); parser.formatOptions = [.withInternetDateTime]
+        guard let date = fractional ?? parser.date(from: stamp) else { return nil }
         return date.formatted(date: .abbreviated, time: .shortened)
     }
     private var messages: [TranscriptItem] {
@@ -58,6 +63,10 @@ public struct PhonePairingView: View {
                 await model.scanAnother(); await model.scan(link)
             }
             #endif
+        }
+        .task(id: search + ":" + String(model.inventoryRevision)) {
+            do { try await Task.sleep(for: .milliseconds(350)); try Task.checkCancellation(); await model.search(search) }
+            catch {}
         }
         .onChange(of: model.attached?.id) { newID in
             if let draftID { drafts[draftID] = input }
@@ -172,15 +181,19 @@ public struct PhonePairingView: View {
                     Spacer()
                     Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise").frame(width: 44, height: 44) }.accessibilityLabel("Refresh machines").accessibilityValue("\(model.fleet.count) sessions").accessibilityIdentifier("phone-refresh").disabled(model.busy)
                 }
+                if let notice = model.inventoryNotice { Text(notice).font(.caption).foregroundStyle(.secondary) }
                 if let carrier = model.carrier { Text(carrier).font(.caption).foregroundStyle(.secondary) }
                 if let error = model.error { Text(error).foregroundStyle(.red).accessibilityIdentifier("phone-error") }
-                TextField("Search sessions, projects or machines", text: $search).accessibilityIdentifier("phone-search").autocorrectionDisabled()
+                TextField("Search names, projects or transcript", text: $search).accessibilityIdentifier("phone-search").autocorrectionDisabled()
             }
-            if let coordinator = visible.first(where: \.coordinator) {
+            if model.searchBusy { ProgressView("Searching native messages…") }
+            if !search.isEmpty, !model.searchBusy, let results = model.searchResults { Text("\(results.count) matching sessions").font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("phone-search-status") }
+            if let notice = model.searchNotice, !search.isEmpty { Text(notice).font(.caption).foregroundStyle(.secondary) }
+            if let coordinator = globalCoordinator {
                 Section { row(coordinator) }
             }
-            ForEach(Array(Set(visible.filter { !$0.coordinator }.map(\.machine))).sorted(), id: \.self) { machine in
-                Section(machine) { ForEach(visible.filter { !$0.coordinator && $0.machine == machine }) { row($0) } }
+            ForEach(Array(Set(groupedRows.map(\.machine))).sorted(), id: \.self) { machine in
+                Section(machine) { ForEach(groupedRows.filter { $0.machine == machine }) { row($0) } }
             }
             if visible.isEmpty { Text(model.busy ? "Loading sessions…" : search.isEmpty ? "No active sessions on these wings." : "No matching sessions.").foregroundStyle(.secondary) }
             Section("Machines · paired separately") {
@@ -202,20 +215,21 @@ public struct PhonePairingView: View {
                     Spacer()
                     if row.coordinator { Image(systemName: "pin.fill").foregroundStyle(.secondary) }
                 }
-                Text("\(row.session.agent) · \(row.session.status)\(row.coordinator ? " · " + row.machine : "")").font(.subheadline).foregroundStyle(.secondary)
+                Text("\(row.session.agent) · \(row.session.status)\(row.preferredRoute == nil ? " · last known" : "")\(row.coordinator ? " · " + row.machine : "")").font(.subheadline).foregroundStyle(.secondary)
                 if row.coordinator { Text("Message your coordinator").font(.subheadline).foregroundStyle(.secondary) }
                 HStack {
                     ForEach(row.routes) { route in
                         Text(route.label + (route.healthy ? "" : " · offline")).font(.caption).padding(.horizontal, 8).padding(.vertical, 4).background(.quaternary, in: Capsule())
                     }
                 }
-                if row.possibleDuplicate { Label("Possible duplicate · identity unverified", systemImage: "questionmark.circle").font(.caption).foregroundStyle(.orange) }
+                if row.possibleDuplicate { Label(row.identity == nil ? "Possible duplicate · identity unverified" : "Possible duplicate · unverified copy", systemImage: "questionmark.circle").font(.caption).foregroundStyle(.orange) }
+                if let preview = model.searchPreviews[row.id], !search.isEmpty { Text(preview).font(.footnote).lineLimit(3).foregroundStyle(.secondary) }
                 HStack {
                     if row.session.blocked { Label("Needs you", systemImage: "exclamationmark.bubble").foregroundStyle(.orange) }
                     if row.session.unread { Label("Unread", systemImage: "circle.fill").foregroundStyle(.blue) }
                 }.font(.caption)
-            }.padding(.vertical, 5).foregroundStyle(.primary)
-        }.disabled(model.busy || row.preferredRoute == nil || row.identity == nil).accessibilityIdentifier("phone-session-" + row.id)
+            }.padding(.vertical, 5).foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+        }.buttonStyle(.plain).disabled(model.busy || row.preferredRoute == nil || row.identity == nil).accessibilityIdentifier("phone-session-" + row.id)
     }
     private func session(_ row: PhoneFleetSession) -> some View {
         VStack(spacing: 12) {
@@ -235,7 +249,7 @@ public struct PhonePairingView: View {
                                     if item.kind == "user" { Spacer(minLength: 48) }
                                     VStack(alignment: .leading, spacing: 6) {
                                         Text(item.content).textSelection(.enabled).accessibilityIdentifier("phone-message-" + item.id)
-                                        Text((item.kind == "user" ? "You" : "wing") + (timestamp(item).map { " · " + $0 } ?? "")).font(.caption2).foregroundStyle(.secondary)
+                                        Text((item.kind == "user" ? "You" : row.coordinator ? "wing" : row.session.agent) + (timestamp(item).map { " · " + $0 } ?? "")).font(.caption2).foregroundStyle(.secondary)
                                     }.padding(14).background(item.kind == "user" ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
                                     if item.kind != "user" { Spacer(minLength: 32) }
                                 }.id(item.id)
@@ -246,11 +260,12 @@ public struct PhonePairingView: View {
             } else {
                 ScrollView([.horizontal, .vertical]) { Text(model.output.isEmpty ? "Waiting for session output…" : model.output).font(.system(.footnote, design: .monospaced)).fixedSize(horizontal: true, vertical: false).textSelection(.enabled).padding() }.accessibilityIdentifier("phone-terminal")
             }
+            if row.session.status == "archived" { Text("Archived session · transcript only").font(.footnote).foregroundStyle(.secondary) }
             HStack(alignment: .bottom) {
                 TextField(model.threadVisible ? "Message wing" : "Type into this session", text: $input, axis: .vertical).lineLimit(1...6).padding(12).background(.quaternary, in: RoundedRectangle(cornerRadius: 18)).accessibilityIdentifier("phone-input").focused($composing)
-                Button { let text = input; Task { if await model.input(text), input == text { input = ""; composing = false } } } label: { Image(systemName: "arrow.up.circle.fill").font(.system(size: 32)).frame(width: 44, height: 44) }.accessibilityLabel("Send").accessibilityIdentifier("phone-send").disabled(model.busy || !model.online || input.isEmpty)
+                Button { let text = input; Task { if await model.input(text), input == text { input = ""; composing = false } } } label: { Image(systemName: "arrow.up.circle.fill").font(.system(size: 32)).frame(width: 44, height: 44) }.accessibilityLabel("Send").accessibilityIdentifier("phone-send").disabled(model.busy || !model.online || input.isEmpty || row.session.status == "archived")
             }.padding(.horizontal)
-            Button("Stop session", role: .destructive) { stopTarget = row }.disabled(model.busy || !model.online).accessibilityIdentifier("phone-stop").padding(.bottom, 10)
+            Button("Stop session", role: .destructive) { stopTarget = row }.disabled(model.busy || !model.online || row.session.status == "archived").accessibilityIdentifier("phone-stop").padding(.bottom, 10)
         }
     }
     private var notifications: some View {

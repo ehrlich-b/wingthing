@@ -158,6 +158,8 @@ public actor PhoneConnection {
     private var cipher: TunnelCipher?
     private var connectionID: String?
     private var sequence: Int64 = 0
+    private var capabilities: Set<String> = []
+    private var historyWarning: String?
     private var flight = false
     private var commandTail: Task<Void, Never>?
     public init(wing: PairedWing, secret: PhoneSecret, wire: any PhoneWire = URLSessionPhoneWire()) { self.wing = wing; self.secret = secret; self.wire = wire }
@@ -165,7 +167,9 @@ public actor PhoneConnection {
         guard !flight else { throw PairingError.denied }; flight = true; defer { flight = false }
         connectionID = nil; sequence = 0
         await wire.configure(endpoints: wing.endpoints ?? [])
-        let channel = try identity.cipher(peerPublicKey: wing.key, domain: "wt-phone-v1")
+        let channel: TunnelCipher
+        do { channel = try identity.cipher(peerPublicKey: wing.key, domain: "wt-phone-v1") }
+        catch { throw PairingError.badProof }
         let hello = try await send(.object(["op": .string("device.hello"), "sender_pub": .string(identity.publicKey)]))
         guard let payload = hello["payload"]?.string else { throw PairingError.badProof }
         let challenge = try JSONDecoder().decode(JSONValue.self, from: channel.open(payload))
@@ -182,9 +186,28 @@ public actor PhoneConnection {
             guard !direct.isEmpty, direct.count <= 9, direct.allSatisfy(PairingInvitation.localAllowed), remote.map(PairingInvitation.relayAllowed) ?? true else { throw PairingError.protocolFailure }
             wing = PairedWing(wingID: wing.wingID, name: wing.name, key: wing.key, deviceID: wing.deviceID, local: direct[0], relay: remote, endpoints: Array(direct.dropFirst()))
         }
+        capabilities = Set(challenge["capabilities"]?.array?.compactMap(\.string) ?? [])
         cipher = channel; connectionID = id
     }
-    public func sessions() async throws -> [PhoneSession] { try JSONDecoder().decode([PhoneSession].self, from: JSONEncoder().encode(await command("sessions"))) }
+    public func sessions() async throws -> [PhoneSession] {
+        var rows = try JSONDecoder().decode([PhoneSession].self, from: JSONEncoder().encode(await command("sessions")))
+        historyWarning = nil
+        guard capabilities.contains("history") else { return rows }
+        var cursor = ""
+        for page in 0..<8 {
+            let input = String(decoding: try JSONEncoder().encode(["after": cursor]), as: UTF8.self)
+            let value = try await command("history", input: input)
+            guard let entries = value["sessions"]?.array, let next = value["next_cursor"]?.string else { throw PairingError.protocolFailure }
+            let archived = try JSONDecoder().decode([PhoneSession].self, from: JSONEncoder().encode(entries))
+            for row in archived where !rows.contains(where: { $0.id == row.id && $0.originWingID == row.originWingID && $0.machine == row.machine }) { rows.append(row) }
+            if next.isEmpty { break }
+            guard next > cursor else { throw PairingError.protocolFailure }
+            cursor = next
+            if page == 7 { historyWarning = "More archived sessions are available beyond this inventory window." }
+        }
+        return rows
+    }
+    public func inventoryWarning() -> String? { historyWarning }
     public func carrierDescription() async -> String? { await wire.carrierDescription() }
     public func command(_ op: String, session: String = "", input: String = "", originWingID: String? = nil) async throws -> JSONValue {
         let previous = commandTail
@@ -193,7 +216,7 @@ public actor PhoneConnection {
         return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }
     private func execute(_ op: String, session: String, input: String, originWingID: String?) async throws -> JSONValue {
-        guard !flight, let cipher, let id = connectionID, ["sessions", "attach", "read", "thread", "input", "stop", "detach", "close"].contains(op) else { throw PairingError.denied }
+        guard !flight, let cipher, let id = connectionID, ["sessions", "history", "attach", "read", "thread", "input", "stop", "detach", "close"].contains(op) else { throw PairingError.denied }
         flight = true; defer { flight = false }; sequence += 1; let seq = sequence
         // Older wings reject origin.* instead of silently treating a remote ID as local.
         let remote = originWingID != nil && originWingID != wing.wingID

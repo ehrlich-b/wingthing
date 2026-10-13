@@ -8,6 +8,13 @@ import WingthingCore
     @Published public private(set) var invitation: PairingInvitation?
     @Published public private(set) var emoji: String?
     @Published public private(set) var fleet: [PhoneFleetSession] = []
+    @Published public private(set) var inventoryRevision = 0
+    @Published public private(set) var searchResults: [PhoneFleetSession]?
+    @Published public private(set) var searchPreviews: [String: String] = [:]
+    @Published public private(set) var searchBusy = false
+    @Published public private(set) var searchNotice: String?
+    @Published public private(set) var inventoryNotice: String?
+    private var searchID = UUID()
     @Published public private(set) var busy = false
     @Published public private(set) var waitingForTerminal = false
     @Published public private(set) var recoverablePairing = false
@@ -139,7 +146,7 @@ import WingthingCore
     public func showAll() async { await detach(); selected = nil; scanning = false; await refresh() }
     public func select(_ wing: PairedWing) async { await detach(); selected = wing; scanning = false; await refresh() }
     public func refresh() async {
-        guard !busy else { return }; busy = true; let request = epoch; error = nil
+        guard !busy else { return }; busy = true; let request = epoch; error = nil; inventoryNotice = nil
         for wing in wings {
             do {
                 let client: any PhoneSessionTransport
@@ -162,6 +169,7 @@ import WingthingCore
                         try persist(saved); wings = saved
                     }
                     carrier = await client.carrierDescription()
+                    if let notice = await client.inventoryWarning() { inventoryNotice = wing.name + ": " + notice }
                 }
             } catch {
                 guard epoch == request else { return }
@@ -171,7 +179,7 @@ import WingthingCore
                 if error as? PairingError == .identityMismatch || error as? PairingError == .badProof { hardStop = true }
             }
         }
-        fleet = PhoneFleet.merge(Array(inventories.values)); online = inventories.values.contains(where: \.healthy); busy = false
+        fleet = PhoneFleet.merge(Array(inventories.values)); inventoryRevision += 1; online = inventories.values.contains(where: \.healthy); busy = false
         let blocked = Set(fleet.filter { $0.session.blocked && $0.preferredRoute != nil }.compactMap(\.identity))
         if notificationsEnabled {
             for identity in blocked.subtracting(attentionSeen) { try? await attention.notify(identity) }
@@ -184,9 +192,17 @@ import WingthingCore
         for route in row.routes.sorted(by: { a, b in a.direct != b.direct ? a.direct : a.wingID < b.wingID }) where route.healthy {
             guard let client = connections[route.wingID], let identity = row.identity else { continue }
             do {
-                if !row.coordinator { _ = try await client.command("attach", session: identity.sessionID, input: "", originWingID: identity.originWingID) }
+                let nativeView = row.coordinator || row.session.status == "archived"
+                var transcript = TranscriptState()
+                if nativeView {
+                    let value = try await client.command("thread", session: identity.sessionID, input: "{\"after\":0}", originWingID: identity.originWingID)
+                    let lifecycle = try JSONDecoder().decode(SessionLifecycle.self, from: JSONEncoder().encode(value))
+                    guard lifecycle.sessionID == identity.sessionID else { throw PairingError.identityMismatch }
+                    let reference = ConversationReference(profileID: transcriptScope, userID: "paired-device", wingID: identity.originWingID, conversationID: identity.sessionID)
+                    try transcript.apply(lifecycle, target: ExecutionReference(conversation: reference, sessionID: identity.sessionID))
+                } else { _ = try await client.command("attach", session: identity.sessionID, input: "", originWingID: identity.originWingID) }
                 guard epoch == request else { return }
-                attached = row; activeRoute = route; output = ""; thread = TranscriptState(); threadVisible = row.coordinator; terminalAttached = !row.coordinator; online = true; busy = false
+                attached = row; activeRoute = route; output = ""; thread = transcript; threadVisible = nativeView; terminalAttached = !nativeView; online = true; busy = false
                 startReading(request: request); return
             } catch {
                 guard epoch == request else { return }
@@ -201,8 +217,9 @@ import WingthingCore
         readTask?.cancel()
         readTask = Task {
             do {
-                while !Task.isCancelled {
+                while !Task.isCancelled && epoch == request {
                     if !busy { try await readCurrent(request: request) }
+                    guard epoch == request else { return }
                     try await Task.sleep(for: .seconds(threadVisible ? 2 : 1))
                 }
             } catch {
@@ -240,7 +257,7 @@ import WingthingCore
     }
     public func showThread() { guard attached?.coordinator == true, !busy else { return }; threadVisible = true; error = nil; startReading(request: epoch) }
     public func input(_ text: String) async -> Bool {
-        guard !busy, online, let row = attached, let identity = row.identity, let route = activeRoute, let client = connections[route.wingID] else { return false }
+        guard !busy, online, let row = attached, row.session.status != "archived", let identity = row.identity, let route = activeRoute, let client = connections[route.wingID] else { return false }
         busy = true; let request = epoch
         do {
             if !terminalAttached {
@@ -255,7 +272,7 @@ import WingthingCore
         }
     }
     public func stop(expectedRowID: String) async {
-        guard !busy, online, let row = attached, row.id == expectedRowID, let identity = row.identity, let route = activeRoute, let client = connections[route.wingID] else { return }
+        guard !busy, online, let row = attached, row.session.status != "archived", row.id == expectedRowID, let identity = row.identity, let route = activeRoute, let client = connections[route.wingID] else { return }
         busy = true; let request = epoch
         do {
             _ = try await client.command("stop", session: identity.sessionID, input: "", originWingID: identity.originWingID)
@@ -263,9 +280,12 @@ import WingthingCore
         } catch { guard epoch == request else { return }; fail(error) }; busy = false
     }
     public func detach() async {
-        epoch = UUID(); let request = epoch; readTask?.cancel(); readTask = nil
+        epoch = UUID(); let request = epoch; let reading = readTask; readTask = nil
         let row = attached, route = activeRoute, hadTerminal = terminalAttached
         attached = nil; activeRoute = nil; terminalAttached = false; unconfirmedInput = false; output = ""; thread = TranscriptState(); busy = true
+        // Let the outstanding read finish. Cancelling its exchange would revoke
+        // the local connection cipher and make the next inventory look offline.
+        await reading?.value
         if hadTerminal, let identity = row?.identity, let route, let client = connections[route.wingID] {
             _ = try? await client.command("detach", session: identity.sessionID, input: "", originWingID: identity.originWingID)
         }
@@ -278,6 +298,53 @@ import WingthingCore
         if let route { await connections.removeValue(forKey: route.wingID)?.close() }
         await refresh()
         if let fresh = fleet.first(where: { $0.id == row.id }) { await attach(fresh) }
+    }
+    public func search(_ query: String) async {
+        searchID = UUID(); let id = searchID, request = epoch
+        guard !query.isEmpty, query.utf8.count <= 256 else {
+            searchResults = nil; searchPreviews = [:]; searchBusy = false
+            searchNotice = query.isEmpty ? nil : "Use a shorter search."; return
+        }
+        searchBusy = true; searchNotice = nil
+        // UI debounce cancellation retires publication, not an in-flight exchange.
+        let worker = Task { await performSearch(query, id: id, request: request) }
+        await worker.value
+    }
+    private func performSearch(_ query: String, id: UUID, request: UUID) async {
+        let rows = fleet, deadline = Date().addingTimeInterval(10)
+        var matches: [PhoneFleetSession] = [], previews: [String: String] = [:], partial = false
+        for (index, row) in rows.enumerated() {
+            guard searchID == id, epoch == request else { return }
+            let metadata = [row.session.title, row.session.agent, row.session.cwd ?? "", row.machine, row.session.id].joined(separator: " ")
+            if metadata.localizedCaseInsensitiveContains(query) { matches.append(row); continue }
+            guard index < 32, Date() < deadline, let identity = row.identity,
+                  let route = row.preferredRoute, let client = connections[route.wingID] else { partial = true; continue }
+            do {
+                var cursor: Int64 = 0
+                for page in 0..<8 {
+                    guard searchID == id, epoch == request else { return }
+                    let value = try await client.command("thread", session: identity.sessionID, input: "{\"after\":\(cursor)}", originWingID: identity.originWingID)
+                    let lifecycle = try JSONDecoder().decode(SessionLifecycle.self, from: JSONEncoder().encode(value))
+                    guard lifecycle.sessionID == identity.sessionID else { throw PairingError.identityMismatch }
+                    let messages = (lifecycle.events ?? []).flatMap(TranscriptItem.items).filter { ["user", "assistant"].contains($0.kind) }
+                    if let match = messages.first(where: { $0.content.localizedCaseInsensitiveContains(query) }) {
+                        matches.append(row); previews[row.id] = String(match.content.prefix(180)); break
+                    }
+                    if lifecycle.hasMore != true { break }
+                    guard lifecycle.cursor > cursor else { partial = true; break }
+                    cursor = lifecycle.cursor
+                    if page == 7 || Date() >= deadline { partial = true; break }
+                }
+            } catch {
+                if error as? PairingError == .identityMismatch || error as? PairingError == .badProof {
+                    guard searchID == id, epoch == request else { return }; fail(error)
+                }
+                partial = true
+            }
+        }
+        guard searchID == id, epoch == request else { return }
+        searchResults = matches; searchPreviews = previews; searchBusy = false
+        searchNotice = partial ? "Some transcripts are unavailable or beyond this search window. Names, projects and machines are still searched." : nil
     }
     public func enableNotifications() async {
         do {

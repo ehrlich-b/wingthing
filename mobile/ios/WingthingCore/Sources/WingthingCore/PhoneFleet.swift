@@ -27,7 +27,7 @@ public struct PhoneFleetSession: Identifiable, Equatable, Sendable {
     public let routes: [PhoneRoute]
     public let possibleDuplicate: Bool
     public let id: String
-    public var coordinator: Bool { session.role == "coordinator" && session.pinned == true }
+    public let coordinator: Bool
     public var preferredRoute: PhoneRoute? {
         routes.filter(\.healthy).sorted { a, b in a.direct != b.direct ? a.direct : a.wingID < b.wingID }.first
     }
@@ -47,10 +47,10 @@ public enum PhoneFleet {
             for session in inventory.sessions {
                 // A legacy row without a machine label belongs to its authenticated wing.
                 // A labeled remote without an origin remains unproven, even if names match.
-                let remoteLabel = session.machine?.isEmpty == false && session.machine != inventory.wing.name
+                let remoteLabel = session.machine?.isEmpty == false
                 let origin = session.originWingID?.isEmpty == false ? session.originWingID : remoteLabel ? nil : inventory.wing.wingID
                 let identity = origin.map { PhoneSessionIdentity(originWingID: $0, sessionID: session.id) }
-                let key = identity?.key ?? PhoneSessionIdentity(originWingID: "unproven:" + inventory.wing.wingID + ":" + (session.machine ?? ""), sessionID: session.id).key
+                let key = identity.map { "known:" + $0.key } ?? "unproven:" + (try! JSONEncoder().encode([inventory.wing.wingID, session.machine ?? "", session.id])).base64EncodedString()
                 observations.append(Observation(identity: identity, session: session,
                     route: PhoneRoute(wingID: inventory.wing.wingID, name: inventory.wing.name, direct: origin == inventory.wing.wingID, healthy: inventory.healthy),
                     machine: session.machine ?? inventory.wing.name, key: key))
@@ -69,8 +69,10 @@ public enum PhoneFleet {
             }
             var routeIDs = Set<String>()
             let routes = sorted.map(\.route).filter { routeIDs.insert($0.id).inserted }
+            let pin = sorted.first { $0.session.pinned != nil && $0.session.role != nil }
             return PhoneFleetSession(identity: first.identity, session: first.session, machine: first.machine, routes: routes,
-                possibleDuplicate: first.identity == nil || uncertain, id: key)
+                possibleDuplicate: first.identity == nil || uncertain, id: key,
+                coordinator: first.identity != nil && pin?.session.pinned == true && pin?.session.role == "coordinator")
         }.sorted { a, b in
             if a.coordinator != b.coordinator { return a.coordinator }
             if a.machine != b.machine { return a.machine.localizedStandardCompare(b.machine) == .orderedAscending }

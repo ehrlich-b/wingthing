@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/sessionrole"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
@@ -38,6 +41,7 @@ type phoneSessions struct {
 func (h *phoneSessions) authority() wingsession.Authority {
 	return wingsession.Authority{UserID: h.owner, Role: "owner", Browser: true}
 }
+func (h *phoneSessions) PhoneCapabilities() []string { return []string{"thread", "history"} }
 func (h *phoneSessions) Execute(ctx context.Context, connection, op, id, input string) (any, error) {
 	if h.service == nil {
 		return nil, errors.New("unavailable")
@@ -63,6 +67,58 @@ func (h *phoneSessions) Execute(ctx context.Context, connection, op, id, input s
 			out = append(out, map[string]any{"id": s.ID, "name": s.Name, "agent": s.Agent, "status": s.Status, "blocked": attention[s.ID], "unread": s.TotalWritten > seen, "cwd": s.CWD, "role": s.Role, "pinned": s.Pinned})
 		}
 		return out, nil
+	case "history":
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		var page struct {
+			After string `json:"after"`
+		}
+		if input != "" && json.Unmarshal([]byte(input), &page) != nil || len(page.After) > 128 {
+			return nil, errors.New("invalid history cursor")
+		}
+		entries, err := os.ReadDir(filepath.Join(h.service.Config.Dir, "eggs"))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		out := []map[string]any{}
+		next, last, size := "", "", 0
+		for _, entry := range entries {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || entry.Name() <= page.After {
+				continue
+			}
+			dir := filepath.Join(h.service.Config.Dir, "eggs", entry.Name())
+			if _, alive := eggclient.ReadAliveEggPID(dir); alive {
+				continue
+			}
+			meta := eggclient.ReadEggMetaValues(dir)
+			if len(meta) == 0 {
+				continue
+			}
+			s := eggclient.LocalSession{ID: entry.Name(), Name: eggclient.ReadSessionName(dir), Principal: eggclient.ReadSessionPrincipal(dir), Agent: meta["agent"], CWD: meta["cwd"]}
+			if !h.service.Owns(h.authority(), s) {
+				continue
+			}
+			role, err := sessionrole.Read(dir)
+			if err != nil {
+				return nil, err
+			}
+			row := map[string]any{"id": s.ID, "name": s.Name, "agent": s.Agent, "status": "archived", "cwd": s.CWD, "role": role.Role, "pinned": role.Pinned, "blocked": false, "unread": false}
+			encoded, err := json.Marshal(row)
+			if err != nil || len(encoded) > 48<<10 {
+				return nil, errors.New("history metadata too large")
+			}
+			if len(out) == 32 || size+len(encoded) > 48<<10 {
+				next = last
+				break
+			}
+			out = append(out, row)
+			size += len(encoded)
+			last = entry.Name()
+		}
+		return map[string]any{"sessions": out, "next_cursor": next}, nil
 	case "thread":
 		var page struct {
 			After int64 `json:"after"`

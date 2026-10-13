@@ -2,6 +2,9 @@ package wing
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -76,5 +79,49 @@ func TestPhoneSessionInventoryAttachmentInputAndStop(t *testing.T) {
 	h.Close("phone-connection")
 	if _, e = h.Execute(ctx, "phone-connection", "input", id, "never"); e == nil {
 		t.Fatal("closed phone retained stream")
+	}
+}
+
+func TestPhoneHistoryPagesOnlyArchivedMetadataAndRequiresBoundOwner(t *testing.T) {
+	f := newSessionTransportFixture(t)
+	for i := 0; i < 35; i++ {
+		dir := filepath.Join(f.sessions.Config.Dir, "eggs", fmt.Sprintf("archive-%03d", i))
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=shell\ncwd="+f.work+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := &phoneSessions{service: f.sessions, owner: "alice"}
+	page, err := h.Execute(f.ctx, "fixture", "history", "", `{"after":""}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := page.(map[string]any)
+	first := result["sessions"].([]map[string]any)
+	if len(first) != 32 || result["next_cursor"] != "archive-031" {
+		t.Fatalf("invalid first page: %v", result)
+	}
+	for _, row := range first {
+		if row["status"] != "archived" || row["unread"] != false {
+			t.Fatal("invented live archive state", row)
+		}
+	}
+	page, err = h.Execute(f.ctx, "fixture", "history", "", `{"after":"archive-031"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result = page.(map[string]any)
+	if len(result["sessions"].([]map[string]any)) != 3 || result["next_cursor"] != "" {
+		t.Fatal("archive cursor repeated or skipped rows", result)
+	}
+	foreign := &phoneSessions{service: f.sessions, owner: ""}
+	page, err = foreign.Execute(f.ctx, "unbound", "history", "", "")
+	if err != nil || len(page.(map[string]any)["sessions"].([]map[string]any)) != 0 {
+		t.Fatal("unbound phone read archived metadata", err)
+	}
+	if _, err = h.Execute(f.ctx, "fixture", "history", "", "not-json"); err == nil {
+		t.Fatal("invalid archive page accepted")
 	}
 }

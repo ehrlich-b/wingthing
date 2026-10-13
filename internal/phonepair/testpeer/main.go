@@ -30,6 +30,12 @@ type fixture struct {
 	dropInput, inputReplyLost bool
 }
 
+func (f *fixture) PhoneCapabilities() []string {
+	if f.fleet {
+		return []string{"thread", "history"}
+	}
+	return nil
+}
 func (f *fixture) Execute(_ context.Context, _ string, op, id, input string) (any, error) {
 	return f.execute(op, f.wing, id, input)
 }
@@ -65,6 +71,15 @@ func (f *fixture) execute(op, origin, id, input string) (any, error) {
 			return []map[string]any{row("shared", "QR pairing", "EhrlichMac", f.wing, "claude", false), row("coordinator", "wing", "forge", "fixture-remote-wing", "claude", true), unknown}, nil
 		}
 		return []map[string]any{row("coordinator", "wing", "forge", f.wing, "claude", true), row("shared", "DNS helper", "forge", f.wing, "codex", false)}, nil
+	case "history":
+		rows := []map[string]any{}
+		if f.wing == "fixture-remote-wing" {
+			archived := row("archived-run", "Resolver follow-up", "forge", f.wing, "codex", false)
+			archived["status"] = "archived"
+			archived["blocked"] = false
+			rows = append(rows, archived)
+		}
+		return map[string]any{"sessions": rows, "next_cursor": ""}, nil
 	case "thread":
 		var page struct {
 			After int64 `json:"after"`
@@ -72,7 +87,14 @@ func (f *fixture) execute(op, origin, id, input string) (any, error) {
 		if json.Unmarshal([]byte(input), &page) != nil {
 			return nil, errors.New("bad page")
 		}
-		events := []map[string]any{{"sequence": int64(1), "type": "message", "role": "assistant", "text": "I checked the session inventory. Your Mac and home server are connected. The DNS helper is ready for your review.", "timestamp": "2026-10-12T21:00:00Z"}}
+		text := "I checked the session inventory. Your Mac and home server are connected. The DNS helper is ready for your review."
+		if origin == "fixture-remote-wing" && (id == "shared" || id == "archived-run") {
+			text = "The resolver retries are fixed. Native tests passed on the DNS helper."
+		}
+		if origin == "fixture-main-wing" && id == "shared" {
+			text = "The pairing coverage is ready for review."
+		}
+		events := []map[string]any{{"sequence": int64(1), "type": "message", "role": "assistant", "text": text, "timestamp": "2026-10-12T21:00:00Z"}}
 		for i, text := range f.input {
 			events = append(events, map[string]any{"sequence": int64(2 + i*2), "type": "message", "role": "user", "text": strings.TrimSuffix(strings.SplitN(text, "|", 3)[2], "\r")}, map[string]any{"sequence": int64(3 + i*2), "type": "message", "role": "assistant", "text": "I received your direction. I will run the pairing tests first and report the result here."})
 		}
@@ -83,7 +105,7 @@ func (f *fixture) execute(op, origin, id, input string) (any, error) {
 				filtered = append(filtered, e)
 			}
 		}
-		return map[string]any{"session_id": id, "agent": "claude", "provider_session_id": "fixture-native", "state": "idle", "status": "idle", "state_source": "claude_hook", "ready": true, "process_alive": true, "cursor": head, "head_cursor": head, "has_more": false, "events": filtered}, nil
+		return map[string]any{"session_id": id, "agent": "claude", "provider_session_id": "fixture-native", "state": "idle", "status": "idle", "state_source": "claude_hook", "ready": true, "process_alive": id != "archived-run", "cursor": head, "head_cursor": head, "has_more": false, "events": filtered}, nil
 	case "read":
 		return map[string]any{"screen": fmt.Sprintf("%s / %s\n\nDisposable acceptance session\nReady for your direction.\n\n%s", origin, id, strings.Join(f.input, "\n")), "ended": false}, nil
 	case "input":
