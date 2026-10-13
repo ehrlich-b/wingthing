@@ -8,3 +8,6 @@ body.paid-active{background:#101713;color:#e6eee8;overflow:auto;font-family:syst
 .paid-feedback.warning{background:#3b2b1b;border-color:#efa85f;color:#ffe0bd}
 .paid-feedback.success{background:#1c3223;border-color:#80bd93;color:#c2f6d1}
 .paid-tone-icon{display:inline-block;min-width:1.2em;margin-right:6px;font-weight:700}
+
+.paid-button.danger{background:#b94040;border-color:#e88484;color:#fff!important}
+[data-cap-preview]{display:block;margin:-8px 0 16px;color:#cbded1;font-size:12px}

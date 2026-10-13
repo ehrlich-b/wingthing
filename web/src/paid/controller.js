@@ -1,5 +1,6 @@
 import { cards } from './cards.js';
 import { createPaidState, applyPaidAction, fixtureDownload, FIXTURE_VERSION } from './model.js';
+import { parseUSD } from './currency.js';
 import { renderPaidView } from './view.js';
 import './paid.css';
 const STORAGE = 'wingthing-dormant-paid-fixture-v1';
@@ -46,10 +47,23 @@ export function mountPaidFixture(user) {
         if (event.target.id === 'paid-route') location.hash = event.target.value;
         if (event.target.dataset.preference) dispatch({op:'notification',name:event.target.dataset.preference,enabled:event.target.checked});
     });
+    root.addEventListener('input', event => {
+        const form=event.target.closest('form'); if (!form) return;
+        if (event.target.name==='capUSD') {
+            const output=form.querySelector('[data-cap-preview]'), submit=form.querySelector('[type="submit"]');
+            try { const cents=parseUSD(event.target.value); output.textContent='$'+(cents/100).toFixed(2)+' USD'; submit.disabled=false; }
+            catch(e) { output.textContent=e.message; submit.disabled=true; }
+        }
+        if (event.target.name==='volumeId') form.querySelector('[type="submit"]').disabled=!(s.deletionReview && s.cloud?.status==='stopped' && event.target.value===s.cloud.volumeId);
+    });
     root.addEventListener('submit', event => {
         if (!event.target.dataset.operation) return;
         event.preventDefault(); const op=event.target.dataset.operation, values = Object.fromEntries(new FormData(event.target));
-        for (const name of ['hours','capCents']) if (name in values) values[name]=Number(values[name]);
+        if ('capUSD' in values) {
+            try { values.capCents=parseUSD(values.capUSD); delete values.capUSD; }
+            catch(e) { error=e.message; render(); return; }
+        }
+        if ('hours' in values) values.hours=Number(values.hours);
         for (const name of ['overage','consent','revoked']) if (event.target.querySelector(`[name="${name}"][type="checkbox"]`)) values[name]=!!event.target.querySelector(`[name="${name}"]`).checked;
         dispatch({op,...values});
     });
