@@ -36,9 +36,9 @@ export function refreshReachShare() {
     render();
 }
 function currentWing() { return S.wingsData.find(w => w.wing_id === chosenWing); }
-function label(id) { const w = S.wingsData.find(w => w.wing_id === id); return w ? wingDisplayName(w) || id : id; }
+function label(id) { const w = S.wingsData.find(w => w.wing_id === id); return w ? wingDisplayName(w,S.wingsData) || id : id; }
 function options() {
-    return S.wingsData.map(w => '<option value="' + esc(w.wing_id) + '"' + (w.wing_id === chosenWing ? ' selected' : '') + '>' + esc(wingDisplayName(w) || w.wing_id) + '</option>').join('');
+    return S.wingsData.map(w => '<option value="' + esc(w.wing_id) + '"' + (w.wing_id === chosenWing ? ' selected' : '') + '>' + esc(wingDisplayName(w,S.wingsData) || w.wing_id) + '</option>').join('');
 }
 function field(title, value) { return '<div class="reach-kv"><strong>' + title + '</strong><span>' + value + '</span></div>'; }
 function dormantNotice() { return '<p class="reach-notice">Paid route preview. These controls exercise local fixture state only. No account registration, email, public URL, terminal input or SSH connection is created.</p>'; }

@@ -50,9 +50,9 @@ async function run() {
             assert.equal(await page.locator('.fleet-machine').count(),2);
             assert.ok((await liveInventory.textContent()).includes('via Laptop'));
 
-            const position = await page.evaluate(() => ({pin:document.getElementById('coordinator-home').getBoundingClientRect().top, other:document.getElementById('conversation-inventory').getBoundingClientRect().top}));
-            assert.ok(position.pin < position.other, 'pinned thread renders above coordinator creation after refresh');
-            await page.screenshot({path:resolve(shots, `pwa-home-${viewport.width}x${viewport.height}.png`)});
+            const position = await page.evaluate(() => ({pin:document.getElementById('coordinator-home').getBoundingClientRect().top, other:document.getElementById('conversation-inventory').getBoundingClientRect().top,otherHidden:getComputedStyle(document.getElementById('conversation-inventory')).display==='none'}));
+            assert.ok(position.otherHidden || position.pin < position.other, 'pinned thread renders above coordinator creation after refresh');
+            assert.doesNotMatch(await page.locator('#coordinator-home').innerText(),/Heartbeat report is stale/);assert.notEqual(await page.locator('#coordinator-home [data-presence]').getAttribute('data-presence'),'unknown');await page.screenshot({path:resolve(shots, `pwa-home-${viewport.width}x${viewport.height}.png`)});
             await page.locator('#session-search-form').scrollIntoViewIfNeeded();
             await page.screenshot({path:resolve(shots, `pwa-inventory-${viewport.width}x${viewport.height}.png`)});
             await page.locator('#coordinator-home').scrollIntoViewIfNeeded();

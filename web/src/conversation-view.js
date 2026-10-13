@@ -730,7 +730,8 @@ function renderInventory(mount, wings) {
         list.appendChild(section);
     });
     issues.forEach(function(issue) { list.appendChild(issue); });
-    if (!list.children.length) list.innerHTML = '<p class="text-dim">Create a persistent parent conversation, then inspect its linked children here.</p>';
+    mount.dataset.empty=String(!list.children.length);
+    if (!list.children.length) list.innerHTML = '<p class="text-dim">Start a coordinator to see its tasks.</p>';
     var newParent = mount.querySelector('#new-parent-conversation');
     newParent.disabled = eligibleWings().length === 0;
     newParent.addEventListener('click', function() { showLaunchForm(mount, eligibleWings(), null); });

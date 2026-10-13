@@ -79,7 +79,14 @@ func renderSessionInventory(out io.Writer, inv fleet.Inventory) error {
 		}
 		if s.Presence != nil {
 			p := s.Presence
-			fmt.Fprintf(out, "  %s · last wake %s · next wake %s · stale=%t\n", p.State, p.LastWake, p.NextWake, p.Stale)
+			if !s.Live {
+				fmt.Fprintln(out, "  Coordinator stopped. No restart is confirmed.")
+				quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'" }
+				fmt.Fprintf(out, "  Inspect: wt session action --wing %s --session %s --operation session_read\n", quote(s.OriginWingID), quote(s.SessionID))
+				fmt.Fprintf(out, "  Historical heartbeat · last wake %s · stale=%t\n", p.LastWake, p.Stale)
+			} else {
+				fmt.Fprintf(out, "  %s · last wake %s · next wake %s · stale=%t\n", p.State, p.LastWake, p.NextWake, p.Stale)
+			}
 			fmt.Fprintf(out, "  last note %s · source %s · observed %s\n", p.LastNote, p.Source, p.ObservedAt)
 		}
 		if s.NeedsAttention {

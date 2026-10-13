@@ -51,7 +51,7 @@ function answer(wingId, inner) {
     if (inner.type === 'sessions.inventory' || inner.type === 'sessions.search') {
         if (window.pwaInventoryFailure) return {error:'Fixture inventory unavailable'};
         const route = (id, kind = 'direct') => ({wing_id:id,kind,healthy:true,observed_at:new Date().toISOString(),machine_label:id==='machine-a'?'Workstation':'Studio'});
-        const own = { origin_wing_id:wingId, session_id:'same-id',name:wingId==='machine-a'?'wing':'Research',agent:'claude',machine_label:wingId==='machine-a'?'Workstation':'Studio',live:true,status:'idle',pinned:wingId==='machine-a',role:wingId==='machine-a'?'coordinator':'', routes:[route(wingId)] };
+        const own = { origin_wing_id:wingId, session_id:'same-id',name:wingId==='machine-a'?'wing':'Research',agent:'claude',machine_label:wingId==='machine-a'?'Workstation':'Studio',live:wingId==='machine-a'?processAlive:true,status:wingId==='machine-a'?status:'idle',pinned:wingId==='machine-a',role:wingId==='machine-a'?'coordinator':'', routes:[route(wingId)] };
         const rows = [own];
         if (wingId==='machine-a' && inner.arguments.include_remotes) rows.push({...own,origin_wing_id:'machine-b',name:'Research',machine_label:'Studio',pinned:false,role:'',routes:[route('machine-a','via')]});
         return { version:'wingthing.session-inventory.v1',wing_id:wingId,sessions:rows,complete:true,sources:[],generated_at:new Date().toISOString() };
@@ -60,6 +60,7 @@ function answer(wingId, inner) {
     if (inner.type === 'session.control') {
         if (inner.operation === 'session_action') {
             const args = inner.arguments;
+            if(args.operation==='terminal_read')return {origin_wing_id:args.origin_wing_id,session_id:args.session_id,route:{wing_id:wingId,kind:wingId===args.origin_wing_id?'direct':'via'},result:{ansi:'Release brief ready for review\r\nNo decision entered.\r\n'}};
             if (args.operation !== 'session_read') throw Error('Unexpected fixture mutation');
             return {origin_wing_id:args.origin_wing_id,session_id:args.session_id,route:{wing_id:wingId,kind:wingId===args.origin_wing_id?'direct':'via'},result:{session:args.session_id,lifecycle:lifecycle(args.origin_wing_id,args.arguments.after_cursor,args.arguments.limit)}};
         }
@@ -102,6 +103,7 @@ window.coordinatorFixture = {
         events.push({ sequence: events.length + 1, type: next === 'blocked' ? 'input_requested' : next === 'exited' ? 'session_exit' : next === 'idle' ? 'turn_completed' : 'prompt_submitted', source: 'claude_hook', state: next === 'blocked' ? 'needs_input' : next === 'exited' ? 'stopped' : next, timestamp: new Date().toISOString(), reason: next === 'blocked' ? 'Confirm the proposed release.' : '' });
         if (report) events.push({ sequence: events.length + 1, type: 'session_report', source: 'wing_report', timestamp: new Date().toISOString(), report: { ...events.filter(event => event.report).at(-1).report, ...report } });
     },
+    staleReport(){events.filter(event=>event.report).at(-1).timestamp=new Date(Date.now()-120000).toISOString();},
     fail(value) { failReads = value; },
     offline(value) {
         offline = value;

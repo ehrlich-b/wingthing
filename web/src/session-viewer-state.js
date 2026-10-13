@@ -59,7 +59,7 @@ export function createSessionViewer({ inventory, request, user, wings, update, u
             const found = (await inventory(row.session_id)).sessions.filter(candidate => qualifiedSessionEquals(candidate, row));
             if (!valid(ticket)) return;
             if (found.length !== 1) throw Error('Exact session identity unavailable. Refresh inventory.');
-            active.row = found[0];
+            active.row = found[0];if(!active.row.live)active.terminalStatus='Session stopped; no live terminal output';
             active.route = searchRoute(found[0], wings(), now());
             if (!active.route) throw Error('No healthy route. Refresh inventory.');
             active.status = pendingPrompt ? `Unconfirmed message · ${pendingPrompt.request_id}. Recheck before sending.` : promptStorageError ? 'Saved message state unavailable. Message submission is disabled.' : active.row.live ? 'Viewing · agent continues running' : 'Viewing recorded session';

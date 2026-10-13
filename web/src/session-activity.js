@@ -31,7 +31,7 @@ export function sessionActivity(messages) {
         if (message.type === 'activity') {
             if (message.report) items.push({ key, kind: 'update', title: 'Coordinator update', content: message.report.update || '', timestamp: message.timestamp, report: message.report });
             else items.push({ key, kind: message.eventType === 'input_requested' || message.state === 'needs_input' ? 'approval' : 'state',
-                title: labels[message.eventType] || 'State changed', content: [message.state, message.reason].filter(Boolean).join(' · '), timestamp: message.timestamp });
+                title: labels[message.eventType] || 'State changed', content: [({needs_input:'Input requested',working:'Working',idle:'Idle',stopped:'Stopped',completed:'Completed'})[message.state] || message.state, message.reason].filter(Boolean).join(' · '), timestamp: message.timestamp });
         } else if ((message.type === 'user' || message.type === 'assistant') && message.content) {
             items.push({ key, kind: 'message', title: message.type === 'user' ? 'You sent a message' : 'Agent update', content: message.content.slice(0, 4096), timestamp: message.timestamp });
         }
@@ -41,5 +41,5 @@ export function sessionActivity(messages) {
 
 export function timelineMarkup(messages, limit = 200) {
     const items = sessionActivity(messages).slice(-limit).reverse();
-    return items.length ? '<ol class="session-timeline">' + items.map(item => '<li data-activity-key="' + escapeMarkup(item.key) + '" data-kind="' + item.kind + '"><span class="activity-marker" aria-hidden="true"></span><div><div class="activity-heading"><strong>' + escapeMarkup(item.title) + '</strong><time>' + escapeMarkup(activityTime(item.timestamp)) + '</time></div><p>' + escapeMarkup(item.content) + '</p>' + (item.report ? reportChips(item.report) : '') + (item.kind === 'approval' ? '<small>Recorded request · open this session’s terminal to inspect its current status.</small>' : '') + '</div></li>').join('') + '</ol>' : '<p class="activity-empty">No recorded activity yet.</p>';
+    return items.length ? '<ol class="session-timeline">' + items.map(item => '<li data-activity-key="' + escapeMarkup(item.key) + '" data-kind="' + item.kind + '"><span class="activity-marker" aria-hidden="true"></span><div><div class="activity-heading"><strong>' + escapeMarkup(item.title) + '</strong><time>' + escapeMarkup(activityTime(item.timestamp)) + '</time></div><p>' + escapeMarkup(item.content) + '</p>' + (item.report ? reportChips(item.report) : '') + (item.kind === 'approval' ? '<small>Recorded request; its current status may have changed.</small><button type="button" data-review-request>Review current request</button>' : '') + '</div></li>').join('') + '</ol>' : '<p class="activity-empty">No recorded activity yet.</p>';
 }

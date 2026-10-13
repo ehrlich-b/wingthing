@@ -22,6 +22,7 @@ const port = Number(process.env.WT_REACH_PORT || 18181);
 const base = 'http://127.0.0.1:' + port;
 const processEnv = { PATH: process.env.PATH, HOME: path.join(state, 'home'), WINGTHING_DIR: state };
 fs.mkdirSync(processEnv.HOME);
+fs.writeFileSync(path.join(state,'wing.yaml'),'label: Review machine\n',{mode:0o600});
 const log = fs.openSync(path.join(out, 'roost.log'), 'w');
 const roost = spawn('nice', ['-n', '10', path.join(root, 'wt'), 'roost', 'start', '--foreground', '--dev', '--addr', '127.0.0.1:' + port], { cwd: root, env: processEnv, stdio: ['ignore', log, log] });
 const steps = [];
@@ -82,6 +83,10 @@ async function fixtureWing(id, name, platform, rows) {
             }
             response = { sessions: fixtureRows.get(id) };
         }
+        else if(inner.type==='session.control' && inner.operation==='session_read'){
+            const selected=fixtureRows.get(id).find(row=>row.session_id===inner.arguments.session);
+            response=selected ? {session:selected.session_id,lifecycle:{...selected.lifecycle,session_id:selected.session_id,agent:'claude',provider_session_id:'provider-'+selected.session_id,process_alive:true,ready:true,cursor:1,head_cursor:1,has_more:false,report_cursor:1,reported_at:new Date().toISOString(),report:{goal:'Review the pairing changes',update:'Pairing changes are ready for review.',presence:'awake'},events:[{sequence:1,type:'message',role:'assistant',text:'Pairing changes are ready for review.'}]}} : {error:'Session not found'};
+        }
         else if (inner.type === 'sessions.history') response = { sessions: [] };
         else if (inner.type === 'conversations.list') response = { conversations: [] };
         else if (inner.type === 'pty.kill') {
@@ -101,7 +106,7 @@ async function screenshot(page, flow, card, slug, suffix = '') {
     // Fixed viewport captures must show the behavior being reviewed, including
     // dashboard rows below the mobile fold. Companion frames cover unread and
     // blocked separately without changing the running UI or viewport contract.
-    if (flow === 3 || flow === 5) {
+    if ((flow === 3 || flow === 5) && slug !== 'overview-coordinator') {
         let target = page.locator('#sessions-list');
         if (slug === 'unread-output') target = page.locator('.egg-box[data-sid="review"]');
         else if (flow === 3 && card === 3) target = page.locator('.egg-box[data-sid="same-id"][data-wing-id="fixture-mac"]');
@@ -139,7 +144,7 @@ try {
     assert.equal(me.reach_share_preview, true);
     record('existing --dev and local mode expose dormant UI');
     const macID = 'fixture-mac', remoteID = 'fixture-remote';
-    await fixtureWing(macID, 'EhrlichMac', 'darwin', [row('same-id', 'pairing', 'blocked', '/Users/example/pairing'), row('coordinator', 'coordinator', 'working', '/Users/example/pairing')]);
+    await fixtureWing(macID, 'Studio Mac', 'darwin', [row('same-id', 'pairing', 'blocked', '/Users/example/pairing'), {...row('coordinator','wing','working','/Users/example/pairing'),pinned:true,role:'coordinator'}]);
     const remote = await fixtureWing(remoteID, 'forge', 'linux', [row('same-id', 'pairing', 'working', '/home/example/pairing'), row('review', 'review', 'idle', '/home/example/pairing')]);
     browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH });
     for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }, { width: 430, height: 932 }]) {
@@ -152,6 +157,7 @@ try {
         assert.equal(await page.locator('.egg-box[data-sid="same-id"]').count(), 2);
         assert.match(await page.locator('#sessions-list').innerText(), /blocked/);
         await verifyNoOverflow(page);
+        await page.locator('#coordinator-home .coordinator-message').waitFor();await page.waitForFunction(()=>document.querySelector('#coordinator-home [data-presence]').dataset.presence==='awake');assert.match(await page.locator('#coordinator-home').innerText(),/wing/);assert.equal(await page.locator('#conversation-inventory').isVisible(),false);await page.waitForFunction(()=>document.querySelector('[data-search-retry="fixture-mac"]')&&document.querySelector('[data-search-retry="fixture-remote"]')).catch(async error=>{await page.screenshot({path:path.join(shots,'startup-search-error.png')});throw Error(error.message+'; status: '+await page.locator('#session-search-status').textContent());});assert.doesNotMatch(await page.locator('#session-search-results').innerText(),/No authorized wings available/);await page.locator('#home-section').evaluate(el=>el.scrollTop=0);await screenshot(page,3,1,'overview-coordinator',suffix);await page.locator('#machine-diagnostics summary').click();await page.locator('#wing-status').screenshot({path:path.join(shots,`03-1-computers${suffix}.png`)});await page.locator('#machine-diagnostics summary').click();
         record(`${viewport.width}: qualified overlapping IDs and lifecycle groups`);
         await screenshot(page, 3, 1, 'dashboard-groups', suffix);
         await page.fill('#inventory-query', 'forge');
@@ -303,7 +309,7 @@ try {
         await page.click('#reach-close');
         const stop = page.locator('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"] .egg-delete');
         await stop.click();
-        assert.match(await page.locator('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"]').innerText(), /Stop.*pairing.*EhrlichMac/);
+        assert.match(await page.locator('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"]').innerText(), /Stop.*pairing.*Studio Mac/);
         await page.locator('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"] .keep-running').waitFor({timeout:2000});
         await screenshot(page, 3, 7, 'qualified-stop-confirmation', suffix);
         await page.locator('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"] .keep-running').click();
@@ -347,7 +353,7 @@ try {
         await page.setViewportSize(viewport); await verifyNoOverflow(page);
         const suffix = viewport.width === 390 ? '-mobile' : viewport.width === 430 ? '-430' : '';
         assert.equal(await page.locator('.egg-box[data-wing-id="fixture-remote"] .egg-delete').count(), 0);
-        await screenshot(page, 3, 6, 'stale-inventory', suffix);
+        await screenshot(page, 3, 6, 'stale-inventory', suffix);if(!await page.locator('#machine-diagnostics').evaluate(el=>el.open))await page.locator('#machine-diagnostics summary').click();await page.locator('#wing-status').screenshot({path:path.join(shots,`03-6-computers${suffix}.png`)});
     }
     record('real fixture disconnect retains stale rows and disables actions');
     assert.equal(requests.filter(r => r.type === 'pty.input' || r.type === 'session_prompt').length, 0);

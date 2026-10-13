@@ -8,6 +8,8 @@ import { escapeMarkup, renderSafeSimpleMarkdown } from './security.js';
 import { createConversationReader } from './conversation-recovery.js';
 import { coordinatorComposer, chatEnterSubmits, coordinatorStatus } from './coordinator-state.js';
 import { trackSessionCompletions, sessionCompletionObservation, acknowledgeSessionCompletions } from './session-completion.js';
+import { openSessionViewer, initSessionViewer } from './session-viewer.js';
+import { searchEverywhere } from './session-search.js';
 import { timelineMarkup, reportChips } from './session-activity.js';
 
 var reader = null;
@@ -183,6 +185,7 @@ function render() {
 }
 
 function openActivityArtifact(event) {
+    if(event.target.closest('[data-review-request]')&&snapshot?.target){initSessionViewer(searchEverywhere);openSessionViewer({origin_wing_id:snapshot.target.wingId,session_id:snapshot.target.sessionId});return;}
     var button = event.target.closest('[data-artifact-path]');
     if (!button || !snapshot || !snapshot.target) return;
     // The existing file adapter checks the exact session's artifact grants.

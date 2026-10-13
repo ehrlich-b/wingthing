@@ -89,9 +89,13 @@ export function projectName(cwd) {
     return parts[parts.length - 1] || '~';
 }
 
-export function wingDisplayName(wing) {
+export function wingDisplayName(wing, peers = []) {
     if (!wing) return '';
-    return wing.wing_label || wing.hostname || (wing.wing_id ? wing.wing_id.substring(0, 8) : '');
+    const name=wing.wing_label || wing.hostname || (wing.wing_id ? wing.wing_id.substring(0, 8) : '');
+    const others=(Array.isArray(peers)?peers:[]).filter(peer=>peer&&peer.wing_id!==wing.wing_id&&wingDisplayName(peer)===name);
+    if(!wing.wing_id||!others.length)return name;
+    let length=8;while(length<wing.wing_id.length&&others.some(peer=>peer.wing_id?.slice(0,length)===wing.wing_id.slice(0,length)))length++;
+    return name+' · '+wing.wing_id.slice(0,length);
 }
 
 export function shortenPath(path) {

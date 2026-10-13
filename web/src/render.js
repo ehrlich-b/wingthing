@@ -1414,7 +1414,7 @@ export function renderWingDetailPage(wingId) {
         return;
     }
 
-    var name = wingDisplayName(w);
+    var name = wingDisplayName(w,S.wingsData);
     var isOnline = w.online !== false;
     var ver = w.version || '';
     var updateAvailable = !w.updating_at && S.latestVersion && ver && semverCompare(S.latestVersion, ver) > 0;
@@ -2396,7 +2396,7 @@ export function renderDashboard() {
     if (visibleWings.length > 0) {
         var wingHtml = '<h3 class="section-label">wings</h3><div class="wing-grid">';
         wingHtml += visibleWings.map(function(w) {
-            var name = wingDisplayName(w);
+            var name = wingDisplayName(w,S.wingsData);
             var isUnreachable = w.tunnel_error === 'unreachable' || w.tunnel_error === 'key_mismatch';
             var dotClass = isUnreachable ? 'dot-offline' :
                 (w.online === undefined) ? '' : (w.online === true ? 'dot-live' : 'dot-offline');

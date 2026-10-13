@@ -43,7 +43,7 @@ function render(value) {
         if(button.disabled&&!note){note=document.createElement('span');note.dataset.artifactRoute='';note.className='viewer-artifact-route';const text=document.createElement('span');text.textContent=`File needs a direct connection to ${value.row.machine_label || 'this machine'}. Reconnect it, then refresh the route.`;const refresh=document.createElement('button');refresh.type='button';refresh.dataset.artifactRefresh='';refresh.textContent='Refresh route';note.append(text,refresh);button.parentElement.append(note);}
         if(!button.disabled)note?.remove();
     });
-    const attention = value.lifecycle?.state === 'needs_input' || value.row.needs_attention;
+    const attention = typeof value.lifecycle?.state==='string' ? value.lifecycle.state==='needs_input' : value.row.needs_attention;
     dialog.querySelector('[data-attention]').hidden = !attention;
     dialog.querySelector('[data-more]').hidden = !value.hasMore;
     dialog.querySelector('[data-more]').disabled = value.busy;

@@ -57,3 +57,12 @@ test('links reject unsafe schemes and embedded credentials', () => {
     for (const url of ['javascript:alert(1)', 'data:text/html,bad', '/relative', 'https://user:password@example.com']) assert.equal(safeActivityLink(url), '');
     assert.equal(safeActivityLink('https://example.com/docs'), 'https://example.com/docs');
 });
+
+test('stopped coordinator retains history but makes no wake or work promise',()=>{
+ const v=coordinatorHomeSummary(session,wing,{lifecycle:{...lifecycle,process_alive:false,status:'exited'},observedAt:now},now);
+ assert.equal(v.presence,'stopped');assert.equal(v.nextWake,null);assert.equal(v.historicalUpdate,true);assert.match(v.nextAction,/Inspect/);assert.match(v.detail,/restart/);
+});
+test('recorded approval exposes a read-only review action in plain words',()=>{
+ const html=timelineMarkup([{type:'activity',eventType:'input_requested',state:'needs_input',reason:'Confirm release',sequence:1}]);
+ assert.match(html,/Review current request/);assert.match(html,/Recorded request/);assert.doesNotMatch(html,/needs_input/);
+});
