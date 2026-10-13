@@ -1,0 +1,96 @@
+/* Shared interface tokens. System theme is the default; data-theme is an override. */
+:root {
+    color-scheme: light dark;
+    --canvas: #F7F7F4;
+    --surface: #FFFFFF;
+    --surface-subtle: #EEEFEA;
+    --text: #22282C;
+    --text-secondary: #59636A;
+    --line: #D8DED9;
+    --control-line: #7B868C;
+    --accent: #315B76;
+    --on-accent: #FFFFFF;
+    --accent-soft: #E7EFF4;
+    --success: #246246;
+    --success-bg: #E9F4ED;
+    --warning: #805000;
+    --warning-bg: #FFF3D6;
+    --error: #A42D32;
+    --error-bg: #FDECEE;
+    --info: #275F8C;
+    --info-bg: #EAF2FB;
+    --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+    --font-code: "SFMono-Regular", Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-12: 48px;
+    --radius-small: 6px;
+    --radius-control: 10px;
+    --radius-panel: 14px;
+    --radius-message: 18px;
+}
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --canvas: #171A1D; --surface: #202428; --surface-subtle: #2A3035;
+        --text: #EDF0F2; --text-secondary: #B2BDC5; --line: #3C454D; --control-line: #84929D;
+        --accent: #ADCCE0; --on-accent: #172A36; --accent-soft: #263B49;
+        --success: #9CD5B3; --success-bg: #203B2D;
+        --warning: #F3CA78; --warning-bg: #3C321F;
+        --error: #FFA9AE; --error-bg: #42272C;
+        --info: #A4CDF2; --info-bg: #24394D;
+    }
+}
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --canvas: #171A1D; --surface: #202428; --surface-subtle: #2A3035;
+    --text: #EDF0F2; --text-secondary: #B2BDC5; --line: #3C454D; --control-line: #84929D;
+    --accent: #ADCCE0; --on-accent: #172A36; --accent-soft: #263B49;
+    --success: #9CD5B3; --success-bg: #203B2D;
+    --warning: #F3CA78; --warning-bg: #3C321F;
+    --error: #FFA9AE; --error-bg: #42272C;
+    --info: #A4CDF2; --info-bg: #24394D;
+}
+:root[data-theme="light"] { color-scheme: light; }
+.wt-interface { font: 400 15px/22px var(--font-ui); color: var(--text); background: var(--canvas); }
+.wt-interface :is(button,input,textarea,select) { font: inherit; }
+.wt-interface :is(button,a,input,textarea,select,summary,[tabindex]):focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.wt-interface button, .wt-button {
+    box-sizing: border-box; min-height: 44px; min-width: 44px;
+    padding: 10px 16px; border: 1px solid var(--control-line); border-radius: var(--radius-control);
+    background: var(--surface); color: var(--text); font: 500 14px/20px var(--font-ui); cursor: pointer;
+    transition: background 120ms ease;
+}
+.wt-interface button:hover, .wt-button:hover { background: var(--surface-subtle); }
+.wt-interface .wt-primary, .wt-button.wt-primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.wt-interface button:disabled { color: var(--text-secondary); background: var(--surface-subtle); cursor: default; }
+.wt-interface :is(input,textarea,select) {
+    box-sizing: border-box; min-height: 44px; padding: 10px 12px;
+    border: 1px solid var(--control-line); border-radius: var(--radius-control);
+    background: var(--surface); color: var(--text); font: 400 15px/22px var(--font-ui);
+}
+.wt-interface :is(input,textarea)::placeholder { color: var(--text-secondary); opacity: 1; }
+.wt-interface a { color: var(--accent); }
+.wt-interface :is(code,pre) { font-family: var(--font-code); font-variant-ligatures: none; }
+.wt-interface code { border-radius: var(--radius-small); background: var(--surface-subtle); padding: 2px 4px; }
+.wt-status { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: var(--radius-small); font: 500 12px/16px var(--font-ui); color: var(--text-secondary); background: var(--surface-subtle); }
+.wt-status[data-tone="warning"] { color: var(--warning); background: var(--warning-bg); }
+.wt-status[data-tone="success"] { color: var(--success); background: var(--success-bg); }
+.wt-status[data-tone="error"] { color: var(--error); background: var(--error-bg); }
+.wt-status[data-tone="info"] { color: var(--info); background: var(--info-bg); }
+.wt-banner { padding: 12px 16px; border-radius: var(--radius-control); color: var(--info); background: var(--info-bg); }
+.wt-banner[data-tone="warning"] { color: var(--warning); background: var(--warning-bg); }
+.wt-banner[data-tone="error"] { color: var(--error); background: var(--error-bg); }
+.wt-caption { color: var(--text-secondary); font: 400 13px/18px var(--font-ui); }
+@media (max-width: 600px) {
+    .wt-interface { font-size: 17px; line-height: 24px; }
+    .wt-interface :is(input,textarea,select) { font-size: 17px; line-height: 24px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .wt-interface *, .wt-interface *::before, .wt-interface *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
