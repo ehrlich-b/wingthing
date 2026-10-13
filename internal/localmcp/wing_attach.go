@@ -29,6 +29,9 @@ func bindWingAttachment(version string, sessions *wingsession.Service, owner str
 				return nil, eggclient.LocalSession{}, errors.New("terminal attachment is not granted")
 			}
 			ref, err := sessions.Resolve(ctx, s.sessionAuthority(), target, archived)
+			if err == nil && a.Exact && ref.ID != a.Session {
+				err = errors.New("attachment requires the exact full session ID")
+			}
 			return s, ref, err
 		}
 		s, ref, err := check(!a.ReadOnly, false)

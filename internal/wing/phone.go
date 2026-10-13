@@ -28,11 +28,12 @@ type phoneAttachment struct {
 	closed    bool
 }
 type phoneSessions struct {
-	service     *wingsession.Service
-	owner       string
-	mu          sync.Mutex
-	attachments map[string]*phoneAttachment
-	seen        map[string]map[string]int64
+	service          *wingsession.Service
+	owner            string
+	mu               sync.Mutex
+	attachments      map[string]*phoneAttachment
+	seen             map[string]map[string]int64
+	fleetAttachments map[string]*fleetPhoneAttachment
 }
 
 func (h *phoneSessions) authority() wingsession.Authority {
@@ -43,6 +44,8 @@ func (h *phoneSessions) Execute(ctx context.Context, connection, op, id, input s
 		return nil, errors.New("unavailable")
 	}
 	switch op {
+	case "fleet_attach", "fleet_read", "fleet_input":
+		return h.executeFleetAttachment(ctx, connection, op, input)
 	case "inventory", "search", "action":
 		operation := "session_inventory"
 		arguments := json.RawMessage(input)
@@ -187,6 +190,7 @@ func (h *phoneSessions) Close(connection string) {
 	h.mu.Unlock()
 }
 func (h *phoneSessions) detach(connection string) {
+	h.detachFleet(connection)
 	h.mu.Lock()
 	a := h.attachments[connection]
 	delete(h.attachments, connection)
