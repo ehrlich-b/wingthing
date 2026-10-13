@@ -84,7 +84,7 @@ func TestMachineDetailsFreshnessTrustFailureAndRemovedProfile(t *testing.T) {
 		s.machines["remote"] = machine{err: tc.err, updated: time.Now().Add(-time.Minute)}
 		s.remotes = map[string]config.Remote{"remote": {SSHTarget: "fixture-remote", WingID: "remote-id", ControlVersion: "1", ControlSocket: "/fixture/socket", WingthingDir: "/fixture/state"}}
 		text := strings.Join(overlayLines(s, time.Now()), "\n")
-		for _, want := range []string{tc.want, "last seen 1m ago", "Machine ID checked", "may be out of date"} {
+		for _, want := range []string{tc.want, "last seen 1m ago", "same machine each time", "may be out of date"} {
 			if want == "may be out of date" && tc.want != "Connection refused" {
 				continue
 			}
@@ -106,7 +106,7 @@ func TestMachineDetailsUnverifiedProfileAndPicker(t *testing.T) {
 	s.handle("m")
 	s.picker = len(s.machineNames())
 	s.handle("i")
-	if s.mode != machineDetails || !strings.Contains(strings.Join(s.machineLines(time.Now()), "\n"), "Machine ID not saved yet") {
+	if s.mode != machineDetails || !strings.Contains(strings.Join(s.machineLines(time.Now()), "\n"), "remembers this machine after its next connect") {
 		t.Fatal("legacy profile claimed verified")
 	}
 	s.handle("escape")
@@ -124,7 +124,7 @@ func TestRunReceiptRefreshKeepsOriginalKeyAndCurrentOutcome(t *testing.T) {
 	r.Status, r.Terminal, r.Cleanup, r.OutputAvailability = "done", true, "unknown", "expired"
 	h.pages[r.WingID] = runPage{Runs: []runRow{r}, ObservedAt: "2026-10-12T20:00:00Z"}
 	text := strings.Join(s.runOverlay(), "\n")
-	for _, want := range []string{"Result: + Done", "Time limit: None", "the output is gone", "Cleanup: Not checked", "Checked: "} {
+	for _, want := range []string{"Result: + Done", "the output is gone", "Cleanup: Not checked", "Checked: "} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %s in %s", want, text)
 		}
@@ -148,7 +148,7 @@ func TestRunReceiptPendingAdmissionIsNotUnknownCompletion(t *testing.T) {
 	s.history().target = r
 	s.history().pages["wing"] = runPage{Runs: []runRow{r}}
 	text := strings.Join(s.runOverlay(), "\n")
-	if !strings.Contains(text, "Result: ! Pending") || !strings.Contains(text, "wait for it to start") || strings.Contains(text, "? Unknown") || strings.Contains(text, "check its work") {
+	if !strings.Contains(text, "Result: ! Pending") || !strings.Contains(text, "press o once it has run") || strings.Contains(text, "recovery steps") || !strings.Contains(text, "Queued: ") || strings.Contains(text, "? Unknown") || strings.Contains(text, "check its work") {
 		t.Fatal(text)
 	}
 }

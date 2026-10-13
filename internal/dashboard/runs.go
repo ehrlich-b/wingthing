@@ -289,6 +289,19 @@ func (s *state) history() *runHistory {
 	}
 	return s.runs
 }
+
+// current is the target run as its machine last reported it; found is false
+// when the latest page no longer lists it.
+func (h *runHistory) current() (r runRow, found bool) {
+	r = h.target
+	for _, run := range h.pages[r.WingID].Runs {
+		if run.ID == r.ID && run.SessionID == r.SessionID && run.route == r.route {
+			r, found = run, true
+		}
+	}
+	return r, found
+}
+
 func (h *runHistory) rows() []runRow {
 	var rows []runRow
 	query := strings.ToLower(h.filter)
@@ -609,34 +622,50 @@ func (s *state) runOverlay() []string {
 		return append(lines, h.content...)
 	}
 	p := h.pages[r.WingID]
-	live := false
-	for _, current := range p.Runs {
-		if current.ID == r.ID && current.SessionID == r.SessionID && current.route == r.route {
-			r = current
-			live = current.live
-		}
-	}
+	r, found := h.current()
+	live := found && r.live
 	stale := p.err != "" || h.err != ""
 	if h.recovery {
 		return runRecoveryLines(title, r)
 	}
 	label, _ := runStatus(r)
-	lines := []string{title, "", "Ran: " + runWhat(r), "Result: " + label, "Started: " + humanTime(r.CreatedAt), "Checked: " + humanTime(p.ObservedAt)}
+	when := "Started: "
+	if r.status() == "pending" {
+		when = "Queued: "
+	}
+	lines := []string{title, "", "Ran: " + runWhat(r), "Result: " + label, when + humanTime(r.CreatedAt), "Checked: " + humanTime(p.ObservedAt)}
 	if r.Isolation == "privileged" {
 		lines = append(lines, "! Sandbox off. This run had full access to your account.")
-	} else {
-		lines = append(lines, "Sandbox: "+isolationLabel(r.Isolation))
+	} else if label := isolationLabel(r.Isolation); label != "Not reported" {
+		lines = append(lines, "Sandbox: "+label)
 	}
 	if r.TimeoutSeconds > 0 {
 		lines = append(lines, fmt.Sprintf("Time limit: %d seconds", r.TimeoutSeconds))
-	} else {
-		lines = append(lines, "Time limit: None")
 	}
-	lines = append(lines, "Cleanup: "+cleanupLabel(r.Cleanup), "")
+	if runNeedsRecovery(r) && r.Cleanup != "" {
+		lines = append(lines, "Cleanup: "+cleanupLabel(r.Cleanup))
+	}
+	lines = append(lines, "")
 	if stale {
 		lines = append(lines, "History is offline. This is the last saved state.")
 	}
-	return append(lines, "Next: "+runNextStep(r, live && !stale), "", "o result   r recovery steps")
+	keys := "o result"
+	if runNeedsRecovery(r) {
+		keys += "   r recovery steps"
+	}
+	return append(lines, "Next: "+runNextStep(r, live && !stale), "", keys)
+}
+
+// runNeedsRecovery is true only when a run ended without a readable result
+// or may have left work behind; a finished run with its output needs none.
+func runNeedsRecovery(r runRow) bool {
+	switch r.status() {
+	case "pending", "running":
+		return false
+	case "done":
+		return r.OutputAvailability != "" && r.OutputAvailability != "available" && r.OutputAvailability != "pending"
+	}
+	return true
 }
 
 func runWhat(r runRow) string {
@@ -657,7 +686,7 @@ func runNextStep(r runRow, live bool) string {
 			return "press Esc, then Enter to open the live session."
 		}
 		if r.status() == "pending" {
-			return "wait for it to start. Press o later for the result."
+			return "press o once it has run."
 		}
 		return "wait for it to finish, then press o for the result."
 	case "done":

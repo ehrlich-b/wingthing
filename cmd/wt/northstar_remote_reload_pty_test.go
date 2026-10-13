@@ -285,7 +285,7 @@ func TestNorthstarPTYDailyLoop(t *testing.T) {
 	fresh := northstarStartPTY(t, f, binary, 160, 36)
 	fresh.expect("fresh navigator after client loss", 0, "daily-parent", "daily-forge", "! Needs you")
 	fresh.expect("discover original durable run", fresh.send("h/"+runID+"\r"), "Recent runs", "Done", "Codex")
-	fresh.expect("terminal run metadata and explicit recovery", fresh.send("i"), "Ran: Codex in", "Result: + Done", "r recovery steps")
+	fresh.expect("terminal run metadata", fresh.send("i"), "Ran: Codex in", "Result: + Done", "o result")
 	fresh.expect("recovery steps behind r", fresh.send("r"), "Recovery steps", "original request", "agent", "recover", "--snapshot FILE")
 	fresh.expect("bounded same-run result", fresh.send("o"), "Result / Read only", "Fake Codex fixture-model")
 	fresh.expect("return from result", fresh.send("\x1b"), "Recent runs")

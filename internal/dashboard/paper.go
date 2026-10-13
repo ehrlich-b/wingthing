@@ -183,12 +183,9 @@ func (s *state) paperPane(r row, now time.Time, width, height int) []string {
 	case s.stale(r.machine):
 		action = "R reconnect   i details"
 	case r.Status == "blocked":
-		request := value.next
-		if request == "" {
-			request = "Waiting for your answer."
-		}
 		lines = append(lines, "", "ASKING")
-		appendText(request, 3)
+		appendText(s.askingText(r), 3)
+		appendText(s.askingWhere(r), 3)
 		action = "Enter answer in the session   i details"
 	}
 	lines = append(lines, "", action, "", "MACHINES")
@@ -214,9 +211,9 @@ func (s *state) paperPane(r row, now time.Time, width, height int) []string {
 		} else if m.updated.IsZero() {
 			state = "loading"
 		}
-		entry := field(machineLabel(name), 14) + field(state, 17) + machineCount(m)
+		entry := field(machineLabel(name), 14) + field(state, 17) + s.machineCount(name)
 		if runewidth.StringWidth(entry) > width {
-			entry = machineLabel(name) + " · " + state + " · " + machineCount(m)
+			entry = machineLabel(name) + " · " + state + " · " + s.machineCount(name)
 		}
 		appendText(entry, 2)
 	}

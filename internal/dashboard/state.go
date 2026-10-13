@@ -355,7 +355,14 @@ func (s *state) handle(key string) (act *action, quit bool) {
 	}
 	if s.mode == details || s.mode == help {
 		switch key {
-		case "escape", "q", "enter", "i", "?":
+		case "enter":
+			// Enter on session details opens the session it describes.
+			wasDetails := s.mode == details
+			s.mode = navigate
+			if wasDetails {
+				return s.handle("enter")
+			}
+		case "escape", "q", "i", "?":
 			s.mode = navigate
 		case "up", "k":
 			s.overlayOffset = max(0, s.overlayOffset-1)

@@ -195,7 +195,7 @@ func (s *state) machineLines(now time.Time) []string {
 	if accessDenied(m.err) {
 		lines = append(lines, accessLine(name, m.err))
 	} else {
-		lines = append(lines, connection(m, now), machineCount(m))
+		lines = append(lines, connection(m, now), s.machineCount(name))
 	}
 	if s.registryError != "" {
 		lines = append(lines, "Saved machines could not be loaded. Remote actions are blocked.")
@@ -204,14 +204,13 @@ func (s *state) machineLines(now time.Time) []string {
 		lines = append(lines, "", routeCause(m.err), "The session list may be out of date.")
 	}
 	if name == "local" {
-		return append(lines, "", "Add a machine you reach over SSH:", "wt remote add Studio SSH_ALIAS")
+		return append(lines, "", "Add another machine:", "wt remote add Studio studio.local")
 	}
 	r := s.remotes[name]
-	verification := "Reached over SSH. Machine ID not saved yet."
 	if r.WingID != "" && r.ControlSocket != "" && r.ControlVersion != "" {
-		verification = "Reached over SSH. Machine ID checked on every connect."
+		return append(lines, "", "wt checks this is the same machine each time it connects.")
 	}
-	return append(lines, "", verification, "", "List saved machines:", "wt remote ls")
+	return append(lines, "", "wt remembers this machine after its next connect.")
 }
 
 // accessLine says in one line why a machine's sessions are gone and what to do.
@@ -234,14 +233,29 @@ func accessState(err string) string {
 	return "access denied"
 }
 
-func machineCount(m machine) string {
+// machineCount leaves out the pinned wing row, which the header does not
+// count as a session either, so machine counts add up to the header.
+func (s *state) machineCount(name string) string {
+	m := s.machines[name]
 	if accessDenied(m.err) {
 		return "Sessions unavailable"
 	}
 	if m.updated.IsZero() {
 		return "Sessions not reported"
 	}
-	label := plural(len(m.sessions), "session")
+	count := len(m.sessions)
+pin:
+	for _, other := range s.machineNames() {
+		for _, session := range s.machines[other].sessions {
+			if s.sessionRow(other, session).Pinned {
+				if other == name {
+					count--
+				}
+				break pin
+			}
+		}
+	}
+	label := plural(count, "session")
 	if m.err != "" {
 		label += " cached"
 	}

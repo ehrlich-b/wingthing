@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/sessionrole"
 	"strings"
 	"testing"
@@ -29,18 +30,31 @@ func TestPaperLayoutKeepsReportsAndExactTargetAtBothSizes(t *testing.T) {
 }
 func TestMachineCountsNeverTurnMissingInventoryOrDenialIntoZero(t *testing.T) {
 	for _, m := range []machine{{}, {err: "connection refused"}, {updated: time.Now(), err: "permission denied"}} {
-		if strings.Contains(machineCount(m), "0 session") {
-			t.Fatal("unknown source became a zero count")
-		}
 		s := fixture()
 		s.machines["work"] = m
+		if strings.Contains(s.machineCount("work"), "0 session") {
+			t.Fatal("unknown source became a zero count")
+		}
 		s.target.machine = "work"
 		if strings.Contains(strings.Join(s.machineLines(time.Now()), "\n"), "0 session") {
 			t.Fatal("details claimed known zero")
 		}
 	}
-	if machineCount(machine{updated: time.Now()}) != "0 sessions" {
+	s := fixture()
+	s.machines["empty"] = machine{updated: time.Now()}
+	if s.machineCount("empty") != "0 sessions" {
 		t.Fatal("successful zero lost")
+	}
+}
+
+func TestMachineCountsLeaveOutThePinnedWing(t *testing.T) {
+	now := time.Now()
+	s := &state{machines: map[string]machine{
+		"local":  {updated: now, sessions: []eggclient.LocalSession{{ID: "a", Kind: "egg", Status: "idle"}, {ID: "b", Kind: "egg", Status: "idle"}}},
+		"Studio": {updated: now, sessions: []eggclient.LocalSession{{ID: "wing", Kind: "egg", Status: "idle", Metadata: sessionrole.Metadata{Pinned: true, Role: "coordinator"}}, {ID: "c", Kind: "egg", Status: "idle"}}},
+	}}
+	if s.machineCount("local") != "2 sessions" || s.machineCount("Studio") != "1 session" {
+		t.Fatalf("counts %q and %q include the pinned wing", s.machineCount("local"), s.machineCount("Studio"))
 	}
 }
 

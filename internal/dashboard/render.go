@@ -218,6 +218,10 @@ func (s *state) selectedLines(r row, now time.Time, width int) []string {
 	suffix := " · " + agentLabel(r.Agent) + " · " + machineLabel(r.machine) + " · " + r.project()
 	title := clip(r.name(), max(12, width-runewidth.StringWidth(suffix))) + suffix
 	metadata := label + " · " + lastLine(s, r)
+	// wing reports through its messages; an idle cell beside them misleads.
+	if r.Pinned && r.Status != "blocked" && !s.stale(r.machine) {
+		metadata = lastLine(s, r)
+	}
 	action := "Enter open   v read only   i details"
 	switch {
 	case r.Status == "blocked":
@@ -316,6 +320,9 @@ func keyHints(s *state) []string {
 		return []string{"1 launch readiness   2 session reach   3 saved result", "Esc back   Ctrl-C quit"}
 	case diagnosticInput:
 		return []string{"Enter accept input   Ctrl-U clear", "Esc back   Ctrl-C quit"}
+	}
+	if s.mode == details {
+		return []string{"j/k scroll   PgUp/PgDn page", "Enter open   Esc back   Ctrl-C quit"}
 	}
 	if s.isOverlay() {
 		return []string{"j/k scroll   PgUp/PgDn page", "Esc back   Enter back   Ctrl-C quit"}
@@ -947,7 +954,11 @@ func overlayLines(s *state, now time.Time) []string {
 	if s.stale(r.machine) {
 		lines = append(lines, "", routeCause(m.err), "Esc, then R to retry.")
 	} else {
-		lines = append(lines, "", lifecycleDescription(r), "", "Esc, then Enter opens this session.", "Ctrl+B then q comes back here.")
+		lines = append(lines, "", lifecycleDescription(r))
+		if r.Status == "blocked" {
+			lines = append(lines, "", "ASKING", s.askingText(r), s.askingWhere(r))
+		}
+		lines = append(lines, "", "Enter opens this session. Ctrl+B then q comes back here.")
 	}
 	if s.mode == details {
 		lines = append(lines, "", "RECENT")
@@ -959,6 +970,19 @@ func overlayLines(s *state, now time.Time) []string {
 
 // Remote optional metadata is presentation input too: render descriptions
 // from an allowlist instead of forwarding any provider-supplied reason.
+// askingText is the request a Needs-you session reported, in its own words.
+func (s *state) askingText(r row) string {
+	if next := s.preview(r).next; next != "" {
+		return next
+	}
+	return agentLabel(r.Agent) + " has not said what it is asking. Enter opens the session to see."
+}
+
+// askingWhere names the machine and project the request would run in.
+func (s *state) askingWhere(r row) string {
+	return "on " + machineLabel(r.machine) + ", in " + r.project()
+}
+
 func lifecycleDescription(r row) string {
 	agent := agentLabel(r.Agent)
 	if r.attention == "unknown" {
