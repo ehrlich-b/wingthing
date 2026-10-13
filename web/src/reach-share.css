@@ -11,7 +11,7 @@
 .reach-panel button { padding:8px 12px; margin:8px 8px 0 0; border:1px solid #5b5975; border-radius:7px; background:#303046; color:#eeeeff; font:inherit; cursor:pointer; }
 .reach-panel button:disabled { opacity:.5; cursor:default; }
 .reach-panel button:focus-visible, .reach-panel input:focus-visible, .reach-panel select:focus-visible { outline:2px solid #b3abff; outline-offset:2px; }
-.reach-tabs { display:flex; flex-wrap:wrap; align-items:center; border-bottom:1px solid #414157; padding:0 0 12px; margin-bottom:18px; gap:6px; position:sticky; top:0; z-index:2; background:#202033; }
+.reach-tabs { display:flex; flex-wrap:wrap; align-items:center; border-bottom:1px solid #414157; padding:0 0 12px; margin-bottom:18px; gap:6px; position:static; background:#202033; }
 .reach-alice-preview #sidebar, .reach-alice-preview #home-section > :not(#reach-share), .reach-alice-preview #header-center, .reach-alice-preview #header-right, .reach-alice-preview #parent-dot { display:none !important; }
 .reach-alice-preview #reach-share { max-width:900px; margin:auto; }
 .reach-tabs button[aria-selected=true] { background:#7566bc; border-color:#a996ee; }
@@ -26,3 +26,9 @@
 .reach-preview-app { border:1px solid #74688e; border-radius:10px; padding:22px; background:#242a31; }
 .reach-grant { display:flex; gap:12px; align-items:center; justify-content:space-between; border-bottom:1px solid #414157; padding:12px 0; flex-wrap:wrap; }
 @media(max-width:600px) { .reach-panel { padding:16px; } .reach-grid { grid-template-columns:1fr; gap:12px; } .reach-panel h2 { font-size:22px; } .reach-toolbar { gap:8px; } }
+
+.share-access-review{margin:12px 0;padding:12px;border:1px solid #7566bc;border-radius:8px;background:#171727;overflow-wrap:anywhere}
+.share-access-review .reach-kv{padding:8px 0}
+.reach-grant>div{min-width:0;width:100%}
+
+.share-access-review{scroll-margin-top:60px}

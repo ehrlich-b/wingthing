@@ -15,6 +15,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const out = process.env.WT_REACH_OUT || path.join(root, '.scratch/reach-evidence');
 const shots = process.env.WT_REACH_SHOTS || path.join(out, 'shots');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
+fs.mkdirSync(out, { recursive: true });
 fs.mkdirSync(shots, { recursive: true });
 const state = fs.mkdtempSync(path.join(root, '.scratch/reach-'));
 const port = Number(process.env.WT_REACH_PORT || 18181);
@@ -141,13 +142,13 @@ try {
     await fixtureWing(macID, 'EhrlichMac', 'darwin', [row('same-id', 'pairing', 'blocked', '/Users/example/pairing'), row('coordinator', 'coordinator', 'working', '/Users/example/pairing')]);
     const remote = await fixtureWing(remoteID, 'forge', 'linux', [row('same-id', 'pairing', 'working', '/home/example/pairing'), row('review', 'review', 'idle', '/home/example/pairing')]);
     browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH });
-    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }, { width: 430, height: 932 }]) {
         const context = await browser.newContext({ viewport });
         const page = await context.newPage(); pages.push(page);
         page.on('pageerror', error => errors.push(String(error)));
         await page.goto(base + '/app/');
         await page.waitForSelector('.egg-box[data-wing-id="fixture-mac"]');
-        const suffix = viewport.width === 390 ? '-mobile' : '';
+        const suffix = viewport.width === 390 ? '-mobile' : viewport.width === 430 ? '-430' : '';
         assert.equal(await page.locator('.egg-box[data-sid="same-id"]').count(), 2);
         assert.match(await page.locator('#sessions-list').innerText(), /blocked/);
         await verifyNoOverflow(page);
@@ -224,11 +225,21 @@ try {
         await tab(page, 'Private sharing');
         await page.click('#share-publish');
         await screenshot(page, 9, 1, 'private-publish-dormant', suffix);
+        await page.locator('#share-access-review').evaluate(el=>el.scrollIntoView({block:'start'}));
+        assert.match(await page.locator('#share-access-review').innerText(), /alice@example\.test/);
+        assert.match(await page.locator('#share-access-review').innerText(), /port 3000/);
+        assert.match(await page.locator('#share-access-review').innerText(), /View app/);
+        const reviewRect=await page.locator('#share-access-review').boundingBox();
+        const grantRect=await page.locator('#share-invite').boundingBox();
+        assert.ok(reviewRect.y>=36 && grantRect.y+grantRect.height<=viewport.height,'account, resource and grant action visible together');
+        await screenshot(page, 9, 2, 'identity-confirmation', suffix);
         await page.click('#share-invite');
         assert.match(await page.locator('#share-grants').innerText(), /Google|google/);
         await screenshot(page, 9, 2, 'identity-invite-dormant', suffix);
         await page.click('#share-alice');
         assert.equal(await page.locator('.reach-preview-app').count(), 1);
+        assert.match(await page.locator('.reach-preview-app').innerText(), /port 3000/);
+        assert.match(await page.locator('.reach-preview-app').innerText(), /View app/);
         assert.equal(await page.locator('#reach-wing').count(), 0);
         assert.equal(await page.locator('#reach-os-user').count(), 0);
         assert.equal(await page.locator('#sidebar').isVisible(), false);
@@ -236,6 +247,13 @@ try {
         assert.equal(await page.getByRole('tab').count(), 0);
         await screenshot(page, 9, 3, 'alice-preview-dormant', suffix);
         await page.click('#share-owner');
+        await page.locator('#share-grants .share-access-review').first().evaluate(el=>el.scrollIntoView({block:'start'}));
+        assert.match(await page.locator('#share-grants').innerText(), /alice@example\.test/);
+        assert.match(await page.locator('#share-grants').innerText(), /port 3000/);
+        const revokeReview=await page.locator('#share-grants .share-access-review').first().boundingBox();
+        const revokeButton=await page.locator('[data-revoke]').first().boundingBox();
+        assert.ok(revokeReview.y>=36 && revokeButton.y+revokeButton.height<=viewport.height,'account, resource and revoke action visible together');
+        await screenshot(page, 9, 4, 'revoke-confirmation', suffix);
         await page.getByRole('button', { name: 'Revoke Alice', exact: true }).click();
         assert.match(await page.locator('#reach-action-status').innerText(), /1 active fixture viewer\(s\) closed/);
         await page.locator('#share-grants').scrollIntoViewIfNeeded();
@@ -265,10 +283,13 @@ try {
         await page.click('#share-observe');
         assert.ok(await page.getByRole('button', { name: 'Send terminal input', exact: true }).isDisabled());
         await page.locator('#share-session').scrollIntoViewIfNeeded();
+        assert.deepEqual(JSON.parse(await page.locator('#share-session').inputValue()), ['fixture-remote','same-id']);
         await screenshot(page, 9, 7, 'qualified-resources-observer-dormant', suffix);
         await page.click('#share-alice');
         assert.match(await page.locator('.reach-preview-app').innerText(), /read-only fixture/);
         assert.ok(await page.getByRole('button', { name: 'Send terminal input', exact: true }).isDisabled());
+        assert.match(await page.locator('.reach-preview-app').innerText(), /forge/);
+        assert.match(await page.locator('.reach-preview-app').innerText(), /Observe session/);
         await screenshot(page, 9, 7, 'alice-observer-dormant', suffix);
         await page.click('#share-owner');
         await tab(page, 'SSH preview');
@@ -297,7 +318,7 @@ try {
     await stop.waitFor(); await stop.click(); await stop.click();
     await page.waitForFunction(() => document.querySelector('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"]')?.textContent.includes('process exit unverified'));
     assert.equal(await page.locator('.egg-box[data-sid="same-id"]').count(), 2);
-    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }, { width: 430, height: 932 }]) {
         await page.setViewportSize(viewport);
         await screenshot(page, 3, 7, 'stop-unverified', viewport.width === 390 ? '-mobile' : '');
     }
@@ -308,7 +329,7 @@ try {
     assert.deepEqual(requests.filter(r => r.type === 'pty.kill'), Array(2).fill({ wingId: 'fixture-mac', type: 'pty.kill', sessionId: 'same-id' }));
     assert.ok(stopVerificationReads >= 2);
     assert.equal(await page.locator('.egg-box[data-wing-id="fixture-remote"][data-sid="same-id"]').count(), 1);
-    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }, { width: 430, height: 932 }]) {
         await page.setViewportSize(viewport);
         await screenshot(page, 3, 7, 'stop-verified', viewport.width === 390 ? '-mobile' : '');
     }
@@ -316,9 +337,9 @@ try {
     remote.close();
     await page.waitForFunction(() => document.querySelector('.egg-box[data-wing-id="fixture-remote"]')?.textContent.includes('wing offline'));
     await page.selectOption('#inventory-status', 'offline');
-    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }, { width: 430, height: 932 }]) {
         await page.setViewportSize(viewport); await verifyNoOverflow(page);
-        const suffix = viewport.width === 390 ? '-mobile' : '';
+        const suffix = viewport.width === 390 ? '-mobile' : viewport.width === 430 ? '-430' : '';
         assert.equal(await page.locator('.egg-box[data-wing-id="fixture-remote"] .egg-delete').count(), 0);
         await screenshot(page, 3, 6, 'stale-inventory', suffix);
     }

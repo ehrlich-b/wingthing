@@ -106,3 +106,23 @@ export function connectionMeasurement(start, end, route, measuredAt) {
     if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) throw new Error('Invalid measurement');
     return { ms: Math.round(end - start), route, measuredAt };
 }
+
+// Accounts used only by the existing, gated local preview.
+export function previewIdentity(provider) {
+    const accounts = {
+        google: { provider: 'google', subject: 'sample-google-alice-42', name: 'Alice', email: 'alice@example.test' },
+        github: { provider: 'github', subject: 'sample-github-alice-17', name: 'Alice', username: 'alice-example' },
+    };
+    if (!accounts[provider]) throw new Error('Choose a verified account');
+    return { ...accounts[provider] };
+}
+export function accessReview(resource, identity, computer, sessionName = '') {
+    const account = identity?.provider === 'google' ? identity.email : identity?.provider === 'github' && identity.username ? '@' + identity.username : '';
+    if (!account || !identity.subject) throw new Error('Verify the recipient account before granting access');
+    if (!resource || !computer) throw new Error('Select a computer and resource');
+    return {
+        recipient: `${identity.provider === 'google' ? 'Google' : 'GitHub'} · ${account} · account ${identity.subject}`,
+        resource: resource.kind === 'app' ? `${computer} · ${resource.id} · port ${resource.port}` : `${computer} · ${sessionName || resource.id} · ${resource.sessionId}`,
+        role: resource.kind === 'app' ? 'View app' : 'Observe session · no input',
+    };
+}
