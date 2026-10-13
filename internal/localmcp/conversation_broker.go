@@ -68,7 +68,7 @@ var conversationBrokerTools = []string{
 // Mutations pause while the wing is locked, as host wake delivery does. Only
 // these calls are journaled: initialize, list, read and wait polling never
 // consume the mutation journal and are never replayed after a restart.
-var conversationBrokerMutations = map[string]bool{"session_pin": true, "agent_start": true, "agent_run": true, "agent_stop": true, "agent_steer": true, "session_prompt": true, "conversation_checkpoint": true}
+var conversationBrokerMutations = map[string]bool{"session_pin": true, "session_report": true, "agent_start": true, "agent_run": true, "agent_stop": true, "agent_steer": true, "session_prompt": true, "conversation_checkpoint": true}
 
 // A journaled mutation that was dispatched but not answered is replayed after a
 // broker restart only when its durable tool-level request_id makes the replay
@@ -644,7 +644,7 @@ func (s *Server) preflightBrokerChild(eggCfg *egg.EggConfig, agentName, cwd, ses
 // terminal contract; these rules apply only to broker-dispatched calls.
 var boundSessionTargetTools = map[string]bool{
 	"session_status": true, "session_read": true, "session_wait": true, "session_prompt": true,
-	"session_pin": true, "terminal_read": true, "terminal_send": true, "terminal_wait": true, "terminal_rename": true, "terminal_stop": true,
+	"session_pin": true, "session_report": true, "terminal_read": true, "terminal_send": true, "terminal_wait": true, "terminal_rename": true, "terminal_stop": true,
 }
 
 func (s *Server) checkBoundSessionTarget(tool string, arguments json.RawMessage) error {

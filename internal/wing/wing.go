@@ -41,6 +41,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/phonepair"
 	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	relaypkg "github.com/ehrlich-b/wingthing/internal/relay"
+	"github.com/ehrlich-b/wingthing/internal/sessionrole"
 	"github.com/ehrlich-b/wingthing/internal/tunnel"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
@@ -1100,7 +1101,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		}
 	}
 
-	sessions := &wingsession.Service{Config: cfg, Home: home, SharedHost: sharedHost, AuthCache: passkeyCache, Inventory: ListAliveEggSessions, Policy: func() wingsession.Policy {
+	sessions := &wingsession.Service{Config: cfg, Home: home, SharedHost: sharedHost, AuthCache: passkeyCache, Inventory: ListWebEggSessions, Policy: func() wingsession.Policy {
 		wingCfgMu.Lock()
 		wc := wingCfg.Clone()
 		keys := append([]config.AllowKey(nil), allowedKeys...)
@@ -1563,6 +1564,10 @@ func ListAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 			UserID:    eggclient.ReadEggOwner(dir),
 			Email:     eggclient.ReadEggOwnerEmail(dir),
 		}
+		metadata, metadataErr := sessionrole.Read(dir)
+		if metadataErr == nil {
+			info.Pinned, info.Role = metadata.Pinned, metadata.Role
+		}
 		link := eggclient.SessionConversationLink(cfg, sessionID)
 		info.ConversationID, info.RootConversationID, info.ParentConversationID, info.ConversationRole = link.ConversationID, link.RootConversationID, link.ParentConversationID, link.ConversationRole
 		info.Lifecycle = eggclient.SessionLifecycleSummary(context.Background(), cfg, sessionID)
@@ -1580,6 +1585,45 @@ func ListAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 		out = append(out, info)
 	}
 	sortSessionsByStart(out, started)
+	return out
+}
+
+// A pin is a persistent reference, including after its process stops. Web
+// inventory retains stopped coordinator pins so heartbeat can show the exit;
+// active-only runtime discovery, PTY attachment and artifact gates stay intact.
+func ListWebEggSessions(cfg *config.Config) []ws.SessionInfo {
+	out := ListAliveEggSessions(cfg)
+	seen := make(map[string]bool, len(out))
+	for _, session := range out {
+		seen[session.SessionID] = true
+	}
+	entries, err := os.ReadDir(filepath.Join(cfg.Dir, "eggs"))
+	if err != nil {
+		return out
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || seen[entry.Name()] {
+			continue
+		}
+		dir := filepath.Join(cfg.Dir, "eggs", entry.Name())
+		metadata, err := sessionrole.Read(dir)
+		if err != nil || !metadata.Pinned || metadata.Role != "coordinator" {
+			continue
+		}
+		if _, alive := eggclient.ReadAliveEggPID(dir); alive {
+			continue // An unconfirmed live process is not an archived pin.
+		}
+		agent, cwd := eggclient.ReadEggMeta(dir)
+		if agent == "" {
+			continue
+		}
+		info := ws.SessionInfo{SessionID: entry.Name(), Name: eggclient.ReadSessionName(dir), Agent: agent, CWD: cwd,
+			UserID: eggclient.ReadEggOwner(dir), Email: eggclient.ReadEggOwnerEmail(dir), Pinned: true, Role: metadata.Role,
+			Lifecycle: eggclient.SessionLifecycleSummary(context.Background(), cfg, entry.Name())}
+		link := eggclient.SessionConversationLink(cfg, entry.Name())
+		info.ConversationID, info.RootConversationID, info.ParentConversationID, info.ConversationRole = link.ConversationID, link.RootConversationID, link.ParentConversationID, link.ConversationRole
+		out = append(out, info)
+	}
 	return out
 }
 

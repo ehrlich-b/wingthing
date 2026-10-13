@@ -32,7 +32,7 @@ var scopedParentTools = append(append([]string{}, conversationBrokerTools...),
 
 // Coordinator authority is explicit at launch and kept in protected wing state.
 // It intersects the same owner grants, path ceilings and finite spawn bounds.
-var coordinatorParentTools = append(append([]string{}, scopedParentTools...), "agent_list", "terminal_list", "session_pin")
+var coordinatorParentTools = append(append([]string{}, scopedParentTools...), "agent_list", "terminal_list", "session_pin", "session_report")
 
 func sealMailboxPolicy(cfg *config.Config, policy *egg.EggConfig) error {
 	state := wingpolicy.CanonicalPolicyPath(cfg.Dir)

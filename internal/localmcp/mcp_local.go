@@ -631,6 +631,8 @@ func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMe
 		data, err = s.toolAgentSteer(arguments)
 	case "agent_stop":
 		data, err = s.toolAgentStop(arguments)
+	case "session_report":
+		data, err = s.ToolSessionReport(ctx, arguments)
 	case "session_pin":
 		data, err = s.ToolSessionPin(ctx, arguments)
 	case "terminal_rename":

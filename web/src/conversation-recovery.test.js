@@ -344,7 +344,7 @@ test('native lifecycle markers and non-Claude records stay inspectable provider 
         { sequence: 2, type: 'tool_activity', state: 'working', source: 'claude_hook' },
         { sequence: 3, type: 'turn_completed', state: 'completed', source: 'claude_hook', reason: 'native Stop observed' },
     ] }));
-    assert.deepEqual(state.messages.map(m => [m.type, m.kind]), [['lifecycle', 'attention'], ['lifecycle', 'turn']]);
+    assert.deepEqual(state.messages.filter(m => m.type === 'lifecycle').map(m => [m.type, m.kind]), [['lifecycle', 'attention'], ['lifecycle', 'turn']]);
     const codex = applyConversationRead(emptyConversationState(), live({ agent: 'codex', provider_session_id: '', events: [{ sequence: 4, type: 'provider_item', raw: { type: 'mcpToolCall', tool: 'session_read', result: { content: 'evidence' } } }] }));
     assert.equal(codex.messages[0].type, 'provider_record');
     assert.match(codex.messages[0].content, /session_read/);

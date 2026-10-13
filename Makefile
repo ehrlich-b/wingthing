@@ -410,3 +410,10 @@ test-coordinator-role-native: | web/dist
 
 test-coordinator-role-race: | web/dist
 	$(GO) test -race -p 2 -count=1 ./internal/sessionrole ./internal/egg ./internal/eggclient ./internal/localmcp ./internal/dashboard ./internal/control ./internal/wingpolicy ./cmd/wt -run 'Role|Pin|Pinned|SessionPS|RegistryDefines|ScopedParent|IsUnderPathsRoot' -timeout 180s
+
+.PHONY: test-session-report test-coordinator-home-web
+test-session-report: | web/dist
+	$(GO) test -p 2 -count=1 ./internal/egg ./internal/localmcp ./internal/control ./internal/wing ./cmd/wt -run 'SessionReport|RegistryDefinesExpectedSurfaceOperations' -timeout 180s
+
+test-coordinator-home-web:
+	cd web && $(NODE) test/coordinator-home-browser.mjs
