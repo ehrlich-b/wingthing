@@ -28,6 +28,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/fsutil"
 
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/sessionrole"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/google/uuid"
 )
@@ -592,6 +593,7 @@ func validateExactAgentArgs(args []string) error {
 }
 
 type SpawnEggOpts struct {
+	RoleMetadata           sessionrole.Metadata
 	ForkSession            bool
 	nameLock               *os.File // held by the owner-scoped fork operation
 	ResumeSessionID        string
@@ -761,6 +763,14 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if len(opts) > 0 {
 		o = opts[0]
 	}
+	var roleErr error
+	o.RoleMetadata, roleErr = spawnRoleMetadata(cfg, o)
+	if roleErr != nil {
+		return nil, roleErr
+	}
+	if err := validateRoleSpawn(o); err != nil {
+		return nil, err
+	}
 	if o.ToolSocketPath != "" {
 		if err := egg.ValidateSocketPath(o.ToolSocketPath); err != nil {
 			return nil, err
@@ -830,6 +840,14 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create egg dir: %w", err)
+	}
+	if o.RoleMetadata != (sessionrole.Metadata{}) {
+		if agentName != "claude" && o.RoleMetadata.Role != "" {
+			return nil, errors.New("role context requires Claude")
+		}
+		if err := sessionrole.Write(dir, o.RoleMetadata); err != nil {
+			return nil, err
+		}
 	}
 	if err := WriteSessionPrincipal(dir, o.Principal); err != nil {
 		return nil, err
@@ -1478,6 +1496,57 @@ func SetupAPIKeyHelper(agentName string, envMap map[string]string, effectiveHome
 	}
 	if err := daemonctl.WriteAtomicMetadataFile(settingsDst, append(data, '\n'), 0644); err != nil {
 		return fmt.Errorf("write API key settings: %w", err)
+	}
+	return nil
+}
+
+// Resuming transfers the owning wing's pin/role state, including explicit unpin.
+// Forks do not inherit a pin: their new identity remains ordinary by default.
+func spawnRoleMetadata(cfg *config.Config, opts SpawnEggOpts) (sessionrole.Metadata, error) {
+	if opts.ResumeSourceSessionID == "" || opts.ForkSession {
+		return opts.RoleMetadata, sessionrole.Validate(opts.RoleMetadata.Role)
+	}
+	if err := ValidateSessionID(opts.ResumeSourceSessionID); err != nil {
+		return sessionrole.Metadata{}, err
+	}
+	return sessionrole.Read(filepath.Join(cfg.Dir, "eggs", opts.ResumeSourceSessionID))
+}
+
+func validateRoleSpawn(opts SpawnEggOpts) error {
+	if opts.RoleMetadata.Role == "" {
+		return nil
+	}
+	if !opts.OmitBrowserBridge || len(opts.ProtectedWriteTargets) == 0 || !containsArg(opts.AgentArgs, "--strict-mcp-config") || !containsArg(opts.AgentArgs, "--mcp-config") {
+		return errors.New("role sessions require the wing-owned protected MCP launch; resume through wing agent_start with resume_session")
+	}
+	return nil
+}
+
+func containsArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if arg == want {
+			return true
+		}
+	}
+	return false
+}
+
+// Standalone providers cannot apply a wing-owned role's protected mailbox.
+// Refuse before restoring history, rather than copying a coordinator pin into
+// an ordinary egg whose provider has no fleet MCP.
+func ValidateStandaloneRoleResume(cfg *config.Config, source string) error {
+	if err := ValidateSessionID(source); err != nil {
+		return err
+	}
+	m, err := sessionrole.Read(filepath.Join(cfg.Dir, "eggs", source))
+	if err != nil {
+		return err
+	}
+	if m.Role != "" {
+		return errors.New("role sessions must resume through wing agent_start with resume_session; standalone --resume cannot preserve their protected MCP")
 	}
 	return nil
 }
