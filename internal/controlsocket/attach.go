@@ -133,6 +133,11 @@ func DialAttachment(ctx context.Context, dir string, hello Hello) (*SessionStrea
 }
 
 func DialAttachmentPath(ctx context.Context, path string, hello Hello) (*SessionStream, Welcome, error) {
+	var err error
+	hello, err = expectedHello(ctx, hello)
+	if err != nil {
+		return nil, Welcome{}, err
+	}
 	if hello.Attach == nil {
 		return nil, Welcome{}, errors.New("attachment is required")
 	}

@@ -22,8 +22,10 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
+	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
@@ -409,6 +411,13 @@ func eggExplainCmd() *cobra.Command {
 
 // eggSpawn starts an agent session in a per-session egg and optionally attaches the terminal.
 func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, resumeID, name, cwd string, detach, jsonOutput, unsandboxed, preserveEmptyAgentArgs bool, agentArgs []string) error {
+	if controlsocket.ExpectedWingID(ctx) != "" {
+		if configPath != "" || trace || resumeID != "" || unsandboxed {
+			return errors.New("verified wing launch uses receiving wing policy; per-launch config, trace, resume and unsandboxed are not supported")
+		}
+		streams := remotepkg.Streams(ctx)
+		return verifiedStart(ctx, streams.In, streams.Out, "agent_start", map[string]any{"agent": agentName, "label": name, "cwd": cwd, "args": agentArgs}, detach, jsonOutput)
+	}
 	if trace && runtime.GOOS != "linux" {
 		return fmt.Errorf("--trace requires Linux (strace is not available on %s)", runtime.GOOS)
 	}

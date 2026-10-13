@@ -415,7 +415,7 @@ test-coordinator-role-race: | web/dist
 .PHONY: test-storyboard-machines-runs
 test-storyboard-machines-runs: | web/dist
 	$(stable-build)
-	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 ./internal/dashboard ./internal/launchplan ./cmd/wt -run '^Test(Diagnostics|MachineDetails|RunReceipt|LaunchPlanHumanReach|StoryboardMachinesRunsPTY|BuiltWTConnectRememberedSSHRunSurvivesDrop|MCPConnect(Verifies|Upgrade))' -v -count=1 -timeout=3m
+	WT_TEST_BINARY="$(CURDIR)/wt" $(GO) test -p 2 ./internal/dashboard ./internal/launchplan ./cmd/wt -run '^Test(Diagnostics|MachineDetails|RunReceipt|LaunchPlanHumanReach|StoryboardMachinesRunsPTY|BuiltWTConnectRememberedSSHRunSurvivesDrop|MCPConnect(Verifies|Upgrade)|BuiltWTVerifiedSSH|VerifiedCLI|VerifiedProfile)' -v -count=1 -timeout=3m
 
 .PHONY: test-storyboard-runs-offline
 test-storyboard-runs-offline: | web/dist

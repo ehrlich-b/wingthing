@@ -40,3 +40,16 @@ receipt and report behavior, not real provider login or real SSH host trust.
 Run `make test-storyboard-machines-runs` for unit and built-PTY journeys.
 `WT_STORYBOARD_EVIDENCE=/absolute/directory` retains per-card PTY byte streams,
 120x36 screen text and executable SHA256 for faithful screenshot rendering.
+
+Verified profiles also bind native SSH inventory, attachment, rename, stop and
+pin to the saved wing ID at each receiving control handshake. A replaced wing
+at the same host/state path is refused before terminal I/O or mutation. Inventory
+returns the authenticated origin wing ID. No identity failure or unavailable
+verified wing falls back to standalone egg access or starts a replacement daemon.
+Existing CLI-only profiles retain their standalone SSH contract. A receiving
+binary without the identity guard fails with an upgrade diagnostic.
+
+New terminal/agent launches through a verified profile use the receiving wing's
+authorized start primitive and policy. Per-launch config, trace, resume and
+unsandboxed selectors are refused rather than ignored. Other standalone-only
+CLI verbs are unavailable on the verified route; use its typed MCP interface.

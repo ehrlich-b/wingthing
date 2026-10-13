@@ -7,6 +7,7 @@ import (
 	"runtime"
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
+	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 
 	"github.com/spf13/cobra"
@@ -54,6 +55,12 @@ func terminalCmd() *cobra.Command {
 }
 
 func terminalSpawn(cmd *cobra.Command, command []string, name, configPath, cwd string, detach, trace, jsonOutput, unsandboxed bool) error {
+	if controlsocket.ExpectedWingID(cmd.Context()) != "" {
+		if configPath != "" || trace || unsandboxed {
+			return fmt.Errorf("verified wing launch uses receiving wing policy; per-launch config, trace and unsandboxed are not supported")
+		}
+		return verifiedStart(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), "terminal_start", map[string]any{"command": command, "label": name, "cwd": cwd}, detach, jsonOutput)
+	}
 	sessionID := cmdutil.NewRuntimeID()
 	cfg, err := eggclient.LoadConfigForEgg(sessionID)
 	if err != nil {

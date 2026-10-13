@@ -66,6 +66,7 @@ func newRootCommand() *cobra.Command {
 	var remoteBinary string
 	var remoteCWD string
 	var remoteState string
+	var remoteWingID, expectedWingID string
 	root := &cobra.Command{
 		Use:           config.BinaryName(),
 		Short:         "wingthing — an agent manager for agents",
@@ -88,11 +89,15 @@ func newRootCommand() *cobra.Command {
 	root.PersistentFlags().StringVar(&remoteBinary, "remote-binary", config.BinaryName(), "channel-matching executable or absolute path on the remote host")
 	root.PersistentFlags().StringVar(&remoteState, "remote-state", "", "absolute state directory on the remote host (sets WINGTHING_DIR and WINGTHING_PREVIEW_DIR there)")
 	root.PersistentFlags().StringVar(&remoteCWD, "remote-cwd", "", "remote working directory for bare interactive entry")
+	root.PersistentFlags().StringVar(&remoteWingID, "remote-wing-id", "", "expected wing on the SSH route")
+	root.PersistentFlags().StringVar(&expectedWingID, "expected-wing-id", "", "receiver identity guard")
+	_ = root.PersistentFlags().MarkHidden("remote-wing-id")
+	_ = root.PersistentFlags().MarkHidden("expected-wing-id")
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("remote") || cmd.Flags().Changed("remote-binary") || cmd.Flags().Changed("remote-state") || cmd.Flags().Changed("remote-cwd") {
 			return errors.New("remote routing was not initialized")
 		}
-		return nil
+		return bindVerifiedCLI(cmd, expectedWingID)
 	}
 
 	root.AddCommand(

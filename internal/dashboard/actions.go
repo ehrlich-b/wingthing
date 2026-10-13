@@ -256,6 +256,8 @@ func validateRemoteAction(ctx context.Context, args []string, streams remotepkg.
 			route.WTBinary = args[i+1]
 		case "--remote-state":
 			route.WingthingDir = args[i+1]
+		case "--remote-wing-id":
+			route.WingID = args[i+1]
 		default:
 			goto command
 		}
@@ -276,7 +278,7 @@ command:
 	}
 	for _, name := range eggclient.SortedRemoteNames(profiles) {
 		current := profiles[name]
-		if current.SSHTarget == route.SSHTarget && current.Binary() == route.Binary() && current.WingthingDir == route.WingthingDir {
+		if current.SSHTarget == route.SSHTarget && current.Binary() == route.Binary() && current.WingthingDir == route.WingthingDir && current.WingID == route.WingID {
 			return eggclient.ValidateRemoteSession(ctx, name, current, id, streams)
 		}
 	}

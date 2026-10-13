@@ -60,7 +60,7 @@ func ensureClaudeWing(ctx context.Context, dir, clientName string) (*controlsock
 		}
 		return nil, startupErr
 	}
-	if err == nil || clientName != "" || !missingClaudeWing(err) {
+	if err == nil || controlsocket.ExpectedWingID(ctx) != "" || clientName != "" || !missingClaudeWing(err) {
 		return client, err
 	}
 	// Load validates the selected channel and state before lifecycle mutations;

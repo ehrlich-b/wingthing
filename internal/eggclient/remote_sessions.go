@@ -28,6 +28,7 @@ const (
 // Only the internal inventory response is versioned. Public session ps --json
 // remains an array, with machine and error fields added to its rows.
 type RemoteSessionInventory struct {
+	WingID          string         `json:"wing_id,omitempty"`
 	Version         string         `json:"version"`
 	ContractVersion string         `json:"contract_version"`
 	Sessions        []LocalSession `json:"sessions"`
@@ -128,6 +129,9 @@ func QueryRemoteSessions(localVersion string, ctx context.Context, name string, 
 			contract = "unsupported"
 		}
 		return nil, mismatch(remoteVersion, contract, "session inventory contract is incompatible")
+	}
+	if remote.WingID != "" && inventory.WingID != remote.WingID {
+		return nil, fmt.Errorf("remote %q pinned wing identity mismatch; verify the host and wing out of band", name)
 	}
 	return inventory.Sessions, nil
 }
