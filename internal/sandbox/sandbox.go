@@ -48,6 +48,7 @@ type Config struct {
 	SessionID    string        // unique ID for cgroup naming
 	UserHome     string        // per-user home override (empty = os.UserHomeDir)
 	HostHome     string        // explicit host HOME for policy emission (empty = os.UserHomeDir)
+	Diagnostics  io.Writer     // nil retains backend logging; io.Discard hides only diagnostics
 	Trace        bool          // wrap command with strace (Linux only)
 	AllowSockets []string      // Unix socket paths to allow outbound connections (macOS Seatbelt)
 	// ProtectedWriteTargets are host-owned absolute paths (e.g. controller
@@ -179,4 +180,12 @@ func isWSL2Kernel() bool {
 
 func isWSLKernelRelease(release string) bool {
 	return strings.Contains(strings.ToLower(release), "microsoft")
+}
+
+func logDiagnostic(cfg Config, format string, args ...any) {
+	if cfg.Diagnostics == nil {
+		log.Printf(format, args...)
+		return
+	}
+	fmt.Fprintf(cfg.Diagnostics, format+"\n", args...)
 }

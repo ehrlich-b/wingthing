@@ -4,7 +4,6 @@ package sandbox
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,7 +72,6 @@ func newCgroupManager(sessionID string, memLimit uint64, pidLimit uint32) (*cgro
 		}
 	}
 
-	log.Printf("linux sandbox: cgroup created at %s (memory=%d pids=%d)", cgroupPath, memLimit, pidLimit)
 	return &cgroupManager{path: cgroupPath}, nil
 }
 

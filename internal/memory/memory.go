@@ -2,6 +2,7 @@ package memory
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -46,7 +47,9 @@ func (s *MemoryStore) Load(name string) string {
 
 	mf, err := s.parseFile(name)
 	if err != nil {
-		log.Printf("memory: warning: %s: %v", name, err)
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("memory: warning: %s: %v", name, err)
+		}
 		return ""
 	}
 	s.cache[name] = mf
@@ -57,7 +60,9 @@ func (s *MemoryStore) Load(name string) string {
 func (s *MemoryStore) LoadAll() {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
-		log.Printf("memory: warning: read dir %s: %v", s.dir, err)
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("memory: warning: read dir %s: %v", s.dir, err)
+		}
 		return
 	}
 	for _, e := range entries {

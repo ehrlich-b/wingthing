@@ -125,7 +125,7 @@ func newLinuxSandbox(cfg Config, checkNamespace func(bool) error, createCgroup f
 		}
 	}
 
-	log.Printf("linux sandbox: created tmpdir=%s network=%s cgroup=%v", dir, cfg.NetworkNeed, cg != nil)
+	logDiagnostic(cfg, "linux sandbox: created tmpdir=%s network=%s cgroup=%v", dir, cfg.NetworkNeed, cg != nil)
 	return &linuxSandbox{cfg: cfg, tmpDir: dir, cgroup: cg, userNamespace: !hasNamespaceCapability}, nil
 }
 
@@ -598,7 +598,7 @@ func (s *linuxSandbox) rlimits() []rlimitPair {
 		mem := s.cfg.MemLimit
 		const minVAS = 4 * 1024 * 1024 * 1024 // 4GB
 		if mem < minVAS {
-			log.Printf("linux sandbox: bumping RLIMIT_AS from %dMB to 4GB (JIT needs virtual address space)", mem/1024/1024)
+			logDiagnostic(s.cfg, "linux sandbox: bumping RLIMIT_AS from %dMB to 4GB (JIT needs virtual address space)", mem/1024/1024)
 			mem = minVAS
 		}
 		pairs = append(pairs, rlimitPair{unix.RLIMIT_AS, mem})
