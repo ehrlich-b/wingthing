@@ -212,6 +212,9 @@ printf launched
 				if err != nil {
 					t.Fatal(err)
 				}
+				// Use the explicit provider home mounted by the browser policy,
+				// even when the runner's temporary root is outside /tmp.
+				cmd.Env = append(cmd.Env, "HOME="+home)
 				output, runErr := cmd.CombinedOutput()
 				if os.IsPermission(runErr) {
 					t.Skipf("namespace creation unavailable: %v", runErr)
