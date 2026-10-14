@@ -231,7 +231,7 @@ func TestNorthstarPTYInventoryBudget(t *testing.T) {
 		}
 		start := time.Now()
 		h := northstarStartPTY(t, f, binary, 120, 40)
-		h.expect("first frame", 0, "R refresh", "q quit")
+		h.expect("first frame", 0, "R re", "q quit")
 		firstFrame := time.Since(start)
 		northstarInventoryWait(t, "outstanding local probes", func() bool { return active.Load() > 0 })
 		reactionStart := time.Now()
@@ -239,7 +239,7 @@ func TestNorthstarPTYInventoryBudget(t *testing.T) {
 		h.expect("filter while inventory waits", rev, "Search sessions")
 		keyReaction := time.Since(reactionStart)
 		rev = h.send("\x1b")
-		h.expect("leave filter", rev, "R refresh")
+		h.expect("leave filter", rev, "R re")
 		h.expect("healthy local metadata", h.send("/local-19\r"), "local 19", "? Unknown")
 		localReady := time.Since(start)
 		phaseMetrics := fmt.Sprintf("first_frame=%s local_metadata=%s key_response=%s\n", firstFrame, localReady, keyReaction)
@@ -267,7 +267,7 @@ func TestNorthstarPTYInventoryBudget(t *testing.T) {
 		// Start a second local query and coalesce repeated R while slow SSH
 		// remains in flight. Quit with RPC and SSH readers still outstanding.
 		rev = h.send("RRRR")
-		h.expect("explicit refresh", rev, "R refresh")
+		h.expect("explicit refresh", rev, "R re")
 		northstarInventoryWait(t, "new local status RPC", func() bool { return active.Load() > 0 && calls.Load() > 20 })
 		rev = h.send("j")
 		h.expect("navigate while refresh waits", rev, "> local 11")

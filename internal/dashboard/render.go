@@ -243,7 +243,7 @@ func (s *state) selectedLines(r row, now time.Time, width int) []string {
 		if updated := s.machines[r.machine].updated; !updated.IsZero() {
 			metadata = "? Last seen " + age(int64(now.Sub(updated)/time.Second)) + " ago · " + routeCause(s.machines[r.machine].err)
 		}
-		action = "R retry   i details"
+		action = "R reconnect   i details"
 	}
 	// A normal title fits in full. Longer remote titles retain identity and an
 	// explicit route to their complete, scrollable detail instead of taking over.
@@ -347,7 +347,7 @@ func keyHints(s *state) []string {
 	if len(s.rows()) == 0 && s.filter == "" {
 		for name, m := range s.machines {
 			if (s.machineFilter == "" || name == s.machineFilter) && (s.stale(name) || m.updated.IsZero()) {
-				return []string{"R refresh   a agents   m machines   h runs", "? help   q quit"}
+				return []string{s.refreshKey() + "   a agents   m machines   h runs", "? help   q quit"}
 			}
 		}
 	}
@@ -357,7 +357,18 @@ func keyHints(s *state) []string {
 	if len(s.rows()) == 0 && s.filter == "" {
 		return []string{"n new session   a agents   m machines   h runs", "? help   q quit"}
 	}
-	return []string{"Enter open   / search   n new   ! needs you   . actions", "j/k move   m machines   h runs   R refresh   ? help   q quit   Ctrl+B then q detaches"}
+	return []string{"Enter open   / search   n new   ! needs you   . actions", "j/k move   m machines   h runs   " + s.refreshKey() + "   ? help   q quit   Ctrl+B then q detaches"}
+}
+
+// refreshKey names R for what it does now: reconnect when a machine is
+// unreachable, refresh otherwise.
+func (s *state) refreshKey() string {
+	for name := range s.machines {
+		if s.stale(name) {
+			return "R reconnect"
+		}
+	}
+	return "R refresh"
 }
 
 func (s *state) hasAgent() bool {
@@ -591,7 +602,7 @@ func render(s *state, width, height int, now time.Time) string {
 			if loading {
 				set(3, "Loading sessions...", plain)
 			}
-			set(5, "R retry   m machines", plain)
+			set(5, "R reconnect   m machines", plain)
 			set(6, "", plain)
 			set(7, "", plain)
 		} else if !s.hasAgent() && (s.machineFilter == "" || s.machineFilter == "local") {
@@ -643,7 +654,7 @@ func render(s *state, width, height int, now time.Time) string {
 		}
 		for _, name := range s.machineNames() {
 			if s.stale(name) {
-				search += "   " + machineLabel(name) + " not searched, R retry"
+				search += "   " + machineLabel(name) + " not searched, R reconnect"
 				break
 			}
 		}
@@ -719,7 +730,7 @@ func render(s *state, width, height int, now time.Time) string {
 		}
 	}
 	if width < 65 && s.mode == navigate && !s.recent {
-		hints = []string{"Enter open  / search  ! attention  n new", "j/k move m scope R refresh ? help q quit"}
+		hints = []string{"Enter open  / search  ! attention  n new", "j/k move m scope " + s.refreshKey() + " ? help q quit"}
 	}
 	for i, text := range hints {
 		set(height-2+i, text, secondary)
@@ -879,9 +890,6 @@ func connection(m machine, now time.Time) string {
 		} else {
 			text += " · sessions unavailable"
 		}
-		if !m.attempted.IsZero() {
-			text += " · retried " + age(int64(now.Sub(m.attempted)/time.Second)) + " ago"
-		}
 		return text
 	}
 	if m.updated.IsZero() {
@@ -984,7 +992,7 @@ func overlayLines(s *state, now time.Time) []string {
 		lines = append(lines, "Unread response.")
 	}
 	if s.stale(r.machine) {
-		lines = append(lines, "", routeCause(m.err), "Esc, then R to retry.")
+		lines = append(lines, "", routeCause(m.err), "Esc, then R to reconnect.")
 	} else {
 		// ASKING already says the agent is waiting; RECENT needs the rows.
 		if r.Status == "blocked" {

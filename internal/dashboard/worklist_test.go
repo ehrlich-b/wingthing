@@ -87,7 +87,7 @@ func TestInventoryFailureDatesAttemptWithoutRefreshingCache(t *testing.T) {
 		t.Fatal("failed attempt dated cached sessions as fresh")
 	}
 	text := connection(m, retry)
-	if !strings.Contains(text, "last seen 14m ago") || !strings.Contains(text, "retried 0s ago") {
+	if !strings.Contains(text, "last seen 14m ago") || strings.Contains(text, "retried") {
 		t.Fatal(text)
 	}
 }

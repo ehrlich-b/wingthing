@@ -206,11 +206,10 @@ func (s *state) machineLines(now time.Time) []string {
 	if name == "local" {
 		return append(lines, "", "Add another machine:", "wt remote add Studio studio.local")
 	}
-	r := s.remotes[name]
-	if r.WingID != "" && r.ControlSocket != "" && r.ControlVersion != "" {
+	if r := s.remotes[name]; r.WingID != "" && r.ControlSocket != "" && r.ControlVersion != "" {
 		return append(lines, "", "wt checks this is the same machine each time it connects.")
 	}
-	return append(lines, "", "wt remembers this machine after its next connect.")
+	return lines
 }
 
 // accessLine says in one line why a machine's sessions are gone and what to do.

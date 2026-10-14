@@ -252,7 +252,11 @@ func (s *state) paperPane(r row, now time.Time, width, height int) []string {
 		appendText(entry, 2)
 	}
 	done, failed := 0, 0
+	var unknown []string
 	for name, m := range s.machines {
+		if m.err != "" || m.updated.IsZero() {
+			unknown = append(unknown, machineLabel(name))
+		}
 		if s.stale(name) {
 			continue
 		}
@@ -269,13 +273,14 @@ func (s *state) paperPane(r row, now time.Time, width, height int) []string {
 			}
 		}
 	}
-	lines = append(lines, "", "TODAY", fmt.Sprintf("%d done · %d failed", done, failed))
-	for _, m := range s.machines {
-		if m.err != "" || m.updated.IsZero() || s.registryError != "" {
-			lines = append(lines, "Counts skip unavailable machines.")
-			break
-		}
+	today := fmt.Sprintf("%d done · %d failed", done, failed)
+	switch {
+	case s.registryError != "" || len(unknown) > 1:
+		today += " · some machines unknown"
+	case len(unknown) == 1:
+		today += " · " + unknown[0] + " unknown"
 	}
+	lines = append(lines, "", "TODAY", today)
 	if len(lines) > height {
 		lines = lines[:height]
 	}

@@ -660,7 +660,7 @@ func TestNorthstarPTYSessionNavigator(t *testing.T) {
 	h.expect("40x12 help scroll / detach", h.send("\x1b[6~"), "Ctrl+B then q")
 	h.expect("40x12 return", h.send("\x1b"), "local parent")
 	rev = h.resize(120, 40)
-	h.expect("120x40 restored", rev, "local parent", "forge renamed", "offline unreachable", "R refresh")
+	h.expect("120x40 restored", rev, "local parent", "forge renamed", "offline unreachable", "R reconnect")
 	h.exit("q")
 	if local.killed.Load() != 0 || forge.killed.Load() != 0 {
 		t.Fatal("quitting stopped surviving sessions")

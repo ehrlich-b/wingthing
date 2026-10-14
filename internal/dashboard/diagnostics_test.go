@@ -106,7 +106,7 @@ func TestMachineDetailsUnverifiedProfileAndPicker(t *testing.T) {
 	s.handle("m")
 	s.picker = len(s.machineNames())
 	s.handle("i")
-	if s.mode != machineDetails || !strings.Contains(strings.Join(s.machineLines(time.Now()), "\n"), "remembers this machine after its next connect") {
+	if s.mode != machineDetails || strings.Contains(strings.Join(s.machineLines(time.Now()), "\n"), "same machine") {
 		t.Fatal("legacy profile claimed verified")
 	}
 	s.handle("escape")

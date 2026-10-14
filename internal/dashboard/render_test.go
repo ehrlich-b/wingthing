@@ -138,14 +138,14 @@ func TestDashboardFreshnessDetailsHelpAndAttention(t *testing.T) {
 	s.remotes = map[string]config.Remote{"work": {SSHTarget: "fake-forge", WTBinary: "/opt/wing thing/wt", WingthingDir: "/remote/state"}}
 	s.selected = "work:one"
 	text := render(s, 80, 24, now)
-	for _, want := range []string{"work unreachable", "Last seen 5m ago", "remote · ", "? Last seen", "R retry", "? help"} {
+	for _, want := range []string{"work unreachable", "Last seen 5m ago", "remote · ", "? Last seen", "R reconnect", "? help"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("missing %q", want)
 		}
 	}
 	drive(s, "i")
 	detail := strings.Join(renderedLines(t, render(s, 80, 24, now), 80, 24), "\n")
-	for _, want := range []string{"Machine: work", "Project: app", "Permissions:", "Esc, then R to retry."} {
+	for _, want := range []string{"Machine: work", "Project: app", "Permissions:", "Esc, then R to reconnect."} {
 		if !strings.Contains(detail, want) {
 			t.Errorf("missing %q", want)
 		}
