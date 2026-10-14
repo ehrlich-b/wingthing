@@ -55,7 +55,7 @@ func launchFailureDashboard(t *testing.T, f *northstarFixture, binary, cwd strin
 	h.expect("navigator ready", 0, "wt   ", "m machines")
 	h.expect("provider prompt", h.send("n"), "Agent (blank = shell)")
 	h.expect("cwd prompt", h.send("\x15claude\r"), "Working directory")
-	h.expect("denial returned to navigator", h.send("\x15"+cwd+"\r"), "wt   ", "Session did not start", "Policy refused launch", "d diagnostics")
+	h.expect("denial returned to navigator", h.send("\x15"+cwd+"\r"), "wt   ", "Session did not start", "Policy refused launch", "D diagnostics")
 	return h
 }
 
@@ -271,7 +271,7 @@ exec /bin/sh -c "$1"
 				if admitted {
 					h.expect("remote exact reattach returned to navigator", mark, "wt   ", "Session started", "Attachment failed", "Check it before retrying")
 				} else {
-					h.expect("remote policy returned to navigator", mark, "wt   ", "Session did not start", "Policy refused launch", "d diagnostics")
+					h.expect("remote policy returned to navigator", mark, "wt   ", "Session did not start", "Policy refused launch", "D diagnostics")
 				}
 				if starts.Load() != 1 {
 					t.Fatalf("remote launch repeated: %d", starts.Load())

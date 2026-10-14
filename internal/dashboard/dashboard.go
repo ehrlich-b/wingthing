@@ -45,7 +45,11 @@ func Run(ctx context.Context, version string, streams remotepkg.IO) error {
 	inv.reload(s, remotes, registryErr)
 	inv.queryProfile = func(ctx context.Context, name string, profile config.Remote) ([]eggclient.LocalSession, error) {
 		if name == "local" {
-			return eggclient.DiscoverActiveSessions(ctx, cfg)
+			sessions, err := eggclient.DiscoverActiveSessions(ctx, cfg)
+			if err == nil {
+				readPermissions(ctx, cfg.Dir, sessions)
+			}
+			return sessions, err
 		}
 		return eggclient.QueryRemoteSessions(version, ctx, name, profile, streams)
 	}
@@ -113,8 +117,9 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 		}
 	}
 	type actionResult struct {
-		row row
-		err error
+		message string
+		row     row
+		err     error
 	}
 	actionDone := make(chan actionResult, 1)
 	type diagnosticReply struct {
@@ -137,7 +142,7 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			if s.isOverlay() {
 				lineCount := 0
 				for _, line := range overlayLines(s, time.Now()) {
-					lineCount += len(wrap(line, max(1, width)))
+					lineCount += len(s.overlayWrap(line, max(1, width)))
 				}
 				s.overlayLimit = max(0, lineCount-max(0, height-6))
 				s.overlayOffset = min(s.overlayOffset, s.overlayLimit)
@@ -207,6 +212,10 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			}
 			actionErr := result.err
 			s.message = "Done"
+			if result.message != "" {
+				s.message = result.message
+				s.permissionNotice = result.message
+			}
 			if actionErr != nil {
 				s.message = actionErr.Error()
 			}
@@ -335,6 +344,26 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			}
 			if act.kind != runAttach && act.row.generation != s.machines[act.row.machine].generation {
 				s.message = "Cancelled: saved profile " + act.row.machine + " changed or was removed; select the current machine before acting"
+				continue
+			}
+			if act.permission != nil {
+				s.busy, s.message = true, "Sending decision…"
+				actionCtx, stop := context.WithTimeout(ctx, 5*time.Second)
+				activeAction, actionCancel = act.row, stop
+				target, response := act.row, *act.permission
+				actions.Add(1)
+				go func() {
+					defer actions.Done()
+					defer stop()
+					message, err := sendPermission(actionCtx, s.localDir, response)
+					if err != nil {
+						message = "Decision not confirmed. Answer in terminal."
+					}
+					select {
+					case actionDone <- actionResult{row: target, message: message, err: err}:
+					case <-ctx.Done():
+					}
+				}()
 				continue
 			}
 			args, actionErr := actionArgs(*act, remotes)

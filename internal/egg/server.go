@@ -27,6 +27,7 @@ import (
 	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	"github.com/ehrlich-b/wingthing/internal/permissions"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
@@ -59,6 +60,7 @@ type Server struct {
 	inputLease     inputLease
 	inputMu        sync.Mutex
 	runTurns       *runTurnRuntime
+	permissions    *permissions.Broker
 }
 
 // Session holds a single PTY process and its state.
@@ -643,6 +645,16 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	}
 	args = prepared.Args
 	envMap = prepared.Environment
+	if rc.Agent == "claude" && len(rc.Command) == 0 && lifecycleSettingsPath != "" {
+		cleanup, permissionErr := s.preparePermissions(ctx, home, lifecycleSettingsPath, rc.ProviderSessionID, envMap)
+		if permissionErr != nil {
+			return permissionErr
+		}
+		defer cleanup()
+		if socket := permissionSocketForSandbox(home, filepath.Base(s.dir)); socket != "" {
+			prepared.Sandbox.AllowSockets = append(prepared.Sandbox.AllowSockets, socket)
+		}
+	}
 	// Preparation merges the data-home environment again. Apply the Mac
 	// credential account context only after that final merge, while keeping
 	// sandbox mounts, lifecycle hooks and history rooted in the data home.
@@ -757,6 +769,11 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			sbCfg.ProxyPort = domainProxy.Port()
 		}
 		sbCfg.AllowSockets = sandboxAllowedSockets(rc.ToolSocketPath, envMap)
+		if s.permissions != nil {
+			if socket := permissionSocketForSandbox(home, filepath.Base(s.dir)); socket != "" {
+				sbCfg.AllowSockets = append(sbCfg.AllowSockets, socket)
+			}
+		}
 		configSnap = SnapshotAgentConfig(rc.Agent, rc.UserHome, &sbCfg)
 		sb, err = sandbox.New(sbCfg)
 		if err != nil {
@@ -965,6 +982,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	)
 	pb.RegisterEggServer(s.grpcServer, s)
 	RegisterRunTurnRPC(s.grpcServer, s)
+	registerPermissionRPC(s.grpcServer, s)
 
 	log.Printf("egg: serving on %s (pid %d)", lis.Addr(), os.Getpid())
 

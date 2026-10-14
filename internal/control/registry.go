@@ -12,6 +12,7 @@ import (
 type Surface string
 
 const (
+	SurfaceHuman    Surface = "human"
 	SurfaceLocalMCP Surface = "local-mcp"
 	SurfaceHTTPMCP  Surface = "http-mcp"
 	// SurfaceDirectMCP is the native multi-wing adapter. Portal operations are
@@ -270,6 +271,8 @@ func buildTools() []Tool {
 	both := []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}
 
 	tools := []Tool{
+		{Name: "permission_list", Title: "Pending permissions", Description: "Read a live Claude Bash request on an exact personal wing and session.", InputSchema: objectSchema(map[string]any{"wing_id": stringProperty("Exact owning wing"), "session_id": stringProperty("Exact execution session")}, "wing_id", "session_id"), Annotations: readOnly, Grant: "permission.read", Surfaces: []Surface{SurfaceHuman}},
+		{Name: "permission_respond", Title: "Answer one permission request", Description: "Allow one complete Bash invocation once, or deny it. Durable reservation precedes delivery; unconfirmed decisions are never resent.", InputSchema: objectSchema(map[string]any{"wing_id": stringProperty("Exact owning wing"), "session_id": stringProperty("Exact execution session"), "request_id": stringProperty("Exact live request"), "digest": stringProperty("Displayed request digest"), "attempt_id": stringProperty("Unique decision attempt"), "decision": map[string]any{"type": "string", "enum": []string{"allow", "deny"}}}, "wing_id", "session_id", "request_id", "digest", "attempt_id", "decision"), Annotations: mutating, Grant: "permission.respond", Surfaces: []Surface{SurfaceHuman}},
 		{
 			Name: "wingthing_capabilities", Title: "Wingthing capabilities",
 			Description: "Discover supported and installed agent CLIs plus the local runtime primitives available on this machine.",

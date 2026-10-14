@@ -9,7 +9,7 @@ import (
 func TestDiagnosticsCoexistsWithOnboardingAndMachineDetails(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	s := setupFixture()
-	s.handle("d")
+	s.handle("D")
 	if s.mode != diagnostics {
 		t.Fatal("diagnostics did not open")
 	}

@@ -229,7 +229,7 @@ func (s *state) selectedLines(r row, now time.Time, width int) []string {
 		if next := s.preview(r).next; next != "" {
 			metadata = label + " · " + next
 		}
-		action = "Enter answer in the session   i details"
+		action = "Answer in terminal · Enter open   i details"
 	case r.Status == "failed":
 		action = "i details   h runs"
 	case r.Status == "exited" || r.Status == "done":
@@ -249,6 +249,9 @@ func (s *state) selectedLines(r row, now time.Time, width int) []string {
 	// explicit route to their complete, scrollable detail instead of taking over.
 	if width == 0 {
 		return nil
+	}
+	if p, ok := s.livePermission(r); ok {
+		return []string{"WILL RUN " + fmt.Sprint(p.Arguments["command"]), permissionWhere(p), "a review   d decline   Enter open"}
 	}
 	return []string{title, metadata, action}
 }
@@ -296,6 +299,8 @@ func setupRetryLabel(stage string) string {
 
 func keyHints(s *state) []string {
 	switch s.mode {
+	case permissionReview:
+		return []string{"Enter Allow once (after review)   Esc cancel", "j/k scroll   PgUp/PgDn page   End last line"}
 	case runFilter:
 		return []string{"Enter keep search   Ctrl-U clear", "Esc back   Ctrl-C quit"}
 	case actionMenu:
@@ -356,6 +361,11 @@ func keyHints(s *state) []string {
 	}
 	if len(s.rows()) == 0 && s.filter == "" {
 		return []string{"n new session   a agents   m machines   h runs", "? help   q quit"}
+	}
+	if r, ok := s.selection(); ok {
+		if _, live := s.livePermission(r); live {
+			return []string{"a review   d decline   Enter open   / search", "j/k move   A agents   D diagnostics   ? help   q quit"}
+		}
 	}
 	return []string{"Enter open   / search   n new   ! needs you   . actions", "j/k move   m machines   h runs   " + s.refreshKey() + "   ? help   q quit   Ctrl+B then q detaches"}
 }
@@ -713,7 +723,7 @@ func render(s *state, width, height int, now time.Time) string {
 			if line == "ASKING" || line == "RECENT" {
 				role = secondary
 			}
-			for _, line := range wrap(line, width) {
+			for _, line := range s.overlayWrap(line, width) {
 				content = append(content, viewLine{text: line, tone: role})
 			}
 		}
@@ -731,12 +741,16 @@ func render(s *state, width, height int, now time.Time) string {
 	if s.mode == runFilter {
 		set(1, "Search runs /"+s.input+"_", plain)
 	}
-	if s.message != "" && s.message != "Done" && s.mode != help {
+	notice := s.message
+	if s.permissionNotice != "" {
+		notice = s.permissionNotice
+	}
+	if notice != "" && notice != "Done" && s.mode != help {
 		noticeRow := height - 4
 		if wide {
 			noticeRow = height - 3
 		}
-		set(noticeRow, safeNotice(s.message), warning)
+		set(noticeRow, safeNotice(notice), warning)
 	}
 	hints := keyHints(s)
 	for i := range hints {
@@ -860,7 +874,7 @@ func safeNotice(message string) string {
 	case strings.Contains(lower, "attach-after-admission"):
 		return "Session started. Attachment failed. Check it before retrying."
 	case strings.Contains(lower, "admission/policy"):
-		return "Session did not start. Policy refused launch. d diagnostics."
+		return "Session did not start. Policy refused launch. D diagnostics."
 	case strings.Contains(lower, "unknown") && strings.Contains(lower, "admission"):
 		return "Start not confirmed. Check the session before starting another."
 	case strings.Contains(lower, "cannot validate"), strings.Contains(lower, "changed or was removed"), strings.Contains(lower, "registry error"):
@@ -871,7 +885,13 @@ func safeNotice(message string) string {
 	// Action errors can contain arbitrary remote payloads. Only known local
 	// notices may supply literal chrome; everything else has a fixed safe label.
 	switch message {
-	case "Access denied. R refresh.", "Done", "Running...", "Running…", "Name cannot be empty", "Working directory cannot be empty",
+	case "Allow once: delivered. Delivery does not confirm execution.",
+		"Decline: delivered. Delivery does not confirm execution.",
+		"Allow once: unconfirmed. Answer in terminal; this decision will not be resent.",
+		"Decline: unconfirmed. Answer in terminal; this decision will not be resent.",
+		"Decision not confirmed. Answer in terminal.", "Answer in terminal", "Sending decision…",
+		"Review every line of the current request, or Answer in terminal",
+		"Access denied. R refresh.", "Done", "Running...", "Running…", "Name cannot be empty", "Working directory cannot be empty",
 		"Bell on for this dashboard", "Bell off for this dashboard", "Waiting for your answer.",
 		"New reply. Background work may still run.", "Input control is not available for this session":
 		return message
@@ -965,6 +985,9 @@ func promptLines(s *state) []string {
 }
 
 func overlayLines(s *state, now time.Time) []string {
+	if s.mode == permissionReview {
+		return s.permissionReviewLines()
+	}
 	if lines := promptLines(s); lines != nil {
 		return lines
 	}
@@ -982,9 +1005,9 @@ func overlayLines(s *state, now time.Time) []string {
 			"Open", "  Enter open terminal   v read only   i session details",
 			"  Ctrl+B then q returns here; Ctrl+B twice sends Ctrl+B.", "",
 			"Find", "  / search sessions   ! needs you   m machine scope", "",
-			"Manage", "  n new   a agents   . actions   r rename   x stop",
-			"  h recent runs   M machine details   d diagnostics   R refresh",
-			"  b bell " + s.bellSetting() + " in this window", "",
+			"Manage", "  n new   A agents (a without a live request)   . actions",
+			"  h recent runs   M machine details   D diagnostics   R refresh",
+			"  b bell " + s.bellSetting() + "; a review / d decline live Bash; Enter allows once", "",
 			"Leave", "  q or Ctrl-C quits. Leaving keeps sessions running.", "* marks a new reply. Unknown means the agent does not say if it is working."}
 	}
 
@@ -1011,7 +1034,11 @@ func overlayLines(s *state, now time.Time) []string {
 	} else {
 		// ASKING already says the agent is waiting; RECENT needs the rows.
 		if r.Status == "blocked" {
-			lines = append(lines, "", "ASKING", s.askingText(r), s.askingWhere(r))
+			if p, ok := s.livePermission(r); ok {
+				lines = append(lines, "", "WILL RUN", fmt.Sprint(p.Arguments["command"]), permissionWhere(p), "a review   d decline   Enter open")
+			} else {
+				lines = append(lines, "", "ASKING", s.askingText(r), s.askingWhere(r), "Answer in terminal")
+			}
 		} else {
 			lines = append(lines, "", lifecycleDescription(r))
 		}

@@ -56,6 +56,21 @@ func ListenLocalWingControl(ctx context.Context, version string, sessions *wings
 				return control.DirectResponse{Version: control.ContractVersion, ID: request.ID, Error: err.Error(), ErrorKind: control.ErrorKindOf(err)}
 			}
 			mailboxes.configure(current)
+			if request.Tool == "permission_list" || request.Tool == "permission_respond" {
+				response := control.DirectResponse{Version: control.ContractVersion, ID: request.ID}
+				if hello.Human != "tui" && hello.Human != "browser" {
+					response.Error = "permission operations are unavailable to MCP"
+					return response
+				}
+				refresh := func() (*Server, error) {
+					return resolveLocalWingClient(version, sessions, ownerUserID, admission, hello)
+				}
+				response.Result, err = permissionControl(callCtx, current, hello.Human, request.Tool, request.Arguments, refresh)
+				if err != nil {
+					response.Error = err.Error()
+				}
+				return response
+			}
 			current.remoteToolCall = func(ctx context.Context, name, tool string, args []byte) (map[string]any, error) {
 				return remotes.remoteByName(ctx, hello, name, tool, args)
 			}
@@ -105,6 +120,9 @@ func (s *Server) toolLocalWingList(arguments []byte) (map[string]any, error) {
 }
 
 func resolveLocalWingClient(version string, sessions *wingsession.Service, ownerUserID string, admission *AdmissionState, hello controlsocket.Hello) (*Server, error) {
+	if hello.Human != "" && (hello.Human != "tui" && hello.Human != "browser" || hello.Scope != "" || hello.Aggregate || hello.Execution != "" || hello.Conversation != "") {
+		return nil, errors.New("invalid human control binding")
+	}
 	policy := sessions.Policy()
 	if sessions.SharedHost || policy.Wing == nil || policy.Wing.Org != "" {
 		return nil, errors.New("local wing control is available only on personal wings")

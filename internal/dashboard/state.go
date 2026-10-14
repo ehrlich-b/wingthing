@@ -10,6 +10,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/onboarding"
+	"github.com/ehrlich-b/wingthing/internal/permissions"
 )
 
 type machine struct {
@@ -73,9 +74,11 @@ const (
 	diagnosticInput
 	diagnosticReport
 	actionMenu
+	permissionReview
 )
 
 type action struct {
+	permission *permissions.Response
 	run        runRow
 	kind       mode
 	row        row
@@ -90,6 +93,8 @@ type action struct {
 }
 
 type state struct {
+	permissionNotice                   string
+	permissionAnswered                 string
 	previews                           map[attentionIdentity]sessionPreview
 	previewReader                      func(context.Context, row) (sessionPreview, error)
 	theme                              terminalTheme
@@ -292,6 +297,35 @@ func (s *state) handle(key string) (act *action, quit bool) {
 	if key == "ctrl-c" {
 		return nil, true
 	}
+	if s.mode == permissionReview {
+		switch key {
+		case "escape", "q":
+			s.mode = navigate
+		case "enter":
+			current, found := s.selection()
+			p, live := s.livePermission(current)
+			s.mode = navigate
+			if !found || !live || s.target.Permission == nil || p.RequestID != s.target.Permission.RequestID || p.Digest != s.target.Permission.Digest || s.overlayOffset < s.overlayLimit {
+				s.message = "Review every line of the current request, or Answer in terminal"
+				return nil, false
+			}
+			response := permissionResponse(p, "allow")
+			s.permissionAnswered = p.RequestID
+			return &action{kind: permissionReview, row: current, permission: &response}, false
+		default:
+			s.scrollOverlay(key)
+		}
+		return nil, false
+	}
+	if (s.mode == navigate || s.mode == details) && !s.recent && (key == "a" || key == "d") {
+		if act, handled := s.permissionAction(key); handled {
+			return act, false
+		}
+		if r, ok := s.selection(); ok && r.Status == "blocked" {
+			s.message = "Answer in terminal"
+			return nil, false
+		}
+	}
 	if s.isSetupMode() {
 		return s.setupHandle(key)
 	}
@@ -477,9 +511,9 @@ func (s *state) handle(key string) (act *action, quit bool) {
 		if r, ok := s.selection(); ok {
 			s.target, s.mode, s.overlayOffset = r, actionMenu, 0
 		}
-	case "a":
+	case "a", "A":
 		s.openSetup()
-	case "d":
+	case "d", "D":
 		s.mode, s.overlayOffset = diagnostics, 0
 	case "M":
 		name := s.machineFilter

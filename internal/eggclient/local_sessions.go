@@ -21,6 +21,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	"github.com/ehrlich-b/wingthing/internal/permissions"
 	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	"github.com/ehrlich-b/wingthing/internal/sessionrole"
 
@@ -44,6 +45,7 @@ const (
 var ErrSessionNameInUse = control.ErrSessionNameInUse
 
 type LocalSession struct {
+	Permission *permissions.Request `json:"-"`
 	ConversationLink
 	sessionrole.Metadata
 	OriginWingID     string `json:"origin_wing_id,omitempty"`

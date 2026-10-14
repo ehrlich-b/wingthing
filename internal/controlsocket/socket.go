@@ -22,6 +22,7 @@ const maxEnvelope = 1024 * 1024
 const SocketName = "control.sock"
 
 type Hello struct {
+	Human        string      `json:"human,omitempty"`
 	Version      string      `json:"version"`
 	WingID       string      `json:"wing_id,omitempty"`
 	Client       string      `json:"client,omitempty"`

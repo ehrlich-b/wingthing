@@ -11,7 +11,7 @@ import (
 type diagnosticField struct{ label, flag, value string }
 
 func (s *state) isOverlay() bool {
-	return s.mode == confirmStop || s.mode == confirmTakeover || s.mode == help || s.mode == details || s.mode == runDetails || s.mode == runResult || s.mode == machineDetails || s.mode == diagnostics || s.mode == diagnosticInput || s.mode == diagnosticReport
+	return s.mode == permissionReview || s.mode == confirmStop || s.mode == confirmTakeover || s.mode == help || s.mode == details || s.mode == runDetails || s.mode == runResult || s.mode == machineDetails || s.mode == diagnostics || s.mode == diagnosticInput || s.mode == diagnosticReport
 }
 
 type diagnosticState struct {

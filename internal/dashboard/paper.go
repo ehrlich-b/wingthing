@@ -217,10 +217,25 @@ func (s *state) paperPane(r row, now time.Time, width, height int) []string {
 	case s.stale(r.machine):
 		action = "R reconnect   i details"
 	case r.Status == "blocked":
+		if p, ok := s.livePermission(r); ok {
+			lines = append(lines, "", "WILL RUN")
+			appendExact := func(text string) {
+				parts := permissionWrap(text, width)
+				if len(parts) > 4 {
+					parts = parts[:4]
+					parts[3] = clip(parts[3]+" ...", width)
+				}
+				lines = append(lines, parts...)
+			}
+			appendExact(fmt.Sprint(p.Arguments["command"]))
+			appendExact(permissionWhere(p))
+			action = "a review   d decline   Enter open"
+			break
+		}
 		lines = append(lines, "", "ASKING")
 		appendText(s.askingText(r), 3)
 		appendText(s.askingWhere(r), 3)
-		action = "Enter answer in the session   i details"
+		action = "Answer in terminal · Enter open"
 	}
 	lines = append(lines, "", action, "", "MACHINES")
 	names := s.machineNames()

@@ -546,3 +546,10 @@ test-pwa-web: web
 	$(preview-build)
 	WT_SESSION_TAKEOVER_BROWSER=1 WT_TEST_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 ./cmd/wt -run '^TestBuiltSessionTakeoverDashboard$$' -v -timeout=180s
 	cd web && $(NODE) test/pwa-browser.mjs
+
+.PHONY: test-permissions test-permissions-race
+test-permissions: | web/dist
+	$(GO) test -p 2 ./internal/permissions ./internal/permissionbridge ./internal/egg ./internal/control ./internal/controlsocket ./internal/dashboard ./internal/localmcp -count=1 -timeout=5m
+
+test-permissions-race: | web/dist
+	$(GO) test -race -p 2 ./internal/permissions ./internal/egg ./internal/control ./internal/dashboard ./internal/localmcp -run Permission -count=1 -timeout=3m

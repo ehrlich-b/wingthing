@@ -14,7 +14,7 @@ func TestDiagnosticsExplicitInputLiteralArgvAndReturnScope(t *testing.T) {
 	s := fixture()
 	s.defaultAgent, s.defaultCWD = "codex", "/workspace"
 	s.selected, s.filter = "local:two", "keep-query"
-	s.handle("d")
+	s.handle("D")
 	s.handle("1")
 	for _, value := range []string{"agent_run", "codex", "/workspace", "/provider", "/", "/tools/codex", "/policy literal; $(no-exec).yaml", "/workspace", "/provider"} {
 		s.handle("ctrl-u")
@@ -44,7 +44,7 @@ func TestDiagnosticsExplicitInputLiteralArgvAndReturnScope(t *testing.T) {
 
 func TestDiagnosticsRequiredFieldsCancellationAndBoundedSanitizedOutput(t *testing.T) {
 	s := fixture()
-	s.handle("d")
+	s.handle("D")
 	s.handle("3")
 	act, _ := s.handle("enter")
 	if act != nil || s.mode != diagnosticInput || s.message == "" {

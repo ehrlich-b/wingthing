@@ -89,7 +89,7 @@ export function initSessionViewer(inventory) {
         <div data-transcript aria-label="Live conversation transcript"></div><button data-more hidden>Load more events</button>
         <section data-terminal-panel hidden><div data-terminal aria-label="Live terminal output"></div><label for="viewer-terminal-input">Type into the controlled terminal</label><input id="viewer-terminal-input" data-input autocomplete="off"><button data-terminal-send>Send + Enter</button><button data-interrupt>Ctrl+C</button></section>
         <div class="viewer-control"><button data-take>Take control</button><button data-back hidden>Hand back</button><span>Hand back keeps the agent running.</span></div>
-        <p data-attention class="viewer-attention" hidden>Permission or input attention. This provider has no connected approval responder. Inspect the terminal, take control, and enter your decision there.</p>
+        <p data-attention class="viewer-attention" hidden>Answer in terminal. This browser has no connected approval responder. Open Terminal, take control, and answer the current request.</p>
         <form data-composer><label for="viewer-message">Send a message to this session</label><textarea id="viewer-message" rows="3" maxlength="65536" placeholder="Steer the next step…"></textarea><div><button data-send type="submit">Send message</button><button data-recheck type="button" hidden>Recheck original message</button></div></form>`;
     document.body.appendChild(dialog);
     viewer = createSessionViewer({ inventory, request: sendTunnelRequest, user: () => S.currentUser, wings: () => S.wingsData, update: render, uuid: randomUUID, prompts: sessionPromptStore(sessionStorage) });

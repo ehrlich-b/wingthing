@@ -25,6 +25,7 @@ Available Commands:
   logout       Remove device authentication
   mcp          Expose Wingthing to LLM clients
   pair         Pair a phone with this machine's main wing
+  permission   Review a live Claude Bash request on the local personal wing
   phone        Set up the phone app
   pin          Pin a session at the top of the fleet inventory
   prompt       Manage named, versioned prompt templates

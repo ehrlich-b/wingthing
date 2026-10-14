@@ -39,6 +39,10 @@ import (
 var version = "dev"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "_permission_hook" {
+		permissionHook(os.Args[2:])
+		return
+	}
 	// Fast path: re-exec'd as sandbox deny-path wrapper (Linux mount namespace).
 	// Must run before cobra to avoid any overhead — this process execs immediately.
 	if len(os.Args) > 1 && os.Args[1] == "_deny_init" {
@@ -151,6 +155,7 @@ func newRootCommand() *cobra.Command {
 	if config.Channel() == "preview" {
 		root.AddCommand(previewProviderCmd())
 	}
+	root.AddCommand(permissionCommand())
 	return root
 }
 
