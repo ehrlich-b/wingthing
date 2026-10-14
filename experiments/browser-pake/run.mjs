@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createInterface } from 'node:readline';
 import { once } from 'node:events';
@@ -44,6 +44,8 @@ function rpc(request) {
 }
 
 let browser;
+let browserClosed;
+let browserTmp;
 let server;
 let timer;
 let browserStderr = '';
@@ -57,6 +59,9 @@ try {
   const node = await runSuite(pake, rpc, vocabulary);
   let complete, fail;
   const browserResult = new Promise((resolve, reject) => { complete = resolve; fail = reject; });
+  // Keep failures observed during setup and cleanup without replacing the error
+  // that the main harness reports; awaiting the original promise still rejects.
+  browserResult.catch(() => {});
   const modules = new Map([
     ['/loader.mjs', await readFile('experiments/browser-pake/loader.mjs')],
     ['/interop.mjs', await readFile('experiments/browser-pake/interop.mjs')],
@@ -120,10 +125,13 @@ try {
     '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1',
     `--user-data-dir=${out}/chromium-profile`, `http://127.0.0.1:${server.address().port}/`];
   if (process.env.CHROMIUM_NO_SANDBOX === '1') flags.unshift('--no-sandbox');
-  browser = spawn('nice', ['-n', '10', chromiumPath, ...flags], {env: childEnv, stdio: ['ignore', 'ignore', 'pipe']});
+  // Chromium creates Unix sockets here, so keep the path short even in deep clones.
+  browserTmp = await mkdtemp('/tmp/wt-pake-');
+  browser = spawn('nice', ['-n', '10', chromiumPath, ...flags], {env: {...childEnv, TMPDIR: browserTmp}, stdio: ['ignore', 'ignore', 'pipe']});
+  browserClosed = new Promise(resolve => browser.once('close', resolve));
   browser.stderr.on('data', data => { browserStderr += data; });
   browser.on('error', fail);
-  browser.on('exit', code => fail(new Error(`Chromium exited ${code}: ${browserStderr}`)));
+  browser.on('exit', (code, signal) => fail(new Error(`Chromium exited ${signal ? `with signal ${signal}` : `with code ${code}`}: ${browserStderr}`)));
   const chromium = await browserResult;
   const module = await WebAssembly.compile(bytes);
   const result = {generatedAt: new Date().toISOString(), nodeVersion: process.version,
@@ -139,5 +147,7 @@ try {
   browser?.kill();
   peer.stdin.end(); peer.kill();
   server?.close();
+  await browserClosed;
+  if (browserTmp) await rm(browserTmp, {recursive: true, force: true});
   await writeFile(`${out}/chromium.stderr`, browserStderr);
 }

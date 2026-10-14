@@ -3,12 +3,18 @@
 
 # Isolated experiment; never included in the web app or release binary.
 browser-pake:
+	@test -n "$(strip $(WASI_SDK_PATH))" || { echo 'Set WASI_SDK_PATH to the extracted wasi-sdk-25.0 directory' >&2; exit 1; }
 	sh experiments/browser-pake/build.sh
 
-check-browser-pake: browser-pake
+check-browser-pake: check-browser-pake-env
 	@mkdir -p .scratch/browser-pake/home
 	HOME="$(CURDIR)/.scratch/browser-pake/home" $(GO) build -p 2 -o .scratch/browser-pake/go-peer ./experiments/browser-pake/go-peer
 	HOME="$(CURDIR)/.scratch/browser-pake/home" $(NODE) experiments/browser-pake/run.mjs
+
+.PHONY: check-browser-pake-env
+check-browser-pake-env:
+	@test -n "$(strip $(CHROMIUM_PATH))" || { echo 'Set CHROMIUM_PATH to a local Chromium executable; browser checks are required' >&2; exit 1; }
+	@$(MAKE) --no-print-directory browser-pake
 
 test-pairing:
 	$(GO) test -p 2 -count=1 ./internal/pake ./internal/phonepair
