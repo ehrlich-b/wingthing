@@ -10,10 +10,12 @@ import (
 	"testing"
 )
 
+var fixtureTags = []string{"v0.147.0", "v0.149.5"}
+
 func stagedFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	for _, tag := range deployTags {
+	for _, tag := range fixtureTags {
 		dir := filepath.Join(root, tag)
 		if err := os.Mkdir(dir, 0755); err != nil {
 			t.Fatal(err)
@@ -30,7 +32,7 @@ func stagedFixture(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	tag := deployTags[len(deployTags)-1]
+	tag := fixtureTags[len(fixtureTags)-1]
 	assets := []map[string]string{}
 	for _, name := range append(append([]string{}, deployAssets...), "SHA256SUMS") {
 		assets = append(assets, map[string]string{"name": name, "browser_download_url": strings.TrimSpace(defaultBase) + "/" + tag + "/" + name})
@@ -51,7 +53,7 @@ func TestStagedCompleteRelease(t *testing.T) {
 }
 
 func TestStagedRejectsIncompleteAndCorruptReleases(t *testing.T) {
-	latest := deployTags[len(deployTags)-1]
+	latest := fixtureTags[len(fixtureTags)-1]
 	cases := []struct {
 		name, path, contents string
 		remove               bool
@@ -71,7 +73,7 @@ func TestStagedRejectsIncompleteAndCorruptReleases(t *testing.T) {
 		{"bad-manifest", latest + "/SHA256SUMS", "bad", false},
 		{"duplicate-entry", latest + "/SHA256SUMS", "duplicate", false},
 		{"incomplete-manifest", latest + "/SHA256SUMS", "incomplete", false},
-		{"missing-historical-release", deployTags[0] + "/wt-linux-amd64", "", true},
+		{"missing-historical-release", fixtureTags[0] + "/wt-linux-amd64", "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -123,7 +125,7 @@ func TestStagedRejectsIncompleteAndCorruptReleases(t *testing.T) {
 }
 
 func TestStagedRefusesSymlinks(t *testing.T) {
-	for _, name := range []string{".", "latest.json", deployTags[0], deployTags[1] + "/SHA256SUMS", deployTags[1] + "/wt-linux-amd64"} {
+	for _, name := range []string{".", "latest.json", fixtureTags[0], fixtureTags[1] + "/SHA256SUMS", fixtureTags[1] + "/wt-linux-amd64"} {
 		t.Run(name, func(t *testing.T) {
 			root := stagedFixture(t)
 			path := filepath.Join(root, name)
@@ -138,5 +140,34 @@ func TestStagedRefusesSymlinks(t *testing.T) {
 				t.Fatal("symlink accepted")
 			}
 		})
+	}
+}
+
+func TestStagedNextReleaseAndBinaryChecksums(t *testing.T) {
+	root := stagedFixture(t)
+	old := fixtureTags[1]
+	next := "v12.345.678"
+	if err := os.Rename(filepath.Join(root, old), filepath.Join(root, next)); err != nil {
+		t.Fatal(err)
+	}
+	feed, err := os.ReadFile(filepath.Join(root, "latest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "latest.json"), []byte(strings.ReplaceAll(string(feed), old, next)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tag := range []string{fixtureTags[0], next} {
+		path := filepath.Join(root, tag, "SHA256SUMS")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(strings.ReplaceAll(string(data), "  wt-", " *wt-")), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := CheckStaged(root); err != nil {
+		t.Fatal(err)
 	}
 }

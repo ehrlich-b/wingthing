@@ -12,9 +12,7 @@ import (
 	"strings"
 )
 
-// Keep these tags aligned with the immutable releases served by the relay.
-// Advancing latest requires staging the new release before changing this list.
-var deployTags = []string{"v0.147.0", "v0.149.5"}
+var stableTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 
 var deployAssets = []string{"wt-linux-amd64", "wt-linux-arm64", "wt-darwin-amd64", "wt-darwin-arm64"}
 
@@ -45,8 +43,8 @@ func CheckStaged(root string) error {
 	if err := decoder.Decode(&extra); err != io.EOF {
 		return fmt.Errorf("invalid trailing latest.json data")
 	}
-	latest := deployTags[len(deployTags)-1]
-	if release.TagName != latest || release.Draft == nil || *release.Draft || release.Prerelease == nil || *release.Prerelease {
+	latest := release.TagName
+	if !stableTag.MatchString(latest) || release.Draft == nil || *release.Draft || release.Prerelease == nil || *release.Prerelease {
 		return fmt.Errorf("latest.json must select stable %s", latest)
 	}
 	seen := make(map[string]bool)
@@ -60,8 +58,22 @@ func CheckStaged(root string) error {
 	if len(seen) != len(deployAssets)+1 {
 		return fmt.Errorf("incomplete latest.json assets")
 	}
-	for _, tag := range deployTags {
-		if err := checkStagedTag(filepath.Join(root, tag)); err != nil {
+	if err := checkStagedTag(filepath.Join(root, latest)); err != nil {
+		return err
+	}
+	// Discover retained releases from the staged tree, never from source pins.
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() == ".gitkeep" || entry.Name() == "latest.json" {
+			continue
+		}
+		if !stableTag.MatchString(entry.Name()) {
+			return fmt.Errorf("unexpected staged release %q", entry.Name())
+		}
+		if err := checkStagedTag(filepath.Join(root, entry.Name())); err != nil {
 			return err
 		}
 	}
@@ -96,7 +108,7 @@ func regularFile(path string) (*os.File, error) {
 	return os.Open(path)
 }
 
-var checksumLine = regexp.MustCompile(`^([0-9a-f]{64})  (wt-(linux|darwin)-(amd64|arm64))$`)
+var checksumLine = regexp.MustCompile(`^([0-9a-f]{64}) [ *](wt-(linux|darwin)-(amd64|arm64))$`)
 
 func checkStagedTag(directory string) error {
 	if err := requireDirectory(directory); err != nil {

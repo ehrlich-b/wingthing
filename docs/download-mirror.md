@@ -30,13 +30,17 @@ change their embedded updater. Existing clients can use the new installer to
 reinstall a historical version, and acquire the new updater only through a new
 reviewed CLI release.
 
-Deployment requires a complete staged tree: `latest.json` selects stable
-`v0.149.5` and lists its four platform binaries and `SHA256SUMS` with the
-`https://wingthing.ai/dl/v0.149.5/` URLs. Keep both `v0.147.0/` and `v0.149.5/`,
-each with four nonempty binaries and their matching `SHA256SUMS`.
+Production deployment requires a complete staged tree: `latest.json` selects a
+stable tag and lists its four platform binaries and `SHA256SUMS` with matching
+mirror URLs. Each retained release directory must contain the four nonempty
+binaries and matching `SHA256SUMS`; text and binary checksum lines are accepted.
 Copy a verified release tree with `cp -R /path/to/verified/downloads/. downloads/`,
-then run `make check-downloads`. This validates every binary hash and refuses
-symlinks, incomplete manifests and stale latest metadata.
-`make deploy` checks staging before running its existing check and gate targets;
-the Docker build runs the same validation, so `fly deploy` also refuses an
-unstaged image. Downloads remain ignored by Git.
+then run `make check-downloads`. Every binary hash is checked; symlinks,
+incomplete manifests and mismatched latest metadata are refused. New stable
+releases require staging only, with no source change to the validator.
+`make deploy` checks staging before its existing check and gate targets.
+Production `fly.toml` sets `REQUIRE_DOWNLOADS=1`, so a production `fly deploy`
+also refuses an unstaged image. Plain `docker build -t wingthing .` leaves the
+build argument off. Self-hosters use `fly launch --config fly.selfhost.toml
+--name my-wingthing` and `fly deploy --config fly.selfhost.toml`; this template
+leaves the mirror requirement off. Downloads remain ignored by Git.

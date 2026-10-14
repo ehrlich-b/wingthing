@@ -3,6 +3,9 @@ primary_region = "ewr"
 
 [build]
 
+[build.args]
+  REQUIRE_DOWNLOADS = "1"
+
 [deploy]
   strategy = "rolling"
 
