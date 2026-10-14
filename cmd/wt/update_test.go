@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,5 +53,38 @@ func TestStableUpdateRejectsPreviewStateBeforeAnyWork(t *testing.T) {
 		if data, err := os.ReadFile(filepath.Join(state, name)); err != nil || string(data) != want {
 			t.Fatalf("update changed foreign metadata %s: %q %v", name, data, err)
 		}
+	}
+}
+
+type unavailableReleaseTransport struct{}
+
+func (unavailableReleaseTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("missing"))}, nil
+}
+func TestUpdateUnavailableReportsOnePlainSentence(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("WINGTHING_DIR", filepath.Join(root, "state"))
+	transport := http.DefaultTransport
+	http.DefaultTransport = unavailableReleaseTransport{}
+	t.Cleanup(func() { http.DefaultTransport = transport })
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout := os.Stdout
+	os.Stdout = writer
+	t.Cleanup(func() { os.Stdout = stdout; _ = reader.Close(); _ = writer.Close() })
+	command := updateCmd()
+	command.SetContext(context.Background())
+	result := command.RunE(command, nil)
+	os.Stdout = stdout
+	_ = writer.Close()
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != updater.ErrReleaseUnavailable || len(output) != 0 {
+		t.Fatalf("error=%v stdout=%q", result, output)
 	}
 }

@@ -62,7 +62,7 @@ func TestPublishedInstallerVerifiesBeforeAtomicReplacement(t *testing.T) {
 	fixture := []byte(`#!/bin/sh
 if [ -n "$EXEC_MARKER" ]; then : > "$EXEC_MARKER"; fi
 case "$*" in
-  "--version") echo "wt version v-test" ;;
+  "--version") echo "wt version v0.149.5" ;;
   "mcp connect --help") echo "connect directly" ;;
   "serve --help") echo "--https" ;;
   "roost start --help") echo "--https" ;;
@@ -110,7 +110,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$url" in
-  */releases/latest) printf '%s\n' '{"tag_name":"v-test"}' ;;
+  */latest.json|*/releases/latest) printf '%s\n' '{"tag_name":"v0.149.5"}' > "$out" ;;
   */SHA256SUMS) cp "$FAKE_SUMS" "$out" ;;
   *) cp "$FAKE_BINARY" "$out" ;;
 esac
@@ -145,13 +145,13 @@ esac
 	})
 	t.Run("contract rejection keeps existing install", func(t *testing.T) {
 		output, installed, executed, err := run(t, broken, "")
-		if err == nil || string(installed) != "existing-install" || !executed || !strings.Contains(output, "no binary was installed") {
+		if err == nil || string(installed) != "existing-install" || !executed || !strings.Contains(output, "Unable to download a verified wt release") {
 			t.Fatalf("installer err=%v executed=%v output=%s installed=%q", err, executed, output, installed)
 		}
 	})
 	t.Run("checksum rejection happens before execution", func(t *testing.T) {
 		output, installed, executed, err := run(t, fixture, strings.Repeat("0", 64))
-		if err == nil || string(installed) != "existing-install" || executed || !strings.Contains(output, "checksum mismatch") {
+		if err == nil || string(installed) != "existing-install" || executed || !strings.Contains(output, "Unable to download a verified wt release") {
 			t.Fatalf("installer err=%v executed=%v output=%s installed=%q", err, executed, output, installed)
 		}
 	})

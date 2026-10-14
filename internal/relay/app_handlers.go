@@ -17,6 +17,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/ntfy"
+	"github.com/ehrlich-b/wingthing/internal/updater"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -296,57 +297,8 @@ func (s *Server) fetchLatestVersion() {
 }
 
 func fetchLatestGitHubVersion(ctx context.Context) (string, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
-	endpoint := "https://api.github.com/repos/ehrlich-b/wingthing/releases/latest"
-	if config.Channel() == "preview" {
-		endpoint = "https://api.github.com/repos/ehrlich-b/wingthing/releases?per_page=100"
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("github release response: %s", resp.Status)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
-	if err != nil {
-		return "", err
-	}
-	if len(body) > 1<<20 {
-		return "", fmt.Errorf("release metadata exceeds 1 MiB")
-	}
-	if config.Channel() == "preview" {
-		var releases []struct {
-			TagName    string `json:"tag_name"`
-			Prerelease bool   `json:"prerelease"`
-			Draft      bool   `json:"draft"`
-		}
-		if err := json.Unmarshal(body, &releases); err != nil {
-			return "", err
-		}
-		for _, release := range releases {
-			if release.Prerelease && !release.Draft && strings.HasPrefix(release.TagName, "v") && strings.Contains(release.TagName, "-preview.") {
-				return release.TagName, nil
-			}
-		}
-		return "", fmt.Errorf("no published preview release")
-	}
-	var release struct {
-		TagName string `json:"tag_name"`
-	}
-	if err := json.Unmarshal(body, &release); err != nil || release.TagName == "" {
-		if err != nil {
-			return "", err
-		}
-		return "", fmt.Errorf("github release response has no tag_name")
-	}
-	return release.TagName, nil
+	release, err := updater.LatestRelease(ctx)
+	return release.TagName, err
 }
 
 // handleAppWS is a dashboard WebSocket that pushes wing.online/wing.offline events.

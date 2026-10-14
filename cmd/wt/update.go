@@ -1,20 +1,14 @@
 package main
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
-	"strings"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
-	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/fsutil"
 	"github.com/ehrlich-b/wingthing/internal/updater"
@@ -33,143 +27,24 @@ func updateCmd() *cobra.Command {
 			if localFile != "" {
 				return updater.UpdatePreviewFile(cmd.Context(), localFile, checksumFile)
 			}
+			exe, err := os.Executable()
+			if err != nil {
+				return err
+			}
+			rel, tmp, err := updater.PrepareUpdate(cmd.Context(), version, filepath.Dir(exe))
+			if err != nil {
+				return err
+			}
 			fmt.Printf("current version: %s\n", version)
-
-			// Fetch latest release.
-			req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, updater.ReleaseMetadataURL(), nil)
-			if err != nil {
-				return fmt.Errorf("create latest release request: %w", err)
-			}
-			req.Header.Set("Accept", "application/vnd.github+json")
-			resp, err := updater.ReleaseHTTPClient(30 * time.Second).Do(req)
-			if err != nil {
-				return fmt.Errorf("fetch latest release: %w", err)
-			}
-			defer cmdutil.CloseWithLog("GitHub release response", resp.Body)
-
-			if resp.StatusCode == http.StatusNotFound {
-				return fmt.Errorf("no releases found — tag a release first")
-			}
-			if resp.StatusCode != http.StatusOK {
-				return fmt.Errorf("github API error: %s", resp.Status)
-			}
-
-			rel, err := updater.DecodeChannelRelease(resp.Body)
-			if err != nil {
-				return fmt.Errorf("parse release: %w", err)
-			}
-
-			if rel.TagName == version {
+			if tmp == "" {
 				fmt.Println("already up to date")
 				return nil
 			}
-
-			// Find the matching binary and its release checksum manifest.
-			wantName := updater.ReleaseAssetName()
-			var downloadURL string
-			var sumsURL string
-			for _, a := range rel.Assets {
-				if a.Name == wantName {
-					downloadURL = a.BrowserDownloadURL
-				}
-				if a.Name == "SHA256SUMS" {
-					sumsURL = a.BrowserDownloadURL
-				}
-			}
-			if downloadURL == "" {
-				available := make([]string, len(rel.Assets))
-				for i, a := range rel.Assets {
-					available[i] = a.Name
-				}
-				return fmt.Errorf("no binary for %s/%s in release %s (available: %s)",
-					runtime.GOOS, runtime.GOARCH, rel.TagName, strings.Join(available, ", "))
-			}
-			if sumsURL == "" {
-				return fmt.Errorf("release %s has no SHA256SUMS manifest; refusing an unverified update", rel.TagName)
-			}
-			if err := updater.ValidateReleaseAssetURL(downloadURL); err != nil {
-				return fmt.Errorf("binary asset URL: %w", err)
-			}
-			if err := updater.ValidateReleaseAssetURL(sumsURL); err != nil {
-				return fmt.Errorf("checksum asset URL: %w", err)
-			}
-
-			expected, err := updater.FetchReleaseChecksum(cmd.Context(), sumsURL, wantName)
-			if err != nil {
-				return fmt.Errorf("verify release manifest: %w", err)
-			}
-
-			fmt.Printf("downloading %s...\n", rel.TagName)
-
-			// Download binary
-			dlReq, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, downloadURL, nil)
-			if err != nil {
-				return fmt.Errorf("download request: %w", err)
-			}
-			dlResp, err := updater.ReleaseHTTPClient(5 * time.Minute).Do(dlReq)
-			if err != nil {
-				return fmt.Errorf("download: %w", err)
-			}
-			defer cmdutil.CloseWithLog("release download response", dlResp.Body)
-
-			if dlResp.StatusCode != http.StatusOK {
-				return fmt.Errorf("download failed: %s", dlResp.Status)
-			}
-
-			// Write to a uniquely named file next to the current binary. Keeping it
-			// on the same filesystem makes the final rename atomic; CreateTemp also
-			// avoids following a predictable pre-created symlink.
-			exe, err := os.Executable()
-			if err != nil {
-				return fmt.Errorf("find executable: %w", err)
-			}
-
-			f, err := os.CreateTemp(filepath.Dir(exe), "."+config.BinaryName()+"-update-*")
-			if err != nil {
-				return fmt.Errorf("create temp file: %w", err)
-			}
-			tmp := f.Name()
 			defer func() {
-				if f != nil {
-					if err := f.Close(); err != nil {
-						runErr = errors.Join(runErr, fmt.Errorf("close update temporary file: %w", err))
-					}
-				}
 				if tmp != "" {
-					if err := cmdutil.RemoveIfExists(tmp); err != nil {
-						runErr = errors.Join(runErr, fmt.Errorf("remove update temporary file: %w", err))
-					}
+					runErr = errors.Join(runErr, cmdutil.RemoveIfExists(tmp))
 				}
 			}()
-			if err := f.Chmod(0755); err != nil {
-				return fmt.Errorf("make downloaded binary executable: %w", err)
-			}
-
-			digest := sha256.New()
-			const maxBinaryBytes = 256 << 20
-			written, copyErr := io.Copy(io.MultiWriter(f, digest), io.LimitReader(dlResp.Body, maxBinaryBytes+1))
-			if copyErr != nil {
-				return fmt.Errorf("write binary: %w", copyErr)
-			}
-			if written > maxBinaryBytes {
-				return fmt.Errorf("downloaded binary exceeds %d bytes", maxBinaryBytes)
-			}
-			if err := f.Sync(); err != nil {
-				return fmt.Errorf("sync downloaded binary: %w", err)
-			}
-			if err := f.Close(); err != nil {
-				f = nil
-				return fmt.Errorf("close downloaded binary: %w", err)
-			}
-			f = nil
-			actual := fmt.Sprintf("%x", digest.Sum(nil))
-			if !strings.EqualFold(actual, expected) {
-				return fmt.Errorf("checksum mismatch for %s", wantName)
-			}
-			if err := updater.ValidateReleaseBinary(cmd.Context(), tmp); err != nil {
-				return fmt.Errorf("release contract: %w", err)
-			}
-
 			// Serialize the atomic replacement with daemon start/stop. Without this
 			// lock, a concurrent start can race between daemon inspection and the
 			// rename, leaving an old process running with misleading new metadata.

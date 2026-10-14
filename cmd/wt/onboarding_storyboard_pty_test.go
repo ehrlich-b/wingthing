@@ -99,14 +99,14 @@ while [ "$#" -gt 0 ]; do
  case "$1" in -o) out=$2; shift 2;; *) url=$1;shift;; esac
 done
 case "$url" in
- */releases/latest) printf '{"tag_name":"fixture-build"}\n';;
+ */latest.json|*/releases/latest) printf '{"tag_name":"v0.149.5","draft":false,"prerelease":false}\n' > "$out";;
  */SHA256SUMS) if command -v sha256sum >/dev/null 2>&1; then sha256sum "$STORYBOARD_BINARY"; else shasum -a 256 "$STORYBOARD_BINARY"; fi | awk '{print $1 "  wt-linux-amd64"}' > "$out";;
  */wt-linux-amd64) cp "$STORYBOARD_BINARY" "$out";;
  *) exit 99;;
 esac
 `, "wt-linux-amd64", "wt-"+runtime.GOOS+"-"+runtime.GOARCH), 0700)
 	installer := northstarStartPTY(t, f, "/bin/sh", 120, 36, filepath.Join(f.repo, "scripts", "install.sh"))
-	installer.expect("checksum verified build installed", 0, "installed wt fixture-build", "open the session navigator", "add to your PATH")
+	installer.expect("checksum verified build installed", 0, "installed wt v0.149.5", "open the session navigator", "add to your PATH")
 	onboardingStoryboardCapture(t, installer, "01-1")
 	// Deterministic permission/path diagnostic without touching system directories.
 	f.env = append(f.env, "WT_INSTALL_DIR="+filepath.Join(f.home, "not-a-directory", "bin"))

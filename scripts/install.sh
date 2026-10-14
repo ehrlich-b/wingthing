@@ -1,94 +1,66 @@
 #!/bin/sh
-set -e
-
+set -eu
+DOWNLOAD_BASE="${WT_DOWNLOAD_BASE:-https://wingthing.ai/dl}"
 REPO="ehrlich-b/wingthing"
 INSTALL_DIR="${WT_INSTALL_DIR:-$HOME/.local/bin}"
-
-# Detect OS and architecture
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
-
-case "$ARCH" in
-    x86_64|amd64) ARCH="amd64" ;;
-    aarch64|arm64) ARCH="arm64" ;;
-    *) echo "unsupported architecture: $ARCH"; exit 1 ;;
-esac
-
-case "$OS" in
-    linux|darwin) ;;
-    *) echo "unsupported OS: $OS"; exit 1 ;;
-esac
-
+case "$ARCH" in x86_64|amd64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;; esac
+case "$OS" in linux|darwin) ;; *) echo "Unsupported OS: $OS" >&2; exit 1 ;; esac
 BINARY="wt-${OS}-${ARCH}"
-
-# Get latest release tag
-echo "fetching latest release..."
-TAG=$(curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 60 --retry 2 "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | head -1 | cut -d'"' -f4)
-if [ -z "$TAG" ]; then
-    echo "error: could not find latest release"
-    exit 1
-fi
-
-URL="https://github.com/${REPO}/releases/download/${TAG}/${BINARY}"
-SUMS_URL="https://github.com/${REPO}/releases/download/${TAG}/SHA256SUMS"
-echo "downloading wt ${TAG} for ${OS}/${ARCH}..."
-
-TMP=$(mktemp)
-SUMS_TMP=$(mktemp)
+WORK=$(mktemp -d)
 INSTALL_TMP=""
-cleanup() {
-    rm -f "$TMP" "$SUMS_TMP"
-    if [ -n "$INSTALL_TMP" ]; then rm -f "$INSTALL_TMP"; fi
-}
+cleanup() { rm -rf "$WORK"; if [ -n "$INSTALL_TMP" ]; then rm -f "$INSTALL_TMP"; fi; }
 trap cleanup EXIT
-
-curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 300 --retry 2 -o "$TMP" "$URL" || {
-    echo "error: binary download failed for ${OS}/${ARCH}; check your network and retry the installer" >&2
-    exit 1
+fetch() {
+    curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 60 --retry 2 --max-filesize 268435456 -o "$2" "$1" 2>/dev/null
 }
-if [ "$(wc -c < "$TMP" | tr -d ' ')" -gt 268435456 ]; then
-    echo "error: downloaded binary exceeds 256 MiB" >&2
-    exit 1
-fi
-chmod +x "$TMP"
+try_source() {
+    SOURCE=$1
+    if [ "$SOURCE" = mirror ]; then
+        META="${DOWNLOAD_BASE%/}/latest.json"
+    else
+        META="https://api.github.com/repos/${REPO}/releases/latest"
+    fi
+    fetch "$META" "$WORK/meta" || return 1
+    [ "$(wc -c < "$WORK/meta" | tr -d ' ')" -le 1048576 ] || return 1
+    # GitHub and the mirror share the release tag field. Only path-safe stable
+    # tags are accepted; an installer never selects a preview or draft.
+    TAG=$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$WORK/meta" | head -1)
+    printf '%s\n' "$TAG" | LC_ALL=C grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || return 1
+    if grep -Eq '"(draft|prerelease)"[[:space:]]*:[[:space:]]*true' "$WORK/meta"; then return 1; fi
+    if [ "$SOURCE" = mirror ]; then
+        ASSET_BASE="${DOWNLOAD_BASE%/}/${TAG}"
+    else
+        ASSET_BASE="https://github.com/${REPO}/releases/download/${TAG}"
+    fi
+    fetch "$ASSET_BASE/$BINARY" "$WORK/binary" || return 1
+    [ "$(wc -c < "$WORK/binary" | tr -d ' ')" -le 268435456 ] || return 1
+    fetch "$ASSET_BASE/SHA256SUMS" "$WORK/sums" || return 1
+    [ "$(wc -c < "$WORK/sums" | tr -d ' ')" -le 1048576 ] || return 1
+    MATCHES=$(awk -v binary="$BINARY" '$2 == binary || $2 == "*" binary { print $1 }' "$WORK/sums")
+    [ "$(printf '%s\n' "$MATCHES" | awk 'NF { n++ } END { print n+0 }')" -eq 1 ] || return 1
+    EXPECTED=$MATCHES
+    printf '%s\n' "$EXPECTED" | LC_ALL=C grep -Eq '^[0-9a-fA-F]{64}$' || return 1
+    if command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL=$(sha256sum "$WORK/binary" | awk '{print $1}')
+    else
+        ACTUAL=$(shasum -a 256 "$WORK/binary" | awk '{print $1}')
+    fi
+    [ "$ACTUAL" = "$(printf '%s' "$EXPECTED" | tr '[:upper:]' '[:lower:]')" ] || return 1
+    chmod 0755 "$WORK/binary"
+    # Refuse an incompatible binary without changing the existing install.
+    # no binary was installed unless all release contract checks succeed.
+    "$WORK/binary" mcp connect --help >/dev/null 2>&1 &&
+    "$WORK/binary" serve --help 2>/dev/null | grep -q -- '--https' &&
+    "$WORK/binary" roost start --help 2>/dev/null | grep -q -- '--https' &&
+    "$WORK/binary" local-cert status --help >/dev/null 2>&1
 
-curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 60 --retry 2 -o "$SUMS_TMP" "$SUMS_URL" || {
-    echo "error: release ${TAG} has no published SHA256SUMS manifest" >&2
-    exit 1
 }
-if [ "$(wc -c < "$SUMS_TMP" | tr -d ' ')" -gt 1048576 ]; then
-    echo "error: SHA256SUMS exceeds 1 MiB" >&2
+if ! try_source mirror && ! try_source github; then
+    echo "Unable to download a verified wt release; please try again later." >&2
     exit 1
 fi
-MATCHES=$(awk -v binary="$BINARY" '$2 == binary || $2 == "*" binary { print $1 }' "$SUMS_TMP")
-if [ "$(printf '%s\n' "$MATCHES" | awk 'NF { n++ } END { print n+0 }')" -ne 1 ]; then
-    echo "error: SHA256SUMS must contain exactly one entry for ${BINARY}" >&2
-    exit 1
-fi
-EXPECTED=$MATCHES
-if command -v sha256sum >/dev/null 2>&1; then
-    ACTUAL=$(sha256sum "$TMP" | awk '{print $1}')
-else
-    ACTUAL=$(shasum -a 256 "$TMP" | awk '{print $1}')
-fi
-if [ "$ACTUAL" != "$EXPECTED" ]; then
-    echo "error: checksum mismatch for ${BINARY}" >&2
-    exit 1
-fi
-
-# The website and installer are one release contract. Refuse to report a
-# successful install when GitHub's latest verified binary predates a workflow
-# shown by the current site.
-if ! "$TMP" mcp connect --help >/dev/null 2>&1 || \
-   ! "$TMP" serve --help 2>/dev/null | grep -q -- '--https' || \
-   ! "$TMP" roost start --help 2>/dev/null | grep -q -- '--https' || \
-   ! "$TMP" local-cert status --help >/dev/null 2>&1; then
-    echo "error: latest release ${TAG} predates the workflows documented by wingthing.ai" >&2
-    echo "no binary was installed; wait for the matching GitHub release" >&2
-    exit 1
-fi
-
-# Install
 mkdir -p "$INSTALL_DIR" || {
     echo "error: cannot create ${INSTALL_DIR}; choose a writable WT_INSTALL_DIR (no automatic sudo)" >&2
     exit 1
@@ -97,11 +69,10 @@ INSTALL_TMP=$(mktemp "${INSTALL_DIR}/.wt-install.XXXXXX") || {
     echo "error: cannot write ${INSTALL_DIR}; choose a writable WT_INSTALL_DIR (no automatic sudo)" >&2
     exit 1
 }
-cp "$TMP" "$INSTALL_TMP"
+cp "$WORK/binary" "$INSTALL_TMP"
 chmod 0755 "$INSTALL_TMP"
 mv "$INSTALL_TMP" "${INSTALL_DIR}/wt"
 INSTALL_TMP=""
-
 echo "installed wt ${TAG} to ${INSTALL_DIR}/wt"
 
 # Check if INSTALL_DIR is in PATH

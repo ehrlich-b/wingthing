@@ -35,3 +35,5 @@ web/fixtures/session-inventory.html
 /test/linux/runinspect-orphan/
 
 /test/linux/install.sh
+/downloads/*
+!/downloads/.gitkeep

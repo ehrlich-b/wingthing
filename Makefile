@@ -581,3 +581,6 @@ test-browser-join-go: | web/dist
 test-browser-join: web
 	$(stable-build)
 	$(NODE) test/web/browser-join.mjs
+.PHONY: generate-installer
+generate-installer:
+	python3 scripts/generate-installer.py

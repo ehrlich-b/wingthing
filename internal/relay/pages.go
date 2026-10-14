@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/downloads"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	patternfiles "github.com/ehrlich-b/wingthing/patterns"
 )
@@ -19,8 +20,7 @@ import (
 //go:embed templates
 var templateFS embed.FS
 
-//go:embed install.sh
-var installScript []byte
+var installScript = []byte(downloads.Installer())
 
 var tmplFuncs = template.FuncMap{
 	"deref": func(s *string) string {

@@ -17,6 +17,8 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates sqlite
 WORKDIR /app
 COPY --from=build /app/wt .
+COPY downloads/ /app/downloads/
+ENV WT_DOWNLOAD_DIR=/app/downloads
 COPY hero.mp4 .
 ENV WT_HERO_VIDEO=/app/hero.mp4
 ENV HOME=/data

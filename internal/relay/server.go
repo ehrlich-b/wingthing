@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
+	"github.com/ehrlich-b/wingthing/internal/downloads"
 	"io"
 	"io/fs"
 	"log"
@@ -178,6 +179,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 
 	// Static files
 	s.mux.HandleFunc("GET /install.sh", s.handleInstallScript)
+	s.mux.Handle("GET /dl/", downloads.Handler())
 	s.mux.HandleFunc("GET /hero.mp4", s.handleHeroVideo)
 
 	// Web pages
