@@ -146,14 +146,16 @@ func (l Ledger) Decide(r Response, a Actor, authorize func() error, live func() 
 			return Outcome{}, errors.Join(err, auditErr)
 		}
 		entry := record{Response: r, Actor: a, Time: time.Now().UTC(), Authorization: "allowed", Phase: "reservation", Outcome: Outcome{State: "unconfirmed", Decision: r.Decision, AttemptID: r.AttemptID}}
+		// Audit before reserving: a failed audit has never reached delivery and
+		// must leave neither a request nor an attempt marked unconfirmed.
+		if err = l.audit(entry); err != nil {
+			return Outcome{}, err
+		}
 		if err = l.persist(attemptPath, entry); err != nil {
 			return Outcome{}, err
 		}
 		if err = l.persist(path, entry); err != nil {
 			return Outcome{}, err
-		}
-		if err = l.audit(entry); err != nil {
-			return entry.Outcome, err
 		}
 		// Authority can be revoked while persistence is in progress.
 		if err = authorize(); err != nil {

@@ -196,9 +196,25 @@ func TestPermissionLedgerRaceRetriesAuditFailureAndLostReply(t *testing.T) {
 		l := Ledger{Dir: t.TempDir()}
 		os.Mkdir(filepath.Join(l.Dir, "audit.jsonl"), 0700)
 		calls := 0
-		_, err := l.Decide(r, a, auth, auth, func() (Outcome, error) { calls++; return Outcome{}, nil })
-		if err == nil || calls != 0 {
-			t.Fatal("audit failure delivered")
+		for i := 0; i < 2; i++ {
+			out, err := l.Decide(r, a, auth, auth, func() (Outcome, error) { calls++; return Outcome{}, nil })
+			if err == nil || calls != 0 || out.State == "unconfirmed" {
+				t.Fatalf("audit failure delivered or reported uncertainty: %+v %v", out, err)
+			}
+			entries, err := filepath.Glob(filepath.Join(l.Dir, "*.json"))
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("audit failure reserved a decision or attempt: %v %v", entries, err)
+			}
+		}
+		if err := os.Remove(filepath.Join(l.Dir, "audit.jsonl")); err != nil {
+			t.Fatal(err)
+		}
+		out, err := l.Decide(r, a, auth, auth, func() (Outcome, error) {
+			calls++
+			return Outcome{State: "delivered", Decision: r.Decision, AttemptID: r.AttemptID}, nil
+		})
+		if err != nil || out.State != "delivered" || calls != 1 {
+			t.Fatalf("repaired audit could not accept fresh delivery: %+v %v calls=%d", out, err, calls)
 		}
 	})
 	t.Run("crash and lost reply", func(t *testing.T) {
