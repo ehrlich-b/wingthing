@@ -188,7 +188,7 @@ try {
         if(process.env.WT_JOIN_CASE==='fragment')record('fragment-'+size,'imported invitation fragment stripped before exchange; account lookup absent');
         record('join-'+size,'terminal Enter; devices lists '+name+' with inventory scope; machine and session inventory rendered');
         const p=await probe(page,a[1]);assert.ok(p.errors.every(([,e])=>e==='denied'));assert.equal(p.replay,'replay');assert.equal(p.scope,'inventory');
-        record('denials-'+size,'launch, input, action, stop, attach and fleet_input denied at wing');record('replay-'+size,'same encrypted command returned replay');record('key-'+size,'stored P-256 private CryptoKey refuses export');
+        record('denials-'+size,'launch, input, action, stop, attach, fleet_input, permission_list and permission_respond denied at wing');record('replay-'+size,'same encrypted command returned replay');record('key-'+size,'stored P-256 private CryptoKey refuses export');
         // A saved wing pin cannot be silently replaced by an imported link.
         const wrongPin=await pair(), changed=decode(wrongPin.link);changed[3]=Buffer.alloc(32,11).toString('base64');
         await page.reload();await paste(page,encode(changed),'Pin replacement');

@@ -157,7 +157,6 @@ export function renderCoordinatorHome(read = true) {
             (sessions.length > 1 ? '<label>Coordinator<select aria-label="Choose pinned coordinator" data-home-action="choose">' + sessions.map(item => '<option value="' + escapeMarkup(key(item)) + '"' + (key(item) === key(session) ? ' selected' : '') + '>' + escapeMarkup((item.name || 'wing') + ' · ' + (wingDisplayName(wingFor(item)) || item.wing_id)) + '</option>').join('') + '</select></label>' : '') + '</div>' +
             '<p id="coordinator-home-error" role="status"></p><details class="coordinator-recent"' + (expanded ? ' open' : '') + '><summary>Recent activity</summary>' + timelineMarkup(evidence.messages, 5) + '</details>';
         bindOpen(mount.querySelector('.coordinator-message'), session);
-        mount.querySelectorAll('[data-review-request]').forEach(button=>bindOpen(button,session));
         const select = mount.querySelector('select');
         if (select) select.addEventListener('change', () => { selected = select.value; try { localStorage.setItem(selectionKey(), selected); } catch {} renderCoordinatorHome(); });
         mount.querySelectorAll('[data-artifact-path]').forEach(button => button.addEventListener('click', async () => {

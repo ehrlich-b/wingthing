@@ -515,6 +515,20 @@ func TestPermissionLedgerPreparationCrashAndReservationAuditFailure(t *testing.T
 		if err != nil || out.State != "failed" || sends != 0 {
 			t.Fatalf("retry invented delivery: %+v %v sends=%d", out, err, sends)
 		}
+		if err := os.Remove(filepath.Join(l.Dir, "audit.jsonl")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(filepath.Join(l.Dir, "intent.jsonl"), filepath.Join(l.Dir, "audit.jsonl")); err != nil {
+			t.Fatal(err)
+		}
+		r.AttemptID = "fresh-attempt"
+		out, err = (Ledger{Dir: l.Dir}).Decide(r, a, auth, auth, func() (Outcome, error) {
+			sends++
+			return Outcome{State: "delivered", Decision: r.Decision, AttemptID: r.AttemptID}, nil
+		})
+		if err != nil || out.State != "delivered" || sends != 1 {
+			t.Fatalf("repaired audit blocked a fresh answer: %+v %v sends=%d", out, err, sends)
+		}
 	})
 }
 
@@ -608,5 +622,49 @@ func TestPermissionLedgerPersistentWriteFailureUsesAuditReceipt(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestPermissionLedgerTornAuditPreservesIdenticalRetry(t *testing.T) {
+	for _, state := range []string{"delivered", "failed", "unconfirmed"} {
+		t.Run(state, func(t *testing.T) {
+			l := Ledger{Dir: t.TempDir()}
+			r := Response{WingID: "wing", SessionID: "egg", RequestID: "request", Digest: "digest", AttemptID: "attempt", Decision: "allow"}
+			a := Actor{"owner", "tui", "tui"}
+			writes, sends := 0, 0
+			l.writeRecord = func(path string, value any) error {
+				writes++
+				if writes > 3 {
+					return errors.New("receipt storage unavailable")
+				}
+				return l.persistFile(path, value)
+			}
+			auth := func() error { return nil }
+			_, err := l.Decide(r, a, auth, auth, func() (Outcome, error) {
+				sends++
+				return Outcome{State: state, Decision: r.Decision, AttemptID: r.AttemptID}, nil
+			})
+			if err == nil || sends != 1 {
+				t.Fatalf("fault not reached: %v sends=%d", err, sends)
+			}
+			audit := filepath.Join(l.Dir, "audit.jsonl")
+			data, err := os.ReadFile(audit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A torn line can precede a valid receipt or be the trailing append.
+			data = append([]byte("{\"phase\":\n"), data...)
+			data = append(data, []byte("{\"phase\":")...)
+			if err := os.WriteFile(audit, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			out, err := (Ledger{Dir: l.Dir}).Decide(r, a, auth, auth, func() (Outcome, error) {
+				sends++
+				return Outcome{}, nil
+			})
+			if err != nil || out.State != state || sends != 1 {
+				t.Fatalf("torn audit lost outcome or resent: %+v %v sends=%d", out, err, sends)
+			}
+		})
 	}
 }

@@ -368,7 +368,7 @@ func TestPermissionTUIParallelPendingOverridesSiblingToolStatus(t *testing.T) {
 	}
 }
 
-func TestPermissionRefreshOnlyQueriesBlockedClaudeOnSupportedPlatform(t *testing.T) {
+func TestPermissionRefreshQueriesActiveClaudeOnSupportedPlatform(t *testing.T) {
 	for _, supported := range []bool{false, true} {
 		t.Run(fmt.Sprint(supported), func(t *testing.T) {
 			dir := t.TempDir()
@@ -410,13 +410,17 @@ func TestPermissionRefreshOnlyQueriesBlockedClaudeOnSupportedPlatform(t *testing
 			defer mu.Unlock()
 			want := 0
 			if supported {
-				want = 3
+				want = 9
 			}
-			if len(calls) != want || connections != want {
+			wantConnections := 0
+			if supported {
+				wantConnections = 3
+			}
+			if len(calls) != want || connections != wantConnections {
 				t.Fatalf("three refreshes: calls=%v connections=%d want=%d", calls, connections, want)
 			}
 			for _, call := range calls {
-				if call != "permission_list:blocked-claude" {
+				if call != "permission_list:blocked-claude" && call != "permission_list:running-claude" && call != "permission_list:idle-claude" {
 					t.Fatalf("queried ineligible session: %s", call)
 				}
 			}
@@ -472,5 +476,84 @@ func TestPermissionTUIAnswerStaysSelectedAcrossRefreshUntilMovement(t *testing.T
 				}
 			})
 		}
+	}
+}
+
+func TestPermissionTUISequentialRequestReplacesAnsweredRequest(t *testing.T) {
+	for _, answer := range []string{"allow", "deny"} {
+		for _, gap := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/gap-%t", answer, gap), func(t *testing.T) {
+				s := permissionState(t)
+				first, _ := s.selection()
+				if answer == "allow" {
+					s.handle("a")
+					s.handle("enter")
+				} else {
+					s.handle("d")
+				}
+				m := s.machines["local"]
+				m.sessions[0].Permission = nil
+				if gap {
+					m.sessions[0].Status, m.sessions[0].State = "running", "working"
+					s.machines["local"] = m
+					s.reconcile()
+				}
+				next := *first.Permission
+				next.RequestID = permissions.ID()
+				next.Arguments = map[string]any{"command": "echo next"}
+				next.Digest = permissionbridge.Digest(permissionbridge.Input{Tool: next.Tool, Arguments: next.Arguments, Directory: next.Directory})
+				m.sessions[0].Permissions = []permissions.Request{next}
+				m.sessions[0].Status, m.sessions[0].State = "blocked", "needs_input"
+				s.machines["local"] = m
+				s.reconcile()
+				selected, _ := s.selection()
+				if p, live := s.livePermission(selected); !live || p.RequestID != next.RequestID {
+					t.Fatal("answered request hid the next command")
+				}
+				for _, size := range [][2]int{{132, 36}, {80, 24}} {
+					if text := render(s, size[0], size[1], time.Now()); !strings.Contains(text, "echo next") {
+						t.Fatalf("next command missing at %v: %s", size, text)
+					}
+				}
+				s.handle("a")
+				act, _ := s.handle("enter")
+				if act == nil || act.permission == nil || act.permission.RequestID != next.RequestID {
+					t.Fatal("next command could not be reviewed and answered")
+				}
+			})
+		}
+	}
+}
+
+func TestPermissionRefreshShowsParallelRequestAfterSiblingPostToolUse(t *testing.T) {
+	s := parallelPermissionState(t)
+	m := s.machines["local"]
+	remaining := m.sessions[0].Permissions[1]
+	m.sessions[0].Permissions = nil
+	m.sessions[0].Status, m.sessions[0].State = "running", "working"
+	m.sessions[0].StateCursor++
+	dir := t.TempDir()
+	server, err := controlsocket.Listen(t.Context(), dir, "personal", func(controlsocket.Hello) (controlsocket.Welcome, controlsocket.Handler, error) {
+		return controlsocket.Welcome{WingID: "personal", Grants: map[string]bool{"permission.read": true, "permission.respond": true}}, func(_ context.Context, r control.DirectRequest) control.DirectResponse {
+			return control.DirectResponse{Version: control.ContractVersion, ID: r.ID, Result: map[string]any{"requests": []permissions.Request{remaining}}}
+		}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	readPermissionsForPlatform(ctx, dir, m.sessions, true)
+	s.machines["local"] = m
+	s.reconcile()
+	r, _ := s.selection()
+	if p, live := s.livePermission(r); !live || p.RequestID != remaining.RequestID || r.attention != "blocked" {
+		t.Fatal("production refresh hid the remaining parallel request")
+	}
+	s.handle("a")
+	act, _ := s.handle("enter")
+	if act == nil || act.permission == nil || act.permission.RequestID != remaining.RequestID {
+		t.Fatal("refreshed parallel request could not be reviewed and answered")
 	}
 }

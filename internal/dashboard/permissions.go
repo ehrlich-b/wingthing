@@ -34,7 +34,8 @@ func readPermissionsForPlatform(ctx context.Context, dir string, sessions []eggc
 	}
 	for i := range sessions {
 		r := &sessions[i]
-		if r.Agent != "claude" || r.Status != "blocked" {
+		// Lifecycle hooks from sibling tools can mark a waiting session working.
+		if r.Agent != "claude" || (r.Status != "blocked" && r.Status != "running" && r.Status != "idle") {
 			continue
 		}
 		args, _ := json.Marshal(map[string]string{"wing_id": c.Welcome.WingID, "session_id": r.ID})
@@ -207,13 +208,25 @@ func (s *state) permissionWasAnswered(id string) bool {
 	return id == s.permissionAnswered || s.permissionAnswers[id]
 }
 
+type retainedPermission struct {
+	request permissions.Request
+	peers   map[string]bool
+}
+
 func (s *state) markPermissionAnswered(r row, p *permissions.Request) {
 	id := p.RequestID
 	if s.permissionRetained == nil {
-		s.permissionRetained = map[string]permissions.Request{}
+		s.permissionRetained = map[string]retainedPermission{}
 	}
-	// Keep this exact request visible through refreshes until explicit movement.
-	s.permissionRetained[r.key()] = *p
+	// Pin only the current batch so repeated keys cannot answer unseen siblings.
+	// A later request must become visible without manual navigation.
+	peers := map[string]bool{}
+	for _, pending := range s.pendingPermissions(r) {
+		if pending.RequestID != id {
+			peers[pending.RequestID] = true
+		}
+	}
+	s.permissionRetained[r.key()] = retainedPermission{request: *p, peers: peers}
 	if s.permissionAnswers == nil {
 		s.permissionAnswers = map[string]bool{}
 	}
@@ -237,11 +250,21 @@ func (s *state) pendingPermissions(r row) []permissions.Request {
 
 func (s *state) selectPermission(r *row) {
 	if retained, ok := s.permissionRetained[r.key()]; ok {
-		r.Permission = &retained
-		if len(s.pendingPermissions(*r)) > 0 {
-			r.Status, r.State = "blocked", "needs_input"
+		requests := s.pendingPermissions(*r)
+		keep := time.Now().Before(retained.request.Deadline)
+		for _, p := range requests {
+			if !retained.peers[p.RequestID] {
+				keep = false
+			}
 		}
-		return
+		if keep {
+			r.Permission = &retained.request
+			if len(requests) > 0 {
+				r.Status, r.State = "blocked", "needs_input"
+			}
+			return
+		}
+		delete(s.permissionRetained, r.key())
 	}
 	if len(r.Permissions) == 0 {
 		return

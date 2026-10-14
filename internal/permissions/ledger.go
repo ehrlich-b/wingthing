@@ -181,7 +181,15 @@ func (l Ledger) Decide(r Response, a Actor, authorize func() error, live func() 
 		}
 		// Only claim a reservation once both bindings are durably persisted.
 		if err = l.audit(entry); err != nil {
-			return entry.Outcome, err
+			// Nothing was sent. Preserve this attempt's failed receipt, but free
+			// the request so a fresh answer can proceed once storage is repaired.
+			removeErr := os.Remove(path)
+			directory, openErr := os.Open(l.Dir)
+			var syncErr error
+			if openErr == nil {
+				syncErr = errors.Join(directory.Sync(), directory.Close())
+			}
+			return entry.Outcome, errors.Join(err, removeErr, openErr, syncErr)
 		}
 		// The request record is authoritative; the attempt file also prevents
 		// reuse for another request. Enter uncertainty only at the handoff.
@@ -235,7 +243,9 @@ func (l Ledger) deliveryReceipt(r Response, a Actor) (Outcome, bool, error) {
 	for scanner.Scan() {
 		var entry record
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
-			return Outcome{}, false, errors.New("invalid decision audit receipt")
+			// A torn append is not a receipt. Valid matching delivery lines can
+			// still resolve the outcome; otherwise retain durable uncertainty.
+			continue
 		}
 		if entry.Response == r && entry.Actor == a && entry.Phase == "delivery" && (entry.Outcome.State == "delivered" || entry.Outcome.State == "failed") {
 			outcome, found = entry.Outcome, true

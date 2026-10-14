@@ -97,7 +97,7 @@ type state struct {
 	permissionAnswered                 string
 	permissionAnswers                  map[string]bool
 	permissionSelected                 map[string]string
-	permissionRetained                 map[string]permissions.Request
+	permissionRetained                 map[string]retainedPermission
 	previews                           map[attentionIdentity]sessionPreview
 	previewReader                      func(context.Context, row) (sessionPreview, error)
 	theme                              terminalTheme
