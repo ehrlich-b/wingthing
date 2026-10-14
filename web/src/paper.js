@@ -1,10 +1,6 @@
 // Paper shell: wing thread, sessions, one session, approve, pair, machines and
 // empty or asleep states, rendered from the same inventory the legacy views use.
 // Terminal take-over hands off to the existing PTY view.
-import '@fontsource-variable/newsreader/opsz.css';
-import '@fontsource-variable/newsreader/opsz-italic.css';
-import '@fontsource/ibm-plex-mono/400.css';
-import '@fontsource/ibm-plex-mono/500.css';
 import './paper.css';
 import { S } from './state.js';
 import { escapeMarkup as esc } from './security.js';
@@ -151,7 +147,7 @@ function sessionRow(s) {
     const line = st.key === 'need' ? (request(s).reason || (last && last.text) || '') : last ? last.text : '';
     return '<a class="pp-srow" href="' + sessionHref(s) + '">' + chip(st) +
         '<span class="pp-sname"><b>' + esc(sessionDisplayName(s)) + '</b><i>' + esc([agentName(s.agent), machineName(w), project(s)].filter(Boolean).join(' · ')) + '</i></span>' +
-        '<span class="pp-sline">' + esc(line) + '</span><time class="' + (st.key === 'need' ? 'pp-hot' : '') + '">' + esc(ago(last && last.at)) + '</time></a>';
+        '<span class="pp-sline">' + esc(line) + '</span><time>' + esc(ago(last && last.at)) + '</time></a>';
 }
 function group(title, list, right) { return list.length ? '<section class="pp-group">' + kicker(title, right || String(list.length)) + list.map(sessionRow).join('') + '</section>' : ''; }
 
