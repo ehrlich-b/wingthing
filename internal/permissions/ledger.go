@@ -1,6 +1,7 @@
 package permissions
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -28,7 +29,10 @@ type record struct {
 
 // Ledger uses a private, fsynced reservation and a cross-process exclusive lock.
 // An unconfirmed reservation is final for delivery purposes, including restart.
-type Ledger struct{ Dir string }
+type Ledger struct {
+	Dir         string
+	writeRecord func(string, any) error
+}
 
 func (l Ledger) locked(fn func() (Outcome, error)) (Outcome, error) {
 	if err := os.MkdirAll(l.Dir, 0700); err != nil {
@@ -95,6 +99,8 @@ func (l Ledger) Decide(r Response, a Actor, authorize func() error, live func() 
 		}
 		key := fmt.Sprintf("%x", sha256.Sum256([]byte(r.WingID+"\x00"+r.SessionID+"\x00"+r.RequestID)))
 		path := filepath.Join(l.Dir, key+".json")
+		attemptKey := fmt.Sprintf("%x", sha256.Sum256([]byte(a.Principal+"\x00"+a.Client+"\x00"+a.Surface+"\x00"+r.AttemptID)))
+		attemptPath := filepath.Join(l.Dir, "attempt-"+attemptKey+".json")
 		file, err := os.OpenFile(path, os.O_RDONLY|unix.O_NOFOLLOW, 0)
 		var data []byte
 		if err == nil {
@@ -110,6 +116,23 @@ func (l Ledger) Decide(r Response, a Actor, authorize func() error, live func() 
 				return Outcome{}, errors.New("invalid decision ledger")
 			}
 			if old.Response == r && old.Actor == a {
+				if old.Outcome.State == "unconfirmed" {
+					// Either receipt may survive an interrupted final write. A
+					// preparation record is not a receipt and cannot resolve it.
+					if data, readErr := os.ReadFile(attemptPath); readErr == nil {
+						var receipt record
+						if json.Unmarshal(data, &receipt) == nil && receipt.Response == r && receipt.Actor == a && receipt.Phase == "delivery" && (receipt.Outcome.State == "delivered" || receipt.Outcome.State == "failed") {
+							return receipt.Outcome, nil
+						}
+					}
+					// Storage may have refused both receipt files. The durable
+					// audit can still prove a known delivery or non-delivery.
+					if receipt, found, err := l.deliveryReceipt(r, a); err != nil {
+						return Outcome{}, err
+					} else if found {
+						return receipt, nil
+					}
+				}
 				return old.Outcome, nil
 			}
 			if err = l.audit(record{Response: r, Actor: a, Time: time.Now().UTC(), Authorization: "conflict"}); err != nil {
@@ -120,8 +143,6 @@ func (l Ledger) Decide(r Response, a Actor, authorize func() error, live func() 
 		if !os.IsNotExist(err) {
 			return Outcome{}, err
 		}
-		attemptKey := fmt.Sprintf("%x", sha256.Sum256([]byte(a.Principal+"\x00"+a.Client+"\x00"+a.Surface+"\x00"+r.AttemptID)))
-		attemptPath := filepath.Join(l.Dir, "attempt-"+attemptKey+".json")
 		if attemptData, readErr := os.ReadFile(attemptPath); readErr == nil {
 			var old record
 			if json.Unmarshal(attemptData, &old) != nil {
@@ -145,22 +166,39 @@ func (l Ledger) Decide(r Response, a Actor, authorize func() error, live func() 
 			auditErr := l.audit(record{Response: r, Actor: a, Time: time.Now().UTC(), Authorization: "refused", Outcome: Outcome{State: "failed", Decision: r.Decision, AttemptID: r.AttemptID}})
 			return Outcome{}, errors.Join(err, auditErr)
 		}
-		entry := record{Response: r, Actor: a, Time: time.Now().UTC(), Authorization: "allowed", Phase: "reservation", Outcome: Outcome{State: "unconfirmed", Decision: r.Decision, AttemptID: r.AttemptID}}
-		// Audit before reserving: a failed audit has never reached delivery and
-		// must leave neither a request nor an attempt marked unconfirmed.
+		entry := record{Response: r, Actor: a, Time: time.Now().UTC(), Authorization: "allowed", Phase: "intent", Outcome: Outcome{State: "failed", Decision: r.Decision, AttemptID: r.AttemptID}}
+		// An intent makes no reservation claim. Both files start as failed, so
+		// partial preparation or a crash before delivery cannot imply a send.
 		if err = l.audit(entry); err != nil {
 			return Outcome{}, err
 		}
+		entry.Phase = "reservation"
 		if err = l.persist(attemptPath, entry); err != nil {
-			return Outcome{}, err
+			return entry.Outcome, err
 		}
 		if err = l.persist(path, entry); err != nil {
-			return Outcome{}, err
+			return entry.Outcome, err
+		}
+		// Only claim a reservation once both bindings are durably persisted.
+		if err = l.audit(entry); err != nil {
+			return entry.Outcome, err
+		}
+		// The request record is authoritative; the attempt file also prevents
+		// reuse for another request. Enter uncertainty only at the handoff.
+		entry.Phase, entry.Outcome.State = "delivery", "unconfirmed"
+		if err = l.persist(path, entry); err != nil {
+			// Rename may have succeeded before directory fsync failed. Persist
+			// the known non-delivery before returning the storage error.
+			entry.Outcome.State = "failed"
+			entry.Authorization = "storage_failed_before_delivery"
+			repairErr := errors.Join(l.persist(path, entry), l.persist(attemptPath, entry))
+			auditErr := l.audit(entry)
+			return entry.Outcome, errors.Join(err, repairErr, auditErr)
 		}
 		// Authority can be revoked while persistence is in progress.
 		if err = authorize(); err != nil {
-			entry.Time, entry.Phase, entry.Authorization = time.Now().UTC(), "delivery", "denied_before_delivery"
 			entry.Outcome.State = "failed"
+			entry.Time, entry.Phase, entry.Authorization = time.Now().UTC(), "delivery", "denied_before_delivery"
 			auditErr := l.audit(entry)
 			persistErr := errors.Join(l.persist(path, entry), l.persist(attemptPath, entry))
 			return entry.Outcome, errors.Join(err, auditErr, persistErr)
@@ -175,14 +213,45 @@ func (l Ledger) Decide(r Response, a Actor, authorize func() error, live func() 
 		// Append the delivery receipt separately from the reservation. A transport
 		// loss remains unconfirmed; a known refusal is failed, never a lost reply.
 		auditErr := l.audit(entry)
-		persistErr := l.persist(path, entry)
-		if persistErr == nil {
-			persistErr = l.persist(attemptPath, entry)
-		}
+		persistErr := errors.Join(l.persist(path, entry), l.persist(attemptPath, entry))
 		return result, errors.Join(deliveryErr, auditErr, persistErr)
 	})
 }
+
+// Consult the append-only receipt when a storage failure prevented updating
+// both bindings. Preparation and intent lines never prove delivery.
+func (l Ledger) deliveryReceipt(r Response, a Actor) (Outcome, bool, error) {
+	f, err := os.OpenFile(filepath.Join(l.Dir, "audit.jsonl"), os.O_RDONLY|unix.O_NOFOLLOW, 0)
+	if os.IsNotExist(err) {
+		return Outcome{}, false, nil
+	}
+	if err != nil {
+		return Outcome{}, false, err
+	}
+	defer f.Close()
+	var outcome Outcome
+	found := false
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var entry record
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			return Outcome{}, false, errors.New("invalid decision audit receipt")
+		}
+		if entry.Response == r && entry.Actor == a && entry.Phase == "delivery" && (entry.Outcome.State == "delivered" || entry.Outcome.State == "failed") {
+			outcome, found = entry.Outcome, true
+		}
+	}
+	return outcome, found, scanner.Err()
+}
+
 func (l Ledger) persist(path string, v any) error {
+	if l.writeRecord != nil {
+		return l.writeRecord(path, v)
+	}
+	return l.persistFile(path, v)
+}
+
+func (l Ledger) persistFile(path string, v any) error {
 	f, err := os.CreateTemp(l.Dir, ".decision-*")
 	if err != nil {
 		return err

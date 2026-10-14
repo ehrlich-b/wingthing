@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/ehrlich-b/wingthing/internal/permissionbridge"
 	"net"
 	"os"
@@ -373,13 +374,239 @@ func TestPermissionAuditAppendsDeliveryOutcome(t *testing.T) {
 				t.Fatal(err)
 			}
 			lines := bytes.Split(bytes.TrimSpace(data), []byte{'\n'})
-			if len(lines) != 2 {
-				t.Fatalf("want reservation and delivery lines: %s", data)
+			if len(lines) != 3 {
+				t.Fatalf("want intent, reservation and delivery lines: %s", data)
 			}
-			var first, last record
-			if json.Unmarshal(lines[0], &first) != nil || json.Unmarshal(lines[1], &last) != nil || first.Phase != "reservation" || first.Outcome.State != "unconfirmed" || last.Phase != "delivery" || last.Outcome.State != state || last.Response != r {
+			var intent, first, last record
+			if json.Unmarshal(lines[0], &intent) != nil || intent.Phase != "intent" || intent.Outcome.State != "failed" || json.Unmarshal(lines[1], &first) != nil || json.Unmarshal(lines[2], &last) != nil || first.Phase != "reservation" || first.Outcome.State != "failed" || last.Phase != "delivery" || last.Outcome.State != state || last.Response != r {
 				t.Fatalf("incorrect delivery receipt: %s", data)
 			}
 		})
+	}
+}
+
+func TestPermissionLedgerPersistFailuresNeverInventDelivery(t *testing.T) {
+	for _, state := range []string{"delivered", "failed", "unconfirmed"} {
+		for failAt := 1; failAt <= 5; failAt++ {
+			for _, afterWrite := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/write-%d/after-%t", state, failAt, afterWrite), func(t *testing.T) {
+					l := Ledger{Dir: t.TempDir()}
+					r := Response{WingID: "wing", SessionID: "egg", RequestID: "request", Digest: "digest", AttemptID: "attempt", Decision: "allow"}
+					a := Actor{"owner", "tui", "tui"}
+					writes, sends := 0, 0
+					injected := errors.New("injected storage failure")
+					l.writeRecord = func(path string, value any) error {
+						writes++
+						if writes == failAt && !afterWrite {
+							return injected
+						}
+						if err := l.persistFile(path, value); err != nil {
+							return err
+						}
+						if writes == failAt {
+							return injected
+						}
+						return nil
+					}
+					auth := func() error { return nil }
+					deliver := func() (Outcome, error) {
+						sends++
+						return Outcome{State: state, Decision: r.Decision, AttemptID: r.AttemptID}, nil
+					}
+					out, err := l.Decide(r, a, auth, auth, deliver)
+					if !errors.Is(err, injected) {
+						t.Fatalf("fault was not reached: %+v %v", out, err)
+					}
+					if failAt <= 3 && (sends != 0 || out.State != "failed") {
+						t.Fatalf("pre-delivery failure: %+v sends=%d", out, sends)
+					}
+					audit, err := os.ReadFile(filepath.Join(l.Dir, "audit.jsonl"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, line := range bytes.Split(bytes.TrimSpace(audit), []byte{'\n'}) {
+						var entry record
+						if err := json.Unmarshal(line, &entry); err != nil {
+							t.Fatal(err)
+						}
+						if entry.Phase == "reservation" {
+							files, _ := filepath.Glob(filepath.Join(l.Dir, "*.json"))
+							if len(files) != 2 || failAt <= 2 {
+								t.Fatalf("audit claimed an unpersisted reservation: %s", audit)
+							}
+						}
+					}
+					beforeRetry := sends
+					reopened := Ledger{Dir: l.Dir}
+					retry, err := reopened.Decide(r, a, auth, auth, deliver)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if failAt <= 3 && !(failAt == 1 && !afterWrite) && (retry.State != "failed" || sends != 0) {
+						t.Fatalf("undelivered retry: %+v sends=%d", retry, sends)
+					}
+					if failAt >= 4 && (retry.State != state || sends != beforeRetry) {
+						t.Fatalf("receipt lost or resent: %+v sends=%d", retry, sends)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestPermissionLedgerPreparationCrashAndReservationAuditFailure(t *testing.T) {
+	for _, stopAt := range []int{1, 2} {
+		t.Run(fmt.Sprintf("crash-after-write-%d", stopAt), func(t *testing.T) {
+			l := Ledger{Dir: t.TempDir()}
+			r := Response{WingID: "wing", SessionID: "egg", RequestID: "request", Digest: "digest", AttemptID: "attempt", Decision: "deny"}
+			a := Actor{"owner", "tui", "tui"}
+			auth := func() error { return nil }
+			writes, sends := 0, 0
+			l.writeRecord = func(path string, value any) error {
+				if err := l.persistFile(path, value); err != nil {
+					return err
+				}
+				writes++
+				if writes == stopAt {
+					panic("simulated crash during preparation")
+				}
+				return nil
+			}
+			deliver := func() (Outcome, error) { sends++; return Outcome{}, nil }
+			func() {
+				defer func() {
+					if recover() == nil {
+						t.Error("crash injection was not reached")
+					}
+				}()
+				l.Decide(r, a, auth, auth, deliver)
+			}()
+			out, err := (Ledger{Dir: l.Dir}).Decide(r, a, auth, auth, deliver)
+			if err != nil || out.State != "failed" || sends != 0 {
+				t.Fatalf("crashed preparation became delivery: %+v %v sends=%d", out, err, sends)
+			}
+		})
+	}
+	t.Run("reservation audit failure", func(t *testing.T) {
+		l := Ledger{Dir: t.TempDir()}
+		r := Response{WingID: "wing", SessionID: "egg", RequestID: "request", Digest: "digest", AttemptID: "attempt", Decision: "allow"}
+		a := Actor{"owner", "tui", "tui"}
+		writes, sends := 0, 0
+		l.writeRecord = func(path string, value any) error {
+			if err := l.persistFile(path, value); err != nil {
+				return err
+			}
+			writes++
+			if writes == 2 {
+				audit := filepath.Join(l.Dir, "audit.jsonl")
+				if err := os.Rename(audit, filepath.Join(l.Dir, "intent.jsonl")); err != nil {
+					return err
+				}
+				return os.Mkdir(audit, 0700)
+			}
+			return nil
+		}
+		auth := func() error { return nil }
+		deliver := func() (Outcome, error) { sends++; return Outcome{}, nil }
+		if out, err := l.Decide(r, a, auth, auth, deliver); err == nil || out.State != "failed" || sends != 0 {
+			t.Fatalf("failed reservation audit delivered: %+v %v sends=%d", out, err, sends)
+		}
+		out, err := (Ledger{Dir: l.Dir}).Decide(r, a, auth, auth, deliver)
+		if err != nil || out.State != "failed" || sends != 0 {
+			t.Fatalf("retry invented delivery: %+v %v sends=%d", out, err, sends)
+		}
+	})
+}
+
+func TestPermissionLedgerFailureReceiptPersistsWhenOneRepairWriteFails(t *testing.T) {
+	for _, revoked := range []bool{false, true} {
+		firstRepair := 4
+		for failAt := firstRepair; failAt <= firstRepair+1; failAt++ {
+			for _, afterWrite := range []bool{false, true} {
+				t.Run(fmt.Sprintf("revoked-%t/write-%d/after-%t", revoked, failAt, afterWrite), func(t *testing.T) {
+					l := Ledger{Dir: t.TempDir()}
+					r := Response{WingID: "wing", SessionID: "egg", RequestID: "request", Digest: "digest", AttemptID: "attempt", Decision: "allow"}
+					a := Actor{"owner", "tui", "tui"}
+					writes, checks, sends := 0, 0, 0
+					injected := errors.New("injected failure")
+					l.writeRecord = func(path string, value any) error {
+						writes++
+						if writes == failAt && !afterWrite {
+							return injected
+						}
+						if err := l.persistFile(path, value); err != nil {
+							return err
+						}
+						if writes == failAt || (!revoked && writes == 3) {
+							return injected
+						}
+						return nil
+					}
+					auth := func() error {
+						checks++
+						if revoked && checks == 2 {
+							return errors.New("revoked")
+						}
+						return nil
+					}
+					live := func() error { return nil }
+					deliver := func() (Outcome, error) { sends++; return Outcome{}, nil }
+					out, err := l.Decide(r, a, auth, live, deliver)
+					if !errors.Is(err, injected) || out.State != "failed" || sends != 0 {
+						t.Fatalf("failed repair: %+v %v sends=%d", out, err, sends)
+					}
+					out, err = (Ledger{Dir: l.Dir}).Decide(r, a, auth, live, deliver)
+					if err != nil || out.State != "failed" || sends != 0 {
+						t.Fatalf("retry lost non-delivery receipt: %+v %v sends=%d", out, err, sends)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestPermissionLedgerPersistentWriteFailureUsesAuditReceipt(t *testing.T) {
+	for _, state := range []string{"delivered", "failed", "unconfirmed"} {
+		for _, failAt := range []int{3, 4} {
+			for _, afterWrite := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/write-%d/after-%t", state, failAt, afterWrite), func(t *testing.T) {
+					l := Ledger{Dir: t.TempDir()}
+					r := Response{WingID: "wing", SessionID: "egg", RequestID: "request", Digest: "digest", AttemptID: "attempt", Decision: "allow"}
+					a := Actor{"owner", "tui", "tui"}
+					writes, sends := 0, 0
+					injected := errors.New("persistent storage failure")
+					l.writeRecord = func(path string, value any) error {
+						writes++
+						if writes > failAt || (writes == failAt && !afterWrite) {
+							return injected
+						}
+						if err := l.persistFile(path, value); err != nil {
+							return err
+						}
+						if writes == failAt {
+							return injected
+						}
+						return nil
+					}
+					auth := func() error { return nil }
+					deliver := func() (Outcome, error) {
+						sends++
+						return Outcome{State: state, Decision: r.Decision, AttemptID: r.AttemptID}, nil
+					}
+					if _, err := l.Decide(r, a, auth, auth, deliver); !errors.Is(err, injected) {
+						t.Fatal(err)
+					}
+					beforeRetry := sends
+					out, err := (Ledger{Dir: l.Dir}).Decide(r, a, auth, auth, deliver)
+					want := state
+					if failAt == 3 {
+						want = "failed"
+					}
+					if err != nil || out.State != want || sends != beforeRetry {
+						t.Fatalf("lost known outcome or resent: %+v %v sends=%d want=%s", out, err, sends, want)
+					}
+				})
+			}
+		}
 	}
 }
