@@ -114,7 +114,7 @@ func (s *Server) forwardPhoneWS(w http.ResponseWriter, r *http.Request, browser 
 			}
 		}
 		// Drop ALL sender identity hints, including forged roles and passkeys.
-		forwarded := ws.TunnelRequest{Type: ws.TypeTunnelRequest, WingID: id, RequestID: req.RequestID, Purpose: "phone", Payload: req.Payload}
+		forwarded := ws.TunnelRequest{Type: ws.TypeTunnelRequest, WingID: id, RequestID: req.RequestID, Purpose: "phone", Payload: req.Payload, BrowserPhone: browser}
 		current := s.findAnyWingByWingID(id)
 		if current == nil || current.Conn != wing.Conn || !ws.HostedRelayAllowed(current.HostedRelay) || !s.relayAccess(wing.UserID).Allowed {
 			return

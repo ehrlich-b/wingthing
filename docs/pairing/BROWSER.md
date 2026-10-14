@@ -2,15 +2,18 @@
 
 On a registered personal machine, run `wt pair --show-link`. Open the trusted
 app's `#pair` page and paste the full invitation. The browser shows the machine,
-requested inventory-only access, four PAKE emoji and the full wing fingerprint.
+requested inventory-only access, four PAKE emoji with labels and the full wing fingerprint.
 Compare all of them with the terminal, select **Match · Join**, and press Enter
 in the terminal. **They differ** and **Cancel** stop the exchange.
 
-This first browser slice lists sessions and the paired machine only. The wing
-records the terminal-approved scope and rejects input, launch, actions, terminal
+This first browser slice reads machines and sessions from the wing's `inventory`
+operation. The relay marks the browser route, and the wing forces inventory-only
+scope even when a client omits scope; wider requests are refused before terminal
+approval. The wing records this scope and rejects input, launch, actions, terminal
 attachment and remote fleet selectors. `wt devices` shows the granted scope;
 `wt devices revoke <name-or-device-id>` ends live access. **Forget** removes this
-origin's saved access. An interrupted attempt offers **Forget incomplete pairing**.
+origin's saved access. Failed commits remove the local candidate. A fresh join
+also discards an interrupted incomplete candidate while preserving its pin check.
 
 The page opens before account lookup and uses `/ws/browser-phone` on the trusted
 app origin. The relay checks the exact configured app Origin, ignores cookie
@@ -44,6 +47,7 @@ set `PLAYWRIGHT_MODULE` or `CHROMIUM_PATH` when they are outside normal location
 Its loopback roost uses a disposable repository-local HOME and never contacts a
 real relay or provider. Screenshots and proof default to `.scratch/browser-join`;
 `WT_JOIN_OUT` and `WT_JOIN_SHOTS` select evidence destinations. It checks both
-390×844 and 1440×900, real five-minute expiry, wrong pin/secret, storage failures,
+390×844 and 1440×900, a real terminal session, wider scope requests, real wing-side
+five-minute start/commit expiry, re-pairing, wrong pin/secret, storage failures,
 revocation, denial, ciphertext replay and cancellation races. Local fixtures do
 not establish hosted production acceptance.

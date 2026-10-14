@@ -13,6 +13,43 @@ import (
 	"time"
 )
 
+func TestBrowserTransportForcesInventoryScope(t *testing.T) {
+	for _, startRestricted := range []bool{false, true} {
+		for _, scope := range []string{"", ScopeInventory, ScopeControl, "admin", "*"} {
+			t.Run(scope+map[bool]string{false: "/prove-route", true: "/start-route"}[startRestricted], func(t *testing.T) {
+				f := fixture(t)
+				f.startOnTransport(t, f.q.Secret, startRestricted)
+				payload, err := auth.Encrypt(f.pair, encode(map[string]any{
+					"op": "prove", "id": f.q.ID, "name": "Browser", "scope": scope,
+					"public_key": base64.StdEncoding.EncodeToString(elliptic.Marshal(elliptic.P256(), f.signing.X, f.signing.Y)),
+				}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Starting on the browser route binds the restriction even if
+				// the subsequent proof arrives through the native transport.
+				r := f.m.Handle(context.Background(), Request{Op: "pair.prove", ID: f.q.ID, Payload: payload, InventoryOnly: !startRestricted})
+				if scope != "" && scope != ScopeInventory {
+					if r.Error != "denied" {
+						t.Fatal(r)
+					}
+					if err := f.m.Allow(f.q.ID); err == nil {
+						t.Fatal("denied scope reached terminal approval")
+					}
+				} else {
+					status, err := f.m.Status(f.q.ID)
+					if r.Error != "" || err != nil || status.Scope != ScopeInventory {
+						t.Fatal(r, status, err)
+					}
+				}
+				if len(f.m.Devices()) != 0 {
+					t.Fatal("scope request granted a device")
+				}
+			})
+		}
+	}
+}
+
 func TestTerminalApprovedInventoryScopePersistsAndCannotAct(t *testing.T) {
 	f := fixture(t)
 	f.start(t, f.q.Secret)

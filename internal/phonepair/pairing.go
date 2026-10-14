@@ -58,12 +58,13 @@ func (q Invitation) Link() string {
 }
 
 type Request struct {
-	Op           string `json:"op"`
-	ID           string `json:"id,omitempty"`
-	Message      string `json:"message,omitempty"`
-	SenderPub    string `json:"sender_pub,omitempty"`
-	ConnectionID string `json:"connection_id,omitempty"`
-	Payload      string `json:"payload,omitempty"`
+	InventoryOnly bool   `json:"-"` // trusted transport policy, never decoded from a client
+	Op            string `json:"op"`
+	ID            string `json:"id,omitempty"`
+	Message       string `json:"message,omitempty"`
+	SenderPub     string `json:"sender_pub,omitempty"`
+	ConnectionID  string `json:"connection_id,omitempty"`
+	Payload       string `json:"payload,omitempty"`
 }
 type Response struct {
 	Error        string    `json:"error,omitempty"`
@@ -101,6 +102,7 @@ type pending struct {
 	prepared               *Device
 	device                 string
 	phone, terminal        bool
+	inventoryOnly          bool
 	result                 json.RawMessage
 }
 type command struct {
@@ -399,6 +401,7 @@ func (m *Manager) handle(ctx context.Context, r Request) (Response, error) {
 		if p.state != "waiting" {
 			return Response{}, failure("used")
 		}
+		p.inventoryOnly = r.InventoryOnly
 		p.state = "used"
 		peer, e := base64.StdEncoding.DecodeString(r.Message)
 		if e != nil {
@@ -430,6 +433,12 @@ func (m *Manager) handle(ctx context.Context, r Request) (Response, error) {
 		if p.cipher == nil || p.state == "cancelled" {
 			return Response{}, failure("cancelled")
 		}
+		// A route restriction follows the exchange even if later requests use
+		// another carrier; a browser route cannot resume a wider native grant.
+		p.inventoryOnly = p.inventoryOnly || r.InventoryOnly
+		if p.inventoryOnly && p.scope != "" && p.scope != ScopeInventory {
+			return Response{}, failure("denied")
+		}
 		data, e := auth.Decrypt(p.cipher, r.Payload)
 		if e != nil {
 			if err := m.cancelPending(p); err != nil {
@@ -459,8 +468,13 @@ func (m *Manager) handle(ctx context.Context, r Request) (Response, error) {
 			if c.Scope != "" && c.Scope != ScopeControl && c.Scope != ScopeInventory {
 				return Response{}, failure("denied")
 			}
+			if p.inventoryOnly && c.Scope != "" && c.Scope != ScopeInventory {
+				return Response{}, failure("denied")
+			}
 			p.scope = c.Scope
-			if p.scope == "" {
+			if p.inventoryOnly {
+				p.scope = ScopeInventory
+			} else if p.scope == "" {
 				p.scope = ScopeControl
 			}
 			p.publicKey = c.PublicKey

@@ -1209,6 +1209,8 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 			if phoneServer != nil && len(req.Payload) <= phonepair.MaxPayload+4096 {
 				var request phonepair.Request
 				if json.Unmarshal([]byte(req.Payload), &request) == nil {
+					// The registered relay supplies route policy outside the opaque box.
+					request.InventoryOnly = req.BrowserPhone
 					response = phoneServer.Manager.Box(ctx, request)
 				}
 			}

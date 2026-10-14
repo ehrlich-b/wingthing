@@ -328,6 +328,7 @@ type TunnelRequest struct {
 	WingID         string   `json:"wing_id"`
 	RequestID      string   `json:"request_id"`
 	Purpose        string   `json:"purpose,omitempty"`
+	BrowserPhone   bool     `json:"browser_phone,omitempty"`   // relay-injected browser phone route
 	SenderPub      string   `json:"sender_pub,omitempty"`      // browser X25519 identity pubkey
 	Payload        string   `json:"payload"`                   // base64(AES-GCM encrypted)
 	SenderUserID   string   `json:"sender_user_id,omitempty"`  // relay-injected user ID

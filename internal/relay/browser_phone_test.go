@@ -56,7 +56,7 @@ func TestBrowserPhoneForwardsOnlyOpaqueBoxesWithoutCookieAuthority(t *testing.T)
 				t.Fatal(err)
 			}
 			var got ws.TunnelRequest
-			if json.Unmarshal(data, &got) != nil || got.Payload != payload || got.SenderUserID != "" || got.SenderOrgRole != "" || len(got.SenderPasskeys) != 0 {
+			if json.Unmarshal(data, &got) != nil || !got.BrowserPhone || got.Payload != payload || got.SenderUserID != "" || got.SenderOrgRole != "" || len(got.SenderPasskeys) != 0 {
 				t.Fatal("identity leaked")
 			}
 		} else if _, _, err = client.Read(ctx); err == nil {

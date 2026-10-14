@@ -1,6 +1,7 @@
 import './browser-pair.css';
 import { loadDevice, listDevices, forgetDevice, saveDevice, activateDevice, prepareSigningKey } from './browser-device.js';
 import { parseInvitation, fingerprint, PhoneCarrier, PairExchange, InventoryConnection } from './browser-pair-protocol.js';
+import { emojiLabel } from './pake/emoji.js';
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const labels = {
     expired: ['Invitation expired', 'Run wt pair --show-link on the machine for a fresh invitation.'],
@@ -56,11 +57,11 @@ export async function initBrowserPair() {
             card.innerHTML = '<h2>Checking invitation…</h2><p role="status">Verifying the machine and browser storage.</p><button id="bp-cancel">Cancel</button>';
         } else if (kind === 'compare' || kind === 'waiting') {
             const fp = fingerprint(q.key).match(/.{4}/g).map(group => '<span>' + group + '</span>').join(' ');
-            card.innerHTML = '<h2>Pair ' + escape(q.name) + '</h2><p>Compare these with the terminal on ' + escape(q.name) + '.</p><div class="bp-emoji" aria-label="Confirmation emoji">' + escape(exchange.emoji) + '</div><label>Requested access</label><p>List sessions and machines on ' + escape(q.name) + '. Inventory only.</p><label>Full fingerprint</label><p class="bp-fingerprint">' + fp + '</p>' + (kind === 'compare' ? '<div class="bp-actions"><button id="bp-match" class="bp-primary">Match · Join</button><button id="bp-differ">They differ</button></div><p class="bp-secondary">Then press Enter in the terminal.</p>' : '<p role="status">Waiting for Enter in the terminal on ' + escape(q.name) + '…</p>') + '<p id="bp-expiry" class="bp-secondary"></p><button id="bp-cancel">Cancel</button>';
+            card.innerHTML = '<h2>Pair ' + escape(q.name) + '</h2><p>Compare these with the terminal on ' + escape(q.name) + '.</p><div class="bp-emoji" aria-label="Confirmation emoji">' + escape(exchange.emoji) + '</div><p class="bp-emoji-labels bp-secondary">' + escape(exchange.emoji.split(' ').map(emojiLabel).join(' · ')) + '</p><label>Requested access</label><p>List sessions and machines on ' + escape(q.name) + '. Inventory only.</p><label>Full fingerprint</label><p class="bp-fingerprint">' + fp + '</p>' + (kind === 'compare' ? '<div class="bp-actions"><button id="bp-match" class="bp-primary">Match · Join</button><button id="bp-differ">They differ</button></div><p class="bp-secondary">Then press Enter in the terminal.</p>' : '<p role="status">Waiting for Enter in the terminal on ' + escape(q.name) + '…</p>') + '<p id="bp-expiry" class="bp-secondary"></p><button id="bp-cancel">Cancel</button>';
             bind('bp-match', confirm); bind('bp-differ', () => cancel('mismatch'));
             updateExpiry();
         } else if (kind === 'connected') {
-            card.innerHTML = '<h2>' + escape(record.name) + '</h2><p role="status">✓ Connected · Inventory only</p><h3>Machines</h3><p>' + escape(record.name) + '</p><h3>Sessions</h3><div id="bp-sessions">Loading sessions…</div><p class="bp-secondary">Updated from this machine. Access lasts until revoked or forgotten.</p><button id="bp-forget">Forget</button>';
+            card.innerHTML = '<h2 id="bp-machine-name">Paired machine</h2><p role="status">✓ Connected · Inventory only</p><h3>Machines</h3><div id="bp-machines">Loading machines…</div><h3>Sessions</h3><div id="bp-sessions">Loading sessions…</div><p class="bp-secondary">Updated from this machine. Access lasts until revoked or forgotten.</p><button id="bp-forget">Forget</button>';
             bind('bp-forget', forget);
         } else {
             const label = labels[kind] || labels.unreachable;
@@ -98,7 +99,8 @@ export async function initBrowserPair() {
             if (relay.username || relay.password || relay.hash || (relay.protocol !== 'https:' && !(relay.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(relay.hostname)))) throw new Error('unreachable');
             const pinned = await loadDevice(q.wing_id); assertCurrent(n);
             if (pinned && pinned.key !== q.key) throw new Error('mismatch');
-            if (pinned) { record = pinned; throw new Error('cancelled'); }
+            if (pinned?.ready === true) { record = pinned; throw new Error('cancelled'); }
+            if (pinned) { await forgetDevice(pinned.wing_id, pinned.device_id); assertCurrent(n); }
             const prepared = await prepareSigningKey(); assertCurrent(n); signing = prepared;
             carrier = new PhoneCarrier(q.wing_id, q.key);
             await carrier.open(); assertCurrent(n);
@@ -133,7 +135,7 @@ export async function initBrowserPair() {
             exchange.close(); exchange = null; signing = null; q = null; clearInterval(expiry);
             await connect(record, n);
         } catch (error) {
-            if (candidate && (n !== generation || error.message === 'storage')) { try { await forgetDevice(candidate.wing_id, candidate.device_id); } catch {} }
+            if (candidate && (!candidate.ready || n !== generation || error.message === 'storage')) { try { await forgetDevice(candidate.wing_id, candidate.device_id); } catch {} }
             if (n === generation) await cancel(errorState(error));
         } finally { busy = false; }
     }
@@ -155,14 +157,17 @@ export async function initBrowserPair() {
         if (busy && state !== 'connected') return;
         clearInterval(poll); // Never send simultaneous sequence-bearing commands.
         try {
-            const rows = await inventory.command('sessions'); assertCurrent(n);
+            const result = await inventory.command('inventory'); assertCurrent(n);
             if (state !== 'connected') return;
+            if (result.version !== 'wingthing.session-inventory.v1' || result.wing_id !== record.wing_id || !Array.isArray(result.sources) || !Array.isArray(result.sessions)) throw new Error('mismatch');
+            card.querySelector('#bp-machine-name').textContent = result.machine_label;
+            card.querySelector('#bp-machines').innerHTML = '<ul>' + result.sources.map(source => '<li><strong>' + escape(source.machine_label) + '</strong><span>' + (source.healthy ? 'Available' : 'Unavailable') + '</span></li>').join('') + '</ul>';
+            const rows = result.sessions;
             const sessions = card.querySelector('#bp-sessions');
-            sessions.innerHTML = Array.isArray(rows) && rows.length ? '<ul>' + rows.map(row => '<li><strong>' + escape(row.name || 'Untitled session') + '</strong><span>' + escape([row.agent, row.status].filter(Boolean).join(' · ')) + '</span></li>').join('') + '</ul>' : '<p>No sessions on ' + escape(savedName()) + '.</p>';
-            poll = setInterval(() => refresh(n), 2000);
+            sessions.innerHTML = rows.length ? '<ul>' + rows.map(row => '<li><strong>' + escape(row.name || 'Untitled session') + '</strong><span>' + escape([row.agent, row.status].filter(Boolean).join(' · ')) + '</span></li>').join('') + '</ul>' : '<p>No sessions on ' + escape(result.machine_label) + '.</p>';
+            poll = setTimeout(() => refresh(n), 2000);
         } catch (error) { if (n === generation) { wipe(); render(errorState(error)); } }
     }
-    function savedName() { return record?.name || 'this machine'; }
     async function forget() {
         generation++; wipe();
         try { await forgetDevice(record.wing_id); record = null; render('paste'); }

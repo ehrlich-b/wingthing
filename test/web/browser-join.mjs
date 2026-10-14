@@ -1,12 +1,15 @@
 // Branch-built, loopback-only Pair acceptance; no provider or account services.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const revision=()=>({head:spawnSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).stdout.trim(),dirty:!!spawnSync('git',['status','--porcelain'],{cwd:root,encoding:'utf8'}).stdout});
+const source=revision(), screenshots=[];
 const out = process.env.WT_JOIN_OUT || path.join(root, '.scratch/browser-join');
 const shots = process.env.WT_JOIN_SHOTS || path.join(out, 'shots');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -21,7 +24,7 @@ const log = fs.openSync(path.join(out,'roost.log'),'w');
 const startRoost = () => spawn('nice',['-n','10',path.join(root,'wt'),'roost','start','--foreground','--addr','127.0.0.1:'+port],{cwd:root,env,stdio:['ignore',log,log]});
 let roost = startRoost(), invitationCount = 0;
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
-const proof=[]; const pairs=[];let browser;
+const proof=[]; const pairs=[];let browser, sessionStarted=false;
 const record = (name, fact) => { proof.push({name,pass:true,fact});console.log('PASS '+name+': '+fact); };
 const cli = (...args) => {
     const r=spawnSync('nice',['-n','10',path.join(root,'wt'),...args],{cwd:root,env,encoding:'utf8'});
@@ -47,9 +50,9 @@ async function pair() {
     assert.ok(link,'pair command did not issue a link');
     return {child,link,output:()=>output};
 }
-async function newPage(viewport, init) {
+async function newPage(viewport, init, initArg) {
     const context=await browser.newContext({viewport});
-    if(init)await context.addInitScript(init);
+    if(init)await context.addInitScript(init, initArg);
     const page=await context.newPage();
     let me=0;page.on('request',r=>{if(r.url().includes('/api/app/me'))me++;});
     await page.goto(base+'/app/#pair');
@@ -57,7 +60,20 @@ async function newPage(viewport, init) {
     assert.equal(me,0,'Pair fetched account authority');
     return {page,context};
 }
-async function shot(page,size,name){await page.screenshot({path:path.join(shots,`${size}-${name}.png`),fullPage:true});}
+async function shot(page,size,name){
+    // Label the captured scenario outside the product UI, so identical error
+    // screens still carry distinct, honest evidence of the exercised failure.
+    await page.evaluate(({size,name})=>{
+        document.getElementById('proof-case')?.remove();
+        const note=document.createElement('p');note.id='proof-case';
+        note.textContent=`Local verification: ${name} · ${size}px`;
+        note.style.cssText='margin:24px 32px;color:#626262;font:13px system-ui';
+        document.body.append(note);
+    },{size,name});
+    const file=`${size}-${name}.png`;
+    await page.screenshot({path:path.join(shots,file),fullPage:true});
+    screenshots.push({file,sha256:createHash('sha256').update(fs.readFileSync(path.join(shots,file))).digest('hex')});
+}
 async function paste(page,link,name) {
     await page.locator('#bp-link').fill(link);await page.locator('#bp-name').fill(name);
     await page.getByRole('button',{name:'Check invitation'}).click();
@@ -111,17 +127,24 @@ async function probe(page,wing) {
 }
 try {
     await ready();
+    cli('terminal','--unsandboxed','--detach','--name','join-proof-session','--cwd',home,'--','/bin/sleep','1800');
+    sessionStarted=true;
+    record('real-session','branch-built CLI started a real local terminal egg running sleep in lane HOME');
     browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||chromium.executablePath(),headless:true,args:['--disable-background-networking','--disable-component-update','--disable-default-apps','--disable-sync','--metrics-recording-only','--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1',...(process.env.CHROMIUM_NO_SANDBOX==='1'?['--no-sandbox']:[])]});
     for(const viewport of [{width:390,height:844},{width:1440,height:900}]) {
         const size=viewport.width;
         const {page,context}=await newPage(viewport);
         await shot(page,size,'paste');
         const invitation=await pair(), a=decode(invitation.link), name=process.env.WT_JOIN_CASE==='fragment'?'Browser':'Browser '+size;
-        if(process.env.WT_JOIN_CASE==='fragment'){await page.goto('about:blank');await page.goto(base+'/app/'+new URL(invitation.link).hash);}else await paste(page,invitation.link,name);
+        a[2]='Invitation alias';
+        const displayLink=encode(a);
+        if(process.env.WT_JOIN_CASE==='fragment'){await page.goto('about:blank');await page.goto(base+'/app/'+new URL(displayLink).hash);}else await paste(page,displayLink,name);
         await page.getByRole('button',{name:'Match · Join'}).waitFor();
         await shot(page,size,'compare');
         const fp=await page.locator('.bp-fingerprint').innerText();assert.equal(fp.replaceAll(/\s/g,'').length,64);
         assert.equal((await page.locator('.bp-emoji').innerText()).split(' ').length,4);
+        assert.equal((await page.locator('.bp-emoji-labels').innerText()).split(' · ').length,4);
+        record('emoji-labels-'+size,'four confirmation glyphs and four readable labels rendered together');
         await page.getByRole('button',{name:'Match · Join'}).click();
         await page.getByText(/Waiting for Enter/).waitFor();await shot(page,size,'waiting');
         assert.ok(!devices().includes(name),'single-sided approval issued device');
@@ -130,7 +153,11 @@ try {
         assert.ok(invitation.output().includes('Fingerprint: '+fp.replaceAll(/\s+/g,' ')));
         invitation.child.stdin.write('\n');
         await page.getByText('✓ Connected · Inventory only').waitFor({timeout:15000});
-        await page.getByText('No sessions on Studio.').waitFor();
+        await page.locator('#bp-machines').getByText('Studio',{exact:true}).waitFor();
+        await page.locator('#bp-sessions').getByText('join-proof-session',{exact:true}).waitFor();
+        assert.equal(await page.locator('#bp-machine-name').innerText(),'Studio');
+        assert.ok(!(await page.locator('#bp-machines').innerText()).includes('Invitation alias'));
+        record('inventory-'+size,'wing inventory supplies Studio and the real join-proof-session despite invitation name Invitation alias');
         await shot(page,size,'connected');
         assert.ok(devices().includes(name+'\tinventory\t'));
         assert.equal(new URL(page.url()).hash,'#pair');
@@ -146,7 +173,7 @@ try {
         const samePin=await page.evaluate(async ({wing,key})=>{const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('wt-paired-wings-v1');r.onsuccess=()=>resolve(r.result);r.onerror=reject;});const saved=await new Promise((resolve,reject)=>{const r=db.transaction('devices').objectStore('devices').get(wing);r.onsuccess=()=>resolve(r.result);r.onerror=reject;});db.close();return saved.key===key;},{wing:a[1],key:a[3]});
         assert.equal(samePin,true);assert.ok(!devices().includes('Pin replacement'));wrongPin.child.kill('SIGINT');
         record('saved-pin-'+size,'changed invitation pin refused; original persisted pin unchanged');
-        await page.reload();await page.getByRole('button',{name:'Open Studio'}).click();await page.getByText('✓ Connected · Inventory only').waitFor();
+        await page.reload();await page.getByRole('button',{name:'Open Invitation alias'}).click();await page.getByText('✓ Connected · Inventory only').waitFor();
         record('reload-'+size,'IndexedDB signing key and credential reconnect after reload');
         cli('devices','revoke',name);
         await page.getByRole('heading',{name:'Access ended'}).waitFor({timeout:12000});
@@ -154,6 +181,34 @@ try {
         await page.getByRole('button',{name:'Forget',exact:true}).click();await page.getByRole('heading',{name:'Join from this browser'}).waitFor();
         assert.equal(await page.locator('#bp-saved button').count(),0);record('forget-'+size,'local key and credential removed');
         await context.close();
+        for (const requestedScope of ['control','admin']) {
+            const item=await newPage(viewport,scope=>{
+                const encode=TextEncoder.prototype.encode,decode=TextDecoder.prototype.decode;
+                window.__wingErrors=[];
+                const send=WebSocket.prototype.send;
+                WebSocket.prototype.send=function(value){const request=JSON.parse(value);request.browser_phone=false;return send.call(this,JSON.stringify(request));};
+                TextEncoder.prototype.encode=function(value){
+                    try { const data=JSON.parse(value);if(data.op==='prove'){data.scope=scope;data.inventory_only=false;value=JSON.stringify(data);} } catch {}
+                    return encode.call(this,value);
+                };
+                TextDecoder.prototype.decode=function(...args){
+                    const value=decode.apply(this,args);try{const data=JSON.parse(value);if(data.error)window.__wingErrors.push(data.error);}catch{}
+                    return value;
+                };
+            },requestedScope);
+            const f=await pair();
+            let route;item.page.on('websocket',socket=>{route=socket.url();});
+            await paste(item.page,f.link,'Scope '+requestedScope+' '+size);
+            await item.page.getByRole('heading',{name:'Machine unreachable',exact:true}).waitFor();
+            assert.equal(new URL(route).pathname,'/ws/browser-phone');
+            assert.equal(new URL(route).host,new URL(base).host);
+            assert.ok(await item.page.evaluate(()=>window.__wingErrors.includes('denied')),'wing did not refuse wider scope');
+            assert.ok(!devices().includes('Scope '+requestedScope+' '+size));
+            assert.ok(!f.output().includes('Enter to allow'));
+            await shot(item.page,size,'scope-'+requestedScope);
+            record('scope-'+requestedScope+'-'+size,'app-Origin browser route request refused by wing with denied; no terminal approval or device');
+            await item.context.close();f.child.kill('SIGINT');
+        }
         for(const failure of ['wrong-pin','wrong-secret','expired','mismatch','cancelled','unreachable','storage','storage-final','storage-readback','storage-activation','cancel-commit','pagehide-commit','unload-commit'].filter(name=>!process.env.WT_JOIN_CASE||name===process.env.WT_JOIN_CASE)) {
             const init=failure==='storage'?()=>{indexedDB.open=()=>{throw new DOMException('Unavailable','QuotaExceededError');};}:failure==='storage-final'?()=>{const put=IDBObjectStore.prototype.put;IDBObjectStore.prototype.put=function(value,...rest){if(value.device_id)throw new DOMException('Full','QuotaExceededError');return put.call(this,value,...rest);};}:failure==='storage-activation'?()=>{const put=IDBObjectStore.prototype.put;IDBObjectStore.prototype.put=function(value,...rest){if(value.ready===true)throw new DOMException('Full','QuotaExceededError');return put.call(this,value,...rest);};}:failure==='storage-readback'?()=>{
                 let wrote=false,failed=false;const put=IDBObjectStore.prototype.put,get=IDBObjectStore.prototype.get,send=WebSocket.prototype.send;
@@ -204,26 +259,96 @@ try {
         }
     }
     record('accountless','both viewports serve Pair without /api/app/me');
-    // Let a genuine unmodified invitation expire at both ends. The five-minute
-    // wait runs in this asynchronous harness, never as a blocking tool call.
+    // Keep the browser clock before expiry only in these fixtures. One real
+    // five-minute wait proves both a start rejected by the wing and a commit
+    // rejected after Enter, without changing the invitation's server deadline.
     if (!process.env.WT_JOIN_CASE) {
-    const expired = await pair(), real = decode(expired.link);
-    const wait = Math.max(0,real[8]*1000-Date.now()+1200);
-    console.log('Waiting '+Math.ceil(wait/1000)+' seconds for real invitation expiry');
-    await sleep(wait);
-    for(const viewport of [{width:390,height:844},{width:1440,height:900}]){
-        const {page,context}=await newPage(viewport);
-        await paste(page,expired.link,'Expired browser');
-        await page.getByRole('heading',{name:'Invitation expired'}).waitFor();
-        await shot(page,viewport.width,'expired-real');
-        assert.ok(!devices().includes('Expired browser'));
-        record('expired-real-'+viewport.width,'unmodified wt pair invitation expired after five minutes; no grant');
-        await context.close();
-    }
+        roost.kill('SIGINT');await once(roost,'exit');roost=startRoost();await ready();invitationCount=0;
+        const expired=await pair(), real=decode(expired.link), pending=[];
+        for(const viewport of [{width:390,height:844},{width:1440,height:900}]){
+            const f=await pair();
+            const item=await newPage(viewport,now=>{
+                Date.now=()=>now;
+                const put=IDBObjectStore.prototype.put,send=WebSocket.prototype.send,timeout=window.setTimeout;
+                let wrote=false,held=false,previous,keepalive;
+                // Only the delayed commit needs a longer browser request timer.
+                window.setTimeout=(fn,ms,...args)=>timeout(fn,wrote&&ms===12000?360000:ms,...args);
+                IDBObjectStore.prototype.put=function(value,...rest){if(value.device_id)wrote=true;return put.call(this,value,...rest);};
+                WebSocket.prototype.send=function(value){
+                    if(wrote&&!held){
+                        held=true;window.__heldCommit={socket:this,value};
+                        // Reissue the last encrypted status (never commit) to
+                        // keep this bounded relay socket alive during expiry.
+                        keepalive=setInterval(()=>{const request=JSON.parse(previous);request.request_id=crypto.randomUUID();send.call(this,JSON.stringify(request));},30000);
+                        return;
+                    }
+                    previous=value;return send.call(this,value);
+                };
+                window.__releaseCommit=()=>{clearInterval(keepalive);const c=window.__heldCommit;send.call(c.socket,c.value);};
+                const decode=TextDecoder.prototype.decode;window.__wingErrors=[];
+                TextDecoder.prototype.decode=function(...args){const value=decode.apply(this,args);try{const data=JSON.parse(value);if(data.error)window.__wingErrors.push(data.error);}catch{}return value;};
+            },Date.now());
+            await paste(item.page,f.link,'Commit expiry '+viewport.width);
+            await item.page.getByRole('button',{name:'Match · Join'}).click();
+            for(let i=0;i<50&&!f.output().includes('Enter to allow');i++)await sleep(100);
+            assert.ok(f.output().includes('Enter to allow'));f.child.stdin.write('\n');
+            await item.page.waitForFunction(()=>!!window.__heldCommit);
+            pending.push({viewport,f,...item});
+        }
+        const deadline=Math.max(real[8],...pending.map(item=>decode(item.f.link)[8]))*1000;
+        const wait=Math.max(0,deadline-Date.now()+1200);
+        console.log('Waiting '+Math.ceil(wait/1000)+' seconds for wing start and commit expiry');
+        await sleep(wait);
+        for(const item of pending){
+            const size=item.viewport.width;
+            await item.page.evaluate(()=>window.__releaseCommit());
+            await item.page.getByRole('heading',{name:'Invitation expired',exact:true}).waitFor();
+            assert.ok(await item.page.evaluate(()=>window.__wingErrors.includes('expired')));
+            const remaining=await item.page.evaluate(async()=>{
+                const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('wt-paired-wings-v1');r.onsuccess=()=>resolve(r.result);r.onerror=reject;});
+                const rows=await new Promise((resolve,reject)=>{const r=db.transaction('devices').objectStore('devices').getAll();r.onsuccess=()=>resolve(r.result);r.onerror=reject;});db.close();return rows.filter(row=>row.device_id).length;
+            });
+            assert.equal(remaining,0,'failed commit retained ready:false candidate');
+            assert.ok(!devices().includes('Commit expiry '+size));
+            await shot(item.page,size,'expired-commit');
+            record('expired-commit-'+size,'wing refused commit after Enter with expired; no local candidate or server device');
+            await item.page.getByRole('button',{name:'Pair again',exact:true}).click();
+            const retry=await pair();await paste(item.page,retry.link,'Retry '+size);
+            await item.page.getByRole('button',{name:'Match · Join'}).click();
+            for(let i=0;i<50&&!retry.output().includes('Enter to allow');i++)await sleep(100);
+            retry.child.stdin.write('\n');
+            await item.page.getByText('✓ Connected · Inventory only').waitFor();
+            await item.page.locator('#bp-sessions').getByText('join-proof-session',{exact:true}).waitFor();
+            assert.ok(devices().includes('Retry '+size+'\tinventory\t'));
+            await shot(item.page,size,'repaired');
+            record('repaired-'+size,'fresh invitation joined successfully after expired commit without Forget');
+            cli('devices','revoke','Retry '+size);
+            await item.context.close();item.f.child.kill('SIGINT');
+        }
+        for(const viewport of [{width:390,height:844},{width:1440,height:900}]){
+            const {page,context}=await newPage(viewport,now=>{
+                Date.now=()=>now;
+                const decode=TextDecoder.prototype.decode;window.__wingErrors=[];
+                TextDecoder.prototype.decode=function(...args){const value=decode.apply(this,args);try{const data=JSON.parse(value);if(data.error)window.__wingErrors.push(data.error);}catch{}return value;};
+            },real[8]*1000-10000);
+            let reachedWing=false;page.on('websocket',socket=>socket.on('framesent',()=>{reachedWing=true;}));
+            await paste(page,expired.link,'Expired browser');
+            await page.getByRole('heading',{name:'Invitation expired',exact:true}).waitFor();
+            assert.ok(reachedWing,'browser clock check prevented the wing expiry probe');
+            assert.ok(await page.evaluate(()=>window.__wingErrors.includes('expired')),'wing did not refuse expired invitation');
+            await shot(page,viewport.width,'expired-real');
+            assert.ok(!devices().includes('Expired browser'));
+            record('expired-real-'+viewport.width,'unmodified five-minute invitation reached wing with browser clock bypassed; wing returned expired; no grant');
+            await context.close();
+        }
     }
 
 } catch(error) { console.error(error);fs.writeFileSync(path.join(out,'failure.txt'),error.stack+'\n');process.exitCode=1; }
 finally {
-    fs.writeFileSync(path.join(out,'proof.json'),JSON.stringify({head:spawnSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).stdout.trim(),dirty:!!spawnSync('git',['status','--porcelain'],{cwd:root,encoding:'utf8'}).stdout,proof},null,2)+'\n');
+    try { if(sessionStarted)cli('session','kill','join-proof-session'); } catch(error) { console.error('Fixture session cleanup: '+error.message);process.exitCode=1; }
     await browser?.close();for(const p of pairs)if(p.exitCode===null)p.kill('SIGINT');roost.kill('SIGINT');fs.closeSync(log);
+    const finish=revision();
+    if(finish.head!==source.head||finish.dirty!==source.dirty){console.error('Source revision changed during verification');process.exitCode=1;}
+    if(new Set(screenshots.map(shot=>shot.sha256)).size!==screenshots.length){console.error('Duplicate screenshot evidence');process.exitCode=1;}
+    fs.writeFileSync(path.join(out,'proof.json'),JSON.stringify({...source,completed:process.exitCode!==1,proof,screenshots},null,2)+'\n');
 }
