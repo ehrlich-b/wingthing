@@ -7,7 +7,7 @@ build-permission-spike:
 	$(GO) build -p 2 -o .scratch/permission-spike ./cmd/permission-spike
 
 test-permission-spike:
-	$(GO) test -p 2 -count=1 ./internal/permissionbridge ./internal/egg -timeout=180s -v
+	$(GO) test -p 2 -count=1 ./cmd/permission-spike ./internal/permissionbridge ./internal/egg -timeout=180s -v
 
 test-permission-spike-race:
 	$(GO) test -p 2 -race -count=1 ./internal/permissionbridge ./internal/egg -run 'PermissionBridge|PermissionSpike' -timeout=60s -v

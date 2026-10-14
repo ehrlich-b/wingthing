@@ -98,7 +98,9 @@ func run(mode string, args []string) error {
 		}
 		quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 		command := quote(binary) + " hook --socket " + quote(*socket) + " --session " + quote(*session) + " --deadline " + quote(deadline.String())
-		return json.NewEncoder(os.Stdout).Encode(map[string]any{"hooks": map[string]any{"PermissionRequest": []any{map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": command, "timeout": int(deadline.Seconds()) + 3}}}}}})
+		// Round up so fractional deadlines retain the full three-second margin.
+		hookTimeout := int((*deadline+time.Second-1)/time.Second) + 3
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"hooks": map[string]any{"PermissionRequest": []any{map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": command, "timeout": hookTimeout}}}}}})
 	default:
 		return errors.New("unknown mode")
 	}

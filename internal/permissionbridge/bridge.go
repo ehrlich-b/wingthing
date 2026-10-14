@@ -232,6 +232,7 @@ func (b *Broker) handle(ctx context.Context, c net.Conn) {
 		return
 	}
 	if command, ok := req.Input.Arguments["command"].(string); !ok || command == "" {
+		b.logLocked(req.Binding, "rejected_request")
 		b.mu.Unlock()
 		return
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -266,5 +267,44 @@ func TestPermissionBridgeCanonicalInputAndInvalidRequests(t *testing.T) {
 	}
 	if (&Broker{Script: Script{Session: "s", ProviderID: "p", Steps: []Step{{Digest: Digest(a), Attempts: []Attempt{{Binding: "current", Decision: "allow-all"}}}}}}).Validate() == nil {
 		t.Fatal("allow-all accepted")
+	}
+}
+
+func TestPermissionBridgeMissingCommandIsLoggedWithoutConsumingStep(t *testing.T) {
+	for _, arguments := range []map[string]any{{}, {"command": ""}, {"command": 7}} {
+		in := fixtureInput(t, "unused")
+		in.Arguments = arguments
+		log := new(bytes.Buffer)
+		b := &Broker{Script: Script{Session: "egg-fixture", ProviderID: in.ProviderID,
+			Steps: []Step{{Digest: Digest(in), Attempts: []Attempt{{Binding: "current", Decision: "allow"}}}}}, Log: log}
+		server, client := net.Pipe()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			defer server.Close()
+			b.handle(context.Background(), server)
+		}()
+		req := Request{Binding: Binding{"egg-fixture", in.ProviderID, strings.Repeat("a", 32), Digest(in)},
+			Input: in, Deadline: time.Now().Add(time.Second)}
+		if err := json.NewEncoder(client).Encode(req); err != nil {
+			t.Fatal(err)
+		}
+		var answer Answer
+		if err := decodeStrict(client, &answer); err == nil {
+			t.Fatal("commandless request received an answer")
+		}
+		client.Close()
+		<-done
+		var row struct {
+			Binding
+			Status string `json:"status"`
+		}
+		decoder := json.NewDecoder(log)
+		if err := decoder.Decode(&row); err != nil || row.Binding != req.Binding || row.Status != "rejected_request" {
+			t.Fatalf("missing bound rejection log: %+v, %v", row, err)
+		}
+		if b.next != 0 || len(b.seen) != 0 || decoder.Decode(new(any)) != io.EOF {
+			t.Fatal("invalid request consumed the step or emitted extra log data")
+		}
 	}
 }
