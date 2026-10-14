@@ -28,6 +28,9 @@ import (
 const Lifetime = 5 * time.Minute
 const MaxPayload = 256 << 10
 
+const ScopeInventory = "inventory"
+const ScopeControl = "control"
+
 type Invitation struct {
 	Version   int       `json:"v"`
 	WingID    string    `json:"wing_id"`
@@ -79,23 +82,29 @@ type Device struct {
 	PairedAt       time.Time `json:"paired_at"`
 	LastSeen       time.Time `json:"last_seen"`
 	Revoked        bool      `json:"revoked"`
+	Scope          string    `json:"scope,omitempty"`
 }
 type PairStatus struct {
-	State     string    `json:"state"`
-	Name      string    `json:"name,omitempty"`
-	Emoji     string    `json:"emoji,omitempty"`
-	ExpiresAt time.Time `json:"expires_at"`
+	State       string    `json:"state"`
+	Name        string    `json:"name,omitempty"`
+	Emoji       string    `json:"emoji,omitempty"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	Scope       string    `json:"scope"`
+	Fingerprint string    `json:"fingerprint"`
 }
 type pending struct {
 	q                      Invitation
 	state                  string
 	cipher                 cipher.AEAD
 	name, publicKey, emoji string
+	scope                  string
+	prepared               *Device
 	device                 string
 	phone, terminal        bool
 	result                 json.RawMessage
 }
 type command struct {
+	Scope        string `json:"scope,omitempty"`
 	Op           string `json:"op"`
 	ID           string `json:"id,omitempty"`
 	Emoji        string `json:"emoji,omitempty"`
@@ -212,7 +221,7 @@ func (m *Manager) Status(id string) (PairStatus, error) {
 	if e != nil {
 		return PairStatus{}, e
 	}
-	return PairStatus{p.state, p.name, p.emoji, p.q.ExpiresAt}, nil
+	return PairStatus{State: p.state, Name: p.name, Emoji: p.emoji, ExpiresAt: p.q.ExpiresAt, Scope: p.scope, Fingerprint: Fingerprint(m.key)}, nil
 }
 func (m *Manager) invitation(id string) (*pending, error) {
 	p := m.pending[id]
@@ -238,6 +247,7 @@ func (m *Manager) cancelPending(p *pending) error {
 			return err
 		}
 	}
+	p.prepared = nil
 	p.state = "cancelled"
 	p.q.Secret = ""
 	p.result = nil
@@ -270,15 +280,28 @@ func (m *Manager) complete(p *pending) error {
 	}
 	credential := randomID()
 	hash := sha256.Sum256([]byte(credential))
-	d := Device{ID: randomID(), Name: p.name, PublicKey: p.publicKey, CredentialHash: base64.StdEncoding.EncodeToString(hash[:]), PairedAt: m.now(), LastSeen: m.now()}
-	m.devices = append(m.devices, d)
-	if e := m.save(); e != nil {
-		m.devices = m.devices[:len(m.devices)-1]
-		return e
+	d := Device{ID: randomID(), Name: p.name, PublicKey: p.publicKey, CredentialHash: base64.StdEncoding.EncodeToString(hash[:]), PairedAt: m.now(), LastSeen: m.now(), Scope: p.scope}
+	if d.Scope == ScopeInventory {
+		// Do not admit the credential until the browser acknowledges durable
+		// storage. Expiry, cancellation or restart drops this prepared grant.
+		p.prepared = &d
+	} else {
+		m.devices = append(m.devices, d)
+		if e := m.save(); e != nil {
+			m.devices = m.devices[:len(m.devices)-1]
+			return e
+		}
 	}
 	p.device = d.ID
-	p.result = encode(map[string]any{"op": "paired", "id": p.q.ID, "wing_id": m.wingID, "key": m.key, "device_id": d.ID, "credential": credential})
+	op := "paired"
+	if p.prepared != nil {
+		op = "prepared"
+	}
+	p.result = encode(map[string]any{"op": op, "id": p.q.ID, "wing_id": m.wingID, "key": m.key, "device_id": d.ID, "credential": credential, "scope": d.Scope})
 	p.state = "paired"
+	if p.prepared != nil {
+		p.state = "saving"
+	}
 	return nil
 }
 func (m *Manager) Devices() []Device {
@@ -399,7 +422,7 @@ func (m *Manager) handle(ctx context.Context, r Request) (Response, error) {
 		p.emoji = EmojiFromShared(p.q, shared, r.Message, bob)
 		p.state = "proving"
 		return Response{Message: bob, Key: m.key, Name: m.name, ExpiresAt: p.q.ExpiresAt}, nil
-	case "pair.prove", "pair.confirm", "pair.status", "pair.cancel":
+	case "pair.prove", "pair.confirm", "pair.status", "pair.cancel", "pair.commit":
 		p, e := m.invitation(r.ID)
 		if e != nil {
 			return Response{}, e
@@ -433,11 +456,18 @@ func (m *Manager) handle(ctx context.Context, r Request) (Response, error) {
 				p.state = "cancelled"
 				return Response{}, failure("bad_key")
 			}
+			if c.Scope != "" && c.Scope != ScopeControl && c.Scope != ScopeInventory {
+				return Response{}, failure("denied")
+			}
+			p.scope = c.Scope
+			if p.scope == "" {
+				p.scope = ScopeControl
+			}
 			p.publicKey = c.PublicKey
 			p.name = c.Name
 			p.state = "confirming"
 		case "pair.confirm":
-			if p.state != "confirming" && p.state != "paired" {
+			if p.state != "confirming" && p.state != "paired" && p.state != "saving" {
 				return Response{}, failure("cancelled")
 			}
 			if c.Emoji != p.emoji {
@@ -451,6 +481,35 @@ func (m *Manager) handle(ctx context.Context, r Request) (Response, error) {
 			if e = m.complete(p); e != nil {
 				return Response{}, e
 			}
+		case "pair.commit":
+			if p.scope != ScopeInventory || !p.phone || !p.terminal || (p.state != "saving" && p.state != "paired") {
+				return Response{}, failure("denied")
+			}
+			if p.state == "saving" {
+				if p.prepared == nil {
+					return Response{}, failure("denied")
+				}
+				for _, d := range m.devices {
+					if !d.Revoked && d.Name == p.prepared.Name {
+						return Response{}, failure("name_in_use")
+					}
+				}
+				m.devices = append(m.devices, *p.prepared)
+				if err := m.save(); err != nil {
+					m.devices = m.devices[:len(m.devices)-1]
+					return Response{}, err
+				}
+				p.prepared = nil
+			} else if m.device(p.device) == nil {
+				return Response{}, failure("revoked")
+			}
+			var result map[string]any
+			if json.Unmarshal(p.result, &result) != nil {
+				return Response{}, failure("denied")
+			}
+			result["op"] = "paired"
+			p.result = encode(result)
+			p.state = "paired"
 		case "pair.cancel":
 			if e := m.cancelPending(p); e != nil {
 				return Response{}, e
@@ -458,7 +517,7 @@ func (m *Manager) handle(ctx context.Context, r Request) (Response, error) {
 		}
 		result := p.result
 		if result == nil {
-			result = encode(map[string]any{"op": map[string]string{"pair.prove": "proved"}[r.Op], "id": p.q.ID, "state": p.state, "emoji": p.emoji})
+			result = encode(map[string]any{"op": map[string]string{"pair.prove": "proved"}[r.Op], "id": p.q.ID, "state": p.state, "emoji": p.emoji, "scope": p.scope})
 		}
 		payload, e := auth.Encrypt(p.cipher, result)
 		return Response{Payload: payload}, e
@@ -543,6 +602,20 @@ func (m *Manager) handle(ctx context.Context, r Request) (Response, error) {
 		switch cmd.Op {
 		case "sessions", "attach", "read", "input", "stop", "detach", "close", "inventory", "search", "action", "launch", "fleet_attach", "fleet_read", "fleet_input", "fleet_detach":
 		default:
+			return Response{}, failure("denied")
+		}
+		// Capabilities come from the durable terminal-approved record. A client
+		// flag, cookie, command payload or reconnect cannot enlarge the grant.
+		d := m.device(c.device)
+		if d.Scope == ScopeInventory {
+			if cmd.Op != "sessions" && cmd.Op != "inventory" && cmd.Op != "close" {
+				return Response{}, failure("denied")
+			}
+			// Inventory is for this wing only; discard client fleet selectors.
+			if cmd.Op == "inventory" {
+				cmd.Input = `{}`
+			}
+		} else if d.Scope != "" && d.Scope != ScopeControl {
 			return Response{}, failure("denied")
 		}
 		var result any = map[string]any{"ok": true}

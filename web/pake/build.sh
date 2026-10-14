@@ -26,7 +26,7 @@ for file in $sources; do
     -std=c++17 -fno-exceptions -fno-rtti -MMD -MF "$out/$i.d" \
     -x c++ -c "$src/$file" -o "$out/$i.o"
 done
-nice -n 10 "$cc" $flags -c experiments/browser-pake/wrapper.c -o "$out/wrapper.o"
+nice -n 10 "$cc" $flags -c web/pake/wrapper.c -o "$out/wrapper.o"
 nice -n 10 "$cc" --target=wasm32-wasi --sysroot="$WASI_SDK_PATH/share/wasi-sysroot" \
   -resource-dir "$WASI_SDK_PATH/lib/clang/19" \
   -mexec-model=reactor -Wl,--gc-sections -Wl,--strip-all \
@@ -36,3 +36,6 @@ nice -n 10 "$cc" --target=wasm32-wasi --sysroot="$WASI_SDK_PATH/share/wasi-sysro
   -Wl,--export=pake_errors -Wl,-Map,"$out/pake.map" \
   "$out"/*.o -o "$out/pake.wasm"
 printf '%s\n' "$sources" > "$out/sources.txt"
+
+cp "$out/pake.wasm" web/src/pake/pake.wasm
+chmod 644 web/src/pake/pake.wasm

@@ -13,7 +13,7 @@ Available Commands:
   completion   Generate the autocompletion script for the specified shell
   conversation Inspect persistent parent and child conversations
   daemon       Run this machine’s wing, locally or through a relay
-  devices      List phones paired with this wing
+  devices      List devices paired with this wing
   doctor       Check available agents, embedders, and API keys
   embed        Generate embeddings
   help         Help about any command
@@ -24,7 +24,7 @@ Available Commands:
   login        Authenticate this device with the roost
   logout       Remove device authentication
   mcp          Expose Wingthing to LLM clients
-  pair         Pair a phone with this machine's main wing
+  pair         Pair a device with this machine's main wing
   phone        Set up the phone app
   pin          Pin a session at the top of the fleet inventory
   prompt       Manage named, versioned prompt templates

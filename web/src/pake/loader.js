@@ -1,4 +1,4 @@
-// Standalone spike loader: no npm dependencies, no application integration.
+// BoringSSL SPAKE2 with browser entropy and single-use, explicitly freed exchanges.
 const utf8 = new TextEncoder();
 
 export async function loadPake(bytes) {

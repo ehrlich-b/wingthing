@@ -1,10 +1,10 @@
 .DEFAULT_GOAL := check
 .PHONY: browser-pake check-browser-pake test-pairing
 
-# Isolated experiment; never included in the web app or release binary.
+# Build the browser PAKE asset from the vendored native BoringSSL sources.
 browser-pake:
 	@test -n "$(strip $(WASI_SDK_PATH))" || { echo 'Set WASI_SDK_PATH to the extracted wasi-sdk-25.0 directory' >&2; exit 1; }
-	sh experiments/browser-pake/build.sh
+	sh web/pake/build.sh
 
 check-browser-pake: check-browser-pake-env
 	@mkdir -p .scratch/browser-pake/home
@@ -554,3 +554,12 @@ test-pwa-web: web
 	$(preview-build)
 	WT_SESSION_TAKEOVER_BROWSER=1 WT_TEST_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 ./cmd/wt -run '^TestBuiltSessionTakeoverDashboard$$' -v -timeout=180s
 	cd web && $(NODE) test/pwa-browser.mjs
+
+# Accountless browser join: native scope gates and the branch-built loopback UI.
+.PHONY: test-browser-join-go test-browser-join
+test-browser-join-go: | web/dist
+	$(GO) test -p 2 -count=1 ./internal/pake ./internal/phonepair ./internal/relay ./internal/wing
+
+test-browser-join: web
+	$(stable-build)
+	$(NODE) test/web/browser-join.mjs

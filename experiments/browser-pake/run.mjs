@@ -6,7 +6,7 @@ import { createInterface } from 'node:readline';
 import { once } from 'node:events';
 import { resolve } from 'node:path';
 import { gzipSync } from 'node:zlib';
-import { loadPake } from './loader.mjs';
+import { loadPake } from '../../web/src/pake/loader.js';
 import { runSuite } from './interop.mjs';
 
 const out = resolve('.scratch/browser-pake');
@@ -63,7 +63,7 @@ try {
   // that the main harness reports; awaiting the original promise still rejects.
   browserResult.catch(() => {});
   const modules = new Map([
-    ['/loader.mjs', await readFile('experiments/browser-pake/loader.mjs')],
+    ['/loader.mjs', await readFile('web/src/pake/loader.js')],
     ['/interop.mjs', await readFile('experiments/browser-pake/interop.mjs')],
   ]);
   const html = `<!doctype html><meta charset="utf-8"><title>Local PAKE interop</title><pre id="result">running</pre>

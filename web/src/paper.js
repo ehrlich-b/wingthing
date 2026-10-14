@@ -188,20 +188,9 @@ function viewMachines() {
         '<aside class="pp-col-rail">' + kicker('Add a device') + '<p>Run <code>wt start</code> on another computer to add it here. To read and answer from your phone, pair it with a machine.</p><a class="pp-btn pp-btn-ink" href="#pair">Pair a phone</a></aside></div>';
 }
 
-// A machine starts pairing with wt pair and the phone app joins it. The browser
-// neither starts nor joins one, so this page only explains the two sides.
+// The accountless Pair entry is handled by entry.js before account login.
 function viewPair() {
-    return head('Pair <i>a phone</i>', '<b>wt pair</b> · on the computer') + '<div class="pp-cols pp-pair"><div class="pp-col-main">' +
-        '<p class="pp-lead">Pairing starts on the computer with <code>wt pair</code> and is joined from the Wingthing phone app.</p>' +
-        '<p class="pp-quiet">This page can\'t join a pairing. Use the phone app to scan the code.</p>' +
-        kicker('On your computer') + '<pre class="pp-cmd"><span class="pp-prompt">$</span> wt pair</pre>' +
-        '<div class="pp-actions pp-desk-only"><button type="button" class="pp-btn" data-copy="wt pair">Copy command</button></div>' +
-        '<p class="pp-gap">Run it in a terminal on the computer you want to pair. It shows a code to scan, good for five minutes.</p>' +
-        kicker('Then, in that terminal') + '<p>After the scan, the terminal shows four symbols and the phone\'s name. If the phone shows the same four in the same order, press <code>Enter</code> to allow. <code>Ctrl-C</code> cancels.</p>' +
-        kicker('What pairing allows') + '<p>The phone can read this machine\'s sessions and message wing. It cannot type into a terminal until you take control from the phone.</p>' +
-        '<p class="pp-quiet pp-gap">Pairing lasts until you revoke it. <code>wt devices</code> lists paired phones and <code>wt devices revoke</code> removes one.</p></div>' +
-        '<aside class="pp-col-rail">' + kicker('In the Wingthing phone app') + '<ol class="pp-steps"><li>Scan the code the terminal shows.</li><li>Check that the app\'s four symbols match the terminal\'s, in the same order.</li><li>Press <code>Enter</code> in the terminal to allow, then confirm in the app.</li></ol>' +
-        '<p class="pp-quiet">Nothing is paired until both sides agree. If the symbols differ, cancel on both.</p></aside></div>';
+    return head('Pair a machine', 'On the computer') + '<p>Open the Pair page to join this machine.</p><a href="#pair" onclick="location.reload()">Open Pair</a>';
 }
 
 function findSession(route) { return sessions().find(s => s.id === route.sessionId && s.wing_id === route.wingId); }

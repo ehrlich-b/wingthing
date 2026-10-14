@@ -1,11 +1,11 @@
 # Browser SPAKE2 interoperability experiment
 
-This standalone experiment compiles the same BoringSSL SPAKE2 that
-`internal/pake` uses to wasm32. It is separate from the web application and
-does not enroll devices or communicate with a relay.
+This interoperability harness checks the web application’s BoringSSL SPAKE2
+asset against the same native `internal/pake` implementation. The harness does
+not enroll devices or communicate with a relay.
 
-The build uses the eight portable sources listed in `build.sh`, unmodified,
-with linker garbage collection. `wrapper.c` provides a C ABI, a cryptographic
+The build uses the eight portable sources listed in `web/pake/build.sh`, unmodified,
+with linker garbage collection. `web/pake/wrapper.c` provides a C ABI, a cryptographic
 host entropy hook, assertion termination and allocation diagnostics. The
 single-thread module imports only `host.random` and `host.abort`; no WASI
 filesystem, networking, environment or RNG interface is exposed. The loader
