@@ -756,7 +756,7 @@ func (s *state) runTitle(r runRow) string {
 func runStatus(r runRow) (string, tone) {
 	switch r.status() {
 	case "running":
-		return "* Working", accent
+		return "* Working", plain
 	case "pending":
 		return "! Pending", caution
 	case "done":

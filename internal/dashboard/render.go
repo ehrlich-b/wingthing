@@ -492,7 +492,11 @@ func render(s *state, width, height int, now time.Time) string {
 			prefix = "> "
 		}
 		pinText := prefix + field("wing", 10) + field(machineLabel(pin.machine), 15) + field(age(pin.UptimeSecs), 5) + summary
-		lines[4] = viewLine{text: pinText, selected: pin.key() == s.selected, statusAt: 2, statusWidth: 10, statusTone: warning}
+		pinTone := plain
+		if pin.Status == "blocked" {
+			pinTone = warning
+		}
+		lines[4] = viewLine{text: pinText, selected: pin.key() == s.selected, statusAt: 2, statusWidth: 10, statusTone: pinTone}
 		set(5, "", plain)
 	} else {
 		set(3, "", secondary)
@@ -566,8 +570,6 @@ func render(s *state, width, height int, now time.Time) string {
 						lines[i+3].rightTone = warning
 					case strings.HasPrefix(line, "? Last seen"):
 						lines[i+3].rightTone = caution
-					case strings.HasPrefix(line, "* Working"):
-						lines[i+3].rightTone = accent
 					case strings.HasPrefix(line, "+ Done"):
 						lines[i+3].rightTone = success
 					}
@@ -698,8 +700,12 @@ func render(s *state, width, height int, now time.Time) string {
 
 		var content []viewLine
 		for _, line := range body {
+			role := plain
+			if line == "ASKING" || line == "RECENT" {
+				role = secondary
+			}
 			for _, line := range wrap(line, width) {
-				content = append(content, viewLine{text: line})
+				content = append(content, viewLine{text: line, tone: role})
 			}
 		}
 		offset := min(s.overlayOffset, max(0, len(content)-max(0, height-6)))
@@ -791,9 +797,9 @@ func paintLine(theme terminalTheme, line viewLine, width int) string {
 		leftWidth -= 2
 	}
 	text := field(line.text, leftWidth)
-	base := theme.sheet() + theme.style(line.tone)
+	base := theme.style(line.tone)
 	if line.selected {
-		base = theme.sheet() + theme.style(selection)
+		base = theme.style(selection)
 	}
 	out := base
 	if line.statusWidth > 0 {
@@ -827,11 +833,11 @@ func paintLine(theme terminalTheme, line viewLine, width int) string {
 		if a == "+" {
 			vertical = "|"
 		}
-		rule := "\x1b[0m" + theme.sheet() + theme.style(separator) + vertical
+		rule := theme.style(separator) + vertical
 		if line.frame {
 			out = rule + base + " " + out + base + " "
 		}
-		out += rule + theme.sheet() + theme.style(line.rightTone) + "  " + field(line.right, width-line.split-3-boolCell(line.frame))
+		out += rule + theme.style(line.rightTone) + "  " + field(line.right, width-line.split-3-boolCell(line.frame))
 		if line.frame {
 			out += rule
 		}

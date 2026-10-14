@@ -1,14 +1,14 @@
 package dashboard
 
 import (
-	"fmt"
 	"os"
 	"strconv"
 	"strings"
 )
 
-// Paper is a cream sheet with ink, red pencil, slate and moss. Basic
-// terminals retain their canvas; labels and marks carry the same meaning.
+// Text keeps the terminal's own ink and canvas. Secondary text is dim gray,
+// one muted blue marks focus and primary keys, and status colors stay on
+// status cells. Basic terminals rely on labels, marks and bold.
 type tone uint8
 
 const (
@@ -66,72 +66,44 @@ func detectTheme() terminalTheme {
 	return t
 }
 
-// Extended-color terminals render the same paper sheet in either host theme.
-func (t terminalTheme) sheet() string {
-	if t.dumb || t.colors < 256 {
-		return ""
-	}
-	if t.colors == 1<<24 {
-		return "\x1b[48;2;243;237;224;38;2;31;26;21m"
-	}
-	return "\x1b[48;5;255;38;5;234m"
-}
 func (t terminalTheme) style(role tone) string {
 	if t.dumb {
 		return ""
 	}
+	// NO_COLOR keeps attributes; every role resets so bold cannot bleed past a cell.
 	if t.colors == 0 {
 		if role == selection {
-			return "\x1b[7m"
+			return "\x1b[0;1m"
 		}
-		return ""
+		return "\x1b[0m"
 	}
 	if t.colors == 8 {
-		if role == selection {
-			return "\x1b[39;7m"
-		}
-		return "\x1b[" + strconv.Itoa(ansiRoles[role]) + "m"
+		return "\x1b[" + ansiRoles[role] + "m"
 	}
-	if role == selection {
-		if t.colors == 1<<24 {
-			return "\x1b[48;2;31;26;21;38;2;243;237;224m"
-		}
-		return "\x1b[48;5;234;38;5;230m"
-	}
-	colors := []int{234, 239, 24, 65, 124, 124, 246, 234, 136}
-	rgb := [][3]int{{31, 26, 21}, {90, 80, 71}, {47, 76, 107}, {78, 106, 72}, {155, 58, 29}, {155, 58, 29}, {168, 156, 134}, {31, 26, 21}, {160, 112, 16}}
-	if t.colors == 1<<24 {
-		c := rgb[role]
-		return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", c[0], c[1], c[2])
-	}
-	return fmt.Sprintf("\x1b[38;5;%dm", colors[role])
-}
-func (t terminalTheme) selectedState(role tone) string {
-	if t.colors == 8 {
-		return "\x1b[39m"
-	}
-	if t.colors < 256 {
-		return t.style(role)
-	}
-	rgb := [][3]int{{243, 237, 224}, {203, 192, 173}, {199, 214, 230}, {188, 211, 175}, {243, 198, 181}, {243, 198, 181}, {200, 188, 166}, {243, 237, 224}, {236, 206, 140}}
-	colors := []int{230, 250, 153, 151, 217, 217, 250, 230, 222}
-	if t.colors == 1<<24 {
-		c := rgb[role]
-		return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", c[0], c[1], c[2])
-	}
-	return fmt.Sprintf("\x1b[38;5;%dm", colors[role])
+	return "\x1b[" + extendedRoles[role] + "m"
 }
 
-// Basic terminals: needs you and failed red, done green, last seen yellow.
-// Working keeps the terminal's own ink so it stays readable on any canvas.
-var ansiRoles = []int{39, 39, 39, 32, 31, 31, 39, 39, 33}
+// The selected row keeps each status cell's color and adds bold.
+func (t terminalTheme) selectedState(role tone) string {
+	if t.colors == 0 {
+		return t.style(selection)
+	}
+	return strings.Replace(t.style(role), "\x1b[0", "\x1b[0;1", 1)
+}
+
+// Basic terminals: needs you and last seen yellow, failed red, done green.
+// The accent stays in the terminal's own ink; blue is unreadable on some canvases.
+var ansiRoles = []string{"0", "0;2", "0", "0;32", "0;33", "0;31", "0;2", "0;1", "0;33"}
+
+// Extended palettes pick mid-tone indexes that read on light and dark canvases.
+var extendedRoles = []string{"0", "0;38;5;244", "0;38;5;67", "0;38;5;65", "0;38;5;136", "0;38;5;131", "0;38;5;244", "0;1;38;5;67", "0;38;5;136"}
 
 func stateLabel(r row) (string, tone) {
 	switch r.Status {
 	case "blocked":
 		return "! Needs you", warning
 	case "working":
-		return "* Working", accent
+		return "* Working", plain
 	case "idle":
 		return "o Idle", secondary
 	case "done":

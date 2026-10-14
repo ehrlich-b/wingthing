@@ -127,10 +127,10 @@ func TestPaperPaneKeepsStateColorAndUnreadSeparate(t *testing.T) {
 			t.Fatalf("missing %q", want)
 		}
 	}
-	if !strings.Contains(output, "48;5;255") || !strings.Contains(output, "48;5;234") || strings.Contains(text, "[unread]") {
+	if strings.Contains(output, "48;") || !strings.Contains(output, "\x1b[0;1;38;5;67m") || strings.Contains(text, "[unread]") {
 		t.Fatal("row recolored or unread in title")
 	}
-	if !strings.Contains(output, "\x1b[38;5;217m! Needs you") {
+	if !strings.Contains(output, "\x1b[0;1;38;5;136m! Needs you") {
 		t.Fatal("selected state lost warning color")
 	}
 	s.theme.ascii = true

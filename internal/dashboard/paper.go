@@ -95,7 +95,7 @@ func (s *state) paperReports(lines []viewLine, work []row, pin *row, start, coun
 				if y < limit {
 					lines[y].statusAt = 0
 					lines[y].statusWidth = len(stamp)
-					lines[y].statusTone = warning
+					lines[y].statusTone = secondary
 				}
 			} else {
 				set(y, strings.Repeat(" ", len(stamp))+part, plain)
