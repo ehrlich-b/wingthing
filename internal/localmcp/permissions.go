@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"path/filepath"
 
 	"github.com/ehrlich-b/wingthing/internal/control"
@@ -92,9 +94,15 @@ func permissionControl(ctx context.Context, s *Server, surface, name string, arg
 		}
 		return map[string]any{"requests": requests}, nil
 	}
-	outcome, err := ledger.Decide(r, actor, authorize, func() (permissions.Outcome, error) {
+	outcome, err := ledger.Decide(r, actor, authorize, func() error {
+		_, err := permissionEggCall(ctx, s, r, "Check")
+		return err
+	}, func() (permissions.Outcome, error) {
 		result, err := permissionEggCall(ctx, s, r, "Respond")
 		if err != nil {
+			if status.Code(err) == codes.FailedPrecondition {
+				return permissions.Outcome{State: "failed", Decision: r.Decision, AttemptID: r.AttemptID}, err
+			}
 			return permissions.Outcome{}, err
 		}
 		wire, _ := json.Marshal(result["outcome"])

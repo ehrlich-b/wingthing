@@ -22,7 +22,7 @@ func readPermissions(ctx context.Context, dir string, sessions []eggclient.Local
 		return
 	}
 	defer c.Close()
-	if !c.Welcome.Grants["permission.read"] || !c.Welcome.Grants["permission.respond"] {
+	if !c.Welcome.Grants["permission.read"] {
 		return
 	}
 	for i := range sessions {
@@ -37,7 +37,7 @@ func readPermissions(ctx context.Context, dir string, sessions []eggclient.Local
 		}
 		wire, _ := json.Marshal(result["requests"])
 		var requests []permissions.Request
-		if json.Unmarshal(wire, &requests) != nil || len(requests) != 1 {
+		if json.Unmarshal(wire, &requests) != nil || len(requests) == 0 {
 			continue
 		}
 		p := requests[0]
@@ -45,6 +45,7 @@ func readPermissions(ctx context.Context, dir string, sessions []eggclient.Local
 			continue
 		}
 		r.Permission = &p
+		r.PermissionRespond = c.Welcome.Grants["permission.respond"]
 	}
 }
 func (s *state) livePermission(r row) (*permissions.Request, bool) {
@@ -79,7 +80,7 @@ func (s *state) permissionAction(key string) (*action, bool) {
 		return nil, false
 	}
 	p, ok := s.livePermission(r)
-	if !ok {
+	if !ok || !r.PermissionRespond {
 		return nil, false
 	}
 	if key == "a" {
@@ -123,10 +124,14 @@ func (s *state) permissionReviewLines() []string {
 	if p == nil {
 		return []string{"Answer in terminal"}
 	}
+	title, confirm, cancel := "Allow once", "Enter allows this complete Bash invocation once.", "Esc cancels. No permission rule is saved."
+	if !s.reviewPermissionLive() {
+		title, confirm, cancel = "Answer in terminal", "Answer in terminal", "Esc returns to the session list."
+	}
 	wire, _ := json.MarshalIndent(p.Arguments, "", "  ")
-	lines := []string{"Allow once", s.target.name(), "", "WILL RUN", fmt.Sprint(p.Arguments["command"]), permissionWhere(p), "", "Tool: " + p.Tool, "Arguments:"}
+	lines := []string{title, s.target.name(), "", "WILL RUN", fmt.Sprint(p.Arguments["command"]), permissionWhere(p), "", "Tool: " + p.Tool, "Arguments:"}
 	lines = append(lines, strings.Split(string(wire), "\n")...)
-	return append(lines, "Scope: "+p.Scope, "Deadline: "+p.Deadline.Local().Format("15:04:05"), "Request: "+p.RequestID, "Digest: "+p.Digest, "", "Enter allows this complete Bash invocation once.", "Esc cancels. No permission rule is saved.")
+	return append(lines, "Scope: "+p.Scope, "Deadline: "+p.Deadline.Local().Format("15:04:05"), "Request: "+p.RequestID, "Digest: "+p.Digest, "", confirm, cancel)
 }
 
 // Permission review preserves every space: normal prose wrapping would change
@@ -150,4 +155,22 @@ func (s *state) overlayWrap(line string, width int) []string {
 		return permissionWrap(line, width)
 	}
 	return wrap(line, width)
+}
+
+func permissionKeys(r row) string {
+	if r.PermissionRespond {
+		return "a review   d decline   Enter open"
+	}
+	return "Answer in terminal   Enter open"
+}
+
+func (s *state) reviewPermissionLive() bool {
+	for _, r := range s.rows() {
+		if r.identity != s.target.identity {
+			continue
+		}
+		p, live := s.livePermission(r)
+		return live && r.PermissionRespond && s.target.Permission != nil && p.RequestID == s.target.Permission.RequestID && p.Digest == s.target.Permission.Digest
+	}
+	return false
 }

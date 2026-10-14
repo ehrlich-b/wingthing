@@ -19,7 +19,7 @@ func permissionState(t *testing.T) *state {
 	now := time.Now()
 	p := &permissions.Request{WingID: "personal", SessionID: "work", ProviderID: "provider", Generation: "generation", RequestID: permissions.ID(), Digest: "", Tool: "Bash", Arguments: map[string]any{"command": "echo allowed"}, Directory: "~/code/wingthing", Machine: "Studio", User: "developer", Scope: "This complete Bash invocation", Deadline: now.Add(time.Minute)}
 	p.Digest = permissionbridge.Digest(permissionbridge.Input{Tool: p.Tool, Arguments: p.Arguments, Directory: p.Directory})
-	s := &state{machines: map[string]machine{"local": {updated: now, sessions: []eggclient.LocalSession{{ID: "work", Name: "Run DNS tests", Agent: "claude", Status: "blocked", State: "needs_input", StateSource: "claude_hook", StateCursor: 1, CWD: "~/code/wingthing", Permission: p}}}}, selected: "local:work", selectionTouched: true, theme: terminalTheme{}}
+	s := &state{machines: map[string]machine{"local": {updated: now, sessions: []eggclient.LocalSession{{ID: "work", Name: "Run DNS tests", Agent: "claude", Status: "blocked", State: "needs_input", StateSource: "claude_hook", StateCursor: 1, CWD: "~/code/wingthing", Permission: p, PermissionRespond: true}}}}, selected: "local:work", selectionTouched: true, theme: terminalTheme{}}
 	s.reconcile()
 	return s
 }
@@ -192,5 +192,54 @@ func TestPermissionLossyRPCNumbersDisableReview(t *testing.T) {
 	r.Permission = &displayed
 	if _, ok := s.livePermission(r); ok {
 		t.Fatal("rounded RPC arguments remained approvable")
+	}
+}
+
+func TestPermissionTUIReadOnlyShowsCommandWithoutDecisionKeys(t *testing.T) {
+	s := permissionState(t)
+	m := s.machines["local"]
+	m.sessions[0].PermissionRespond = false
+	s.machines["local"] = m
+	for _, size := range [][2]int{{132, 36}, {80, 24}} {
+		text := render(s, size[0], size[1], time.Now())
+		for _, want := range []string{"WILL RUN", "echo allowed", "Studio", "developer", "Answer in terminal"} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("read-only display missing %q: %s", want, text)
+			}
+		}
+		if strings.Contains(text, "a review") || strings.Contains(text, "d decline") {
+			t.Fatal("response keys visible without grant")
+		}
+	}
+	for _, key := range []string{"a", "d"} {
+		if act, handled := s.permissionAction(key); act != nil || handled {
+			t.Fatal("read-only key answered request")
+		}
+	}
+	s.target, _ = s.selection()
+	s.mode = details
+	text := strings.Join(overlayLines(s, time.Now()), "\n")
+	if !strings.Contains(text, "WILL RUN") || strings.Contains(text, "a review") {
+		t.Fatal("read-only details incorrect")
+	}
+}
+
+func TestPermissionTUIRevocationRemovesReviewAndHelpKeys(t *testing.T) {
+	s := permissionState(t)
+	s.handle("a")
+	m := s.machines["local"]
+	m.sessions[0].PermissionRespond = false
+	s.machines["local"] = m
+	text := render(s, 132, 36, time.Now())
+	if !strings.Contains(text, "WILL RUN") || !strings.Contains(text, "Answer in terminal") || strings.Contains(text, "Enter Allow once") || strings.Contains(text, "Enter allows") {
+		t.Fatal("revoked review retained approval keys")
+	}
+	if act, _ := s.handle("enter"); act != nil {
+		t.Fatal("revoked review sent a decision")
+	}
+	s.mode = help
+	text = strings.Join(overlayLines(s, time.Now()), "\n")
+	if strings.Contains(text, "a review") || strings.Contains(text, "d decline") {
+		t.Fatal("read-only help advertises decision keys")
 	}
 }

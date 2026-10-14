@@ -22,6 +22,7 @@ type record struct {
 	Actor
 	Time          time.Time `json:"time"`
 	Authorization string    `json:"authorization"`
+	Phase         string    `json:"phase,omitempty"`
 	Outcome       Outcome   `json:"outcome"`
 }
 
@@ -87,7 +88,7 @@ func (l Ledger) Refuse(r Response, a Actor, reason string) error {
 	})
 	return err
 }
-func (l Ledger) Decide(r Response, a Actor, authorize func() error, deliver func() (Outcome, error)) (Outcome, error) {
+func (l Ledger) Decide(r Response, a Actor, authorize func() error, live func() error, deliver func() (Outcome, error)) (Outcome, error) {
 	return l.locked(func() (Outcome, error) {
 		if r.WingID == "" || r.SessionID == "" || r.RequestID == "" || r.Digest == "" || r.AttemptID == "" || len(r.AttemptID) > 128 || (r.Decision != "allow" && r.Decision != "deny") {
 			return Outcome{}, errors.New("complete decision binding required")
@@ -140,7 +141,11 @@ func (l Ledger) Decide(r Response, a Actor, authorize func() error, deliver func
 			auditErr := l.audit(record{Response: r, Actor: a, Time: time.Now().UTC(), Authorization: "denied"})
 			return Outcome{}, errors.Join(err, auditErr)
 		}
-		entry := record{Response: r, Actor: a, Time: time.Now().UTC(), Authorization: "allowed", Outcome: Outcome{State: "unconfirmed", Decision: r.Decision, AttemptID: r.AttemptID}}
+		if err = live(); err != nil {
+			auditErr := l.audit(record{Response: r, Actor: a, Time: time.Now().UTC(), Authorization: "refused", Outcome: Outcome{State: "failed", Decision: r.Decision, AttemptID: r.AttemptID}})
+			return Outcome{}, errors.Join(err, auditErr)
+		}
+		entry := record{Response: r, Actor: a, Time: time.Now().UTC(), Authorization: "allowed", Phase: "reservation", Outcome: Outcome{State: "unconfirmed", Decision: r.Decision, AttemptID: r.AttemptID}}
 		if err = l.persist(attemptPath, entry); err != nil {
 			return Outcome{}, err
 		}
@@ -152,21 +157,27 @@ func (l Ledger) Decide(r Response, a Actor, authorize func() error, deliver func
 		}
 		// Authority can be revoked while persistence is in progress.
 		if err = authorize(); err != nil {
-			auditErr := l.audit(record{Response: r, Actor: a, Time: time.Now().UTC(), Authorization: "denied_before_delivery", Outcome: entry.Outcome})
-			return entry.Outcome, errors.Join(err, auditErr)
+			entry.Time, entry.Phase, entry.Authorization = time.Now().UTC(), "delivery", "denied_before_delivery"
+			entry.Outcome.State = "failed"
+			auditErr := l.audit(entry)
+			persistErr := errors.Join(l.persist(path, entry), l.persist(attemptPath, entry))
+			return entry.Outcome, errors.Join(err, auditErr, persistErr)
 		}
 		result, deliveryErr := deliver()
-		if deliveryErr != nil {
-			return entry.Outcome, deliveryErr
+		if result.State != "delivered" && result.State != "failed" {
+			result = entry.Outcome
 		}
-		if result.State != "delivered" {
-			return entry.Outcome, nil
-		}
+		entry.Time = time.Now().UTC()
+		entry.Phase = "delivery"
 		entry.Outcome = result
-		if err = l.persist(path, entry); err != nil {
-			return Outcome{State: "unconfirmed", Decision: r.Decision, AttemptID: r.AttemptID}, err
+		// Append the delivery receipt separately from the reservation. A transport
+		// loss remains unconfirmed; a known refusal is failed, never a lost reply.
+		auditErr := l.audit(entry)
+		persistErr := l.persist(path, entry)
+		if persistErr == nil {
+			persistErr = l.persist(attemptPath, entry)
 		}
-		return result, nil
+		return result, errors.Join(deliveryErr, auditErr, persistErr)
 	})
 }
 func (l Ledger) persist(path string, v any) error {

@@ -251,7 +251,7 @@ func (s *state) selectedLines(r row, now time.Time, width int) []string {
 		return nil
 	}
 	if p, ok := s.livePermission(r); ok {
-		return []string{"WILL RUN " + fmt.Sprint(p.Arguments["command"]), permissionWhere(p), "a review   d decline   Enter open"}
+		return []string{"WILL RUN " + fmt.Sprint(p.Arguments["command"]), permissionWhere(p), permissionKeys(r)}
 	}
 	return []string{title, metadata, action}
 }
@@ -300,6 +300,9 @@ func setupRetryLabel(stage string) string {
 func keyHints(s *state) []string {
 	switch s.mode {
 	case permissionReview:
+		if !s.reviewPermissionLive() {
+			return []string{"Answer in terminal   Esc back", "j/k scroll   PgUp/PgDn page"}
+		}
 		return []string{"Enter Allow once (after review)   Esc cancel", "j/k scroll   PgUp/PgDn page   End last line"}
 	case runFilter:
 		return []string{"Enter keep search   Ctrl-U clear", "Esc back   Ctrl-C quit"}
@@ -363,7 +366,7 @@ func keyHints(s *state) []string {
 		return []string{"n new session   a agents   m machines   h runs", "? help   q quit"}
 	}
 	if r, ok := s.selection(); ok {
-		if _, live := s.livePermission(r); live {
+		if _, live := s.livePermission(r); live && r.PermissionRespond {
 			return []string{"a review   d decline   Enter open   / search", "j/k move   A agents   D diagnostics   ? help   q quit"}
 		}
 	}
@@ -1001,13 +1004,19 @@ func overlayLines(s *state, now time.Time) []string {
 		return s.runOverlay()
 	}
 	if s.mode == help {
+		permissionHint := ""
+		if r, selected := s.selection(); selected && r.PermissionRespond {
+			if _, live := s.livePermission(r); live {
+				permissionHint = "; a review / d decline live Bash; Enter allows once"
+			}
+		}
 		return []string{"Help", "Move", "  j/k or arrows move   PgUp/PgDn page   Home/End first/last", "",
 			"Open", "  Enter open terminal   v read only   i session details",
 			"  Ctrl+B then q returns here; Ctrl+B twice sends Ctrl+B.", "",
 			"Find", "  / search sessions   ! needs you   m machine scope", "",
 			"Manage", "  n new   A agents (a without a live request)   . actions",
 			"  h recent runs   M machine details   D diagnostics   R refresh",
-			"  b bell " + s.bellSetting() + "; a review / d decline live Bash; Enter allows once", "",
+			"  b bell " + s.bellSetting() + permissionHint, "",
 			"Leave", "  q or Ctrl-C quits. Leaving keeps sessions running.", "* marks a new reply. Unknown means the agent does not say if it is working."}
 	}
 
@@ -1035,7 +1044,7 @@ func overlayLines(s *state, now time.Time) []string {
 		// ASKING already says the agent is waiting; RECENT needs the rows.
 		if r.Status == "blocked" {
 			if p, ok := s.livePermission(r); ok {
-				lines = append(lines, "", "WILL RUN", fmt.Sprint(p.Arguments["command"]), permissionWhere(p), "a review   d decline   Enter open")
+				lines = append(lines, "", "WILL RUN", fmt.Sprint(p.Arguments["command"]), permissionWhere(p), permissionKeys(r))
 			} else {
 				lines = append(lines, "", "ASKING", s.askingText(r), s.askingWhere(r), "Answer in terminal")
 			}

@@ -549,7 +549,7 @@ test-pwa-web: web
 
 .PHONY: test-permissions test-permissions-race
 test-permissions: | web/dist
-	$(GO) test -p 2 ./internal/permissions ./internal/permissionbridge ./internal/egg ./internal/control ./internal/controlsocket ./internal/dashboard ./internal/localmcp -count=1 -timeout=5m
+	$(GO) test -p 2 ./internal/permissions ./internal/permissionbridge ./internal/egg ./internal/control ./internal/controlsocket ./internal/dashboard ./internal/localmcp ./internal/tunnel -count=1 -timeout=5m
 
 test-permissions-race: | web/dist
-	$(GO) test -race -p 2 ./internal/permissions ./internal/egg ./internal/control ./internal/dashboard ./internal/localmcp -run Permission -count=1 -timeout=3m
+	$(GO) test -race -p 2 ./internal/permissions ./internal/egg ./internal/control ./internal/dashboard ./internal/localmcp ./internal/tunnel -run Permission -count=1 -timeout=3m

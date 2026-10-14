@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-func brokerFixture(t *testing.T, duration time.Duration) (*Broker, string) {
+func brokerFixture(t *testing.T, duration time.Duration, configure ...func(*Broker)) (*Broker, string) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "wp-")
 	if err != nil {
@@ -26,6 +26,9 @@ func brokerFixture(t *testing.T, duration time.Duration) (*Broker, string) {
 	path := filepath.Join(dir, "p.sock")
 	b := New("egg", "provider", "Studio", "developer")
 	b.Duration = duration
+	for _, setup := range configure {
+		setup(b)
+	}
 	l, err := Listen(path)
 	if err != nil {
 		t.Fatal(err)
@@ -113,23 +116,27 @@ func TestPermissionBrokerAllowDenyExpiryAuthenticationAndReplacement(t *testing.
 			t.Fatal("expired answer admitted")
 		}
 	})
-	t.Run("replacement", func(t *testing.T) {
+	t.Run("parallel invocations", func(t *testing.T) {
 		b, path := brokerFixture(t, time.Second)
 		out, done := startHook(t, b, path, b.Token, input("echo first"))
-		old := waitRequest(t, b)
+		first := waitRequest(t, b)
 		out2, done2 := startHook(t, b, path, b.Token, input("echo second"))
-		if <-done == nil || out.Len() != 0 {
-			t.Fatal("replaced hook emitted a decision")
+		end := time.Now().Add(time.Second)
+		for len(b.List()) != 2 && time.Now().Before(end) {
+			time.Sleep(time.Millisecond)
 		}
-		current := waitRequest(t, b)
-		if _, err := b.Respond(response(old, "allow")); err == nil {
-			t.Fatal("stale answer delivered")
+		rows := b.List()
+		if len(rows) != 2 || rows[0].RequestID != first.RequestID || rows[0].Digest != first.Digest {
+			t.Fatal("parallel call replaced existing display")
 		}
-		if _, err := b.Respond(response(current, "deny")); err != nil {
+		if _, err := b.Respond(response(rows[1], "deny")); err != nil {
 			t.Fatal(err)
 		}
-		if <-done2 != nil || out2.Len() == 0 {
-			t.Fatal("replacement did not receive deny")
+		if _, err := b.Respond(response(first, "allow")); err != nil {
+			t.Fatal(err)
+		}
+		if <-done != nil || <-done2 != nil || out.Len() == 0 || out2.Len() == 0 {
+			t.Fatal("parallel reply lost")
 		}
 	})
 }
@@ -153,7 +160,7 @@ func TestPermissionLedgerRaceRetriesAuditFailureAndLostReply(t *testing.T) {
 			if i == 1 {
 				c.AttemptID = "competing"
 			}
-			if _, err := l.Decide(c, a, auth, deliver); err == nil {
+			if _, err := l.Decide(c, a, auth, auth, deliver); err == nil {
 				winners.Add(1)
 			}
 		}(i)
@@ -176,20 +183,20 @@ func TestPermissionLedgerRaceRetriesAuditFailureAndLostReply(t *testing.T) {
 	if json.Unmarshal(data, &stored) != nil {
 		t.Fatal("invalid ledger")
 	}
-	out, err := (Ledger{Dir: l.Dir}).Decide(stored.Response, a, auth, deliver)
+	out, err := (Ledger{Dir: l.Dir}).Decide(stored.Response, a, auth, auth, deliver)
 	if err != nil || out.State != "delivered" || sends.Load() != 1 {
 		t.Fatalf("retry: %+v %v sends=%d", out, err, sends.Load())
 	}
 	changed := stored.Response
 	changed.Decision = "allow"
-	if _, err = l.Decide(changed, a, auth, deliver); err == nil {
+	if _, err = l.Decide(changed, a, auth, auth, deliver); err == nil {
 		t.Fatal("changed decision accepted")
 	}
 	t.Run("audit failure", func(t *testing.T) {
 		l := Ledger{Dir: t.TempDir()}
 		os.Mkdir(filepath.Join(l.Dir, "audit.jsonl"), 0700)
 		calls := 0
-		_, err := l.Decide(r, a, auth, func() (Outcome, error) { calls++; return Outcome{}, nil })
+		_, err := l.Decide(r, a, auth, auth, func() (Outcome, error) { calls++; return Outcome{}, nil })
 		if err == nil || calls != 0 {
 			t.Fatal("audit failure delivered")
 		}
@@ -198,10 +205,10 @@ func TestPermissionLedgerRaceRetriesAuditFailureAndLostReply(t *testing.T) {
 		l := Ledger{Dir: t.TempDir()}
 		calls := 0
 		send := func() (Outcome, error) { calls++; return Outcome{}, errors.New("lost connection") }
-		if _, err := l.Decide(r, a, auth, send); err == nil {
+		if _, err := l.Decide(r, a, auth, auth, send); err == nil {
 			t.Fatal("missing lost reply")
 		}
-		out, err := (Ledger{Dir: l.Dir}).Decide(r, a, auth, send)
+		out, err := (Ledger{Dir: l.Dir}).Decide(r, a, auth, auth, send)
 		if err != nil || out.State != "unconfirmed" || calls != 1 {
 			t.Fatalf("replayed uncertain decision: %+v %v %d", out, err, calls)
 		}
@@ -215,7 +222,7 @@ func TestPermissionLedgerRaceRetriesAuditFailureAndLostReply(t *testing.T) {
 				return errors.New("revoked")
 			}
 			return nil
-		}, func() (Outcome, error) { calls++; return Outcome{}, nil })
+		}, auth, func() (Outcome, error) { calls++; return Outcome{}, nil })
 		if err == nil || calls != 0 {
 			t.Fatal("revoked authority delivered")
 		}
@@ -280,11 +287,83 @@ func TestPermissionDecisionAttemptCannotMoveToAnotherRequest(t *testing.T) {
 		return Outcome{State: "delivered", Decision: r.Decision, AttemptID: r.AttemptID}, nil
 	}
 	auth := func() error { return nil }
-	if _, err := l.Decide(r, a, auth, send); err != nil {
+	if _, err := l.Decide(r, a, auth, auth, send); err != nil {
 		t.Fatal(err)
 	}
 	r.RequestID = "second"
-	if _, err := l.Decide(r, a, auth, send); err == nil || calls != 1 {
+	if _, err := l.Decide(r, a, auth, auth, send); err == nil || calls != 1 {
 		t.Fatal("attempt moved to another request")
+	}
+}
+
+func TestPermissionDeadRequestRefusedBeforeReservation(t *testing.T) {
+	for _, dead := range []string{"expired", "answered", "replaced", "disconnected"} {
+		t.Run(dead, func(t *testing.T) {
+			duration := time.Second
+			if dead == "expired" {
+				duration = 40 * time.Millisecond
+			}
+			b, path := brokerFixture(t, duration)
+			_, done := startHook(t, b, path, b.Token, input("echo original"))
+			req := waitRequest(t, b)
+			b.mu.Lock()
+			p := b.requests[req.RequestID]
+			switch dead {
+			case "answered":
+				p.answered = true
+			case "replaced":
+				delete(b.requests, req.RequestID)
+			case "disconnected":
+				p.conn.Close()
+			}
+			b.mu.Unlock()
+			if dead == "disconnected" || dead == "expired" {
+				<-done
+			}
+			l := Ledger{Dir: t.TempDir()}
+			answer := response(req, "allow")
+			sends := 0
+			_, err := l.Decide(answer, Actor{"owner", "tui", "tui"}, func() error { return nil }, func() error { return b.Check(answer) }, func() (Outcome, error) { sends++; return b.Respond(answer) })
+			if err == nil || sends != 0 {
+				t.Fatal("dead request reserved or delivered")
+			}
+			records, _ := filepath.Glob(filepath.Join(l.Dir, "*.json"))
+			if len(records) != 0 {
+				t.Fatal("dead request persisted as a decision")
+			}
+			audit, err := os.ReadFile(filepath.Join(l.Dir, "audit.jsonl"))
+			if err != nil || !strings.Contains(string(audit), `"authorization":"refused"`) || strings.Contains(string(audit), `"authorization":"allowed"`) || strings.Contains(string(audit), `"state":"unconfirmed"`) {
+				t.Fatalf("refusal audit: %s %v", audit, err)
+			}
+			p.conn.Close()
+		})
+	}
+}
+
+func TestPermissionAuditAppendsDeliveryOutcome(t *testing.T) {
+	for _, state := range []string{"delivered", "unconfirmed", "failed"} {
+		t.Run(state, func(t *testing.T) {
+			l := Ledger{Dir: t.TempDir()}
+			r := Response{WingID: "wing", SessionID: "egg", RequestID: "request", Digest: "digest", AttemptID: "attempt", Decision: "allow"}
+			auth := func() error { return nil }
+			out, err := l.Decide(r, Actor{"owner", "tui", "tui"}, auth, auth, func() (Outcome, error) {
+				return Outcome{State: state, Decision: r.Decision, AttemptID: r.AttemptID}, nil
+			})
+			if err != nil || out.State != state {
+				t.Fatal(out, err)
+			}
+			data, err := os.ReadFile(filepath.Join(l.Dir, "audit.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := bytes.Split(bytes.TrimSpace(data), []byte{'\n'})
+			if len(lines) != 2 {
+				t.Fatalf("want reservation and delivery lines: %s", data)
+			}
+			var first, last record
+			if json.Unmarshal(lines[0], &first) != nil || json.Unmarshal(lines[1], &last) != nil || first.Phase != "reservation" || first.Outcome.State != "unconfirmed" || last.Phase != "delivery" || last.Outcome.State != state || last.Response != r {
+				t.Fatalf("incorrect delivery receipt: %s", data)
+			}
+		})
 	}
 }

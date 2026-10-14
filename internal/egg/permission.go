@@ -5,18 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/user"
 	"path/filepath"
 	"runtime"
-	"strings"
+	"strconv"
 
 	"github.com/ehrlich-b/wingthing/internal/permissions"
 )
 
 // Start only for the real interactive Claude path, after ordinary preparation.
 // Observers and supplied hooks retain their entries. disableAllHooks is honored.
-func (s *Server) preparePermissions(ctx context.Context, home, settingsPath, provider string, env map[string]string) (func(), error) {
+func (s *Server) preparePermissions(ctx context.Context, home, settingsPath, provider string, env map[string]string, namespaced bool) (func(), error) {
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
 		return nil, err
@@ -33,6 +34,13 @@ func (s *Server) preparePermissions(ctx context.Context, home, settingsPath, pro
 	if err != nil {
 		return nil, err
 	}
+	binary, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	if binary, err = filepath.EvalSymlinks(binary); err != nil {
+		return nil, err
+	}
 	broker := permissions.New(filepath.Base(s.dir), provider, machine, account.Username)
 	socket := permissions.Socket(home, broker.SessionID)
 	if err = ValidateSocketPath(socket); err != nil {
@@ -43,26 +51,31 @@ func (s *Server) preparePermissions(ctx context.Context, home, settingsPath, pro
 		return nil, err
 	}
 	childCtx, cancel := context.WithCancel(ctx)
+	started := make(chan int, 1)
+	s.permissionStarted = started
+	broker.Authenticate = func(c net.Conn, input *os.File) error {
+		select {
+		case root := <-started:
+			started <- root
+			return permissions.HookPeer(root, settingsPath, binary, c, input)
+		case <-childCtx.Done():
+			return childCtx.Err()
+		}
+	}
 	done := make(chan struct{})
 	go func() { defer close(done); _ = broker.Serve(childCtx, listener) }()
 	cleanup := func() { cancel(); listener.Close(); <-done; _ = os.Remove(socket); _ = os.Remove(filepath.Dir(socket)) }
-	binary, err := os.Executable()
-	if err != nil {
-		cleanup()
-		return nil, err
-	}
-	if binary, err = filepath.EvalSymlinks(binary); err != nil {
-		cleanup()
-		return nil, err
-	}
-	q := func(v string) string { return "'" + strings.ReplaceAll(v, "'", "'\"'\"'") + "'" }
-	command := q(binary) + " _permission_hook --socket " + q(socket) + " --session " + q(broker.SessionID) + " --generation " + q(broker.Generation)
+	delete(env, "WT_PERMISSION_TOKEN")
 	hooks, _ := settings["hooks"].(map[string]any)
 	if hooks == nil {
 		hooks = map[string]any{}
 	}
+	brokerPID := os.Getpid()
+	if namespaced && runtime.GOOS == "linux" {
+		brokerPID = 0
+	}
 	entries, _ := hooks["PermissionRequest"].([]any)
-	hooks["PermissionRequest"] = append(entries, map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": command, "timeout": permissions.HookTimeout}}})
+	hooks["PermissionRequest"] = append(entries, map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": binary, "args": []string{"_permission_hook", "--socket", socket, "--session", broker.SessionID, "--generation", broker.Generation, "--provider", broker.ProviderID, "--broker-pid", strconv.Itoa(brokerPID)}, "timeout": permissions.HookTimeout}}})
 	settings["hooks"] = hooks
 	perms, _ := settings["permissions"].(map[string]any)
 	if perms == nil {
@@ -79,7 +92,6 @@ func (s *Server) preparePermissions(ctx context.Context, home, settingsPath, pro
 		cleanup()
 		return nil, fmt.Errorf("prepare permission hook: %w", err)
 	}
-	env["WT_PERMISSION_TOKEN"] = broker.Token
 	s.permissions = broker
 	return cleanup, nil
 }
@@ -94,6 +106,8 @@ func (s *Server) permissionOperation(ctx context.Context, method string, r permi
 	switch method {
 	case "List":
 		return map[string]any{"requests": s.permissions.List()}, nil
+	case "Check":
+		return map[string]any{}, s.permissions.Check(r)
 	case "Respond":
 		out, err := s.permissions.Respond(r)
 		return map[string]any{"outcome": out}, err

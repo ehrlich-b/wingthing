@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"flag"
-	"github.com/ehrlich-b/wingthing/internal/permissionbridge"
 	"github.com/ehrlich-b/wingthing/internal/permissions"
 	"io"
 	"os"
@@ -14,15 +13,13 @@ func permissionHook(args []string) {
 	f.SetOutput(io.Discard)
 	socket := f.String("socket", "", "")
 	session := f.String("session", "", "")
+	provider := f.String("provider", "", "")
+	brokerPID := f.Int("broker-pid", -1, "")
 	generation := f.String("generation", "", "")
 	if f.Parse(args) != nil || f.NArg() != 0 {
 		return
 	}
-	in, err := permissionbridge.ParseInput(os.Stdin)
-	if err != nil {
-		return
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), permissions.Lifetime)
 	defer cancel()
-	_ = permissions.Hook(ctx, *socket, *session, *generation, os.Getenv("WT_PERMISSION_TOKEN"), in, os.Stdout)
+	_ = permissions.HookNative(ctx, *socket, *session, *generation, *provider, *brokerPID, os.Stdin, os.Stdout)
 }

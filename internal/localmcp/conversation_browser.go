@@ -31,27 +31,9 @@ type BrowserLaunchConfig struct {
 // access is checked independently before selecting a legacy session principal.
 func BrowserSessionControl(version string, ctx context.Context, cfg *config.Config, wc *config.WingConfig, req ws.TunnelRequest, operation string, arguments json.RawMessage, home string, sharedHost bool, launchConfig ...BrowserLaunchConfig) (map[string]any, error) {
 	switch operation {
-	case "permission_list", "permission_respond", "session_inventory", "session_search", "session_action", "session_launch", "session_fork", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "conversation_list", "conversation_bootstrap", "conversation_read", "conversation_checkpoint", "conversation_wake", "agent_start":
+	case "session_inventory", "session_search", "session_action", "session_launch", "session_fork", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "conversation_list", "conversation_bootstrap", "conversation_read", "conversation_checkpoint", "conversation_wake", "agent_start":
 	default:
 		return nil, errors.New("unsupported browser session operation")
-	}
-	if operation == "permission_list" || operation == "permission_respond" {
-		if sharedHost || wc.Org != "" || req.SenderUserID == "" || req.SenderOrgRole != "owner" || len(launchConfig) == 0 || launchConfig[0].Sessions == nil {
-			return nil, errors.New("personal owner required")
-		}
-		// The encrypted tunnel has already checked owner, key and passkey. The
-		// local control listener independently rechecks its current policy/grants.
-		if _, err := os.Stat(filepath.Join(cfg.Dir, "local-owner.yaml")); err != nil {
-			return nil, errors.New("personal owner binding unavailable")
-		}
-		owner, err := config.EnsureLocalOwner(cfg.Dir, "")
-		if err != nil {
-			return nil, err
-		}
-		if owner.ID != req.SenderUserID {
-			return nil, errors.New("permission control is not delegated to this owner")
-		}
-		return CallHumanPermission(ctx, cfg.Dir, "browser", "browser", operation, arguments)
 	}
 	if len(arguments) == 0 {
 		arguments = json.RawMessage(`{}`)

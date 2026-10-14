@@ -415,6 +415,10 @@ func HandleTunnelRequest(refs References, ctx context.Context, cfg *config.Confi
 		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions}, write)
 
 	case "session.control":
+		if inner.Operation == "permission_list" || inner.Operation == "permission_respond" {
+			ws.TunnelRespond(gcm, req.RequestID, map[string]any{"error": "permission operations are local only; Answer in terminal"}, write)
+			return
+		}
 		if inner.Operation == "fleet_attach" || inner.Operation == "fleet_read" || inner.Operation == "fleet_input" || inner.Operation == "fleet_detach" {
 			if refs.BrowserFleetAttachment == nil {
 				ws.TunnelRespond(gcm, req.RequestID, map[string]any{"error": "browser attachment unavailable"}, write)

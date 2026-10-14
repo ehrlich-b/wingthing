@@ -229,7 +229,7 @@ func (s *state) paperPane(r row, now time.Time, width, height int) []string {
 			}
 			appendExact(fmt.Sprint(p.Arguments["command"]))
 			appendExact(permissionWhere(p))
-			action = "a review   d decline   Enter open"
+			action = permissionKeys(r)
 			break
 		}
 		lines = append(lines, "", "ASKING")

@@ -17,7 +17,7 @@ type permissionRPCServer interface {
 
 func registerPermissionRPC(server *grpc.Server, handler permissionRPCServer) {
 	desc := grpc.ServiceDesc{ServiceName: "egg.Permissions", HandlerType: (*permissionRPCServer)(nil)}
-	for _, method := range []string{"List", "Respond"} {
+	for _, method := range []string{"List", "Check", "Respond"} {
 		desc.Methods = append(desc.Methods, grpc.MethodDesc{MethodName: method, Handler: func(srv any, ctx context.Context, decode func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 			m := new(structpb.Struct)
 			if err := decode(m); err != nil {

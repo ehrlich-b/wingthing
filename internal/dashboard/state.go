@@ -305,7 +305,7 @@ func (s *state) handle(key string) (act *action, quit bool) {
 			current, found := s.selection()
 			p, live := s.livePermission(current)
 			s.mode = navigate
-			if !found || !live || s.target.Permission == nil || p.RequestID != s.target.Permission.RequestID || p.Digest != s.target.Permission.Digest || s.overlayOffset < s.overlayLimit {
+			if !found || !live || !current.PermissionRespond || s.target.Permission == nil || p.RequestID != s.target.Permission.RequestID || p.Digest != s.target.Permission.Digest || s.overlayOffset < s.overlayLimit {
 				s.message = "Review every line of the current request, or Answer in terminal"
 				return nil, false
 			}

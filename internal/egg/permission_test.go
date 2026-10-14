@@ -25,7 +25,7 @@ func TestPermissionSettingsPreserveObserversAndOtherHooks(t *testing.T) {
 	path := args[len(args)-1]
 	s := &Server{dir: dir}
 	env := map[string]string{}
-	cleanup, err := s.preparePermissions(t.Context(), home, path, "provider", env)
+	cleanup, err := s.preparePermissions(t.Context(), home, path, "provider", env, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,6 +35,7 @@ func TestPermissionSettingsPreserveObserversAndOtherHooks(t *testing.T) {
 		Hooks       map[string][]struct {
 			Hooks []struct {
 				Command string
+				Args    []string
 				Timeout int
 			}
 		}
@@ -50,8 +51,8 @@ func TestPermissionSettingsPreserveObserversAndOtherHooks(t *testing.T) {
 	if len(entries) != 3 || entries[0].Hooks[0].Command != "true" || entries[1].Hooks[0].Timeout != 5 || entries[2].Hooks[0].Timeout != permissions.HookTimeout {
 		t.Fatal("hooks replaced")
 	}
-	if !strings.Contains(entries[2].Hooks[0].Command, "_permission_hook") || strings.Contains(entries[2].Hooks[0].Command, env["WT_PERMISSION_TOKEN"]) || env["WT_PERMISSION_TOKEN"] == "" {
-		t.Fatal("hook authentication leaked or missing")
+	if len(entries[2].Hooks[0].Args) == 0 || entries[2].Hooks[0].Args[0] != "_permission_hook" || env["WT_PERMISSION_TOKEN"] != "" || strings.Contains(string(data), s.permissions.Token) {
+		t.Fatal("hook credential leaked or exec-form channel missing")
 	}
 	for _, event := range []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "Stop", "StopFailure", "SessionEnd"} {
 		if len(settings.Hooks[event]) == 0 {
@@ -65,7 +66,7 @@ func TestPermissionDisabledHooksDoNotInstallBroker(t *testing.T) {
 	os.WriteFile(path, []byte(`{"disableAllHooks":true}`), 0600)
 	s := &Server{dir: dir}
 	env := map[string]string{}
-	cleanup, err := s.preparePermissions(context.Background(), dir, path, "provider", env)
+	cleanup, err := s.preparePermissions(context.Background(), dir, path, "provider", env, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -73,7 +74,8 @@ type Broker struct {
 	mu                                                      sync.Mutex
 	SessionID, ProviderID, Generation, Token, Machine, User string
 	Duration                                                time.Duration
-	current                                                 *pending
+	requests                                                map[string]*pending
+	Authenticate                                            func(net.Conn, *os.File) error
 }
 
 func ID() string {
@@ -87,7 +89,7 @@ func Socket(home, session string) string {
 	return filepath.Join(home, ".claude", "wp-"+session, "p.sock")
 }
 func New(session, provider, machine, user string) *Broker {
-	return &Broker{SessionID: session, ProviderID: provider, Generation: ID(), Token: ID(), Machine: machine, User: user, Duration: Lifetime}
+	return &Broker{SessionID: session, ProviderID: provider, Generation: ID(), Token: ID(), Machine: machine, User: user, Duration: Lifetime, requests: make(map[string]*pending)}
 }
 func (b *Broker) Serve(ctx context.Context, l net.Listener) error {
 	stop := context.AfterFunc(ctx, func() { l.Close() })
@@ -110,25 +112,56 @@ func (b *Broker) handle(ctx context.Context, c net.Conn) {
 	_ = c.SetDeadline(time.Now().Add(3 * time.Second))
 	stop := context.AfterFunc(ctx, func() { c.Close() })
 	defer stop()
+	var native *os.File
+	if b.Authenticate != nil {
+		var err error
+		native, err = receiveHookInput(c)
+		if err != nil {
+			return
+		}
+		defer native.Close()
+	}
 	var ex exchange
-	if decode(c, &ex) != nil || subtle.ConstantTimeCompare([]byte(ex.Token), []byte(b.Token)) != 1 || ex.SessionID != b.SessionID || ex.Generation != b.Generation || ex.Input.ProviderID != b.ProviderID {
+	if decode(c, &ex) != nil || ex.SessionID != b.SessionID || ex.Generation != b.Generation || ex.Input.ProviderID != b.ProviderID {
 		return
 	}
-	wire, _ := json.Marshal(ex.Input)
-	in, err := permissionbridge.ParseInput(bytes.NewReader(wire))
-	if err != nil {
-		return
+	var in permissionbridge.Input
+	var err error
+	if b.Authenticate != nil {
+		if ex.Token != "" || b.Authenticate(c, native) != nil {
+			return
+		}
+		// Read the command from the provider-created channel itself. A hook
+		// process cannot substitute arguments in its registration envelope.
+		source, sourceErr := net.FileConn(native)
+		if sourceErr != nil {
+			return
+		}
+		_ = source.SetReadDeadline(time.Now().Add(3 * time.Second))
+		in, err = permissionbridge.ParseInput(source)
+		_ = source.Close()
+		if err != nil || in.ProviderID != b.ProviderID {
+			return
+		}
+		if json.NewEncoder(c).Encode(in) != nil {
+			return
+		}
+	} else {
+		if subtle.ConstantTimeCompare([]byte(ex.Token), []byte(b.Token)) != 1 {
+			return
+		}
+		wire, _ := json.Marshal(ex.Input)
+		in, err = permissionbridge.ParseInput(bytes.NewReader(wire))
+		if err != nil {
+			return
+		}
 	}
 	b.mu.Lock()
-	if b.current != nil {
-		b.current.conn.Close()
-		b.current.finish.Do(func() { close(b.current.done) })
-	}
 	p := &pending{request: Request{SessionID: b.SessionID, ProviderID: b.ProviderID, Generation: b.Generation, RequestID: ID(), Digest: permissionbridge.Digest(in), Tool: in.Tool, Arguments: in.Arguments, Directory: in.Directory, Machine: b.Machine, User: b.User, Scope: "This Bash invocation, including the complete command and arguments", Deadline: time.Now().Add(b.Duration)}, conn: c, done: make(chan struct{})}
 	p.ack = make(chan bool, 1)
 	p.readDone = make(chan struct{})
 	_ = c.SetDeadline(p.request.Deadline)
-	b.current = p
+	b.requests[p.request.RequestID] = p
 	b.mu.Unlock()
 	go func() {
 		defer close(p.readDone)
@@ -149,8 +182,8 @@ func (b *Broker) handle(ctx context.Context, c net.Conn) {
 	case <-p.readDone:
 	}
 	b.mu.Lock()
-	if b.current == p {
-		b.current = nil
+	if b.requests[p.request.RequestID] == p {
+		delete(b.requests, p.request.RequestID)
 		if !p.answered {
 			p.finish.Do(func() { close(p.done) })
 		}
@@ -160,23 +193,45 @@ func (b *Broker) handle(ctx context.Context, c net.Conn) {
 func (b *Broker) List() []Request {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.current == nil || b.current.answered || !time.Now().Before(b.current.request.Deadline) {
-		return []Request{}
+	rows := []Request{}
+	for _, p := range b.requests {
+		if !p.answered && time.Now().Before(p.request.Deadline) {
+			wire, _ := json.Marshal(p.request)
+			var copy Request
+			d := json.NewDecoder(bytes.NewReader(wire))
+			d.UseNumber()
+			_ = d.Decode(&copy)
+			rows = append(rows, copy)
+		}
 	}
-	r := b.current.request
-	wire, _ := json.Marshal(r)
-	var copy Request
-	d := json.NewDecoder(bytes.NewReader(wire))
-	d.UseNumber()
-	_ = d.Decode(&copy)
-	return []Request{copy}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Deadline.Before(rows[j].Deadline) })
+	return rows
 }
+func (b *Broker) live(r Response) (*pending, error) {
+	p := b.requests[r.RequestID]
+	if p == nil || p.answered || !time.Now().Before(p.request.Deadline) || r.SessionID != b.SessionID || r.Digest != p.request.Digest || (r.Decision != "allow" && r.Decision != "deny") {
+		return nil, errors.New("request is expired, replaced or already answered; Answer in terminal")
+	}
+	select {
+	case <-p.readDone:
+		return nil, errors.New("hook disconnected; Answer in terminal")
+	default:
+	}
+	return p, nil
+}
+func (b *Broker) Check(r Response) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	_, err := b.live(r)
+	return err
+}
+
 func (b *Broker) Respond(r Response) (Outcome, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	p := b.current
-	if p == nil || p.answered || !time.Now().Before(p.request.Deadline) || r.SessionID != b.SessionID || r.RequestID != p.request.RequestID || r.Digest != p.request.Digest || (r.Decision != "allow" && r.Decision != "deny") {
-		return Outcome{}, errors.New("request is expired, replaced or already answered; Answer in terminal")
+	p, err := b.live(r)
+	if err != nil {
+		return Outcome{State: "failed", Decision: r.Decision, AttemptID: r.AttemptID}, err
 	}
 	p.answered = true
 	defer p.finish.Do(func() { close(p.done) })
@@ -200,6 +255,17 @@ func decode(r io.Reader, v any) error {
 // Hook never emits a decision after its deadline or after a binding mismatch.
 // Failure returns silently to native permission handling.
 func Hook(ctx context.Context, socket, session, generation, token string, in permissionbridge.Input, out io.Writer) error {
+	return hook(ctx, socket, session, generation, token, in, out, nil, -1)
+}
+
+// HookNative transfers the actual provider stdin descriptor as the credential.
+func HookNative(ctx context.Context, socket, session, generation, provider string, brokerPID int, input *os.File, out io.Writer) error {
+	if !NativeHookSupported() {
+		return errors.New("native hook channel authentication unavailable")
+	}
+	return hook(ctx, socket, session, generation, "", permissionbridge.Input{ProviderID: provider}, out, input, brokerPID)
+}
+func hook(ctx context.Context, socket, session, generation, token string, in permissionbridge.Input, out io.Writer, input *os.File, brokerPID int) error {
 	c, err := (&net.Dialer{}).DialContext(ctx, "unix", socket)
 	if err != nil {
 		return err
@@ -210,8 +276,25 @@ func Hook(ctx context.Context, socket, session, generation, token string, in per
 		return errors.New("hook needs a deadline")
 	}
 	_ = c.SetDeadline(deadline)
+	if input != nil {
+		if err = checkHookServer(c, brokerPID); err != nil {
+			return err
+		}
+		if err = sendHookInput(c, input); err != nil {
+			return err
+		}
+	}
 	if err = json.NewEncoder(c).Encode(exchange{token, session, generation, in}); err != nil {
 		return err
+	}
+	if input != nil {
+		expectedProvider := in.ProviderID
+		if err = decode(c, &in); err != nil {
+			return err
+		}
+		if in.ProviderID != expectedProvider {
+			return errors.New("provider binding changed")
+		}
 	}
 	var a reply
 	if err = decode(c, &a); err != nil {

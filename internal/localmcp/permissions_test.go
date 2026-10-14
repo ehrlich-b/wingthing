@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
+	"github.com/ehrlich-b/wingthing/internal/ws"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +62,15 @@ func TestPermissionHumanBindingRefusesScopedAndBoundConnections(t *testing.T) {
 	for _, hello := range []controlsocket.Hello{{Human: "tui", Conversation: "bound"}, {Human: "tui", Execution: "bound"}, {Human: "tui", Scope: "{}"}, {Human: "tui", Aggregate: true}, {Human: "other"}} {
 		if _, err := resolveLocalWingClient("test", sessions, "owner", NewMCPAdmissionState(), hello); err == nil {
 			t.Fatalf("invalid binding accepted: %+v", hello)
+		}
+	}
+}
+
+func TestPermissionBrowserRouteRefused(t *testing.T) {
+	for _, operation := range []string{"permission_list", "permission_respond"} {
+		_, err := BrowserSessionControl("test", t.Context(), nil, nil, ws.TunnelRequest{SenderUserID: "owner", SenderOrgRole: "owner"}, operation, json.RawMessage(`{}`), t.TempDir(), false)
+		if err == nil || !strings.Contains(err.Error(), "unsupported browser session operation") {
+			t.Fatalf("browser permission route survived: %v", err)
 		}
 	}
 }

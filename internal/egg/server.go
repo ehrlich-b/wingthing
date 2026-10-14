@@ -49,18 +49,19 @@ var (
 type Server struct {
 	pb.UnimplementedEggServer
 
-	dir            string // ~/.wingthing/eggs/<session-id>/
-	token          string
-	session        *Session
-	mu             sync.RWMutex
-	grpcServer     *grpc.Server
-	listener       net.Listener
-	metaMu         sync.Mutex
-	exclusiveInput bool
-	inputLease     inputLease
-	inputMu        sync.Mutex
-	runTurns       *runTurnRuntime
-	permissions    *permissions.Broker
+	dir               string // ~/.wingthing/eggs/<session-id>/
+	token             string
+	session           *Session
+	mu                sync.RWMutex
+	grpcServer        *grpc.Server
+	listener          net.Listener
+	metaMu            sync.Mutex
+	exclusiveInput    bool
+	inputLease        inputLease
+	inputMu           sync.Mutex
+	runTurns          *runTurnRuntime
+	permissions       *permissions.Broker
+	permissionStarted chan int
 }
 
 // Session holds a single PTY process and its state.
@@ -646,11 +647,14 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	args = prepared.Args
 	envMap = prepared.Environment
 	if rc.Agent == "claude" && len(rc.Command) == 0 && lifecycleSettingsPath != "" {
-		cleanup, permissionErr := s.preparePermissions(ctx, home, lifecycleSettingsPath, rc.ProviderSessionID, envMap)
+		cleanup, permissionErr := s.preparePermissions(ctx, home, lifecycleSettingsPath, rc.ProviderSessionID, envMap, hasSandbox)
 		if permissionErr != nil {
 			return permissionErr
 		}
 		defer cleanup()
+		if s.permissions != nil {
+			prepared.Sandbox.DenyWrite = append(prepared.Sandbox.DenyWrite, filepath.Dir(permissions.Socket(home, filepath.Base(s.dir))))
+		}
 		if socket := permissionSocketForSandbox(home, filepath.Base(s.dir)); socket != "" {
 			prepared.Sandbox.AllowSockets = append(prepared.Sandbox.AllowSockets, socket)
 		}
@@ -877,6 +881,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			return fmt.Errorf("start sandboxed PTY with user/mount/PID/network namespaces: %v. %s", err, sandbox.CapabilityFailureHelp())
 		}
 		return fmt.Errorf("start pty: %v", err)
+	}
+	if s.permissionStarted != nil {
+		s.permissionStarted <- cmd.Process.Pid
 	}
 	cancellableInput, err := s.prepareSessionPTYInput(ptmx, rc, codexRun)
 	if err != nil {
