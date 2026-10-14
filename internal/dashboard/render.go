@@ -691,9 +691,9 @@ func render(s *state, width, height int, now time.Time) string {
 	}
 	if (s.filter != "" || s.mode == filter) && len(work) == 0 {
 		set(8, "  No matching sessions", plain)
-		set(10, "  Ctrl-U clear   Esc back", secondary)
+		set(10, "  Ctrl-U clear", secondary)
 	}
-	if s.filter != "" || s.mode == filter {
+	if s.mode != help && (s.filter != "" || s.mode == filter) {
 		query := s.filter
 		if s.mode == filter {
 			query = s.input + "_"

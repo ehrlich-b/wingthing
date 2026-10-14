@@ -295,7 +295,7 @@ func (s *state) paperPane(r row, now time.Time, width, height int) []string {
 			}
 		}
 	}
-	today := fmt.Sprintf("%d done · %d failed", done, failed)
+	today := fmt.Sprintf("Sessions: %d done · %d failed", done, failed)
 	switch {
 	case s.registryError != "" || len(unknown) > 1:
 		today += " · some machines unknown"
