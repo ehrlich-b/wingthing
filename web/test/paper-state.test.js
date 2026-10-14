@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { machineState, sessionState, projectName, requestedCommand, paperRoute, answerKeys, awayLabel } from '../src/paper-state.js';
+import { machineState, sessionState, projectName, requestedCommand, paperRoute, awayLabel } from '../src/paper-state.js';
 
 const row = (status, extra = {}) => ({ lifecycle: { status }, ...extra });
 const online = { online: true };
@@ -41,13 +41,6 @@ test('paper routes are separate from legacy routes', () => {
     assert.deepEqual(paperRoute('#approve/studio/a%2Fb'), { view: 'approve', wingId: 'studio', sessionId: 'a/b' });
     assert.equal(paperRoute('#chat/x?wing=y'), null);
     assert.equal(paperRoute('#w/abc'), null);
-});
-
-test('approve and decline send each agent its own prompt keys', () => {
-    assert.deepEqual(answerKeys('claude'), { approve: '1', decline: '\u001b' });
-    assert.deepEqual(answerKeys('codex'), { approve: 'y', decline: '\u001b' });
-    assert.equal(answerKeys('gemini'), null);
-    assert.equal(answerKeys(undefined), null);
 });
 
 test('a machine that stopped reporting has one word and a since time', () => {

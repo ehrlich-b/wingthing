@@ -10,11 +10,10 @@ import { applyConversationRead, restoredConversationState } from './conversation
 import { switchToSession, showSessionChat, showHome } from './nav.js';
 import { showPalette } from './palette.js';
 import { loadHome } from './data.js';
-import { paperRoute as route, machineState, sessionState as stateOf, projectName, agentName, requestedCommand, answerKeys, awayLabel } from './paper-state.js';
+import { paperRoute as route, machineState, sessionState as stateOf, projectName, agentName, requestedCommand, awayLabel } from './paper-state.js';
 
 const reads = new Map();
 const terminals = new Map();
-const answers = new Map();
 const numberWords = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
 let root, main, side, lastSignature = '', showEarlier = false;
 
@@ -37,16 +36,7 @@ const squares = () => S.wingsData.filter(w => wingDisplayName(w)).map(w => { con
 function sessions() { return S.sessionsData.filter(s => (s.kind || 'terminal') !== 'chat' && wingOf(s.wing_id)); }
 function coordinator() { return sessions().find(isCoordinator); }
 function workSessions() { return sessions().filter(s => !isCoordinator(s)); }
-// A request answered from this page reads as answered until the session asks again.
-function answered(s) {
-    const a = answers.get(s.wing_id + '/' + s.id); if (!a || a.state !== 'sent') return null;
-    const asked = Date.parse(request(s).at);
-    return Number.isFinite(asked) && asked > a.at ? null : a;
-}
-function sessionState(s) {
-    const st = stateOf(s, wingOf(s.wing_id)), a = st.key === 'need' && answered(s);
-    return a ? { key: 'work', label: (a.choice === 'approve' ? 'Approved ' : 'Declined ') + clock(a.at) } : st;
-}
+function sessionState(s) { return stateOf(s, wingOf(s.wing_id)); }
 function needing() { return workSessions().filter(s => sessionState(s).key === 'need'); }
 
 // Read the session's own transcript evidence; cached briefly per session.
@@ -90,7 +80,7 @@ function terminal(s) {
     return entry;
 }
 
-function needCard(s, primary = 'Review request') {
+function needCard(s, primary = 'Answer in terminal') {
     const r = request(s), w = wingOf(s.wing_id);
     return '<article class="pp-need"><div class="pp-need-top"><span class="pp-st pp-st-need">Needs you</span><time>' + esc(clock(r.at)) + '</time></div>' +
         '<h3>' + esc(sessionDisplayName(s)) + ' is waiting for you</h3>' +
@@ -132,7 +122,7 @@ function viewWing() {
     return head('wing', meta) + '<div class="pp-cols"><div class="pp-col-main">' +
         kicker('Today', reporting + (reporting === 1 ? ' session' : ' sessions') + ' reporting') +
         (thread || '<p class="pp-quiet">Wing has not reported yet. Its updates and each session\'s latest line appear here.</p>') +
-        need.map(s => needCard(s, 'Review and approve')).join('') + (coord ? composer('Message wing', coord) : '') + '</div>' +
+        need.map(s => needCard(s)).join('') + (coord ? composer('Message wing', coord) : '') + '</div>' +
         '<aside class="pp-col-rail">' + kicker('Sessions', String(work.length)) + work.map(s => '<a class="pp-mini" href="' + sessionHref(s) + '">' + chip(sessionState(s)) + '<span>' + esc(sessionDisplayName(s)) + '</span><small>' + esc(machineName(wingOf(s.wing_id))) + '</small></a>').join('') +
         kicker('Machines', String(S.wingsData.length)) + '<div class="pp-squares">' + squares() + '</div></aside></div>';
 }
@@ -214,44 +204,18 @@ function viewApprove(route) {
     const s = findSession(route); if (!s) return missing();
     const w = wingOf(s.wing_id), r = request(s), st = sessionState(s), where = machineName(w);
     const why = lines(s).filter(l => l.who === 'agent').slice(-3);
-    const live = machineState(w) === 'connected', keys = answerKeys(s.agent), sent = answers.get(s.wing_id + '/' + s.id);
+    const live = machineState(w) === 'connected';
     const facts = [['Where', '<b>' + esc(where) + '</b>' + (project(s) ? ' · ' + esc(project(s)) : '')], ['Agent', esc(agentName(s.agent))], ['Asked', esc(clock(r.at) || 'Time not recorded')]];
     const id = esc(s.wing_id + '/' + s.id);
-    let actions, note;
-    if (sent && sent.state === 'sent') { actions = '<a class="pp-btn" href="' + sessionHref(s) + '">Open session</a>'; note = (sent.choice === 'approve' ? 'Approved' : 'Declined') + ' at ' + clock(sent.at) + '. ' + where + ' has the answer; the session reports what happens next.'; }
-    else if (sent && sent.state === 'failed') { actions = '<a class="pp-btn pp-btn-ink" href="' + sessionHref(s) + '">Open session</a>'; note = 'Could not confirm the answer reached ' + where + ' (' + sent.error + '). Check the session before answering again.'; }
-    else if (!live) { actions = '<a class="pp-btn" href="' + sessionHref(s) + '">Open session</a>'; note = where + ' is ' + awayText(w) + '. You can answer when it reconnects.'; }
-    else if (st.key !== 'need') { actions = '<a class="pp-btn" href="' + sessionHref(s) + '">Open session</a>'; note = ''; }
-    else if (keys) {
-        const busy = sent && sent.state === 'sending' ? ' disabled' : '';
-        actions = '<button type="button" class="pp-btn pp-btn-ink" data-answer="approve" data-session="' + id + '"' + busy + '>' + esc(r.command ? 'Approve, run on ' + where : 'Approve') + '</button>' +
-            '<button type="button" class="pp-btn" data-answer="decline" data-session="' + id + '"' + busy + '>Decline</button><a class="pp-btn pp-btn-quiet" href="' + sessionHref(s) + '">Open session</a>';
-        note = 'Your answer goes to the session on ' + where + ', the same as answering in its terminal.';
-    } else {
-        actions = '<button type="button" class="pp-btn pp-btn-ink" data-takeover="' + id + '">Answer in terminal</button><a class="pp-btn" href="' + sessionHref(s) + '">Open session</a>';
-        note = agentName(s.agent) + ' takes its answer in the terminal.';
-    }
-    return head('Approve request', esc(sessionDisplayName(s)) + ' · ' + esc(where)) + '<div class="pp-cols"><div class="pp-col-main">' +
+    const actions = (live && st.key === 'need' ? '<button type="button" class="pp-btn pp-btn-ink" data-takeover="' + id + '">Answer in terminal</button>' : '') + '<a class="pp-btn" href="' + sessionHref(s) + '">Open session</a>';
+    const note = !live ? where + ' is ' + awayText(w) + '. Open its terminal when it reconnects.' : 'Inspect the current request in the terminal and answer it there.';
+    return head('Answer in terminal', esc(sessionDisplayName(s)) + ' · ' + esc(where)) + '<div class="pp-cols"><div class="pp-col-main">' +
         kicker('Request from ' + esc(sessionDisplayName(s)), chip(st)) +
-        '<p class="pp-lead">' + (sent && sent.state === 'sent' ? 'You answered this request. The session picks it up from here.' : st.key === 'need' ? 'The session is waiting for your answer. Nothing runs until you approve.' : 'This request is no longer waiting. The session state is shown above.') + '</p>' +
-        kicker(sent && sent.state === 'sent' ? (sent.choice === 'approve' ? 'Approved to run' : 'Declined, will not run') : 'Will run') + (r.command ? '<pre class="pp-cmd"><span class="pp-prompt">$</span> ' + esc(r.command) + '</pre>' : '<p>' + prose(r.reason || 'The session did not say what it will run.') + '</p>') +
+        '<p class="pp-lead">' + (st.key === 'need' ? 'This session needs your attention. Answer in terminal.' : 'This recorded request may have changed. Check its current status in the terminal.') + '</p>' +
+        kicker('Recorded request') + '<p>' + prose(r.reason || 'The session did not record a request.') + '</p>' +
         '<dl class="pp-facts">' + facts.map(f => '<dt>' + f[0] + '</dt><dd>' + f[1] + '</dd>').join('') + '</dl>' +
-        kicker('Then') + '<p class="pp-quiet">The session keeps running and reports the result in its messages and in the wing thread.</p>' +
-        '<div class="pp-actions">' + actions + '</div>' + (note ? '<p class="pp-quiet pp-note" role="status">' + esc(note) + '</p>' : '') + '</div>' +
-        '<aside class="pp-col-rail">' + kicker('Why it asked') + (why.length ? why.map(l => '<div class="pp-why"><small>' + esc(clock(l.at)) + '</small><p>' + prose(l.text) + '</p></div>').join('') : '<p class="pp-quiet">No earlier messages were recorded.</p>') + '</aside></div>';
-}
-
-// Answer a waiting permission prompt with the agent's own key. Never resent on
-// failure: a lost reply may still have reached the terminal.
-function answer(button) {
-    const [wingId, sessionId] = button.dataset.session.split('/'), s = findSession({ wingId, sessionId }); if (!s) return;
-    const keys = answerKeys(s.agent), k = wingId + '/' + sessionId, choice = button.dataset.answer; if (!keys) return;
-    answers.set(k, { state: 'sending', choice });
-    render(true);
-    sendTunnelRequest(wingId, { type: 'session.control', operation: 'terminal_send', arguments: { session: sessionId, input: keys[choice] } })
-        .then(result => { if (result && result.error) throw Error(result.error); answers.set(k, { state: 'sent', choice, at: Date.now() }); const entry = reads.get(k); if (entry) entry.at = 0; })
-        .catch(error => answers.set(k, { state: 'failed', choice, error: (error && error.message) || 'the machine did not answer' }))
-        .finally(() => { lastSignature = ''; render(true); });
+        '<div class="pp-actions">' + actions + '</div><p class="pp-quiet pp-note" role="status">' + esc(note) + '</p></div>' +
+        '<aside class="pp-col-rail">' + kicker('Recent messages') + (why.length ? why.map(l => '<div class="pp-why"><small>' + esc(clock(l.at)) + '</small><p>' + prose(l.text) + '</p></div>').join('') : '<p class="pp-quiet">No earlier messages were recorded.</p>') + '</aside></div>';
 }
 
 function nav(route) {
@@ -268,8 +232,6 @@ function frame() {
     main = root.querySelector('.pp-main'); side = root.querySelector('.pp-side');
     root.addEventListener('click', event => {
         if (event.target.closest('[data-earlier]')) { showEarlier = true; lastSignature = ''; render(true); return; }
-        const pick = event.target.closest('[data-answer]');
-        if (pick) { answer(pick); return; }
         const take = event.target.closest('[data-takeover]');
         if (take) { const [wingId, sessionId] = take.dataset.takeover.split('/'); show(false); switchToSession(sessionId, true, wingId); return; }
         if (event.target.closest('[data-new-session]')) { showPalette(); return; }

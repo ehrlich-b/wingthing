@@ -32,11 +32,6 @@ export function requestedCommand(reason) {
     return (String(reason || '').match(/(\.\/\S+(?:\s+[\w.-]+)*|\b(?:npm|go|make|git|kubectl|fly|terraform)\s[^\n]+)/) || [])[1] || '';
 }
 
-// The keys an agent's own permission prompt takes, sent with terminal_send (the
-// typed, owner-checked input path). Other agents are answered in the terminal.
-const ANSWER_KEYS = { claude: { approve: '1', decline: '\u001b' }, codex: { approve: 'y', decline: '\u001b' } };
-export function answerKeys(agent) { return ANSWER_KEYS[agent] || null; }
-
 // One word for a machine that stopped reporting, plus when it was last seen.
 export function awayLabel(state, since) {
     const word = state === 'unreachable' ? 'unreachable' : 'asleep';

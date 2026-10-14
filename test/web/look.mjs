@@ -139,7 +139,7 @@ const viewports = [{ width: 1440, height: 900, suffix: '-desktop' }, { width: 39
 let browser;
 try {
     for (let i = 0; i < 100; i++) { try { if ((await fetch(base + '/health')).ok) break; } catch {} await sleep(100); }
-    browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH });
+    browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH, args: ['--disable-background-networking','--disable-component-update','--disable-default-apps','--disable-sync','--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'] });
     const contexts = [];
     for (const v of viewports) contexts.push(await browser.newContext({ viewport: { width: v.width, height: v.height } }));
     contexts.push(await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark' }));
@@ -166,14 +166,13 @@ try {
         await go(page, process.env.WT_LOOK_LEGACY ? '#chat/redirect?wing=studio' : '#approve/studio/redirect');
         await shoot(page, '04-approve', v.suffix);
         if (!process.env.WT_LOOK_LEGACY) {
-            // Approve answers the agent's own prompt through terminal_send,
-            // and the answered request leaves every Needs-you mark.
-            await page.click('[data-answer="approve"]');
-            await page.waitForFunction(() => /Approved at/.test(document.body.textContent), null, { timeout: 8000 }).catch(() => {});
-            await shoot(page, '04-approve-sent', v.suffix);
-            if (JSON.stringify(sent.slice(index)) !== JSON.stringify([{ machine: 'studio', session: 'redirect', input: '1' }])) throw Error('approve sent ' + JSON.stringify(sent));
+            await page.getByRole('heading', {name:'Answer in terminal',exact:true}).waitFor();
+            await page.getByRole('button', {name:'Answer in terminal',exact:true}).waitFor();
+            if (await page.locator('[data-answer]').count()) throw Error('browser offered an approval decision');
+            if (sent.length) throw Error('browser guessed terminal input: ' + JSON.stringify(sent));
             const marks = await page.evaluate(() => document.querySelectorAll('#paper .pp-st-need, #paper .pp-hot').length);
-            if (marks) throw Error('answered request still shows ' + marks + ' Needs-you marks');
+            if (!marks) throw Error('terminal fallback incorrectly cleared attention');
+            await shoot(page, '04-answer-in-terminal', v.suffix);
         }
         await go(page, '#pair');
         await shoot(page, '05-pair', v.suffix);
