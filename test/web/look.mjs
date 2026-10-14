@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { removeState } from './fixture-state.mjs';
 import { x25519 } from '../../web/node_modules/@noble/curves/ed25519.js';
 import { hkdf } from '../../web/node_modules/@noble/hashes/hkdf.js';
 import { sha256 } from '../../web/node_modules/@noble/hashes/sha2.js';
@@ -138,7 +139,7 @@ async function go(page, hash) {
 // A real one-time invitation from a second, non-dev roost's own wing (the
 // same setup as browser-join.mjs), compared but never confirmed: the terminal
 // never gets Enter, so nothing is paired.
-const joinState = fs.mkdtempSync(path.join('/tmp', 'look-j-'));
+const joinState = fs.mkdtempSync(path.join(root, '.scratch/lj-'));
 const joinBase = 'http://127.0.0.1:' + (port + 1);
 const joinEnv = { PATH: process.env.PATH, HOME: path.join(state, 'join-home'), WINGTHING_DIR: joinState, WT_BASE_URL: joinBase };
 fs.mkdirSync(joinEnv.HOME);
@@ -173,8 +174,9 @@ try {
     browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH, args: ['--disable-background-networking','--disable-component-update','--disable-default-apps','--disable-sync','--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'] });
     const contexts = [];
     for (const v of viewports) contexts.push(await browser.newContext({ viewport: { width: v.width, height: v.height } }));
-    contexts.push(await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark' }));
-    const themes = [...viewports, { width: 1440, height: 900, suffix: '-dark' }];
+    const dark = [{ width: 1440, height: 900, suffix: '-desktop-dark' }, { width: 390, height: 844, suffix: '-phone-dark' }];
+    for (const v of dark) contexts.push(await browser.newContext({ viewport: { width: v.width, height: v.height }, colorScheme: 'dark' }));
+    const themes = [...viewports, ...dark];
     // Empty state: signed in, no machine has connected yet.
     for (const [index, v] of themes.entries()) {
         const page = await contexts[index].newPage();
@@ -242,7 +244,6 @@ try {
     for (const socket of sockets.values()) try { socket.close(); } catch {}
     roost.kill('SIGTERM');
     if (joinRoost) joinRoost.kill('SIGTERM');
-    await sleep(300);
-    fs.rmSync(joinState, { recursive: true, force: true });
-    fs.rmSync(state, { recursive: true, force: true });
+    await removeState(joinState);
+    await removeState(state);
 }
