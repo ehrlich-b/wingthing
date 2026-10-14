@@ -78,6 +78,8 @@ body.paper-on #app { display: none; }
 .pp-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); gap: 48px; align-items: start; }
 .pp-split { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; }
 .pp-col-rail { position: sticky; top: 0; padding-top: 2px; }
+#paper .pp-col-rail > p + p { margin-top: 8px; }
+.pp-col-rail code { white-space: nowrap; }
 .pp-kick { display: flex; justify-content: space-between; gap: 12px; margin: 22px 0 6px; padding-bottom: 6px; border-bottom: 1px solid var(--pp-rule); font-size: 13px; font-weight: 600; color: var(--pp-ink-2); }
 .pp-kick span:last-child:not(.pp-st) { font-weight: 400; color: var(--pp-ink-3); }
 .pp-kick-sm { font-size: 13px; font-weight: 600; color: var(--pp-ink-2); }

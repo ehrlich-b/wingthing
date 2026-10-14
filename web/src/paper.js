@@ -94,7 +94,7 @@ function kicker(left, right = '') { return '<div class="pp-kick"><span>' + left 
 function viewEmpty() {
     if (!S.wingsData.length) return head('wing', '') + '<section class="pp-empty"><h2>No machines yet</h2><p>Install wt on a computer where your agents run, then sign in and start it. It shows up here when it connects.</p>' +
         '<pre class="pp-cmd"><span class="pp-prompt">$</span> curl -fsSL https://wingthing.ai/install.sh | sh\n<span class="pp-prompt">$</span> wt login\n<span class="pp-prompt">$</span> wt start</pre>' +
-        '<div class="pp-actions"><button type="button" class="pp-btn" data-copy="curl -fsSL https://wingthing.ai/install.sh | sh">Copy install command</button><a class="pp-btn" href="#pair">Pair a phone</a></div></section>';
+        '<div class="pp-actions"><button type="button" class="pp-btn" data-copy="curl -fsSL https://wingthing.ai/install.sh | sh">Copy install command</button><a class="pp-btn" href="#pair">Pair a machine</a></div></section>';
     const names = S.wingsData.map(machineName).join(', ');
     return head('wing', '') + '<div class="pp-cols"><section class="pp-empty"><h2>No sessions on ' + esc(names) + '</h2><p>Start an agent from here or run <code>wt claude</code> on the machine. Wing reports on it in this thread.</p>' +
         '<div class="pp-actions"><button type="button" class="pp-btn pp-btn-ink" data-new-session>New session</button></div></section>' +
@@ -175,7 +175,7 @@ function viewMachines() {
         (list.length ? '<ul>' + list.map(s => '<li><a href="' + sessionHref(s) + '">' + esc(sessionDisplayName(s)) + '</a> ' + chip(sessionState(s)) + '</li>').join('') + '</ul>' : '<p class="pp-quiet">No sessions on ' + esc(machineName(w)) + '.</p>') +
         (m === 'asleep' || m === 'unreachable' ? '<button type="button" class="pp-btn" data-retry>Retry ' + esc(machineName(w)) + '</button>' : '') + '</section>'; }).join('');
     return head('Machines', '<span class="pp-squares">' + squares() + '</span>') + '<div class="pp-cols"><div class="pp-col-main">' + kicker('Your machines', String(S.wingsData.length)) + rows + '</div>' +
-        '<aside class="pp-col-rail">' + kicker('Add a device') + '<p>Run <code>wt start</code> on another computer to add it here. To read and answer from your phone, pair it with a machine.</p><a class="pp-btn pp-btn-ink" href="#pair">Pair a phone</a></aside></div>';
+        '<aside class="pp-col-rail">' + kicker('Add a device') + '<p>Run <code>wt start</code> on another computer to add it here.</p><p class="pp-quiet">To list a machine\'s sessions in another browser without signing in, run <code>wt pair --show-link</code> on it, then open Pair.</p><a class="pp-btn" href="#pair">Pair a machine</a></aside></div>';
 }
 
 // The accountless Pair entry is handled by entry.js before account login.
@@ -208,10 +208,10 @@ function viewApprove(route) {
     const facts = [['Where', '<b>' + esc(where) + '</b>' + (project(s) ? ' · ' + esc(project(s)) : '')], ['Agent', esc(agentName(s.agent))], ['Asked', esc(clock(r.at) || 'Time not recorded')]];
     const id = esc(s.wing_id + '/' + s.id);
     const actions = (live && st.key === 'need' ? '<button type="button" class="pp-btn pp-btn-ink" data-takeover="' + id + '">Answer in terminal</button>' : '') + '<a class="pp-btn" href="' + sessionHref(s) + '">Open session</a>';
-    const note = !live ? where + ' is ' + awayText(w) + '. Open its terminal when it reconnects.' : 'Inspect the current request in the terminal and answer it there.';
+    const note = !live ? where + ' is ' + awayText(w) + '. Open its terminal when it reconnects.' : 'Opens the terminal on ' + where + '. Check the current prompt there before you answer.';
     return head('Answer in terminal', esc(sessionDisplayName(s)) + ' · ' + esc(where)) + '<div class="pp-cols"><div class="pp-col-main">' +
         kicker('Request from ' + esc(sessionDisplayName(s)), chip(st)) +
-        '<p class="pp-lead">' + (st.key === 'need' ? 'This session needs your attention. Answer in terminal.' : 'This recorded request may have changed. Check its current status in the terminal.') + '</p>' +
+        '<p class="pp-lead">' + (st.key === 'need' ? esc(sessionDisplayName(s)) + ' is waiting for an answer on ' + esc(where) + '. The current prompt and its choices are in its terminal.' : 'This recorded request may have changed. Check its current status in the terminal.') + '</p>' +
         kicker('Recorded request') + '<p>' + prose(r.reason || 'The session did not record a request.') + '</p>' +
         '<dl class="pp-facts">' + facts.map(f => '<dt>' + f[0] + '</dt><dd>' + f[1] + '</dd>').join('') + '</dl>' +
         '<div class="pp-actions">' + actions + '</div><p class="pp-quiet pp-note" role="status">' + esc(note) + '</p></div>' +
