@@ -24,7 +24,7 @@ export async function initBrowserPair() {
     history.replaceState(null, '', location.pathname + '#pair');
     document.title = 'Pair a machine · wingthing';
     document.body.className = 'browser-pair';
-    document.body.innerHTML = '<header class="bp-header"><a href="#pair">wingthing</a><span>Pair a machine</span></header><main class="bp-layout"><aside><h1>Pair a machine</h1><p>On the computer you want to join, run:</p><pre>wt pair --show-link</pre><p>Paste its full invitation here. Compare the fingerprint and emoji with that terminal.</p><p>The terminal confirms with Enter. Nothing is paired until both sides agree.</p></aside><section id="bp-card" aria-label="Join a machine"></section></main>';
+    document.body.innerHTML = '<header class="bp-header"><a href="./">wingthing</a></header><main class="bp-layout" data-state="paste"><div class="bp-title"><h1>Pair a machine</h1><span class="bp-secondary">Join from this browser · inventory only</span></div><aside><h2 class="bp-kicker">On the computer</h2><pre><span aria-hidden="true">$ </span>wt pair --show-link</pre><p>It shows a code for the phone app and a one-time link for this browser, good for five minutes.</p><h2 class="bp-kicker">Then, in that terminal</h2><p>The terminal shows four symbols and a fingerprint. If they match this page, press Enter there. Ctrl-C cancels.</p><h2 class="bp-kicker">What joining allows</h2><p>This browser can list the machine and its sessions. It cannot type into a terminal, start or stop sessions, or answer requests.</p></aside><section id="bp-card" aria-label="Join a machine"></section></main>';
     const card = document.getElementById('bp-card');
     let state = 'paste', q, carrier, exchange, signing, record, inventory, poll, expiry, generation = 0;
     let busy = false;
@@ -35,10 +35,12 @@ export async function initBrowserPair() {
     function status(kind) {
         return '<p class="bp-status" role="status">' + escape(labels[kind][1]) + '</p>';
     }
+    const kicker = (left, right = '') => '<p class="bp-kicker"><span>' + left + '</span>' + (right ? '<span>' + right + '</span>' : '') + '</p>';
     function render(kind = state) {
         state = kind;
+        document.querySelector('.bp-layout').dataset.state = kind;
         if (kind === 'paste') {
-            card.innerHTML = '<h2>Join from this browser</h2><form id="bp-form"><label for="bp-link">Full invitation</label><textarea id="bp-link" rows="4" placeholder="wingthing://pair#v1z.…" autocomplete="off" spellcheck="false" required></textarea><label for="bp-name">Browser name</label><input id="bp-name" value="Browser" maxlength="80" required autocomplete="off"><p class="bp-secondary">Requested access: inventory only on this machine.</p><button class="bp-primary" type="submit">Check invitation</button></form><div id="bp-saved"></div>';
+            card.innerHTML = kicker('This browser', 'Step 1 of 2') + '<h2>Join from this browser</h2><form id="bp-form"><label for="bp-link">Full invitation</label><textarea id="bp-link" rows="4" placeholder="wingthing://pair#v1z.…" autocomplete="off" spellcheck="false" required></textarea><label for="bp-name">Browser name</label><input id="bp-name" value="Browser" maxlength="80" required autocomplete="off"><p class="bp-secondary">Paste the link from wt pair --show-link. Requested access: inventory only.</p><button class="bp-primary" type="submit">Check invitation</button></form><div id="bp-saved"></div>';
             card.querySelector('#bp-form').onsubmit = async event => {
                 event.preventDefault();
                 const name = card.querySelector('#bp-name').value.trim();
@@ -57,20 +59,20 @@ export async function initBrowserPair() {
             return;
         }
         if (kind === 'checking') {
-            card.innerHTML = '<h2>Checking invitation…</h2><p role="status">Verifying the machine and browser storage.</p><button id="bp-cancel">Cancel</button>';
+            card.innerHTML = kicker('This browser', 'Step 1 of 2') + '<h2>Checking invitation…</h2><p role="status">Checking the machine and browser storage.</p><div class="bp-actions"><button id="bp-cancel">Cancel</button></div>';
         } else if (kind === 'compare' || kind === 'waiting') {
             const fp = fingerprint(q.key).match(/.{4}/g).map(group => '<span>' + group + '</span>').join(' ');
-            card.innerHTML = '<h2>Pair ' + escape(q.name) + '</h2><p>Compare these with the terminal on ' + escape(q.name) + '.</p><div class="bp-emoji" aria-label="Confirmation emoji">' + escape(exchange.emoji) + '</div><p class="bp-emoji-labels bp-secondary">' + escape(exchange.emoji.split(' ').map(emojiLabel).join(' · ')) + '</p><label>Requested access</label><p>List sessions and machines on ' + escape(q.name) + '. Inventory only.</p><label>Full fingerprint</label><p class="bp-fingerprint">' + fp + '</p>' + (kind === 'compare' ? '<div class="bp-actions"><button id="bp-match" class="bp-primary">Match · Join</button><button id="bp-differ">They differ</button></div><p class="bp-secondary">Then press Enter in the terminal.</p>' : '<p role="status">Waiting for Enter in the terminal on ' + escape(q.name) + '…</p>') + '<p id="bp-expiry" class="bp-secondary"></p><button id="bp-cancel">Cancel</button>';
+            card.innerHTML = kicker('This browser', 'Step 2 of 2') + '<h2>Pair ' + escape(q.name) + '</h2><p>Compare the four symbols and the fingerprint with the terminal on ' + escape(q.name) + '.</p><div class="bp-emoji" aria-label="Confirmation emoji">' + escape(exchange.emoji) + '</div><p class="bp-emoji-labels bp-secondary">' + escape(exchange.emoji.split(' ').map(emojiLabel).join(' · ')) + '</p>' + kicker('Fingerprint') + '<p class="bp-fingerprint">' + fp + '</p>' + kicker('This browser will be able to') + '<p>List the sessions and machines on ' + escape(q.name) + '. Inventory only: no terminal input, no requests.</p>' + (kind === 'compare' ? '<div class="bp-actions"><button id="bp-match" class="bp-primary">Match · Join</button><button id="bp-differ">They differ</button></div><p class="bp-secondary">Then press Enter in the terminal. Nothing is paired until both sides agree.</p>' : '<p class="bp-wait" role="status">Waiting for Enter in the terminal on ' + escape(q.name) + '…</p>') + '<div class="bp-foot"><span id="bp-expiry" class="bp-secondary"></span><button id="bp-cancel" class="bp-link">Cancel</button></div>';
             bind('bp-match', confirm); bind('bp-differ', () => cancel('mismatch'));
             updateExpiry();
         } else if (kind === 'connected') {
-            card.innerHTML = '<h2 id="bp-machine-name">Paired machine</h2><p role="status">✓ Connected · Inventory only</p><h3>Machines</h3><div id="bp-machines">Loading machines…</div><h3>Sessions</h3><div id="bp-sessions">Loading sessions…</div><p class="bp-secondary">Updated from this machine. Access lasts until revoked or forgotten.</p><button id="bp-forget">Forget</button>';
+            card.innerHTML = kicker('Paired') + '<h2 id="bp-machine-name">Paired machine</h2><p class="bp-ok" role="status">✓ Connected · Inventory only</p><h3>Machines</h3><div id="bp-machines">Loading machines…</div><h3>Sessions</h3><div id="bp-sessions">Loading sessions…</div><p class="bp-secondary">Updated from this machine every few seconds. Access lasts until it is revoked with wt devices or forgotten here.</p><button id="bp-forget">Forget</button>';
             bind('bp-forget', forget);
         } else {
             const label = labels[kind] || labels.unreachable;
             const incomplete = record && record.ready !== true;
             const message = incomplete ? '<p class="bp-status" role="status">This browser has an incomplete pairing. Forget it here, then run wt pair --show-link to try again.</p>' : status(kind);
-            card.innerHTML = '<h2>' + label[0] + '</h2>' + message + '<button id="bp-again" class="bp-primary">Pair again</button>' + (record ? '<button id="bp-forget">' + (incomplete ? 'Forget incomplete pairing' : 'Forget') + '</button>' : '');
+            card.innerHTML = kicker('Not paired') + '<h2>' + label[0] + '</h2>' + message + '<div class="bp-actions"><button id="bp-again" class="bp-primary">Pair again</button>' + (record ? '<button id="bp-forget">' + (incomplete ? 'Forget incomplete pairing' : 'Forget') + '</button>' : '') + '</div>';
             bind('bp-again', () => { wipe(); record = q = null; render('paste'); }); bind('bp-forget', forget);
         }
         bind('bp-cancel', () => cancel('cancelled'));
