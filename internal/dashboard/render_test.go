@@ -108,7 +108,7 @@ func TestDashboardRendersAgeStatusAndPrompts(t *testing.T) {
 		}
 	}
 	s.mode = confirmStop
-	if text = render(s, 80, 24, time.Now()); !strings.Contains(text, "Enter keep running") || !strings.Contains(text, "y stop session") || !strings.Contains(text, "ID: aged") || !strings.Contains(text, "app") || strings.Contains(text, "local:aged") {
+	if text = render(s, 80, 24, time.Now()); !strings.Contains(text, "Enter keep running") || !strings.Contains(text, "y stop session") || strings.Contains(text, "ID:") || !strings.Contains(text, "app") || strings.Contains(text, "local:aged") {
 		t.Fatal("confirmation target or default lost")
 	}
 	if age(-1) != "0s" || age(3600) != "1h" || age(86400) != "1d" {

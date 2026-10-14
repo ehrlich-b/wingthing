@@ -248,7 +248,7 @@ func TestScopedNewSessionUsesSelectedMachineOutsidePinnedWing(t *testing.T) {
 func TestInitialInventoryHasRefreshBeforeEmptyStateIsKnown(t *testing.T) {
 	s := &state{machines: map[string]machine{"local": {loading: true}}}
 	lines := renderedLines(t, render(s, 80, 24, time.Now()), 80, 24)
-	if !strings.Contains(lines[22], "R refresh") || strings.Contains(lines[22], "a install an agent") {
+	if !strings.Contains(lines[22], "R refresh") || strings.Contains(lines[22], "A install an agent") {
 		t.Fatal("loading presented an unverified empty-state action")
 	}
 }

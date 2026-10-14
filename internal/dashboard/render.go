@@ -363,15 +363,15 @@ func keyHints(s *state) []string {
 	if len(s.rows()) == 0 && s.filter == "" {
 		for name, m := range s.machines {
 			if (s.machineFilter == "" || name == s.machineFilter) && (s.stale(name) || m.updated.IsZero()) {
-				return []string{s.refreshKey() + "   a agents   m machines   h runs", "? help   q quit"}
+				return []string{s.refreshKey() + "   A agents   m machines   h runs", "? help   q quit"}
 			}
 		}
 	}
 	if len(s.rows()) == 0 && s.filter == "" && !s.hasAgent() && (s.machineFilter == "" || s.machineFilter == "local") {
-		return []string{"a install an agent   m machines   h runs", "? help   q quit"}
+		return []string{"A install an agent   m machines   h runs", "? help   q quit"}
 	}
 	if len(s.rows()) == 0 && s.filter == "" {
-		return []string{"n new session   a agents   m machines   h runs", "? help   q quit"}
+		return []string{"n new session   A agents   m machines   h runs", "? help   q quit"}
 	}
 	if r, ok := s.selection(); ok {
 		if _, live := s.livePermission(r); live && r.PermissionRespond {
@@ -982,7 +982,7 @@ func promptLines(s *state) []string {
 		if err := s.machines[s.target.machine].err; accessDenied(err) {
 			return []string{"Stop session", "", accessLine(s.target.machine, err)}
 		}
-		return []string{"Stop session", "", s.target.name() + " on " + machineLabel(s.target.machine), agentLabel(s.target.Agent) + " · " + s.target.project(), "ID: " + s.target.ID, "", "The agent will stop. Unsaved work may be lost.", "Keep running is selected."}
+		return []string{"Stop session", "", s.target.name() + " on " + machineLabel(s.target.machine), agentLabel(s.target.Agent) + " · " + s.target.project(), "", "The agent will stop. Unsaved work may be lost.", "Keep running is selected."}
 	case confirmTakeover:
 		return []string{"Take control", "Current input owner: " + ownerLabel(s.target.WriterOwner), "", s.target.name() + " on " + machineLabel(s.target.machine), "", "Typing will go to this terminal. The agent will lose input control.", "Keep agent control is selected."}
 	case rename:
