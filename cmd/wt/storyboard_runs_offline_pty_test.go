@@ -130,3 +130,36 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
 		t.Fatalf("task receipt: %+v %v", tasks, err)
 	}
 }
+
+// A refused task is also a complete capture state. The provider below must
+// never start; this test does not retry without sandbox enforcement.
+func TestStoryboardTerminalTaskRefusalPTY(t *testing.T) {
+	f := northstarNewFixture(t)
+	binary := northstarBuild(t, f, "stable")
+	if err := os.Remove(filepath.Join(f.local, "remotes.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	northstarWrite(t, filepath.Join(f.bin, "claude"), "#!/bin/sh\nexit 97\n", 0700)
+	policy := filepath.Join(f.work, "egg.yaml")
+	northstarWrite(t, policy, "base: none\nfs: ['ro:/', 'rw:"+f.work+"']\nnetwork: {agent_domains: none}\nresources: {memory: 64MB, max_pids: 8}\n", 0600)
+	h := northstarStartPTY(t, f, binary, 120, 36, "run", "Run project tests", "--agent", "claude", "--config", policy)
+	h.expect("sandbox refusal before provider start", 0, "task refused: sandbox unavailable; no agent started")
+	select {
+	case err := <-h.done:
+		if err == nil {
+			t.Fatal("refused task succeeded")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("refusal did not finish")
+	}
+	storyboardCapture(t, h, "06-1-terminal-task-refused")
+	s, err := store.Open(filepath.Join(f.local, "wt.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	tasks, err := s.ListRecent(2)
+	if err != nil || len(tasks) != 1 || tasks[0].Status != "failed" || tasks[0].Isolation == "privileged" {
+		t.Fatalf("refusal receipt: %+v %v", tasks, err)
+	}
+}

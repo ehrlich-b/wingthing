@@ -36,5 +36,5 @@ func (s *Server) ToolSessionSearch(ctx context.Context, arguments json.RawMessag
 	if err != nil {
 		return nil, err
 	}
-	return s.ToolSessionInventory(ctx, raw)
+	return s.toolSessionInventory(ctx, raw, true)
 }

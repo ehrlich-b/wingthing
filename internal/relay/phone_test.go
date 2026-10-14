@@ -25,7 +25,7 @@ func TestPhoneRelayOpaqueRoutingWithoutPhoneAccount(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer phone.CloseNow()
-	req := ws.TunnelRequest{Type: ws.TypeTunnelRequest, Purpose: "phone", WingID: "wing-one", RequestID: "request-one", Payload: `{"op":"phone.box","sender_pub":"random-public-key","payload":"opaque-ciphertext"}`, SenderUserID: "forged-admin", SenderOrgRole: "owner", SenderPasskeys: []string{"forged-passkey"}}
+	req := ws.TunnelRequest{Type: ws.TypeTunnelRequest, Purpose: "phone", WingID: "wing-one", RequestID: "request-one", Payload: `{"op":"phone.box","sender_pub":"random-public-key","payload":"opaque-ciphertext"}`, SenderUserID: "forged-admin", SenderOrgRole: "owner", SenderPasskeys: []string{"forged-passkey"}, BrowserPhone: true}
 	if e = writeWebSocketJSON(ctx, phone, req); e != nil {
 		t.Fatal(e)
 	}
@@ -34,7 +34,7 @@ func TestPhoneRelayOpaqueRoutingWithoutPhoneAccount(t *testing.T) {
 		t.Fatal(e)
 	}
 	var got ws.TunnelRequest
-	if json.Unmarshal(b, &got) != nil || got.Payload != req.Payload || got.SenderUserID != "" || got.SenderOrgRole != "" || len(got.SenderPasskeys) != 0 {
+	if json.Unmarshal(b, &got) != nil || got.BrowserPhone || got.Payload != req.Payload || got.SenderUserID != "" || got.SenderOrgRole != "" || len(got.SenderPasskeys) != 0 {
 		t.Fatal("relay disclosed or elevated phone request")
 	}
 	// A different wing cannot consume the pending reply.

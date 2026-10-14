@@ -45,19 +45,25 @@ export function searchRoute(row, wings, now = Date.now()) {
 }
 
 // Each input change retires every earlier request, even before debounce fires.
-export function createSearchController(search, update) {
+export function createSearchController(search, update, now = Date.now) {
     let generation = 0;
+    const previous = new Map();
+    function publishResult(result,query) {
+        const saved=previous.get(query);
+        if(result.complete===false&&!result.sessions?.length&&saved){
+            update({...result,loading:false,query,cached:true,fetchedAt:saved.fetchedAt,sessions:saved.sessions.map(row=>({...row,routes:(row.routes||[]).map(route=>({...route,healthy:false}))}))});return;
+        }
+        const value={...result,loading:false,query,fetchedAt:now()};
+        if(result.complete===true){previous.delete(query);previous.set(query,value);while(previous.size>4)previous.delete(previous.keys().next().value);}
+        update(value);
+    }
     return {
-        retire() { generation++; },
+        retire(clear = false) { generation++; if(clear)previous.clear(); },
         async run(query) {
             const ticket = ++generation;
             update({ loading: true, query });
-            try {
-                const result = await search(query);
-                if (ticket === generation) update({ ...result, loading: false, query });
-            } catch (error) {
-                if (ticket === generation) update({ sessions: [], sources: [], complete: false, loading: false, query, error: error.message });
-            }
+            try { const result=await search(query);if(ticket===generation)publishResult(result,query); }
+            catch(error){if(ticket===generation)publishResult({sessions:[],sources:[],complete:false,error:error.message},query);}
         },
     };
 }
@@ -69,5 +75,15 @@ export function inventoryPresentation(state) {
     const visible = Boolean(state.query || state.loading || state.error || state.sessions?.length || checked);
     const fallback = !state.query && !state.sessions?.length && (state.loading || state.complete === false || state.error);
     return { visible, fallback, status: state.loading ? (state.query ? 'Searching sessions…' : 'Loading machine inventory…') :
-        state.error || (checked ? `${state.sessions?.length || 0} sessions · ${state.complete ? 'coverage complete' : 'coverage incomplete'}` : '') };
+        state.cached ? `Search unavailable · ${state.sessions?.length || 0} cached sessions · coverage incomplete` : state.error || (checked ? state.complete===false&&!state.sessions?.length ? 'Search unavailable · coverage incomplete' : `${state.sessions?.length || 0} sessions · ${state.complete ? 'coverage complete' : 'coverage incomplete'}` : '') };
+}
+
+export function sourceProblems(sources=[]) {
+    const grouped=new Map();
+    for(const source of sources.filter(s=>!s.healthy)){
+        const key=source.wing_id||source.machine_label||'unknown',prior=grouped.get(key);
+        if(!prior)grouped.set(key,{...source});
+        else if(source.error&&!String(source.error).startsWith('Configured'))grouped.set(key,{...prior,...source});
+    }
+    return [...grouped.values()];
 }

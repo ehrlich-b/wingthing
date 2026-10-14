@@ -156,9 +156,11 @@ type WingRegister struct {
 	AllowedCount int           `json:"allowed_count,omitempty"` // number of allowed keys
 	// PurposeBinding means this wing verifies the coordinator-visible tunnel
 	// purpose against the decrypted inner message before dispatch.
-	PurposeBinding bool   `json:"purpose_binding,omitempty"`
-	DirectMCP      bool   `json:"direct_mcp,omitempty"`
-	HostedRelay    string `json:"hosted_relay,omitempty"`
+	PurposeBinding bool `json:"purpose_binding,omitempty"`
+	// BrowserPhoneScope means this wing enforces inventory-only browser carriers.
+	BrowserPhoneScope bool   `json:"browser_phone_scope,omitempty"`
+	DirectMCP         bool   `json:"direct_mcp,omitempty"`
+	HostedRelay       string `json:"hosted_relay,omitempty"`
 }
 
 // WingHeartbeat is sent by the wing every 30s.
@@ -328,6 +330,7 @@ type TunnelRequest struct {
 	WingID         string   `json:"wing_id"`
 	RequestID      string   `json:"request_id"`
 	Purpose        string   `json:"purpose,omitempty"`
+	BrowserPhone   bool     `json:"browser_phone,omitempty"`   // relay-injected browser phone route
 	SenderPub      string   `json:"sender_pub,omitempty"`      // browser X25519 identity pubkey
 	Payload        string   `json:"payload"`                   // base64(AES-GCM encrypted)
 	SenderUserID   string   `json:"sender_user_id,omitempty"`  // relay-injected user ID

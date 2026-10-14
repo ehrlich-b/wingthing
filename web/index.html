@@ -4,11 +4,12 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
     <meta name="google" content="notranslate">
-    <meta name="theme-color" content="#1a1a2e">
+    <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#151618" media="(prefers-color-scheme: dark)">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="wingthing">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="color-scheme" content="dark">
+    <meta name="color-scheme" content="light dark">
     <link rel="apple-touch-icon" href="%BASE_URL%icons/wt-180.png">
     <link rel="icon" type="image/svg+xml" href="%BASE_URL%icons/wt.svg">
     <link rel="manifest" href="%BASE_URL%manifest.json">
@@ -117,7 +118,7 @@
                     <div id="session-search-results" hidden></div>
                     <pre id="session-search-transcript" aria-label="Session transcript" hidden></pre>
                 </section>
-                <div id="wing-status"></div>
+                <details id="machine-diagnostics"><summary>Computers and connection status</summary><div id="wing-status"></div></details>
                 <section id="conversation-inventory" aria-label="Conversations"></section>
                 <section id="session-inventory-controls" aria-label="Session filters">
                     <div class="inventory-heading"><h3 class="section-label">sessions</h3><span id="session-inventory-count"></span></div>
@@ -258,6 +259,6 @@
         </div>
     </div>
 
-    <script type="module" src="src/main.js"></script>
+    <script type="module" src="src/entry.js"></script>
 </body>
 </html>

@@ -298,7 +298,7 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "session_search", Title: "Search sessions everywhere",
-			Description: "Search authorized live and past sessions by name, repo, machine, agent or redacted transcript text using the wing's incremental index. Returns exact origin/session IDs, routes and incomplete coverage. Includes verified personal remotes by default; set include_remotes=false for local or scoped access. No transcript snippets or recursive fanout.",
+			Description: "Search owned live and past sessions. Matching transcript excerpts are redacted and limited to 240 characters; they require session_read to be allowed. Returns exact origin/session IDs, routes and incomplete coverage. Includes verified personal remotes by default; set include_remotes=false for local or scoped access. No recursive fanout.",
 			InputSchema: objectSchema(map[string]any{"query": map[string]any{"type": "string", "minLength": 1, "maxLength": 256}, "include_remotes": map[string]any{"type": "boolean", "default": true}}, "query"), Annotations: readOnly,
 			Grant: "terminal.read", Surfaces: both,
 		},

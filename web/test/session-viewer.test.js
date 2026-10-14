@@ -134,3 +134,18 @@ test('browser pending messages are bounded and isolated across owners', () => {
     assert.equal(f.calls.some(([, e]) => e.arguments.operation === 'session_prompt'), false);
     assert.ok(f.calls.some(([, e]) => e.arguments.operation === 'session_read'));
  });
+
+test('handback preserves the last screen and a read failure cannot erase it', async()=>{
+ const f=fixture();await f.viewer.open(f.rows[0]);await f.viewer.takeControl();await f.viewer.read();
+ assert.equal(f.viewer.current().terminal,'Real terminal output');assert.equal(f.viewer.current().terminalFormat,'screen');
+ await f.viewer.handBack();assert.equal(f.viewer.current().terminal,'Real terminal output');assert.equal(f.viewer.current().terminalFormat,'screen');
+ f.setReply(async()=>{throw Error('temporary read unavailable');});await f.viewer.read();
+ assert.equal(f.viewer.current().terminal,'Real terminal output');assert.equal(f.viewer.current().mode,'observe');
+ assert.match(f.viewer.current().terminalStatus,/unavailable|temporary read/);
+ assert.equal(f.calls.filter(([,e])=>e.operation==='fleet_attach').length,1);
+});
+test('missing snapshot preserves output with an explicit unavailable state',async()=>{
+ const f=fixture();await f.viewer.open(f.rows[0]);
+ f.setReply(async(wing,envelope)=>{const a=envelope.arguments;return {origin_wing_id:a.origin_wing_id,session_id:a.session_id,route:{wing_id:wing},result:a.operation==='session_read'?{lifecycle:{events:[],cursor:0}}:{}};});
+ await f.viewer.read();assert.equal(f.viewer.current().terminal,'Terminal snapshot');assert.match(f.viewer.current().terminalStatus,/unavailable/);
+});

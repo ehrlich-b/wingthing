@@ -191,6 +191,7 @@ subprocess.run([%q,'wing','status'])
 	nav.expect("restore verified route", nav.send("R"), "machines connected")
 	nav.expect("explicit qualified stop", nav.send("x"), "pairing on forge", "Enter keep running")
 	onboardingStoryboardCapture(t, nav, "03-7")
+	storyboardCapture(t, nav, "03-7-qualified-stop")
 	nav.expect("enter cancels destructive action", nav.send("\r"), "machines connected")
 	if remote.killed.Load() != 0 {
 		t.Fatal("Enter stopped the colliding remote")

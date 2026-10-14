@@ -710,6 +710,28 @@ func TestStaticSW(t *testing.T) {
 	}
 }
 
+func TestStaticFontsAreCacheableAndAppIsNot(t *testing.T) {
+	_, ts := testServer(t)
+
+	resp, err := http.Get(ts.URL + "/app/fonts/JetBrainsMono-Regular.woff2")
+	if err != nil {
+		t.Fatalf("GET font: %v", err)
+	}
+	closeTestBody(t, resp.Body)
+	// The placeholder web/dist has no fonts; the header is the contract here.
+	if got := resp.Header.Get("Cache-Control"); got != "public, max-age=604800" {
+		t.Fatalf("font Cache-Control = %q", got)
+	}
+	resp, err = http.Get(ts.URL + "/app/sw.js")
+	if err != nil {
+		t.Fatalf("GET sw.js: %v", err)
+	}
+	closeTestBody(t, resp.Body)
+	if got := resp.Header.Get("Cache-Control"); got != "" {
+		t.Fatalf("sw.js Cache-Control = %q, want none", got)
+	}
+}
+
 func TestStaticManifest(t *testing.T) {
 	_, ts := testServer(t)
 

@@ -20,6 +20,15 @@ import (
 
 // SessionCatalog returns content-free search results after authority filtering.
 func SessionCatalog(ctx context.Context, cfg *config.Config, wingID, label, query string, owns func(LocalSession) bool) ([]fleet.Session, bool, error) {
+	return sessionCatalog(ctx, cfg, wingID, label, query, owns, false)
+}
+
+// SessionSearchCatalog adds bounded excerpts after ownership filtering. The
+// protocol caller must also require the existing session_read capability.
+func SessionSearchCatalog(ctx context.Context, cfg *config.Config, wingID, label, query string, owns func(LocalSession) bool) ([]fleet.Session, bool, error) {
+	return sessionCatalog(ctx, cfg, wingID, label, query, owns, true)
+}
+func sessionCatalog(ctx context.Context, cfg *config.Config, wingID, label, query string, owns func(LocalSession) bool, excerpts bool) ([]fleet.Session, bool, error) {
 	if len(query) > 256 || len(strings.Fields(query)) > 8 {
 		return nil, false, errors.New("query must be at most 256 bytes and 8 words")
 	}
@@ -225,6 +234,15 @@ func SessionCatalog(ctx context.Context, cfg *config.Config, wingID, label, quer
 		for _, field := range []string{"session_id", "name", "agent", "repo", "machine", "transcript"} {
 			if fields[field] {
 				row.MatchFields = append(row.MatchFields, field)
+			}
+		}
+		if excerpts && fields["transcript"] && index != nil {
+			excerpt, err := index.Excerpt(ctx, row.SessionID, words)
+			if err != nil {
+				row.SearchIncomplete = true
+				complete = false
+			} else {
+				row.MatchExcerpt = excerpt
 			}
 		}
 		if len(rows) < 200 {

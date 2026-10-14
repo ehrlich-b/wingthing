@@ -86,7 +86,7 @@ export function saveSessionCache() {
 
 export function saveWingCache() {
     setCachedWings(S.wingsData.map(function(w) {
-        return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label, hostname: w.hostname, platform: w.platform, agents: w.agents, locked: w.locked || false, spectate: w.spectate || false, user_id: w.user_id, owner: w.owner };
+        return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label, hostname: w.hostname, platform: w.platform, agents: w.agents, locked: w.locked || false, spectate: w.spectate || false, user_id: w.user_id, owner: w.owner, last_seen: w.last_seen };
     }));
 }
 
@@ -293,6 +293,7 @@ async function _loadHomeInner() {
         var aw = apiMap[w.wing_id];
         if (aw) {
             w.online = true;
+            w.last_seen = new Date().toISOString();
             if (aw.public_key) w.public_key = aw.public_key;
             if (aw.user_id) w.user_id = aw.user_id;
             if (aw.owner) w.owner = aw.owner;
@@ -313,6 +314,7 @@ async function _loadHomeInner() {
             S.wingsData.push({
                 wing_id: aw.wing_id,
                 online: true,
+                last_seen: new Date().toISOString(),
                 public_key: aw.public_key,
                 wing_label: c ? c.wing_label : undefined,
                 hostname: c ? c.hostname : undefined,

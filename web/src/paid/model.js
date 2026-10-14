@@ -53,8 +53,8 @@ export function createPaidState(scenario = 'free') {
         cloud: null, launchRecords: {}, resumeRecords: {}, reservation: null, nextRun: 0, nextCloud: 1,
         template: { id: 'fixture-template-1', approved: scenario !== 'unapproved-phone', size: 'standard', hours: 2, capCents: 0, coordinatorWingId: 'fixture-coordinator-wing', coordinatorSessionId: 'fixture-coordinator-session' },
         phoneRequest: null, phonePairedWings: ['fixture-local-wing', 'fixture-coordinator-wing'], localSessions: ['fixture-local-session'], localDeviceGrants: ['fixture-local-wing'],
-        notifications: { budget: true, billing: true, workspace: true, attention: false }, report: null, deletionReview: false,
-        fault: null, audit: [], teamDecision: null, message: 'Dormant fixture. All amounts are proposed; no providers are connected.',
+        notificationDelivery: {email:'owner@example.test',verified:true}, notificationsSavedAt:null, notifications: { budget: true, billing: true, workspace: true, attention: false }, report: null, deletionReview: false,
+        fault: null, audit: [], teamDecision: null, messageTone: 'info', message: 'Dormant fixture. All amounts are proposed; no providers are connected.',
     };
     return s;
 }
@@ -145,7 +145,7 @@ export function applyPaidAction(original, action) {
         s.message = 'Offer dismissed; your draft and local work remain available.'; break;
     case 'checkout':
         id(action.requestId); demand(!s.pro, 'Already entitled; no second subscription');
-        if (s.checkout && s.checkout.status !== 'abandoned') { s.message = 'Reusing the existing fixture checkout; no second subscription.'; break; }
+        if (s.checkout) { s.message = 'Existing checkout retained. Check its payment status before paying.'; break; }
         s.checkout = { id: action.requestId, status: 'pending', accountId: s.accountId };
         s.message = 'Fixture checkout handoff created. Waiting for a verified fixture payment event.'; break;
     case 'checkout-return': s.message = 'Return received; entitlement still depends on the verified payment event.'; break;
@@ -258,10 +258,10 @@ export function applyPaidAction(original, action) {
         const existing = s.pendingIntervals[action.eventId];
         if (existing) demand(existing.seconds === action.seconds && existing.runId === s.cloud.runId, 'Usage event ID conflicts with the retained interval');
         if (!action.verified) {
-            if (!existing) s.pendingIntervals[action.eventId] = {eventId:action.eventId,runId:s.cloud.runId,seconds:action.seconds,status:'pending'};
+            if (!existing) s.pendingIntervals[action.eventId] = {eventId:action.eventId,runId:s.cloud.runId,seconds:action.seconds,status:'pending',observedAt:s.asOf,endAt:s.asOf,startAt:new Date(Date.parse(s.asOf)-action.seconds*1000).toISOString(),computeCents:Math.ceil(action.seconds*SIZES[s.cloud.size].cents/3600)};
             s.meterFresh = !pendingUsage(s); s.message = 'Estimated interval retained pending explicit reconciliation; new starts blocked.'; break;
         }
-        if (existing) existing.status = 'verified';
+        if (existing) { existing.status = 'verified'; existing.resolvedAt = s.asOf; }
         recordInterval(s,action.eventId,action.seconds);
         s.meterFresh = !pendingUsage(s);
         if (s.cloud.status !== 'stopping') s.message = 'Verified ready interval recorded once. Models and outbound remain separate.';
@@ -336,15 +336,15 @@ export function applyPaidAction(original, action) {
         id(action.eventId); demand(action.invoiceId === s.invoice.id, 'Invoice ID mismatch'); demand(s.meterFresh && !s.reservation, 'Only reconciled, settled usage can be invoiced');
         if (s.invoiceEvents.includes(action.eventId) || s.invoice.status === 'finalized') { s.message = 'Duplicate invoice ignored.'; break; }
         s.invoiceEvents.push(action.eventId); s.invoice.status = 'finalized'; s.invoice.cents = TERMS.monthlyCents + s.consumedCents;
-        s.invoice.lines = [{ label: 'Pro subscription (proposal)', cents: TERMS.monthlyCents }, { label: 'Verified compute overage after credits', cents: s.consumedCents }, { label: 'Included 10 GB workspace storage', cents: 0 }, { label: 'BYO model invoices billed externally', cents: 0 }];
-        s.invoice.events = [...s.meterEvents]; s.message = 'Fixture invoice finalized from settled event IDs. BYO usage is not a Wingthing charge.'; break;
+        s.invoice.lines = [{ label: 'Pro subscription (proposal)', cents: TERMS.monthlyCents }, { label: 'Verified compute overage after credits', cents: s.consumedCents }, { label: 'Included 10 GB workspace storage', cents: 0 }, { label: 'Included outbound allowance', cents: 0 }];
+        s.invoice.issuedAt=s.asOf; s.invoice.events = [...s.meterEvents]; s.message = 'Fixture invoice finalized from settled event IDs. BYO usage is not a Wingthing charge.'; break;
     case 'billing-fail':
         demand(action.invoiceId === s.invoice.id, 'Invoice ID mismatch'); s.invoice.status = 'unpaid'; s.billingBlocked = true;
         if (s.cloud && ['allocating','booting','ready','failed'].includes(s.cloud.status)) beginStop(s, 'unpaid invoice'); s.message = `Invoice ${s.invoice.id} unpaid. New starts blocked; stop policy applies; local work continues. Fixture deadline ${s.paidThrough}.`; break;
     case 'billing-recover': s.billingBlocked = false; s.invoice.status = 'paid'; s.message = 'Fixture payment-method recovery recorded. Cap unchanged; no automatic launch or duplicate charge.'; break;
-    case 'notification': demand(Object.hasOwn(s.notifications, action.name) && typeof action.enabled === 'boolean', 'Unknown notification preference'); s.notifications[action.name] = action.enabled; s.message = 'Preference saved for the explicit fixture owner; no notification sent.'; break;
+    case 'notification': demand(Object.hasOwn(s.notifications, action.name) && typeof action.enabled === 'boolean', 'Unknown notification preference'); s.notifications[action.name] = action.enabled; s.notificationsSavedAt=s.asOf; s.message = 'Preference saved for the explicit fixture owner; no notification sent.'; break;
     case 'support':
-        s.report = { accountId: s.accountId, requestId: s.cloud?.requestId || null, wingId: s.cloud?.wingId || null, version: 'paid-fixture-v1', route: 'fixture-local', classification: s.fault || (s.billingBlocked ? 'unpaid-invoice' : 'none'), usageEventIds: [...s.meterEvents], invoiceId: s.invoice.id };
+        s.report = { accountId: s.accountId, requestId: s.cloud?.requestId || null, wingId: s.cloud?.wingId || null, version: 'paid-fixture-v1', route: 'fixture-local', classification: pendingUsage(s) ? 'usage-under-review' : s.fault || (s.billingBlocked ? 'unpaid-invoice' : 'none'), pendingUsageEventIds: Object.values(s.pendingIntervals).filter(v=>v.status==='pending').map(v=>v.eventId), usageEventIds: [...s.meterEvents], invoiceId: s.invoice.id };
         s.message = 'Metadata-only support report prepared for your review. Nothing sent.'; break;
     case 'reconcile': {
         id(action.eventId);
@@ -353,7 +353,7 @@ export function applyPaidAction(original, action) {
             const interval = s.pendingIntervals[action.usageEventId]; demand(interval, 'Unknown retained usage interval');
             demand(interval.runId === s.cloud?.runId, 'Usage interval execution identity does not match');
             if (interval.status === 'pending') {
-                interval.status = action.decision === 'confirmed' ? 'verified' : 'rejected';
+                interval.status = action.decision === 'confirmed' ? 'verified' : 'rejected'; interval.resolvedAt = s.asOf;
                 if (action.decision === 'confirmed') recordInterval(s, interval.eventId, interval.seconds);
             } else demand(interval.status === (action.decision === 'confirmed' ? 'verified' : 'rejected'), 'Usage interval already resolved with another decision');
         }
@@ -365,6 +365,7 @@ export function applyPaidAction(original, action) {
         s.teamDecision = action.tenant === 'sample-tenant' && !action.revoked && action.role !== 'phone' && (action.resource !== 'billing' || action.role === 'admin') ? 'allowed by explicit fixture resource role' : 'denied; live access must close';
         s.message = `Later team design: ${s.teamDecision}. Individual Pro does not include team seats.`; break;
     }
+    s.messageTone = actionTone(s, action);
     if (!op.startsWith('owner-') && op !== 'reconcile') audit(s, op);
     return s;
 }
@@ -378,4 +379,21 @@ export function fixtureDownload(s, kind) {
     }
     demand(kind === 'artifacts', 'Unknown artifact');
     return 'Dormant fixture artifact\nTest report: fixture contract exercised.\nPatch: review before applying.\nNo source, credentials or real provider results are included.\n';
+}
+
+function actionTone(s, action) {
+    const op = action.op;
+    if (op === 'billing-fail' || op === 'launch-fail' || op === 'fault') return 'error';
+    if (op === 'team-check') return s.teamDecision.startsWith('denied') ? 'error' : 'success';
+    if (['payment', 'checkout', 'checkout-return', 'payment-check'].includes(op)) {
+        return { pending: 'pending', declined: 'error', abandoned: 'warning', confirmed: 'success' }[s.checkout?.status] || 'info';
+    }
+    if (op === 'idle-check') return !s.cloud.active && s.cloud.idleMinutes >= TERMS.idleMinutes - TERMS.warningMinutes ? 'warning' : 'info';
+    if (op === 'stop-confirm') return s.meterFresh ? 'success' : 'warning';
+    if (op === 'reconcile') return s.meterFresh ? 'success' : 'pending';
+    if (op === 'launch-step') return s.cloud.status === 'ready' ? 'success' : 'pending';
+    if (['launch', 'launch-retry', 'resume', 'stop', 'phone-request'].includes(op)) return 'pending';
+    if (['expire', 'delete-review', 'cancel', 'owner-revoke'].includes(op)) return 'warning';
+    if (['attach', 'cloud-pair', 'git-clone', 'git-push', 'delete', 'billing-recover', 'invoice-finalize', 'owner-grant'].includes(op)) return 'success';
+    return 'info';
 }

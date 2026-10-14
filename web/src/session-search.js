@@ -3,14 +3,15 @@ import { initSessionViewer, openSessionViewer, closeSessionViewer } from './sess
 import { S } from './state.js';
 import { escapeHtml, wingDisplayName } from './helpers.js';
 import { sendTunnelRequest } from './tunnel.js';
-import { SEARCH_VERSION, inventoryPresentation, mergeSearchInventories, searchRoute, createSearchController } from './session-search-state.js';
+import { SEARCH_VERSION, sourceProblems, inventoryPresentation, mergeSearchInventories, searchRoute, createSearchController } from './session-search-state.js';
 
-let installed = false, timer, controller, current = null, owner = null, reading = 0;
+const sourceSuccess=new Map();let sourceOwner=null;
+let installed = false, timer, controller, current = null, owner = null, reading = 0, observedWings = '';
 
 export async function searchEverywhere(query) {
     const wings = S.wingsData.filter(wing => wing.wing_id && wingDisplayName(wing));
     const inventories = [], failures = [];
-    const userId = S.currentUser?.id;
+    const userId = S.currentUser?.id;if(sourceOwner!==userId){sourceOwner=userId;sourceSuccess.clear();}
     let cursor = 0;
     // Match the transport pool's fixed concurrency rather than flooding its queue.
     await Promise.all(Array.from({ length: Math.min(4, wings.length) }, async () => {
@@ -18,7 +19,7 @@ export async function searchEverywhere(query) {
             if (S.currentUser?.id !== userId) return;
             const wing = wings[cursor++];
             const label = wingDisplayName(wing);
-            if (wing.online === false) { failures.push({ machine_label: label, healthy: false, error: 'offline' }); continue; }
+            if (wing.online === false) { failures.push({ wing_id:wing.wing_id,machine_label: label, healthy: false, error: 'Computer offline',lastFetchedAt:sourceSuccess.get(wing.wing_id) }); continue; }
             const remotes = wing.user_id === S.currentUser?.id && !wing.org;
             try {
                 let result;
@@ -27,12 +28,14 @@ export async function searchEverywhere(query) {
                 } catch (error) {
                     if (!remotes) throw error;
                     // Local read remains useful when fleet delegation is disabled.
-                    failures.push({ machine_label: label, healthy: false, error: 'Configured remote search unavailable' });
                     result = await sendTunnelRequest(wing.wing_id, { type: query ? 'sessions.search' : 'sessions.inventory', arguments: { query, include_remotes: false } }, { skipPasskey: true });
+                    failures.push({wing_id:wing.wing_id,machine_label:label,healthy:false,error:'Saved remote search unavailable',lastFetchedAt:sourceSuccess.get(wing.wing_id)});
                 }
                 if (result.version !== SEARCH_VERSION || result.wing_id !== wing.wing_id || !Array.isArray(result.sessions)) throw Error('Search contract or wing identity mismatch');
-                inventories.push(result);
-            } catch (error) { failures.push({ machine_label: label, healthy: false, error: 'Search unavailable; unlock or refresh this wing' }); }
+                if(S.currentUser?.id!==userId)return;
+                sourceSuccess.set(wing.wing_id,Date.now());
+                inventories.push({...result,sources:(result.sources||[]).map(source=>({...source,retryWingId:wing.wing_id}))});
+            } catch (error) { failures.push({wing_id:wing.wing_id,machine_label:label,healthy:false,error:'Search unavailable; verify access and retry',lastFetchedAt:sourceSuccess.get(wing.wing_id)}); }
         }
     }));
     if (!wings.length) failures.push({ machine_label: 'Wings', healthy: false, error: 'No authorized wings available' });
@@ -53,11 +56,10 @@ function showResults(state) {
     if (normal) normal.hidden = active && !presentation.fallback;
     if (empty) empty.hidden = active && !presentation.fallback;
     if (!active) { results.replaceChildren(); status.textContent = ''; return; }
-    status.textContent = presentation.status + (presentation.fallback && !state.loading ? ' · local inventory below may be cached' : '');
+    status.textContent = presentation.status + (state.cached&&state.fetchedAt ? ' · last fetched '+new Date(state.fetchedAt).toLocaleString() : '') + (presentation.fallback && !state.loading ? ' · local inventory below may be cached' : '');
     results.innerHTML = '';
     if (state.loading) return;
-    results.innerHTML = (state.sources || []).filter(source => !source.healthy).map(source =>
-        `<p class="search-source-error">${escapeHtml(source.machine_label)} · ${escapeHtml(source.error || 'unavailable')}</p>`).join('') +
+    results.innerHTML = sourceProblems(state.sources).map(source=>{const retryId=source.retryWingId||source.wing_id,wing=S.wingsData.find(w=>w.wing_id===retryId);return `<section class="search-source-error"><strong>${escapeHtml(source.machine_label)} · Search unavailable</strong><p>${escapeHtml((source.error||'Verify access and retry').replace(/^Search unavailable; /,''))}</p><p>Last successful check: ${escapeHtml(source.lastFetchedAt ? new Date(source.lastFetchedAt).toLocaleString() : 'Unknown')}</p>${wing ? `<button type="button" data-search-retry="${escapeHtml(wing.wing_id)}">Retry ${escapeHtml(source.machine_label||wingDisplayName(wing))}</button>` : ''}</section>`;}).join('') +
         groupedRows(state.sessions).map(({ row, index, heading }) => {
             const route = searchRoute(row, S.wingsData);
             return heading + `<article class="search-session" data-origin="${escapeHtml(row.origin_wing_id)}" data-session="${escapeHtml(row.session_id)}"><h3>${row.pinned && row.role === 'coordinator' ? 'Pinned wing · ' : ''}${escapeHtml(row.name || row.session_id)} · ${escapeHtml(row.agent || 'agent')}</h3>` +
@@ -66,7 +68,7 @@ function showResults(state) {
                 `<p>${(row.routes || []).map(r => `<span class="search-route">${escapeHtml(r.kind === 'via' ? 'via ' + r.machine_label : 'direct')}${r.healthy ? '' : ' · unavailable'}</span>`).join(' ')}</p>` +
                 `<p class="text-dim">Matched: ${escapeHtml((row.match_fields || []).join(', '))}${row.search_incomplete ? ' · index incomplete' : ''}</p>` +
                 `<button type="button" data-search-open="${index}" ${route ? '' : 'disabled'}>Open session</button> <button type="button" data-search-read="${index}" ${route ? '' : 'disabled'}>Read transcript</button></article>`;
-        }).join('') + (!state.sessions?.length ? '<p>' + (state.complete ? 'No sessions matched in the successfully checked sources.' : 'Inventory coverage is incomplete. Reconnect or unlock the unavailable sources and refresh.') + '</p>' : '');
+        }).join('') + (!state.sessions?.length ? '<p>' + (state.complete ? 'No sessions matched in the successfully checked sources.' : 'Connect the unavailable computers, then retry.') + '</p>' : '');
 }
 
 async function readResult(index) {
@@ -100,17 +102,19 @@ export function initSessionSearch() {
     if (owner !== S.currentUser?.id) {
         closeSessionViewer();
         owner = S.currentUser?.id;
-        controller?.retire(); reading++; clearTimeout(timer);
-        input.value = ''; current = null;
+        controller?.retire(true); reading++; clearTimeout(timer);
+        input.value = ''; current = null; observedWings='';
         document.getElementById('session-search-transcript').hidden = true;
         document.getElementById('session-search-transcript').textContent = '';
         showResults({ query: '', sessions: [] });
     }
+    const wingSignature=JSON.stringify(S.wingsData.map(w=>[w.wing_id,w.online,wingDisplayName(w),w.user_id,w.org,w.tunnel_error]));
     if (installed) {
+        if(wingSignature!==observedWings){observedWings=wingSignature;controller.run(input.value.trim());return;}
         if (current) showResults(current);
         return;
     }
-    installed = true;
+    installed = true;observedWings=wingSignature;
     controller = createSearchController(searchEverywhere, showResults);
     function run() {
         const query = input.value.trim();
@@ -127,7 +131,9 @@ export function initSessionSearch() {
         timer = setTimeout(run, 250);
     });
     document.getElementById('session-search-form').addEventListener('submit', event => { event.preventDefault(); clearTimeout(timer); run(); });
-    document.getElementById('session-search-results').addEventListener('click', event => {
+    document.getElementById('session-search-results').addEventListener('click', async event => {
+        const retry=event.target.closest('[data-search-retry]');
+        if(retry&&!retry.disabled){const wing=S.wingsData.find(w=>w.wing_id===retry.dataset.searchRetry),retryOwner=owner,query=current?.query||'';if(!wing)return;retry.disabled=true;try{const result=await sendTunnelRequest(wing.wing_id,{type:query?'sessions.search':'sessions.inventory',arguments:{query,include_remotes:wing.user_id===S.currentUser?.id&&!wing.org}},{skipPasskey:false});if(result.version!==SEARCH_VERSION||result.wing_id!==wing.wing_id||!Array.isArray(result.sessions))throw Error('Search response identity mismatch');if(retryOwner===owner&&owner===S.currentUser?.id)await controller.run(query);}catch(error){if(retryOwner===owner&&owner===S.currentUser?.id){document.getElementById('session-search-status').textContent='Search unavailable for '+wingDisplayName(wing)+'. Verify access and retry.';retry.disabled=false;}}return;}
         const open = event.target.closest('[data-search-open]');
         if (open && !open.disabled) openSessionViewer(current?.sessions?.[Number(open.dataset.searchOpen)]);
         const button = event.target.closest('[data-search-read]');

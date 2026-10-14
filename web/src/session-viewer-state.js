@@ -53,13 +53,13 @@ export function createSessionViewer({ inventory, request, user, wings, update, u
         const ticket = ++generation;
         let pendingPrompt = null, promptStorageError = false;
         try { pendingPrompt = prompts?.get(owner, row) || null; } catch (error) { promptStorageError = true; }
-        active = { generation: ticket, owner, attachmentSequence: 0, releaseWarning: !released, row: { ...row }, route: null, events: [], cursor: 0, hasMore: false, terminal: '', mode: 'observe', status: released ? 'Opening session…' : 'Prior hand-back unconfirmed; its idle lease will expire. Opening session…', pendingPrompt, promptStorageError, attachment: null };
+        active = { generation: ticket, owner, attachmentSequence: 0, releaseWarning: !released, row: { ...row }, route: null, events: [], cursor: 0, hasMore: false, terminal: '', terminalFormat: 'ansi', terminalStatus: 'Loading terminal…', inputReleased: false, mode: 'observe', status: released ? 'Opening session…' : 'Prior hand-back unconfirmed; its idle lease will expire. Opening session…', pendingPrompt, promptStorageError, attachment: null };
         publish();
         try {
             const found = (await inventory(row.session_id)).sessions.filter(candidate => qualifiedSessionEquals(candidate, row));
             if (!valid(ticket)) return;
             if (found.length !== 1) throw Error('Exact session identity unavailable. Refresh inventory.');
-            active.row = found[0];
+            active.row = found[0];if(!active.row.live)active.terminalStatus='Session stopped; no live terminal output';
             active.route = searchRoute(found[0], wings(), now());
             if (!active.route) throw Error('No healthy route. Refresh inventory.');
             active.status = pendingPrompt ? `Unconfirmed message · ${pendingPrompt.request_id}. Recheck before sending.` : promptStorageError ? 'Saved message state unavailable. Message submission is disabled.' : active.row.live ? 'Viewing · agent continues running' : 'Viewing recorded session';
@@ -91,17 +91,21 @@ export function createSessionViewer({ inventory, request, user, wings, update, u
                 if (state.attachment) {
                     const output = await attachmentAction('fleet_read', state);
                     if (!valid(ticket)) return;
-                    state.terminal = output.screen || '';
+                    if (typeof output.screen !== 'string') throw Error('Terminal output unavailable');
+                    state.terminal = output.screen; state.terminalFormat = 'screen'; state.terminalStatus = output.screen ? 'Current terminal snapshot' : 'Terminal has no output yet';
                     if (output.ended) { state.mode = 'lost'; state.status = 'Terminal attachment ended. Refresh and explicitly attach again.'; }
                 } else {
                     const output = await action('terminal_read', {});
                     if (!valid(ticket)) return;
-                    state.terminal = output.result?.ansi || '';
+                    const snapshot=output.result?.ansi;
+                    if (typeof snapshot !== 'string') throw Error('Terminal snapshot unavailable');
+                    if (snapshot) { state.terminal=snapshot; state.terminalFormat='ansi'; state.terminalStatus='Current read-only terminal snapshot'; }
+                    else state.terminalStatus=state.terminal ? 'No current output; last snapshot retained' : 'Terminal has no output yet';
                 }
             }
-            if (state.mode !== 'lost' && !state.pendingPrompt && !state.promptStorageError) state.status = state.mode === 'control' ? 'You control terminal input' : state.row.live ? 'Viewing · agent continues running' : 'Viewing recorded session';
+            if (state.mode !== 'lost' && !state.pendingPrompt && !state.promptStorageError) state.status = state.mode === 'control' ? 'You control terminal input' : state.row.live ? state.inputReleased ? 'Terminal input released · agent continues running' : 'Viewing · agent continues running' : 'Viewing recorded session';
         } catch (error) {
-            if (valid(ticket)) { state.status = error.message; if (state.attachment) state.mode = 'lost'; }
+            if (valid(ticket)) { state.status = error.message; state.terminalStatus = `Terminal unavailable: ${error.message}${state.terminal ? '. Last snapshot retained.' : ''}`; if (state.attachment) state.mode = 'lost'; }
         } finally { if (valid(ticket)) { reading = false; publish(); } }
     }
     async function mutate(fn) {
@@ -131,7 +135,7 @@ export function createSessionViewer({ inventory, request, user, wings, update, u
             const receipt = response.result?.receipt;
             if (!receipt || receipt.request_id !== prompt.request_id || receipt.session_id !== active.row.session_id) throw Error('Message receipt mismatch; retain the original request ID.');
             active.receipt = receipt;
-            active.status = receipt.native_receipt_observed === true ? 'Message text observed by provider' : receipt.definitely_not_sent === true ? 'Message was not sent · provider is not ready or input is owned elsewhere' : `Message unconfirmed · ${prompt.request_id}. Recheck this message before sending again.`;
+            active.status = receipt.native_receipt_observed === true ? 'Message appeared in session' : receipt.definitely_not_sent === true ? 'Message was not sent · provider is not ready or input is owned elsewhere' : `Message unconfirmed · ${prompt.request_id}. Recheck this message before sending again.`;
             if (receipt.native_receipt_observed === true || receipt.definitely_not_sent === true) {
                 prompts?.set(owner, active.row, null);
                 active.pendingPrompt = null;
@@ -146,7 +150,7 @@ export function createSessionViewer({ inventory, request, user, wings, update, u
             try {
                 const result = await attachmentAction('fleet_attach', state, { takeover: true });
                 if (!valid(ticket)) { try { await release(state); } catch (error) {} return; }
-                state.route = result.route; state.mode = 'control'; state.status = 'You control terminal input';
+                state.route = result.route; state.inputReleased=false; state.mode = 'control'; state.status = 'You control terminal input';
             } catch (error) {
                 if (valid(ticket)) { state.mode = 'lost'; state.status = 'Takeover outcome unknown. Hand back or close; do not repeat takeover automatically.'; }
             }
@@ -157,7 +161,7 @@ export function createSessionViewer({ inventory, request, user, wings, update, u
             const state = active;
             if (!state.attachment) return;
             await release(state);
-            if (valid(ticket)) { state.attachment = null; state.mode = 'observe'; state.status = 'Terminal input released · agent continues running'; }
+            if (valid(ticket)) { state.attachment = null; state.mode = 'observe'; state.inputReleased=true; state.terminalStatus='Input released; last terminal snapshot retained'; state.status = 'Terminal input released · agent continues running'; }
         });
     }
     async function terminalInput(input) {

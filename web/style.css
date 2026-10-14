@@ -2929,3 +2929,18 @@ button:disabled { cursor: not-allowed; }
     #coordinator-home .coordinator-home-actions { margin-top: 8px; }
     #coordinator-home .coordinator-recent { display: none; }
 }
+
+.inventory-session-actions .egg-delete{opacity:1}
+.inventory-session-actions .btn-sm,.inventory-action-status .keep-running{min-height:44px;padding:10px 12px}
+.inventory-action-status .keep-running{display:block;margin-top:10px}
+.inventory-action-status{overflow-wrap:anywhere;line-height:1.5}
+
+.has-pinned-coordinator #conversation-inventory[data-empty="true"] { display:none; }
+#machine-diagnostics { margin:16px 0; border:1px solid var(--border); border-radius:8px; padding:12px; }
+#machine-diagnostics>summary { cursor:pointer; min-height:44px; display:flex; align-items:center; }
+#coordinator-home .coordinator-history-label, #coordinator-home .coordinator-next-action { font:12px/1.4 system-ui; color:var(--text-dim); }
+@media(max-width:600px){ #coordinator-home .coordinator-heartbeat { display:none; } #coordinator-home .coordinator-heartbeat-detail { margin:4px 0; } #coordinator-home .coordinator-recent { display:block; } #coordinator-home .thread-bubble { font-size:13px; padding:8px 10px; } #coordinator-home .coordinator-home-heading { margin-bottom:2px; } #coordinator-home .coordinator-home-kicker { margin-bottom:4px; } #coordinator-home { padding:12px!important; } }
+
+.search-source-error { padding:12px; border:1px solid var(--yellow); border-radius:8px; margin:12px 0; }
+.search-source-error p { margin:6px 0; font-size:12px; }
+.search-source-error button, [data-review-request] { min-height:44px; margin-top:6px; }

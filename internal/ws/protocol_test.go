@@ -92,15 +92,16 @@ func TestTunnelPurposeIsBoundToInnerType(t *testing.T) {
 
 func TestWingRegisterFields(t *testing.T) {
 	reg := WingRegister{
-		Type:           TypeWingRegister,
-		WingID:         "mac-A1B2",
-		Agents:         []string{"claude", "ollama"},
-		Skills:         []string{"compress", "scorer"},
-		Labels:         []string{"gpu", "home"},
-		Identities:     []string{"bryan", "team-ml"},
-		PurposeBinding: true,
-		DirectMCP:      true,
-		HostedRelay:    HostedRelayDeny,
+		Type:              TypeWingRegister,
+		WingID:            "mac-A1B2",
+		Agents:            []string{"claude", "ollama"},
+		Skills:            []string{"compress", "scorer"},
+		Labels:            []string{"gpu", "home"},
+		Identities:        []string{"bryan", "team-ml"},
+		PurposeBinding:    true,
+		BrowserPhoneScope: true,
+		DirectMCP:         true,
+		HostedRelay:       HostedRelayDeny,
 	}
 
 	data, err := json.Marshal(reg)
@@ -124,6 +125,9 @@ func TestWingRegisterFields(t *testing.T) {
 	}
 	if !decoded.PurposeBinding {
 		t.Error("purpose binding capability was lost in registration")
+	}
+	if !decoded.BrowserPhoneScope {
+		t.Error("browser scope capability was lost in registration")
 	}
 	if !decoded.DirectMCP {
 		t.Error("direct MCP capability was lost in registration")

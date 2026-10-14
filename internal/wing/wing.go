@@ -13,6 +13,7 @@ import (
 	"io"
 	"log"
 	"mime"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -1035,24 +1036,25 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 
 	routing := &ws.PTYRegistry{}
 	client = &ws.Client{
-		OwnerForRelay: func(userID string) string { return localOwner.OwnerForRelay(roostURL, userID) },
-		PTYRoutes:     routing,
-		RoostURL:      wsURL,
-		WingID:        cfg.WingID,
-		Hostname:      cfg.Hostname,
-		Platform:      runtime.GOOS,
-		Version:       version,
-		PublicKey:     base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes()),
-		Agents:        agents,
-		Skills:        skills,
-		Labels:        labels,
-		Projects:      projects,
-		OrgSlug:       orgFlag,
-		RootDir:       rootDir,
-		Locked:        wingCfg.Locked,
-		AllowedCount:  len(wingCfg.AllowKeys),
-		DirectMCP:     directMCPEnabled(peerMgr != nil, wingCfg),
-		HostedRelay:   wingCfg.EffectiveHostedRelay(),
+		OwnerForRelay:     func(userID string) string { return localOwner.OwnerForRelay(roostURL, userID) },
+		PTYRoutes:         routing,
+		RoostURL:          wsURL,
+		WingID:            cfg.WingID,
+		Hostname:          cfg.Hostname,
+		Platform:          runtime.GOOS,
+		Version:           version,
+		PublicKey:         base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes()),
+		Agents:            agents,
+		Skills:            skills,
+		Labels:            labels,
+		Projects:          projects,
+		OrgSlug:           orgFlag,
+		RootDir:           rootDir,
+		Locked:            wingCfg.Locked,
+		AllowedCount:      len(wingCfg.AllowKeys),
+		DirectMCP:         directMCPEnabled(peerMgr != nil, wingCfg),
+		HostedRelay:       wingCfg.EffectiveHostedRelay(),
+		BrowserPhoneScope: true,
 	}
 	if tok != nil {
 		client.Token = tok.Token
@@ -1146,11 +1148,12 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	defer browserAttachments.Close()
 	var phoneServer *phonepair.Server
 	if !sharedHost && localOwner != nil && orgFlag == "" {
-		phoneServer, err = phonepair.Listen(ctx, cfg.Dir, cfg.WingID, strings.TrimSuffix(cfg.Hostname, ".local"), func() string {
-			if tok != nil && strings.HasPrefix(roostURL, "https://") {
-				return roostURL
-			}
-			return ""
+		pairName := wingCfg.Label
+		if pairName == "" {
+			pairName = strings.TrimSuffix(cfg.Hostname, ".local")
+		}
+		phoneServer, err = phonepair.Listen(ctx, cfg.Dir, cfg.WingID, pairName, func() string {
+			return phoneRelayURL(roostURL, tok != nil)
 		}, privKey, &phoneSessions{service: sessions, owner: localOwner.ID, attachments: map[string]*phoneAttachment{}, seen: map[string]map[string]int64{}})
 		if err != nil {
 			return fmt.Errorf("phone pairing: %w", err)
@@ -1207,6 +1210,8 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 			if phoneServer != nil && len(req.Payload) <= phonepair.MaxPayload+4096 {
 				var request phonepair.Request
 				if json.Unmarshal([]byte(req.Payload), &request) == nil {
+					// The registered relay supplies route policy outside the opaque box.
+					request.InventoryOnly = req.BrowserPhone
 					response = phoneServer.Manager.Box(ctx, request)
 				}
 			}
@@ -2941,4 +2946,24 @@ func appendHostedRelayPolicyAudit(cfg *config.Config, operation string) (result 
 		"policy":    config.HostedRelayDeny,
 	}
 	return json.NewEncoder(file).Encode(record)
+}
+
+// Local loopback relays use the browser's secure localhost context. An
+// unregistered or LAN-only wing must not advertise browser relay transport.
+func phoneRelayURL(raw string, registered bool) string {
+	if !registered {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil || u.Fragment != "" {
+		return ""
+	}
+	if u.Scheme == "https" {
+		return raw
+	}
+	ip := net.ParseIP(u.Hostname())
+	if u.Scheme == "http" && (u.Hostname() == "localhost" || (ip != nil && ip.IsLoopback())) {
+		return raw
+	}
+	return ""
 }

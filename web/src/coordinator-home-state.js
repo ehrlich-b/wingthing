@@ -29,15 +29,16 @@ export function coordinatorHomeSummary(session, wing, evidence = {}, now = Date.
     else if (!newerNativeState && Number.isFinite(reportAt) && reportAt <= now && now - reportAt < CONVERSATION_FRESH_MS && ['awake', 'asleep'].includes(report.presence)) {
         presence = report.presence; detail = 'Reported by the coordinator';
     } else if (report.presence) detail = 'Heartbeat report is stale; session is reachable';
+    const stopped=lifecycle.process_alive===false;
     const messages = evidence.messages || [];
     const firstRequest = messages.find(message => message.type === 'user' && message.content);
     const latest = messages.filter(message => message.type === 'assistant' && message.content).at(-1);
     return { title: session.name || 'wing', goal: report.goal || (firstRequest && firstRequest.content.slice(0, 2048)) || 'No goal reported yet',
         update: report.update || (latest && latest.content.slice(0, 4096)) || 'No update reported yet',
-        nextAction: report.next_action || lifecycle.reason || 'Open the conversation to check in', status, presence, detail, fresh,
+        nextAction: stopped ? 'Inspect the stopped session before starting another.' : report.next_action || lifecycle.reason || 'Open the conversation to check in', status, presence, detail: stopped && fresh ? 'Coordinator process has exited. No automatic restart is confirmed.' : detail, fresh, historicalUpdate:stopped||!fresh,
         observedAt, reportedAt: Number.isFinite(reportAt) ? reportAt : null,
         lastWake: Number.isFinite(lastWake) && lastWake <= now ? lastWake : null,
-        nextWake: Number.isFinite(nextWake) ? nextWake : null,
+        nextWake: !stopped && Number.isFinite(nextWake) ? nextWake : null,
         artifacts: Array.isArray(report.artifacts) ? report.artifacts.slice(0, 8) : [],
         links: Array.isArray(report.links) ? report.links.slice(0, 8) : [] };
 }

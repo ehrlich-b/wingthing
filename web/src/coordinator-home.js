@@ -126,6 +126,7 @@ export function renderCoordinatorHome(read = true) {
     const sessions = candidates(), session = choose();
     mount.parentElement.classList.toggle('has-pinned-coordinator', Boolean(session));
     if (session && mount.parentElement.firstElementChild !== mount) mount.parentElement.prepend(mount);
+    const search=document.querySelector('.session-search');if(session&&search&&mount.nextElementSibling!==search)mount.insertAdjacentElement('afterend',search);
     const otherCoordinators = document.getElementById('conversation-inventory');
     if (session && otherCoordinators && otherCoordinators.parentElement === mount.parentElement) mount.parentElement.append(otherCoordinators);
     nav.hidden = !sessions.length;
@@ -148,13 +149,15 @@ export function renderCoordinatorHome(read = true) {
             '<div class="coordinator-home-heading"><span class="coordinator-avatar" aria-hidden="true">w</span><div><h2>' + escapeMarkup(summary.title) + '</h2><p>' + escapeMarkup(machineName(session)) + ' · pinned thread</p></div></div>' +
             '<h1 class="coordinator-goal">' + escapeMarkup(summary.goal) + '</h1>' +
             '<span class="coordinator-task-state" data-status="' + summary.status + '">' + escapeMarkup(summary.status) + '</span>' +
-            coordinatorThreadMarkup(evidence.messages, summary, 2) +
-            '<div class="coordinator-heartbeat"><div><span>Last wake</span><strong>' + (summary.lastWake ? escapeMarkup(activityTime(summary.lastWake)) : 'Not reported') + '</strong></div><div><span>Next wake</span><strong>' + (summary.nextWake ? escapeMarkup(activityTime(summary.nextWake)) : 'Not reported') + '</strong></div></div>' +
+            (summary.historicalUpdate ? '<p class="coordinator-history-label">Last recorded update</p>' : '') + coordinatorThreadMarkup(evidence.messages, summary, 1) +
+            (summary.presence==='stopped' ? '<p class="coordinator-next-action">'+escapeMarkup(summary.nextAction)+'</p>' : '') +
+            '<div class="coordinator-heartbeat"><div><span>Last wake</span><strong>' + (summary.lastWake ? escapeMarkup(activityTime(summary.lastWake)) : 'Not reported') + '</strong></div><div><span>Next wake</span><strong>' + (summary.presence==='stopped' ? 'No restart confirmed' : summary.nextWake ? escapeMarkup(activityTime(summary.nextWake)) : 'Not reported') + '</strong></div></div>' +
             '<p class="coordinator-heartbeat-detail">' + escapeMarkup(summary.detail) + (summary.observedAt ? ' · checked ' + escapeMarkup(activityTime(summary.observedAt)) : '') + '</p>' +
-            '<div class="coordinator-home-actions"><button type="button" class="coordinator-message" data-home-action="message">Message ' + escapeMarkup(summary.title) + ' <span aria-hidden="true">↗</span></button>' +
+            '<div class="coordinator-home-actions"><button type="button" class="coordinator-message" data-home-action="message">' + (summary.presence==='stopped' ? 'Inspect stopped session' : 'Message '+escapeMarkup(summary.title)) + ' <span aria-hidden="true">↗</span></button>' +
             (sessions.length > 1 ? '<label>Coordinator<select aria-label="Choose pinned coordinator" data-home-action="choose">' + sessions.map(item => '<option value="' + escapeMarkup(key(item)) + '"' + (key(item) === key(session) ? ' selected' : '') + '>' + escapeMarkup((item.name || 'wing') + ' · ' + (wingDisplayName(wingFor(item)) || item.wing_id)) + '</option>').join('') + '</select></label>' : '') + '</div>' +
             '<p id="coordinator-home-error" role="status"></p><details class="coordinator-recent"' + (expanded ? ' open' : '') + '><summary>Recent activity</summary>' + timelineMarkup(evidence.messages, 5) + '</details>';
         bindOpen(mount.querySelector('.coordinator-message'), session);
+        mount.querySelectorAll('[data-review-request]').forEach(button=>bindOpen(button,session));
         const select = mount.querySelector('select');
         if (select) select.addEventListener('change', () => { selected = select.value; try { localStorage.setItem(selectionKey(), selected); } catch {} renderCoordinatorHome(); });
         mount.querySelectorAll('[data-artifact-path]').forEach(button => button.addEventListener('click', async () => {

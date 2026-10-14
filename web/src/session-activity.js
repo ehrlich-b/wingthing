@@ -31,7 +31,7 @@ export function sessionActivity(messages) {
         if (message.type === 'activity') {
             if (message.report) items.push({ key, kind: 'update', title: 'Coordinator update', content: message.report.update || '', timestamp: message.timestamp, report: message.report });
             else items.push({ key, kind: message.eventType === 'input_requested' || message.state === 'needs_input' ? 'approval' : 'state',
-                title: labels[message.eventType] || 'State changed', content: [message.state, message.reason].filter(Boolean).join(' · '), timestamp: message.timestamp });
+                title: labels[message.eventType] || 'State changed', content: [({needs_input:'Input requested',working:'Working',idle:'Idle',stopped:'Stopped',completed:'Completed'})[message.state] || message.state, message.reason].filter(Boolean).join(' · '), timestamp: message.timestamp });
         } else if ((message.type === 'user' || message.type === 'assistant') && message.content) {
             items.push({ key, kind: 'message', title: message.type === 'user' ? 'You sent a message' : 'Agent update', content: message.content.slice(0, 4096), timestamp: message.timestamp });
         }

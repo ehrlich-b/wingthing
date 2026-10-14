@@ -809,10 +809,10 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
         fontSize: 14,
         fontFamily: "'JetBrains Mono', monospace",
         theme: {
-            background: '#1a1a2e',
-            foreground: '#eee',
+            background: '#2B2420',
+            foreground: '#EFE6D6',
             cursor: '#ffffff',
-            selectionBackground: '#0f3460',
+            selectionBackground: '#5A4A3C',
         },
         allowProposedApi: true,
     });
@@ -1121,10 +1121,10 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, la
         fontSize: 14,
         fontFamily: "'JetBrains Mono', monospace",
         theme: {
-            background: '#1a1a2e',
-            foreground: '#eee',
+            background: '#2B2420',
+            foreground: '#EFE6D6',
             cursor: '#ffffff',
-            selectionBackground: '#0f3460',
+            selectionBackground: '#5A4A3C',
         },
         allowProposedApi: true,
     });

@@ -98,6 +98,7 @@ func (m *Manager) Box(ctx context.Context, r Request) Response {
 	if json.Unmarshal(b, &inner) != nil || inner.Op == "phone.box" {
 		return Response{Error: "bad_proof"}
 	}
+	inner.InventoryOnly = r.InventoryOnly
 	result := m.Handle(ctx, inner)
 	payload, e := auth.Encrypt(g, encode(result))
 	if e != nil {

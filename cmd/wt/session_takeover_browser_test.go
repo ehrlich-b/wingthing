@@ -198,6 +198,24 @@ func TestBuiltSessionTakeoverDashboard(t *testing.T) {
 		t.Fatal("missing exact launched session")
 	}
 	t.Cleanup(func() { _ = eggclient.KillOrphanEggContext(context.Background(), &config.Config{Dir: states[1]}, id) })
+	// Wait for the fixture's native idle notification before recording its report.
+	deadlineIdle := time.Now().Add(8 * time.Second)
+	for {
+		view, readErr := eggclient.ReadSessionLifecycleView(t.Context(), &config.Config{Dir: states[1]}, id, 0, 100)
+		idle := false
+		for _, event := range view.Events {
+			if event.Type == "notification" && event.State == "idle" {
+				idle = true
+			}
+		}
+		if readErr == nil && idle {
+			break
+		}
+		if time.Now().After(deadlineIdle) {
+			t.Fatal("fixture did not reach native idle before its report")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	// The pinned coordinator is the real launched fixture egg, not a UI-only row.
 	if err := sessionrole.Write(filepath.Join(states[1], "eggs", id), sessionrole.Metadata{Pinned: true, Role: "coordinator"}); err != nil {
 		t.Fatal(err)

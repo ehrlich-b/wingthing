@@ -4,7 +4,6 @@ package sandbox
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,8 +17,7 @@ type cgroupManager struct {
 }
 
 // newCgroupManager creates a cgroup v2 sub-cgroup with the given limits.
-// Returns (nil, nil) if cgroups v2 is unavailable or permissions are insufficient —
-// the caller falls back to prlimit-only enforcement.
+// Missing controllers or delegation fail configured memory and process limits.
 func newCgroupManager(sessionID string, memLimit uint64, pidLimit uint32) (*cgroupManager, error) {
 	if memLimit == 0 && pidLimit == 0 {
 		return nil, nil
@@ -27,14 +25,12 @@ func newCgroupManager(sessionID string, memLimit uint64, pidLimit uint32) (*cgro
 
 	// Check cgroups v2 availability
 	if _, err := os.Stat("/sys/fs/cgroup/cgroup.controllers"); err != nil {
-		log.Printf("linux sandbox: cgroups v2 not available, falling back to prlimit-only")
-		return nil, nil
+		return nil, fmt.Errorf("cgroups v2 unavailable: %w", err)
 	}
 
 	ownPath, err := readOwnCgroup()
 	if err != nil {
-		log.Printf("linux sandbox: cannot read own cgroup: %v, falling back to prlimit-only", err)
-		return nil, nil
+		return nil, fmt.Errorf("read sandbox cgroup: %w", err)
 	}
 
 	parentPath := filepath.Join("/sys/fs/cgroup", ownPath)
@@ -43,8 +39,7 @@ func newCgroupManager(sessionID string, memLimit uint64, pidLimit uint32) (*cgro
 
 	// Create sub-cgroup directory
 	if err := os.MkdirAll(cgroupPath, 0755); err != nil {
-		log.Printf("linux sandbox: cannot create cgroup %s: %v, falling back to prlimit-only", cgroupPath, err)
-		return nil, nil
+		return nil, fmt.Errorf("create sandbox cgroup: %w", err)
 	}
 
 	// Enable controllers in parent's subtree_control
@@ -58,8 +53,7 @@ func newCgroupManager(sessionID string, memLimit uint64, pidLimit uint32) (*cgro
 	if err := enableControllers(parentPath, controllers); err != nil {
 		// Clean up the directory we just created
 		os.Remove(cgroupPath)
-		log.Printf("linux sandbox: cannot enable controllers: %v, falling back to prlimit-only", err)
-		return nil, nil
+		return nil, fmt.Errorf("enable sandbox cgroup controllers: %w", err)
 	}
 
 	// Set limits
@@ -67,20 +61,17 @@ func newCgroupManager(sessionID string, memLimit uint64, pidLimit uint32) (*cgro
 		memPath := filepath.Join(cgroupPath, "memory.max")
 		if err := os.WriteFile(memPath, []byte(fmt.Sprintf("%d", memLimit)), 0644); err != nil {
 			os.Remove(cgroupPath)
-			log.Printf("linux sandbox: cannot set memory.max: %v, falling back to prlimit-only", err)
-			return nil, nil
+			return nil, fmt.Errorf("set sandbox memory limit: %w", err)
 		}
 	}
 	if pidLimit > 0 {
 		pidPath := filepath.Join(cgroupPath, "pids.max")
 		if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d", pidLimit)), 0644); err != nil {
 			os.Remove(cgroupPath)
-			log.Printf("linux sandbox: cannot set pids.max: %v, falling back to prlimit-only", err)
-			return nil, nil
+			return nil, fmt.Errorf("set sandbox process limit: %w", err)
 		}
 	}
 
-	log.Printf("linux sandbox: cgroup created at %s (memory=%d pids=%d)", cgroupPath, memLimit, pidLimit)
 	return &cgroupManager{path: cgroupPath}, nil
 }
 

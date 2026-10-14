@@ -145,6 +145,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("GET /ws/pty", s.handlePTYWS)
 	s.mux.HandleFunc("GET /ws/relay", s.handlePTYWS)
 	s.mux.HandleFunc("GET /ws/phone", s.handlePhoneWS)
+	s.mux.HandleFunc("GET /ws/browser-phone", s.handleBrowserPhoneWS)
 
 	// App dashboard API (cookie auth)
 	s.mux.HandleFunc("GET /api/app/me", s.handleAppMe)
@@ -259,6 +260,12 @@ func (s *Server) registerStaticRoutes() {
 	sub, _ := fs.Sub(web.FS, "dist")
 	fileServer := http.FileServer(http.FS(sub))
 	s.mux.Handle("GET /app/", http.StripPrefix("/app/", fileServer))
+	// Public font files only. A cache lifetime lets the app's fonts render
+	// offline without the worker caching them.
+	s.mux.Handle("GET /app/fonts/", http.StripPrefix("/app/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=604800")
+		fileServer.ServeHTTP(w, r)
+	})))
 	s.mux.HandleFunc("GET /app", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/app/", http.StatusMovedPermanently)
 	})

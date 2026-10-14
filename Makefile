@@ -11,6 +11,26 @@ test-permission-spike:
 
 test-permission-spike-race:
 	$(GO) test -p 2 -race -count=1 ./internal/permissionbridge ./internal/egg -run 'PermissionBridge|PermissionSpike' -timeout=60s -v
+.PHONY: browser-pake check-browser-pake test-pairing
+
+# Build the browser PAKE asset from the vendored native BoringSSL sources.
+browser-pake:
+	@test -n "$(strip $(WASI_SDK_PATH))" || { echo 'Set WASI_SDK_PATH to the extracted wasi-sdk-25.0 directory' >&2; exit 1; }
+	sh web/pake/build.sh
+
+check-browser-pake: check-browser-pake-env
+	@mkdir -p .scratch/browser-pake/home
+	HOME="$(CURDIR)/.scratch/browser-pake/home" $(GO) build -p 2 -o .scratch/browser-pake/go-peer ./experiments/browser-pake/go-peer
+	HOME="$(CURDIR)/.scratch/browser-pake/home" $(NODE) experiments/browser-pake/run.mjs
+
+.PHONY: check-browser-pake-env
+check-browser-pake-env:
+	@test -n "$(strip $(CHROMIUM_PATH))" || { echo 'Set CHROMIUM_PATH to a local Chromium executable; browser checks are required' >&2; exit 1; }
+	@$(MAKE) --no-print-directory browser-pake
+
+test-pairing:
+	$(GO) test -p 2 -count=1 ./internal/pake ./internal/phonepair
+
 .PHONY: check gate test-parent-lifecycle-offline test-parent-lifecycle-protocol test-parent-lifecycle-protocol-race test-parent-lifecycle-built test-run-inspect test-run-inspect-race test-run-inspect-roundtrip test-run-recovery test-run-recovery-race test-run-load test-run-load-full test-run-canary e2e-linux e2e-web e2e-mac release deploy ops proto web serve clean
 
 GO ?= nice -n 15 go
@@ -553,3 +573,11 @@ test-permissions: | web/dist
 
 test-permissions-race: | web/dist
 	$(GO) test -race -p 2 ./internal/permissions ./internal/egg ./internal/control ./internal/dashboard ./internal/localmcp ./internal/tunnel -run Permission -count=1 -timeout=3m
+# Accountless browser join: native scope gates and the branch-built loopback UI.
+.PHONY: test-browser-join-go test-browser-join
+test-browser-join-go: | web/dist
+	$(GO) test -p 2 -count=1 ./internal/pake ./internal/phonepair ./internal/relay ./internal/wing
+
+test-browser-join: web
+	$(stable-build)
+	$(NODE) test/web/browser-join.mjs

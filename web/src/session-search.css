@@ -33,3 +33,22 @@
     .viewer-tabs { gap: 6px; }
     #session-viewer button { padding: 10px 12px; }
 }
+
+#session-viewer[open] { display:flex; flex-direction:column; height:min(800px, calc(100dvh - 48px)); overflow:hidden; gap:8px; }
+#session-viewer .search-identity, #session-viewer [data-status] { margin:0; font-size:12px; }
+#session-viewer .viewer-header h2 { margin:4px 0 0; }
+#session-viewer .viewer-scroll { flex:1 1 auto; min-height:80px; overflow:auto; overscroll-behavior:contain; }
+#session-viewer [data-transcript] { overflow-wrap:anywhere; }
+#session-viewer .viewer-control { margin:0; flex-shrink:0; }
+#session-viewer [data-composer] { flex-shrink:0; }
+#session-viewer label { margin-top:0; }
+#session-viewer textarea { height:76px; margin:4px 0; padding:8px; }
+#session-viewer .viewer-attention { margin:0; padding:8px; font-size:12px; flex-shrink:0; }
+#session-viewer [data-terminal] { margin:4px 0; }
+#session-viewer button { min-height:44px; }
+@media(max-width:600px) { #session-viewer[open] { height:100dvh; max-height:100dvh; padding:12px; gap:6px; } #session-viewer .viewer-tabs { gap:4px; } #session-viewer textarea { height:62px; } }
+#session-viewer .viewer-scroll [data-transcript] { max-height:none; overflow:visible; }
+
+#session-viewer .viewer-artifact-route { display:block; font-size:12px; margin-top:6px; }
+#session-viewer .viewer-artifact-route span { display:block; margin-bottom:6px; }
+#session-viewer [data-terminal-scroll] p { margin:4px 0; font-size:12px; }

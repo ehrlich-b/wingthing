@@ -458,3 +458,26 @@ func (i *Index) MatchesMany(ctx context.Context, sessions, words []string) (map[
 	}
 	return out, nil
 }
+
+// Excerpt reads at most 240 characters from an already admitted session's
+// redacted cache. It never queries another session or reads a transcript file.
+func (i *Index) Excerpt(ctx context.Context, session string, words []string) (string, error) {
+	if session == "" || len(words) > 8 {
+		return "", errors.New("invalid excerpt query")
+	}
+	for _, word := range words {
+		if word == "" {
+			continue
+		}
+		var text string
+		err := i.db.QueryRowContext(ctx, `SELECT substr(text,max(1,instr(text,?)-80),240) FROM text_index JOIN sources s ON s.id=text_index.rowid WHERE s.session=? AND instr(text,?)>0 LIMIT 1`, word, session, word).Scan(&text)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		return strings.Join(strings.Fields(text), " "), nil
+	}
+	return "", nil
+}

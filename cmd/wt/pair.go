@@ -72,10 +72,10 @@ func phoneAdmin(ctx context.Context, op, id, name string, result any) error {
 }
 func pairCmd() *cobra.Command {
 	var showLink bool
-	cmd := &cobra.Command{Use: "pair", Short: "Pair a phone with this machine's main wing", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	cmd := &cobra.Command{Use: "pair", Short: "Pair a device with this machine's main wing", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		return runPairWithLink(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), showLink)
 	}}
-	cmd.Flags().BoolVar(&showLink, "show-link", false, "show the one-time pairing link for the app’s hidden paste fallback")
+	cmd.Flags().BoolVar(&showLink, "show-link", false, "show the one-time invitation for browser or phone paste")
 	return cmd
 }
 func runPair(ctx context.Context, in io.Reader, out io.Writer) error {
@@ -140,7 +140,7 @@ func runPairWithLink(ctx context.Context, in io.Reader, out io.Writer, showLink 
 							return e
 						}
 						allowed = true
-						fmt.Fprintf(out, "Allowed on %s's terminal. Waiting for the phone to confirm…\n", q.Name)
+						fmt.Fprintf(out, "Allowed on %s's terminal. Waiting for the device to finish…\n", q.Name)
 					}
 				case <-ticker.C:
 					remaining := time.Until(q.ExpiresAt)
@@ -168,7 +168,11 @@ func runPairWithLink(ctx context.Context, in io.Reader, out io.Writer, showLink 
 					case "confirming":
 						if showed != status.Emoji {
 							showed = status.Emoji
-							fmt.Fprintf(out, "\n%s\n%s wants to pair. Enter to allow.\nOnly allow if all 4 emoji match the phone. Ctrl-C cancels.\n", status.Emoji, status.Name)
+							scope := "Control sessions on this machine"
+							if status.Scope == phonepair.ScopeInventory {
+								scope = "Inventory only: list sessions and machines on this machine"
+							}
+							fmt.Fprintf(out, "\n%s\n%s\nFingerprint: %s\nAccess: %s\n%s wants to pair. Enter to allow.\nOnly allow if the full fingerprint and all 4 emoji match the device. Ctrl-C cancels.\n", status.Emoji, phonepair.EmojiLabels(status.Emoji), groupedFingerprint(status.Fingerprint), scope, status.Name)
 						}
 					case "cancelled", "used":
 						if showed != "cancelled" {
@@ -201,7 +205,7 @@ func showInvitation(out io.Writer, q phonepair.Invitation) error {
 	if runtime.GOOS == "darwin" {
 		place = "this Mac"
 	}
-	fmt.Fprintf(out, "\nPair a phone with wing %s (%s). The phone will be able to see and control the sessions on this machine.\n\n", q.Name, place)
+	fmt.Fprintf(out, "\nPair a device with wing %s (%s). Access will be shown here before you approve.\n\n", q.Name, place)
 	qr, e := qrcode.New(q.Link(), qrcode.Low)
 	if e != nil {
 		return e
@@ -239,19 +243,19 @@ func showInvitation(out io.Writer, q phonepair.Invitation) error {
 	return nil
 }
 func devicesCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "devices", Short: "List phones paired with this wing", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	cmd := &cobra.Command{Use: "devices", Short: "List devices paired with this wing", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		var devices []phonepair.Device
 		if e := phoneAdmin(cmd.Context(), "devices", "", "", &devices); e != nil {
 			return e
 		}
 		out := cmd.OutOrStdout()
-		fmt.Fprintln(out, "NAME\tPAIRED AT\tLAST SEEN\tDEVICE ID")
+		fmt.Fprintln(out, "NAME\tACCESS\tPAIRED AT\tLAST SEEN\tDEVICE ID")
 		for _, d := range devices {
-			fmt.Fprintf(out, "%s\t%s\t%s\t%s\n", d.Name, d.PairedAt.Local().Format(time.RFC3339), d.LastSeen.Local().Format(time.RFC3339), d.ID)
+			fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%s\n", d.Name, deviceScope(d.Scope), d.PairedAt.Local().Format(time.RFC3339), d.LastSeen.Local().Format(time.RFC3339), d.ID)
 		}
 		return nil
 	}}
-	cmd.AddCommand(&cobra.Command{Use: "revoke <name-or-device-id>", Short: "Immediately revoke this phone, including live access", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd.AddCommand(&cobra.Command{Use: "revoke <name-or-device-id>", Short: "Immediately revoke this device, including live access", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if e := phoneAdmin(cmd.Context(), "revoke", "", args[0], nil); e != nil {
 			return e
 		}
@@ -263,4 +267,22 @@ func devicesCmd() *cobra.Command {
 
 func pakeUnavailable() error {
 	return errors.New("phone pairing requires a native build with CGO_ENABLED=1 and a C++17 compiler; see docs/pairing/PROTOCOL.md")
+}
+
+func groupedFingerprint(value string) string {
+	var groups []string
+	for len(value) > 4 {
+		groups = append(groups, value[:4])
+		value = value[4:]
+	}
+	if value != "" {
+		groups = append(groups, value)
+	}
+	return strings.Join(groups, " ")
+}
+func deviceScope(scope string) string {
+	if scope == "" {
+		return phonepair.ScopeControl
+	}
+	return scope
 }

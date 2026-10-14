@@ -16,6 +16,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/fleet"
 	"github.com/ehrlich-b/wingthing/internal/sessionrole"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 )
 
 type inventoryArgs struct {
@@ -48,6 +49,9 @@ func (s *Server) fleetRemotesAllowed() bool {
 	return s.Sessions != nil && !s.Sessions.SharedHost && s.Sessions.Policy().Wing.Org == "" && !s.enforcePathBounds && s.BoundConversation == "" && !s.restrictWings && !s.scopedParent && s.remoteToolCall != nil
 }
 func (s *Server) ToolSessionInventory(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {
+	return s.toolSessionInventory(ctx, arguments, false)
+}
+func (s *Server) toolSessionInventory(ctx context.Context, arguments json.RawMessage, excerpts bool) (map[string]any, error) {
 	var args inventoryArgs
 	if err := decodeFleetArguments(arguments, &args); err != nil {
 		return nil, err
@@ -64,7 +68,18 @@ func (s *Server) ToolSessionInventory(ctx context.Context, arguments json.RawMes
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	rows, complete, err := eggclient.SessionCatalog(ctx, s.Cfg, id, label, args.Query, s.ownsSession)
+	catalog := eggclient.SessionCatalog
+	owns := s.ownsSession
+	if excerpts && s.toolAllowed("session_read") {
+		catalog = eggclient.SessionSearchCatalog
+		owns = func(session eggclient.LocalSession) bool {
+			if !s.ownsSession(session) {
+				return false
+			}
+			return !s.enforcePathBounds || len(s.allowedPaths) > 0 && wingpolicy.IsUnderPaths(wingpolicy.CanonicalSessionPath(session.CWD), s.allowedPaths)
+		}
+	}
+	rows, complete, err := catalog(ctx, s.Cfg, id, label, args.Query, owns)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +118,11 @@ func (s *Server) ToolSessionInventory(ctx context.Context, arguments json.RawMes
 						continue
 					}
 					raw, _ := json.Marshal(inventoryArgs{Query: args.Query})
-					value, e := s.remoteToolCall(ctx, name, "session_inventory", raw)
+					operation := "session_inventory"
+					if excerpts && s.toolAllowed("session_read") {
+						operation = "session_search"
+					}
+					value, e := s.remoteToolCall(ctx, name, operation, raw)
 					if e == nil {
 						data, _ := json.Marshal(value)
 						e = json.Unmarshal(data, &results[i].inv)
@@ -141,6 +160,9 @@ func (s *Server) ToolSessionInventory(ctx context.Context, arguments json.RawMes
 			inv.Complete = inv.Complete && r.inv.Complete
 			inv.Sources = append(inv.Sources, r.inv.Sources...)
 			for _, row := range r.inv.Sessions {
+				if !excerpts || !s.toolAllowed("session_read") {
+					row.MatchExcerpt = ""
+				}
 				row.Routes = []fleet.Route{{WingID: id, MachineLabel: label, Kind: "via", Remote: name, Healthy: true, ObservedAt: at}}
 				inv.Sessions = append(inv.Sessions, row)
 			}

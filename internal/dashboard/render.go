@@ -974,7 +974,7 @@ func promptLines(s *state) []string {
 		if err := s.machines[s.target.machine].err; accessDenied(err) {
 			return []string{"Stop session", "", accessLine(s.target.machine, err)}
 		}
-		return []string{"Stop session", "", s.target.name() + " on " + machineLabel(s.target.machine), agentLabel(s.target.Agent) + " · " + s.target.project(), "", "The agent will stop. Unsaved work may be lost.", "Keep running is selected."}
+		return []string{"Stop session", "", s.target.name() + " on " + machineLabel(s.target.machine), agentLabel(s.target.Agent) + " · " + s.target.project(), "ID: " + s.target.ID, "", "The agent will stop. Unsaved work may be lost.", "Keep running is selected."}
 	case confirmTakeover:
 		return []string{"Take control", "Current input owner: " + ownerLabel(s.target.WriterOwner), "", s.target.name() + " on " + machineLabel(s.target.machine), "", "Typing will go to this terminal. The agent will lose input control.", "Keep agent control is selected."}
 	case rename:

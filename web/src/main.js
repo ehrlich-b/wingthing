@@ -25,6 +25,7 @@ import { initCoordinatorHome } from './coordinator-home.js';
 import { conversationViewport } from './mobile-viewport.js';
 import { createForegroundRefresh } from './phone-refresh.js';
 import { initReachShare } from './reach-share.js';
+import { initPaper, isPaperRoute } from './paper.js';
 
 function denyBrowserRelayView() {
     history.replaceState({ view: 'home' }, '', location.pathname);
@@ -54,6 +55,7 @@ async function init() {
     } catch (e) { loginRedirect(); return; }
 
     initReachShare();
+    initPaper();
 
     var refreshPhone = createForegroundRefresh(async function() {
         await loadHome();
@@ -91,7 +93,7 @@ async function init() {
         });
     }
 
-    if (!location.hash.startsWith('#s/') && !location.hash.startsWith('#w/') && !location.hash.startsWith('#account') && location.hash !== '#canvas' && !location.hash.startsWith('#conversation/') && !location.hash.startsWith('#chat/')) {
+    if (!location.hash.startsWith('#s/') && !location.hash.startsWith('#w/') && !location.hash.startsWith('#account') && location.hash !== '#canvas' && !location.hash.startsWith('#conversation/') && !location.hash.startsWith('#chat/') && !isPaperRoute()) {
         history.replaceState({ view: 'home' }, '', location.pathname);
     }
 

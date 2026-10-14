@@ -21,16 +21,17 @@ import (
 
 // ConnectedWing represents a wing connected via WebSocket.
 type ConnectedWing struct {
-	ID             string
-	UserID         string
-	WingID         string
-	PublicKey      string
-	OrgID          string // org ID this wing serves
-	Locked         bool
-	AllowedCount   int
-	PurposeBinding bool
-	DirectMCP      bool
-	HostedRelay    string
+	ID                string
+	UserID            string
+	WingID            string
+	PublicKey         string
+	OrgID             string // org ID this wing serves
+	Locked            bool
+	AllowedCount      int
+	PurposeBinding    bool
+	BrowserPhoneScope bool
+	DirectMCP         bool
+	HostedRelay       string
 	// Revision is local to one connection generation. It starts at one and
 	// increases whenever policy/capability state changes, allowing split-node
 	// snapshots and real-time events to be ordered without comparing host clocks.
@@ -475,19 +476,20 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wing := &ConnectedWing{
-		ID:             uuid.New().String(),
-		UserID:         userID,
-		WingID:         reg.WingID,
-		PublicKey:      wingPublicKey,
-		OrgID:          reg.OrgSlug,
-		Locked:         reg.Locked,
-		AllowedCount:   reg.AllowedCount,
-		PurposeBinding: reg.PurposeBinding,
-		DirectMCP:      reg.DirectMCP,
-		HostedRelay:    reg.HostedRelay,
-		Conn:           conn,
-		ConnectedAt:    time.Now(),
-		LastSeen:       time.Now(),
+		ID:                uuid.New().String(),
+		UserID:            userID,
+		WingID:            reg.WingID,
+		PublicKey:         wingPublicKey,
+		OrgID:             reg.OrgSlug,
+		Locked:            reg.Locked,
+		AllowedCount:      reg.AllowedCount,
+		PurposeBinding:    reg.PurposeBinding,
+		BrowserPhoneScope: reg.BrowserPhoneScope,
+		DirectMCP:         reg.DirectMCP,
+		HostedRelay:       reg.HostedRelay,
+		Conn:              conn,
+		ConnectedAt:       time.Now(),
+		LastSeen:          time.Now(),
 	}
 
 	// Validate org membership if org specified (accepts slug or ID)

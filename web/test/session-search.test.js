@@ -60,3 +60,13 @@ test('empty machine inventory retains failures and separates verified zero from 
     assert.equal(inventoryPresentation({query:'',sessions:[],loading:true}).visible,true);
     assert.equal(inventoryPresentation({query:'',sessions:[],error:'Unavailable'}).status,'Unavailable');
 });
+
+test('unavailable search retains dated cached rows with all routes disabled and clears them on owner retirement',async()=>{
+ let unavailable=false;const updates=[];
+ const c=createSearchController(async()=>unavailable?{sessions:[],sources:[{wing_id:'desktop',healthy:false,error:'Search unavailable'}],complete:false}:{sessions:[session('desktop',[route('desktop','direct')])],sources:[],complete:true},value=>updates.push(value),()=>now);
+ await c.run('DNS');unavailable=true;await c.run('DNS');let v=updates.at(-1);
+ assert.equal(v.cached,true);assert.equal(v.sessions.length,1);assert.equal(v.fetchedAt,now);assert.equal(searchRoute(v.sessions[0],[{wing_id:'desktop',online:true}],now),null);
+ assert.match(inventoryPresentation(v).status,/unavailable/i);assert.match(inventoryPresentation(v).status,/1 cached/);
+ await c.run('different');assert.equal(updates.at(-1).sessions.length,0);
+ c.retire(true);await c.run('DNS');assert.equal(updates.at(-1).sessions.length,0);
+});

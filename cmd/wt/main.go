@@ -251,6 +251,7 @@ func runCmd() *cobra.Command {
 	var afterFlag string
 	var noRun bool
 	var unsandboxed bool
+	var verbose bool
 	var configFlag string
 
 	cmd := &cobra.Command{
@@ -320,7 +321,7 @@ func runCmd() *cobra.Command {
 				return nil
 			}
 
-			return taskrun.RunTask(cmd.Context(), cfg, s, t)
+			return taskrun.RunTaskToWithOptions(cmd.Context(), cfg, s, t, os.Stdout, taskrun.TaskRunOptions{Verbose: verbose})
 		},
 	}
 	cmd.Flags().StringVar(&skillFlag, "skill", "", "Run a named skill")
@@ -329,6 +330,7 @@ func runCmd() *cobra.Command {
 	cmd.Flags().StringVar(&configFlag, "config", "", "Path to egg config")
 	cmd.Flags().BoolVar(&noRun, "no-run", false, "Submit task without running it")
 	cmd.Flags().BoolVar(&unsandboxed, "unsandboxed", false, "trust the host boundary; run with the full authority of the local OS user")
+	cmd.Flags().BoolVar(&verbose, "verbose", false, "show task sandbox diagnostics")
 	cmd.MarkFlagsMutuallyExclusive("config", "unsandboxed")
 	return cmd
 }

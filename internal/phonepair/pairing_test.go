@@ -62,13 +62,16 @@ func fixture(t *testing.T) *phoneFixture {
 	return &phoneFixture{m: m, q: q, signing: signing, handler: handler}
 }
 func (f *phoneFixture) start(t *testing.T, secret string) {
+	f.startOnTransport(t, secret, false)
+}
+func (f *phoneFixture) startOnTransport(t *testing.T, secret string, inventoryOnly bool) {
 	t.Helper()
 	a, am, e := pake.New(true, secret, Identity(f.q))
 	if e != nil {
 		t.Fatal(e)
 	}
 	as := base64.StdEncoding.EncodeToString(am)
-	response := f.m.Handle(context.Background(), Request{Op: "pair.start", ID: f.q.ID, Message: as})
+	response := f.m.Handle(context.Background(), Request{Op: "pair.start", ID: f.q.ID, Message: as, InventoryOnly: inventoryOnly})
 	if response.Error != "" {
 		t.Fatal(response.Error)
 	}

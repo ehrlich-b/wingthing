@@ -6,12 +6,37 @@ import (
 	"github.com/coder/websocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
 // Phone authorization terminates at the wing. This route only forwards bounded
 // opaque messages to one routing ID, and accepts no account/device credential.
 func (s *Server) handlePhoneWS(w http.ResponseWriter, r *http.Request) {
+	s.forwardPhoneWS(w, r, false)
+}
+
+// Browser pairing is accountless, but restricted to the exact configured app
+// origin. Cookies are neither consulted nor forwarded.
+func (s *Server) handleBrowserPhoneWS(w http.ResponseWriter, r *http.Request) {
+	origin := s.browserOriginScheme() + "://" + s.Config.AppHost
+	if s.Config.AppHost == "" {
+		u, err := url.Parse(s.Config.BaseURL)
+		if err != nil || u.Host == "" {
+			http.Error(w, "app origin unavailable", 403)
+			return
+		}
+		origin = u.Scheme + "://" + u.Host
+	}
+	if r.Header.Get("Origin") != origin {
+		http.Error(w, "app origin required", 403)
+		return
+	}
+	s.forwardPhoneWS(w, r, true)
+}
+
+func (s *Server) forwardPhoneWS(w http.ResponseWriter, r *http.Request, browser bool) {
 	id := r.URL.Query().Get("wing_id")
 	if id == "" || len(id) > 100 || r.Header.Get("Authorization") != "" {
 		http.Error(w, "invalid route", 400)
@@ -32,12 +57,30 @@ func (s *Server) handlePhoneWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "relay unavailable", 403)
 		return
 	}
+	if browser && !wing.BrowserPhoneScope {
+		// Browsers cannot read an unsuccessful WebSocket upgrade's HTTP body.
+		// Accept only to send a refusal; never register or forward this socket.
+		if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{r.Header.Get("Origin")}})
+			if err == nil {
+				defer conn.CloseNow()
+				_ = conn.Close(websocket.StatusPolicyViolation, "wing_update_required")
+			}
+		} else {
+			http.Error(w, "browser pairing refused: update and restart this wing to enforce inventory-only access", http.StatusForbidden)
+		}
+		return
+	}
 	// No cross-site browser clients. Native URLSession sends no Origin.
-	if r.Header.Get("Origin") != "" {
+	if !browser && r.Header.Get("Origin") != "" {
 		http.Error(w, "native phone route", 403)
 		return
 	}
-	conn, e := websocket.Accept(w, r, nil)
+	options := &websocket.AcceptOptions{}
+	if browser {
+		options.OriginPatterns = []string{r.Header.Get("Origin")}
+	}
+	conn, e := websocket.Accept(w, r, options)
 	if e != nil {
 		return
 	}
@@ -71,10 +114,27 @@ func (s *Server) handlePhoneWS(w http.ResponseWriter, r *http.Request) {
 			_ = conn.Close(websocket.StatusPolicyViolation, "invalid phone envelope")
 			return
 		}
+		if browser {
+			var box struct{ Op, SenderPub, Payload string }
+			// Require an opaque carrier, never a plaintext pairing/device command.
+			var fields map[string]json.RawMessage
+			if json.Unmarshal([]byte(req.Payload), &fields) != nil || len(fields) != 3 ||
+				json.Unmarshal(fields["op"], &box.Op) != nil || box.Op != "phone.box" ||
+				json.Unmarshal(fields["sender_pub"], &box.SenderPub) != nil || len(box.SenderPub) != 44 ||
+				json.Unmarshal(fields["payload"], &box.Payload) != nil || box.Payload == "" ||
+				req.RequestID == "" || len(req.RequestID) > 100 || strings.ContainsAny(req.RequestID, "\r\n") {
+				_ = conn.Close(websocket.StatusPolicyViolation, "opaque phone box required")
+				return
+			}
+		}
 		// Drop ALL sender identity hints, including forged roles and passkeys.
-		forwarded := ws.TunnelRequest{Type: ws.TypeTunnelRequest, WingID: id, RequestID: req.RequestID, Purpose: "phone", Payload: req.Payload}
+		forwarded := ws.TunnelRequest{Type: ws.TypeTunnelRequest, WingID: id, RequestID: req.RequestID, Purpose: "phone", Payload: req.Payload, BrowserPhone: browser}
 		current := s.findAnyWingByWingID(id)
-		if current == nil || current.Conn != wing.Conn || !ws.HostedRelayAllowed(current.HostedRelay) || !s.relayAccess(wing.UserID).Allowed {
+		if browser && current != nil && !current.BrowserPhoneScope {
+			_ = conn.Close(websocket.StatusPolicyViolation, "wing_update_required")
+			return
+		}
+		if current == nil || current.Conn != wing.Conn || (browser && !current.BrowserPhoneScope) || !ws.HostedRelayAllowed(current.HostedRelay) || !s.relayAccess(wing.UserID).Allowed {
 			return
 		}
 		if !s.registerTunnelRequest(id, req.RequestID, conn, false) {

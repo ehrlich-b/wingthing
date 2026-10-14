@@ -88,6 +88,7 @@ func RunTaskTo(ctx context.Context, cfg *config.Config, s *store.Store, t *store
 }
 
 type TaskRunOptions struct {
+	Verbose      bool
 	UserHome     string
 	SharedHost   bool
 	AllowedPaths []string
@@ -134,9 +135,13 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		Agents: agents,
 	}
 
+	requestedIsolation := t.Isolation
 	pr, err := builder.Build(ctx, t.ID)
 	if err != nil {
 		return fmt.Errorf("build prompt: %w", err)
+	}
+	if pr.Isolation == "privileged" && requestedIsolation != "privileged" {
+		return errors.New("task refused: unsandboxed execution requires wt run --unsandboxed")
 	}
 	if err := s.SetTaskResolved(t.ID, pr.Agent, pr.Isolation); err != nil {
 		return fmt.Errorf("record resolved task: %w", err)
@@ -207,6 +212,7 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 	}
 	var runOpts agent.RunOpts
 	var sandboxDiagnosticPath string
+	var sandboxNotice string
 	runOpts.WorkDir = workDir
 	runOpts.Model = t.Model
 
@@ -235,6 +241,12 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 			return fmt.Errorf("record unconfined egress audit: %w", auditErr)
 		}
 		log.Printf("SECURITY: task %s is unsandboxed; %s", t.ID, detail)
+		if err := writeUnsandboxedWarning(destination, false); err != nil {
+			return err
+		}
+		defer func() {
+			runErr = errors.Join(runErr, writeUnsandboxedWarning(destination, true))
+		}()
 	}
 
 	if pr.Isolation != "privileged" {
@@ -283,6 +295,9 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 			return fmt.Errorf("resolve sandbox network policy: %w", policyErr)
 		}
 		sbCfg.SessionID = t.ID
+		if !options.Verbose {
+			sbCfg.Diagnostics = io.Discard
+		}
 		domainProxy, proxyErr := sandbox.StartPolicyProxyWithMode(sbCfg.NetworkNeed, sbCfg.Domains, sbCfg.NetworkMode)
 		if proxyErr != nil {
 			detail := proxyErr.Error()
@@ -295,21 +310,34 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 			defer domainProxy.Close()
 			sbCfg.ProxyPort = domainProxy.Port()
 		}
-		detail, auditErr := AppendNetworkEnforcementAudit(s, t.ID, "sandbox_enforcement", eggclient.ExplainEnforcement(sbCfg.NetworkNeed, runtime.GOOS, sbCfg.NetworkMode), sbCfg.NetworkNeed, sbCfg.Domains, sbCfg.LocalPorts)
-		if auditErr != nil {
-			return fmt.Errorf("record sandbox enforcement audit: %w", auditErr)
-		}
-		log.Printf("task %s sandbox: %s", t.ID, detail)
-
 		sb, sbErr := sandbox.New(sbCfg)
 		if sbErr != nil {
-			return fmt.Errorf("create sandbox: %w", sbErr)
+			return fmt.Errorf("task refused: sandbox unavailable; no agent started: %w", sbErr)
+		}
+		if sbCfg.NetworkNeed == sandbox.NetworkHTTPS && sbCfg.NetworkMode == "observe" {
+			sandboxNotice = "WARNING: Network allowlist is not enforced. Requests are only recorded."
+			defer func() { runErr = errors.Join(runErr, writeSandboxNotice(destination, sandboxNotice)) }()
+		} else if sbCfg.NetworkNeed == sandbox.NetworkNone {
+			sandboxNotice = "Sandbox enabled. Network blocked."
+		} else {
+			sandboxNotice = "Sandbox enabled."
 		}
 		defer func() {
 			if err := sb.Destroy(); err != nil {
 				runErr = errors.Join(runErr, fmt.Errorf("destroy sandbox: %w", err))
 			}
 		}()
+		enforcement := eggclient.ExplainEnforcement(sbCfg.NetworkNeed, runtime.GOOS, sbCfg.NetworkMode)
+		if sbCfg.NetworkNeed == sandbox.NetworkNone {
+			enforcement = "kernel-deny"
+		}
+		detail, auditErr := AppendNetworkEnforcementAudit(s, t.ID, "sandbox_enforcement", enforcement, sbCfg.NetworkNeed, sbCfg.Domains, sbCfg.LocalPorts)
+		if auditErr != nil {
+			return fmt.Errorf("record sandbox enforcement audit: %w", auditErr)
+		}
+		if options.Verbose {
+			log.Printf("task %s sandbox: %s", t.ID, detail)
+		}
 		sandboxDiagnosticPath = sb.DiagLog()
 		agentEnv := directAgentEnvWithPolicy(agentName, home, sbCfg.ProxyPort, !options.SharedHost && config.Channel() != "preview")
 		if config.Channel() == "preview" && runtime.GOOS == "darwin" && agentName == "claude" {
@@ -353,6 +381,11 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 	if timeout > 0 {
 		runCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
+	}
+	if sandboxNotice != "" {
+		if err := writeSandboxNotice(destination, sandboxNotice); err != nil {
+			return err
+		}
 	}
 	stream, err := a.Run(runCtx, pr.Prompt, runOpts)
 	if err != nil {
@@ -478,4 +511,22 @@ func mergeAgentFailureOutput(stdout, diagnostics string) string {
 		stdout += "\n"
 	}
 	return stdout + diagnostics
+}
+
+func writeUnsandboxedWarning(destination io.Writer, completed bool) error {
+	message := "WARNING: NO SANDBOX. This task has your full user permissions."
+	if completed {
+		message = "WARNING: Task ran WITHOUT sandbox enforcement."
+	}
+	if _, err := fmt.Fprintln(destination, message); err != nil {
+		return fmt.Errorf("write sandbox warning: %w", err)
+	}
+	return nil
+}
+
+func writeSandboxNotice(destination io.Writer, notice string) error {
+	if _, err := fmt.Fprintln(destination, notice); err != nil {
+		return fmt.Errorf("write sandbox status: %w", err)
+	}
+	return nil
 }

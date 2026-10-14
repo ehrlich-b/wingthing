@@ -69,13 +69,13 @@ func TestParseCgroupV2PathHybrid(t *testing.T) {
 }
 
 func TestNewCgroupManagerNoCgroupV2(t *testing.T) {
-	// If cgroups v2 is not available, newCgroupManager should return (nil, nil)
+	// Configured limits must fail closed when cgroups v2 is unavailable.
 	if _, err := os.Stat("/sys/fs/cgroup/cgroup.controllers"); err == nil {
 		t.Skip("cgroups v2 is available, skipping no-cgroup test")
 	}
 	cg, err := newCgroupManager("test-session", 1024*1024*1024, 256)
-	if err != nil {
-		t.Fatalf("expected nil error, got: %v", err)
+	if err == nil {
+		t.Fatal("configured limits accepted without cgroups v2")
 	}
 	if cg != nil {
 		t.Fatal("expected nil cgroupManager when cgroups v2 unavailable")
@@ -93,10 +93,10 @@ func TestNewCgroupManagerIntegration(t *testing.T) {
 	pidLimit := uint32(128)
 	cg, err := newCgroupManager("test-integration", memLimit, pidLimit)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Skipf("cgroup delegation unavailable: %v", err)
 	}
 	if cg == nil {
-		t.Skip("cgroup creation failed (no delegation?), skipping integration test")
+		t.Fatal("configured limits accepted without a cgroup")
 	}
 	defer cg.Destroy()
 

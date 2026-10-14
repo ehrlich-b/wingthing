@@ -52,7 +52,7 @@ export const cards = [
   {
     "flow": 7,
     "card": 8,
-    "title": "Bryan’s owner entitlement",
+    "title": "Owner entitlement (operator)",
     "key": "owner",
     "group": "upgrade"
   },
@@ -73,7 +73,7 @@ export const cards = [
   {
     "flow": 10,
     "card": 3,
-    "title": "3 · Start from Bryan’s iPhone",
+    "title": "3 · Start from your phone",
     "key": "phone",
     "group": "cloud"
   },

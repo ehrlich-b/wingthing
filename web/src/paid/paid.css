@@ -2,3 +2,12 @@ body.paid-active{background:#101713;color:#e6eee8;overflow:auto;font-family:syst
 
 .paid-route-picker{display:none}@media(max-width:700px){.paid-nav details{display:none}.paid-route-picker{display:block;flex-basis:100%;font-size:10px;color:var(--pm)}.paid-route-picker select{display:block;margin:5px 0 3px;width:100%;min-height:36px;border:1px solid #445c4c;border-radius:6px;background:#17231b;color:#dee9e1;font:11px system-ui;padding:7px;color-scheme:dark}}
 .paid-button:hover{background:#b8f6ce}.paid-button.secondary:hover{background:#2b4233}.paid-button:disabled:hover{background:var(--pa)}.paid-button.secondary:disabled:hover{background:transparent}
+
+.paid-feedback.info{background:#202c3a;border-color:#9fc4ec;color:#dbeafe}
+.paid-feedback.pending{background:#332c1c;border-color:#e0c27b;color:#f8e7b3}
+.paid-feedback.warning{background:#3b2b1b;border-color:#efa85f;color:#ffe0bd}
+.paid-feedback.success{background:#1c3223;border-color:#80bd93;color:#c2f6d1}
+.paid-tone-icon{display:inline-block;min-width:1.2em;margin-right:6px;font-weight:700}
+
+.paid-button.danger{background:#b94040;border-color:#e88484;color:#fff!important}
+[data-cap-preview]{display:block;margin:-8px 0 16px;color:#cbded1;font-size:12px}
