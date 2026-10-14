@@ -9,6 +9,10 @@ say **Answer in terminal**. The browser uses that terminal fallback too.
 The session shows its pending count; `[` and `]` step through parallel requests.
 Refreshing the list preserves the selected request ID, and an open review
 remains bound to its own request even if another request is answered or removed.
+After an answer, selection stays on that request through refreshes; repeated
+`d` cannot decline another request. Use `[` or `]`, or move to another session,
+to select another request. The dashboard queries only blocked Claude sessions
+on supported platforms.
 
 Enable the local TUI explicitly in the personal wing's `clients.yaml`:
 
@@ -48,12 +52,17 @@ permission handling. `disableAllHooks` stays effective; deny rules and the
 sandbox continue to apply. There are no saved rules or blanket approvals.
 
 The wing's private `permissions/` ledger synchronizes competing surfaces,
-checks request liveness, fsyncs the audit record followed by a reservation
-before delivery, and rechecks authority. Dead requests are audited as refused;
-delivery appends a separate delivered, unconfirmed or failed audit line.
-An audit failure blocks delivery and leaves no decision or attempt reservation.
-An identical reserved attempt returns its stored
-outcome; changed decisions and competing attempts conflict. A crash or lost
-reply leaves **unconfirmed**, which is never resent. **Delivered** means the
-hook accepted the answer, not that the command executed or succeeded. Inspect
+checks request liveness, and fsyncs an audit intent before preparing the request
+and attempt bindings. Preparation starts as **failed**; only persisted bindings
+get a reservation audit line. An audit failure blocks delivery. Failure of the
+initial intent leaves no reservation; later preparation failures retain a failed
+outcome. The wing rechecks authority and persists the delivery handoff before
+sending. A storage error before sending records **failed**. Delivery appends a
+separate delivered, unconfirmed or failed audit line and stores both receipts;
+either receipt can resolve a failed write to the other. If both receipt writes
+fail, the delivery audit still resolves a known delivery or non-delivery.
+An identical reserved attempt returns its stored outcome; changed decisions and
+competing attempts conflict. A crash during preparation stays **failed**; a crash
+during delivery or a lost reply leaves **unconfirmed**, which is never resent.
+**Delivered** means the hook accepted the answer, not that the command executed or succeeded. Inspect
 the session for that result.
