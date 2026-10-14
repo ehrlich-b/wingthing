@@ -353,7 +353,12 @@ func keyHints(s *state) []string {
 		return []string{"j/k scroll   PgUp/PgDn page", "Esc back   Enter back   Ctrl-C quit"}
 	}
 	if s.recent {
-		return []string{"Enter open   o result   / search   N next page", "j/k move   h sessions   i details   ? help   q quit"}
+		// N only pages when the wing returned a cursor for this page.
+		keys := "Enter open   o result   / search"
+		if s.history().pagingPage().Next != "" {
+			keys += "   N next page"
+		}
+		return []string{keys, "j/k move   h sessions   i details   ? help   q quit"}
 	}
 	if len(s.rows()) == 0 && s.filter == "" {
 		for name, m := range s.machines {
@@ -1044,7 +1049,7 @@ func overlayLines(s *state, now time.Time) []string {
 		// ASKING already says the agent is waiting; RECENT needs the rows.
 		if r.Status == "blocked" {
 			if p, ok := s.livePermission(r); ok {
-				lines = append(lines, "", "WILL RUN", fmt.Sprint(p.Arguments["command"]), permissionWhere(p), s.permissionKeys(r))
+				lines = append(lines, "", "WILL RUN", fmt.Sprint(p.Arguments["command"]), permissionWhere(p), "", s.permissionKeys(r))
 			} else {
 				lines = append(lines, "", "ASKING", s.askingText(r), s.askingWhere(r), s.permissionPosition(r)+"Answer in terminal")
 			}

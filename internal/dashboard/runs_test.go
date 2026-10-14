@@ -329,3 +329,15 @@ func TestRecentRunsGiveSameValueColumnsToTitlesAt80(t *testing.T) {
 		t.Fatal("run title cut while a same-value column kept its room", body[0].text, body[1].text)
 	}
 }
+
+func TestRecentRunsOfferNextPageOnlyWithACursor(t *testing.T) {
+	s := fixture()
+	s.recent = true
+	h := s.history()
+	r := runRow{WingID: "one", ID: "only", SessionID: "egg", Status: "done", Cleanup: "complete", OutputAvailability: "available", route: runRoute{name: "local", wingID: "one"}}
+	h.pages["one"] = runPage{WingID: "one", Runs: []runRow{r}, route: r.route}
+	h.reconcile()
+	if text := render(s, 120, 24, time.Now()); strings.Contains(text, "N next page") {
+		t.Fatal("next page offered without a cursor")
+	}
+}
