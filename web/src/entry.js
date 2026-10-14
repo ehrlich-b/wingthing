@@ -2,6 +2,8 @@
 const pairRoute = () => location.hash === '#pair' || location.hash.startsWith('#v1z.');
 async function start() {
 if (pairRoute()) {
+    // Leaving Pair (Back, or a link to another app route) loads the account app.
+    window.addEventListener('hashchange', () => { if (!pairRoute()) location.reload(); });
     const { initBrowserPair } = await import('./browser-pair.js');
     await initBrowserPair();
 } else {

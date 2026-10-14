@@ -135,6 +135,37 @@ async function go(page, hash) {
     await page.waitForTimeout(900);
 }
 
+// A real one-time invitation from a second, non-dev roost's own wing (the
+// same setup as browser-join.mjs), compared but never confirmed: the terminal
+// never gets Enter, so nothing is paired.
+const joinState = fs.mkdtempSync(path.join('/tmp', 'look-j-'));
+const joinBase = 'http://127.0.0.1:' + (port + 1);
+const joinEnv = { PATH: process.env.PATH, HOME: path.join(state, 'join-home'), WINGTHING_DIR: joinState, WT_BASE_URL: joinBase };
+fs.mkdirSync(joinEnv.HOME);
+fs.writeFileSync(path.join(joinState, 'wing.yaml'), 'label: Studio\n', { mode: 0o600 });
+let joinRoost;
+async function joinShot(page, suffix) {
+    if (!joinRoost) {
+        joinRoost = spawn('nice', ['-n', '10', process.env.WT_LOOK_BIN || path.join(root, 'wt'), 'roost', 'start', '--foreground', '--addr', '127.0.0.1:' + (port + 1)], { cwd: root, env: joinEnv, stdio: ['ignore', log, log] });
+        for (let i = 0; i < 150; i++) { try { if ((await fetch(joinBase + '/health')).ok) break; } catch {} await sleep(100); }
+    }
+    const child = spawn('nice', ['-n', '10', process.env.WT_LOOK_BIN || path.join(root, 'wt'), 'pair', '--show-link'], { cwd: root, env: joinEnv, stdio: ['pipe', 'pipe', 'pipe'] });
+    let output = '', link;
+    child.stdout.on('data', b => output += b); child.stderr.on('data', () => {});
+    try {
+        for (let i = 0; i < 100 && !link; i++) { link = output.match(/wingthing:\/\/pair#v1z\.[A-Za-z0-9_-]+/)?.[0]; if (!link) await sleep(100); }
+        if (!link) throw Error('wt pair did not issue a link');
+        await page.goto(joinBase + '/app/#pair');
+        await page.getByRole('heading', {name:'Join from this browser'}).waitFor();
+        await page.locator('#bp-link').fill(link);
+        await page.locator('#bp-name').fill('Browser');
+        await page.getByRole('button', {name:'Check invitation'}).click();
+        await page.getByRole('button', {name:'Match · Join'}).waitFor({ timeout: 15000 });
+        await shoot(page, '05-pair-match', suffix);
+        await page.getByRole('button', {name:'Cancel', exact:true}).click();
+    } finally { child.kill('SIGINT'); }
+}
+
 const viewports = [{ width: 1440, height: 900, suffix: '-desktop' }, { width: 390, height: 844, suffix: '-phone' }];
 let browser;
 try {
@@ -175,7 +206,12 @@ try {
             await shoot(page, '04-answer-in-terminal', v.suffix);
         }
         await go(page, '#pair');
+        await page.getByRole('heading', {name:'Join from this browser'}).waitFor();
         await shoot(page, '05-pair', v.suffix);
+        // Leaving Pair by hash (Back or an app link) must load the app again.
+        await go(page, '#machines');
+        await page.getByRole('heading', {name:'Machines', exact:true}).waitFor({ timeout: 10000 });
+        if (!process.env.WT_LOOK_LEGACY && (!only.length || only.includes('05-pair-match'))) await joinShot(page, v.suffix);
         await go(page, '#machines');
         await shoot(page, '07-machines', v.suffix);
         await page.close();
@@ -205,6 +241,8 @@ try {
     if (browser) await browser.close();
     for (const socket of sockets.values()) try { socket.close(); } catch {}
     roost.kill('SIGTERM');
+    if (joinRoost) joinRoost.kill('SIGTERM');
     await sleep(300);
+    fs.rmSync(joinState, { recursive: true, force: true });
     fs.rmSync(state, { recursive: true, force: true });
 }
