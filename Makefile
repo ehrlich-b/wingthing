@@ -1,4 +1,16 @@
 .DEFAULT_GOAL := check
+.PHONY: build-permission-spike test-permission-spike test-permission-spike-race
+
+# Separately built finite hook/broker experiment; no wing control integration.
+build-permission-spike:
+	@mkdir -p .scratch
+	$(GO) build -p 2 -o .scratch/permission-spike ./cmd/permission-spike
+
+test-permission-spike:
+	$(GO) test -p 2 -count=1 ./internal/permissionbridge ./internal/egg -timeout=180s -v
+
+test-permission-spike-race:
+	$(GO) test -p 2 -race -count=1 ./internal/permissionbridge ./internal/egg -run 'PermissionBridge|PermissionSpike' -timeout=60s -v
 .PHONY: check gate test-parent-lifecycle-offline test-parent-lifecycle-protocol test-parent-lifecycle-protocol-race test-parent-lifecycle-built test-run-inspect test-run-inspect-race test-run-inspect-roundtrip test-run-recovery test-run-recovery-race test-run-load test-run-load-full test-run-canary e2e-linux e2e-web e2e-mac release deploy ops proto web serve clean
 
 GO ?= nice -n 15 go
