@@ -233,8 +233,8 @@ func (s *state) paperPane(r row, now time.Time, width, height int) []string {
 			if where := permissionWhere(p); runewidth.StringWidth(where) <= width {
 				appendExact(where)
 			} else {
-				appendExact("on " + p.Machine + ", as " + p.User)
-				appendExact("in " + p.Directory)
+				appendExact("on this machine, as " + p.User)
+				appendExact("in " + permissionDirectory(p))
 			}
 			action = s.permissionKeys(r)
 			break

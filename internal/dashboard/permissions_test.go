@@ -34,9 +34,14 @@ func TestPermissionTUIReviewAndExplicitOnce(t *testing.T) {
 		t.Fatal("a delivered without review")
 	}
 	text := strings.Join(s.permissionReviewLines(), "\n")
-	for _, want := range []string{"echo allowed", "Studio", "developer", "~/code/wingthing", "Digest:", "Arguments:", "Allow once"} {
+	for _, want := range []string{"echo allowed", "this machine", "developer", "~/code/wingthing", "Expires at", "Allow once"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("review missing %s", want)
+		}
+	}
+	for _, hidden := range []string{"Digest", "Request", "Scope", "{"} {
+		if strings.Contains(text, hidden) {
+			t.Fatalf("review shows %s", hidden)
 		}
 	}
 	s.handle("escape")
@@ -206,7 +211,7 @@ func TestPermissionTUIReadOnlyShowsCommandWithoutDecisionKeys(t *testing.T) {
 	s.machines["local"] = m
 	for _, size := range [][2]int{{132, 36}, {80, 24}} {
 		text := render(s, size[0], size[1], time.Now())
-		for _, want := range []string{"WILL RUN", "echo allowed", "Studio", "developer", "Answer in terminal"} {
+		for _, want := range []string{"WILL RUN", "echo allowed", "developer", "Answer in terminal"} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("read-only display missing %q: %s", want, text)
 			}
@@ -561,12 +566,28 @@ func TestPermissionRefreshShowsParallelRequestAfterSiblingPostToolUse(t *testing
 func TestPermissionPlaceSplitsAtCommasInsteadOfInsideTheDirectory(t *testing.T) {
 	s := permissionState(t)
 	r, _ := s.selection()
-	r.Permission.Directory = "/home/developer/projects/wingthing"
+	r.Permission.Directory = "/srv/builds/developer/projects/wingthing"
 	r.Permission.Digest = permissionbridge.Digest(permissionbridge.Input{Tool: r.Permission.Tool, Arguments: r.Permission.Arguments, Directory: r.Permission.Directory})
 	text := strings.Join(renderedLines(t, render(s, 132, 36, time.Now()), 132, 36), "\n")
-	for _, want := range []string{"on Studio, as developer", "in /home/developer/projects/wingthing", "a approve   d decline"} {
+	for _, want := range []string{"on this machine, as developer", "in /srv/builds/developer/projects/wingthing", "a approve   d decline"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in\n%s", want, text)
 		}
+	}
+}
+
+func TestPermissionReviewKeepsExtraArgumentsAndShortensHome(t *testing.T) {
+	p := &permissions.Request{Arguments: map[string]any{"command": "ls", "timeout": 30, "description": "list"}, Directory: "/home/dev/projects/wingthing", User: "dev"}
+	if got := permissionWhere(p); got != "on this machine, as dev, in ~/projects/wingthing" {
+		t.Fatalf("where = %q", got)
+	}
+	s := &state{}
+	s.target.Permission = p
+	text := strings.Join(s.permissionReviewLines(), "\n")
+	if !strings.Contains(text, "description: list\ntimeout: 30") {
+		t.Fatalf("extra arguments hidden:\n%s", text)
+	}
+	if permissionDirectory(&permissions.Request{Directory: "/home/devops/x", User: "dev"}) != "/home/devops/x" {
+		t.Fatal("shortened another user's home")
 	}
 }
