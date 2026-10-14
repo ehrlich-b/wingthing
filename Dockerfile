@@ -11,7 +11,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web /app/web/dist web/dist
-RUN CGO_ENABLED=0 go build -o wt ./cmd/wt
+RUN nice -n 10 go run -p 2 ./cmd/check-downloads downloads
+RUN CGO_ENABLED=0 nice -n 10 go build -p 2 -o wt ./cmd/wt
 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates sqlite

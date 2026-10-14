@@ -133,7 +133,7 @@ endef
 
 # All untagged Go tests include android-contract and every former focused unit
 # selection (preview, conversation, socket, protected-target, remote and wake).
-check: web
+check: test-deploy-guard web
 	# Build once outside the PTY interaction deadlines, including CGO pairing.
 	$(stable-build)
 	$(preview-build)
@@ -338,7 +338,8 @@ else
 	$(error CHANNEL must be stable or preview)
 endif
 
-deploy: check gate
+deploy: check-downloads
+	$(MAKE) --no-print-directory check gate
 	fly deploy
 
 # Local builds/vector generation and explicitly selected Fly operations.
@@ -584,3 +585,10 @@ test-browser-join: web
 .PHONY: generate-installer
 generate-installer:
 	python3 scripts/generate-installer.py
+
+.PHONY: check-downloads test-deploy-guard
+check-downloads:
+	$(GO) run -p 2 ./cmd/check-downloads downloads
+
+test-deploy-guard:
+	$(GO) test -p 2 ./internal/downloads ./cmd/check-downloads -run "Staged|DeployGuard" -count=1

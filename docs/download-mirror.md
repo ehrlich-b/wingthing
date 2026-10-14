@@ -29,3 +29,14 @@ This affects the newly built client. Mirroring older release binaries does not
 change their embedded updater. Existing clients can use the new installer to
 reinstall a historical version, and acquire the new updater only through a new
 reviewed CLI release.
+
+Deployment requires a complete staged tree: `latest.json` selects stable
+`v0.149.5` and lists its four platform binaries and `SHA256SUMS` with the
+`https://wingthing.ai/dl/v0.149.5/` URLs. Keep both `v0.147.0/` and `v0.149.5/`,
+each with four nonempty binaries and their matching `SHA256SUMS`.
+Copy a verified release tree with `cp -R /path/to/verified/downloads/. downloads/`,
+then run `make check-downloads`. This validates every binary hash and refuses
+symlinks, incomplete manifests and stale latest metadata.
+`make deploy` checks staging before running its existing check and gate targets;
+the Docker build runs the same validation, so `fly deploy` also refuses an
+unstaged image. Downloads remain ignored by Git.
