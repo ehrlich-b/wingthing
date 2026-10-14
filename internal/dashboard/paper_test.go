@@ -28,6 +28,32 @@ func TestPaperLayoutKeepsReportsAndExactTargetAtBothSizes(t *testing.T) {
 		}
 	}
 }
+
+func TestPaperLastLineMatchesRecentReplyBeforeReport(t *testing.T) {
+	s := fixture()
+	r, _ := s.selection()
+	for _, tc := range []struct {
+		name     string
+		messages []previewMessage
+		want     string
+	}{
+		{name: "reply", messages: []previewMessage{{speaker: "Codex", text: "The cache test passes."}, {speaker: "You", text: "Check the refresh too."}}, want: "The cache test passes."},
+		{name: "report only", want: "Writing cache tests."},
+		{name: "user only", messages: []previewMessage{{speaker: "You", text: "Check the refresh too."}}, want: "Writing cache tests."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s.previews = map[attentionIdentity]sessionPreview{r.identity: {update: "Writing cache tests.", messages: tc.messages}}
+			if got := lastLine(s, r); got != tc.want {
+				t.Fatalf("last line = %q, want %q", got, tc.want)
+			}
+			text := strings.Join(renderedLines(t, render(s, 132, 36, time.Now()), 132, 36), "\n")
+			if !strings.Contains(text, tc.want) {
+				t.Fatalf("last line missing from list: %s", text)
+			}
+		})
+	}
+}
+
 func TestMachineCountsNeverTurnMissingInventoryOrDenialIntoZero(t *testing.T) {
 	for _, m := range []machine{{}, {err: "connection refused"}, {updated: time.Now(), err: "permission denied"}} {
 		s := fixture()

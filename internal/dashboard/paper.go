@@ -30,10 +30,15 @@ func (s *state) machineStrip() string {
 }
 
 func lastLine(s *state, r row) string {
+	value := s.preview(r)
+	for i := len(value.messages) - 1; i >= 0; i-- {
+		if value.messages[i].speaker != "You" && value.messages[i].text != "" {
+			return value.messages[i].text
+		}
+	}
 	if value := s.latestUpdate(r); value != "" {
 		return value
 	}
-	value := s.preview(r)
 	if value.failed {
 		return "Messages unavailable. Enter open."
 	}

@@ -237,7 +237,7 @@ func (s *state) selectedLines(r row, now time.Time, width int) []string {
 	if r.Pinned && r.Status != "blocked" && !s.stale(r.machine) {
 		metadata = lastLine(s, r)
 	}
-	action := "Enter open   v read only   i details"
+	action := "v read only   i details"
 	switch {
 	case r.Status == "blocked":
 		metadata = label + " · Waiting for your answer."
@@ -337,7 +337,7 @@ func keyHints(s *state) []string {
 	case filter:
 		return []string{"Type to search   Enter keep search   Ctrl-U clear", "Esc restore selection   Ctrl-C quit"}
 	case help:
-		return []string{"j/k scroll   PgUp/PgDn page", "Esc back   q back   Ctrl-C quit"}
+		return []string{"j/k scroll   PgUp/PgDn page", "Esc back   Ctrl-C quit"}
 	case machinePicker:
 		return []string{"j/k move   Enter select   i details", "Esc back   Ctrl-C quit"}
 	case confirmStop:
