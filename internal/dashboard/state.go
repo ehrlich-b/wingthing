@@ -97,6 +97,7 @@ type state struct {
 	permissionAnswered                 string
 	permissionAnswers                  map[string]bool
 	permissionSelected                 map[string]string
+	permissionRetained                 map[string]permissions.Request
 	previews                           map[attentionIdentity]sessionPreview
 	previewReader                      func(context.Context, row) (sessionPreview, error)
 	theme                              terminalTheme
@@ -288,6 +289,9 @@ func (s *state) move(delta int) {
 	for i, r := range rows {
 		if r.key() == s.selected {
 			s.selected = rows[max(0, min(len(rows)-1, i+delta))].key()
+			if s.selected != r.key() {
+				delete(s.permissionRetained, r.key())
+			}
 			return
 		}
 	}
@@ -313,7 +317,7 @@ func (s *state) handle(key string) (act *action, quit bool) {
 				return nil, false
 			}
 			response := permissionResponse(p, "allow")
-			s.markPermissionAnswered(p.RequestID)
+			s.markPermissionAnswered(current, p)
 			return &action{kind: permissionReview, row: current, permission: &response}, false
 		default:
 			s.scrollOverlay(key)

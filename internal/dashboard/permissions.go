@@ -17,6 +17,13 @@ import (
 )
 
 func readPermissions(ctx context.Context, dir string, sessions []eggclient.LocalSession) {
+	readPermissionsForPlatform(ctx, dir, sessions, permissions.NativeHookSupported())
+}
+
+func readPermissionsForPlatform(ctx context.Context, dir string, sessions []eggclient.LocalSession, supported bool) {
+	if !supported {
+		return
+	}
 	c, err := controlsocket.Dial(ctx, dir, controlsocket.Hello{Client: "tui", Human: "tui"})
 	if err != nil {
 		return
@@ -27,7 +34,7 @@ func readPermissions(ctx context.Context, dir string, sessions []eggclient.Local
 	}
 	for i := range sessions {
 		r := &sessions[i]
-		if r.Agent != "claude" {
+		if r.Agent != "claude" || r.Status != "blocked" {
 			continue
 		}
 		args, _ := json.Marshal(map[string]string{"wing_id": c.Welcome.WingID, "session_id": r.ID})
@@ -91,7 +98,7 @@ func (s *state) permissionAction(key string) (*action, bool) {
 	if key == "d" {
 		s.permissionNotice = ""
 		response := permissionResponse(p, "deny")
-		s.markPermissionAnswered(p.RequestID)
+		s.markPermissionAnswered(r, p)
 		return &action{kind: permissionReview, row: r, permission: &response}, true
 	}
 	return nil, false
@@ -167,6 +174,9 @@ func (s *state) permissionKeys(r row) string {
 
 func (s *state) permissionPosition(r row) string {
 	requests := s.pendingPermissions(r)
+	if r.Permission != nil && s.permissionWasAnswered(r.Permission.RequestID) && len(requests) > 0 {
+		return fmt.Sprintf("%d pending · [/] requests   ", len(requests))
+	}
 	if len(requests) == 1 {
 		return "1 pending   "
 	}
@@ -197,7 +207,13 @@ func (s *state) permissionWasAnswered(id string) bool {
 	return id == s.permissionAnswered || s.permissionAnswers[id]
 }
 
-func (s *state) markPermissionAnswered(id string) {
+func (s *state) markPermissionAnswered(r row, p *permissions.Request) {
+	id := p.RequestID
+	if s.permissionRetained == nil {
+		s.permissionRetained = map[string]permissions.Request{}
+	}
+	// Keep this exact request visible through refreshes until explicit movement.
+	s.permissionRetained[r.key()] = *p
 	if s.permissionAnswers == nil {
 		s.permissionAnswers = map[string]bool{}
 	}
@@ -220,6 +236,13 @@ func (s *state) pendingPermissions(r row) []permissions.Request {
 }
 
 func (s *state) selectPermission(r *row) {
+	if retained, ok := s.permissionRetained[r.key()]; ok {
+		r.Permission = &retained
+		if len(s.pendingPermissions(*r)) > 0 {
+			r.Status, r.State = "blocked", "needs_input"
+		}
+		return
+	}
 	if len(r.Permissions) == 0 {
 		return
 	}
@@ -252,6 +275,25 @@ func (s *state) stepPermission(key string) bool {
 		return false
 	}
 	requests := s.pendingPermissions(r)
+	if len(requests) == 0 {
+		return false
+	}
+	if _, retained := s.permissionRetained[r.key()]; retained {
+		index := 0
+		if key == "[" {
+			index = len(requests) - 1
+		}
+		delete(s.permissionRetained, r.key())
+		if s.permissionSelected == nil {
+			s.permissionSelected = map[string]string{}
+		}
+		s.permissionSelected[r.key()] = requests[index].RequestID
+		if s.mode == details {
+			s.target, _ = s.selection()
+			s.overlayOffset = 0
+		}
+		return true
+	}
 	if len(requests) < 2 {
 		return false
 	}

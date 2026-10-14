@@ -1,8 +1,11 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ehrlich-b/wingthing/internal/control"
+	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/permissionbridge"
 	"github.com/ehrlich-b/wingthing/internal/permissions"
@@ -10,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -298,9 +302,13 @@ func TestPermissionTUIParallelNavigationAndBoundReview(t *testing.T) {
 		t.Fatal("answer switched requests")
 	}
 	remaining, _ := s.selection()
-	if remaining.Permission.RequestID != first.Permission.RequestID {
-		t.Fatal("answered request did not advance to remaining request")
+	if remaining.Permission.RequestID != second.Permission.RequestID {
+		t.Fatal("answer moved selection without user navigation")
 	}
+	if act, _ := s.handle("d"); act != nil {
+		t.Fatal("repeated decline answered an unseen request")
+	}
+	s.handle("]")
 	act, _ = s.handle("d")
 	if act == nil || act.permission.RequestID != first.Permission.RequestID || act.permission.Decision != "deny" {
 		t.Fatal("decline switched requests")
@@ -357,5 +365,112 @@ func TestPermissionTUIParallelPendingOverridesSiblingToolStatus(t *testing.T) {
 	act, _ := s.handle("d")
 	if act == nil || act.permission.Decision != "deny" {
 		t.Fatal("remaining parallel request could not be answered")
+	}
+}
+
+func TestPermissionRefreshOnlyQueriesBlockedClaudeOnSupportedPlatform(t *testing.T) {
+	for _, supported := range []bool{false, true} {
+		t.Run(fmt.Sprint(supported), func(t *testing.T) {
+			dir := t.TempDir()
+			var mu sync.Mutex
+			var calls []string
+			connections := 0
+			server, err := controlsocket.Listen(t.Context(), dir, "personal", func(controlsocket.Hello) (controlsocket.Welcome, controlsocket.Handler, error) {
+				mu.Lock()
+				connections++
+				mu.Unlock()
+				return controlsocket.Welcome{Grants: map[string]bool{"permission.read": true}}, func(_ context.Context, r control.DirectRequest) control.DirectResponse {
+					var args map[string]string
+					if err := json.Unmarshal(r.Arguments, &args); err != nil {
+						t.Error(err)
+					}
+					mu.Lock()
+					calls = append(calls, r.Tool+":"+args["session_id"])
+					mu.Unlock()
+					return control.DirectResponse{Version: control.ContractVersion, ID: r.ID, Result: map[string]any{"requests": []permissions.Request{}}}
+				}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer server.Close()
+			sessions := []eggclient.LocalSession{
+				{ID: "blocked-claude", Agent: "claude", Status: "blocked"},
+				{ID: "running-claude", Agent: "claude", Status: "running"},
+				{ID: "idle-claude", Agent: "claude", Status: "idle"},
+				{ID: "exited-claude", Agent: "claude", Status: "exited"},
+				{ID: "blocked-codex", Agent: "codex", Status: "blocked"},
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			for i := 0; i < 3; i++ {
+				readPermissionsForPlatform(ctx, dir, sessions, supported)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			want := 0
+			if supported {
+				want = 3
+			}
+			if len(calls) != want || connections != want {
+				t.Fatalf("three refreshes: calls=%v connections=%d want=%d", calls, connections, want)
+			}
+			for _, call := range calls {
+				if call != "permission_list:blocked-claude" {
+					t.Fatalf("queried ineligible session: %s", call)
+				}
+			}
+		})
+	}
+}
+
+func TestPermissionTUIAnswerStaysSelectedAcrossRefreshUntilMovement(t *testing.T) {
+	for _, answer := range []string{"allow", "deny"} {
+		for _, movement := range []string{"[", "]", "session"} {
+			t.Run(answer+"/"+movement, func(t *testing.T) {
+				s := parallelPermissionState(t)
+				first, _ := s.selection()
+				if answer == "allow" {
+					s.handle("a")
+					s.handle("enter")
+				} else {
+					s.handle("d")
+				}
+				m := s.machines["local"]
+				m.sessions[0].Permissions = m.sessions[0].Permissions[1:]
+				m.sessions = append(m.sessions, eggclient.LocalSession{ID: "other", Agent: "claude", Status: "idle"})
+				s.machines["local"] = m
+				s.reconcile()
+				for _, size := range [][2]int{{132, 36}, {80, 24}} {
+					raw := render(s, size[0], size[1], time.Now())
+					if !strings.Contains(raw, "1 pending") || !strings.Contains(raw, "[/] requests") || strings.Contains(raw, "echo second") || strings.Contains(raw, "d decline") {
+						t.Fatalf("answer exposed another request at %v: %s", size, raw)
+					}
+				}
+				selected, _ := s.selection()
+				if selected.Permission == nil || selected.Permission.RequestID != first.Permission.RequestID {
+					t.Fatal("refresh moved off the answered request")
+				}
+				for i := 0; i < 2; i++ {
+					if act, _ := s.handle("d"); act != nil {
+						t.Fatal("repeated d declined an unseen request")
+					}
+				}
+				if movement == "session" {
+					s.handle("j")
+					s.handle("k")
+				} else {
+					s.handle(movement)
+				}
+				selected, _ = s.selection()
+				if selected.Permission == nil || selected.Permission.Arguments["command"] != "echo second" {
+					t.Fatal("explicit movement failed to show the remaining request")
+				}
+				act, _ := s.handle("d")
+				if act == nil || act.permission == nil || act.permission.RequestID != selected.Permission.RequestID {
+					t.Fatal("could not decline the newly displayed request")
+				}
+			})
+		}
 	}
 }
