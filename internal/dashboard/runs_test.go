@@ -227,7 +227,7 @@ func TestRecentRunsLayoutAndTruthfulUnknown(t *testing.T) {
 	}
 	s.handle("r")
 	text = strings.Join(overlayLines(s, time.Now()), "\n")
-	for _, want := range []string{"wt agent recover", "--snapshot FILE", "original request was not saved", "In a terminal, run:", "Some processes may still run on This machine"} {
+	for _, want := range []string{"wt agent recover", "--snapshot FILE", "original request was not saved", "In a terminal, run:", "Some processes may still run on this machine"} {
 		if !strings.Contains(text, want) {
 			t.Fatal(want, text)
 		}

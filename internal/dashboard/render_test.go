@@ -101,7 +101,7 @@ func TestDashboardRendersAgeStatusAndPrompts(t *testing.T) {
 	for _, test := range []struct {
 		mode mode
 		want string
-	}{{filter, "Search sessions /"}, {rename, "Name: "}, {newAgent, "Agent (blank = shell): "}, {newCWD, "Working directory"}, {confirmStop, "old on This machine"}} {
+	}{{filter, "Search sessions /"}, {rename, "Name: "}, {newAgent, "Agent (blank = shell): "}, {newCWD, "Working directory"}, {confirmStop, "old on this machine"}} {
 		s.mode, s.target, s.input = test.mode, row{LocalSession: session("aged", "old", "/src/app", "done"), machine: "local"}, "input"
 		if !strings.Contains(render(s, 80, 24, time.Now()), test.want) {
 			t.Errorf("missing %q", test.want)
@@ -208,5 +208,34 @@ func TestDashboardHelpAdvertisesRecentRuns(t *testing.T) {
 	s.mode = help
 	if !strings.Contains(render(s, 120, 32, time.Now()), "h recent runs") {
 		t.Fatal("history help missing")
+	}
+}
+
+func TestNewSessionShowsHomeAsTildeAndStartsInTheFullPath(t *testing.T) {
+	s := &state{home: "/home/dev"}
+	if got := s.homeShort("local", "/home/dev/projects/wingthing"); got != "~/projects/wingthing" {
+		t.Fatalf("short = %q", got)
+	}
+	if got := s.homeShort("Studio", "/home/dev/projects/wingthing"); got != "/home/dev/projects/wingthing" {
+		t.Fatalf("remote short = %q", got)
+	}
+	if got := s.homeShort("local", "/home/devops/x"); got != "/home/devops/x" {
+		t.Fatalf("other home short = %q", got)
+	}
+	if got := s.homeExpand("local", "~/projects/wingthing"); got != "/home/dev/projects/wingthing" {
+		t.Fatalf("expand = %q", got)
+	}
+	if got := s.homeExpand("Studio", "~/projects/wingthing"); got != "~/projects/wingthing" {
+		t.Fatalf("remote expand = %q", got)
+	}
+}
+
+func TestStaleWingAgeIncludesTimeSinceItsMachineReported(t *testing.T) {
+	now := time.Date(2026, 10, 14, 13, 55, 0, 0, time.UTC)
+	s := &state{machines: map[string]machine{"Studio": {updated: now.Add(-14 * time.Minute), err: "ssh: connection timed out"}}}
+	r := row{machine: "Studio"}
+	r.UptimeSecs = 120
+	if got := age(s.rowAge(r, now)); got != "16m" {
+		t.Fatalf("age = %q", got)
 	}
 }

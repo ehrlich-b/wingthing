@@ -76,6 +76,14 @@ func machineLabel(name string) string {
 	return clean(name)
 }
 
+// machinePhrase is machineLabel for the middle of a sentence.
+func machinePhrase(name string) string {
+	if name == "local" {
+		return "this machine"
+	}
+	return machineLabel(name)
+}
+
 func ownerLabel(value string) string {
 	switch value {
 	case "browser", "agent", "terminal":
@@ -156,16 +164,23 @@ func sessionLine(s *state, r row, width int, now time.Time) viewLine {
 	if s.stale(r.machine) {
 		label, role = "? Last seen", caution
 	}
-	elapsed := r.UptimeSecs
-	if updated := s.machines[r.machine].updated; !updated.IsZero() {
-		elapsed += max(0, int64(now.Sub(updated)/time.Second))
-	}
+	elapsed := s.rowAge(r, now)
 	selected := r.key() == s.selected
 	lead := "  "
 	if selected {
 		lead = "> "
 	}
 	return viewLine{text: lead + field(label, st) + field(unread, unreadWidth(width)) + field("  "+r.name(), t) + field(agentLabel(r.Agent), a) + field(machineLabel(r.machine), m) + ageField(age(elapsed), e, columnGap(width)), selected: selected, statusAt: 2, statusWidth: st, statusTone: role, unreadAt: 2 + st, unreadWidth: unreadWidth(width)}
+}
+
+// rowAge counts the time since the machine last reported on top of the
+// reported age, so a cached row never looks newer than its machine.
+func (s *state) rowAge(r row, now time.Time) int64 {
+	elapsed := r.UptimeSecs
+	if updated := s.machines[r.machine].updated; !updated.IsZero() {
+		elapsed += max(0, int64(now.Sub(updated)/time.Second))
+	}
+	return elapsed
 }
 
 func (s *state) stale(name string) bool {
@@ -251,7 +266,12 @@ func (s *state) selectedLines(r row, now time.Time, width int) []string {
 		return nil
 	}
 	if p, ok := s.livePermission(r); ok {
-		return []string{"WILL RUN " + fmt.Sprint(p.Arguments["command"]), permissionWhere(p), s.permissionKeys(r)}
+		keys := s.permissionKeys(r)
+		if r.PermissionRespond {
+			// The footer already carries a approve and d decline.
+			keys = strings.TrimSpace(s.permissionPosition(r))
+		}
+		return []string{"WILL RUN " + fmt.Sprint(p.Arguments["command"]), permissionWhere(p), keys}
 	}
 	return []string{title, metadata, action}
 }
@@ -340,7 +360,7 @@ func keyHints(s *state) []string {
 	case providerReady:
 		return []string{"v verify   l sign in   Enter new session   R rescan", "Esc back   Ctrl-C quit"}
 	case setupFailure:
-		return []string{"r " + setupRetryLabel(s.setupStage) + "   R rescan   a choose agent", "Esc back   Ctrl-C quit"}
+		return []string{"r " + setupRetryLabel(s.setupStage) + "   R rescan   A choose agent", "Esc back   Ctrl-C quit"}
 	case diagnostics:
 		return []string{"1 launch readiness   2 session reach   3 saved result", "Esc back   Ctrl-C quit"}
 	case diagnosticInput:
@@ -512,7 +532,7 @@ func render(s *state, width, height int, now time.Time) string {
 		if pin.key() == s.selected {
 			prefix = "> "
 		}
-		pinText := prefix + field("wing", 10) + field(machineLabel(pin.machine), 15) + field(age(pin.UptimeSecs), 5) + summary
+		pinText := prefix + field("wing", 10) + field(machineLabel(pin.machine), 15) + field(age(s.rowAge(*pin, now)), 5) + summary
 		pinTone := plain
 		if pin.Status == "blocked" {
 			pinTone = warning
@@ -973,7 +993,7 @@ func wrap(text string, width int) []string {
 func promptLines(s *state) []string {
 	switch s.mode {
 	case actionMenu:
-		lines := []string{"Session actions", "", s.target.name() + " on " + machineLabel(s.target.machine), agentLabel(s.target.Agent) + " · " + s.target.project(), "", "r  Rename session", "x  Stop session"}
+		lines := []string{"Session actions", "", s.target.name() + " on " + machinePhrase(s.target.machine), agentLabel(s.target.Agent) + " · " + s.target.project(), "", "r  Rename session", "x  Stop session"}
 		if takeoverAvailable(s.target) {
 			lines = append(lines, "t  Take control and type here")
 		}
@@ -982,11 +1002,11 @@ func promptLines(s *state) []string {
 		if err := s.machines[s.target.machine].err; accessDenied(err) {
 			return []string{"Stop session", "", accessLine(s.target.machine, err)}
 		}
-		return []string{"Stop session", "", s.target.name() + " on " + machineLabel(s.target.machine), agentLabel(s.target.Agent) + " · " + s.target.project(), "", "The agent will stop. Unsaved work may be lost.", "Keep running is selected."}
+		return []string{"Stop session", "", s.target.name() + " on " + machinePhrase(s.target.machine), agentLabel(s.target.Agent) + " · " + s.target.project(), "", "The agent will stop. Unsaved work may be lost.", "Keep running is selected."}
 	case confirmTakeover:
-		return []string{"Take control", "Current input owner: " + ownerLabel(s.target.WriterOwner), "", s.target.name() + " on " + machineLabel(s.target.machine), "", "Typing will go to this terminal. The agent will lose input control.", "Keep agent control is selected."}
+		return []string{"Take control", "Current input owner: " + ownerLabel(s.target.WriterOwner), "", s.target.name() + " on " + machinePhrase(s.target.machine), "", "Typing will go to this terminal. The agent will lose input control.", "Keep agent control is selected."}
 	case rename:
-		return []string{"Rename session", s.target.name() + " on " + machineLabel(s.target.machine), "", "Name: " + s.input + "_"}
+		return []string{"Rename session", s.target.name() + " on " + machinePhrase(s.target.machine), "", "Name: " + s.input + "_"}
 	case newAgent:
 		return []string{"New session", "Machine: " + machineLabel(s.target.machine), "", "Agent (blank = shell): " + s.input + "_"}
 	case newCWD:
@@ -1016,7 +1036,7 @@ func overlayLines(s *state, now time.Time) []string {
 			"Open", "  Enter open terminal   v read only   i session details"}
 		if r, selected := s.selection(); selected && r.PermissionRespond {
 			if _, live := s.livePermission(r); live {
-				lines = append(lines, "  a approve: read the command, then Enter runs it once   d decline")
+				lines = append(lines, "  a approve: read the command, then Enter allows it once   d decline")
 			}
 		}
 		return append(lines, "  Ctrl+B then q returns here; Ctrl+B twice sends Ctrl+B.", "", "Find", "  / search sessions   ! needs you   m machine scope", "",
@@ -1081,7 +1101,7 @@ func (s *state) askingText(r row) string {
 
 // askingWhere names the machine and project the request would run in.
 func (s *state) askingWhere(r row) string {
-	return "on " + machineLabel(r.machine) + ", in " + r.project()
+	return "on " + machinePhrase(r.machine) + ", in " + r.project()
 }
 
 func lifecycleDescription(r row) string {
@@ -1093,7 +1113,7 @@ func lifecycleDescription(r row) string {
 		return agent + " replied. Background work may still run."
 	}
 	if r.StateSource == "" && r.State == "" {
-		return "Update wt on " + machineLabel(r.machine) + " to see live state."
+		return "Update wt on " + machinePhrase(r.machine) + " to see live state."
 	}
 	switch r.State {
 	case "needs_input":

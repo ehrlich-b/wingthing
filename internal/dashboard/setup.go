@@ -77,7 +77,7 @@ func (s *state) setupHandle(key string) (*action, bool) {
 				s.mode, s.setupError = providerReady, ""
 			}
 		}
-		if key == "a" {
+		if key == "A" {
 			s.openSetup()
 		}
 		return nil, false
@@ -98,6 +98,7 @@ func (s *state) setupHandle(key string) (*action, bool) {
 			if s.input == "" {
 				s.input = s.defaultCWD
 			}
+			s.input = s.homeShort(s.target.machine, s.input)
 		}
 	}
 	if stage != "" {

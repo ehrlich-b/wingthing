@@ -144,7 +144,7 @@ func (s *state) permissionReviewLines() []string {
 	if p == nil {
 		return []string{"Answer in terminal"}
 	}
-	title, confirm, cancel := "Allow once", "Enter allows this complete Bash invocation once.", "Esc cancels. No permission rule is saved."
+	title, confirm, cancel := "Allow once", "Enter allows this command once.", "Esc cancels. No permission rule is saved."
 	if !s.reviewPermissionLive() {
 		title, confirm, cancel = "Answer in terminal", "Answer in terminal", "Esc returns to the session list."
 	}

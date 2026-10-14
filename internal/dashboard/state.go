@@ -126,6 +126,7 @@ type state struct {
 	agent                              string
 	defaultAgent                       string
 	defaultCWD                         string
+	home                               string
 	message                            string
 	busy                               bool
 	machineFilter                      string
@@ -478,13 +479,14 @@ func (s *state) handle(key string) (act *action, quit bool) {
 				if s.input == "" && s.target.machine == "local" {
 					s.input = s.defaultCWD
 				}
+				s.input = s.homeShort(s.target.machine, s.input)
 				return nil, false
 			case newCWD:
 				if strings.TrimSpace(s.input) == "" {
 					s.message = "Working directory cannot be empty"
 					return nil, false
 				}
-				act = &action{kind: newCWD, row: s.target, agent: s.agent, cwd: s.input}
+				act = &action{kind: newCWD, row: s.target, agent: s.agent, cwd: s.homeExpand(s.target.machine, s.input)}
 			}
 			s.mode = navigate
 			return act, false
@@ -642,4 +644,26 @@ func (s *state) handle(key string) (act *action, quit bool) {
 
 func takeoverAvailable(r row) bool {
 	return config.Channel() == "preview" && r.WriterID != "" && r.InputEpoch > 0
+}
+
+// homeShort shows a local path under the home directory as ~/..., the way the
+// rest of the dashboard names directories. homeExpand undoes it on submit.
+func (s *state) homeShort(machine, path string) string {
+	if machine != "local" || s.home == "" || s.home == "/" {
+		return path
+	}
+	if path == s.home || strings.HasPrefix(path, s.home+"/") {
+		return "~" + path[len(s.home):]
+	}
+	return path
+}
+
+func (s *state) homeExpand(machine, path string) string {
+	if machine != "local" || s.home == "" || s.home == "/" {
+		return path
+	}
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		return s.home + path[1:]
+	}
+	return path
 }
