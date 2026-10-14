@@ -7,6 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import { removeState } from './fixture-state.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const revision=()=>({head:spawnSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).stdout.trim(),dirty:!!spawnSync('git',['status','--porcelain'],{cwd:root,encoding:'utf8'}).stdout});
 const source=revision(), screenshots=[];
@@ -476,7 +477,9 @@ finally {
             }));
         }
     } catch(error) { console.error('Fixture cleanup: '+error.message);process.exitCode=1; }
-    finally { fs.closeSync(log);fs.rmSync(state,{recursive:true,force:true}); }
+    finally { fs.closeSync(log); }
+    // Eggs started by the wing outlive the roost; wait for them before deleting.
+    try { await removeState(state); } catch(error) { console.error('State cleanup: '+error.message);process.exitCode=1; }
     assert.equal(fs.existsSync(state),false);
     record('state-cleanup','temporary wing state removed after fixture processes exit');
     const finish=revision();
