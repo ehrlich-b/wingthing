@@ -96,12 +96,15 @@ func TestBrowserPhoneRefusesWingWithoutScopeCapability(t *testing.T) {
 	s.Config.BaseURL = server.URL
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	client, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"?wing_id=old", &websocket.DialOptions{HTTPHeader: http.Header{"Origin": {server.URL}}})
-	if client != nil {
-		client.CloseNow()
+	client, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"?wing_id=old", &websocket.DialOptions{HTTPHeader: http.Header{"Origin": {server.URL}}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err == nil || response == nil || response.StatusCode != http.StatusForbidden {
-		t.Fatal("old wing accepted browser pairing", response, err)
+	defer client.CloseNow()
+	_ = writeWebSocketJSON(ctx, client, ws.TunnelRequest{Type: ws.TypeTunnelRequest, Purpose: "phone", WingID: "old", RequestID: "old-refused", Payload: `{"op":"phone.box","sender_pub":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","payload":"opaque"}`})
+	_, _, err = client.Read(ctx)
+	if websocket.CloseStatus(err) != websocket.StatusPolicyViolation || !strings.Contains(err.Error(), "wing_update_required") {
+		t.Fatal("missing browser-readable capability refusal", err)
 	}
 	r := httptest.NewRequest("GET", server.URL+"?wing_id=old", nil)
 	r.Header.Set("Origin", server.URL)

@@ -8,6 +8,7 @@ const labels = {
     mismatch: ['Identity mismatch', 'The fingerprint or emoji did not match. Cancel in the terminal and run wt pair again.'],
     cancelled: ['Pairing cancelled', 'Pairing stopped in this browser. Run wt pair --show-link to try again.'],
     unreachable: ['Machine unreachable', 'Check that the machine is running and registered with this relay, then try again.'],
+    wing_update_required: ['Machine needs a newer wingthing', 'Update wingthing on this machine and restart its wing, then run wt pair --show-link again. Browser pairing requires inventory-only access.'],
     denied: ['Pairing refused', 'This machine refused the requested access. Browser pairing requires inventory-only access. Run wt pair --show-link again.'],
     storage: ['Browser storage unavailable', 'Pairing stopped because site storage could not be verified. Enable site storage, then run wt pair --show-link again.'],
     revoked: ['Access ended', 'This browser’s access was revoked. Pair again to restore it.'],
@@ -67,7 +68,9 @@ export async function initBrowserPair() {
             bind('bp-forget', forget);
         } else {
             const label = labels[kind] || labels.unreachable;
-            card.innerHTML = '<h2>' + label[0] + '</h2>' + status(kind) + '<button id="bp-again" class="bp-primary">Pair again</button>' + (record ? '<button id="bp-forget">Forget</button>' : '');
+            const incomplete = record && record.ready !== true;
+            const message = incomplete ? '<p class="bp-status" role="status">This browser has an incomplete pairing. Forget it here, then run wt pair --show-link to try again.</p>' : status(kind);
+            card.innerHTML = '<h2>' + label[0] + '</h2>' + message + '<button id="bp-again" class="bp-primary">Pair again</button>' + (record ? '<button id="bp-forget">' + (incomplete ? 'Forget incomplete pairing' : 'Forget') + '</button>' : '');
             bind('bp-again', () => { wipe(); record = q = null; render('paste'); }); bind('bp-forget', forget);
         }
         bind('bp-cancel', () => cancel('cancelled'));
@@ -106,7 +109,7 @@ export async function initBrowserPair() {
             }
             if (pinned && pinned.key !== q.key) throw new Error('mismatch');
             if (pinned?.ready === true) { record = pinned; throw new Error('cancelled'); }
-            if (pinned) throw new Error('cancelled');
+            if (pinned) { record = pinned; throw new Error('cancelled'); }
             const prepared = await prepareSigningKey(); assertCurrent(n); signing = prepared;
             carrier = new PhoneCarrier(q.wing_id, q.key);
             await carrier.open(); assertCurrent(n);
@@ -176,7 +179,7 @@ export async function initBrowserPair() {
     }
     async function forget() {
         generation++; wipe();
-        try { await forgetDevice(record.wing_id); record = null; render('paste'); }
+        try { await forgetDevice(record.wing_id, record.device_id); record = null; render('paste'); }
         catch { render('storage'); }
     }
     window.addEventListener('pagehide', () => { generation++; if (exchange) exchange.send('cancel').catch(() => {}); wipe(); });

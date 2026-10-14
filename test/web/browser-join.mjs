@@ -24,7 +24,7 @@ const log = fs.openSync(path.join(out,'roost.log'),'w');
 const startRoost = () => spawn('nice',['-n','10',path.join(root,'wt'),'roost','start','--foreground','--addr','127.0.0.1:'+port],{cwd:root,env,stdio:['ignore',log,log]});
 let roost = startRoost(), invitationCount = 0;
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
-const proof=[]; const pairs=[];let browser, sessionStarted=false;
+const proof=[]; const pairs=[], fixtureSockets=[];let browser, sessionStarted=false;
 const record = (name, fact) => { proof.push({name,pass:true,fact});console.log('PASS '+name+': '+fact); };
 const cli = (...args) => {
     const r=spawnSync('nice',['-n','10',path.join(root,'wt'),...args],{cwd:root,env,encoding:'utf8'});
@@ -53,6 +53,21 @@ async function pair() {
     for(let i=0;i<100;i++){link=output.match(/wingthing:\/\/pair#v1z\.[A-Za-z0-9_-]+/)?.[0];if(link)break;await sleep(100);}
     assert.ok(link,'pair command did not issue a link');
     return {child,link,output:()=>output};
+}
+async function oldWing(id, publicKey) {
+    const token = 'local-old-wing-' + id;
+    const seed = spawnSync('python3', ['-c', 'import sqlite3,sys\nc=sqlite3.connect(sys.argv[1]);c.execute("INSERT INTO device_tokens(token,user_id,device_id,expires_at) VALUES (?, ?, ?, datetime(\'now\',\'+1 hour\'))",(sys.argv[2],"local",sys.argv[3]));c.commit()', path.join(state,'roost.db'), token, id], {encoding:'utf8'});
+    assert.equal(seed.status,0,seed.stderr);
+    const socket = new WebSocket(base.replace('http:','ws:')+'/ws/wing?token='+encodeURIComponent(token));
+    fixtureSockets.push(socket);
+    let forwarded = 0;
+    await new Promise((resolve,reject)=>{
+        const timer=setTimeout(()=>reject(Error('old wing registration timed out')),10000);
+        socket.onopen=()=>socket.send(JSON.stringify({type:'wing.register',wing_id:id,public_key:publicKey,hosted_relay:'allow'}));
+        socket.onerror=()=>{clearTimeout(timer);reject(Error('old wing registration failed'));};
+        socket.onmessage=event=>{const message=JSON.parse(event.data);if(message.type==='registered'){clearTimeout(timer);resolve();}else if(message.type==='tunnel.req')forwarded++;};
+    });
+    return {socket,forwarded:()=>forwarded};
 }
 async function newPage(viewport, init, initArg) {
     const context=await browser.newContext({viewport});
@@ -190,6 +205,53 @@ try {
         await page.getByRole('button',{name:'Forget',exact:true}).click();await page.getByRole('heading',{name:'Join from this browser'}).waitFor();
         assert.equal(await page.locator('#bp-saved button').count(),0);record('forget-'+size,'local key and credential removed');
         await context.close();
+        {
+            const item=await newPage(viewport), f=await pair(), invitation=decode(f.link);
+            invitation[1]='old-wing-'+size;
+            const old=await oldWing(invitation[1],invitation[3]);
+            await paste(item.page,encode(invitation),'Old wing browser '+size);
+            await item.page.getByRole('heading',{name:'Machine needs a newer wingthing',exact:true}).waitFor();
+            await item.page.getByText(/Update wingthing on this machine and restart its wing/).waitFor();
+            assert.equal(old.forwarded(),0,'browser request reached a wing without scope enforcement');
+            await shot(item.page,size,'old-wing');
+            record('old-wing-'+size,'real relay closes unsupported wing route with readable update reason; no request forwarded');
+            old.socket.close();await item.context.close();f.child.kill('SIGINT');
+        }
+        {
+            const item=await newPage(viewport,()=>{
+                if(sessionStorage.getItem('candidate-held'))return;
+                sessionStorage.setItem('candidate-held','1');
+                const put=IDBObjectStore.prototype.put,send=WebSocket.prototype.send;
+                let wrote=false,held=false;
+                IDBObjectStore.prototype.put=function(value,...rest){if(value.device_id)wrote=true;return put.call(this,value,...rest);};
+                WebSocket.prototype.send=function(value){if(wrote&&!held){held=true;window.__candidateHeld=true;return;}return send.call(this,value);};
+            });
+            const f=await pair();await paste(item.page,f.link,'Interrupted '+size);
+            await item.page.getByRole('button',{name:'Match · Join'}).click();
+            for(let i=0;i<50&&!f.output().includes('Enter to allow');i++)await sleep(100);
+            assert.ok(f.output().includes('Enter to allow'));f.child.stdin.write('\n');
+            await item.page.waitForFunction(()=>window.__candidateHeld===true);
+            await item.page.reload();
+            await item.page.getByRole('heading',{name:'Join from this browser'}).waitFor();
+            const retry=await pair();await paste(item.page,retry.link,'Recovered '+size);
+            await item.page.getByRole('heading',{name:'Pairing cancelled',exact:true}).waitFor();
+            const forget=item.page.getByRole('button',{name:'Forget incomplete pairing',exact:true});
+            await forget.waitFor();await shot(item.page,size,'incomplete-pairing');
+            await forget.click();
+            await item.page.getByRole('heading',{name:'Join from this browser'}).waitFor();
+            await paste(item.page,retry.link,'Recovered '+size);
+            await item.page.getByRole('button',{name:'Match · Join'}).click();
+            for(let i=0;i<50&&!retry.output().includes('Enter to allow');i++)await sleep(100);
+            assert.ok(retry.output().includes('Enter to allow'));retry.child.stdin.write('\n');
+            await item.page.getByText('✓ Connected · Inventory only').waitFor();
+            await item.page.locator('#bp-sessions').getByText('join-proof-session',{exact:true}).waitFor();
+            assert.ok(devices().includes('Recovered '+size+'\tinventory\t'));
+            assert.ok(!devices().includes('Interrupted '+size));
+            await shot(item.page,size,'recovered-page');
+            record('recovered-page-'+size,'actual reload leaves pending record; error offers Forget incomplete pairing; fresh join opens inventory');
+            cli('devices','revoke','Recovered '+size);
+            await item.context.close();f.child.kill('SIGINT');retry.child.kill('SIGINT');
+        }
         for (const requestedScope of ['control','admin']) {
             const item=await newPage(viewport,scope=>{
                 const encode=TextEncoder.prototype.encode,decode=TextDecoder.prototype.decode;
@@ -402,7 +464,21 @@ try {
 } catch(error) { console.error(error);fs.writeFileSync(path.join(out,'failure.txt'),error.stack+'\n');process.exitCode=1; }
 finally {
     try { if(sessionStarted)cli('session','kill','join-proof-session'); } catch(error) { console.error('Fixture session cleanup: '+error.message);process.exitCode=1; }
-    await browser?.close();for(const p of pairs)if(p.exitCode===null)p.kill('SIGINT');roost.kill('SIGINT');fs.closeSync(log);
+    try {
+        try { await browser?.close(); }
+        finally {
+            for(const socket of fixtureSockets)socket.close();
+            await Promise.all([...pairs,roost].map(async child=>{
+                if(child.exitCode!==null||child.signalCode!==null)return;
+                const exited=once(child,'exit');child.kill('SIGINT');
+                const timer=setTimeout(()=>child.kill('SIGKILL'),5000);
+                try{await exited;}finally{clearTimeout(timer);}
+            }));
+        }
+    } catch(error) { console.error('Fixture cleanup: '+error.message);process.exitCode=1; }
+    finally { fs.closeSync(log);fs.rmSync(state,{recursive:true,force:true}); }
+    assert.equal(fs.existsSync(state),false);
+    record('state-cleanup','temporary wing state removed after fixture processes exit');
     const finish=revision();
     if(finish.head!==source.head||finish.dirty!==source.dirty){console.error('Source revision changed during verification');process.exitCode=1;}
     if(new Set(screenshots.map(shot=>shot.sha256)).size!==screenshots.length){console.error('Duplicate screenshot evidence');process.exitCode=1;}

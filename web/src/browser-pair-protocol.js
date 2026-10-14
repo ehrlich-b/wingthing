@@ -63,11 +63,15 @@ export class PhoneCarrier {
         url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
         url.searchParams.set('wing_id', this.wing);
         const socket = this.socket = new WebSocket(url);
+        const closed = event => {
+            this.closeError = event.code === 1008 && event.reason === 'wing_update_required' ? 'wing_update_required' : 'unreachable';
+            this.fail(this.closeError);
+        };
         await new Promise((resolve, reject) => {
             const timer = setTimeout(() => { socket.close(); reject(new Error('unreachable')); }, 10000);
             socket.onopen = () => { clearTimeout(timer); resolve(); };
             socket.onerror = () => { clearTimeout(timer); reject(new Error('unreachable')); };
-            socket.onclose = () => { clearTimeout(timer); reject(new Error('unreachable')); };
+            socket.onclose = event => { clearTimeout(timer); closed(event); reject(new Error(this.closeError)); };
         });
         socket.onmessage = event => {
             let reply;
@@ -83,14 +87,15 @@ export class PhoneCarrier {
                 pending.resolve(inner);
             } catch (error) { pending.reject(error); }
         };
-        socket.onclose = socket.onerror = () => this.fail();
+        socket.onclose = closed;
+        socket.onerror = () => this.fail();
     }
-    fail() {
-        for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error('unreachable')); }
+    fail(reason = 'unreachable') {
+        for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error(reason)); }
         this.pending.clear();
     }
     async call(inner) {
-        if (this.socket?.readyState !== WebSocket.OPEN) throw new Error('unreachable');
+        if (this.socket?.readyState !== WebSocket.OPEN) throw new Error(this.closeError || 'unreachable');
         const request_id = crypto.randomUUID();
         const payload = JSON.stringify({ op: 'phone.box', sender_pub: this.sender, payload: encrypt(this.key, inner) });
         return new Promise((resolve, reject) => {
