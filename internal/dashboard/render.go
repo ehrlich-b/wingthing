@@ -526,7 +526,11 @@ func render(s *state, width, height int, now time.Time) string {
 			summary = "Needs you. " + summary
 		}
 		if s.stale(pin.machine) {
-			summary = "Last seen. Reconnect " + machineLabel(pin.machine) + " to open wing."
+			stamp := "time unknown"
+			if updated := s.machines[pin.machine].updated; !updated.IsZero() {
+				stamp = paperStamp(updated.Format(time.RFC3339), now)
+			}
+			summary = "Last seen " + stamp + ". Reconnect " + machineLabel(pin.machine) + "."
 		}
 		prefix := "  "
 		if pin.key() == s.selected {

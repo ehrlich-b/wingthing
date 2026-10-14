@@ -65,24 +65,36 @@ func TestMachineCountsLeaveOutThePinnedWing(t *testing.T) {
 }
 
 func TestPaperOfflinePinnedStateIsLastSeen(t *testing.T) {
-	s := fixture()
-	m := s.machines["work"]
-	m.sessions[0].Metadata = sessionrole.Metadata{Role: "coordinator", Pinned: true}
-	m.err = "connection timed out"
-	s.machines["work"] = m
-	s.reconcile()
-	for _, w := range []int{80, 132} {
-		h := 24
-		if w == 132 {
-			h = 36
-		}
-		lines := renderedLines(t, render(s, w, h, time.Now()), w, h)
-		if !strings.Contains(lines[4], "Last seen") || strings.Contains(lines[4], "o Idle") {
-			t.Fatal("cached coordinator advertised as live idle")
-		}
-		if !strings.Contains(lines[4], "Reconnect work") {
-			t.Fatal("stale coordinator lost its reconnect step")
-		}
+	now := time.Date(2026, 10, 14, 13, 55, 0, 0, time.Local)
+	for _, tc := range []struct {
+		name, err, registryError, stamp string
+		updated                         time.Time
+	}{
+		{name: "offline", err: "connection timed out", updated: now.Add(-14 * time.Minute), stamp: "13:41"},
+		{name: "identity", err: "REMOTE HOST IDENTIFICATION HAS CHANGED", updated: now.Add(-14 * time.Minute), stamp: "13:41"},
+		{name: "registry", registryError: "connection timed out", updated: now.Add(-14 * time.Minute), stamp: "13:41"},
+		{name: "yesterday", err: "connection timed out", updated: now.Add(-24 * time.Hour), stamp: "Oct 13 13:55"},
+		{name: "unknown", err: "connection timed out", stamp: "time unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := fixture()
+			m := s.machines["work"]
+			m.sessions[0].Metadata = sessionrole.Metadata{Role: "coordinator", Pinned: true}
+			m.err, m.updated = tc.err, tc.updated
+			s.machines["work"] = m
+			s.registryError = tc.registryError
+			s.reconcile()
+			for _, dim := range [][2]int{{80, 24}, {132, 36}} {
+				lines := renderedLines(t, render(s, dim[0], dim[1], now), dim[0], dim[1])
+				want := "Last seen " + tc.stamp + ". Reconnect work."
+				if !strings.Contains(lines[4], want) || strings.Contains(lines[4], "o Idle") {
+					t.Fatalf("%v cached coordinator row = %q; want %q", dim, lines[4], want)
+				}
+				if dim[0] == 132 && !tc.updated.IsZero() && !strings.Contains(strings.Join(lines, "\n"), "last seen "+tc.stamp) {
+					t.Fatal("pinned row and machines pane lost the same observed time")
+				}
+			}
+		})
 	}
 }
 

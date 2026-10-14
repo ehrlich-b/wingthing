@@ -267,7 +267,7 @@ func (s *state) paperPane(r row, now time.Time, width, height int) []string {
 		} else if m.updated.IsZero() {
 			state = "loading"
 		}
-		entry := field(machineLabel(name), 14) + field(state, 17) + s.machineCount(name)
+		entry := field(machineLabel(name), 14) + field(state, max(17, runewidth.StringWidth(state)+1)) + s.machineCount(name)
 		if runewidth.StringWidth(entry) > width {
 			entry = machineLabel(name) + " · " + state + " · " + s.machineCount(name)
 		}
