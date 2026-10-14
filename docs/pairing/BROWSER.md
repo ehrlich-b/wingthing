@@ -12,12 +12,15 @@ scope even when a client omits scope; wider requests are refused before terminal
 approval. The wing records this scope and rejects input, launch, actions, terminal
 attachment and remote fleet selectors. `wt devices` shows the granted scope;
 `wt devices revoke <name-or-device-id>` ends live access. **Forget** removes this
-origin's saved access. Failed commits remove the local candidate. A fresh join
-also discards an interrupted incomplete candidate while preserving its pin check.
+origin's saved access. Failed commits remove only this tab's own incomplete
+candidate. Concurrent tabs preserve each other's candidates and saved pins;
+an incomplete record from a previous page can be removed with **Forget**.
 
 The page opens before account lookup and uses `/ws/browser-phone` on the trusted
 app origin. The relay checks the exact configured app Origin, ignores cookie
-authority and forwards only bounded opaque `phone.box` envelopes. The existing
+authority and forwards only bounded opaque `phone.box` envelopes to wings that
+advertise browser scope enforcement. Older wings must be updated and restarted
+before browser pairing. The existing
 native `/ws/phone` Origin gate and hosted wing admission remain in effect.
 Unregistered/LAN-only invitations are unavailable in this slice. Registered
 loopback HTTP relays work in the browser's secure localhost context; hosted app
@@ -44,10 +47,11 @@ has no forward secrecy, and revocation cannot erase previously cached content.
 Local verification: `make test-browser-join-go`, `make check-browser-pake` and
 `make test-browser-join`. The browser target needs Playwright and local Chromium;
 set `PLAYWRIGHT_MODULE` or `CHROMIUM_PATH` when they are outside normal locations.
-Its loopback roost uses a disposable repository-local HOME and never contacts a
+Its loopback roost uses a short temporary state root and a disposable
+repository-local HOME and never contacts a
 real relay or provider. Screenshots and proof default to `.scratch/browser-join`;
 `WT_JOIN_OUT` and `WT_JOIN_SHOTS` select evidence destinations. It checks both
 390×844 and 1440×900, a real terminal session, wider scope requests, real wing-side
 five-minute start/commit expiry, re-pairing, wrong pin/secret, storage failures,
-revocation, denial, ciphertext replay and cancellation races. Local fixtures do
+revocation, denial, ciphertext replay, concurrent tabs and cancellation races. Local fixtures do
 not establish hosted production acceptance.

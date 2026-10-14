@@ -31,7 +31,7 @@ func TestBrowserPhoneExactConfiguredOrigin(t *testing.T) {
 func TestBrowserPhoneForwardsOnlyOpaqueBoxesWithoutCookieAuthority(t *testing.T) {
 	wing, peer := detachWebSocketPair(t)
 	s := &Server{LocalMode: true, Wings: NewWingRegistry(), browserConns: map[*websocket.Conn]*browserConnection{}, tunnelRequests: map[tunnelRequestKey]pendingTunnelRequest{}, Bandwidth: NewBandwidthMeter(1<<20, 1<<20, nil)}
-	s.Wings.Add(&ConnectedWing{ID: "owner:one", WingID: "one", UserID: "owner", Conn: wing, HostedRelay: "allow"})
+	s.Wings.Add(&ConnectedWing{ID: "owner:one", WingID: "one", UserID: "owner", Conn: wing, HostedRelay: "allow", BrowserPhoneScope: true})
 	server := httptest.NewServer(http.HandlerFunc(s.handleBrowserPhoneWS))
 	defer server.Close()
 	s.Config.BaseURL = server.URL
@@ -84,5 +84,35 @@ func TestNativePhoneRouteStillRejectsBrowserOrigin(t *testing.T) {
 	s.handlePhoneWS(w, r)
 	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "native phone route") {
 		t.Fatal("native origin gate changed", w.Code)
+	}
+}
+
+func TestBrowserPhoneRefusesWingWithoutScopeCapability(t *testing.T) {
+	wing, peer := detachWebSocketPair(t)
+	s := &Server{LocalMode: true, Wings: NewWingRegistry()}
+	s.Wings.Add(&ConnectedWing{ID: "owner:old", WingID: "old", UserID: "owner", Conn: wing, HostedRelay: "allow"})
+	server := httptest.NewServer(http.HandlerFunc(s.handleBrowserPhoneWS))
+	defer server.Close()
+	s.Config.BaseURL = server.URL
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"?wing_id=old", &websocket.DialOptions{HTTPHeader: http.Header{"Origin": {server.URL}}})
+	if client != nil {
+		client.CloseNow()
+	}
+	if err == nil || response == nil || response.StatusCode != http.StatusForbidden {
+		t.Fatal("old wing accepted browser pairing", response, err)
+	}
+	r := httptest.NewRequest("GET", server.URL+"?wing_id=old", nil)
+	r.Header.Set("Origin", server.URL)
+	w := httptest.NewRecorder()
+	s.handleBrowserPhoneWS(w, r)
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "update and restart this wing") {
+		t.Fatal("missing explicit capability refusal", w.Code, w.Body.String())
+	}
+	readCtx, readCancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer readCancel()
+	if _, _, err := peer.Read(readCtx); err == nil {
+		t.Fatal("browser message reached an old wing")
 	}
 }

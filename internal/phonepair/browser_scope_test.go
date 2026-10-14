@@ -50,6 +50,35 @@ func TestBrowserTransportForcesInventoryScope(t *testing.T) {
 	}
 }
 
+func TestBrowserPolicyRequiresAuthenticatedPairingPayload(t *testing.T) {
+	for _, fault := range []string{"ciphertext", "invitation", "operation"} {
+		t.Run(fault, func(t *testing.T) {
+			f := fixture(t)
+			f.start(t, f.q.Secret)
+			if r := f.send(t, "prove", map[string]any{"name": "Native", "public_key": base64.StdEncoding.EncodeToString(elliptic.Marshal(elliptic.P256(), f.signing.X, f.signing.Y)), "scope": ScopeControl}); r.Error != "" {
+				t.Fatal(r)
+			}
+			c := map[string]any{"op": "status", "id": f.q.ID}
+			if fault == "invitation" {
+				c["id"] = "another-invitation"
+			} else if fault == "operation" {
+				c["op"] = "confirm"
+			}
+			payload, err := auth.Encrypt(f.pair, encode(c))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fault == "ciphertext" {
+				payload = "invalid"
+			}
+			r := f.m.Handle(context.Background(), Request{Op: "pair.status", ID: f.q.ID, Payload: payload, InventoryOnly: true})
+			if r.Error != "bad_proof" || f.m.pending[f.q.ID].inventoryOnly {
+				t.Fatal("unauthenticated request changed native policy", r)
+			}
+		})
+	}
+}
+
 func TestTerminalApprovedInventoryScopePersistsAndCannotAct(t *testing.T) {
 	f := fixture(t)
 	f.start(t, f.q.Secret)

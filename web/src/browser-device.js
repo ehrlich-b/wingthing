@@ -34,16 +34,32 @@ export const forgetDevice = (wing, deviceID) => transaction('readwrite', store =
     request.onsuccess = () => { if (request.result?.device_id === deviceID) store.delete(wing); };
     return request;
 });
+export const forgetCandidate = device => transaction('readwrite', store => {
+    const request = store.get(device.wing_id);
+    request.onsuccess = () => {
+        const saved = request.result;
+        if (device.tab_id && saved?.tab_id === device.tab_id && saved.device_id === device.device_id && saved.ready !== true) store.delete(device.wing_id);
+    };
+    return request;
+});
 export async function saveDevice(device) {
     if (device.signingKey?.extractable !== false || device.signingKey.type !== 'private' || device.scope !== 'inventory') throw new Error('storage');
     try {
-        await transaction('readwrite', store => store.put(device));
+        await transaction('readwrite', store => {
+            const request = store.get(device.wing_id);
+            request.onsuccess = () => {
+                const saved = request.result;
+                if (saved && (saved.ready === true || saved.tab_id !== device.tab_id || saved.device_id !== device.device_id)) { request.transaction.abort(); return; }
+                store.put(device);
+            };
+            return request;
+        });
         const saved = await loadDevice(device.wing_id);
         if (!saved || saved.device_id !== device.device_id || saved.signingKey?.extractable !== false) throw new Error('storage');
     } catch {
         // No commit is sent after any storage failure. Also remove any partial
         // local record; an unavailable store still cannot activate the grant.
-        try { await forgetDevice(device.wing_id, device.device_id); } catch {}
+        try { await forgetCandidate(device); } catch {}
         throw new Error('storage');
     }
 }

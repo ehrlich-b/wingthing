@@ -1,5 +1,5 @@
 import './browser-pair.css';
-import { loadDevice, listDevices, forgetDevice, saveDevice, activateDevice, prepareSigningKey } from './browser-device.js';
+import { loadDevice, listDevices, forgetDevice, forgetCandidate, saveDevice, activateDevice, prepareSigningKey } from './browser-device.js';
 import { parseInvitation, fingerprint, PhoneCarrier, PairExchange, InventoryConnection } from './browser-pair-protocol.js';
 import { emojiLabel } from './pake/emoji.js';
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -8,6 +8,7 @@ const labels = {
     mismatch: ['Identity mismatch', 'The fingerprint or emoji did not match. Cancel in the terminal and run wt pair again.'],
     cancelled: ['Pairing cancelled', 'Pairing stopped in this browser. Run wt pair --show-link to try again.'],
     unreachable: ['Machine unreachable', 'Check that the machine is running and registered with this relay, then try again.'],
+    denied: ['Pairing refused', 'This machine refused the requested access. Browser pairing requires inventory-only access. Run wt pair --show-link again.'],
     storage: ['Browser storage unavailable', 'Pairing stopped because site storage could not be verified. Enable site storage, then run wt pair --show-link again.'],
     revoked: ['Access ended', 'This browser’s access was revoked. Pair again to restore it.'],
     invalid: ['Invitation not recognized', 'Paste the full invitation from wt pair --show-link.'],
@@ -26,6 +27,7 @@ export async function initBrowserPair() {
     const card = document.getElementById('bp-card');
     let state = 'paste', q, carrier, exchange, signing, record, inventory, poll, expiry, generation = 0;
     let busy = false;
+    const tabID = globalThis.crypto?.randomUUID?.();
     const assertCurrent = n => { if (n !== generation) throw new Error('cancelled'); };
     const wipe = () => { clearInterval(poll); clearInterval(expiry); carrier?.close(); exchange?.close(); carrier = exchange = signing = inventory = null; if (q) q.secret = ''; };
     const bind = (id, fn) => card.querySelector('#' + id)?.addEventListener('click', fn);
@@ -97,10 +99,14 @@ export async function initBrowserPair() {
             let relay;
             try { relay = new URL(q.relay); } catch { throw new Error('unreachable'); }
             if (relay.username || relay.password || relay.hash || (relay.protocol !== 'https:' && !(relay.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(relay.hostname)))) throw new Error('unreachable');
-            const pinned = await loadDevice(q.wing_id); assertCurrent(n);
+            let pinned = await loadDevice(q.wing_id); assertCurrent(n);
+            if (pinned?.tab_id === tabID && pinned.ready !== true) {
+                await forgetCandidate(pinned); assertCurrent(n);
+                pinned = await loadDevice(q.wing_id); assertCurrent(n);
+            }
             if (pinned && pinned.key !== q.key) throw new Error('mismatch');
             if (pinned?.ready === true) { record = pinned; throw new Error('cancelled'); }
-            if (pinned) { await forgetDevice(pinned.wing_id, pinned.device_id); assertCurrent(n); }
+            if (pinned) throw new Error('cancelled');
             const prepared = await prepareSigningKey(); assertCurrent(n); signing = prepared;
             carrier = new PhoneCarrier(q.wing_id, q.key);
             await carrier.open(); assertCurrent(n);
@@ -124,9 +130,9 @@ export async function initBrowserPair() {
                 if (result.state === 'cancelled') throw new Error('cancelled');
             }
             if (result.key !== q.key || result.wing_id !== q.wing_id || result.scope !== 'inventory' || !result.device_id || !result.credential) throw new Error('mismatch');
-            candidate = { wing_id: q.wing_id, key: q.key, name: q.name, device_id: result.device_id, credential: result.credential, scope: 'inventory', signingKey: signing.signingKey, ready: false };
+            candidate = { wing_id: q.wing_id, key: q.key, name: q.name, device_id: result.device_id, credential: result.credential, scope: 'inventory', signingKey: signing.signingKey, ready: false, tab_id: tabID };
             try { await saveDevice(candidate); } catch { throw new Error('storage'); }
-            if (n !== generation) { await forgetDevice(candidate.wing_id, candidate.device_id); throw new Error('cancelled'); }
+            if (n !== generation) { await forgetCandidate(candidate); throw new Error('cancelled'); }
             const committed = await exchange.send('commit'); assertCurrent(n);
             if (committed.op !== 'paired' || committed.device_id !== candidate.device_id || committed.scope !== 'inventory') throw new Error('mismatch');
             await activateDevice(candidate); assertCurrent(n);
@@ -135,7 +141,7 @@ export async function initBrowserPair() {
             exchange.close(); exchange = null; signing = null; q = null; clearInterval(expiry);
             await connect(record, n);
         } catch (error) {
-            if (candidate && (!candidate.ready || n !== generation || error.message === 'storage')) { try { await forgetDevice(candidate.wing_id, candidate.device_id); } catch {} }
+            if (candidate && (!candidate.ready || n !== generation || error.message === 'storage')) { try { await forgetCandidate(candidate); } catch {} }
             if (n === generation) await cancel(errorState(error));
         } finally { busy = false; }
     }

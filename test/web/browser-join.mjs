@@ -15,8 +15,8 @@ const shots = process.env.WT_JOIN_SHOTS || path.join(out, 'shots');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 fs.mkdirSync(out, {recursive:true}); fs.mkdirSync(shots, {recursive:true});
 fs.mkdirSync(path.join(root,'.scratch'), {recursive:true});
-const state = fs.mkdtempSync(path.join(root,'.scratch/join-state-'));
-const home = path.join(state,'home');fs.mkdirSync(home);
+const state = fs.mkdtempSync('/tmp/wt-join-');
+const home = fs.mkdtempSync(path.join(root,'.scratch/join-home-'));
 const port = Number(process.env.WT_JOIN_PORT || 18241), base = 'http://127.0.0.1:' + port;
 const env = { PATH:process.env.PATH,HOME:home,WINGTHING_DIR:state,WT_BASE_URL:base };
 fs.writeFileSync(path.join(state,'wing.yaml'),'label: Studio\n',{mode:0o600});
@@ -37,10 +37,14 @@ async function ready() {
     for(let i=0;i<150;i++){try{if((await fetch(base+'/health')).ok)return;}catch{}if(roost.exitCode!==null)throw Error('roost exited');await sleep(100);}
     throw Error('roost not ready');
 }
+async function resetRoost() {
+    roost.kill('SIGINT'); await once(roost,'exit');
+    roost = startRoost(); await ready(); invitationCount = 0;
+}
 async function pair() {
     // Each process has a bounded eight-invitation window. Restart only our
     // own disposable roost between closed cases rather than filling it.
-    if (invitationCount >= 6) { roost.kill('SIGINT'); await once(roost,'exit'); roost = startRoost(); await ready(); invitationCount = 0; }
+    if (invitationCount >= 6) await resetRoost();
     invitationCount++;
     const child=spawn('nice',['-n','10',path.join(root,'wt'),'pair','--show-link'],{cwd:root,env,stdio:['pipe','pipe','pipe']});
     pairs.push(child);let output='';child.stdout.on('data',b=>output+=b); // Invitation remains only in memory.
@@ -126,6 +130,9 @@ async function probe(page,wing) {
     },{base,wing});
 }
 try {
+    assert.ok(Buffer.byteLength(state) < 40);
+    assert.ok(home.startsWith(root + path.sep));
+    record('short-state','socket state uses a short temporary root; fixture HOME stays inside the checkout');
     await ready();
     cli('terminal','--unsandboxed','--detach','--name','join-proof-session','--cwd',home,'--','/bin/sleep','1800');
     sessionStarted=true;
@@ -150,6 +157,8 @@ try {
         assert.ok(!devices().includes(name),'single-sided approval issued device');
         for(let i=0;i<50&&!invitation.output().includes('Enter to allow');i++)await sleep(100);
         assert.ok(invitation.output().includes('Inventory only:'));
+        assert.ok(invitation.output().includes(await page.locator('.bp-emoji-labels').innerText()), 'terminal emoji labels differ from browser');
+        record('terminal-labels-'+size,'terminal prints the same four emoji names as the browser beside its glyphs');
         assert.ok(invitation.output().includes('Fingerprint: '+fp.replaceAll(/\s+/g,' ')));
         invitation.child.stdin.write('\n');
         await page.getByText('✓ Connected · Inventory only').waitFor({timeout:15000});
@@ -199,7 +208,7 @@ try {
             const f=await pair();
             let route;item.page.on('websocket',socket=>{route=socket.url();});
             await paste(item.page,f.link,'Scope '+requestedScope+' '+size);
-            await item.page.getByRole('heading',{name:'Machine unreachable',exact:true}).waitFor();
+            await item.page.getByRole('heading',{name:'Pairing refused',exact:true}).waitFor();
             assert.equal(new URL(route).pathname,'/ws/browser-phone');
             assert.equal(new URL(route).host,new URL(base).host);
             assert.ok(await item.page.evaluate(()=>window.__wingErrors.includes('denied')),'wing did not refuse wider scope');
@@ -208,6 +217,53 @@ try {
             await shot(item.page,size,'scope-'+requestedScope);
             record('scope-'+requestedScope+'-'+size,'app-Origin browser route request refused by wing with denied; no terminal approval or device');
             await item.context.close();f.child.kill('SIGINT');
+        }
+        // One tab pauses after saving its candidate. A second tab sharing the
+        // same IndexedDB must leave that candidate intact, including its pin.
+        {
+            if (invitationCount > 4) await resetRoost();
+            const owner=await newPage(viewport,()=>{
+                const put=IDBObjectStore.prototype.put,send=WebSocket.prototype.send;
+                let wrote=false,held=false;
+                IDBObjectStore.prototype.put=function(value,...rest){if(value.device_id)wrote=true;return put.call(this,value,...rest);};
+                WebSocket.prototype.send=function(value){
+                    if(wrote&&!held){held=true;window.__heldCandidateCommit={socket:this,value};return;}
+                    return send.call(this,value);
+                };
+                window.__releaseCandidateCommit=()=>{const c=window.__heldCandidateCommit;send.call(c.socket,c.value);};
+            });
+            const f=await pair();
+            await paste(owner.page,f.link,'Tabs '+size);
+            await owner.page.getByRole('button',{name:'Match · Join'}).waitFor();
+            const other=await owner.context.newPage();
+            await other.goto(base+'/app/#pair');
+            await other.getByRole('heading',{name:'Join from this browser'}).waitFor();
+            const next=await pair();
+            await paste(other,next.link,'Other tab '+size);
+            await other.getByRole('button',{name:'Match · Join'}).waitFor();
+            await owner.page.getByRole('button',{name:'Match · Join'}).click();
+            for(let i=0;i<50&&!f.output().includes('Enter to allow');i++)await sleep(100);
+            assert.ok(f.output().includes('Enter to allow'));f.child.stdin.write('\n');
+            await owner.page.waitForFunction(()=>!!window.__heldCandidateCommit);
+            await other.getByRole('button',{name:'Match · Join'}).click();
+            for(let i=0;i<50&&!next.output().includes('Enter to allow');i++)await sleep(100);
+            assert.ok(next.output().includes('Enter to allow'));next.child.stdin.write('\n');
+            await other.getByRole('heading',{name:'Browser storage unavailable',exact:true}).waitFor();
+            await other.getByRole('button',{name:'Pair again',exact:true}).click();
+            await paste(other,next.link,'Other tab '+size);
+            await other.getByRole('heading',{name:'Pairing cancelled',exact:true}).waitFor();
+            await shot(other,size,'other-tab-candidate');
+            const changed=decode(next.link);changed[3]=Buffer.alloc(32,17).toString('base64');
+            await other.getByRole('button',{name:'Pair again',exact:true}).click();
+            await paste(other,encode(changed),'Changed pin tab '+size);
+            await other.getByRole('heading',{name:'Identity mismatch',exact:true}).waitFor();
+            await owner.page.evaluate(()=>window.__releaseCandidateCommit());
+            await owner.page.getByText('✓ Connected · Inventory only').waitFor({timeout:15000});
+            assert.ok(devices().includes('Tabs '+size+'\tinventory\t'));
+            assert.ok(!devices().includes('Other tab '+size));
+            record('tabs-'+size,'concurrent tab cannot overwrite or delete another tab’s pending candidate or pin; original tab commits and opens inventory');
+            cli('devices','revoke','Tabs '+size);
+            await owner.context.close();f.child.kill('SIGINT');next.child.kill('SIGINT');
         }
         for(const failure of ['wrong-pin','wrong-secret','expired','mismatch','cancelled','unreachable','storage','storage-final','storage-readback','storage-activation','cancel-commit','pagehide-commit','unload-commit'].filter(name=>!process.env.WT_JOIN_CASE||name===process.env.WT_JOIN_CASE)) {
             const init=failure==='storage'?()=>{indexedDB.open=()=>{throw new DOMException('Unavailable','QuotaExceededError');};}:failure==='storage-final'?()=>{const put=IDBObjectStore.prototype.put;IDBObjectStore.prototype.put=function(value,...rest){if(value.device_id)throw new DOMException('Full','QuotaExceededError');return put.call(this,value,...rest);};}:failure==='storage-activation'?()=>{const put=IDBObjectStore.prototype.put;IDBObjectStore.prototype.put=function(value,...rest){if(value.ready===true)throw new DOMException('Full','QuotaExceededError');return put.call(this,value,...rest);};}:failure==='storage-readback'?()=>{
@@ -263,7 +319,7 @@ try {
     // five-minute wait proves both a start rejected by the wing and a commit
     // rejected after Enter, without changing the invitation's server deadline.
     if (!process.env.WT_JOIN_CASE) {
-        roost.kill('SIGINT');await once(roost,'exit');roost=startRoost();await ready();invitationCount=0;
+        await resetRoost();
         const expired=await pair(), real=decode(expired.link), pending=[];
         for(const viewport of [{width:390,height:844},{width:1440,height:900}]){
             const f=await pair();

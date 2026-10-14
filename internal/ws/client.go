@@ -53,10 +53,11 @@ type Client struct {
 
 	PublicKey string // X25519 identity key (base64)
 
-	Locked       bool
-	AllowedCount int
-	DirectMCP    bool
-	HostedRelay  string
+	Locked            bool
+	AllowedCount      int
+	DirectMCP         bool
+	HostedRelay       string
+	BrowserPhoneScope bool
 
 	// RelayPubKey is the relay's EC P-256 public key (base64 DER), received during registration.
 	// Used for JWT verification in direct mode.
@@ -210,24 +211,25 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 	// Send registration — projects flow through E2E tunnel only, never through relay
 	runtimeConfig := c.runtimeConfig()
 	reg := WingRegister{
-		Type:           TypeWingRegister,
-		WingID:         c.WingID,
-		Hostname:       c.Hostname,
-		Platform:       c.Platform,
-		Version:        c.Version,
-		Agents:         c.Agents,
-		Skills:         c.Skills,
-		Labels:         runtimeConfig.Labels,
-		Identities:     c.Identities,
-		Projects:       nil,
-		OrgSlug:        c.OrgSlug,
-		RootDir:        runtimeConfig.RootDir,
-		PublicKey:      c.PublicKey,
-		Locked:         runtimeConfig.Locked,
-		AllowedCount:   runtimeConfig.AllowedCount,
-		PurposeBinding: true,
-		DirectMCP:      runtimeConfig.DirectMCP,
-		HostedRelay:    runtimeConfig.HostedRelay,
+		Type:              TypeWingRegister,
+		WingID:            c.WingID,
+		Hostname:          c.Hostname,
+		Platform:          c.Platform,
+		Version:           c.Version,
+		Agents:            c.Agents,
+		Skills:            c.Skills,
+		Labels:            runtimeConfig.Labels,
+		Identities:        c.Identities,
+		Projects:          nil,
+		OrgSlug:           c.OrgSlug,
+		RootDir:           runtimeConfig.RootDir,
+		PublicKey:         c.PublicKey,
+		Locked:            runtimeConfig.Locked,
+		AllowedCount:      runtimeConfig.AllowedCount,
+		PurposeBinding:    true,
+		BrowserPhoneScope: c.BrowserPhoneScope,
+		DirectMCP:         runtimeConfig.DirectMCP,
+		HostedRelay:       runtimeConfig.HostedRelay,
 	}
 	if err := c.writeJSON(ctx, reg); err != nil {
 		return connected, fmt.Errorf("register: %w", err)

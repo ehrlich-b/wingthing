@@ -57,6 +57,10 @@ func (s *Server) forwardPhoneWS(w http.ResponseWriter, r *http.Request, browser 
 		http.Error(w, "relay unavailable", 403)
 		return
 	}
+	if browser && !wing.BrowserPhoneScope {
+		http.Error(w, "browser pairing refused: update and restart this wing to enforce inventory-only access", http.StatusForbidden)
+		return
+	}
 	// No cross-site browser clients. Native URLSession sends no Origin.
 	if !browser && r.Header.Get("Origin") != "" {
 		http.Error(w, "native phone route", 403)
@@ -116,7 +120,7 @@ func (s *Server) forwardPhoneWS(w http.ResponseWriter, r *http.Request, browser 
 		// Drop ALL sender identity hints, including forged roles and passkeys.
 		forwarded := ws.TunnelRequest{Type: ws.TypeTunnelRequest, WingID: id, RequestID: req.RequestID, Purpose: "phone", Payload: req.Payload, BrowserPhone: browser}
 		current := s.findAnyWingByWingID(id)
-		if current == nil || current.Conn != wing.Conn || !ws.HostedRelayAllowed(current.HostedRelay) || !s.relayAccess(wing.UserID).Allowed {
+		if current == nil || current.Conn != wing.Conn || (browser && !current.BrowserPhoneScope) || !ws.HostedRelayAllowed(current.HostedRelay) || !s.relayAccess(wing.UserID).Allowed {
 			return
 		}
 		if !s.registerTunnelRequest(id, req.RequestID, conn, false) {

@@ -433,12 +433,6 @@ func (m *Manager) handle(ctx context.Context, r Request) (Response, error) {
 		if p.cipher == nil || p.state == "cancelled" {
 			return Response{}, failure("cancelled")
 		}
-		// A route restriction follows the exchange even if later requests use
-		// another carrier; a browser route cannot resume a wider native grant.
-		p.inventoryOnly = p.inventoryOnly || r.InventoryOnly
-		if p.inventoryOnly && p.scope != "" && p.scope != ScopeInventory {
-			return Response{}, failure("denied")
-		}
 		data, e := auth.Decrypt(p.cipher, r.Payload)
 		if e != nil {
 			if err := m.cancelPending(p); err != nil {
@@ -450,6 +444,12 @@ func (m *Manager) handle(ctx context.Context, r Request) (Response, error) {
 		var c command
 		if json.Unmarshal(data, &c) != nil || c.ID != r.ID || "pair."+c.Op != r.Op {
 			return Response{}, failure("bad_proof")
+		}
+		// Bind route policy only after the payload authenticates and names this
+		// exchange; later carriers cannot resume a wider native grant.
+		p.inventoryOnly = p.inventoryOnly || r.InventoryOnly
+		if p.inventoryOnly && p.scope != "" && p.scope != ScopeInventory {
+			return Response{}, failure("denied")
 		}
 		switch r.Op {
 		case "pair.prove":
