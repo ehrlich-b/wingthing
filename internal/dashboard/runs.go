@@ -609,7 +609,7 @@ func humanTime(value string) string {
 	if err != nil {
 		return "Not reported"
 	}
-	return t.Local().Format("Jan 2, 2006 3:04 PM MST")
+	return t.Local().Format("Jan 2, 2006 15:04")
 }
 func (s *state) runOverlay() []string {
 	h := s.history()
