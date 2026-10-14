@@ -112,7 +112,7 @@ esac
 	f.env = append(f.env, "WT_INSTALL_DIR="+filepath.Join(f.home, "not-a-directory", "bin"))
 	northstarWrite(t, filepath.Join(f.home, "not-a-directory"), "fixture", 0600)
 	failed := northstarStartPTY(t, f, "/bin/sh", 120, 36, filepath.Join(f.repo, "scripts", "install.sh"))
-	failed.expect("installer writable path diagnosis", 0, "choose a writable WT_INSTALL_DIR", "no automatic sudo")
+	failed.expect("installer writable path diagnosis", 0, "choose a writable", "WT_INSTALL_DIR", "no automatic sudo")
 	onboardingStoryboardCapture(t, failed, "01-7")
 
 	// Cold launch diagnostics remain real. Native protected-parent acceptance is
