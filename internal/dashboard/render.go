@@ -304,9 +304,9 @@ func keyHints(s *state) []string {
 			return []string{"Answer in terminal   Esc back", "j/k scroll   PgUp/PgDn page"}
 		}
 		if s.overlayOffset < s.overlayLimit {
-			return []string{"End read to the last line   Esc cancel", "j/k scroll   PgUp/PgDn page"}
+			return []string{"End read to the last line   Esc cancel", "j/k scroll   PgUp/PgDn page   Ctrl-C quit"}
 		}
-		return []string{"Enter allow once   Esc cancel", "j/k scroll   PgUp/PgDn page"}
+		return []string{"Enter allow once   Esc cancel", "j/k scroll   PgUp/PgDn page   Ctrl-C quit"}
 	case runFilter:
 		return []string{"Enter keep search   Ctrl-U clear", "Esc back   Ctrl-C quit"}
 	case actionMenu:
