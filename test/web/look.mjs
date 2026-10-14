@@ -142,17 +142,18 @@ try {
     browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH });
     const contexts = [];
     for (const v of viewports) contexts.push(await browser.newContext({ viewport: { width: v.width, height: v.height } }));
+    contexts.push(await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark' }));
+    const themes = [...viewports, { width: 1440, height: 900, suffix: '-dark' }];
     // Empty state: signed in, no machine has connected yet.
-    for (const [index, v] of viewports.entries()) {
+    for (const [index, v] of themes.entries()) {
         const page = await contexts[index].newPage();
         await go(page, '');
         await shoot(page, '08-empty', v.suffix);
         await page.close();
     }
     for (const id of Object.keys(machines)) await machine(id);
-    const dark = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark' });
-    for (const [index, v] of [...viewports, { width: 1440, height: 900, suffix: '-dark' }].entries()) {
-        const page = await (index < 2 ? contexts[index] : dark).newPage();
+    for (const [index, v] of themes.entries()) {
+        const page = await contexts[index].newPage();
         page.on('pageerror', error => console.log('PAGEERROR ' + error));
         await go(page, '');
         await page.waitForSelector('[data-wing-id="studio"]', { timeout: 15000 }).catch(() => {});
@@ -183,7 +184,7 @@ try {
     // Mini goes to sleep: its socket closes and the app keeps its last-seen rows.
     sockets.get('mini').close();
     await sleep(1500);
-    for (const [index, v] of viewports.entries()) {
+    for (const [index, v] of themes.entries()) {
         const page = await contexts[index].newPage();
         await go(page, '#sessions');
         await page.waitForTimeout(1500);
@@ -191,7 +192,7 @@ try {
         await page.close();
     }
     // Phone app with no network: the worker's constant disconnected page.
-    for (const [index, v] of viewports.entries()) {
+    for (const [index, v] of themes.entries()) {
         const page = await contexts[index].newPage();
         await go(page, '');
         await page.evaluate(() => navigator.serviceWorker && navigator.serviceWorker.ready).catch(() => {});
