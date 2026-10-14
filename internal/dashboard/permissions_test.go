@@ -557,3 +557,16 @@ func TestPermissionRefreshShowsParallelRequestAfterSiblingPostToolUse(t *testing
 		t.Fatal("refreshed parallel request could not be reviewed and answered")
 	}
 }
+
+func TestPermissionPlaceSplitsAtCommasInsteadOfInsideTheDirectory(t *testing.T) {
+	s := permissionState(t)
+	r, _ := s.selection()
+	r.Permission.Directory = "/home/developer/projects/wingthing"
+	r.Permission.Digest = permissionbridge.Digest(permissionbridge.Input{Tool: r.Permission.Tool, Arguments: r.Permission.Arguments, Directory: r.Permission.Directory})
+	text := strings.Join(renderedLines(t, render(s, 132, 36, time.Now()), 132, 36), "\n")
+	for _, want := range []string{"on Studio, as developer", "in /home/developer/projects/wingthing", "a approve   d decline"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in\n%s", want, text)
+		}
+	}
+}
