@@ -1,6 +1,5 @@
 # wingthing
 
-[![ci](https://github.com/ehrlich-b/wingthing/actions/workflows/ci.yml/badge.svg)](https://github.com/ehrlich-b/wingthing/actions/workflows/ci.yml)
 
 Wingthing is a local-first, agent-first manager for durable agent runs and
 terminals. Start by giving Codex, Claude, or another parent agent typed MCP
@@ -493,7 +492,7 @@ curl -fsSL https://wingthing.ai/install.sh | sh
 Or build from source with Go 1.26.9+ and Node.js:
 
 ```bash
-git clone https://github.com/ehrlich-b/wingthing.git
+git clone https://gitlab.com/ehrlich-b/wingthing.git
 cd wingthing
 make check
 ```
