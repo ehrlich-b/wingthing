@@ -630,7 +630,7 @@ func render(s *state, width, height int, now time.Time) string {
 			set(7, "", plain)
 		} else if !s.hasAgent() && (s.machineFilter == "" || s.machineFilter == "local") {
 			set(3, "Install an agent", plain)
-			set(5, "a choose Claude Code or Codex", accent)
+			set(5, "A choose Claude Code or Codex", accent)
 			set(6, "", plain)
 			set(7, "", plain)
 			nameWidth := agentNameWidth(s.agents)
