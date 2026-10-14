@@ -79,7 +79,7 @@ func TestSetupEmptyNavigatorAndConnectionGuide(t *testing.T) {
 	s := setupFixture()
 	s.machines["local"] = machine{updated: time.Now()}
 	screen := render(s, 120, 36, time.Now())
-	for _, want := range []string{"Install an agent", "a install an agent", "1 machine", "Claude Code   Missing"} {
+	for _, want := range []string{"Install an agent", "A install an agent", "1 machine", "Claude Code   Missing"} {
 		if !strings.Contains(screen, want) {
 			t.Fatalf("missing %s", want)
 		}

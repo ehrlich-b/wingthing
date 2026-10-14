@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/mattn/go-runewidth"
+	"sort"
 	"strings"
 	"time"
 
@@ -79,8 +80,19 @@ func (s *state) livePermission(r row) (*permissions.Request, bool) {
 	}
 	return p, true
 }
+
+// Live requests always come from this machine's wing, so the place reads as
+// the session list does, with the user's home shortened to ~.
 func permissionWhere(p *permissions.Request) string {
-	return "on " + p.Machine + ", as " + p.User + ", in " + p.Directory
+	return "on this machine, as " + p.User + ", in " + permissionDirectory(p)
+}
+func permissionDirectory(p *permissions.Request) string {
+	for _, home := range []string{"/home/" + p.User, "/Users/" + p.User} {
+		if p.Directory == home || strings.HasPrefix(p.Directory, home+"/") {
+			return "~" + strings.TrimPrefix(p.Directory, home)
+		}
+	}
+	return p.Directory
 }
 func (s *state) permissionAction(key string) (*action, bool) {
 	r, ok := s.selection()
@@ -132,14 +144,29 @@ func (s *state) permissionReviewLines() []string {
 	if p == nil {
 		return []string{"Answer in terminal"}
 	}
-	title, confirm, cancel := "Allow once", "Enter allows this complete Bash invocation once.", "Esc cancels. No permission rule is saved."
+	title, confirm, cancel := "Allow once", "Enter allows this command once.", "Esc cancels. No permission rule is saved."
 	if !s.reviewPermissionLive() {
 		title, confirm, cancel = "Answer in terminal", "Answer in terminal", "Esc returns to the session list."
 	}
-	wire, _ := json.MarshalIndent(p.Arguments, "", "  ")
-	lines := []string{title, s.target.name(), "", "WILL RUN", fmt.Sprint(p.Arguments["command"]), permissionWhere(p), "", "Tool: " + p.Tool, "Arguments:"}
-	lines = append(lines, strings.Split(string(wire), "\n")...)
-	return append(lines, "Scope: "+p.Scope, "Deadline: "+p.Deadline.Local().Format("15:04:05"), "Request: "+p.RequestID, "Digest: "+p.Digest, "", confirm, cancel)
+	lines := []string{title, s.target.name(), "", "WILL RUN", fmt.Sprint(p.Arguments["command"]), permissionWhere(p)}
+	// Any argument besides the command is part of what Enter allows, so it
+	// stays on screen as a plain key and value.
+	keys := make([]string, 0, len(p.Arguments))
+	for key := range p.Arguments {
+		if key != "command" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		value, ok := p.Arguments[key].(string)
+		if !ok {
+			wire, _ := json.Marshal(p.Arguments[key])
+			value = string(wire)
+		}
+		lines = append(lines, key+": "+value)
+	}
+	return append(lines, "", "Expires at "+p.Deadline.Local().Format("15:04"), "", confirm, cancel)
 }
 
 // Permission review preserves every space: normal prose wrapping would change
@@ -168,7 +195,7 @@ func (s *state) overlayWrap(line string, width int) []string {
 func (s *state) permissionKeys(r row) string {
 	label := s.permissionPosition(r)
 	if r.PermissionRespond {
-		return label + "a review   d decline   Enter open"
+		return label + "a approve   d decline   Enter open"
 	}
 	return label + "Answer in terminal   Enter open"
 }
@@ -177,9 +204,6 @@ func (s *state) permissionPosition(r row) string {
 	requests := s.pendingPermissions(r)
 	if r.Permission != nil && s.permissionWasAnswered(r.Permission.RequestID) && len(requests) > 0 {
 		return fmt.Sprintf("%d pending · [/] requests   ", len(requests))
-	}
-	if len(requests) == 1 {
-		return "1 pending   "
 	}
 	if len(requests) > 1 {
 		index := 0

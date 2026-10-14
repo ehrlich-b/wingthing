@@ -609,7 +609,7 @@ func humanTime(value string) string {
 	if err != nil {
 		return "Not reported"
 	}
-	return t.Local().Format("Jan 2, 2006 3:04 PM MST")
+	return t.Local().Format("Jan 2, 2006 15:04")
 }
 func (s *state) runOverlay() []string {
 	h := s.history()
@@ -676,7 +676,7 @@ func runNeedsRecovery(r runRow) bool {
 func runWhat(r runRow) string {
 	what := agentLabel(r.Agent) + " in " + projectName(r.CWD)
 	if r.route.name != "" {
-		what += " on " + machineLabel(r.route.name)
+		what += " on " + machinePhrase(r.route.name)
 	}
 	return what
 }
@@ -716,7 +716,7 @@ func runRecoveryLines(title string, r runRow) []string {
 		lines = append(lines, "wt saved the original request. It never sends it again by itself.")
 	}
 	if r.Cleanup == "unknown" || r.Cleanup == "required" || r.Cleanup == "attention" {
-		lines = append(lines, "Some processes may still run on "+machineLabel(r.route.name)+". Check before you clean up.")
+		lines = append(lines, "Some processes may still run on "+machinePhrase(r.route.name)+". Check before you clean up.")
 	}
 	where := "In a terminal, run:"
 	if r.route.name != "local" {

@@ -38,7 +38,8 @@ func Run(ctx context.Context, version string, streams remotepkg.IO) error {
 	if err != nil {
 		return err
 	}
-	s := &state{machines: map[string]machine{"local": {}}, defaultAgent: cfg.DefaultAgent, defaultCWD: cwd, localDir: cfg.Dir, agents: onboarding.Discover(), persistAttention: true, theme: detectTheme()}
+	home, _ := os.UserHomeDir()
+	s := &state{machines: map[string]machine{"local": {}}, defaultAgent: cfg.DefaultAgent, defaultCWD: cwd, home: home, localDir: cfg.Dir, agents: onboarding.Discover(), persistAttention: true, theme: detectTheme()}
 	s.loadReadCursors()
 	s.previewReader = readSessionPreview
 	inv := newInventory(nil)

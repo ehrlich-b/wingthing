@@ -227,7 +227,7 @@ func TestRecentRunsLayoutAndTruthfulUnknown(t *testing.T) {
 	}
 	s.handle("r")
 	text = strings.Join(overlayLines(s, time.Now()), "\n")
-	for _, want := range []string{"wt agent recover", "--snapshot FILE", "original request was not saved", "In a terminal, run:", "Some processes may still run on This machine"} {
+	for _, want := range []string{"wt agent recover", "--snapshot FILE", "original request was not saved", "In a terminal, run:", "Some processes may still run on this machine"} {
 		if !strings.Contains(text, want) {
 			t.Fatal(want, text)
 		}
@@ -327,5 +327,17 @@ func TestRecentRunsGiveSameValueColumnsToTitlesAt80(t *testing.T) {
 	_, body, _, _ := s.runView(time.Now(), 80)
 	if strings.Contains(body[0].text, "Project") || !strings.Contains(body[1].text, title) || strings.Contains(body[1].text, "...") {
 		t.Fatal("run title cut while a same-value column kept its room", body[0].text, body[1].text)
+	}
+}
+
+func TestRecentRunsOfferNextPageOnlyWithACursor(t *testing.T) {
+	s := fixture()
+	s.recent = true
+	h := s.history()
+	r := runRow{WingID: "one", ID: "only", SessionID: "egg", Status: "done", Cleanup: "complete", OutputAvailability: "available", route: runRoute{name: "local", wingID: "one"}}
+	h.pages["one"] = runPage{WingID: "one", Runs: []runRow{r}, route: r.route}
+	h.reconcile()
+	if text := render(s, 120, 24, time.Now()); strings.Contains(text, "N next page") {
+		t.Fatal("next page offered without a cursor")
 	}
 }

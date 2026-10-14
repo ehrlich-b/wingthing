@@ -61,7 +61,7 @@ func TestOnboardingPTYStoryboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := northstarStartPTY(t, f, binary, 120, 36)
-	h.expect("empty onboarding", 0, "Install an agent", "a install an agent")
+	h.expect("empty onboarding", 0, "Install an agent", "A install an agent")
 	onboardingStoryboardCapture(t, h, "01-2")
 	onboardingStoryboardCapture(t, h, "01-8")
 	h.expect("local detection", h.send("a"), "Install an agent", "Missing")

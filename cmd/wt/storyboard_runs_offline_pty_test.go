@@ -48,7 +48,7 @@ func TestStoryboardRunsOfflinePTY(t *testing.T) {
 	h.send("\x1b")
 	h.expect("report return", 0, "Runs / diagnostics")
 	h.send("\x1b")
-	h.expect("navigator return", 0, "0 sessions", "a install an agent")
+	h.expect("navigator return", 0, "0 sessions", "A install an agent")
 	h.exit("q")
 	after := fixture.Inventory(t, f.work)
 	if fmt.Sprint(before) != fmt.Sprint(after) {

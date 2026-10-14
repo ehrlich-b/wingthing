@@ -228,7 +228,14 @@ func (s *state) paperPane(r row, now time.Time, width, height int) []string {
 				lines = append(lines, parts...)
 			}
 			appendExact(fmt.Sprint(p.Arguments["command"]))
-			appendExact(permissionWhere(p))
+			// The command wraps exactly; the place splits at its own commas so a
+			// directory is never broken across lines when it fits whole.
+			if where := permissionWhere(p); runewidth.StringWidth(where) <= width {
+				appendExact(where)
+			} else {
+				appendExact("on this machine, as " + p.User)
+				appendExact("in " + permissionDirectory(p))
+			}
 			action = s.permissionKeys(r)
 			break
 		}

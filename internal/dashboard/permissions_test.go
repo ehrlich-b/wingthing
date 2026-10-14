@@ -34,9 +34,14 @@ func TestPermissionTUIReviewAndExplicitOnce(t *testing.T) {
 		t.Fatal("a delivered without review")
 	}
 	text := strings.Join(s.permissionReviewLines(), "\n")
-	for _, want := range []string{"echo allowed", "Studio", "developer", "~/code/wingthing", "Digest:", "Arguments:", "Allow once"} {
+	for _, want := range []string{"echo allowed", "this machine", "developer", "~/code/wingthing", "Expires at", "Allow once"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("review missing %s", want)
+		}
+	}
+	for _, hidden := range []string{"Digest", "Request", "Scope", "{"} {
+		if strings.Contains(text, hidden) {
+			t.Fatalf("review shows %s", hidden)
 		}
 	}
 	s.handle("escape")
@@ -76,7 +81,7 @@ func TestPermissionTUIStaleUnsafeAndReplacedFallback(t *testing.T) {
 			t.Fatal("unsafe request actionable")
 		}
 		text := render(s, 132, 36, time.Now())
-		if !strings.Contains(text, "Answer in terminal") || strings.Contains(text, "a review") {
+		if !strings.Contains(text, "Answer in terminal") || strings.Contains(text, "a approve") {
 			t.Fatal("fallback missing")
 		}
 	}
@@ -206,12 +211,12 @@ func TestPermissionTUIReadOnlyShowsCommandWithoutDecisionKeys(t *testing.T) {
 	s.machines["local"] = m
 	for _, size := range [][2]int{{132, 36}, {80, 24}} {
 		text := render(s, size[0], size[1], time.Now())
-		for _, want := range []string{"WILL RUN", "echo allowed", "Studio", "developer", "Answer in terminal"} {
+		for _, want := range []string{"WILL RUN", "echo allowed", "developer", "Answer in terminal"} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("read-only display missing %q: %s", want, text)
 			}
 		}
-		if strings.Contains(text, "a review") || strings.Contains(text, "d decline") {
+		if strings.Contains(text, "a approve") || strings.Contains(text, "d decline") {
 			t.Fatal("response keys visible without grant")
 		}
 	}
@@ -223,7 +228,7 @@ func TestPermissionTUIReadOnlyShowsCommandWithoutDecisionKeys(t *testing.T) {
 	s.target, _ = s.selection()
 	s.mode = details
 	text := strings.Join(overlayLines(s, time.Now()), "\n")
-	if !strings.Contains(text, "WILL RUN") || strings.Contains(text, "a review") {
+	if !strings.Contains(text, "WILL RUN") || strings.Contains(text, "a approve") {
 		t.Fatal("read-only details incorrect")
 	}
 }
@@ -235,7 +240,7 @@ func TestPermissionTUIRevocationRemovesReviewAndHelpKeys(t *testing.T) {
 	m.sessions[0].PermissionRespond = false
 	s.machines["local"] = m
 	text := render(s, 132, 36, time.Now())
-	if !strings.Contains(text, "WILL RUN") || !strings.Contains(text, "Answer in terminal") || strings.Contains(text, "Enter Allow once") || strings.Contains(text, "Enter allows") {
+	if !strings.Contains(text, "WILL RUN") || !strings.Contains(text, "Answer in terminal") || strings.Contains(text, "Enter allow once") || strings.Contains(text, "Enter allows") {
 		t.Fatal("revoked review retained approval keys")
 	}
 	if act, _ := s.handle("enter"); act != nil {
@@ -243,7 +248,7 @@ func TestPermissionTUIRevocationRemovesReviewAndHelpKeys(t *testing.T) {
 	}
 	s.mode = help
 	text = strings.Join(overlayLines(s, time.Now()), "\n")
-	if strings.Contains(text, "a review") || strings.Contains(text, "d decline") {
+	if strings.Contains(text, "a approve") || strings.Contains(text, "d decline") {
 		t.Fatal("read-only help advertises decision keys")
 	}
 }
@@ -343,7 +348,7 @@ func TestPermissionTUIParallelReviewRemovalAndReadOnly(t *testing.T) {
 		t.Fatal("read-only requests cannot be navigated")
 	}
 	text := render(s, 80, 24, time.Now())
-	if !strings.Contains(text, "2 pending") || !strings.Contains(text, "Answer in terminal") || strings.Contains(text, "a review") {
+	if !strings.Contains(text, "2 pending") || !strings.Contains(text, "Answer in terminal") || strings.Contains(text, "a approve") {
 		t.Fatal("read-only parallel display incorrect")
 	}
 }
@@ -555,5 +560,34 @@ func TestPermissionRefreshShowsParallelRequestAfterSiblingPostToolUse(t *testing
 	act, _ := s.handle("enter")
 	if act == nil || act.permission == nil || act.permission.RequestID != remaining.RequestID {
 		t.Fatal("refreshed parallel request could not be reviewed and answered")
+	}
+}
+
+func TestPermissionPlaceSplitsAtCommasInsteadOfInsideTheDirectory(t *testing.T) {
+	s := permissionState(t)
+	r, _ := s.selection()
+	r.Permission.Directory = "/srv/builds/developer/projects/wingthing"
+	r.Permission.Digest = permissionbridge.Digest(permissionbridge.Input{Tool: r.Permission.Tool, Arguments: r.Permission.Arguments, Directory: r.Permission.Directory})
+	text := strings.Join(renderedLines(t, render(s, 132, 36, time.Now()), 132, 36), "\n")
+	for _, want := range []string{"on this machine, as developer", "in /srv/builds/developer/projects/wingthing", "a approve   d decline"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in\n%s", want, text)
+		}
+	}
+}
+
+func TestPermissionReviewKeepsExtraArgumentsAndShortensHome(t *testing.T) {
+	p := &permissions.Request{Arguments: map[string]any{"command": "ls", "timeout": 30, "description": "list"}, Directory: "/home/dev/projects/wingthing", User: "dev"}
+	if got := permissionWhere(p); got != "on this machine, as dev, in ~/projects/wingthing" {
+		t.Fatalf("where = %q", got)
+	}
+	s := &state{}
+	s.target.Permission = p
+	text := strings.Join(s.permissionReviewLines(), "\n")
+	if !strings.Contains(text, "description: list\ntimeout: 30") {
+		t.Fatalf("extra arguments hidden:\n%s", text)
+	}
+	if permissionDirectory(&permissions.Request{Directory: "/home/devops/x", User: "dev"}) != "/home/devops/x" {
+		t.Fatal("shortened another user's home")
 	}
 }
