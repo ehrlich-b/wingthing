@@ -713,7 +713,7 @@ func TestStaticSW(t *testing.T) {
 func TestStaticFontsAreCacheableAndAppIsNot(t *testing.T) {
 	_, ts := testServer(t)
 
-	resp, err := http.Get(ts.URL + "/app/fonts/newsreader-latin.woff2")
+	resp, err := http.Get(ts.URL + "/app/fonts/JetBrainsMono-Regular.woff2")
 	if err != nil {
 		t.Fatalf("GET font: %v", err)
 	}
