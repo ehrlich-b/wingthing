@@ -375,7 +375,7 @@ func keyHints(s *state) []string {
 	}
 	if r, ok := s.selection(); ok {
 		if _, live := s.livePermission(r); live && r.PermissionRespond {
-			return []string{s.permissionKeys(r) + "   / search", "j/k move   A agents   D diagnostics   ? help   q quit"}
+			return []string{s.permissionKeys(r) + "   / search", "j/k move   A agents   D diagnostics   ? help   q quit   Ctrl+B then q detaches"}
 		}
 	}
 	return []string{"Enter open   / search   n new   ! needs you   . actions", "j/k move   m machines   h runs   " + s.refreshKey() + "   ? help   q quit   Ctrl+B then q detaches"}
