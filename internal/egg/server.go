@@ -654,9 +654,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		defer cleanup()
 		if s.permissions != nil {
 			prepared.Sandbox.DenyWrite = append(prepared.Sandbox.DenyWrite, filepath.Dir(permissions.Socket(home, filepath.Base(s.dir))))
-		}
-		if socket := permissionSocketForSandbox(home, filepath.Base(s.dir)); socket != "" {
-			prepared.Sandbox.AllowSockets = append(prepared.Sandbox.AllowSockets, socket)
+			if socket := permissionSocketForSandbox(home, filepath.Base(s.dir)); socket != "" {
+				prepared.Sandbox.AllowSockets = append(prepared.Sandbox.AllowSockets, socket)
+			}
 		}
 	}
 	// Preparation merges the data-home environment again. Apply the Mac

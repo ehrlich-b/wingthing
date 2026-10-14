@@ -3,6 +3,7 @@ package egg
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/ehrlich-b/wingthing/internal/permissions"
 	"os"
 	"path/filepath"
@@ -11,6 +12,9 @@ import (
 )
 
 func TestPermissionSettingsPreserveObserversAndOtherHooks(t *testing.T) {
+	if !permissions.NativeHookSupported() {
+		t.Skip("native hook authentication unavailable")
+	}
 	home, err := os.MkdirTemp("", "wp-home-")
 	if err != nil {
 		t.Fatal(err)
@@ -57,6 +61,65 @@ func TestPermissionSettingsPreserveObserversAndOtherHooks(t *testing.T) {
 	for _, event := range []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "Stop", "StopFailure", "SessionEnd"} {
 		if len(settings.Hooks[event]) == 0 {
 			t.Fatal("observer missing " + event)
+		}
+	}
+}
+
+func TestPermissionSettingsPlatformGateAndUniqueBash(t *testing.T) {
+	for _, supported := range []bool{false, true} {
+		for _, ask := range []string{`["Write"]`, `["Bash","Write","Bash"]`} {
+			t.Run(fmt.Sprintf("supported=%v/ask=%s", supported, ask), func(t *testing.T) {
+				home, err := os.MkdirTemp("", "wp-gate-")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer os.RemoveAll(home)
+				dir := filepath.Join(home, "egg")
+				if err := os.MkdirAll(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+				args, err := prepareClaudeLifecycleArgs([]string{"--settings", `{"permissions":{"ask":` + ask + `,"deny":["Bash(rm:*)"]}}`}, home, dir, "provider", home)
+				if err != nil {
+					t.Fatal(err)
+				}
+				path := args[len(args)-1]
+				before, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				s := &Server{dir: dir}
+				cleanup, err := s.preparePermissionsForPlatform(t.Context(), home, path, "provider", map[string]string{}, false, supported)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer cleanup()
+				after, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !supported {
+					if string(before) != string(after) || s.permissions != nil || s.permissionStarted != nil {
+						t.Fatal("unsupported platform changed generated settings or started broker")
+					}
+					return
+				}
+				var settings struct {
+					Permissions struct{ Ask, Deny []string }
+					Hooks       map[string][]json.RawMessage
+				}
+				if err := json.Unmarshal(after, &settings); err != nil {
+					t.Fatal(err)
+				}
+				bash := 0
+				for _, rule := range settings.Permissions.Ask {
+					if rule == "Bash" {
+						bash++
+					}
+				}
+				if bash != 1 || len(settings.Permissions.Ask) != 2 || len(settings.Permissions.Deny) != 1 || len(settings.Hooks["PermissionRequest"]) != 2 || s.permissions == nil {
+					t.Fatalf("supported settings lost rules or duplicated Bash: %s", after)
+				}
+			})
 		}
 	}
 }

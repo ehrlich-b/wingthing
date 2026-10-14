@@ -18,6 +18,13 @@ import (
 // Start only for the real interactive Claude path, after ordinary preparation.
 // Observers and supplied hooks retain their entries. disableAllHooks is honored.
 func (s *Server) preparePermissions(ctx context.Context, home, settingsPath, provider string, env map[string]string, namespaced bool) (func(), error) {
+	return s.preparePermissionsForPlatform(ctx, home, settingsPath, provider, env, namespaced, permissions.NativeHookSupported())
+}
+
+func (s *Server) preparePermissionsForPlatform(ctx context.Context, home, settingsPath, provider string, env map[string]string, namespaced, supported bool) (func(), error) {
+	if !supported {
+		return func() {}, nil
+	}
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
 		return nil, err
@@ -82,7 +89,21 @@ func (s *Server) preparePermissions(ctx context.Context, home, settingsPath, pro
 		perms = map[string]any{}
 	}
 	ask, _ := perms["ask"].([]any)
-	perms["ask"] = append(ask, "Bash")
+	unique := make([]any, 0, len(ask)+1)
+	hasBash := false
+	for _, rule := range ask {
+		if name, ok := rule.(string); ok && name == "Bash" {
+			if hasBash {
+				continue
+			}
+			hasBash = true
+		}
+		unique = append(unique, rule)
+	}
+	if !hasBash {
+		unique = append(unique, "Bash")
+	}
+	perms["ask"] = unique
 	settings["permissions"] = perms
 	data, err = json.Marshal(settings)
 	if err == nil {
