@@ -34,8 +34,8 @@ The wide view adds recent messages from the selected session and wing at 120
 columns and 30 rows. Smaller terminals use a detail area below the list. Messages
 load through the same saved route; they do not acknowledge unread responses.
 
-Extended-color terminals use a cream sheet with ink, red, slate and moss.
-Basic terminals keep their own canvas. `NO_COLOR=1 wt` keeps state words
+`wt` keeps your terminal's colors. Secondary text is dim, the selected row
+is bold, and only state cells are colored. `NO_COLOR=1 wt` keeps state words
 and selection markers.
 Borders use box drawing when the locale supports Unicode. `WT_TUI_ASCII=1 wt`
 uses ASCII borders. Bare `wt` without a terminal prints CLI help.
