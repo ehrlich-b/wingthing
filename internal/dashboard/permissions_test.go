@@ -591,3 +591,44 @@ func TestPermissionReviewKeepsExtraArgumentsAndShortensHome(t *testing.T) {
 		t.Fatal("shortened another user's home")
 	}
 }
+
+func TestPermissionPlainArgumentsNeedNoDisplayCleaning(t *testing.T) {
+	for _, tc := range []struct{ name, key, value string }{
+		{"newline value", "description", "left\nright"},
+		{"escape value", "description", "left\x1bright"},
+		{"tab value", "description", "left\tright"},
+		{"newline key", "extra\nfield", "value"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := permissionState(t)
+			r, _ := s.selection()
+			p := r.Permission
+			p.Arguments[tc.key] = tc.value
+			p.Digest = permissionbridge.Digest(permissionbridge.Input{Tool: p.Tool, Arguments: p.Arguments, Directory: p.Directory})
+			if _, live := s.livePermission(r); live {
+				t.Fatal("plain argument needs cleaning but the request remains approvable")
+			}
+			text := render(s, 132, 36, time.Now())
+			if !strings.Contains(text, "Answer in terminal") || strings.Contains(text, "a approve") {
+				t.Fatal("unreviewable argument did not use the terminal fallback")
+			}
+			act, _ := s.handle("a")
+			if s.mode == permissionReview || (act != nil && act.permission != nil) {
+				t.Fatal("unreviewable argument opened an actionable permission review")
+			}
+		})
+	}
+	s := permissionState(t)
+	r, _ := s.selection()
+	p := r.Permission
+	p.Arguments["description"] = "keep  these spaces and 'quotes'"
+	p.Arguments["timeout"] = 30
+	p.Digest = permissionbridge.Digest(permissionbridge.Input{Tool: p.Tool, Arguments: p.Arguments, Directory: p.Directory})
+	if _, live := s.livePermission(r); !live {
+		t.Fatal("ordinary plain arguments lost their permission review")
+	}
+	s.handle("a")
+	if text := strings.Join(s.permissionReviewLines(), "\n"); !strings.Contains(text, "description: keep  these spaces and 'quotes'") || !strings.Contains(text, "timeout: 30") {
+		t.Fatal("ordinary argument display changed")
+	}
+}

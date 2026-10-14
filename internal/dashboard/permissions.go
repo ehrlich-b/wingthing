@@ -72,6 +72,16 @@ func (s *state) livePermission(r row) (*permissions.Request, bool) {
 	// Text that would require escaping or redaction cannot be fully reviewed.
 	// Keep that request on the provider's native surface instead of approving a
 	// cleaned-up representation of a different command.
+	// Extra argument names and string values are shown as plain text. Keep
+	// requests needing escaping or redaction on the native provider surface.
+	for key, value := range p.Arguments {
+		if clean(key) != key || sessionsearch.Redact(key) != key {
+			return nil, false
+		}
+		if text, ok := value.(string); ok && (clean(text) != text || sessionsearch.Redact(text) != text) {
+			return nil, false
+		}
+	}
 	wire, _ := json.Marshal(p.Arguments)
 	for _, value := range []string{command, string(wire), p.Machine, p.User, p.Directory, p.Scope} {
 		if clean(value) != value || sessionsearch.Redact(value) != value {
