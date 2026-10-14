@@ -1,4 +1,18 @@
 .DEFAULT_GOAL := check
+.PHONY: browser-pake check-browser-pake test-pairing
+
+# Isolated experiment; never included in the web app or release binary.
+browser-pake:
+	sh experiments/browser-pake/build.sh
+
+check-browser-pake: browser-pake
+	@mkdir -p .scratch/browser-pake/home
+	HOME="$(CURDIR)/.scratch/browser-pake/home" $(GO) build -p 2 -o .scratch/browser-pake/go-peer ./experiments/browser-pake/go-peer
+	HOME="$(CURDIR)/.scratch/browser-pake/home" $(NODE) experiments/browser-pake/run.mjs
+
+test-pairing:
+	$(GO) test -p 2 -count=1 ./internal/pake ./internal/phonepair
+
 .PHONY: check gate test-parent-lifecycle-offline test-parent-lifecycle-protocol test-parent-lifecycle-protocol-race test-parent-lifecycle-built test-run-inspect test-run-inspect-race test-run-inspect-roundtrip test-run-recovery test-run-recovery-race test-run-load test-run-load-full test-run-canary e2e-linux e2e-web e2e-mac release deploy ops proto web serve clean
 
 GO ?= nice -n 15 go
