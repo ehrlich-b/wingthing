@@ -76,7 +76,7 @@ func TestPermissionTUIStaleUnsafeAndReplacedFallback(t *testing.T) {
 			t.Fatal("unsafe request actionable")
 		}
 		text := render(s, 132, 36, time.Now())
-		if !strings.Contains(text, "Answer in terminal") || strings.Contains(text, "a review") {
+		if !strings.Contains(text, "Answer in terminal") || strings.Contains(text, "a approve") {
 			t.Fatal("fallback missing")
 		}
 	}
@@ -211,7 +211,7 @@ func TestPermissionTUIReadOnlyShowsCommandWithoutDecisionKeys(t *testing.T) {
 				t.Fatalf("read-only display missing %q: %s", want, text)
 			}
 		}
-		if strings.Contains(text, "a review") || strings.Contains(text, "d decline") {
+		if strings.Contains(text, "a approve") || strings.Contains(text, "d decline") {
 			t.Fatal("response keys visible without grant")
 		}
 	}
@@ -223,7 +223,7 @@ func TestPermissionTUIReadOnlyShowsCommandWithoutDecisionKeys(t *testing.T) {
 	s.target, _ = s.selection()
 	s.mode = details
 	text := strings.Join(overlayLines(s, time.Now()), "\n")
-	if !strings.Contains(text, "WILL RUN") || strings.Contains(text, "a review") {
+	if !strings.Contains(text, "WILL RUN") || strings.Contains(text, "a approve") {
 		t.Fatal("read-only details incorrect")
 	}
 }
@@ -235,7 +235,7 @@ func TestPermissionTUIRevocationRemovesReviewAndHelpKeys(t *testing.T) {
 	m.sessions[0].PermissionRespond = false
 	s.machines["local"] = m
 	text := render(s, 132, 36, time.Now())
-	if !strings.Contains(text, "WILL RUN") || !strings.Contains(text, "Answer in terminal") || strings.Contains(text, "Enter Allow once") || strings.Contains(text, "Enter allows") {
+	if !strings.Contains(text, "WILL RUN") || !strings.Contains(text, "Answer in terminal") || strings.Contains(text, "Enter allow once") || strings.Contains(text, "Enter allows") {
 		t.Fatal("revoked review retained approval keys")
 	}
 	if act, _ := s.handle("enter"); act != nil {
@@ -243,7 +243,7 @@ func TestPermissionTUIRevocationRemovesReviewAndHelpKeys(t *testing.T) {
 	}
 	s.mode = help
 	text = strings.Join(overlayLines(s, time.Now()), "\n")
-	if strings.Contains(text, "a review") || strings.Contains(text, "d decline") {
+	if strings.Contains(text, "a approve") || strings.Contains(text, "d decline") {
 		t.Fatal("read-only help advertises decision keys")
 	}
 }
@@ -343,7 +343,7 @@ func TestPermissionTUIParallelReviewRemovalAndReadOnly(t *testing.T) {
 		t.Fatal("read-only requests cannot be navigated")
 	}
 	text := render(s, 80, 24, time.Now())
-	if !strings.Contains(text, "2 pending") || !strings.Contains(text, "Answer in terminal") || strings.Contains(text, "a review") {
+	if !strings.Contains(text, "2 pending") || !strings.Contains(text, "Answer in terminal") || strings.Contains(text, "a approve") {
 		t.Fatal("read-only parallel display incorrect")
 	}
 }

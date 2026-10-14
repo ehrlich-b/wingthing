@@ -168,7 +168,7 @@ func (s *state) overlayWrap(line string, width int) []string {
 func (s *state) permissionKeys(r row) string {
 	label := s.permissionPosition(r)
 	if r.PermissionRespond {
-		return label + "a review   d decline   Enter open"
+		return label + "a approve   d decline   Enter open"
 	}
 	return label + "Answer in terminal   Enter open"
 }
@@ -177,9 +177,6 @@ func (s *state) permissionPosition(r row) string {
 	requests := s.pendingPermissions(r)
 	if r.Permission != nil && s.permissionWasAnswered(r.Permission.RequestID) && len(requests) > 0 {
 		return fmt.Sprintf("%d pending · [/] requests   ", len(requests))
-	}
-	if len(requests) == 1 {
-		return "1 pending   "
 	}
 	if len(requests) > 1 {
 		index := 0

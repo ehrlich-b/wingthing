@@ -303,7 +303,10 @@ func keyHints(s *state) []string {
 		if !s.reviewPermissionLive() {
 			return []string{"Answer in terminal   Esc back", "j/k scroll   PgUp/PgDn page"}
 		}
-		return []string{"Enter Allow once (after review)   Esc cancel", "j/k scroll   PgUp/PgDn page   End last line"}
+		if s.overlayOffset < s.overlayLimit {
+			return []string{"End read to the last line   Esc cancel", "j/k scroll   PgUp/PgDn page"}
+		}
+		return []string{"Enter allow once   Esc cancel", "j/k scroll   PgUp/PgDn page"}
 	case runFilter:
 		return []string{"Enter keep search   Ctrl-U clear", "Esc back   Ctrl-C quit"}
 	case actionMenu:
@@ -1004,20 +1007,17 @@ func overlayLines(s *state, now time.Time) []string {
 		return s.runOverlay()
 	}
 	if s.mode == help {
-		permissionHint := ""
+		lines := []string{"Help", "Move", "  j/k or arrows move   PgUp/PgDn page   Home/End first/last", "",
+			"Open", "  Enter open terminal   v read only   i session details"}
 		if r, selected := s.selection(); selected && r.PermissionRespond {
 			if _, live := s.livePermission(r); live {
-				permissionHint = "; a review / d decline live Bash; Enter allows once"
+				lines = append(lines, "  a approve: read the command, then Enter runs it once   d decline")
 			}
 		}
-		return []string{"Help", "Move", "  j/k or arrows move   PgUp/PgDn page   Home/End first/last", "",
-			"Open", "  Enter open terminal   v read only   i session details",
-			"  Ctrl+B then q returns here; Ctrl+B twice sends Ctrl+B.", "",
-			"Find", "  / search sessions   ! needs you   m machine scope", "",
-			"Manage", "  n new   A agents (a without a live request)   . actions",
-			"  h recent runs   M machine details   D diagnostics   R refresh",
-			"  b bell " + s.bellSetting() + permissionHint, "",
-			"Leave", "  q or Ctrl-C quits. Leaving keeps sessions running.", "* marks a new reply. Unknown means the agent does not say if it is working."}
+		return append(lines, "  Ctrl+B then q returns here; Ctrl+B twice sends Ctrl+B.", "", "Find", "  / search sessions   ! needs you   m machine scope", "",
+			"Manage", "  n new   A agents   . actions   h recent runs",
+			"  M machine details   D diagnostics   R refresh   b bell "+s.bellSetting(), "",
+			"Leave", "  q or Ctrl-C quits. Leaving keeps sessions running.", "* marks a new reply. Unknown means the agent does not say if it is working.")
 	}
 
 	r := s.target
