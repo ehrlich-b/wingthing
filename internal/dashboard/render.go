@@ -612,15 +612,20 @@ func render(s *state, width, height int, now time.Time) string {
 			set(5, "a choose Claude Code or Codex", accent)
 			set(6, "", plain)
 			set(7, "", plain)
+			nameWidth := agentNameWidth(s.agents)
 			for i, a := range s.agents {
-				set(7+i, a.Name+"   Missing", secondary)
+				set(7+i, field(a.Name, nameWidth)+"   Missing", secondary)
 			}
 		} else {
 			emptyMachine := s.machineFilter
 			if emptyMachine == "" {
 				emptyMachine = "local"
 			}
-			set(3, "No sessions yet on "+machineLabel(emptyMachine), plain)
+			where := "this machine"
+			if emptyMachine != "local" {
+				where = machineLabel(emptyMachine)
+			}
+			set(3, "No sessions yet on "+where, plain)
 			set(5, "n new session", accent)
 			set(6, "", plain)
 			set(7, "", plain)
@@ -680,10 +685,14 @@ func render(s *state, width, height int, now time.Time) string {
 	if s.mode == machinePicker {
 		body := []viewLine{{text: "Machines", tone: plain}, {}}
 		choices := append([]string{""}, s.machineNames()...)
+		nameWidth := runewidth.StringWidth("All machines")
+		for _, name := range choices[1:] {
+			nameWidth = max(nameWidth, runewidth.StringWidth(machineLabel(name)))
+		}
 		for i, name := range choices {
 			text := "All machines"
 			if name != "" {
-				text = machineLabel(name) + "   " + connection(s.machines[name], now)
+				text = field(machineLabel(name), nameWidth) + "   " + connection(s.machines[name], now)
 			}
 			prefix := "  "
 			if i == s.picker {

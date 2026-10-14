@@ -14,6 +14,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/onboarding"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/mattn/go-runewidth"
 )
 
 func (s *state) isSetupMode() bool {
@@ -108,12 +109,13 @@ func (s *state) setupHandle(key string) (*action, bool) {
 func (s *state) setupLines() []string {
 	if s.mode == agentSetup {
 		lines := []string{"Install an agent", "This machine", ""}
+		nameWidth := agentNameWidth(s.agents)
 		for _, a := range s.agents {
 			status := "Missing"
 			if a.Path != "" {
 				status = "Installed"
 			}
-			lines = append(lines, a.Name+"   "+status)
+			lines = append(lines, field(a.Name, nameWidth)+"   "+status)
 		}
 		return lines
 	}
@@ -231,4 +233,12 @@ func setupCommand(ctx context.Context, a onboarding.Agent, stage string, streams
 		return fmt.Errorf("%s failed (%v); inspect the native terminal output, then review retry", stage, err)
 	}
 	return nil
+}
+
+func agentNameWidth(agents []onboarding.Agent) int {
+	width := 0
+	for _, a := range agents {
+		width = max(width, runewidth.StringWidth(a.Name))
+	}
+	return width
 }

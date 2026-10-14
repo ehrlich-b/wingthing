@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/ehrlich-b/wingthing/internal/onboarding"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -83,4 +84,35 @@ func TestSetupEmptyNavigatorAndConnectionGuide(t *testing.T) {
 			t.Fatalf("missing %s", want)
 		}
 	}
+}
+func TestSetupAndMachineStatusesShareAColumn(t *testing.T) {
+	s := setupFixture()
+	s.mode = agentSetup
+	now := time.Now()
+	s.machines["local"] = machine{updated: now}
+	s.machines["studio"] = machine{updated: now}
+	column := func(screen string, words ...string) {
+		t.Helper()
+		at := -1
+		for _, line := range regexp.MustCompile(`\x1b\[\d+;1H`).Split(regexp.MustCompile(`\x1b\[[0-9;]*[mK]`).ReplaceAllString(screen, ""), -1) {
+			for _, word := range words {
+				if !strings.Contains(line, "   "+word) {
+					continue
+				}
+				col := strings.Index(line, word)
+				if at >= 0 && col != at {
+					t.Fatalf("%q starts at %d, want %d\n%s", word, col, at, screen)
+				}
+				at = col
+			}
+		}
+		if at < 0 {
+			t.Fatalf("no %v rows\n%s", words, screen)
+		}
+	}
+	column(render(s, 80, 24, now), "Installed", "Missing")
+	s.mode = navigate
+	column(render(s, 80, 24, now), "Missing")
+	s.mode = machinePicker
+	column(render(s, 80, 24, now), "Connected")
 }
