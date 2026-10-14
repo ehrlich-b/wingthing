@@ -237,7 +237,7 @@ func (s *state) selectedLines(r row, now time.Time, width int) []string {
 	if r.Pinned && r.Status != "blocked" && !s.stale(r.machine) {
 		metadata = lastLine(s, r)
 	}
-	action := "Enter open   v read only   i details"
+	action := "v read only   i details"
 	switch {
 	case r.Status == "blocked":
 		metadata = label + " · Waiting for your answer."
@@ -337,7 +337,7 @@ func keyHints(s *state) []string {
 	case filter:
 		return []string{"Type to search   Enter keep search   Ctrl-U clear", "Esc restore selection   Ctrl-C quit"}
 	case help:
-		return []string{"j/k scroll   PgUp/PgDn page", "Esc back   q back   Ctrl-C quit"}
+		return []string{"j/k scroll   PgUp/PgDn page", "Esc back   Ctrl-C quit"}
 	case machinePicker:
 		return []string{"j/k move   Enter select   i details", "Esc back   Ctrl-C quit"}
 	case confirmStop:
@@ -526,7 +526,11 @@ func render(s *state, width, height int, now time.Time) string {
 			summary = "Needs you. " + summary
 		}
 		if s.stale(pin.machine) {
-			summary = "Last seen. Reconnect " + machineLabel(pin.machine) + " to open wing."
+			stamp := "time unknown"
+			if updated := s.machines[pin.machine].updated; !updated.IsZero() {
+				stamp = paperStamp(updated.Format(time.RFC3339), now)
+			}
+			summary = "Last seen " + stamp + ". Reconnect " + machineLabel(pin.machine) + "."
 		}
 		prefix := "  "
 		if pin.key() == s.selected {
@@ -687,9 +691,9 @@ func render(s *state, width, height int, now time.Time) string {
 	}
 	if (s.filter != "" || s.mode == filter) && len(work) == 0 {
 		set(8, "  No matching sessions", plain)
-		set(10, "  Ctrl-U clear   Esc back", secondary)
+		set(10, "  Ctrl-U clear", secondary)
 	}
-	if s.filter != "" || s.mode == filter {
+	if s.mode != help && (s.filter != "" || s.mode == filter) {
 		query := s.filter
 		if s.mode == filter {
 			query = s.input + "_"

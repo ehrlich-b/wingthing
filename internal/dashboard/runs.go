@@ -693,16 +693,16 @@ func runNextStep(r runRow, live bool) string {
 		if r.status() == "pending" {
 			return "wait for it to start."
 		}
-		return "wait for it to finish, then press o for the result."
+		return "wait for it to finish."
 	case "done":
 		if r.OutputAvailability != "" && r.OutputAvailability != "available" && r.OutputAvailability != "pending" {
 			return "the output is gone. Press r for recovery steps."
 		}
-		return "press o to read the result."
+		return "read the result."
 	case "failed", "timeout":
-		return "press o to see what went wrong."
+		return "read the result to see what went wrong."
 	default:
-		return "press o to read what it did before it stopped."
+		return "read what it did before it stopped."
 	}
 }
 

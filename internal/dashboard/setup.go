@@ -144,7 +144,7 @@ func (s *state) setupLines() []string {
 		}
 		return lines
 	}
-	if s.setupCompleted != "" {
+	if s.setupCompleted != "" && s.setupCompleted != "install" {
 		lines = append(lines, setupStageLabel(s.setupCompleted)+" finished.")
 	}
 	return append(lines, "Installed", "", "To sign in, run this in a normal terminal:", a.ID+" "+strings.Join(a.Login, " "))

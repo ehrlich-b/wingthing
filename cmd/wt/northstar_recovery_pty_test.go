@@ -230,7 +230,7 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 			return strings.Contains(screen, "4 runs") && strings.Contains(screen, "? Unknown") && !strings.Contains(screen, "Live session verified")
 		})
 		fresh.expect("cancelled run filter", fresh.send("/\x15cancelled-record\r"), "- Stopped")
-		fresh.expect("terminal Enter opens metadata", fresh.send("\r"), "Result: - Stopped", "Next: press o", "r recovery steps")
+		fresh.expect("terminal Enter opens metadata", fresh.send("\r"), "Result: - Stopped", "Next: read what it did before it stopped.", "o result", "r recovery steps")
 		fresh.expect("recovery steps behind r", fresh.send("r"), "Recovery steps", "original request", "wt agent recover", "--snapshot FILE")
 		fresh.expect("explicit bounded result / sanitized controls", fresh.send("o"), "Result / Read only", "METADATA_ONLY_RESULT", "?]52;fake??", "cancellation is not completion")
 		fresh.expect("unknown admission never launches", fresh.send("\x1b/\x15unknown-record\r\rn"), "Result: ? Unknown", "check its work before you run it again")
