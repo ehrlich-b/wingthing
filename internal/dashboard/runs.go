@@ -16,6 +16,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/mattn/go-runewidth"
 )
 
 const runPageSize = 100
@@ -854,6 +855,19 @@ func (s *state) runView(now time.Time, dimensions ...int) ([]string, []viewLine,
 	if width < 80 {
 		name = max(1, width-20)
 		project, agent, machineWidth = 0, 0, 0
+	}
+	// A column where every row says the same thing gives its room to titles
+	// that would otherwise be cut.
+	longest, projects, agents := 0, map[string]bool{}, map[string]bool{}
+	for _, r := range rows {
+		longest = max(longest, runewidth.StringWidth(s.runTitle(r)))
+		projects[projectName(r.CWD)], agents[agentLabel(r.Agent)] = true, true
+	}
+	if longest > name && project > 0 && len(projects) == 1 {
+		name, project = min(40, name+project), 0
+	}
+	if longest > name && agent > 0 && len(agents) == 1 {
+		name, agent = min(40, name+agent), 0
 	}
 	body = append(body, viewLine{text: "  " + field("Run", name) + " " + field("State", 12) + field("Project", project) + field("Agent", agent) + field("Machine", machineWidth) + field("Age", elapsed), tone: secondary})
 	for _, r := range rows {

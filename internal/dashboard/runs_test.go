@@ -315,3 +315,17 @@ func TestRecentRunsRowsAreDistinctAndRedOnlyForFailed(t *testing.T) {
 		t.Fatal("title column missing label or fallback", body[1].text, body[2].text)
 	}
 }
+
+func TestRecentRunsGiveSameValueColumnsToTitlesAt80(t *testing.T) {
+	s := fixture()
+	s.recent = true
+	h := s.history()
+	route := runRoute{name: "local", wingID: "one"}
+	title := "Summarize DNS test failures"
+	h.pages["one"] = runPage{WingID: "one", Runs: []runRow{{WingID: "one", ID: "run-0", SessionID: "egg-0", Agent: "codex", CWD: "/work/wingthing", Status: "done", Label: title, CreatedAt: time.Now().Format(time.RFC3339), Cleanup: "unknown", OutputAvailability: "unavailable", route: route}}, route: route}
+	h.reconcile()
+	_, body, _, _ := s.runView(time.Now(), 80)
+	if strings.Contains(body[0].text, "Project") || !strings.Contains(body[1].text, title) || strings.Contains(body[1].text, "...") {
+		t.Fatal("run title cut while a same-value column kept its room", body[0].text, body[1].text)
+	}
+}
