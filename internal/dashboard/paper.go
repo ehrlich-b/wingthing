@@ -229,13 +229,13 @@ func (s *state) paperPane(r row, now time.Time, width, height int) []string {
 			}
 			appendExact(fmt.Sprint(p.Arguments["command"]))
 			appendExact(permissionWhere(p))
-			action = permissionKeys(r)
+			action = s.permissionKeys(r)
 			break
 		}
 		lines = append(lines, "", "ASKING")
 		appendText(s.askingText(r), 3)
 		appendText(s.askingWhere(r), 3)
-		action = "Answer in terminal · Enter open"
+		action = s.permissionPosition(r) + "Answer in terminal · Enter open"
 	}
 	lines = append(lines, "", action, "", "MACHINES")
 	names := s.machineNames()

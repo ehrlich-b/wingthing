@@ -95,6 +95,8 @@ type action struct {
 type state struct {
 	permissionNotice                   string
 	permissionAnswered                 string
+	permissionAnswers                  map[string]bool
+	permissionSelected                 map[string]string
 	previews                           map[attentionIdentity]sessionPreview
 	previewReader                      func(context.Context, row) (sessionPreview, error)
 	theme                              terminalTheme
@@ -147,6 +149,7 @@ func needsAttention(attention string) bool {
 
 func (s *state) sessionRow(name string, session eggclient.LocalSession) row {
 	r := row{LocalSession: session, machine: name, generation: s.machines[name].generation, identity: s.attentionIdentity(name, session.ID)}
+	s.selectPermission(&r)
 	r.completion = s.attention[r.identity].completion
 	r.attention = s.attentionFor(r)
 	return r
@@ -303,19 +306,24 @@ func (s *state) handle(key string) (act *action, quit bool) {
 			s.mode = navigate
 		case "enter":
 			current, found := s.selection()
-			p, live := s.livePermission(current)
+			p, live := s.reviewedPermission(current)
 			s.mode = navigate
 			if !found || !live || !current.PermissionRespond || s.target.Permission == nil || p.RequestID != s.target.Permission.RequestID || p.Digest != s.target.Permission.Digest || s.overlayOffset < s.overlayLimit {
 				s.message = "Review every line of the current request, or Answer in terminal"
 				return nil, false
 			}
 			response := permissionResponse(p, "allow")
-			s.permissionAnswered = p.RequestID
+			s.markPermissionAnswered(p.RequestID)
 			return &action{kind: permissionReview, row: current, permission: &response}, false
 		default:
 			s.scrollOverlay(key)
 		}
 		return nil, false
+	}
+	if (s.mode == navigate || s.mode == details) && !s.recent && (key == "[" || key == "]") {
+		if s.stepPermission(key) {
+			return nil, false
+		}
 	}
 	if (s.mode == navigate || s.mode == details) && !s.recent && (key == "a" || key == "d") {
 		if act, handled := s.permissionAction(key); handled {

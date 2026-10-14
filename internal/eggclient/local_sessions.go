@@ -45,8 +45,9 @@ const (
 var ErrSessionNameInUse = control.ErrSessionNameInUse
 
 type LocalSession struct {
-	Permission        *permissions.Request `json:"-"`
-	PermissionRespond bool                 `json:"-"`
+	Permissions       []permissions.Request `json:"-"`
+	Permission        *permissions.Request  `json:"-"`
+	PermissionRespond bool                  `json:"-"`
 	ConversationLink
 	sessionrole.Metadata
 	OriginWingID     string `json:"origin_wing_id,omitempty"`

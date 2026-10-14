@@ -229,7 +229,7 @@ func (s *state) selectedLines(r row, now time.Time, width int) []string {
 		if next := s.preview(r).next; next != "" {
 			metadata = label + " · " + next
 		}
-		action = "Answer in terminal · Enter open   i details"
+		action = s.permissionPosition(r) + "Answer in terminal · Enter open   i details"
 	case r.Status == "failed":
 		action = "i details   h runs"
 	case r.Status == "exited" || r.Status == "done":
@@ -251,7 +251,7 @@ func (s *state) selectedLines(r row, now time.Time, width int) []string {
 		return nil
 	}
 	if p, ok := s.livePermission(r); ok {
-		return []string{"WILL RUN " + fmt.Sprint(p.Arguments["command"]), permissionWhere(p), permissionKeys(r)}
+		return []string{"WILL RUN " + fmt.Sprint(p.Arguments["command"]), permissionWhere(p), s.permissionKeys(r)}
 	}
 	return []string{title, metadata, action}
 }
@@ -367,7 +367,7 @@ func keyHints(s *state) []string {
 	}
 	if r, ok := s.selection(); ok {
 		if _, live := s.livePermission(r); live && r.PermissionRespond {
-			return []string{"a review   d decline   Enter open   / search", "j/k move   A agents   D diagnostics   ? help   q quit"}
+			return []string{s.permissionKeys(r) + "   / search", "j/k move   A agents   D diagnostics   ? help   q quit"}
 		}
 	}
 	return []string{"Enter open   / search   n new   ! needs you   . actions", "j/k move   m machines   h runs   " + s.refreshKey() + "   ? help   q quit   Ctrl+B then q detaches"}
@@ -1044,9 +1044,9 @@ func overlayLines(s *state, now time.Time) []string {
 		// ASKING already says the agent is waiting; RECENT needs the rows.
 		if r.Status == "blocked" {
 			if p, ok := s.livePermission(r); ok {
-				lines = append(lines, "", "WILL RUN", fmt.Sprint(p.Arguments["command"]), permissionWhere(p), permissionKeys(r))
+				lines = append(lines, "", "WILL RUN", fmt.Sprint(p.Arguments["command"]), permissionWhere(p), s.permissionKeys(r))
 			} else {
-				lines = append(lines, "", "ASKING", s.askingText(r), s.askingWhere(r), "Answer in terminal")
+				lines = append(lines, "", "ASKING", s.askingText(r), s.askingWhere(r), s.permissionPosition(r)+"Answer in terminal")
 			}
 		} else {
 			lines = append(lines, "", lifecycleDescription(r))

@@ -243,3 +243,119 @@ func TestPermissionTUIRevocationRemovesReviewAndHelpKeys(t *testing.T) {
 		t.Fatal("read-only help advertises decision keys")
 	}
 }
+
+func parallelPermissionState(t *testing.T) *state {
+	t.Helper()
+	s := permissionState(t)
+	m := s.machines["local"]
+	first := *m.sessions[0].Permission
+	second := first
+	second.RequestID = permissions.ID()
+	second.Arguments = map[string]any{"command": "echo second"}
+	second.Digest = permissionbridge.Digest(permissionbridge.Input{Tool: second.Tool, Arguments: second.Arguments, Directory: second.Directory})
+	m.sessions[0].Permission = nil
+	m.sessions[0].Permissions = []permissions.Request{first, second}
+	s.machines["local"] = m
+	return s
+}
+
+func TestPermissionTUIParallelNavigationAndBoundReview(t *testing.T) {
+	s := parallelPermissionState(t)
+	first, _ := s.selection()
+	for _, size := range [][2]int{{132, 36}, {80, 24}} {
+		text := render(s, size[0], size[1], time.Now())
+		for _, want := range []string{"2 pending", "1/2", "[/] requests", "echo allowed"} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("missing %q at %v: %s", want, size, text)
+			}
+		}
+	}
+	s.handle("]")
+	second, _ := s.selection()
+	if second.Permission.RequestID == first.Permission.RequestID {
+		t.Fatal("navigation did not select second request")
+	}
+	s.handle("[")
+	again, _ := s.selection()
+	if again.Permission.RequestID != first.Permission.RequestID {
+		t.Fatal("previous request did not retain identity")
+	}
+	s.handle("[") // wraps to second
+	s.handle("a")
+	if !strings.Contains(strings.Join(s.permissionReviewLines(), "\n"), "echo second") {
+		t.Fatal("reviewed wrong command")
+	}
+	s.handle("]") // cannot change the reviewed request
+	m := s.machines["local"]
+	m.sessions[0].Permissions[0], m.sessions[0].Permissions[1] = m.sessions[0].Permissions[1], m.sessions[0].Permissions[0]
+	s.machines["local"] = m
+	selected, _ := s.selection()
+	if selected.Permission.RequestID != second.Permission.RequestID {
+		t.Fatal("refresh reordered selection by index")
+	}
+	act, _ := s.handle("enter")
+	if act == nil || act.permission.RequestID != second.Permission.RequestID || act.permission.Digest != second.Permission.Digest {
+		t.Fatal("answer switched requests")
+	}
+	remaining, _ := s.selection()
+	if remaining.Permission.RequestID != first.Permission.RequestID {
+		t.Fatal("answered request did not advance to remaining request")
+	}
+	act, _ = s.handle("d")
+	if act == nil || act.permission.RequestID != first.Permission.RequestID || act.permission.Decision != "deny" {
+		t.Fatal("decline switched requests")
+	}
+	remaining, _ = s.selection()
+	if _, live := s.livePermission(remaining); live {
+		t.Fatal("an answered parallel request became actionable again")
+	}
+}
+
+func TestPermissionTUIParallelReviewRemovalAndReadOnly(t *testing.T) {
+	s := parallelPermissionState(t)
+	s.handle("]")
+	s.handle("a")
+	reviewed := s.target.Permission.RequestID
+	m := s.machines["local"]
+	m.sessions[0].Permissions = m.sessions[0].Permissions[:1]
+	s.machines["local"] = m
+	if s.reviewPermissionLive() {
+		t.Fatal("removed review remained live")
+	}
+	if act, _ := s.handle("enter"); act != nil {
+		t.Fatalf("removed %s approved another request", reviewed)
+	}
+	s = parallelPermissionState(t)
+	m = s.machines["local"]
+	m.sessions[0].PermissionRespond = false
+	s.machines["local"] = m
+	s.handle("]")
+	r, _ := s.selection()
+	if r.Permission.Arguments["command"] != "echo second" {
+		t.Fatal("read-only requests cannot be navigated")
+	}
+	text := render(s, 80, 24, time.Now())
+	if !strings.Contains(text, "2 pending") || !strings.Contains(text, "Answer in terminal") || strings.Contains(text, "a review") {
+		t.Fatal("read-only parallel display incorrect")
+	}
+}
+
+func TestPermissionTUIParallelPendingOverridesSiblingToolStatus(t *testing.T) {
+	s := parallelPermissionState(t)
+	m := s.machines["local"]
+	m.sessions[0].Status, m.sessions[0].State = "running", "working"
+	m.sessions[0].StateSource, m.sessions[0].StateCursor = "", 0
+	s.machines["local"] = m
+	r, _ := s.selection()
+	if _, live := s.livePermission(r); !live || r.attention != "blocked" {
+		t.Fatal("sibling PostToolUse hid a pending request")
+	}
+	if text := render(s, 80, 24, time.Now()); !strings.Contains(text, "1 needs you") {
+		t.Fatal("header did not count the session with pending broker requests")
+	}
+	s.handle("]")
+	act, _ := s.handle("d")
+	if act == nil || act.permission.Decision != "deny" {
+		t.Fatal("remaining parallel request could not be answered")
+	}
+}

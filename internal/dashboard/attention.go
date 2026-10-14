@@ -107,6 +107,11 @@ func (s *state) observeAttention() {
 }
 
 func (s *state) attentionFor(r row) string {
+	// The authenticated broker can report a pending hook before its observer
+	// event is imported, or while a sibling tool changes the lifecycle state.
+	if r.machine == "local" && r.Agent == "claude" && len(r.Permissions) > 0 && len(s.pendingPermissions(r)) > 0 {
+		return "blocked"
+	}
 	// Older compatible inventories omit the additive lifecycle fields. Their
 	// blocked/failed status remains useful visual evidence, but supplies no
 	// cursor for a bell or a completion inference.
