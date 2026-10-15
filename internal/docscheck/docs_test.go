@@ -1,6 +1,7 @@
 package docscheck
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,7 +22,17 @@ func repositoryRoot(t *testing.T) string {
 }
 
 func TestLocalMarkdownLinksResolve(t *testing.T) {
-	root := repositoryRoot(t)
+	broken, err := brokenLocalMarkdownLinks(repositoryRoot(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, link := range broken {
+		t.Error(link)
+	}
+}
+
+func brokenLocalMarkdownLinks(root string) ([]string, error) {
+	var broken []string
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -31,7 +42,7 @@ func TestLocalMarkdownLinksResolve(t *testing.T) {
 			if path == filepath.Join(root, ".scratch") {
 				return filepath.SkipDir
 			}
-			if entry.Name() == ".git" || entry.Name() == "node_modules" || entry.Name() == "dist" || entry.Name() == "out" {
+			if entry.Name() == ".git" || entry.Name() == "node_modules" || entry.Name() == "dist" || entry.Name() == "out" || entry.Name() == "build" {
 				return filepath.SkipDir
 			}
 			return nil
@@ -59,13 +70,43 @@ func TestLocalMarkdownLinksResolve(t *testing.T) {
 			resolved := filepath.Clean(filepath.Join(filepath.Dir(path), filepath.FromSlash(target)))
 			if _, statErr := os.Stat(resolved); statErr != nil {
 				rel, _ := filepath.Rel(root, path)
-				t.Errorf("%s links to missing %q", rel, target)
+				broken = append(broken, fmt.Sprintf("%s links to missing %q", rel, target))
 			}
 		}
 		return nil
 	})
+	return broken, err
+}
+
+func TestLocalMarkdownLinksIgnoreGeneratedDirectories(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) {
+		t.Helper()
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{".git", "node_modules", "dist", "out", "build", "mobile/android/app/build/intermediates", ".scratch"} {
+		write(dir+"/NOTICE.md", "[upstream license](missing-license.md)")
+	}
+	write("docs/README.md", "[project](../README.md)")
+	write("README.md", "Project documentation")
+	broken, err := brokenLocalMarkdownLinks(root)
+	if err != nil || len(broken) != 0 {
+		t.Fatalf("generated directories must be ignored: broken=%v, err=%v", broken, err)
+	}
+	write("docs/broken.md", "[missing](missing.md)")
+	broken, err = brokenLocalMarkdownLinks(root)
 	if err != nil {
 		t.Fatal(err)
+	}
+	want := filepath.Join("docs", "broken.md") + ` links to missing "missing.md"`
+	if len(broken) != 1 || broken[0] != want {
+		t.Fatalf("repository docs must still be checked: got %v, want [%s]", broken, want)
 	}
 }
 
