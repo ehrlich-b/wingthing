@@ -182,6 +182,70 @@ func TestGoogleRecoveryRefusesUnsafeEmailAndIdentity(t *testing.T) {
 	}
 }
 
+func TestGoogleRecoveryRefusesLegacyEmailAmbiguity(t *testing.T) {
+	for _, storedEmail := range []string{"", "other@example.com", "OWNER@example.com"} {
+		t.Run("stored email="+storedEmail, func(t *testing.T) {
+			store := testStore(t)
+			legacy := &User{ID: "legacy-email-owner", Provider: "email", ProviderID: " Owner@Example.COM "}
+			mustTest(t, store.UpsertUser(legacy))
+			if storedEmail != "" {
+				mustTest(t, store.UpdateUserEmail(legacy.ID, storedEmail))
+			}
+			recoveryUser(t, store, "github-owner", "github", "owner@example.com")
+			s := NewServer(store, ServerConfig{})
+			w := googleRecoveryCallback(t, s, "new-google-subject", "owner@example.com", true)
+			if user := recoverySession(t, s, w); w.Code != http.StatusForbidden || user != nil {
+				t.Fatalf("ambiguous legacy email recovery status=%d user=%#v body=%s", w.Code, user, w.Body)
+			}
+			linked, err := store.GetUserByProvider("google", "new-google-subject")
+			if err != nil || linked != nil {
+				t.Fatalf("refused recovery registered identity: %#v %v", linked, err)
+			}
+			var sessions int
+			mustTest(t, store.DB().QueryRow("SELECT COUNT(*) FROM sessions").Scan(&sessions))
+			if sessions != 0 {
+				t.Fatalf("refused recovery created %d sessions", sessions)
+			}
+			unchanged, err := store.GetUserByID(legacy.ID)
+			if err != nil || unchanged == nil {
+				t.Fatalf("legacy user missing: %#v %v", unchanged, err)
+			}
+			if (storedEmail == "" && unchanged.Email != nil) || (storedEmail != "" && (unchanged.Email == nil || *unchanged.Email != storedEmail)) {
+				t.Fatalf("legacy email changed: %#v", unchanged.Email)
+			}
+		})
+	}
+}
+
+func TestGoogleRecoveryCountsEachUserOnce(t *testing.T) {
+	store := testStore(t)
+	recoveryUser(t, store, "github-owner", "github", "owner@example.com")
+	_, err := store.RecoverGitHubUser("email", " Owner@Example.COM ", "owner@example.com", true)
+	mustTest(t, err)
+	s := NewServer(store, ServerConfig{})
+	w := googleRecoveryCallback(t, s, "new-google-subject", "owner@example.com", true)
+	if user := recoverySession(t, s, w); w.Code != http.StatusSeeOther || user == nil || user.ID != "github-owner" {
+		t.Fatalf("same user counted twice: status=%d user=%#v body=%s", w.Code, user, w.Body)
+	}
+}
+
+func TestGoogleRecoveryRequiresStoredGitHubEmail(t *testing.T) {
+	store := testStore(t)
+	recoveryUser(t, store, "github-owner", "github", "owner@example.com")
+	_, err := store.RecoverGitHubUser("email", "owner@example.com", "owner@example.com", true)
+	mustTest(t, err)
+	mustTest(t, store.UpdateUserEmail("github-owner", "new@example.com"))
+	s := NewServer(store, ServerConfig{})
+	w := googleRecoveryCallback(t, s, "new-google-subject", "owner@example.com", true)
+	if user := recoverySession(t, s, w); user != nil && user.ID == "github-owner" {
+		t.Fatal("recovered GitHub account without matching its stored email")
+	}
+	linked, err := store.GetUserByProvider("google", "new-google-subject")
+	if err != nil || (linked != nil && linked.ID == "github-owner") {
+		t.Fatalf("linked Google identity without matching stored email: %#v %v", linked, err)
+	}
+}
+
 func TestGoogleRecoveryExistingIdentityNeverMergesAnotherAccount(t *testing.T) {
 	store := testStore(t)
 	recoveryUser(t, store, "github-owner", "github", "owner@example.com")

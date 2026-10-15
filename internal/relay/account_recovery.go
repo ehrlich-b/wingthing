@@ -87,22 +87,33 @@ func (s *RelayStore) RecoverGitHubUser(provider, providerID, email string, verif
 
 	// Compare normalized addresses in Go so legacy mixed-case/whitespace data
 	// uses exactly the same normalization as the incoming provider address.
-	rows, err := tx.Query("SELECT id, provider, email FROM users WHERE email IS NOT NULL")
+	// Legacy magic-link addresses may exist only in their email identity.
+	rows, err := tx.Query(`
+		SELECT id, provider, email, 1 FROM users WHERE email IS NOT NULL
+		UNION ALL
+		SELECT u.id, u.provider, i.provider_id, 0
+		FROM users u JOIN user_identities i ON i.user_id = u.id
+		WHERE i.provider = 'email'`)
 	if err != nil {
 		return nil, err
 	}
-	var targetID, targetProvider string
-	matches := 0
+	var targetID string
+	matches := make(map[string]struct{})
 	for rows.Next() {
 		var id, primaryProvider, storedEmail string
-		if err := rows.Scan(&id, &primaryProvider, &storedEmail); err != nil {
+		var userEmail bool
+		if err := rows.Scan(&id, &primaryProvider, &storedEmail, &userEmail); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
 		stored, err := normalizeRecoveryEmail(storedEmail)
 		if err == nil && stored == normalized {
-			matches++
-			targetID, targetProvider = id, primaryProvider
+			matches[id] = struct{}{}
+			// Email identities contribute ambiguity, but recovery still requires
+			// a match to the GitHub user's stored email.
+			if userEmail && primaryProvider == "github" {
+				targetID = id
+			}
 		}
 	}
 	iterationErr := rows.Err()
@@ -113,10 +124,10 @@ func (s *RelayStore) RecoverGitHubUser(provider, providerID, email string, verif
 	if closeErr != nil {
 		return nil, closeErr
 	}
-	if matches == 0 {
+	if len(matches) == 0 {
 		return nil, nil
 	}
-	if matches != 1 || targetProvider != "github" {
+	if len(matches) != 1 || targetID == "" {
 		return nil, ErrAccountRecoveryRefused
 	}
 	var existingID string
