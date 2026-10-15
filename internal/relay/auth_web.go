@@ -674,6 +674,7 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			if errors.Is(err, ErrAccountRecoveryRefused) {
+				log.Printf("account recovery refused: provider=google user_id=%q: %v", user.ID, err)
 				http.Error(w, "account recovery could not safely match this identity", http.StatusForbidden)
 			} else {
 				http.Error(w, "db error", http.StatusInternalServerError)
@@ -772,6 +773,7 @@ func (s *Server) handleMagicVerify(w http.ResponseWriter, r *http.Request) {
 	user, err := s.Store.GetOrCreateUserByEmail(email)
 	if err != nil {
 		if errors.Is(err, ErrAccountRecoveryRefused) {
+			log.Printf("account recovery refused: provider=email: %v", err)
 			http.Error(w, "account recovery could not safely match this identity", http.StatusForbidden)
 		} else {
 			http.Error(w, "internal error", http.StatusInternalServerError)

@@ -788,15 +788,6 @@ func (s *RelayStore) GetOrCreateUserByEmail(email string) (*User, error) {
 	if err := s.UpsertUser(u); err != nil {
 		return nil, err
 	}
-	// A separate magic-link signup must still work when another non-GitHub
-	// account holds this address. Its email identity retains the verified
-	// address even when the unique users.email slot is already occupied.
-	err = s.db.QueryRow(`UPDATE users SET email = ?
-		WHERE id = ? AND NOT EXISTS (SELECT 1 FROM users WHERE email = ? AND id <> ?)
-		RETURNING email`, email, u.ID, email, u.ID).Scan(&u.Email)
-	if err != nil && err != sql.ErrNoRows {
-		return nil, err
-	}
 	return u, nil
 }
 

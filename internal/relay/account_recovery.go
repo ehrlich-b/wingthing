@@ -3,6 +3,8 @@ package relay
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -39,7 +41,7 @@ func (s *RelayStore) checkExistingRecoveryCollision(user *User, email string) er
 		}
 		stored, err := normalizeRecoveryEmail(storedEmail)
 		if err == nil && stored == normalized {
-			return ErrAccountRecoveryRefused
+			return fmt.Errorf("%w: user_id=%q", ErrAccountRecoveryRefused, user.ID)
 		}
 	}
 	return rows.Err()
@@ -64,7 +66,7 @@ func (s *RelayStore) getUserByNormalizedEmailIdentity(email string) (*User, erro
 		if err == nil && normalized == email {
 			if userID != "" && userID != id {
 				_ = rows.Close()
-				return nil, ErrAccountRecoveryRefused
+				return nil, fmt.Errorf("%w: user_ids=%q", ErrAccountRecoveryRefused, []string{userID, id})
 			}
 			userID = id
 		}
@@ -164,12 +166,17 @@ func (s *RelayStore) RecoverGitHubUser(provider, providerID, email string, verif
 		return nil, nil
 	}
 	if len(matches) != 1 || targetID == "" {
-		return nil, ErrAccountRecoveryRefused
+		userIDs := make([]string, 0, len(matches))
+		for id := range matches {
+			userIDs = append(userIDs, id)
+		}
+		slices.Sort(userIDs)
+		return nil, fmt.Errorf("%w: user_ids=%q", ErrAccountRecoveryRefused, userIDs)
 	}
 	var existingID string
 	err = tx.QueryRow("SELECT provider_id FROM user_identities WHERE user_id = ? AND provider = ?", targetID, provider).Scan(&existingID)
 	if err == nil {
-		return nil, ErrAccountRecoveryRefused
+		return nil, fmt.Errorf("%w: user_id=%q", ErrAccountRecoveryRefused, targetID)
 	}
 	if err != sql.ErrNoRows {
 		return nil, err

@@ -1,10 +1,12 @@
 package relay
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -539,6 +541,93 @@ func TestRecoveryPreservesNonGitHubAlternateSignups(t *testing.T) {
 			user := recoverySession(t, s, w)
 			if w.Code != http.StatusSeeOther || user == nil || user.ID == "original" {
 				t.Fatalf("alternate signup changed: status=%d user=%#v body=%s", w.Code, user, w.Body)
+			}
+		})
+	}
+}
+
+func TestRecoveryEmailSignupThenGoogleLogin(t *testing.T) {
+	store := testStore(t)
+	s := NewServer(store, ServerConfig{SMTPHost: "fixture"})
+	const address = "owner@example.com"
+	mustTest(t, store.CreateMagicLink("signup-link", address, "signup-token", time.Now().Add(time.Minute)))
+	w := httptest.NewRecorder()
+	s.handleMagicVerify(w, httptest.NewRequest(http.MethodGet, "/auth/magic/verify?token=signup-token", nil))
+	emailUser := recoverySession(t, s, w)
+	if w.Code != http.StatusSeeOther || emailUser == nil || emailUser.Provider != "email" {
+		t.Fatalf("email signup status=%d user=%#v body=%s", w.Code, emailUser, w.Body)
+	}
+	var googleUserID string
+	for attempt := 1; attempt <= 2; attempt++ {
+		w = googleRecoveryCallback(t, s, "new-google", address, true)
+		user := recoverySession(t, s, w)
+		if w.Code != http.StatusSeeOther || user == nil {
+			t.Errorf("Google attempt %d status=%d user=%#v body=%s", attempt, w.Code, user, w.Body)
+			continue
+		}
+		if user.ID == emailUser.ID || user.Provider != "google" {
+			t.Fatalf("Google signup changed separate identity: %#v", user)
+		}
+		if attempt == 1 {
+			googleUserID = user.ID
+		} else if user.ID != googleUserID {
+			t.Fatalf("Google retry changed user: got %s want %s", user.ID, googleUserID)
+		}
+	}
+}
+
+func TestRecoveryRefusalLogsUserIDsWithoutEmail(t *testing.T) {
+	for _, tc := range []struct {
+		name, provider string
+	}{
+		{"new ambiguous identity", "google"},
+		{"new ambiguous identity", "email"},
+		{"existing identity", "google"},
+		{"existing identity", "email"},
+		{"duplicate email identities", "email"},
+		{"different linked identity", "email"},
+	} {
+		t.Run(tc.provider+"/"+tc.name, func(t *testing.T) {
+			store := testStore(t)
+			const address = "élodie@example.com"
+			recoveryUser(t, store, "github-owner", "github", "\tÉLODIE@example.com\t")
+			wantID := "github-owner"
+			switch tc.name {
+			case "new ambiguous identity":
+				recoveryUser(t, store, "other-owner", "github", address)
+			case "existing identity", "duplicate email identities":
+				providerID := "existing-google"
+				if tc.provider == "email" {
+					providerID = address
+				}
+				mustTest(t, store.UpsertUser(&User{ID: "alternate-owner", Provider: tc.provider, ProviderID: providerID}))
+				wantID = "alternate-owner"
+				if tc.name == "duplicate email identities" {
+					mustTest(t, store.UpsertUser(&User{ID: "duplicate-owner", Provider: "email", ProviderID: "ÉLODIE@example.com"}))
+				}
+			case "different linked identity":
+				_, err := store.RecoverGitHubUser("email", "different@example.com", address, true)
+				mustTest(t, err)
+			}
+			var output bytes.Buffer
+			previous := log.Writer()
+			log.SetOutput(&output)
+			t.Cleanup(func() { log.SetOutput(previous) })
+			s := NewServer(store, ServerConfig{SMTPHost: "fixture"})
+			var w *httptest.ResponseRecorder
+			if tc.provider == "google" {
+				w = googleRecoveryCallback(t, s, "existing-google", address, true)
+			} else {
+				mustTest(t, store.CreateMagicLink("link", address, "token", time.Now().Add(time.Minute)))
+				w = httptest.NewRecorder()
+				s.handleMagicVerify(w, httptest.NewRequest(http.MethodGet, "/auth/magic/verify?token=token", nil))
+			}
+			if w.Code != http.StatusForbidden || recoverySession(t, s, w) != nil {
+				t.Fatalf("refusal status=%d body=%s", w.Code, w.Body)
+			}
+			entry := output.String()
+			if strings.Count(entry, "account recovery refused:") != 1 || !strings.Contains(entry, "provider="+tc.provider) || !strings.Contains(entry, wantID) || strings.Contains(entry, "@") {
+				t.Fatalf("refusal log must identify user and provider without email: %q", entry)
 			}
 		})
 	}
