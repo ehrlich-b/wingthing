@@ -260,21 +260,57 @@ function show(on) {
     document.body.classList.toggle('paper-on', on);
 }
 
-// The heading occupies its own line outside the scrolling transcript, so a
-// clipped report keeps its source without covering its text or shifting readers.
+// Text ranges, rather than row bounds, exclude the empty space beneath short
+// reports in the desktop identity column. Merge inline-code fragments by line.
+function reportLines(row) {
+    const range = document.createRange();
+    const say = row.querySelector('.pp-say');
+    range.selectNodeContents(say);
+    const height = parseFloat(getComputedStyle(say).lineHeight);
+    const lines = [];
+    for (const rect of range.getClientRects()) {
+        if (!rect.width || !rect.height) continue;
+        const top = rect.top - Math.max(0, height - rect.height) / 2;
+        if (!lines.some(line => Math.abs(line.top - top) < 2)) lines.push({ top, bottom: top + height });
+    }
+    return lines.sort((a, b) => a.top - b.top);
+}
+
+// Only automatic following adjusts to a readable boundary. Extra end space
+// lets us advance past an empty remnant without cutting off the latest update.
+function followThread(conversation) {
+    conversation.style.paddingBottom = '';
+    conversation.scrollTop = conversation.scrollHeight;
+    const top = conversation.getBoundingClientRect().top;
+    const boundaries = [];
+    for (const row of conversation.querySelectorAll('[data-source]')) {
+        const start = row.getBoundingClientRect().top;
+        const identityEnd = row.querySelector('.pp-who').getBoundingClientRect().bottom;
+        if (start >= top - 1) boundaries.push(start);
+        for (const line of reportLines(row)) {
+            if (line.top >= top - 1 && line.top >= identityEnd) boundaries.push(line.top);
+        }
+    }
+    const boundary = Math.min(...boundaries);
+    if (!Number.isFinite(boundary)) return;
+    const advance = Math.max(0, boundary - top);
+    const position = conversation.scrollTop;
+    conversation.style.paddingBottom = Math.ceil(advance) + 'px';
+    conversation.scrollTop = position + advance;
+}
+
+// Attribution stays outside the transcript and belongs to the first complete
+// visible body line, never to an empty row remnant. Identities remain readable.
 function updateThreadSource() {
     const label = main.querySelector('[data-thread-source]');
     if (!label) return;
-    const conversation = main.querySelector('.pp-conversation');
-    const top = conversation.getBoundingClientRect().top;
+    const bounds = main.querySelector('.pp-conversation').getBoundingClientRect();
     let source = '';
-    for (const row of conversation.querySelectorAll('[data-source]')) {
-        const bounds = row.getBoundingClientRect();
-        const identity = row.querySelector('.pp-who');
-        const clipped = bounds.bottom > top && bounds.top < top && identity.getBoundingClientRect().top < top;
-        // Avoid displaying a half-cut timestamp beneath the continuation label.
-        identity.style.visibility = clipped ? 'hidden' : '';
-        if (clipped) source = row.dataset.source;
+    for (const row of main.querySelectorAll('.pp-conversation [data-source]')) {
+        if (!reportLines(row).some(line => line.top >= bounds.top - 1 && line.bottom <= bounds.bottom + 1)) continue;
+        const identity = row.querySelector('.pp-who').getBoundingClientRect();
+        if (identity.top < bounds.top - 1) source = row.dataset.source;
+        break;
     }
     label.textContent = source ? source + ' · continued' : 'Today';
     label.toggleAttribute('data-continued', !!source);
@@ -294,7 +330,8 @@ export function render(force) {
     const fresh = main.dataset.hash !== location.hash;
     const conversation = main.querySelector('.pp-conversation');
     const position = conversation?.scrollTop || 0;
-    const pinned = fresh || !conversation || conversation.scrollHeight - position - conversation.clientHeight <= 48;
+    const endSpace = conversation?.style.paddingBottom || '';
+    const pinned = fresh || !conversation || conversation.scrollHeight - position - conversation.clientHeight <= 2;
     const terminalOpen = main.querySelector('.pp-terminal')?.open;
     main.innerHTML = html;
     main.dataset.view = route.view; main.dataset.hash = location.hash;
@@ -303,7 +340,11 @@ export function render(force) {
     if (!fresh && nextTerminal && terminalOpen !== undefined) nextTerminal.open = terminalOpen;
     const nextConversation = main.querySelector('.pp-conversation');
     if (nextConversation) {
-        nextConversation.scrollTop = pinned ? nextConversation.scrollHeight : position;
+        if (pinned && route.view === 'wing') followThread(nextConversation);
+        else {
+            nextConversation.style.paddingBottom = pinned ? '' : endSpace;
+            nextConversation.scrollTop = pinned ? nextConversation.scrollHeight : position;
+        }
         nextConversation.addEventListener('scroll', updateThreadSource, { passive: true });
         updateThreadSource();
     }

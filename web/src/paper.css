@@ -111,7 +111,9 @@ body.paper-on #app { display: none; }
 .pp-row-you { background: var(--pp-folio); margin: 0; padding: 12px; border-radius: 6px; border-bottom: 0; }
 .pp-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pp-who b, .pp-who a { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
-.pp-who .pp-st { font-size: 12px; }
+.pp-who .pp-st { display: inline-flex; align-items: baseline; align-self: flex-start; font-size: 12px; }
+/* Keep generated markers painted at the left edge of the scrolling grid. */
+.pp-who .pp-st::before { flex: none; transform: translateZ(0); }
 .pp-who a:hover { color: var(--pp-accent); }
 .pp-who small { font-size: 12px; color: var(--pp-ink-3); }
 .pp-say { max-width: 70ch; overflow-wrap: anywhere; }

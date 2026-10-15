@@ -211,19 +211,35 @@ async function checkPublic(page, name, suffix) {
         checked(name + suffix + '-full-document-tables', result);
     }
 }
-async function checkWingSource(page, suffix) {
+async function checkWingSource(page, suffix, automatic = false) {
     const evidence = await page.evaluate(() => {
-        const transcript = document.querySelector('.pp-conversation'), top = transcript.getBoundingClientRect().top;
-        const leading = [...transcript.querySelectorAll('[data-source]')].find(row => {const b=row.getBoundingClientRect();return b.top < top && b.bottom > top;});
-        const identity = leading?.querySelector('.pp-who');
-        const clipped = identity && identity.getBoundingClientRect().top < top;
+        const transcript = document.querySelector('.pp-conversation'), bounds = transcript.getBoundingClientRect();
+        const rows = [...transcript.querySelectorAll('[data-source]')];
+        // Inspect rendered text fragments independently of the product's line
+        // grouping, including inline code and the report's own identity.
+        const fragments = element => {
+            const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT), result = [];
+            while (walker.nextNode()) {
+                if (!walker.currentNode.textContent.trim()) continue;
+                const range = document.createRange(); range.selectNodeContents(walker.currentNode);
+                result.push(...[...range.getClientRects()].map(r => ({top:r.top,bottom:r.bottom,text:walker.currentNode.textContent})));
+            }
+            return result;
+        };
+        const reports = rows.map(row => ({source:row.dataset.source, identity:row.querySelector('.pp-who').getBoundingClientRect().toJSON(), body:fragments(row.querySelector('.pp-say')), text:fragments(row)}));
+        const first = reports.find(row => row.body.some(r => r.top >= bounds.top - 1 && r.bottom <= bounds.bottom + 1));
+        const visible = reports.flatMap(row => row.text).filter(r => r.bottom > bounds.top && r.top < bounds.bottom);
         const label = document.querySelector('[data-thread-source]');
-        return {source:clipped ? leading.dataset.source : '', label:label.textContent, continued:label.hasAttribute('data-continued'), headingBottom:document.querySelector('.pp-thread-heading').getBoundingClientRect().bottom, top, identityHidden:clipped ? getComputedStyle(identity).visibility === 'hidden' : false};
+        return {source:first && first.identity.top < bounds.top - 1 ? first.source : '', label:label.textContent, continued:label.hasAttribute('data-continued'), headingBottom:document.querySelector('.pp-thread-heading').getBoundingClientRect().bottom, top:bounds.top, firstBody:first?.body.filter(r=>r.top>=bounds.top-1 && r.bottom<=bounds.bottom+1), firstText:Math.min(...visible.map(r=>r.top)), sliced:visible.filter(r=>r.top < bounds.top-1), lineHeight:parseFloat(getComputedStyle(transcript).lineHeight), scrollTop:transcript.scrollTop};
     });
-    assert.equal(evidence.label, evidence.source ? evidence.source + ' · continued' : 'Today');
+    assert.equal(evidence.label, evidence.source ? evidence.source + ' · continued' : 'Today', JSON.stringify(evidence));
     assert.equal(evidence.continued, !!evidence.source);
     assert.ok(evidence.headingBottom <= evidence.top + 1);
-    if (evidence.source) assert.ok(evidence.identityHidden);
+    if (evidence.continued) assert.ok(evidence.firstBody.length, JSON.stringify(evidence));
+    if (automatic) {
+        assert.equal(evidence.sliced.length, 0, JSON.stringify(evidence));
+        assert.ok(evidence.firstText >= evidence.top - 1 && evidence.firstText <= evidence.top + evidence.lineHeight, JSON.stringify(evidence));
+    }
     checked('01-wing' + suffix + '-report-source', evidence);
 }
 async function checkWingSourceScrolling(page, suffix) {
@@ -231,22 +247,54 @@ async function checkWingSourceScrolling(page, suffix) {
     const sources = new Set();
     const rows = await page.locator('.pp-conversation [data-source]').count();
     for (let i=0; i<rows; i++) {
-        for (const inset of [0, 20]) {
-            const reachable = await page.locator('.pp-conversation').evaluate((el, {i,inset}) => {
+        for (const inset of [0, 20, 'body']) {
+            const position = await page.locator('.pp-conversation').evaluate((el, {i,inset}) => {
                 const row=el.querySelectorAll('[data-source]')[i];
-                const target=el.scrollTop+row.getBoundingClientRect().top-el.getBoundingClientRect().top+inset;
+                const offset=inset==='body' ? row.querySelector('.pp-say').getBoundingClientRect().top-row.getBoundingClientRect().top : inset;
+                const target=el.scrollTop+row.getBoundingClientRect().top-el.getBoundingClientRect().top+offset;
                 el.scrollTop=target;
-                return Math.abs(el.scrollTop-target)<1;
+                return {reachable:Math.abs(el.scrollTop-target)<1, top:el.scrollTop};
             }, {i,inset});
-            if (!reachable) continue;
+            if (!position.reachable) continue;
             await page.waitForTimeout(60);
+            assert.equal(await page.locator('.pp-conversation').evaluate(el=>el.scrollTop),position.top);
             await checkWingSource(page, suffix + '-scroll-' + i + '-' + inset);
-            if (inset) sources.add(await page.locator('[data-thread-source]').innerText());
+            const label = page.locator('[data-thread-source]');
+            if (!inset) assert.equal(await label.getAttribute('data-continued'), null);
+            if (await label.getAttribute('data-continued') !== null) sources.add(await label.innerText());
         }
     }
     assert.ok(sources.size >= 2);
     await page.locator('.pp-conversation').evaluate((el, top) => {el.scrollTop=top;}, original);
     await page.waitForTimeout(60);
+}
+async function checkStatusMarkers(page, name, suffix) {
+    const selector = name==='01-wing' ? '.pp-conversation .pp-who .pp-st' : '.pp-srow .pp-st';
+    const evidence = await page.locator(selector).evaluateAll(badges => badges.map(badge => {
+        const box=badge.getBoundingClientRect(), marker=getComputedStyle(badge,'::before');
+        const text=document.createRange();text.selectNodeContents(badge);const label=text.getBoundingClientRect();
+        return {label:badge.textContent, marker:marker.content, visibility:getComputedStyle(badge).visibility, display:getComputedStyle(badge).display, markerWidth:parseFloat(marker.width), markerHeight:marker.lineHeight, markerVisibility:marker.visibility, top:box.top, bottom:box.bottom, left:box.left, right:box.right, textLeft:label.left, textRight:label.right};
+    }));
+    const cdp = await page.context().newCDPSession(page);
+    try {
+        const {root} = await cdp.send('DOM.getDocument');
+        const {nodeIds} = await cdp.send('DOM.querySelectorAll',{nodeId:root.nodeId,selector});
+        for (const [index,nodeId] of nodeIds.entries()) {
+            const {node} = await cdp.send('DOM.describeNode',{nodeId});
+            const marker = node.pseudoElements.find(n=>n.pseudoType==='before');
+            const {model} = await cdp.send('DOM.getBoxModel',{backendNodeId:marker.backendNodeId});
+            evidence[index].markerBounds=model.content;
+        }
+    } finally { await cdp.detach(); }
+    assert.ok(evidence.length >= 3);
+    for (const badge of evidence) {
+        assert.equal(badge.visibility,'visible'); assert.equal(badge.markerVisibility,'visible');
+        assert.ok(badge.markerBounds[0]>=badge.left-1 && badge.markerBounds[2]<=badge.right+1 && badge.markerBounds[1]>=badge.top-1 && badge.markerBounds[5]<=badge.bottom+1, JSON.stringify(badge));
+        assert.ok(badge.markerWidth>0 && badge.textLeft-badge.left>=badge.markerWidth-1 && badge.textRight<=badge.right+1,JSON.stringify(badge));
+        if (badge.label==='Working') assert.equal(badge.marker,'"•"');
+        if (badge.label==='Needs you') assert.equal(badge.marker,'"!"');
+    }
+    checked(name+suffix+'-status-markers',evidence);
 }
 async function checkConversation(page, name, suffix) {
     if (process.env.WT_LOOK_LEGACY) return;
@@ -263,7 +311,7 @@ async function checkConversation(page, name, suffix) {
     assert.ok(geometry.header.top>=0 && geometry.header.bottom<geometry.height);
     assert.ok(geometry.composer.top>=geometry.header.bottom && geometry.composer.bottom<=geometry.height-(page.viewportSize().width===390 ? 50 : 0));
     assert.ok(geometry.transcript.bottom<=geometry.composer.top+1);
-    if (name === '01-wing') await checkWingSource(page, suffix);
+    if (name === '01-wing') await checkWingSource(page, suffix, true);
     if (name === '03-session' && page.viewportSize().width === 1440) {
         assert.equal(await page.locator('.pp-terminal summary').count(), 0);
         assert.ok(await page.getByRole('button',{name:'Take over terminal',exact:true}).isVisible());
@@ -293,7 +341,7 @@ async function checkConversationRefresh(page, name, suffix) {
         for(let i=0;i<9;i++) append('Earlier progress receipt ' + i + '. The session is continuing its current task. This example update provides enough history to read back through the conversation without losing the machine identity.');
         await advance();
         await page.locator('.pp-conversation .pp-say').filter({hasText:'Earlier progress receipt 8.'}).waitFor({state:'attached'});
-        const before = await page.locator('.pp-conversation').evaluate(el=>{el.scrollTop=0;return {top:el.scrollTop,height:el.clientHeight,content:el.scrollHeight};});
+        const before = await page.locator('.pp-conversation').evaluate(el=>{el.scrollTop=37;return {top:el.scrollTop,height:el.clientHeight,content:el.scrollHeight};});
         assert.ok(before.content>before.height+48);
         append('New progress receipt while reading earlier messages.');await advance();
         await page.locator('.pp-conversation .pp-say').filter({hasText:'New progress receipt while reading earlier messages.'}).waitFor({state:'attached'});
@@ -314,7 +362,18 @@ async function checkConversationRefresh(page, name, suffix) {
             await page.getByRole('heading',{name:'migrate-sessions-table',exact:true}).waitFor();
             await checkConversation(page,name,suffix+'-from-sessions');
         }
-        if(name==='01-wing') await checkWingSourceScrolling(page,suffix);
+        if(name==='01-wing') {
+            const latest = await page.locator('.pp-say').filter({hasText:'Latest progress receipt at the end of the conversation.'}).boundingBox();
+            assert.ok(latest.y >= 0 && latest.y+latest.height <= page.viewportSize().height);
+            const action = await page.getByRole('link',{name:'Answer in terminal',exact:true}).boundingBox();
+            const viewport = await page.locator('.pp-conversation').boundingBox();
+            assert.ok(action.y >= viewport.y && action.y+action.height <= viewport.y+viewport.height);
+            await page.screenshot({path:path.join(shots, 'follow-latest'+suffix+'.png')});
+            const dimensions = await page.evaluate(() => ({viewport:innerWidth,width:Math.max(document.documentElement.scrollWidth,document.body.scrollWidth)}));
+            captures.push({file:'follow-latest'+suffix+'.png',url:page.url(),...dimensions});
+            if (dimensions.viewport===390 && dimensions.width>390) overflow.push({file:'follow-latest'+suffix+'.png',...dimensions});
+            await checkWingSourceScrolling(page,suffix);
+        }
         checked(name+suffix+'-refresh-position', {before,after,readerStayed:true,followLatest:true});
     } finally {
         events[id]=original;
@@ -418,9 +477,11 @@ try {
         await page.waitForSelector('[data-wing-id="studio"]', { timeout: 15000 }).catch(() => {});
         await page.waitForTimeout(1500);
         await checkConversation(page, '01-wing', v.suffix);
+        await checkStatusMarkers(page,'01-wing',v.suffix);
         await shoot(page, '01-wing', v.suffix);
         await checkConversationRefresh(page,'01-wing',v.suffix);
         await go(page, '#sessions');
+        await checkStatusMarkers(page,'02-sessions',v.suffix);
         await shoot(page, '02-sessions', v.suffix);
         await go(page, process.env.WT_LOOK_LEGACY ? '#chat/migrate?wing=studio' : '#session/studio/migrate');
         await checkConversation(page, '03-session', v.suffix);
@@ -477,7 +538,7 @@ try {
         await contexts[index].setOffline(false);
         await page.close();
     }
-    const expected = only.length ? (only.length + (only.includes('09-landing') ? 2 : 0)) * themes.length : 84;
+    const expected = only.length ? (only.length + 1 + (only.includes('09-landing') ? 2 : 0)) * themes.length : 88;
     if (captures.length !== expected) throw Error('Incomplete capture: ' + captures.length + ' of ' + expected);
     complete = true;
     if (overflow.length) throw Error('Horizontal overflow in ' + overflow.length + ' phone captures');
