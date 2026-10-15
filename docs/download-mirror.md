@@ -18,12 +18,18 @@ renders its installer from the same template and default. `WT_DOWNLOAD_BASE`
 provides an absolute HTTPS override for a relay, CLI or installer invocation;
 no credentials, query strings or shell metacharacters are accepted in a base.
 
-Installers and updates try the mirror first and GitHub second. Any failed or
-invalid binary/checksum/contract falls back to a complete verified bundle;
-sources are never mixed. Both failures produce one plain sentence. Updates
-still validate channel identity, serialize daemon lifecycle changes and replace
-the executable atomically only after all verification succeeds. Relay version
-checks retain their cache and retry backoff when both sources fail.
+Installers, updates and relay version checks use only the product's `/dl`.
+Failed downloads, manifests, checksums or command contracts fail without any
+forge fallback or changes to the existing binary. Updates still validate channel
+identity, serialize daemon lifecycle changes and replace the executable atomically
+after verification. Relay version checks retain their cache and retry backoff.
+
+Stable metadata at `/dl/latest.json` is a release object. Preview metadata at
+`/dl/preview.json` is a list of release objects with the same fields, ordered
+newest first; only published, non-draft `v*-preview.*` prereleases qualify.
+The preview feed currently returns 404. Preview update reports that the feed is
+unavailable and directs users to `update --file` with a reviewed local package;
+it never calls GitHub or selects stable instead.
 
 This affects the newly built client. Mirroring older release binaries does not
 change their embedded updater. Existing clients can use the new installer to
@@ -44,3 +50,5 @@ also refuses an unstaged image. Plain `docker build -t wingthing .` leaves the
 build argument off. Self-hosters use `fly launch --config fly.selfhost.toml
 --name my-wingthing` and `fly deploy --config fly.selfhost.toml`; this template
 leaves the mirror requirement off. Downloads remain ignored by Git.
+
+For manual downloads, see [GitLab releases](https://gitlab.com/ehrlich-b/wingthing/-/releases).

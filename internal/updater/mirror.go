@@ -18,16 +18,19 @@ import (
 
 var ErrReleaseUnavailable = errors.New("Unable to download a verified wt release; please try again later.")
 
-// MetadataURLs keeps the channel isolated across the mirror and GitHub fallback.
-func MetadataURLs() []string {
-	feed := "latest.json"
+// MetadataURLs contains only the product's channel feed.
+func MetadataURLs() []string { return []string{ReleaseMetadataURL()} }
+
+var ErrPreviewUnavailable = errors.New("Preview release feed /dl/preview.json is unavailable; use update --file with a reviewed local preview package.")
+
+func unavailableRelease() error {
 	if config.Channel() == "preview" {
-		feed = "preview.json"
+		return ErrPreviewUnavailable
 	}
-	return []string{downloads.Base() + "/" + feed, ReleaseMetadataURL()}
+	return ErrReleaseUnavailable
 }
 
-func fetchRelease(ctx context.Context, endpoint string, mirror bool) (GhRelease, error) {
+func fetchRelease(ctx context.Context, endpoint string) (GhRelease, error) {
 	if err := ValidateReleaseAssetURL(endpoint); err != nil {
 		return GhRelease{}, err
 	}
@@ -51,17 +54,15 @@ func fetchRelease(ctx context.Context, endpoint string, mirror bool) (GhRelease,
 	if !downloads.ValidTag(rel.TagName) {
 		return GhRelease{}, errors.New("invalid release tag")
 	}
-	if mirror {
-		base := downloads.Base() + "/" + rel.TagName + "/"
-		rel.Assets = []GhAsset{{Name: ReleaseAssetName(), BrowserDownloadURL: base + ReleaseAssetName()}, {Name: "SHA256SUMS", BrowserDownloadURL: base + "SHA256SUMS"}}
-	}
+	base := downloads.Base() + "/" + rel.TagName + "/"
+	rel.Assets = []GhAsset{{Name: ReleaseAssetName(), BrowserDownloadURL: base + ReleaseAssetName()}, {Name: "SHA256SUMS", BrowserDownloadURL: base + "SHA256SUMS"}}
 	return rel, nil
 }
 
 // LatestRelease returns a channel-appropriate version without downloading assets.
 func LatestRelease(ctx context.Context) (GhRelease, error) {
-	for i, endpoint := range MetadataURLs() {
-		rel, err := fetchRelease(ctx, endpoint, i == 0)
+	for _, endpoint := range MetadataURLs() {
+		rel, err := fetchRelease(ctx, endpoint)
 		if err == nil {
 			return rel, nil
 		}
@@ -69,15 +70,15 @@ func LatestRelease(ctx context.Context) (GhRelease, error) {
 			return GhRelease{}, ctx.Err()
 		}
 	}
-	return GhRelease{}, ErrReleaseUnavailable
+	return GhRelease{}, unavailableRelease()
 }
 
 // PrepareUpdate downloads and verifies an entire bundle from one source before
 // touching lifecycle state. The returned temporary file is beside the executable
 // so the existing atomic replacement and daemon restart flow stays intact.
 func PrepareUpdate(ctx context.Context, current, dir string) (GhRelease, string, error) {
-	for i, endpoint := range MetadataURLs() {
-		rel, err := fetchRelease(ctx, endpoint, i == 0)
+	for _, endpoint := range MetadataURLs() {
+		rel, err := fetchRelease(ctx, endpoint)
 		if err == nil && olderRelease(rel.TagName, current) {
 			err = errors.New("release feed predates installed version")
 		}
@@ -94,7 +95,7 @@ func PrepareUpdate(ctx context.Context, current, dir string) (GhRelease, string,
 			return GhRelease{}, "", ctx.Err()
 		}
 	}
-	return GhRelease{}, "", ErrReleaseUnavailable
+	return GhRelease{}, "", unavailableRelease()
 }
 
 func prepareBundle(ctx context.Context, rel GhRelease, dir string) (path string, runErr error) {

@@ -67,7 +67,7 @@ func TestStableReleaseSelectionRejectsPrereleases(t *testing.T) {
 	old := config.ReleaseChannel
 	config.ReleaseChannel = "stable"
 	t.Cleanup(func() { config.ReleaseChannel = old })
-	if !strings.HasSuffix(ReleaseMetadataURL(), "/latest") || strings.HasPrefix(ReleaseAssetName(), "wt-preview-") {
+	if !strings.HasSuffix(ReleaseMetadataURL(), "/latest.json") || strings.HasPrefix(ReleaseAssetName(), "wt-preview-") {
 		t.Fatal("stable update namespace changed")
 	}
 	for _, fixture := range []string{

@@ -21,8 +21,6 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 )
 
-const githubRepo = "ehrlich-b/wingthing"
-
 type GhRelease struct {
 	TagName    string    `json:"tag_name"`
 	Assets     []GhAsset `json:"assets"`

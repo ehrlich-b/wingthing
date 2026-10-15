@@ -17,16 +17,17 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
+	"github.com/ehrlich-b/wingthing/internal/downloads"
 	"github.com/ehrlich-b/wingthing/internal/fsutil"
 )
 
-// Stable's latest feed deliberately excludes GitHub prereleases. Preview has a
-// separate prerelease selection and asset namespace; publication is a later act.
+// ReleaseMetadataURL selects the product feed for the current channel.
+// Preview uses a list of releases; stable uses a single release object.
 func ReleaseMetadataURL() string {
 	if config.Channel() == "preview" {
-		return fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=100", githubRepo)
+		return downloads.Base() + "/preview.json"
 	}
-	return fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", githubRepo)
+	return downloads.Base() + "/latest.json"
 }
 
 func DecodeChannelRelease(body io.Reader) (GhRelease, error) {

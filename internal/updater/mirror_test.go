@@ -18,7 +18,7 @@ type mirrorTransport func(*http.Request) (*http.Response, error)
 
 func (f mirrorTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestMirrorUpdateCompleteBundleFallback(t *testing.T) {
+func TestMirrorUpdateCompleteBundleWithoutFallback(t *testing.T) {
 	good := []byte("#!/bin/sh\ncase \"$*\" in\n '--version') echo 'wt version v0.149.5';;\n 'mcp connect --help') echo connect;;\n 'serve --help'|'roost start --help') echo --https;;\n 'local-cert status --help') echo status;;\n *) exit 1;;\nesac\n")
 	for _, mode := range []string{"healthy", "metadata404", "invalidTag", "binary404", "checksumMismatch", "badContract", "missingManifest", "both404"} {
 		t.Run(mode, func(t *testing.T) {
@@ -69,7 +69,7 @@ func TestMirrorUpdateCompleteBundleFallback(t *testing.T) {
 				t.Fatal(err)
 			}
 			rel, path, err := PrepareUpdate(context.Background(), "v0.149.4", dir)
-			if mode == "both404" {
+			if mode != "healthy" {
 				if err != ErrReleaseUnavailable || path != "" {
 					t.Fatalf("path=%q err=%v", path, err)
 				}
@@ -95,11 +95,11 @@ func TestMirrorUpdateCompleteBundleFallback(t *testing.T) {
 			}
 			fallback := false
 			for _, call := range calls {
-				if strings.Contains(call, "api.github.com") {
+				if !strings.HasPrefix(call, "https://mirror.invalid/dl/") {
 					fallback = true
 				}
 			}
-			if fallback != (mode != "healthy") {
+			if fallback {
 				t.Fatalf("fallback=%t calls=%v", fallback, calls)
 			}
 		})
@@ -135,6 +135,30 @@ func TestMirrorLatestChannelIsolation(t *testing.T) {
 	}
 }
 
+func TestMirrorPreviewMissingFeedNeverFallsBack(t *testing.T) {
+	oldChannel, oldTransport := config.ReleaseChannel, http.DefaultTransport
+	t.Cleanup(func() { config.ReleaseChannel = oldChannel; http.DefaultTransport = oldTransport })
+	config.ReleaseChannel = "preview"
+	t.Setenv("WT_DOWNLOAD_BASE", "https://mirror.invalid/dl")
+	calls := 0
+	http.DefaultTransport = mirrorTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.URL.String() != "https://mirror.invalid/dl/preview.json" {
+			t.Fatalf("unexpected request: %s", r.URL)
+		}
+		return &http.Response{StatusCode: 404, Status: "404 Not Found", Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+	if _, err := LatestRelease(context.Background()); err != ErrPreviewUnavailable {
+		t.Fatalf("missing preview feed: %v", err)
+	}
+	if _, path, err := PrepareUpdate(context.Background(), "v0.149.4-preview.1", t.TempDir()); err != ErrPreviewUnavailable || path != "" {
+		t.Fatalf("path=%q err=%v", path, err)
+	}
+	if calls != 2 || !strings.Contains(ErrPreviewUnavailable.Error(), "/dl/preview.json") || !strings.Contains(ErrPreviewUnavailable.Error(), "update --file") {
+		t.Fatalf("calls=%d error=%v", calls, ErrPreviewUnavailable)
+	}
+}
+
 func TestMirrorUpdateNeverDowngradesNewerRelease(t *testing.T) {
 	t.Setenv("WT_DOWNLOAD_BASE", "https://mirror.invalid/dl")
 	old := http.DefaultTransport
@@ -149,7 +173,7 @@ func TestMirrorUpdateNeverDowngradesNewerRelease(t *testing.T) {
 	})
 	dir := t.TempDir()
 	_, path, err := PrepareUpdate(context.Background(), "v0.150.0", dir)
-	if err != ErrReleaseUnavailable || path != "" || len(requests) != 2 {
+	if err != ErrReleaseUnavailable || path != "" || len(requests) != 1 {
 		t.Fatalf("path=%q err=%v requests=%v", path, err, requests)
 	}
 	files, _ := os.ReadDir(dir)

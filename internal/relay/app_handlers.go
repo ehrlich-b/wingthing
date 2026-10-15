@@ -239,7 +239,7 @@ const (
 )
 
 // getLatestVersion returns the latest release version from cache, fetching from
-// GitHub if stale. Inventory requests may arrive in bursts, so the stale check
+// the product release feed if stale. Inventory requests may arrive in bursts, so the stale check
 // also reserves the fetch before releasing the mutex. Failed fetches retain the
 // last known version and are retried after a short backoff instead of spawning
 // one request per inventory call.
@@ -270,7 +270,7 @@ func (s *Server) getLatestVersion() string {
 func (s *Server) fetchLatestVersion() {
 	fetch := s.latestVersionFetch
 	if fetch == nil {
-		fetch = fetchLatestGitHubVersion
+		fetch = fetchLatestReleaseVersion
 	}
 	ver, err := fetch(context.Background())
 	ver = strings.TrimSpace(ver)
@@ -296,7 +296,7 @@ func (s *Server) fetchLatestVersion() {
 	log.Printf("latest release version: %s", ver)
 }
 
-func fetchLatestGitHubVersion(ctx context.Context) (string, error) {
+func fetchLatestReleaseVersion(ctx context.Context) (string, error) {
 	release, err := updater.LatestRelease(ctx)
 	return release.TagName, err
 }

@@ -45,6 +45,8 @@ codex mcp add wingthing -- wt mcp stdio --client codex
 claude mcp add --scope user wingthing -- wt mcp stdio --client claude
 ```
 
+Manual downloads: [GitLab releases](https://gitlab.com/ehrlich-b/wingthing/-/releases).
+
 The installer verifies the release checksum and confirms that the downloaded
 binary implements the command surface shown by the website before replacing an
 existing installation.

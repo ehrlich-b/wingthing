@@ -14,7 +14,7 @@ public stable release version.
 | Provider data home | Existing personal provider home | `STATE/provider-home`, initially clean |
 | Claude subprocess HOME | Existing OS account home | OS account home on macOS; data home on Linux |
 | Personal portal HTTP / HTTPS defaults | 8080 / 8443 | loopback 8180 / 8181 |
-| Update selection | GitHub latest stable release | published, non-draft `v*-preview.*` prereleases |
+| Update selection | `/dl/latest.json` release object | published, non-draft `v*-preview.*` prereleases |
 | Update assets | `wt-OS-ARCH` | `wt-preview-OS-ARCH` |
 | Organization / shared coordinator | Existing behavior | Disabled in this first preview |
 | Host sandbox policy installer | Existing `doctor --fix` behavior | Refuses to install or replace shared policy |
@@ -135,9 +135,12 @@ No provider credentials or workspace are transferred by SSH routing.
 ## Upgrade, rollback, and promotion
 
 There is no published preview feed implied by this local build. When publication
-is separately authorized, use a unique `v*-preview.*` GitHub prerelease with
-preview assets and SHA256SUMS. The stable `/releases/latest` route excludes these
-prereleases. Preview selects only published preview prereleases; absence fails
+is separately authorized, publish a unique `v*-preview.*` prerelease with
+preview assets and SHA256SUMS under `/dl/<tag>/`. `/dl/preview.json` must contain
+a newest-first list of release objects; `/dl/latest.json` remains a stable release
+object. Preview uses only `/dl/preview.json`, which currently returns 404. A missing
+feed produces a clear error directing users to a reviewed local package, with no
+GitHub fallback. Preview selects only published preview prereleases; absence fails
 with an explicit local-package route, without selecting stable.
 
 Before publication, upgrade or binary rollback with a reviewed local package:
