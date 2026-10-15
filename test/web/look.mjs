@@ -2,6 +2,7 @@
 // fixture machines, same harness as reach-share.mjs. No provider, OAuth or
 // public publication. Fixtures are not live proof.
 import fs from 'node:fs';
+import assert from 'node:assert/strict';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -20,14 +21,25 @@ fs.mkdirSync(path.join(root, '.scratch'), { recursive: true });
 const state = fs.mkdtempSync(path.join(root, '.scratch/look-'));
 const port = Number(process.env.WT_LOOK_PORT || 18191);
 const base = 'http://127.0.0.1:' + port;
-const env = { PATH: process.env.PATH, HOME: path.join(state, 'home'), WINGTHING_DIR: state };
+const env = { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, HOME: path.join(state, 'home'), WINGTHING_DIR: state };
 fs.mkdirSync(env.HOME);
 fs.writeFileSync(path.join(state, 'wing.yaml'), 'label: Laptop\n', { mode: 0o600 });
-const log = fs.openSync(path.join(state, 'roost.log'), 'w');
+const log = fs.openSync(path.join(shots, 'fixture.log'), 'w');
 const roost = spawn('nice', ['-n', '10', process.env.WT_LOOK_BIN || path.join(root, 'wt'), 'roost', 'start', '--foreground', '--dev', '--addr', '127.0.0.1:' + port], { cwd: root, env, stdio: ['ignore', log, log] });
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const sockets = new Map();
 const sent = [];
+const captures = [];
+const overflow = [];
+const checks = [];
+const checked = (name, evidence) => { checks.push({name, evidence}); console.log('CHECK ' + name); };
+const publicBase = 'http://127.0.0.1:' + (port + 2);
+const publicServer = spawn('nice', ['-n', '10', path.join(root, '.scratch/look-public'), '127.0.0.1:' + (port + 2)], { cwd: root, env, stdio: ['ignore', log, log] });
+
+function writeIndex(complete) {
+    fs.writeFileSync(path.join(shots, 'capture.json'), JSON.stringify({ complete, captures, overflow, checks }, null, 2) + '\n');
+    fs.writeFileSync(path.join(shots, 'index.html'), '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>wingthing captures</title><style>body{font:16px system-ui;margin:24px}ul{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px;padding:0;list-style:none}img{width:100%;border:1px solid #888}a{overflow-wrap:anywhere}</style><h1>wingthing captures</h1><p>' + (complete ? 'Complete' : 'Incomplete') + ' · ' + captures.length + ' images · ' + overflow.length + ' overflow failures</p><ul>' + captures.map(({file}) => '<li><a href="' + file + '">' + file + '<br><img loading="lazy" src="' + file + '" alt="' + file + '"></a></li>').join('') + '</ul></html>\n');
+}
 
 function encrypt(key, value) {
     const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -124,11 +136,115 @@ async function machine(id) {
 }
 
 async function shoot(page, name, suffix) {
-    if (only.length && !only.includes(name)) return;
+    if (only.length && !only.includes(name) && !(name.startsWith('09-landing-') && only.includes('09-landing'))) return;
     await page.waitForTimeout(700);
     const file = name + suffix + '.png';
     await page.screenshot({ path: path.join(shots, file) });
+    const dimensions = await page.evaluate(() => ({ viewport: innerWidth, width: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth || 0) }));
+    captures.push({ file, url: page.url(), ...dimensions });
+    if (dimensions.viewport === 390 && dimensions.width > dimensions.viewport) {
+        overflow.push({ file, ...dimensions });
+        console.error('OVERFLOW ' + file + ' ' + dimensions.width + ' > ' + dimensions.viewport);
+    }
+    writeIndex(false);
     console.log('SHOT ' + file);
+}
+async function checkPublic(page, name, suffix) {
+    assert.equal(await page.locator('a[href*="github.com/ehrlich-b"]').count(), 0);
+    assert.ok(await page.getByRole('link', {name:'Source', exact:true}).count());
+    if (page.viewportSize().width === 390) {
+        const nav = await page.locator('.site-nav').evaluate(el => {
+            const box = selector => el.querySelector(selector).getBoundingClientRect().toJSON();
+            return { logo:box('.logo'), action:box('.nav-cta'), links:[...el.querySelectorAll('.nav-secondary a')].map(a=>a.getBoundingClientRect().toJSON()) };
+        });
+        assert.ok(nav.action.top < nav.logo.bottom && nav.logo.top < nav.action.bottom);
+        assert.equal(new Set(nav.links.map(r => Math.round(r.top))).size, 1);
+        assert.ok(nav.links.every(r => r.top >= nav.action.bottom && r.right <= 390));
+        checked(name + suffix + '-navigation', nav);
+    }
+    if (name === '09-landing') {
+        const visible = await page.locator('.product-preview').evaluate(el => {
+            const r = el.getBoundingClientRect(); return {top:r.top, bottom:r.bottom, viewport:innerHeight};
+        });
+        assert.ok(visible.top > 0 && visible.bottom <= visible.viewport);
+        await page.getByRole('link', {name:'Install wingthing', exact:true}).last().isVisible().then(assert.ok);
+        assert.equal(await page.locator('video').count(),0);
+        checked(name + suffix + '-preview-without-video', visible);
+    }
+    if (name === '10-install') {
+        await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', {configurable:true, value:{writeText:text=>{window.copiedCommand=text; return Promise.resolve();}}}));
+        await page.locator('.inst-copy').click();
+        assert.equal(await page.evaluate(() => window.copiedCommand), 'curl -fsSL https://wingthing.ai/install.sh | sh');
+        checked(name + suffix + '-exact-copy', 'curl -fsSL https://wingthing.ai/install.sh | sh');
+    }
+    if (name === '11-docs' && page.viewportSize().width === 390) {
+        const result = await page.evaluate(() => {
+            const widths = [];
+            for (let y=0; y<document.documentElement.scrollHeight; y+=600) {
+                window.scrollTo(0,y); widths.push(Math.max(document.documentElement.scrollWidth,document.body.scrollWidth));
+            }
+            const tables = [...document.querySelectorAll('.docs-table-scroll')].map(el => {
+                el.scrollLeft=el.scrollWidth;
+                const wrapper=el.getBoundingClientRect(), last=el.querySelector('tr:last-child > :last-child').getBoundingClientRect();
+                const result={container:el.clientWidth, content:el.scrollWidth, rightReachable:last.right <= wrapper.right+1, bounded:wrapper.left>=0 && wrapper.right<=innerWidth};
+                el.scrollLeft=0;return result;
+            });
+            window.scrollTo(0,0);return {widths,tables};
+        });
+        assert.ok(result.widths.length > 10 && result.widths.every(w=>w<=390));
+        assert.ok(result.tables.length && result.tables.every(t=>t.bounded && t.rightReachable));
+        checked(name + suffix + '-full-document-tables', result);
+    }
+}
+async function checkConversation(page, name, suffix) {
+    if (process.env.WT_LOOK_LEGACY) return;
+    const identity = await page.locator('.pp-hdr').innerText();
+    assert.ok(identity.includes('Studio') && identity.includes('Claude'));
+    if(name === '03-session') {
+        assert.ok(identity.includes('migrate-sessions-table'));
+        if(page.viewportSize().width===390) assert.equal(await page.locator('.pp-terminal').evaluate(el=>el.open),false);
+    }
+    const geometry = await page.evaluate(() => {
+        const rect = selector => {const r=document.querySelector(selector).getBoundingClientRect();return {top:r.top,bottom:r.bottom};};
+        return {header:rect('.pp-hdr'), composer:rect('.pp-composer'), transcript:rect('.pp-conversation'), height:innerHeight, scrollY};
+    });
+    assert.ok(geometry.header.top>=0 && geometry.header.bottom<geometry.height);
+    assert.ok(geometry.composer.top>=geometry.header.bottom && geometry.composer.bottom<=geometry.height-(page.viewportSize().width===390 ? 50 : 0));
+    assert.ok(geometry.transcript.bottom<=geometry.composer.top+1);
+    checked(name + suffix + '-identity-and-composer', {identity,...geometry});
+}
+async function checkConversationRefresh(page, name, suffix) {
+    if(process.env.WT_LOOK_LEGACY) return;
+    const id=name==='01-wing' ? 'wing' : 'migrate', original=events[id].slice();
+    const append = text => events[id].push(msg(Math.max(...events[id].map(e=>e.sequence))+1, 'assistant', text, 0));
+    const advance = () => page.evaluate(() => { const now=Date.now; Date.now=()=>now()+11000; });
+    try {
+        for(let i=0;i<9;i++) append('Earlier progress receipt ' + i + '. The session is continuing its current task. This example update provides enough history to read back through the conversation without losing the machine identity.');
+        await advance();
+        await page.locator('.pp-conversation .pp-say').filter({hasText:'Earlier progress receipt 8.'}).waitFor({state:'attached'});
+        const before = await page.locator('.pp-conversation').evaluate(el=>{el.scrollTop=0;return {top:el.scrollTop,height:el.clientHeight,content:el.scrollHeight};});
+        assert.ok(before.content>before.height+48);
+        append('New progress receipt while reading earlier messages.');await advance();
+        await page.locator('.pp-conversation .pp-say').filter({hasText:'New progress receipt while reading earlier messages.'}).waitFor({state:'attached'});
+        assert.equal(await page.locator('.pp-conversation').evaluate(el=>el.scrollTop),before.top);
+        await page.locator('.pp-conversation').evaluate(el=>{el.scrollTop=el.scrollHeight;});
+        append('Latest progress receipt at the end of the conversation.');await advance();
+        await page.locator('.pp-conversation .pp-say').filter({hasText:'Latest progress receipt at the end of the conversation.'}).waitFor({state:'attached'});
+        const after = await page.locator('.pp-conversation').evaluate(el=>({top:el.scrollTop,height:el.clientHeight,content:el.scrollHeight}));
+        assert.ok(after.content-after.top-after.height<=2);
+        await checkConversation(page,name,suffix);
+        if(name==='03-session') {
+            if(page.viewportSize().width===390) await page.locator('.pp-terminal summary').click();
+            const takeover=page.getByRole('button',{name:'Take over terminal',exact:true});
+            await takeover.scrollIntoViewIfNeeded();assert.ok(await takeover.isVisible());
+            await page.locator('.pp-terminal summary').click();
+            await page.evaluate(()=>{location.hash='#sessions';});
+            await page.locator('.pp-srow[href="#session/studio/migrate"]').click();
+            await page.getByRole('heading',{name:'migrate-sessions-table',exact:true}).waitFor();
+            await checkConversation(page,name,suffix+'-from-sessions');
+        }
+        checked(name+suffix+'-refresh-position', {before,after,readerStayed:true,followLatest:true});
+    } finally {events[id]=original;}
 }
 async function go(page, hash) {
     await page.goto(base + '/app/' + hash);
@@ -139,9 +255,9 @@ async function go(page, hash) {
 // A real one-time invitation from a second, non-dev roost's own wing (the
 // same setup as browser-join.mjs), compared but never confirmed: the terminal
 // never gets Enter, so nothing is paired.
-const joinState = fs.mkdtempSync(path.join(root, '.scratch/lj-'));
+const joinState = fs.mkdtempSync(path.join(process.env.WT_JOIN_STATE_ROOT || path.join(root, '.scratch'), 'lj-'));
 const joinBase = 'http://127.0.0.1:' + (port + 1);
-const joinEnv = { PATH: process.env.PATH, HOME: path.join(state, 'join-home'), WINGTHING_DIR: joinState, WT_BASE_URL: joinBase };
+const joinEnv = { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, HOME: path.join(state, 'join-home'), WINGTHING_DIR: joinState, WT_BASE_URL: joinBase };
 fs.mkdirSync(joinEnv.HOME);
 fs.writeFileSync(path.join(joinState, 'wing.yaml'), 'label: Studio\n', { mode: 0o600 });
 let joinRoost;
@@ -149,13 +265,15 @@ async function joinShot(page, suffix) {
     if (!joinRoost) {
         joinRoost = spawn('nice', ['-n', '10', process.env.WT_LOOK_BIN || path.join(root, 'wt'), 'roost', 'start', '--foreground', '--addr', '127.0.0.1:' + (port + 1)], { cwd: root, env: joinEnv, stdio: ['ignore', log, log] });
         for (let i = 0; i < 150; i++) { try { if ((await fetch(joinBase + '/health')).ok) break; } catch {} await sleep(100); }
+        for (let i = 0; i < 150 && !fs.existsSync(path.join(joinState, 'phone-control.json')); i++) await sleep(100);
+        if (!fs.existsSync(path.join(joinState, 'phone-control.json'))) throw Error('Pair fixture control did not become ready');
     }
     const child = spawn('nice', ['-n', '10', process.env.WT_LOOK_BIN || path.join(root, 'wt'), 'pair', '--show-link'], { cwd: root, env: joinEnv, stdio: ['pipe', 'pipe', 'pipe'] });
-    let output = '', link;
-    child.stdout.on('data', b => output += b); child.stderr.on('data', () => {});
+    let output = '', errors = '', link;
+    child.stdout.on('data', b => output += b); child.stderr.on('data', b => errors += b);
     try {
         for (let i = 0; i < 100 && !link; i++) { link = output.match(/wingthing:\/\/pair#v1z\.[A-Za-z0-9_-]+/)?.[0]; if (!link) await sleep(100); }
-        if (!link) throw Error('wt pair did not issue a link');
+        if (!link) throw Error('wt pair did not issue a link: ' + errors + ' (exit ' + child.exitCode + ')');
         await page.goto(joinBase + '/app/#pair');
         await page.getByRole('heading', {name:'Join from this browser'}).waitFor();
         await page.locator('#bp-link').fill(link);
@@ -169,14 +287,45 @@ async function joinShot(page, suffix) {
 
 const viewports = [{ width: 1440, height: 900, suffix: '-desktop' }, { width: 390, height: 844, suffix: '-phone' }];
 let browser;
+let complete = false;
 try {
     for (let i = 0; i < 100; i++) { try { if ((await fetch(base + '/health')).ok) break; } catch {} await sleep(100); }
     browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH, args: ['--disable-background-networking','--disable-component-update','--disable-default-apps','--disable-sync','--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'] });
     const contexts = [];
-    for (const v of viewports) contexts.push(await browser.newContext({ viewport: { width: v.width, height: v.height } }));
+    for (const v of viewports) contexts.push(await browser.newContext({ viewport: { width: v.width, height: v.height }, colorScheme: 'light' }));
     const dark = [{ width: 1440, height: 900, suffix: '-desktop-dark' }, { width: 390, height: 844, suffix: '-phone-dark' }];
     for (const v of dark) contexts.push(await browser.newContext({ viewport: { width: v.width, height: v.height }, colorScheme: 'dark' }));
     const themes = [...viewports, ...dark];
+    // Public HTML routes in internal/relay/server.go and pages.go. /self-host
+    // redirects to /docs; markdown and download endpoints are not HTML pages.
+    for (let i = 0; i < 100; i++) { try { if ((await fetch(publicBase + '/health')).ok) break; } catch {} await sleep(100); }
+    const publicPages = [['09-landing', '/'], ['10-install', '/install'], ['11-docs', '/docs'], ['12-patterns', '/patterns'], ['13-login', '/login'], ['14-terms', '/terms'], ['15-privacy', '/privacy'], ['16-abuse', '/abuse']];
+    for (const [index, v] of themes.entries()) {
+        const page = await contexts[index].newPage();
+        // Block external resources and navigation, including any account links.
+        await page.route('**/*', route => new URL(route.request().url()).origin === publicBase ? route.continue() : route.abort());
+        for (const [name, route] of publicPages) {
+            if (only.length && !only.includes(name)) continue;
+            const response = await page.goto(publicBase + route);
+            if (!response?.ok()) throw Error('Public page failed: ' + route);
+            if (new URL(page.url()).pathname !== route) throw Error('Public page redirected: ' + route);
+            await page.evaluate(() => document.fonts.ready);
+            await checkPublic(page, name, v.suffix);
+            await shoot(page, name, v.suffix);
+            if (name === '09-landing') for (const mode of ['blocked','unsupported']) {
+                if(mode === 'blocked') await page.route('**/hero.mp4', route=>route.abort());
+                await page.goto(publicBase + '/?hero=' + mode);
+                await page.locator('video').waitFor({state:'attached'});
+                await page.waitForTimeout(400);
+                assert.ok(await page.locator('.product-preview').isVisible());
+                assert.ok(await page.locator('.hero-video').isHidden());
+                checked('09-landing-' + mode + v.suffix, 'HTML preview visible; failed video hidden');
+                await shoot(page, '09-landing-' + mode, v.suffix);
+                if(mode === 'blocked') await page.unroute('**/hero.mp4');
+            }
+        }
+        await page.close();
+    }
     // Empty state: signed in, no machine has connected yet.
     for (const [index, v] of themes.entries()) {
         const page = await contexts[index].newPage();
@@ -191,11 +340,15 @@ try {
         await go(page, '');
         await page.waitForSelector('[data-wing-id="studio"]', { timeout: 15000 }).catch(() => {});
         await page.waitForTimeout(1500);
+        await checkConversation(page, '01-wing', v.suffix);
         await shoot(page, '01-wing', v.suffix);
+        await checkConversationRefresh(page,'01-wing',v.suffix);
         await go(page, '#sessions');
         await shoot(page, '02-sessions', v.suffix);
         await go(page, process.env.WT_LOOK_LEGACY ? '#chat/migrate?wing=studio' : '#session/studio/migrate');
+        await checkConversation(page, '03-session', v.suffix);
         await shoot(page, '03-session', v.suffix);
+        await checkConversationRefresh(page,'03-session',v.suffix);
         await go(page, process.env.WT_LOOK_LEGACY ? '#chat/redirect?wing=studio' : '#approve/studio/redirect');
         await shoot(page, '04-approve', v.suffix);
         if (!process.env.WT_LOOK_LEGACY) {
@@ -235,15 +388,22 @@ try {
         await page.evaluate(() => navigator.serviceWorker && navigator.serviceWorker.ready).catch(() => {});
         await contexts[index].setOffline(true);
         try { await page.reload({ timeout: 8000 }); await shoot(page, '06-pwa-offline', v.suffix); }
-        catch (error) { console.log('NOSHOT 06-pwa-offline' + v.suffix + ' ' + error.message.split('\n')[0]); }
+        catch (error) { throw Error('Offline capture failed: ' + v.suffix, { cause: error }); }
         await contexts[index].setOffline(false);
         await page.close();
     }
+    const expected = only.length ? (only.length + (only.includes('09-landing') ? 2 : 0)) * themes.length : 84;
+    if (captures.length !== expected) throw Error('Incomplete capture: ' + captures.length + ' of ' + expected);
+    complete = true;
+    if (overflow.length) throw Error('Horizontal overflow in ' + overflow.length + ' phone captures');
 } finally {
+    writeIndex(complete);
     if (browser) await browser.close();
     for (const socket of sockets.values()) try { socket.close(); } catch {}
     roost.kill('SIGTERM');
     if (joinRoost) joinRoost.kill('SIGTERM');
+    publicServer.kill('SIGTERM');
     await removeState(joinState);
     await removeState(state);
+    fs.closeSync(log);
 }

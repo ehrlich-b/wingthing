@@ -461,7 +461,7 @@ func TestSignedInDocumentationUsesThisRoostAppURL(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			server.ServeHTTP(recorder, request)
 			rendered := recorder.Body.String()
-			if !strings.Contains(rendered, `href="`+test.wantURL+`" class="nav-cta">open app</a>`) {
+			if !strings.Contains(rendered, `href="`+test.wantURL+`" class="nav-cta">Open app</a>`) {
 				t.Fatalf("documentation nav did not use app URL %q: %q", test.wantURL, recorder.Body.String())
 			}
 			for _, forbidden := range []string{">hosted app</a>", ">hosted login</a>"} {
@@ -482,21 +482,21 @@ func TestSignedInHomeUsesConfiguredAppURLForLinkAndShortcut(t *testing.T) {
 		t.Fatal(err)
 	}
 	rendered := body.String()
-	if !strings.Contains(rendered, `href="https://app.example.test/" class="prompt-line" id="prompt-app"`) {
+	if !strings.Contains(rendered, `id="prompt-app" href="https://app.example.test/"`) {
 		t.Fatalf("signed-in home omitted configured app link: %q", rendered)
 	}
-	if !strings.Contains(rendered, `href="https://app.example.test/" class="nav-cta">open app</a>`) {
+	if !strings.Contains(rendered, `href="https://app.example.test/" class="nav-cta">Open app</a>`) {
 		t.Fatalf("signed-in home omitted deployment-neutral app nav: %q", rendered)
 	}
 	if strings.Contains(rendered, ">hosted app</a>") || strings.Contains(rendered, ">hosted login</a>") {
 		t.Fatalf("signed-in home uses deployment-specific nav label: %q", rendered)
 	}
-	if strings.Contains(rendered, "h==='wingthing.ai'") || !strings.Contains(rendered, "app?app.href:'/install'") {
+	if strings.Contains(rendered, "h==='wingthing.ai'") || !strings.Contains(rendered, "document.getElementById('prompt-app').href") {
 		t.Fatalf("home keyboard shortcut is not driven by the configured app link: %q", rendered)
 	}
 }
 
-func TestPublicHomeLeadsWithConciseLocalAgentIntro(t *testing.T) {
+func TestPublicHomeLeadsWithBenefitAndPersistentProductPreview(t *testing.T) {
 	server, ts := testServer(t)
 	server.Config.HeroVideo = "hero.mp4"
 	resp, err := http.Get(ts.URL + "/")
@@ -514,25 +514,33 @@ func TestPublicHomeLeadsWithConciseLocalAgentIntro(t *testing.T) {
 	}
 	for _, contract := range []string{
 		`href="/patterns">choose a route</a>`,
-		`href="/install" class="nav-cta">install locally`,
-		`href="/login">login`,
-		`href="/install" class="prompt-line" id="prompt-app"`,
+		`href="/install" class="nav-cta">Install wingthing`,
+		`href="/login">Log in`,
+		`href="/install" class="hero-install">Install wingthing</a>`,
 	} {
 		if !strings.Contains(page, contract) {
 			t.Errorf("home does not contain hierarchy contract %q", contract)
 		}
 	}
-	const intro = `<p class="tagline">Give an agent typed control of local coding agents, using the code and provider login already on this machine.</p>`
-	if got := strings.Count(page, intro); got != 1 {
-		t.Fatalf("home contains %d concise agent-first intros, want 1", got)
+	for _, contract := range []string{
+		"Your coding agents, across your machines.",
+		"Find a session, read its progress, and send the next instruction. Your agents keep running on your own computers.",
+		`aria-label="Example session list and wing conversation"`,
+		"Example · 2 machines",
+		"Claude · Studio · Working",
+		"onplaying=",
+		"onerror=",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Errorf("home is missing %q", contract)
+		}
 	}
-	if !strings.Contains(page, intro+"\n"+`<div class="hero-video"`) {
-		t.Fatal("home video does not immediately follow the agent-first intro")
-	}
-	video := strings.Index(page, `<div class="hero-video"`)
-	install := strings.Index(page, `<div class="prompt-flow" id="prompt-flow">`)
-	if video < 0 || install <= video {
-		t.Fatalf("home hero order video=%d install=%d, want video then install", video, install)
+	install := strings.Index(page, `class="hero-install"`)
+	preview := strings.Index(page, `<section class="product-preview"`)
+	video := strings.Index(page, `<div class="hero-video" hidden>`)
+	glossary := strings.Index(page, `<h3>portal</h3>`)
+	if install < 0 || preview <= install || video <= preview || glossary <= video {
+		t.Fatalf("home order install=%d preview=%d video=%d glossary=%d", install, preview, video, glossary)
 	}
 	for _, forbidden := range []string{">hosted app</a>", ">hosted login</a>"} {
 		if strings.Contains(page, forbidden) {
@@ -583,8 +591,8 @@ func TestPublicDocsAndInstallRenderLocalFirstHierarchy(t *testing.T) {
 			page := string(body)
 			previous := -1
 			for _, route := range []string{
-				`data-route="local-agent"`,
 				`data-route="local-human"`,
+				`data-route="local-agent"`,
 				`data-route="direct-remote"`,
 				`data-route="self-hosted-browser"`,
 				`data-route="hosted-relay"`,
@@ -594,13 +602,13 @@ func TestPublicDocsAndInstallRenderLocalFirstHierarchy(t *testing.T) {
 					t.Fatalf("%s is missing rendered route %q", test.path, route)
 				}
 				if index <= previous {
-					t.Fatalf("%s renders route %q out of local-agent-first order", test.path, route)
+					t.Fatalf("%s renders route %q out of first-local-session order", test.path, route)
 				}
 				previous = index
 			}
 			for _, contract := range append(test.contracts,
-				`href="/install" class="nav-cta">install locally`,
-				`href="/login">login`,
+				`href="/install" class="nav-cta">Install wingthing`,
+				`href="/login">Log in`,
 			) {
 				if !strings.Contains(page, contract) {
 					t.Errorf("%s does not contain rendered contract %q", test.path, contract)

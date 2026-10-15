@@ -1,0 +1,43 @@
+// Loopback fixture for the public pages using the branch's real relay handlers.
+package main
+
+import (
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+
+	"github.com/ehrlich-b/wingthing/internal/relay"
+)
+
+func main() {
+	addr := os.Args[1]
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil || host != "127.0.0.1" {
+		log.Fatal("public capture fixture requires a loopback address")
+	}
+	store, err := relay.OpenRelay(filepath.Join(os.Getenv("WINGTHING_DIR"), "public.db"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer store.Close()
+	server := relay.NewServer(store, relay.ServerConfig{BaseURL: "http://" + addr})
+	videoServer := relay.NewServer(store, relay.ServerConfig{BaseURL: "http://" + addr, HeroVideo: "capture-only"})
+	log.Fatal(http.ListenAndServe(addr, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "read only capture fixture", http.StatusMethodNotAllowed)
+			return
+		}
+		if r.URL.Path == "/hero.mp4" {
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write([]byte("unsupported capture fixture"))
+			return
+		}
+		if r.URL.Path == "/" && r.URL.Query().Get("hero") != "" {
+			videoServer.ServeHTTP(w, r)
+			return
+		}
+		server.ServeHTTP(w, r)
+	})))
+}

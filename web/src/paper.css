@@ -64,11 +64,15 @@ body.paper-on #app { display: none; }
 .pp-main { padding: 0 40px 40px; min-width: 0; }
 .pp-hdr { display: flex; align-items: baseline; justify-content: space-between; gap: 24px; padding: 22px 0 14px; border-bottom: 1px solid var(--pp-rule); }
 .pp-hdr h1 i { font-style: normal; }
-/* The wing thread opens at its newest line; its title and status stay in view. */
-@media (min-width: 761px) {
-    .pp-main[data-view="wing"] .pp-hdr { position: sticky; top: 0; z-index: 3; background: var(--pp-paper); }
-    .pp-main[data-view="wing"] .pp-col-rail { top: 76px; }
-}
+/* Conversation headers and controls stay outside the scrolling transcript. */
+.pp-main:is([data-view="wing"], [data-view="session"]):has(.pp-conversation) { height: 100dvh; display: flex; flex-direction: column; padding-bottom: 16px; }
+.pp-main:is([data-view="wing"], [data-view="session"]) .pp-hdr { position: sticky; top: 0; z-index: 3; background: var(--pp-paper); flex: none; }
+.pp-main:has(.pp-conversation) > .pp-cols { flex: 1; min-height: 0; }
+.pp-main:has(.pp-conversation) .pp-col-main { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.pp-conversation { flex: 1; min-height: 0; overflow-y: auto; overflow-wrap: anywhere; overscroll-behavior-y: contain; scrollbar-gutter: stable; }
+.pp-conversation > .pp-row:last-child { margin-bottom: 12px; }
+.pp-main:has(.pp-conversation) .pp-composer { position: static; flex: none; margin-top: 0; }
+.pp-terminal summary { cursor: pointer; padding: 12px 0; color: var(--pp-accent); font-size: 14px; }
 .pp-hdr h1 { font-size: 22px; font-weight: 600; line-height: 1.25; margin: 0; overflow-wrap: anywhere; }
 .pp-meta { font-size: 13px; color: var(--pp-ink-2); text-align: right; }
 .pp-meta b { color: var(--pp-ink); font-weight: 600; }
@@ -202,6 +206,13 @@ body.paper-on #app { display: none; }
     .pp-side-squares { margin: 0 0 0 auto; padding: 0; flex-direction: row; gap: 4px 10px; }
     .pp-side-squares .pp-sq { font-size: 12px; }
     .pp-main { padding: 0 16px 24px; }
+    #paper:has(.pp-conversation) { height: 100dvh; grid-template-rows: auto minmax(0, 1fr); }
+    .pp-main:is([data-view="wing"], [data-view="session"]):has(.pp-conversation) { height: 100%; padding-bottom: 0; min-height: 0; }
+    .pp-main:has(.pp-conversation) > .pp-cols { grid-template-rows: minmax(0, 1fr) auto; }
+    .pp-main:has(.pp-conversation) .pp-composer { padding: 8px 0; }
+    .pp-terminal[open] { max-height: 36dvh; overflow-y: auto; padding-bottom: 12px; }
+    .pp-terminal summary { position: sticky; top: 0; background: var(--pp-paper); }
+    .pp-terminal .pp-kick { margin-top: 0; }
     .pp-hdr { flex-direction: column; align-items: flex-start; gap: 2px; padding-top: 14px; }
     .pp-hdr h1 { font-size: 20px; }
     .pp-meta { text-align: left; }

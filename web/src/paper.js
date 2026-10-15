@@ -15,7 +15,7 @@ import { paperRoute as route, machineState, sessionState as stateOf, projectName
 const reads = new Map();
 const terminals = new Map();
 const numberWords = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
-let root, main, side, lastSignature = '', showEarlier = false;
+let root, main, side, lastSignature = '';
 
 export function paperRoute(hash = location.hash) { return route(hash); }
 export function isPaperRoute(hash) { return !!paperRoute(hash); }
@@ -118,11 +118,11 @@ function viewWing() {
         '<div class="pp-who">' + (r.s ? '<a href="' + sessionHref(r.s) + '">' + esc(sessionDisplayName(r.s)) + '</a>' + chip(sessionState(r.s)) : '<b>' + r.who + '</b>') +
         '<small>' + esc([clock(r.at), r.who === 'you' ? '' : r.where].filter(Boolean).join(' · ')) + '</small></div>' +
         '<div class="pp-say">' + prose(r.text) + '</div></div>').join('');
-    const meta = '<b>wing</b>' + (coord ? ' · ' + esc(machineName(wingOf(coord.wing_id))) : '') + (need.length ? ' · <em>' + need.length + ' needs you</em>' : '');
+    const meta = '<b>wing</b>' + (coord ? ' · ' + esc(machineName(wingOf(coord.wing_id))) : '') + (coord ? ' · ' + esc(agentName(coord.agent)) + chip(sessionState(coord)) : '') + (need.length ? ' · <em>' + need.length + ' needs you</em>' : '');
     return head('wing', meta) + '<div class="pp-cols"><div class="pp-col-main">' +
-        kicker('Today', reporting + (reporting === 1 ? ' session' : ' sessions') + ' reporting') +
+        '<div class="pp-conversation" tabindex="0" aria-label="Wing messages">' + kicker('Today', reporting + (reporting === 1 ? ' session' : ' sessions') + ' reporting') +
         (thread || '<p class="pp-quiet">Wing has not reported yet. Its updates and each session\'s latest line appear here.</p>') +
-        need.map(s => needCard(s)).join('') + (coord ? composer('Message wing', coord) : '') + '</div>' +
+        need.map(s => needCard(s)).join('') + '</div>' + (coord ? composer('Message wing', coord) : '') + '</div>' +
         '<aside class="pp-col-rail">' + kicker('Sessions', String(work.length)) + work.map(s => '<a class="pp-mini" href="' + sessionHref(s) + '">' + chip(sessionState(s)) + '<span>' + esc(sessionDisplayName(s)) + '</span><small>' + esc(machineName(wingOf(s.wing_id))) + '</small></a>').join('') +
         kicker('Machines', String(S.wingsData.length)) + '<div class="pp-squares">' + squares() + '</div></aside></div>';
 }
@@ -192,12 +192,12 @@ function viewSession(route) {
     const msgs = lines(s).slice(-24).map(l => '<div class="pp-row pp-row-' + (l.who === 'you' ? 'you' : 'session') + '"><div class="pp-who"><b>' + (l.who === 'you' ? 'you' : 'session') + '</b><small>' + esc(clock(l.at)) + '</small></div><div class="pp-say">' + prose(l.text) + '</div></div>').join('');
     const live = machineState(w) === 'connected';
     const meta = esc([agentName(s.agent), machineName(w), project(s)].filter(Boolean).join(' · ')) + chip(st);
-    return head(esc(sessionDisplayName(s)), meta) + '<div class="pp-cols pp-split"><div class="pp-col-main">' + kicker('Messages', entry.error ? esc(entry.error) : '') +
+    return head(esc(sessionDisplayName(s)), meta) + '<div class="pp-cols pp-split"><div class="pp-col-main"><div class="pp-conversation" tabindex="0" aria-label="Session messages">' + kicker('Messages', entry.error ? esc(entry.error) : '') +
         (msgs || '<p class="pp-quiet">' + (entry.at ? 'No messages in this session yet.' : 'Reading the session…') + '</p>') +
-        (st.key === 'need' ? needCard(s) : '') + (machineState(w) === 'connected' ? composer('Message ' + sessionDisplayName(s), s) : '') + '</div>' +
-        '<aside class="pp-col-rail pp-term-rail">' + kicker('Terminal', live ? 'Agent has control' : 'Last seen') +
+        (st.key === 'need' ? needCard(s) : '') + '</div>' + (machineState(w) === 'connected' ? composer('Message ' + sessionDisplayName(s), s) : '') + '</div>' +
+        '<aside class="pp-col-rail pp-term-rail"><details class="pp-terminal"' + (matchMedia('(min-width: 761px)').matches ? ' open' : '') + '><summary>Show terminal</summary>' + kicker('Terminal', live ? 'Agent has control' : 'Last seen') +
         '<pre class="pp-term" aria-label="Terminal preview">' + esc((term.text || '').split('\n').slice(-18).join('\n').trimEnd() || term.error || (live ? 'Waiting for terminal output…' : machineName(w) + ' is ' + awayText(w) + '. The last screen is not cached.')) + '</pre>' +
-        (live ? '<button type="button" class="pp-btn" data-takeover="' + esc(s.wing_id + '/' + s.id) + '">Take over terminal</button><p class="pp-quiet">Your keys go to the session until you hand control back. Messages wait while you have control.</p>' : '') + '</aside></div>';
+        (live ? '<button type="button" class="pp-btn" data-takeover="' + esc(s.wing_id + '/' + s.id) + '">Take over terminal</button><p class="pp-quiet">Your keys go to the session until you hand control back. Messages wait while you have control.</p>' : '') + '</details></aside></div>';
 }
 
 function viewApprove(route) {
@@ -231,7 +231,6 @@ function frame() {
     document.body.prepend(root);
     main = root.querySelector('.pp-main'); side = root.querySelector('.pp-side');
     root.addEventListener('click', event => {
-        if (event.target.closest('[data-earlier]')) { showEarlier = true; lastSignature = ''; render(true); return; }
         const take = event.target.closest('[data-takeover]');
         if (take) { const [wingId, sessionId] = take.dataset.takeover.split('/'); show(false); switchToSession(sessionId, true, wingId); return; }
         if (event.target.closest('[data-new-session]')) { showPalette(); return; }
@@ -261,20 +260,6 @@ function show(on) {
     document.body.classList.toggle('paper-on', on);
 }
 
-// On a desktop screen the thread shows the newest rows that fit whole, under
-// its title; older rows open on request.
-function fitThread() {
-    if (showEarlier || !matchMedia('(min-width: 761px)').matches) return;
-    const rows = [...main.querySelectorAll('.pp-col-main > .pp-row')]; if (!rows.length) return;
-    main.querySelector('[data-earlier]')?.remove(); rows.forEach(r => { r.hidden = false; });
-    const more = document.createElement('button');
-    more.type = 'button'; more.className = 'pp-earlier'; more.dataset.earlier = '';
-    rows[0].before(more);
-    let hidden = 0;
-    while (document.documentElement.scrollHeight > innerHeight && hidden < rows.length - 1) rows[hidden++].hidden = true;
-    if (hidden) more.textContent = hidden + (hidden === 1 ? ' earlier update' : ' earlier updates'); else more.remove();
-}
-
 export function render(force) {
     const route = paperRoute();
     const on = !!route && S.activeView === 'home';
@@ -287,13 +272,17 @@ export function render(force) {
     lastSignature = sig;
     const draft = root.querySelector('#pp-message')?.value, filter = root.querySelector('#pp-filter')?.value, focused = document.activeElement && document.activeElement.id;
     const fresh = main.dataset.hash !== location.hash;
-    const pinned = fresh || innerHeight + scrollY >= document.documentElement.scrollHeight - 48;
+    const conversation = main.querySelector('.pp-conversation');
+    const position = conversation?.scrollTop || 0;
+    const pinned = fresh || !conversation || conversation.scrollHeight - position - conversation.clientHeight <= 48;
+    const terminalOpen = main.querySelector('.pp-terminal')?.open;
     main.innerHTML = html;
     main.dataset.view = route.view; main.dataset.hash = location.hash;
-    // The wing thread opens on its newest line, like a conversation.
-    // A session opens on its terminal and take-over button, above the composer.
-    if (route.view === 'wing') { fitThread(); document.fonts?.ready.then(() => { if (main.dataset.view === 'wing') fitThread(); }); }
-    if (pinned && (route.view === 'wing' || route.view === 'session')) requestAnimationFrame(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    // Only the transcript follows new output; identity and controls stay in view.
+    const nextTerminal = main.querySelector('.pp-terminal');
+    if (!fresh && nextTerminal && terminalOpen !== undefined) nextTerminal.open = terminalOpen;
+    const nextConversation = main.querySelector('.pp-conversation');
+    if (nextConversation) nextConversation.scrollTop = pinned ? nextConversation.scrollHeight : position;
     const nv = nav(route);
     side.querySelector('.pp-nav').innerHTML = nv;
     root.querySelector('.pp-tabs').innerHTML = nv;
@@ -302,7 +291,7 @@ export function render(force) {
     side.querySelector('.pp-foot').textContent = S.currentUser && S.currentUser.email || '';
     if (draft) root.querySelector('#pp-message') && (root.querySelector('#pp-message').value = draft);
     if (filter) { const f = root.querySelector('#pp-filter'); if (f) { f.value = filter; f.dispatchEvent(new Event('input', { bubbles: true })); } }
-    if (focused && (focused === 'pp-message' || focused === 'pp-filter')) root.querySelector('#' + focused)?.focus();
+    if (focused && (focused === 'pp-message' || focused === 'pp-filter')) root.querySelector('#' + focused)?.focus({ preventScroll: true });
 }
 
 export function initPaper() {
