@@ -178,34 +178,30 @@ func scanDir(dir string, depth, maxDepth int, projects *[]ws.WingProject) {
 	if depth > maxDepth {
 		return
 	}
+	rootHasGit := false
 
 	// At depth 0, check if the configured path itself is a project.
 	// This handles paths that point directly at project dirs (e.g.
 	// paths: [~/repos/myproject]). At depth > 0, the parent's child
 	// scan already added this dir if it had .git or egg.yaml.
 	if depth == 0 {
-		hasGit := false
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			hasGit = true
+			rootHasGit = true
 		}
 		hasEgg := false
 		if _, err := os.Stat(filepath.Join(dir, "egg.yaml")); err == nil {
 			hasEgg = true
 		}
-		if hasGit || hasEgg {
+		if rootHasGit || hasEgg {
 			*projects = append(*projects, ws.WingProject{
 				Name:    filepath.Base(dir),
 				Path:    dir,
 				ModTime: projectModTime(dir),
 			})
-			if hasGit {
-				return
-			}
-			// egg.yaml only: also scan children for git repos
 		}
 	}
 
-	// Not a project itself — scan children.
+	// Git roots expose only immediate egg.yaml roles; other dirs can contain repos.
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -219,18 +215,21 @@ func scanDir(dir string, depth, maxDepth int, projects *[]ws.WingProject) {
 		eggFile := filepath.Join(full, "egg.yaml")
 		hasGit := false
 		hasEgg := false
-		if info, err := os.Stat(gitDir); err == nil && info.IsDir() {
+		if info, err := os.Stat(gitDir); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
 			hasGit = true
 		}
 		if info, err := os.Stat(eggFile); err == nil && !info.IsDir() {
 			hasEgg = true
 		}
-		if hasGit || hasEgg {
+		if (hasGit && !rootHasGit) || hasEgg {
 			*projects = append(*projects, ws.WingProject{
 				Name:    e.Name(),
 				Path:    full,
 				ModTime: projectModTime(full),
 			})
+		}
+		if rootHasGit {
+			continue
 		}
 		if hasGit {
 			// Git repo found. Also check immediate children for egg.yaml
