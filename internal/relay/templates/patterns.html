@@ -20,19 +20,33 @@
 .recipe-row{display:flex;gap:14px;align-items:center;margin-top:14px;font-family:var(--mono);font-size:11px}
 .recipe-row a,.copy-recipe{color:var(--text-dim);background:none;border:none;padding:0;font:inherit;cursor:pointer;text-decoration:none}
 .recipe-row a:hover,.copy-recipe:hover{color:var(--action)}
-@media(max-width:700px){.pattern-list{grid-template-columns:1fr}.patterns h1{font-size:25px}}
+.route-details{max-width:760px;color:var(--text-dim);line-height:1.6;margin-top:24px}
+@media(max-width:700px){.pattern-list{grid-template-columns:1fr}.patterns{padding-top:12px}.patterns h1{font-size:25px}.patterns .lead{line-height:1.5;margin-bottom:16px}.plain-language{padding:10px 12px;margin-bottom:18px}.pattern{padding:18px}.pattern-facts{font-size:14px;line-height:1.5}}
 </style>
 {{end}}
 {{define "content"}}
 <main class="patterns">
-<h1>choose the smallest route</h1>
-<p class="lead">Start with local stdio MCP when an agent is driving, or a local sandboxed terminal when a person is driving. If machines differ, use direct remote MCP. If a person needs a browser, self-host a roost first. The hosted browser relay is the last, optional route and requires entitlement.</p>
+<h1>Choose how to run your agents</h1>
+<p class="lead">Start an agent in a local project, return to its terminal later, or connect to another computer. Choose the setup that fits your work.</p>
 
-<div class="plain-language"><strong>Code, credentials, processes, and durable state stay on the execution wing.</strong> Wingthing routes control to an existing workspace; it does not copy workspaces, provider logins, provider history, or Wingthing memory between machines.</div>
+<div class="plain-language"><strong>Your code and provider logins stay on the computer running the agent.</strong></div>
 
 <div class="pattern-list">
-<section class="pattern" data-route="local-agent">
+<section class="pattern" data-route="local-human">
 <div class="pattern-num">01</div>
+<div class="pattern-tags"><span class="pattern-tag">one computer</span><span class="pattern-tag">human-driven</span><span class="pattern-tag">terminal</span></div>
+<h2>Run an agent and return to it later</h2>
+<p>Start Claude, Codex, or another agent in a local project without setting up a server or account.</p>
+<ul class="pattern-facts">
+<li><strong>You need:</strong> Wingthing and the provider agent CLI installed and authenticated locally.</li>
+<li><strong>You get:</strong> project sandbox policy, a persistent terminal, and the ability to disconnect and reattach later.</li>
+</ul>
+<div class="flow">person -> local sandboxed agent terminal -> reattach later</div>
+<div class="recipe-row"><a href="/patterns/local-sandbox/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/local-sandbox/INSTRUCTIONS.md">copy setup guide</button></div>
+</section>
+
+<section class="pattern" data-route="local-agent">
+<div class="pattern-num">02</div>
 <div class="pattern-tags"><span class="pattern-tag">one computer</span><span class="pattern-tag">agent-driven</span><span class="pattern-tag">stdio MCP</span></div>
 <h2>Let your current AI launch local sub-agents</h2>
 <p>Give a parent Claude or Codex session typed tools for agents on the same computer, using the code and provider logins already there.</p>
@@ -42,19 +56,6 @@
 </ul>
 <div class="flow">parent AI -> local stdio MCP -> local child agents</div>
 <div class="recipe-row"><a href="/patterns/local-subagents/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/local-subagents/INSTRUCTIONS.md">copy setup guide</button></div>
-</section>
-
-<section class="pattern" data-route="local-human">
-<div class="pattern-num">02</div>
-<div class="pattern-tags"><span class="pattern-tag">one computer</span><span class="pattern-tag">human-driven</span><span class="pattern-tag">terminal</span></div>
-<h2>Run a durable, sandboxed agent on this computer</h2>
-<p>Start Claude, Codex, or another agent in a local project without setting up a server or account.</p>
-<ul class="pattern-facts">
-<li><strong>You need:</strong> Wingthing and the provider agent CLI installed and authenticated locally.</li>
-<li><strong>You get:</strong> project sandbox policy, a persistent terminal, and the ability to disconnect and reattach later.</li>
-</ul>
-<div class="flow">person -> local sandboxed agent terminal -> reattach later</div>
-<div class="recipe-row"><a href="/patterns/local-sandbox/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/local-sandbox/INSTRUCTIONS.md">copy setup guide</button></div>
 </section>
 
 <section class="pattern" data-route="direct-remote">
@@ -123,6 +124,7 @@
 <div class="recipe-row"><a href="/patterns/hosted-browser-wing/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/hosted-browser-wing/INSTRUCTIONS.md">copy setup guide</button></div>
 </section>
 </div>
+<p class="route-details">Processes and durable state also stay on the execution wing. Wingthing routes control to an existing workspace; it does not copy workspaces, provider logins, provider history, or Wingthing memory between machines.</p>
 </main>
 <script>
 document.querySelectorAll('[data-copy]').forEach(function(button){

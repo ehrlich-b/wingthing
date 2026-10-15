@@ -5,7 +5,10 @@
 .docs-nav{position:sticky;top:24px;min-width:160px;flex-shrink:0;font-family:var(--mono);font-size:12px;display:block;justify-content:initial;align-items:initial;padding:0;border-bottom:none;margin-bottom:0}
 .docs-nav a{display:block;color:var(--text-dim);text-decoration:none;padding:5px 0;border-left:2px solid transparent;padding-left:10px}
 .docs-nav a:hover,.docs-nav a.active{color:var(--text);border-left-color:var(--action)}
-.docs-body{flex:1;min-width:0;max-width:780px}
+.docs-body{flex:1;min-width:0;max-width:780px;overflow-wrap:anywhere}
+.docs-table-scroll{width:100%;max-width:100%;overflow-x:auto;margin-bottom:16px}
+.docs-table-scroll table{min-width:540px;margin-bottom:0;overflow-wrap:normal}
+.docs-table-scroll:focus-visible{outline:2px solid var(--action);outline-offset:2px}
 .docs-body h1{font-size:24px;font-weight:700;letter-spacing:-0.03em;margin-bottom:8px}
 .docs-body>p.lead{color:var(--text-dim);font-size:14px;line-height:1.6;margin-bottom:28px}
 .docs-section{margin-bottom:40px}
@@ -54,33 +57,33 @@
 </nav>
 <div class="docs-body">
 <h1>documentation</h1>
-<p class="lead">Wingthing is a local-first, agent-first manager for durable agent runs and terminals. Start with local stdio MCP, then add another machine or a human display only when the task requires one.</p>
+<p class="lead">Run coding agents in your existing projects and return to their sessions later. Start with a local terminal; add another machine or a browser when you need one.</p>
 
 <div class="docs-section" id="quickstart">
 <h2>quickstart</h2>
 
-<h3 data-route="local-agent" style="font-size:14px;margin:16px 0 8px;color:var(--text)">1. give Codex or Claude local stdio MCP control</h3>
-<div class="docs-code">
-<span class="prompt">$ </span><span class="cmd">curl -fsSL https://wingthing.ai/install.sh | sh</span><br>
-<br>
-<span class="comment"># Codex</span><br>
-<span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp stdio --client codex</span><br>
-<br>
-<span class="comment"># Claude Code</span><br>
-<span class="prompt">$ </span><span class="cmd">claude mcp add --scope user wingthing -- wt mcp stdio --client claude</span>
-</div>
-<p>Manual downloads: <a href="https://gitlab.com/ehrlich-b/wingthing/-/releases">GitLab releases</a>.</p>
-<p>Restart the client, then ask it to call <code>wingthing_capabilities</code>. Child agents use existing project directories and the current OS user's existing provider logins on this computer. No Wingthing account or daemon is required.</p>
-
-<h3 data-route="local-human" style="font-size:14px;margin:16px 0 8px;color:var(--text)">2. start a local sandboxed agent terminal yourself</h3>
+<h3 data-route="local-human" style="font-size:14px;margin:16px 0 8px;color:var(--text)">Run your first coding agent</h3>
+<div class="docs-code"><span class="prompt">$ </span><span class="cmd">curl -fsSL https://wingthing.ai/install.sh | sh</span></div>
+<p>For macOS and Linux, arm64 and x64. Install and authenticate the Claude CLI with your provider login, then enter an existing project:</p>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">cd /path/to/existing/project</span><br>
-<span class="prompt">$ </span><span class="cmd">wt egg claude --name work</span><br>
-<span class="prompt">$ </span><span class="cmd">wt attach work</span>
+<span class="prompt">$ </span><span class="cmd">wt egg claude --name work</span>
 </div>
-<p>The provider CLI must already be installed and authenticated locally. <code>wt egg</code> applies the project sandbox and keeps the terminal attachable without an account or daemon.</p>
+<p>Claude opens in a sandboxed terminal in your project. No Wingthing account or daemon is required. Detach with <code>Ctrl+B</code>, then <code>Q</code>; your agent keeps running.</p>
+<p>Return to that same terminal:</p>
+<div class="docs-code"><span class="prompt">$ </span><span class="cmd">wt attach work</span></div>
+<p>Manual downloads: <a href="https://gitlab.com/ehrlich-b/wingthing/-/releases">GitLab releases</a>.</p>
+<h3 style="font-size:16px;margin:24px 0 8px;color:var(--text)">Optional next steps</h3>
+<h3 data-route="local-agent" style="font-size:14px;margin:16px 0 8px;color:var(--text)">Let another agent manage your sessions with MCP</h3>
+<div class="docs-code">
+<span class="comment"># Codex</span><br>
+<span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp stdio --client codex</span><br>
+<span class="comment"># or Claude Code</span><br>
+<span class="prompt">$ </span><span class="cmd">claude mcp add --scope user wingthing -- wt mcp stdio --client claude</span>
+</div>
+<p>Restart the client, then ask it to call <code>wingthing_capabilities</code>. Child agents use existing project directories and the current OS user's existing provider logins on this computer. No Wingthing account or daemon is required.</p>
 
-<h3 data-route="direct-remote" style="font-size:14px;margin:16px 0 8px;color:var(--text)">3. use direct remote MCP when machines differ</h3>
+<h3 data-route="direct-remote" style="font-size:14px;margin:16px 0 8px;color:var(--text)">Connect agents on other machines</h3>
 <p>On every execution machine, keep the required workspace there, install and authenticate the provider CLIs that may run there, then log in and start its wing:</p>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt login</span><br>
@@ -95,14 +98,14 @@
 <p>Run <code>wt start</code> on the parent only when that machine also executes agents.</p>
 <p>The agent calls <code>wing_list</code>, then passes an explicit <code>wing_id</code> to every operation. The hosted service supplies identity, the access-filtered directory, and WebRTC signaling; MCP payloads travel directly between the connector and selected wing. The connector never silently changes to hosted relay. The first release expects the peers to share a LAN or tailnet unless you configure STUN or TURN under <code>ice_servers</code> in <code>~/.wingthing/wing.yaml</code>; the several-computer pattern includes the exact YAML shape.</p>
 
-<h3 data-route="self-hosted-browser" style="font-size:14px;margin:16px 0 8px;color:var(--text)">4. self-host first when a person needs a browser</h3>
+<h3 data-route="self-hosted-browser" style="font-size:14px;margin:16px 0 8px;color:var(--text)">Open a browser on your own machine</h3>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt roost start --https</span><span class="comment"> # portal + gateway + local wing</span><br>
 <span class="prompt">$ </span><span class="cmd">open https://localhost:8443</span>
 </div>
 <p>This self-hosted route needs no Wingthing account or hosted-relay entitlement. WT creates a localhost-only certificate on demand, installs only its public CA for your current user, and keeps its private keys on this machine. Use the localhost-plus-SSH pattern for a remote wing, or configure OAuth, HTTPS, and explicit enrollment for several people.</p>
 
-<h3 data-route="hosted-relay" style="font-size:14px;margin:16px 0 8px;color:var(--text)">5. use the entitled hosted browser only if needed</h3>
+<h3 data-route="hosted-relay" style="font-size:14px;margin:16px 0 8px;color:var(--text)">Use the hosted browser</h3>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt login</span><br>
 <span class="prompt">$ </span><span class="cmd">wt start</span><br>
@@ -116,7 +119,7 @@
 <div class="docs-section" id="overview">
 <h2>overview</h2>
 <p>Wingthing runs Claude Code, Codex, Ollama, and other agents behind one wing-owned control plane. Local stdio MCP is the primary agent interface. The local CLI is the primary human terminal. Direct remote MCP connects different machines. A self-hosted roost adds browser visibility; the entitled hosted relay is an optional alternative. Execution stays on the wing where the selected workspace, provider login, and hardware live.</p>
-<table class="vocab-table">
+<div class="docs-table-scroll" role="region" aria-label="Scrollable reference table" tabindex="0"><table class="vocab-table">
 <tr><th>term</th><th>what it is</th></tr>
 <tr><td>portal</td><td>The inventory and controls presented to a person or LLM. The browser and MCP are portal adapters, though they do not yet expose every object with full parity.</td></tr>
 <tr><td>wing</td><td>One machine running Wingthing. It owns its process, terminal, task, workspace, and agent-home state.</td></tr>
@@ -124,21 +127,21 @@
 <tr><td>run</td><td>A supervised headless agent task with semantic status, events, output, and errors.</td></tr>
 <tr><td>egg</td><td>The process, PTY, sandbox policy, and local control socket behind a session.</td></tr>
 <tr><td>roost</td><td>The self-hosted bundle started by <code>wt roost start</code>: a portal and gateway with an embedded wing. Other wings can register with its gateway.</td></tr>
-</table>
+</table></div>
 <p><code>wingthing.ai</code> is the hosted identity, directory, and connection-coordination service. Think of it as a tailnet control plane for wings: it introduces authenticated peers, while the free native-MCP data path is direct. The optional hosted relay carries encrypted browser-terminal and control payloads for Pro users. It is not a roost under the stricter self-hosted-bundle definition above.</p>
 </div>
 
 <div class="docs-section" id="agent-control">
 <h2>agent control</h2>
 <p>The MCP server lets a parent LLM discover and operate Wingthing without scraping terminal output. Use <code>wt mcp stdio</code> for the same host and <code>wt mcp connect</code> for an explicitly selected remote wing. Use <code>agent_run</code> for semantic task state. Use <code>agent_start</code> when a person should be able to attach to the persistent terminal.</p>
-<table class="vocab-table">
+<div class="docs-table-scroll" role="region" aria-label="Scrollable reference table" tabindex="0"><table class="vocab-table">
 <tr><th>placement</th><th>current contract</th></tr>
 <tr><td>execution wing</td><td>Local stdio executes on its host. Direct remote calls require the selected <code>wing_id</code>. A roost HTTP MCP endpoint controls that roost's built-in wing; Wingthing never silently substitutes a different target.</td></tr>
 <tr><td>workspace</td><td>Pass an existing <code>cwd</code> on the execution wing. Wingthing does not create, clone, upload, or synchronize the repository or its untracked files.</td></tr>
 <tr><td>display</td><td><code>agent_run</code> has semantic status and a final result but no live browser view. <code>agent_start</code> creates a PTY a person can attach to through the CLI, SSH, or an entitled/self-hosted browser.</td></tr>
 <tr><td>credentials</td><td>The provider CLI uses the execution owner's agent home on that wing. Shared hosts keep those homes separate. Provider tokens and SSH keys do not belong in prompts or MCP arguments.</td></tr>
 <tr><td>durable memory</td><td>Tasks, results, messages, and threads stay in that wing's <code>~/.wingthing/wt.db</code>; terminal state stays under <code>~/.wingthing/eggs</code>, optional prompt memory under <code>~/.wingthing/memory</code>, and provider history in the provider home. <code>WINGTHING_DIR</code> changes the Wingthing state root. None of this is replicated between wings automatically.</td></tr>
-</table>
+</table></div>
 <p>A terminal survives client detachment. A run's record and result persist, but an active headless run still depends on its supervising Wingthing process. Keep the returned run or session ID together with its owning wing for every later operation.</p>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp stdio --client codex</span><br>
@@ -190,7 +193,7 @@
 <p>The daemon picks up changes via SIGHUP. See the reload column for what requires a restart.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">config fields</h3>
-<table class="docs-table">
+<div class="docs-table-scroll" role="region" aria-label="Scrollable reference table" tabindex="0"><table class="docs-table">
 <tr><th>field</th><th>effect</th><th>reload</th></tr>
 <tr><td>org</td><td>organization slug - share this wing with org members</td><td>restart</td></tr>
 <tr><td>paths</td><td>project directories to expose (default: CWD). Also settable via <code>wt start --paths ~/repos,~/projects</code></td><td>live</td></tr>
@@ -207,7 +210,7 @@
 <tr><td>conv</td><td>conversation context file path</td><td>live</td></tr>
 <tr><td>direct_mcp</td><td>optional native-control policy: <code>disabled</code>, <code>allow_grants</code> or <code>deny_grants</code>, <code>max_sessions</code>, and <code>max_spawns_per_hour</code>. Omit it for compatible bounded defaults</td><td>live</td></tr>
 <tr><td>hosted_relay</td><td><code>allow</code> (compatible default) or <code>deny</code>. Deny overrides account entitlement and leaves only bounded direct-connection coordination on the gateway</td><td>restart</td></tr>
-</table>
+</table></div>
 <p>Direct MCP policy is enforced by the wing after the coordinator-authenticated identity arrives. Grant and bound fields are not accepted from tool arguments. Malformed policy or unknown grant names fail closed instead of starting with unrestricted direct access.</p>
 <p>Hosted-relay denial is enforced before forwarding by a current gateway and again by the wing. The effective value appears in authorized capability metadata; audit records contain no command, path, terminal, or tunnel payload.</p>
 <p><strong>Downgrade boundary:</strong> a wing binary from before <code>hosted_relay</code> existed ignores this field and resumes the historical relay behavior. If <code>deny</code> is a security requirement, stop or isolate the wing before installing an older binary.</p>
@@ -333,7 +336,7 @@ agent_settings:<br>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">environment</h3>
 <p>Every egg gets these variables, available to CLAUDE.md, scripts, and any process inside the session:</p>
-<table class="docs-table">
+<div class="docs-table-scroll" role="region" aria-label="Scrollable reference table" tabindex="0"><table class="docs-table">
 <tr><th>variable</th><th>value</th></tr>
 <tr><td>WT_SESSION_ID</td><td>session UUID</td></tr>
 <tr><td>WT_USER</td><td>normalized username from email</td></tr>
@@ -341,19 +344,19 @@ agent_settings:<br>
 <tr><td>WT_USER_NAME</td><td>display name (Google full name, GitHub login)</td></tr>
 <tr><td>WT_PREVIEW_DIR</td><td>working directory path</td></tr>
 <tr><td>WT_PREVIEW_FILE</td><td>.wt-preview-&lt;session-id&gt;</td></tr>
-</table>
+</table></div>
 </div>
 
 <div class="docs-section" id="preview-panel">
 <h2>preview panel</h2>
 <p>An agent can open a panel next to the terminal by writing <code>$WT_PREVIEW_DIR/$WT_PREVIEW_FILE</code>. The file is consumed - it disappears once the panel picks it up, which is how the agent knows the preview is live. Write it again to update the panel, or write an empty file to close it.</p>
 <p>The first line selects the mode:</p>
-<table class="docs-table">
+<div class="docs-table-scroll" role="region" aria-label="Scrollable reference table" tabindex="0"><table class="docs-table">
 <tr><th>first line</th><th>panel shows</th></tr>
 <tr><td><code>url:&lt;url&gt;</code></td><td>the reviewed address with load, copy, and open controls; no request happens until you choose load or open</td></tr>
 <tr><td><code>file:&lt;name&gt;</code></td><td>the rest of the file, with a download button</td></tr>
 <tr><td>anything else</td><td>the whole file rendered as markdown</td></tr>
-</table>
+</table></div>
 <p>Show a deployed app:</p>
 <div class="docs-code">
 echo "url:https://example.com/apps/$WT_USER/tracker/" &gt; "$WT_PREVIEW_DIR/$WT_PREVIEW_FILE"
@@ -394,7 +397,7 @@ idle_timeout: 4h
 <p>Without an <code>egg.yaml</code>, the sandbox applies opinionated defaults: CWD is writable, home is read-only, sensitive directories (<code>~/.ssh</code>, <code>~/.gnupg</code>, <code>~/.aws</code>, etc.) are denied, and only essential env vars pass through. <code>~/.ssh/known_hosts</code> is preserved read-only so SSH can verify host keys without prompting (add <code>deny:~/.ssh/known_hosts</code> to disable this). Network is blocked except for exactly what your agent needs - each agent has a profile declaring its API domains, env vars, and config directories. Claude gets <code>api.anthropic.com</code>, Ollama gets <code>localhost</code>, etc. You don't configure any of this.</p>
 <p>A local <a href="https://en.wikipedia.org/wiki/HTTP_tunnel">CONNECT proxy</a> enforces domain-level filtering - agents can only reach their declared APIs, not the entire internet. On macOS, Seatbelt permits only the proxy endpoint. On Linux, every sandbox keeps a route-less network namespace and an inherited-FD relay exposes only the proxy and explicitly declared host-loopback ports. Removing <code>HTTPS_PROXY</code> does not create a route.</p>
 <p>Drop an <code>egg.yaml</code> in your project to customize. Configs are additive - you only declare what you're changing from the defaults.</p>
-<p>Place <code>egg.yaml</code> in your project directory for per-project config, or in <code>~/.wingthing/egg.yaml</code> for global defaults. Project configs are discovered automatically. Use the <a href="/">sandbox builder</a> on the homepage to generate configs visually, or install the <a href="https://github.com/ehrlich-b/wingthing/tree/main/docs/skills/create-egg">Claude Code skill</a> for an interactive security interview that generates hardened configs.</p>
+<p>Place <code>egg.yaml</code> in your project directory for per-project config, or in <code>~/.wingthing/egg.yaml</code> for global defaults. Project configs are discovered automatically. Use the <a href="/">sandbox builder</a> on the homepage to generate configs visually, or install the <a href="https://gitlab.com/ehrlich-b/wingthing/-/tree/main/docs/skills/create-egg">Claude Code skill</a> for an interactive security interview that generates hardened configs.</p>
 <p>Example <code>egg.yaml</code>:</p>
 <div class="docs-code">
 fs:<br>
@@ -408,7 +411,7 @@ dangerously_skip_permissions: true
 <p>The sandbox auto-injects mounts for the agent binary's install root and config directory, so you don't need to know where Claude or Codex is installed. Use <code>base: none</code> for a blank slate if you want full control.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">what each config field does</h3>
-<table class="docs-table">
+<div class="docs-table-scroll" role="region" aria-label="Scrollable reference table" tabindex="0"><table class="docs-table">
 <tr><th>field</th><th>effect</th></tr>
 <tr><td>fs</td><td>filesystem rules: <code>rw:PATH</code>, <code>ro:PATH</code>, <code>deny:PATH</code>, <code>deny-write:PATH</code>. Additive on top of defaults</td></tr>
 <tr><td>network</td><td>domain allowlist, merged with agent defaults. Use <code>"*"</code> for unrestricted</td></tr>
@@ -420,8 +423,8 @@ dangerously_skip_permissions: true
 <tr><td>memory *</td><td>memory limit, e.g. <code>4G</code>. Linux only, ignored on macOS</td></tr>
 <tr><td>max_fds *</td><td>max open file descriptors. Linux only, ignored on macOS</td></tr>
 <tr><td>max_pids *</td><td>max processes in cgroup. Linux only, requires cgroups v2</td></tr>
-</table>
-<p style="font-size:12px;color:var(--text-dim)">* Linux only. macOS Seatbelt doesn't support resource limits. If these limitations are blocking you, <a href="https://github.com/ehrlich-b/wingthing/issues">file an issue</a>.</p>
+</table></div>
+<p style="font-size:12px;color:var(--text-dim)">* Linux only. macOS Seatbelt doesn't support resource limits. If these limitations are blocking you, <a href="https://gitlab.com/ehrlich-b/wingthing/-/issues">file an issue</a>.</p>
 </div>
 
 <div class="docs-section" id="self-hosting">
@@ -486,7 +489,7 @@ WantedBy=multi-user.target
 
 <div class="docs-section" id="roost-configuration">
 <h2>gateway and roost configuration</h2>
-<table class="docs-table">
+<div class="docs-table-scroll" role="region" aria-label="Scrollable reference table" tabindex="0"><table class="docs-table">
 <tr><th>var</th><th>purpose</th></tr>
 <tr><td>WT_BASE_URL</td><td>public URL for OAuth callbacks</td></tr>
 <tr><td>GITHUB_CLIENT_ID</td><td>GitHub OAuth app ID</td></tr>
@@ -498,7 +501,7 @@ WantedBy=multi-user.target
 <tr><td>WT_JWT_KEY</td><td>EC P-256 private key (PEM or base64-DER) for JWT signing (<strong>required</strong> in server mode, auto-generated in local/roost mode)</td></tr>
 <tr><td>WT_APP_HOST</td><td>hostname for app subdomain (e.g. app.example.com)</td></tr>
 <tr><td>WT_WS_HOST</td><td>hostname for WebSocket subdomain (e.g. ws.example.com)</td></tr>
-</table>
+</table></div>
 <p>Without OAuth env vars, the server auto-enables local mode (single-user, no login page). Pass <code>--local</code> explicitly to force it.</p>
 </div>
 
@@ -538,7 +541,7 @@ WantedBy=multi-user.target
 <p>Agent-authored Markdown previews are network-inert. Agent-authored URLs are displayed but not fetched until you choose <strong>load preview</strong> or <strong>open</strong>. After that choice, the request comes from your browser and is outside the egg's network allowlist. The iframe uses an opaque sandbox origin and no-referrer policy, but the destination still receives the request and its network-level metadata.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">what the sandbox enforces</h3>
-<table class="docs-table">
+<div class="docs-table-scroll" role="region" aria-label="Scrollable reference table" tabindex="0"><table class="docs-table">
 <tr><th>feature</th><th>macOS</th><th>Linux</th></tr>
 <tr><td>deny paths (.ssh, .aws, etc.)</td><td>SBPL rules</td><td>tmpfs overlays</td></tr>
 <tr><td>write isolation (HOME read-only)</td><td>SBPL rules</td><td>bind-mount read-only + writable holes</td></tr>
@@ -547,7 +550,7 @@ WantedBy=multi-user.target
 <tr><td>seccomp syscall filter</td><td>n/a</td><td>blocks mount, ptrace, kexec, setns, unshare, bpf, open_by_handle_at, and 20+ more</td></tr>
 <tr><td>resource limits (CPU, mem, FDs)</td><td>not available</td><td>cgroups v2 (memory, PIDs) + rlimit(2) (CPU, virtual address space, FDs)</td></tr>
 <tr><td>PID isolation</td><td>n/a</td><td>CLONE_NEWPID</td></tr>
-</table>
+</table></div>
 <p style="font-size:12px;color:var(--text-dim)">* See sandbox limits below.</p>
 </div>
 
@@ -561,7 +564,7 @@ WantedBy=multi-user.target
 <li><strong>Agent config is writable.</strong> <code>~/.claude/</code> and similar directories must be writable for the agent to function.</li>
 <li><strong>Resource limits are Linux-only.</strong> macOS agents can consume unbounded CPU and memory. On Linux, cgroups v2 limits real memory (RSS) and process count; rlimit covers CPU time, virtual address space, and file descriptors. Cgroups require v2 with delegation. Falls back to rlimit-only when unavailable.</li>
 </ul>
-<p>These are on the roadmap. If any of these are blocking you, <a href="https://github.com/ehrlich-b/wingthing/issues">file an issue</a> - it helps us prioritize. If you need hard isolation today, run wingthing inside a VM or container.</p>
+<p>These are on the roadmap. If any of these are blocking you, <a href="https://gitlab.com/ehrlich-b/wingthing/-/issues">file an issue</a> - it helps us prioritize. If you need hard isolation today, run wingthing inside a VM or container.</p>
 </div>
 
 

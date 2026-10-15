@@ -1,22 +1,43 @@
-{{define "title"}}wingthing - typed agent manager{{end}}
+{{define "title"}}wingthing - your coding agents, across your machines{{end}}
 {{define "head"}}
 <style>
 .hero{padding:40px 0 24px;text-align:center}
 .hero h1{font-size:28px;font-weight:700;letter-spacing:-0.03em;margin-bottom:8px}
 .hero .tagline{color:var(--text-dim);font-size:15px;line-height:1.6;max-width:720px;margin:0 auto 24px}
-.prompt-flow{font-family:var(--mono);font-size:18px;margin-top:8px}
-.prompt-line{display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0}
-.prompt-dim{color:var(--text-dim)}
-.prompt-key{color:var(--text);font-weight:700;background:var(--bg-card);padding:2px 8px;border-radius:3px}
-.prompt-hidden{display:none}
-.hero-video{margin:24px auto 0;max-width:800px;position:relative;cursor:pointer}
-.hero-video video{width:100%;border-radius:8px;border:1px solid var(--accent);display:block;pointer-events:none}
-.hero-fs{position:absolute;bottom:12px;right:12px;background:rgba(0,0,0,0.5);border:none;color:#fff;width:36px;height:36px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity 0.15s;padding:0}
-.hero-fs svg{width:18px;height:18px}
-.hero-video:hover .hero-fs{opacity:1}
-@media(hover:none){.hero-fs{opacity:0.7}}
-a.prompt-line{text-decoration:none}
-a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
+.hero-actions{display:flex;justify-content:center;align-items:center;gap:16px;margin-bottom:22px}
+.hero-install{display:inline-block;background:var(--action);color:#fff;padding:10px 20px;border-radius:5px;font-weight:600;text-decoration:none}
+.hero-install:hover{background:var(--action-hover);color:#fff}
+.hero-shortcut{color:var(--text-dim);font-size:12px}
+.hero-shortcut kbd{font:12px var(--mono);padding:2px 6px;border:1px solid var(--accent);border-radius:3px}
+.product-preview{max-width:820px;margin:0 auto;text-align:left;border:1px solid var(--accent);border-radius:8px;overflow:hidden;background:var(--bg-card)}
+.preview-bar{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--accent);font-size:12px;color:var(--text-dim)}
+.preview-bar strong{color:var(--text);font-size:14px}
+.preview-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.preview-sessions{border-right:1px solid var(--accent);padding:14px 16px}
+.preview-session + .preview-session{border-top:1px solid var(--accent);margin-top:12px;padding-top:12px}
+.preview-session b{display:block;font-size:13px;overflow-wrap:anywhere}
+.preview-session small{display:block;color:var(--text-dim);font-size:12px;margin:3px 0}
+.preview-session p{font-size:12px;line-height:1.5;color:var(--text-dim)}
+.preview-thread{padding:14px 16px}
+.preview-thread h2{font-size:14px;margin-bottom:10px}
+.preview-thread h2 small{font-size:12px;font-weight:400;color:var(--text-dim)}
+.preview-thread p{font-size:13px;line-height:1.5;margin:6px 0 12px}
+.preview-thread .preview-who{font-size:11px;color:var(--text-dim)}
+.preview-compose{font-size:12px;color:var(--text-dim);border:1px solid var(--accent);padding:8px 10px;border-radius:4px}
+.preview-access{font-size:12px;color:var(--text-dim);max-width:720px;margin:10px auto 0}
+.hero-video{margin:20px auto 0;max-width:820px}
+.hero-video video{width:100%;border-radius:8px;border:1px solid var(--accent);display:block}
+@media(max-width:700px){
+  .hero{padding-top:12px}
+  .hero .tagline{font-size:14px;margin-bottom:16px}
+  .hero-shortcut{display:none}
+  .hero-actions{margin-bottom:18px}
+  .preview-grid{grid-template-columns:minmax(0,1fr)}
+  .preview-sessions{border-right:0;border-bottom:1px solid var(--accent);padding:10px 14px}
+  .preview-session + .preview-session{display:none}
+  .preview-thread{padding:10px 14px}
+  .preview-thread p{margin-bottom:8px}
+}
 .tab-bar{display:flex;gap:0;justify-content:center;font-family:var(--mono);font-size:13px;border-bottom:1px solid var(--accent);margin-bottom:0}
 .tab-bar button{background:none;border:none;color:var(--text-dim);font-family:var(--mono);font-size:13px;padding:10px 20px;cursor:pointer;border-bottom:2px solid transparent;transition:color 0.15s,border-color 0.15s}
 .tab-bar button:hover{color:var(--text)}
@@ -83,30 +104,36 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 {{end}}
 {{define "content"}}
 <script>
-(function(){
-    var hv=document.getElementById('hero-vid');
-    if(hv){document.addEventListener('fullscreenchange',function(){hv.controls=!!document.fullscreenElement});document.addEventListener('webkitfullscreenchange',function(){hv.controls=!!document.webkitFullscreenElement})}
-    document.addEventListener('keydown',function(e){
-        var t=document.activeElement&&document.activeElement.tagName;
-        if(t==='INPUT'||t==='TEXTAREA'||t==='SELECT')return;
-        if(e.key==='.'&&!e.ctrlKey&&!e.metaKey&&!e.altKey){
-            e.preventDefault();
-            var app=document.getElementById('prompt-app');
-            window.location.href=app?app.href:'/install';
-        }
-    });
-})();
+document.addEventListener('keydown',function(e){
+    var t=document.activeElement&&document.activeElement.tagName;
+    if(t==='INPUT'||t==='TEXTAREA'||t==='SELECT'||e.ctrlKey||e.metaKey||e.altKey)return;
+    if(e.key==='.'){e.preventDefault();window.location.href=document.getElementById('prompt-app').href;}
+});
 </script>
 <div class="hero">
-<h1>local-first control for coding agents</h1>
-<p class="tagline">Give an agent typed control of local coding agents, using the code and provider login already on this machine.</p>
-{{if .HeroVideo}}<div class="hero-video" onclick="(function(){var v=document.getElementById('hero-vid');if(v.requestFullscreen)v.requestFullscreen();else if(v.webkitRequestFullscreen)v.webkitRequestFullscreen()})()"><video id="hero-vid" src="/hero.mp4" autoplay muted loop playsinline onloadedmetadata="this.playbackRate=0.8"></video><button class="hero-fs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg></button></div>{{end}}
-{{if .User}}<div class="prompt-flow">
-<a href="{{.AppURL}}" class="prompt-line" id="prompt-app"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to</span> <span class="prompt-key">open optional hosted app</span></a>
+<h1>Your coding agents, across your machines.</h1>
+<p class="tagline">Find a session, read its progress, and send the next instruction. Your agents keep running on your own computers.</p>
+<div class="hero-actions">
+<a href="/install" class="hero-install">Install wingthing</a>
+<span class="hero-shortcut">Press <kbd>.</kbd> to {{if .User}}<a id="prompt-app" href="{{.AppURL}}">open app</a>{{else}}<a id="prompt-app" href="/install">install</a>{{end}}</span>
 </div>
-{{else}}<div class="prompt-flow" id="prompt-flow">
-<a href="/install" class="prompt-line" id="prompt-app"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to</span> <span class="prompt-key">install locally</span></a>
-</div>{{end}}
+<section class="product-preview" aria-label="Example session list and wing conversation">
+<div class="preview-bar"><strong>Sessions</strong><span>Example · 2 machines</span></div>
+<div class="preview-grid">
+<div class="preview-sessions">
+<div class="preview-session"><b>migrate-sessions-table</b><small>Claude · Studio · Working</small><p>Index created. Backfill is 63% complete.</p></div>
+<div class="preview-session"><b>add-rate-limit-to-api</b><small>Codex · Laptop · Working</small><p>Request limits added. Running the tests.</p></div>
+</div>
+<div class="preview-thread">
+<h2>wing <small>· Claude · Studio</small></h2>
+<span class="preview-who">you</span><p>How is the migration going?</p>
+<span class="preview-who">wing · just now</span><p>The index is ready and 11,402 of 18,204 rows are backfilled. No errors so far.</p>
+<div class="preview-compose">Message wing…</div>
+</div>
+</div>
+</section>
+<p class="preview-access">Browser control is available with a self-hosted setup, or hosted relay access on your account and machine. Pairing alone lists sessions.</p>
+{{if .HeroVideo}}<div class="hero-video" hidden><video id="hero-vid" src="/hero.mp4" autoplay muted loop playsinline controls onplaying="this.parentElement.hidden=false" onerror="this.parentElement.hidden=true" aria-label="wingthing product demo"></video></div>{{end}}
 </div>
 <div class="tab-bar">
 <button class="active" onclick="switchTab('how')">how it works</button>
@@ -208,7 +235,7 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 <div class="links">
 <a href="/patterns">choose a route</a>
 <a href="/docs">docs</a>
-<a href="https://github.com/ehrlich-b/wingthing">github</a>
+<a href="https://gitlab.com/ehrlich-b/wingthing">Source</a>
 </div>
 <script>
 (function(){

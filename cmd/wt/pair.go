@@ -172,7 +172,11 @@ func runPairWithLink(ctx context.Context, in io.Reader, out io.Writer, showLink 
 							if status.Scope == phonepair.ScopeInventory {
 								scope = "Inventory only: list sessions and machines on this machine"
 							}
-							fmt.Fprintf(out, "\n%s\n%s\nFingerprint: %s\nAccess: %s\n%s wants to pair. Enter to allow.\nOnly allow if the full fingerprint and all 4 emoji match the device. Ctrl-C cancels.\n", status.Emoji, phonepair.EmojiLabels(status.Emoji), groupedFingerprint(status.Fingerprint), scope, status.Name)
+							fmt.Fprintln(out, "\nComparison labels:")
+							for i, label := range strings.Split(phonepair.EmojiLabels(status.Emoji), " · ") {
+								fmt.Fprintf(out, "%d. %s\n", i+1, label)
+							}
+							fmt.Fprintf(out, "Fingerprint: %s\nAccess: %s\n%s wants to pair. Enter to allow.\nOnly allow if the full fingerprint and all 4 labels match the device in order. Ctrl-C cancels.\n", groupedFingerprint(status.Fingerprint), scope, status.Name)
 						}
 					case "cancelled", "used":
 						if showed != "cancelled" {

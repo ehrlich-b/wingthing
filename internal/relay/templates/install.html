@@ -7,15 +7,15 @@
 .inst-section{margin-bottom:32px}
 .inst-section h2{font-size:16px;font-weight:600;margin-bottom:12px;color:var(--action)}
 .inst-section p{color:var(--text-dim);font-size:14px;line-height:1.6;margin-bottom:12px}
-.inst-code{background:var(--bg-card);border-radius:6px;padding:14px 20px;font-size:13px;line-height:1.7;font-family:var(--mono);overflow-x:auto;margin-bottom:16px;position:relative}
+.inst-code{background:var(--bg-card);border-radius:6px;padding:14px 20px;font-size:13px;line-height:1.7;font-family:var(--mono);overflow-x:auto;margin-bottom:16px;position:relative;white-space:normal;overflow-wrap:anywhere}
 .inst-code .prompt{color:var(--text-dim);user-select:none}
 .inst-code .cmd{color:var(--text)}
 .inst-code .comment{color:#666}
-.inst-copy{position:absolute;top:8px;right:8px;background:var(--accent);border:none;color:var(--text-dim);font-family:var(--mono);font-size:11px;padding:4px 8px;border-radius:3px;cursor:pointer}
+.inst-copy{display:block;margin:0 0 10px auto;background:var(--accent);border:none;color:var(--text-dim);font-family:var(--mono);font-size:11px;padding:4px 8px;border-radius:3px;cursor:pointer}
 .inst-copy:hover{color:var(--text);background:var(--action)}
-.inst-steps{list-style:none;counter-reset:step}
-.inst-steps li{counter-increment:step;margin-bottom:20px;padding-left:36px;position:relative}
-.inst-steps li::before{content:counter(step);position:absolute;left:0;top:0;width:24px;height:24px;border-radius:50%;background:var(--accent);color:var(--text);font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;font-family:var(--mono)}
+.inst-steps{list-style:none}
+.inst-steps li{margin-bottom:28px;position:relative;white-space:normal;overflow-wrap:anywhere}
+
 .inst-steps li h3{font-size:14px;font-weight:600;margin-bottom:6px}
 .inst-steps li p{color:var(--text-dim);font-size:13px;line-height:1.5;margin-bottom:8px}
 .inst-platforms{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap}
@@ -24,14 +24,13 @@
 @media(max-width:600px){
   .inst-hero h1{font-size:20px}
   .inst-code{font-size:11px;padding:12px 14px}
-  .inst-steps li{padding-left:30px}
 }
 </style>
 {{end}}
 {{define "content"}}
 <div class="inst-hero">
 <h1>install wt</h1>
-<p>Install Wingthing for local typed agent control first. Add a wing daemon, remote connector, or browser portal only when the work crosses those boundaries. macOS and Linux, x64 and arm64.</p>
+<p>For macOS and Linux, arm64 and x64. Use your existing coding agent CLI and provider login.</p>
 </div>
 
 <div class="inst-platforms">
@@ -48,29 +47,33 @@
 <p>Installs to <code>~/.local/bin/wt</code>. Set <code>WT_INSTALL_DIR</code> to change the location.</p>
 </div>
 
+<div class="inst-section" data-route="local-human">
+<h2>Run your first coding agent</h2>
+<p>Install and authenticate the Claude CLI with your provider login, then enter an existing project:</p>
+<div class="inst-code">
+<span class="prompt">$ </span><span class="cmd">cd /path/to/existing/project</span><br>
+<span class="prompt">$ </span><span class="cmd">wt egg claude --name work</span>
+</div>
+<p>Claude opens in a sandboxed terminal in your project. No Wingthing account or daemon is required. Detach with <code>Ctrl+B</code>, then <code>Q</code>; your agent keeps running.</p>
+<p>Return to that same terminal:</p>
+<div class="inst-code"><span class="prompt">$ </span><span class="cmd">wt attach work</span></div>
+</div>
+
 <div class="inst-section">
-<h2>get started</h2>
-<p>Every launch uses an existing workspace and provider login on its execution wing. Wingthing keeps task and terminal state there; it does not copy code, credentials, or durable memory to another machine.</p>
+<h2>Optional next steps</h2>
+<p>Add agent control, another machine, or a browser when you need it.</p>
 <ol class="inst-steps">
 <li data-route="local-agent">
-<h3>give a parent agent typed local control</h3>
+<h3>Let another agent manage your sessions with MCP</h3>
 <p>Register local stdio MCP, restart the parent client, and ask it to call <code>wingthing_capabilities</code>. Child agents use the existing code and provider login on this computer. No Wingthing account or daemon is required.</p>
 <div class="inst-code">
 <span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp stdio --client codex</span><br>
 <span class="comment"># or: claude mcp add --scope user wingthing -- wt mcp stdio --client claude</span>
 </div>
 </li>
-<li data-route="local-human">
-<h3>start a local sandboxed agent terminal yourself</h3>
-<p>Authenticate the provider CLI first and use an existing project directory. Detach with <code>Ctrl+B</code>, then <code>Q</code>.</p>
-<div class="inst-code">
-<span class="prompt">$ </span><span class="cmd">cd /path/to/existing/project</span><br>
-<span class="prompt">$ </span><span class="cmd">wt egg claude --name work</span><br>
-<span class="prompt">$ </span><span class="cmd">wt attach work</span>
-</div>
-</li>
+
 <li data-route="direct-remote">
-<h3>use direct remote MCP when machines differ</h3>
+<h3>Connect agents on other machines</h3>
 <p>On each execution wing, run <code>wt login</code>, make sure the wing is authorized for the connector account personally or through an organization, then run <code>wt start</code>. Calls go directly to an explicit wing and never silently fall back to hosted relay.</p>
 <div class="inst-code">
 <span class="prompt">$ </span><span class="cmd">wt login</span><br>
@@ -83,7 +86,7 @@
 </div>
 </li>
 <li data-route="self-hosted-browser">
-<h3>self-host first when a person needs a browser</h3>
+<h3>Open a browser on your own machine</h3>
 <p>No Wingthing account or hosted-relay entitlement is required. This creates and trusts a localhost-only certificate for your current user; Linux needs <code>certutil</code> from <code>libnss3-tools</code> or <code>nss-tools</code> for that trust step.</p>
 <div class="inst-code">
 <span class="prompt">$ </span><span class="cmd">wt roost start --https</span><br>
@@ -91,7 +94,7 @@
 </div>
 </li>
 <li data-route="hosted-relay">
-<h3>use the entitled hosted browser only if needed</h3>
+<h3>Use the hosted browser</h3>
 <p>For this route, the hosted browser terminal and control relay require relay access on the account and <code>hosted_relay: allow</code> on the selected wing. This optional path is separate from direct remote MCP.</p>
 <div class="inst-code">
 <span class="prompt">$ </span><span class="cmd">wt login</span><br>
@@ -104,7 +107,7 @@
 
 <div class="inst-section">
 <h2>manual download</h2>
-<p>The installer above selects a verified binary for macOS or Linux and puts it in your PATH.</p>
+<p>Choose a binary from <a href="https://gitlab.com/ehrlich-b/wingthing/-/releases">GitLab releases</a>, or use the installer above to select one for your platform.</p>
 </div>
 
 <div class="inst-section">

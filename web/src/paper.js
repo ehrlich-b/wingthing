@@ -15,7 +15,7 @@ import { paperRoute as route, machineState, sessionState as stateOf, projectName
 const reads = new Map();
 const terminals = new Map();
 const numberWords = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
-let root, main, side, lastSignature = '', showEarlier = false;
+let root, main, side, lastSignature = '';
 
 export function paperRoute(hash = location.hash) { return route(hash); }
 export function isPaperRoute(hash) { return !!paperRoute(hash); }
@@ -114,15 +114,15 @@ function viewWing() {
     rows.sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
     const reporting = new Set(rows.filter(r => r.s).map(r => r.s.id)).size;
     const need = needing();
-    const thread = rows.slice(-14).map(r => '<div class="pp-row pp-row-' + r.who + '">' +
+    const thread = rows.slice(-14).map(r => '<div class="pp-row pp-row-' + r.who + '" data-source="' + esc((r.s ? sessionDisplayName(r.s) : r.who) + ' · ' + (r.s ? machineName(wingOf(r.s.wing_id)) : r.where)) + '">' +
         '<div class="pp-who">' + (r.s ? '<a href="' + sessionHref(r.s) + '">' + esc(sessionDisplayName(r.s)) + '</a>' + chip(sessionState(r.s)) : '<b>' + r.who + '</b>') +
         '<small>' + esc([clock(r.at), r.who === 'you' ? '' : r.where].filter(Boolean).join(' · ')) + '</small></div>' +
         '<div class="pp-say">' + prose(r.text) + '</div></div>').join('');
-    const meta = '<b>wing</b>' + (coord ? ' · ' + esc(machineName(wingOf(coord.wing_id))) : '') + (need.length ? ' · <em>' + need.length + ' needs you</em>' : '');
+    const meta = '<b>wing</b>' + (coord ? ' · ' + esc(machineName(wingOf(coord.wing_id))) : '') + (coord ? ' · ' + esc(agentName(coord.agent)) + chip(sessionState(coord)) : '') + (need.length ? ' · <em>' + need.length + ' needs you</em>' : '');
     return head('wing', meta) + '<div class="pp-cols"><div class="pp-col-main">' +
-        kicker('Today', reporting + (reporting === 1 ? ' session' : ' sessions') + ' reporting') +
+        '<div class="pp-thread-heading">' + kicker('<span data-thread-source>Today</span>', reporting + (reporting === 1 ? ' session' : ' sessions') + ' reporting') + '</div><div class="pp-conversation" tabindex="0" aria-label="Wing messages">' +
         (thread || '<p class="pp-quiet">Wing has not reported yet. Its updates and each session\'s latest line appear here.</p>') +
-        need.map(s => needCard(s)).join('') + (coord ? composer('Message wing', coord) : '') + '</div>' +
+        need.map(s => needCard(s)).join('') + '</div>' + (coord ? composer('Message wing', coord) : '') + '</div>' +
         '<aside class="pp-col-rail">' + kicker('Sessions', String(work.length)) + work.map(s => '<a class="pp-mini" href="' + sessionHref(s) + '">' + chip(sessionState(s)) + '<span>' + esc(sessionDisplayName(s)) + '</span><small>' + esc(machineName(wingOf(s.wing_id))) + '</small></a>').join('') +
         kicker('Machines', String(S.wingsData.length)) + '<div class="pp-squares">' + squares() + '</div></aside></div>';
 }
@@ -190,14 +190,14 @@ function viewSession(route) {
     const s = findSession(route); if (!s) return missing();
     const w = wingOf(s.wing_id), st = sessionState(s), entry = read(s), term = terminal(s);
     const msgs = lines(s).slice(-24).map(l => '<div class="pp-row pp-row-' + (l.who === 'you' ? 'you' : 'session') + '"><div class="pp-who"><b>' + (l.who === 'you' ? 'you' : 'session') + '</b><small>' + esc(clock(l.at)) + '</small></div><div class="pp-say">' + prose(l.text) + '</div></div>').join('');
-    const live = machineState(w) === 'connected';
+    const live = machineState(w) === 'connected', phone = matchMedia('(max-width: 760px)').matches;
     const meta = esc([agentName(s.agent), machineName(w), project(s)].filter(Boolean).join(' · ')) + chip(st);
-    return head(esc(sessionDisplayName(s)), meta) + '<div class="pp-cols pp-split"><div class="pp-col-main">' + kicker('Messages', entry.error ? esc(entry.error) : '') +
+    return head(esc(sessionDisplayName(s)), meta) + '<div class="pp-cols pp-split"><div class="pp-col-main"><div class="pp-conversation" tabindex="0" aria-label="Session messages">' + kicker('Messages', entry.error ? esc(entry.error) : '') +
         (msgs || '<p class="pp-quiet">' + (entry.at ? 'No messages in this session yet.' : 'Reading the session…') + '</p>') +
-        (st.key === 'need' ? needCard(s) : '') + (machineState(w) === 'connected' ? composer('Message ' + sessionDisplayName(s), s) : '') + '</div>' +
-        '<aside class="pp-col-rail pp-term-rail">' + kicker('Terminal', live ? 'Agent has control' : 'Last seen') +
+        (st.key === 'need' ? needCard(s) : '') + '</div>' + (machineState(w) === 'connected' ? composer('Message ' + sessionDisplayName(s), s) : '') + '</div>' +
+        '<aside class="pp-col-rail pp-term-rail">' + (phone ? '<details class="pp-terminal"><summary>Show terminal</summary>' : '<div class="pp-terminal">') + kicker('Terminal', live ? 'Agent has control' : 'Last seen') +
         '<pre class="pp-term" aria-label="Terminal preview">' + esc((term.text || '').split('\n').slice(-18).join('\n').trimEnd() || term.error || (live ? 'Waiting for terminal output…' : machineName(w) + ' is ' + awayText(w) + '. The last screen is not cached.')) + '</pre>' +
-        (live ? '<button type="button" class="pp-btn" data-takeover="' + esc(s.wing_id + '/' + s.id) + '">Take over terminal</button><p class="pp-quiet">Your keys go to the session until you hand control back. Messages wait while you have control.</p>' : '') + '</aside></div>';
+        (live ? '<button type="button" class="pp-btn" data-takeover="' + esc(s.wing_id + '/' + s.id) + '">Take over terminal</button><p class="pp-quiet">Your keys go to the session until you hand control back. Messages wait while you have control.</p>' : '') + (phone ? '</details>' : '</div>') + '</aside></div>';
 }
 
 function viewApprove(route) {
@@ -231,7 +231,6 @@ function frame() {
     document.body.prepend(root);
     main = root.querySelector('.pp-main'); side = root.querySelector('.pp-side');
     root.addEventListener('click', event => {
-        if (event.target.closest('[data-earlier]')) { showEarlier = true; lastSignature = ''; render(true); return; }
         const take = event.target.closest('[data-takeover]');
         if (take) { const [wingId, sessionId] = take.dataset.takeover.split('/'); show(false); switchToSession(sessionId, true, wingId); return; }
         if (event.target.closest('[data-new-session]')) { showPalette(); return; }
@@ -261,18 +260,60 @@ function show(on) {
     document.body.classList.toggle('paper-on', on);
 }
 
-// On a desktop screen the thread shows the newest rows that fit whole, under
-// its title; older rows open on request.
-function fitThread() {
-    if (showEarlier || !matchMedia('(min-width: 761px)').matches) return;
-    const rows = [...main.querySelectorAll('.pp-col-main > .pp-row')]; if (!rows.length) return;
-    main.querySelector('[data-earlier]')?.remove(); rows.forEach(r => { r.hidden = false; });
-    const more = document.createElement('button');
-    more.type = 'button'; more.className = 'pp-earlier'; more.dataset.earlier = '';
-    rows[0].before(more);
-    let hidden = 0;
-    while (document.documentElement.scrollHeight > innerHeight && hidden < rows.length - 1) rows[hidden++].hidden = true;
-    if (hidden) more.textContent = hidden + (hidden === 1 ? ' earlier update' : ' earlier updates'); else more.remove();
+// Text ranges, rather than row bounds, exclude the empty space beneath short
+// reports in the desktop identity column. Merge inline-code fragments by line.
+function reportLines(row) {
+    const range = document.createRange();
+    const say = row.querySelector('.pp-say');
+    range.selectNodeContents(say);
+    const height = parseFloat(getComputedStyle(say).lineHeight);
+    const lines = [];
+    for (const rect of range.getClientRects()) {
+        if (!rect.width || !rect.height) continue;
+        const top = rect.top - Math.max(0, height - rect.height) / 2;
+        if (!lines.some(line => Math.abs(line.top - top) < 2)) lines.push({ top, bottom: top + height });
+    }
+    return lines.sort((a, b) => a.top - b.top);
+}
+
+// Only automatic following adjusts to a readable boundary. Extra end space
+// lets us advance past an empty remnant without cutting off the latest update.
+function followThread(conversation) {
+    conversation.style.paddingBottom = '';
+    conversation.scrollTop = conversation.scrollHeight;
+    const top = conversation.getBoundingClientRect().top;
+    const boundaries = [];
+    for (const row of conversation.querySelectorAll('[data-source]')) {
+        const start = row.getBoundingClientRect().top;
+        const identityEnd = row.querySelector('.pp-who').getBoundingClientRect().bottom;
+        if (start >= top - 1) boundaries.push(start);
+        for (const line of reportLines(row)) {
+            if (line.top >= top - 1 && line.top >= identityEnd) boundaries.push(line.top);
+        }
+    }
+    const boundary = Math.min(...boundaries);
+    if (!Number.isFinite(boundary)) return;
+    const advance = Math.max(0, boundary - top);
+    const position = conversation.scrollTop;
+    conversation.style.paddingBottom = Math.ceil(advance) + 'px';
+    conversation.scrollTop = position + advance;
+}
+
+// Attribution stays outside the transcript and belongs to the first complete
+// visible body line, never to an empty row remnant. Identities remain readable.
+function updateThreadSource() {
+    const label = main.querySelector('[data-thread-source]');
+    if (!label) return;
+    const bounds = main.querySelector('.pp-conversation').getBoundingClientRect();
+    let source = '';
+    for (const row of main.querySelectorAll('.pp-conversation [data-source]')) {
+        if (!reportLines(row).some(line => line.top >= bounds.top - 1 && line.bottom <= bounds.bottom + 1)) continue;
+        const identity = row.querySelector('.pp-who').getBoundingClientRect();
+        if (identity.top < bounds.top - 1) source = row.dataset.source;
+        break;
+    }
+    label.textContent = source ? source + ' · continued' : 'Today';
+    label.toggleAttribute('data-continued', !!source);
 }
 
 export function render(force) {
@@ -287,13 +328,26 @@ export function render(force) {
     lastSignature = sig;
     const draft = root.querySelector('#pp-message')?.value, filter = root.querySelector('#pp-filter')?.value, focused = document.activeElement && document.activeElement.id;
     const fresh = main.dataset.hash !== location.hash;
-    const pinned = fresh || innerHeight + scrollY >= document.documentElement.scrollHeight - 48;
+    const conversation = main.querySelector('.pp-conversation');
+    const position = conversation?.scrollTop || 0;
+    const endSpace = conversation?.style.paddingBottom || '';
+    const pinned = fresh || !conversation || conversation.scrollHeight - position - conversation.clientHeight <= 2;
+    const terminalOpen = main.querySelector('.pp-terminal')?.open;
     main.innerHTML = html;
     main.dataset.view = route.view; main.dataset.hash = location.hash;
-    // The wing thread opens on its newest line, like a conversation.
-    // A session opens on its terminal and take-over button, above the composer.
-    if (route.view === 'wing') { fitThread(); document.fonts?.ready.then(() => { if (main.dataset.view === 'wing') fitThread(); }); }
-    if (pinned && (route.view === 'wing' || route.view === 'session')) requestAnimationFrame(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    // Only the transcript follows new output; identity and controls stay in view.
+    const nextTerminal = main.querySelector('.pp-terminal');
+    if (!fresh && nextTerminal && terminalOpen !== undefined) nextTerminal.open = terminalOpen;
+    const nextConversation = main.querySelector('.pp-conversation');
+    if (nextConversation) {
+        if (pinned && route.view === 'wing') followThread(nextConversation);
+        else {
+            nextConversation.style.paddingBottom = pinned ? '' : endSpace;
+            nextConversation.scrollTop = pinned ? nextConversation.scrollHeight : position;
+        }
+        nextConversation.addEventListener('scroll', updateThreadSource, { passive: true });
+        updateThreadSource();
+    }
     const nv = nav(route);
     side.querySelector('.pp-nav').innerHTML = nv;
     root.querySelector('.pp-tabs').innerHTML = nv;
@@ -302,12 +356,13 @@ export function render(force) {
     side.querySelector('.pp-foot').textContent = S.currentUser && S.currentUser.email || '';
     if (draft) root.querySelector('#pp-message') && (root.querySelector('#pp-message').value = draft);
     if (filter) { const f = root.querySelector('#pp-filter'); if (f) { f.value = filter; f.dispatchEvent(new Event('input', { bubbles: true })); } }
-    if (focused && (focused === 'pp-message' || focused === 'pp-filter')) root.querySelector('#' + focused)?.focus();
+    if (focused && (focused === 'pp-message' || focused === 'pp-filter')) root.querySelector('#' + focused)?.focus({ preventScroll: true });
 }
 
 export function initPaper() {
     if (root) return;
     frame();
+    window.addEventListener('resize', () => { render(true); updateThreadSource(); });
     window.addEventListener('hashchange', () => { lastSignature = ''; if (isPaperRoute() && S.activeView !== 'home') showHome(false); render(true); window.scrollTo(0, 0); });
     window.addEventListener('popstate', () => setTimeout(() => render(true), 0));
     setInterval(() => render(false), 1000);
