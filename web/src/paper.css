@@ -72,6 +72,14 @@ body.paper-on #app { display: none; }
 .pp-conversation { flex: 1; min-height: 0; overflow-y: auto; overflow-wrap: anywhere; overscroll-behavior-y: contain; scrollbar-gutter: stable; }
 .pp-conversation > .pp-row:last-child { margin-bottom: 12px; }
 .pp-main:has(.pp-conversation) .pp-composer { position: static; flex: none; margin-top: 0; }
+.pp-thread-heading { flex: none; background: var(--pp-paper); }
+.pp-thread-heading .pp-kick { height: 40px; align-items: center; }
+.pp-thread-heading .pp-kick:has([data-continued]) > span:last-child { display: none; }
+.pp-thread-heading [data-continued] { color: var(--pp-ink-2); font-weight: 600; }
+@media (min-width: 761px) {
+    .pp-main[data-view="session"] .pp-conversation { flex: 0 1 auto; }
+    .pp-split .pp-term-rail { padding-top: 0; }
+}
 .pp-terminal summary { cursor: pointer; padding: 12px 0; color: var(--pp-accent); font-size: 14px; }
 .pp-hdr h1 { font-size: 22px; font-weight: 600; line-height: 1.25; margin: 0; overflow-wrap: anywhere; }
 .pp-meta { font-size: 13px; color: var(--pp-ink-2); text-align: right; }
@@ -100,7 +108,7 @@ body.paper-on #app { display: none; }
 
 /* Thread rows */
 .pp-row { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 24px; padding: 12px 0; border-bottom: 1px solid var(--pp-rule); }
-.pp-row-you { background: var(--pp-folio); margin: 0 -12px; padding: 12px; border-radius: 6px; border-bottom: 0; }
+.pp-row-you { background: var(--pp-folio); margin: 0; padding: 12px; border-radius: 6px; border-bottom: 0; }
 .pp-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pp-who b, .pp-who a { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
 .pp-who .pp-st { font-size: 12px; }

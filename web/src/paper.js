@@ -114,13 +114,13 @@ function viewWing() {
     rows.sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
     const reporting = new Set(rows.filter(r => r.s).map(r => r.s.id)).size;
     const need = needing();
-    const thread = rows.slice(-14).map(r => '<div class="pp-row pp-row-' + r.who + '">' +
+    const thread = rows.slice(-14).map(r => '<div class="pp-row pp-row-' + r.who + '" data-source="' + esc((r.s ? sessionDisplayName(r.s) : r.who) + ' · ' + (r.s ? machineName(wingOf(r.s.wing_id)) : r.where)) + '">' +
         '<div class="pp-who">' + (r.s ? '<a href="' + sessionHref(r.s) + '">' + esc(sessionDisplayName(r.s)) + '</a>' + chip(sessionState(r.s)) : '<b>' + r.who + '</b>') +
         '<small>' + esc([clock(r.at), r.who === 'you' ? '' : r.where].filter(Boolean).join(' · ')) + '</small></div>' +
         '<div class="pp-say">' + prose(r.text) + '</div></div>').join('');
     const meta = '<b>wing</b>' + (coord ? ' · ' + esc(machineName(wingOf(coord.wing_id))) : '') + (coord ? ' · ' + esc(agentName(coord.agent)) + chip(sessionState(coord)) : '') + (need.length ? ' · <em>' + need.length + ' needs you</em>' : '');
     return head('wing', meta) + '<div class="pp-cols"><div class="pp-col-main">' +
-        '<div class="pp-conversation" tabindex="0" aria-label="Wing messages">' + kicker('Today', reporting + (reporting === 1 ? ' session' : ' sessions') + ' reporting') +
+        '<div class="pp-thread-heading">' + kicker('<span data-thread-source>Today</span>', reporting + (reporting === 1 ? ' session' : ' sessions') + ' reporting') + '</div><div class="pp-conversation" tabindex="0" aria-label="Wing messages">' +
         (thread || '<p class="pp-quiet">Wing has not reported yet. Its updates and each session\'s latest line appear here.</p>') +
         need.map(s => needCard(s)).join('') + '</div>' + (coord ? composer('Message wing', coord) : '') + '</div>' +
         '<aside class="pp-col-rail">' + kicker('Sessions', String(work.length)) + work.map(s => '<a class="pp-mini" href="' + sessionHref(s) + '">' + chip(sessionState(s)) + '<span>' + esc(sessionDisplayName(s)) + '</span><small>' + esc(machineName(wingOf(s.wing_id))) + '</small></a>').join('') +
@@ -190,14 +190,14 @@ function viewSession(route) {
     const s = findSession(route); if (!s) return missing();
     const w = wingOf(s.wing_id), st = sessionState(s), entry = read(s), term = terminal(s);
     const msgs = lines(s).slice(-24).map(l => '<div class="pp-row pp-row-' + (l.who === 'you' ? 'you' : 'session') + '"><div class="pp-who"><b>' + (l.who === 'you' ? 'you' : 'session') + '</b><small>' + esc(clock(l.at)) + '</small></div><div class="pp-say">' + prose(l.text) + '</div></div>').join('');
-    const live = machineState(w) === 'connected';
+    const live = machineState(w) === 'connected', phone = matchMedia('(max-width: 760px)').matches;
     const meta = esc([agentName(s.agent), machineName(w), project(s)].filter(Boolean).join(' · ')) + chip(st);
     return head(esc(sessionDisplayName(s)), meta) + '<div class="pp-cols pp-split"><div class="pp-col-main"><div class="pp-conversation" tabindex="0" aria-label="Session messages">' + kicker('Messages', entry.error ? esc(entry.error) : '') +
         (msgs || '<p class="pp-quiet">' + (entry.at ? 'No messages in this session yet.' : 'Reading the session…') + '</p>') +
         (st.key === 'need' ? needCard(s) : '') + '</div>' + (machineState(w) === 'connected' ? composer('Message ' + sessionDisplayName(s), s) : '') + '</div>' +
-        '<aside class="pp-col-rail pp-term-rail"><details class="pp-terminal"' + (matchMedia('(min-width: 761px)').matches ? ' open' : '') + '><summary>Show terminal</summary>' + kicker('Terminal', live ? 'Agent has control' : 'Last seen') +
+        '<aside class="pp-col-rail pp-term-rail">' + (phone ? '<details class="pp-terminal"><summary>Show terminal</summary>' : '<div class="pp-terminal">') + kicker('Terminal', live ? 'Agent has control' : 'Last seen') +
         '<pre class="pp-term" aria-label="Terminal preview">' + esc((term.text || '').split('\n').slice(-18).join('\n').trimEnd() || term.error || (live ? 'Waiting for terminal output…' : machineName(w) + ' is ' + awayText(w) + '. The last screen is not cached.')) + '</pre>' +
-        (live ? '<button type="button" class="pp-btn" data-takeover="' + esc(s.wing_id + '/' + s.id) + '">Take over terminal</button><p class="pp-quiet">Your keys go to the session until you hand control back. Messages wait while you have control.</p>' : '') + '</details></aside></div>';
+        (live ? '<button type="button" class="pp-btn" data-takeover="' + esc(s.wing_id + '/' + s.id) + '">Take over terminal</button><p class="pp-quiet">Your keys go to the session until you hand control back. Messages wait while you have control.</p>' : '') + (phone ? '</details>' : '</div>') + '</aside></div>';
 }
 
 function viewApprove(route) {
@@ -260,6 +260,26 @@ function show(on) {
     document.body.classList.toggle('paper-on', on);
 }
 
+// The heading occupies its own line outside the scrolling transcript, so a
+// clipped report keeps its source without covering its text or shifting readers.
+function updateThreadSource() {
+    const label = main.querySelector('[data-thread-source]');
+    if (!label) return;
+    const conversation = main.querySelector('.pp-conversation');
+    const top = conversation.getBoundingClientRect().top;
+    let source = '';
+    for (const row of conversation.querySelectorAll('[data-source]')) {
+        const bounds = row.getBoundingClientRect();
+        const identity = row.querySelector('.pp-who');
+        const clipped = bounds.bottom > top && bounds.top < top && identity.getBoundingClientRect().top < top;
+        // Avoid displaying a half-cut timestamp beneath the continuation label.
+        identity.style.visibility = clipped ? 'hidden' : '';
+        if (clipped) source = row.dataset.source;
+    }
+    label.textContent = source ? source + ' · continued' : 'Today';
+    label.toggleAttribute('data-continued', !!source);
+}
+
 export function render(force) {
     const route = paperRoute();
     const on = !!route && S.activeView === 'home';
@@ -282,7 +302,11 @@ export function render(force) {
     const nextTerminal = main.querySelector('.pp-terminal');
     if (!fresh && nextTerminal && terminalOpen !== undefined) nextTerminal.open = terminalOpen;
     const nextConversation = main.querySelector('.pp-conversation');
-    if (nextConversation) nextConversation.scrollTop = pinned ? nextConversation.scrollHeight : position;
+    if (nextConversation) {
+        nextConversation.scrollTop = pinned ? nextConversation.scrollHeight : position;
+        nextConversation.addEventListener('scroll', updateThreadSource, { passive: true });
+        updateThreadSource();
+    }
     const nv = nav(route);
     side.querySelector('.pp-nav').innerHTML = nv;
     root.querySelector('.pp-tabs').innerHTML = nv;
@@ -297,6 +321,7 @@ export function render(force) {
 export function initPaper() {
     if (root) return;
     frame();
+    window.addEventListener('resize', () => { render(true); updateThreadSource(); });
     window.addEventListener('hashchange', () => { lastSignature = ''; if (isPaperRoute() && S.activeView !== 'home') showHome(false); render(true); window.scrollTo(0, 0); });
     window.addEventListener('popstate', () => setTimeout(() => render(true), 0));
     setInterval(() => render(false), 1000);

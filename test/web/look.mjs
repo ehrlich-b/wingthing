@@ -138,6 +138,14 @@ async function machine(id) {
 async function shoot(page, name, suffix) {
     if (only.length && !only.includes(name) && !(name.startsWith('09-landing-') && only.includes('09-landing'))) return;
     await page.waitForTimeout(700);
+    if (name === '02-sessions') {
+        const pinned = await page.locator('.pp-pin').innerText();
+        assert.ok(pinned.includes(events.wing[1].text));
+        const timestamp = await page.evaluate(at => new Date(at).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}), events.wing[1].timestamp);
+        assert.ok(pinned.includes(timestamp));
+        checked(name + suffix + '-original-pinned-update', {pinned, timestamp});
+    }
+    assert.doesNotMatch(await page.locator('body').innerText(), /progress receipt/i);
     const file = name + suffix + '.png';
     await page.screenshot({ path: path.join(shots, file) });
     const dimensions = await page.evaluate(() => ({ viewport: innerWidth, width: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth || 0) }));
@@ -177,6 +185,13 @@ async function checkPublic(page, name, suffix) {
         assert.equal(await page.evaluate(() => window.copiedCommand), 'curl -fsSL https://wingthing.ai/install.sh | sh');
         checked(name + suffix + '-exact-copy', 'curl -fsSL https://wingthing.ai/install.sh | sh');
     }
+    if (name === '12-patterns') {
+        const first = page.locator('.pattern').first();
+        assert.equal(await first.getAttribute('data-route'), 'local-human');
+        const guide = await first.getByRole('link', {name:'read setup guide'}).boundingBox();
+        if (page.viewportSize().width === 390) assert.ok(guide.y >= 0 && guide.y + guide.height <= 844, JSON.stringify(guide));
+        checked(name + suffix + '-local-guide-first', guide);
+    }
     if (name === '11-docs' && page.viewportSize().width === 390) {
         const result = await page.evaluate(() => {
             const widths = [];
@@ -196,6 +211,43 @@ async function checkPublic(page, name, suffix) {
         checked(name + suffix + '-full-document-tables', result);
     }
 }
+async function checkWingSource(page, suffix) {
+    const evidence = await page.evaluate(() => {
+        const transcript = document.querySelector('.pp-conversation'), top = transcript.getBoundingClientRect().top;
+        const leading = [...transcript.querySelectorAll('[data-source]')].find(row => {const b=row.getBoundingClientRect();return b.top < top && b.bottom > top;});
+        const identity = leading?.querySelector('.pp-who');
+        const clipped = identity && identity.getBoundingClientRect().top < top;
+        const label = document.querySelector('[data-thread-source]');
+        return {source:clipped ? leading.dataset.source : '', label:label.textContent, continued:label.hasAttribute('data-continued'), headingBottom:document.querySelector('.pp-thread-heading').getBoundingClientRect().bottom, top, identityHidden:clipped ? getComputedStyle(identity).visibility === 'hidden' : false};
+    });
+    assert.equal(evidence.label, evidence.source ? evidence.source + ' · continued' : 'Today');
+    assert.equal(evidence.continued, !!evidence.source);
+    assert.ok(evidence.headingBottom <= evidence.top + 1);
+    if (evidence.source) assert.ok(evidence.identityHidden);
+    checked('01-wing' + suffix + '-report-source', evidence);
+}
+async function checkWingSourceScrolling(page, suffix) {
+    const original = await page.locator('.pp-conversation').evaluate(el => el.scrollTop);
+    const sources = new Set();
+    const rows = await page.locator('.pp-conversation [data-source]').count();
+    for (let i=0; i<rows; i++) {
+        for (const inset of [0, 20]) {
+            const reachable = await page.locator('.pp-conversation').evaluate((el, {i,inset}) => {
+                const row=el.querySelectorAll('[data-source]')[i];
+                const target=el.scrollTop+row.getBoundingClientRect().top-el.getBoundingClientRect().top+inset;
+                el.scrollTop=target;
+                return Math.abs(el.scrollTop-target)<1;
+            }, {i,inset});
+            if (!reachable) continue;
+            await page.waitForTimeout(60);
+            await checkWingSource(page, suffix + '-scroll-' + i + '-' + inset);
+            if (inset) sources.add(await page.locator('[data-thread-source]').innerText());
+        }
+    }
+    assert.ok(sources.size >= 2);
+    await page.locator('.pp-conversation').evaluate((el, top) => {el.scrollTop=top;}, original);
+    await page.waitForTimeout(60);
+}
 async function checkConversation(page, name, suffix) {
     if (process.env.WT_LOOK_LEGACY) return;
     const identity = await page.locator('.pp-hdr').innerText();
@@ -211,6 +263,25 @@ async function checkConversation(page, name, suffix) {
     assert.ok(geometry.header.top>=0 && geometry.header.bottom<geometry.height);
     assert.ok(geometry.composer.top>=geometry.header.bottom && geometry.composer.bottom<=geometry.height-(page.viewportSize().width===390 ? 50 : 0));
     assert.ok(geometry.transcript.bottom<=geometry.composer.top+1);
+    if (name === '01-wing') await checkWingSource(page, suffix);
+    if (name === '03-session' && page.viewportSize().width === 1440) {
+        assert.equal(await page.locator('.pp-terminal summary').count(), 0);
+        assert.ok(await page.getByRole('button',{name:'Take over terminal',exact:true}).isVisible());
+        if (await page.locator('.pp-conversation .pp-row').count() === 3) {
+            const layout = await page.evaluate(() => {
+                const messages=document.querySelector('.pp-conversation .pp-kick').getBoundingClientRect();
+                const terminal=document.querySelector('.pp-terminal .pp-kick').getBoundingClientRect();
+                const last=document.querySelector('.pp-conversation .pp-row:last-child').getBoundingClientRect();
+                const composer=document.querySelector('.pp-composer').getBoundingClientRect();
+                const row=document.querySelector('.pp-row-you'), who=row.querySelector('.pp-who').getBoundingClientRect();
+                return {messages:messages.top,terminal:terminal.top,gap:composer.top-last.bottom,inset:who.left-row.getBoundingClientRect().left};
+            });
+            assert.equal(layout.messages,layout.terminal, JSON.stringify(layout));
+            assert.ok(layout.gap>=0 && layout.gap<=32, JSON.stringify(layout));
+            assert.ok(layout.inset>=12, JSON.stringify(layout));
+            checked(name + suffix + '-short-desktop-layout', layout);
+        }
+    }
     checked(name + suffix + '-identity-and-composer', {identity,...geometry});
 }
 async function checkConversationRefresh(page, name, suffix) {
@@ -237,14 +308,20 @@ async function checkConversationRefresh(page, name, suffix) {
             if(page.viewportSize().width===390) await page.locator('.pp-terminal summary').click();
             const takeover=page.getByRole('button',{name:'Take over terminal',exact:true});
             await takeover.scrollIntoViewIfNeeded();assert.ok(await takeover.isVisible());
-            await page.locator('.pp-terminal summary').click();
+            if(page.viewportSize().width===390) await page.locator('.pp-terminal summary').click();
             await page.evaluate(()=>{location.hash='#sessions';});
             await page.locator('.pp-srow[href="#session/studio/migrate"]').click();
             await page.getByRole('heading',{name:'migrate-sessions-table',exact:true}).waitFor();
             await checkConversation(page,name,suffix+'-from-sessions');
         }
+        if(name==='01-wing') await checkWingSourceScrolling(page,suffix);
         checked(name+suffix+'-refresh-position', {before,after,readerStayed:true,followLatest:true});
-    } finally {events[id]=original;}
+    } finally {
+        events[id]=original;
+        // A full navigation discards the appended client thread and its cursor.
+        // Resetting the server array alone would leave test updates cached.
+        await go(page, name==='01-wing' ? '' : '#session/studio/migrate');
+    }
 }
 async function go(page, hash) {
     await page.goto(base + '/app/' + hash);
@@ -362,6 +439,14 @@ try {
         }
         await go(page, '#pair');
         await page.getByRole('heading', {name:'Join from this browser'}).waitFor();
+        const pairing = await page.evaluate(() => {
+            const rect = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
+            return {command:rect('.bp-instruction pre'), invitation:rect('label[for="bp-link"]'), name:rect('#bp-name'), submit:rect('#bp-form button'), commands:document.querySelectorAll('.bp-layout pre').length};
+        });
+        assert.ok(pairing.command.bottom < pairing.invitation.top);
+        assert.equal(pairing.commands, 1);
+        if(v.width === 390 || page.viewportSize().width === 390) assert.ok(pairing.submit.bottom <= 844, JSON.stringify(pairing));
+        checked('05-pair' + v.suffix + '-instruction-before-form', pairing);
         await shoot(page, '05-pair', v.suffix);
         // Leaving Pair by hash (Back or an app link) must load the app again.
         await go(page, '#machines');

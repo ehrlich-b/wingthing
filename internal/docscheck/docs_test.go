@@ -248,9 +248,6 @@ func TestPublicEntryPointsKeepLocalAgentFirstHierarchy(t *testing.T) {
 		"internal/relay/templates/patterns.html",
 	} {
 		first, second := `data-route="local-human"`, `data-route="local-agent"`
-		if strings.HasSuffix(rel, "/patterns.html") {
-			first, second = second, first
-		}
 		ordered[rel] = []string{
 			first,
 			second,

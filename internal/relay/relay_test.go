@@ -350,7 +350,7 @@ func TestPatternsPageExplainsOnlySupportedSetups(t *testing.T) {
 	page := body.String()
 	for _, want := range []string{
 		"Let your current AI launch local sub-agents",
-		"Run a durable, sandboxed agent on this computer",
+		"Run an agent and return to it later",
 		"Let one AI manage agents on several computers",
 		"Control a remote agent from a localhost browser",
 		"Give a team a private browser-based agent host",
@@ -376,8 +376,8 @@ func TestPatternsPageExplainsOnlySupportedSetups(t *testing.T) {
 	}
 	previous := -1
 	for _, route := range []string{
-		`data-route="local-agent"`,
 		`data-route="local-human"`,
+		`data-route="local-agent"`,
 		`data-route="direct-remote"`,
 		`data-route="self-hosted-browser"`,
 		`data-route="self-hosted-team"`,

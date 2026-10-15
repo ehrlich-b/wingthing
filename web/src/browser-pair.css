@@ -34,6 +34,10 @@ aside .bp-kicker:first-child, #bp-card > .bp-kicker:first-child { margin-top: 0 
 .bp-layout label { display: block; font-size: 13px; font-weight: 600; margin: 16px 0 6px; }
 .bp-layout textarea, .bp-layout input { display: block; width: 100%; border: 1px solid var(--bp-rule-2); border-radius: 6px; background: var(--bp-paper); color: inherit; padding: 8px 10px; font: inherit; }
 .bp-layout textarea { resize: vertical; overflow-wrap: anywhere; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.bp-instruction { margin-top: 16px; }
+.bp-layout .bp-instruction p:first-child { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.bp-layout .bp-instruction pre { margin-bottom: 6px; }
+.bp-layout form .bp-instruction .bp-secondary { margin: 0; }
 .bp-layout form .bp-secondary { margin: 12px 0 16px; }
 .bp-layout button { border: 1px solid var(--bp-rule-2); border-radius: 6px; background: var(--bp-paper); color: inherit; min-height: 40px; padding: 8px 16px; font: inherit; font-weight: 500; cursor: pointer; }
 .bp-layout button.bp-primary { background: var(--bp-accent); color: #fff; border-color: var(--bp-accent); }
