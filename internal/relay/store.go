@@ -742,7 +742,9 @@ func (s *RelayStore) UpsertUser(u *User) error {
 
 func (s *RelayStore) GetUserByProvider(provider, providerID string) (*User, error) {
 	row := s.db.QueryRow(
-		"SELECT id, provider, provider_id, display_name, avatar_url, email, tier, is_pro, created_at FROM users WHERE provider = ? AND provider_id = ?",
+		`SELECT u.id, u.provider, u.provider_id, u.display_name, u.avatar_url, u.email, u.tier, u.is_pro, u.created_at
+		 FROM users u JOIN user_identities i ON i.user_id = u.id
+		 WHERE i.provider = ? AND i.provider_id = ?`,
 		provider, providerID,
 	)
 	var u User
@@ -759,12 +761,20 @@ func (s *RelayStore) GetUserByProvider(provider, providerID string) (*User, erro
 }
 
 func (s *RelayStore) GetOrCreateUserByEmail(email string) (*User, error) {
-	u, err := s.GetUserByProvider("email", email)
+	email, err := normalizeRecoveryEmail(email)
+	if err != nil {
+		return nil, err
+	}
+	u, err := s.getUserByNormalizedEmailIdentity(email)
 	if err != nil {
 		return nil, err
 	}
 	if u != nil {
 		return u, nil
+	}
+	u, err = s.RecoverGitHubUser("email", email, email, true)
+	if err != nil || u != nil {
+		return u, err
 	}
 	u = &User{
 		ID:          generateToken(),
@@ -775,6 +785,10 @@ func (s *RelayStore) GetOrCreateUserByEmail(email string) (*User, error) {
 	if err := s.UpsertUser(u); err != nil {
 		return nil, err
 	}
+	if err := s.UpdateUserEmail(u.ID, email); err != nil {
+		return nil, err
+	}
+	u.Email = &email
 	return u, nil
 }
 
