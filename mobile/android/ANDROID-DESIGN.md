@@ -71,13 +71,15 @@ uses explicit Send/Tab/Ctrl+C actions. Scrollback is bounded.
 ## Toolchain and reproducibility
 
 JDK 21, Android tools, platform 37.0, build-tools 37.0.0, NDK 29 and Gradle 9.3.1
-live under the lane's `sdk/`. API 37 is the current stable major target:
+are configured through `ANDROID_HOME`, `ANDROID_NDK_HOME` and `JAVA_HOME`.
+API 37 is the current stable major target:
 [Android 17 release](https://developer.android.com/blog/posts/android-17-is-here),
 [AGP 9.1.1 compatibility](https://developer.android.com/build/releases/agp-9-1-0-release-notes),
 [local-network permission](https://developer.android.com/privacy-and-security/local-network-permission).
 Use `source toolchain.sh`, `./build-bridge.sh`, `./build-release.sh`.
-Gradle uses max four workers and a 3 GiB heap. Signing files are new lane-local
-files, outside Git, with mode 0600; build scripts read the password from that file.
+Gradle uses max four workers and a 3 GiB heap. Signing uses `WT_SIGNING_STORE` and
+`WT_SIGNING_PASSWORD`; keep the keystore outside Git with mode 0600.
+See `testing/README.md` for tool and cache defaults.
 
 `mobile/android/testing/peer` has optional loopback fixture controls for Android
 interop only. It always uses a temporary state directory and rejects non-loopback

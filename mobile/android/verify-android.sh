@@ -6,5 +6,5 @@ source ./toolchain.sh
 adb reverse tcp:38473 tcp:38473
 adb shell rm -rf /sdcard/Download/wingthing-evidence
 ./gradlew --max-workers=4 -Dorg.gradle.jvmargs=-Xmx3g :app:connectedDebugAndroidTest
-mkdir -p "$WT_LANE/evidence/screenshots"
-adb pull /sdcard/Download/wingthing-evidence/. "$WT_LANE/evidence/screenshots/"
+mkdir -p "$WT_ANDROID_WORKDIR/evidence/screenshots"
+adb pull /sdcard/Download/wingthing-evidence/. "$WT_ANDROID_WORKDIR/evidence/screenshots/"

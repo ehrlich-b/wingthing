@@ -6,3 +6,4 @@ app/libs/*.aar
 app/libs/*sources.jar
 *.jks
 *.keystore
+.local/

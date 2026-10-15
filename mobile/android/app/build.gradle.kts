@@ -14,7 +14,7 @@ android {
  }
  signingConfigs {
   create("lane") {
-   storeFile = file(System.getenv("WT_SIGNING_STORE") ?: "${rootProject.projectDir}/../../../signing/wingthing-upload.jks")
+   storeFile = rootProject.file(System.getenv("WT_SIGNING_STORE") ?: "signing/wingthing-upload.jks")
    storePassword = System.getenv("WT_SIGNING_PASSWORD")
    keyAlias = "wingthing"
    keyPassword = System.getenv("WT_SIGNING_PASSWORD")
