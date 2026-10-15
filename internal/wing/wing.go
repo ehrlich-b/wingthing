@@ -896,7 +896,8 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	// user's home directory, so adding cwd to an explicit --paths scan would
 	// disclose unrelated project names and paths to the coordinator.
 	cwd, _ := os.Getwd()
-	projects := wingpolicy.DiscoverWingProjects(resolvedPaths, cwd)
+	projectInventory := newProjectInventory(cwd)
+	projects := projectInventory.snapshot(resolvedPaths)
 
 	if options.LocalOnly {
 		fmt.Println("starting local-only wing")
@@ -1221,11 +1222,18 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		}
 
 		req.SenderUserID = localOwner.OwnerForRelay(roostURL, req.SenderUserID)
+		tunnelClient := client
+		if isProjectDiscovery(req, privKey) {
+			wingCfgMu.Lock()
+			projectRoots := wingpolicy.ResolvePathStrings(wingCfg.Paths.Strings(), home)
+			wingCfgMu.Unlock()
+			tunnelClient = projectDiscoveryClient(client, projectInventory.snapshot(projectRoots))
+		}
 		tunnel.HandleTunnelRequest(tunnel.References{Version: version, WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowedKeys, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs, Sessions: sessions, BrowserFleetAttachment: browserAttachments.Execute, BrowserTools: func() []*config.ToolConfig {
 			wingToolsMu.Lock()
 			defer wingToolsMu.Unlock()
 			return append([]*config.ToolConfig(nil), wingTools...)
-		}}, ctx, cfg, req, write, passkeyCache, passkeyChallenges, currentPasskeyPolicy(), privKey, home, auditLive.Load(), debugLive.Load(), client, peerMgr, &dcSessions, sharedHost)
+		}}, ctx, cfg, req, write, passkeyCache, passkeyChallenges, currentPasskeyPolicy(), privKey, home, auditLive.Load(), debugLive.Load(), tunnelClient, peerMgr, &dcSessions, sharedHost)
 	}
 
 	client.OnOrphanKill = func(ctx context.Context, sessionID string) {
@@ -1310,6 +1318,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 					}
 					client.UpdateRuntimeConfig(newCfg.Locked, len(newCfg.AllowKeys), directMCPEnabled(peerMgr != nil, newCfg), newCfg.Labels, rootDir)
 					wingCfgMu.Unlock()
+					projectInventory.invalidate()
 
 					// Hot-reload tools
 					newToolsDir := config.ResolveToolsDir(cfg.Dir, newCfg.ToolsDir)
