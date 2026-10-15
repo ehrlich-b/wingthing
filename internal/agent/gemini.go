@@ -70,10 +70,8 @@ func (g *Gemini) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 
 	stream := newStream(ctx)
 	go func() {
-		readErr := readProviderLines(stdout, "gemini", func(line string) {
-			if line != "" {
-				stream.send(Chunk{Text: line + "\n"})
-			}
+		readErr := readProviderPlaintext(ctx, stdout, func(text string) {
+			stream.send(Chunk{Text: text})
 		})
 		err := waitAgentCommand(cmd, diagnostics)
 		if readErr != nil {

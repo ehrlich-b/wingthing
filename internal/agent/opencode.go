@@ -72,10 +72,8 @@ func (o *OpenCode) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Str
 
 	stream := newStream(ctx)
 	go func() {
-		readErr := readProviderLines(stdout, "opencode", func(line string) {
-			if line != "" {
-				stream.send(Chunk{Text: line + "\n"})
-			}
+		readErr := readProviderPlaintext(ctx, stdout, func(text string) {
+			stream.send(Chunk{Text: text})
 		})
 		err := waitAgentCommand(cmd, diagnostics)
 		if readErr != nil {
