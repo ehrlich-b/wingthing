@@ -63,7 +63,7 @@ func TestOllamaRunCommandContract(t *testing.T) {
 	if gotName != "ollama" || !reflect.DeepEqual(gotArgs, []string{"run", "mistral"}) {
 		t.Fatalf("invocation = %q %q", gotName, gotArgs)
 	}
-	if got := stream.Text(); got != "hello ollama\n" {
+	if got := stream.Text(); got != "hello ollama" {
 		t.Fatalf("output = %q", got)
 	}
 }

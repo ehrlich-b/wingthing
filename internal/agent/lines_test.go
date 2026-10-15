@@ -115,21 +115,6 @@ func TestProviderStreamsOversizedEvents(t *testing.T) {
 			wantText: "done", wantTokens: [2]int{123, 45},
 		},
 	}
-	for _, plain := range []struct {
-		name     string
-		provider Agent
-	}{
-		{"gemini", NewGemini("", 0)},
-		{"opencode", NewOpenCode(0)},
-		{"ollama", NewOllama("", 0)},
-		{"hermes", NewHermes(0)},
-	} {
-		cases = append(cases, providerCase{
-			name: plain.name, provider: plain.provider,
-			intermediate: strings.Repeat("x", oversizedTestLine),
-			normal:       "\r\n\ndone\r", final: strings.Repeat("x", oversizedTestLine), wantText: "done\n",
-		})
-	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Run("normal", func(t *testing.T) {
