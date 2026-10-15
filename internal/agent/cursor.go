@@ -35,6 +35,10 @@ func (c *Cursor) Health() error {
 }
 
 func (c *Cursor) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream, err error) {
+	if opts.Model != "" {
+		return nil, errors.New("cursor headless adapter does not support model selection")
+	}
+
 	args := []string{"-p", prompt, "--output-format", "stream-json"}
 
 	var cmd *exec.Cmd
