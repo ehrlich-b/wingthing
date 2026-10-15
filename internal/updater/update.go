@@ -189,6 +189,13 @@ func releaseChecksum(manifest []byte, binaryName string) (string, error) {
 }
 
 func ValidateReleaseBinary(ctx context.Context, path string) error {
+	return validateReleaseBinary(ctx, path, "")
+}
+
+// Downloaded bundles must identify the exact advertised release before callers
+// acquire the lifecycle lock or replace the installed executable. Local preview
+// artifacts have no feed tag and retain the existing channel/command checks.
+func validateReleaseBinary(ctx context.Context, path, expectedVersion string) error {
 	if config.Channel() == "preview" {
 		checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
@@ -227,6 +234,12 @@ func ValidateReleaseBinary(ctx context.Context, path string) error {
 				return fmt.Errorf("%s timed out or was canceled: %w", strings.Join(check.args, " "), contextErr)
 			}
 			return fmt.Errorf("%s failed: %w", strings.Join(check.args, " "), err)
+		}
+		if expectedVersion != "" && len(check.args) == 1 && check.args[0] == "--version" {
+			want := config.BinaryName() + " version " + expectedVersion
+			if strings.TrimSpace(string(output)) != want {
+				return fmt.Errorf("downloaded binary version %q does not match advertised %q", strings.TrimSpace(string(output)), want)
+			}
 		}
 		if !strings.Contains(string(output), check.contains) {
 			return fmt.Errorf("%s output does not contain %q", strings.Join(check.args, " "), check.contains)

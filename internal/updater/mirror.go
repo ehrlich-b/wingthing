@@ -166,7 +166,7 @@ func prepareBundle(ctx context.Context, rel GhRelease, dir string) (path string,
 	if !strings.EqualFold(expected, fmt.Sprintf("%x", digest.Sum(nil))) {
 		return "", errors.New("release checksum mismatch")
 	}
-	if err := ValidateReleaseBinary(ctx, tmp); err != nil {
+	if err := validateReleaseBinary(ctx, tmp, rel.TagName); err != nil {
 		return "", err
 	}
 	return tmp, nil
