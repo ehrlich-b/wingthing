@@ -648,6 +648,9 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
         if (ws !== S.ptyWs) return;
         if (!S.ptyReconnecting) DOM.ptyStatus.textContent = 'error';
     };
+
+    // Reconnect close handlers must also let an accepted exit finish draining.
+    return function () { return !!pendingExit; };
 }
 
 export function connectPTY(agent, cwd, wingId, resumeSessionId) {
@@ -884,11 +887,12 @@ function ptyReconnectAttach(sessionId, attempt, wingId) {
         socket.send(JSON.stringify(msg));
     };
 
-    setupPTYHandlers(S.ptyWs, true, sessionId);
+    var hasPendingExit = setupPTYHandlers(S.ptyWs, true, sessionId);
 
     var innerWs = S.ptyWs;
     innerWs.onclose = function () {
         if (innerWs !== S.ptyWs) return;
+        if (hasPendingExit()) return;
         if (S.ptyInputBlocked) return;
         // A socket that already recovered starts a fresh cycle when it drops again;
         // ptyReconnectAttach ignores calls once the previous cycle has finished.

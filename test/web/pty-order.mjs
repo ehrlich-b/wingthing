@@ -20,7 +20,7 @@ const server = createServer((req, res) => {
         res.end('<!doctype html><title>Local PTY ordering fixture</title>');
     } else if (req.url === '/src/pty.js') {
         // Only expose the private entry point; keep its implementation intact.
-        res.end(source + '\nexport { setupPTYHandlers };\n');
+        res.end(source + '\nexport { setupPTYHandlers, ptyReconnectAttach };\n');
     } else if (dependencies.has(req.url)) {
         res.end([...dependencies.get(req.url)].map(name =>
             `export const ${name} = window.fixture[${JSON.stringify(name)}] || (() => {});`
@@ -107,7 +107,7 @@ async function fixture(t, options = {}) {
             },
         };
         window._deleteSession = noop;
-        const { setupPTYHandlers } = await import('/src/pty.js');
+        const { setupPTYHandlers, ptyReconnectAttach } = await import('/src/pty.js');
         const send = message => S.ptyWs.onmessage({ data: JSON.stringify({ session_id: S.ptySessionId, ...message }) });
         const attach = (reattach = false, session = 'session-a') => {
             S.ptySessionId = session;
@@ -123,7 +123,22 @@ async function fixture(t, options = {}) {
             }
             return { type: 'pty.output', data: btoa(String.fromCharCode(...bytes)), compressed };
         };
-        window.harness = { S, output, errors, started, hold, release, settle, send, attach, start, frame };
+        const sockets = [];
+        const reconnect = () => {
+            S.ptyReconnecting = true;
+            window.WebSocket = class {
+                static OPEN = 1;
+                readyState = 1;
+                constructor() { sockets.push(this); }
+                send() {}
+                close() {
+                    this.readyState = 3;
+                    setTimeout(() => this.onclose?.(), 0);
+                }
+            };
+            ptyReconnectAttach(S.ptySessionId, 0, S.ptyWingId);
+        };
+        window.harness = { S, output, errors, started, hold, release, settle, send, attach, start, frame, reconnect, sockets };
         attach(options.reattach);
     }, options);
     return page;
@@ -322,6 +337,46 @@ test('socket close during exit drains without reconnecting', async t => {
     });
     await check(page, 'last\r\n' + ended);
     assert.notEqual(await page.evaluate(() => harness.S.ptyReconnecting), true);
+});
+
+for (const phase of ['gunzip', 'terminal-write']) {
+    test(`reconnected socket close preserves pending exit during ${phase}`, async t => {
+        const page = await fixture(t);
+        await page.evaluate(async phase => {
+            const h = harness;
+            h.reconnect(); h.start(); await h.settle(); h.hold(phase);
+            h.send(await h.frame('final after reconnect\r\n', true));
+            h.send(await h.frame('final queued\r\n'));
+        }, phase);
+        if (phase === 'gunzip') await page.waitForFunction(() => harness.started.includes('gunzip'));
+        else await page.waitForFunction(() => harness.output.length > 0);
+        await page.evaluate(() => {
+            harness.send({ type: 'pty.exited' });
+            harness.S.ptyWs.close();
+        });
+        // Keep accepted output blocked beyond the production reconnect delay.
+        await new Promise(resolve => setTimeout(resolve, 1400));
+        const pending = await page.evaluate(() => ({
+            sockets: harness.sockets.length,
+            reconnecting: harness.S.ptyReconnecting,
+            session: harness.S.ptySessionId,
+            hasKey: !!harness.S.e2eKey,
+        }));
+        await page.evaluate(phase => harness.release(phase), phase);
+        await check(page, 'final after reconnect\r\nfinal queued\r\n' + ended);
+        assert.deepEqual(pending, { sockets: 1, reconnecting: false, session: 'session-a', hasKey: true });
+        assert.deepEqual(await page.evaluate(() => [harness.S.ptySessionId, harness.S.e2eKey]), [null, null]);
+    });
+}
+
+test('reconnected socket still retries a close without an exit', async t => {
+    const page = await fixture(t);
+    await page.evaluate(async () => {
+        harness.reconnect(); harness.start(); await harness.settle();
+        harness.S.ptyWs.close();
+    });
+    await page.waitForFunction(() => harness.sockets.length === 2);
+    assert.equal(await page.evaluate(() => harness.S.ptySessionId), 'session-a');
 });
 
 for (const sameSocket of [false, true]) {
