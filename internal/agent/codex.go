@@ -86,15 +86,18 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 
 	stream := newStream(ctx)
 	go func() {
+		var failureKind ErrorKind
 		readErr := readProviderLines(stdout, "codex", func(line string) {
-			if text, ok := parseCodexEvent(line); ok {
+			if kind, failed := parseCodexFailure(line); failed {
+				failureKind = preferFailureKind(failureKind, kind)
+			} else if text, ok := parseCodexEvent(line); ok {
 				stream.send(Chunk{Text: text})
 			}
 			if input, output, ok := parseCodexUsage(line); ok {
 				stream.SetTokens(input, output)
 			}
 		})
-		err := waitAgentCommand(cmd, diagnostics)
+		err := waitHeadlessCommand(cmd, diagnostics, "codex", failureKind)
 		if readErr != nil {
 			err = errors.Join(err, readErr)
 		}

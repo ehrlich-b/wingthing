@@ -128,6 +128,21 @@ func preferFailureKind(current, next ErrorKind) ErrorKind {
 	return current
 }
 
+// waitHeadlessCommand combines semantic failures with the process outcome.
+// When an event reports failure, neither stderr nor provider event bodies
+// belong in the returned diagnostic or its exit-error cause.
+func waitHeadlessCommand(cmd *exec.Cmd, diagnostics *commandDiagnostics, provider string, kind ErrorKind) error {
+	if kind == "" {
+		return waitAgentCommand(cmd, diagnostics)
+	}
+	err := cmd.Wait()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return &Failure{Kind: kind, Provider: provider, exit: &exec.ExitError{ProcessState: exit.ProcessState}}
+	}
+	return errors.Join(&Failure{Kind: kind, Provider: provider}, err)
+}
+
 func parseClaudeFailure(line string) (ErrorKind, bool) {
 	var ev struct {
 		Type    string          `json:"type"`
