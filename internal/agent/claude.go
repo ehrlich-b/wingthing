@@ -139,11 +139,13 @@ func parseStreamEvent(line string) (string, bool) {
 	switch ev.Type {
 	case "assistant":
 		if ev.Message != nil {
+			var text strings.Builder
 			for _, block := range ev.Message.Content {
-				if block.Type == "text" && block.Text != "" {
-					return block.Text, true
+				if block.Type == "text" {
+					text.WriteString(block.Text)
 				}
 			}
+			return text.String(), text.Len() > 0
 		}
 	case "content_block_delta":
 		if ev.Delta != nil && ev.Delta.Type == "text_delta" && ev.Delta.Text != "" {
