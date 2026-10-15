@@ -35,6 +35,34 @@ func onboardingStoryboardCapture(t *testing.T, h *northstarPTY, card string) {
 	northstarWrite(t, filepath.Join(dir, card+".txt"), h.emu.String(), 0600)
 }
 
+func onboardingWritablePathDiagnosis(screen string) bool {
+	// Terminal wrapping may consume a separator or split a word. Require the
+	// complete advice while allowing those changes in its screen rendering.
+	flat := strings.Join(strings.Fields(screen), "")
+	return strings.Contains(flat, "chooseawritableWT_INSTALL_DIR(noautomaticsudo)")
+}
+
+func TestOnboardingWritablePathDiagnosisWrapping(t *testing.T) {
+	for _, tc := range []struct {
+		name, screen string
+		want         bool
+	}{
+		{"one row", "error: cannot create /fixture; choose a writable WT_INSTALL_DIR (no automatic sudo)", true},
+		{"word boundary", "error: cannot create /long/fixture; choose a\nwritable WT_INSTALL_DIR (no automatic sudo)", true},
+		{"inside words", "choose a writ\nable WT_INSTALL_\nDIR (no automa\ntic sudo)", true},
+		{"missing advice", "error: cannot create /fixture; WT_INSTALL_DIR (no automatic sudo)", false},
+		{"missing variable", "choose a writable directory (no automatic sudo)", false},
+		{"missing sudo policy", "choose a writable WT_INSTALL_DIR", false},
+		{"opposite advice", "choose an unwritable WT_INSTALL_DIR (no automatic sudo)", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := onboardingWritablePathDiagnosis(tc.screen); got != tc.want {
+				t.Fatalf("diagnosis matched=%v, want %v: %q", got, tc.want, tc.screen)
+			}
+		})
+	}
+}
+
 func TestOnboardingPTYStoryboard(t *testing.T) {
 	f := northstarNewFixture(t)
 	binary := northstarBuild(t, f, "stable")
@@ -112,7 +140,7 @@ esac
 	f.env = append(f.env, "WT_INSTALL_DIR="+filepath.Join(f.home, "not-a-directory", "bin"))
 	northstarWrite(t, filepath.Join(f.home, "not-a-directory"), "fixture", 0600)
 	failed := northstarStartPTY(t, f, "/bin/sh", 120, 36, filepath.Join(f.repo, "scripts", "install.sh"))
-	failed.expect("installer writable path diagnosis", 0, "choose a writable", "WT_INSTALL_DIR", "no automatic sudo")
+	failed.waitScreen("installer writable path diagnosis", 0, onboardingWritablePathDiagnosis)
 	onboardingStoryboardCapture(t, failed, "01-7")
 
 	// Cold launch diagnostics remain real. Native protected-parent acceptance is
