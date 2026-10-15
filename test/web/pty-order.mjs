@@ -369,6 +369,56 @@ for (const phase of ['gunzip', 'terminal-write']) {
     });
 }
 
+for (const event of ['relay.restart', 'wing.offline']) {
+    for (const beforeExit of [true, false]) {
+        for (const phase of ['gunzip', 'terminal-write']) {
+            test(`${event} ${beforeExit ? 'before' : 'after'} exit waits for ${phase} drain`, async t => {
+                const page = await fixture(t);
+                await page.evaluate(async phase => {
+                    const h = harness;
+                    h.reconnect(); h.start(); await h.settle(); h.hold(phase);
+                    h.send(await h.frame('final compressed λ\r\n', true));
+                    h.send(await h.frame('final queued\r\n'));
+                }, phase);
+                if (phase === 'gunzip') await page.waitForFunction(() => harness.started.includes('gunzip'));
+                else await page.waitForFunction(() => harness.output.length > 0);
+                await page.evaluate(({ event, beforeExit }) => {
+                    if (beforeExit) harness.send({ type: event });
+                    harness.send({ type: 'pty.exited' });
+                    if (!beforeExit) harness.send({ type: event });
+                    harness.S.ptyWs.close();
+                }, { event, beforeExit });
+                // Both an already armed timer and one armed during exit must wait.
+                await new Promise(resolve => setTimeout(resolve, 1400));
+                const pending = await page.evaluate(() => ({
+                    sockets: harness.sockets.length,
+                    session: harness.S.ptySessionId,
+                    hasKey: !!harness.S.e2eKey,
+                }));
+                await page.evaluate(phase => harness.release(phase), phase);
+                const expected = 'final compressed λ\r\nfinal queued\r\n' + ended;
+                await check(page, expected);
+                assert.deepEqual(pending, { sockets: 1, session: 'session-a', hasKey: true });
+                assert.deepEqual(await page.evaluate(() => [harness.S.ptySessionId, harness.S.e2eKey]), [null, null]);
+                // A deferred timer must recheck identity after exit cleanup.
+                await new Promise(resolve => setTimeout(resolve, 1200));
+                await check(page, expected);
+                assert.equal(await page.evaluate(() => harness.sockets.length), 1);
+            });
+        }
+    }
+
+    test(`${event} still reconnects without an exit`, async t => {
+        const page = await fixture(t);
+        await page.evaluate(async event => {
+            harness.reconnect(); harness.start(); await harness.settle();
+            harness.send({ type: event });
+        }, event);
+        await page.waitForFunction(() => harness.sockets.length === 2);
+        assert.equal(await page.evaluate(() => harness.S.ptySessionId), 'session-a');
+    });
+}
+
 test('reconnected socket still retries a close without an exit', async t => {
     const page = await fixture(t);
     await page.evaluate(async () => {

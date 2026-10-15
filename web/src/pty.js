@@ -385,8 +385,11 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                     S.ptyReconnecting = true;
                     DOM.ptyStatus.textContent = 'reconnecting...';
                     showReconnectBanner();
-                    setTimeout(function () {
-                        if (terminalReferenceMatches(S, sid, connectedWingId, ws)) ptyReconnectAttach(sid, 0, connectedWingId);
+                    setTimeout(function reconnectAfterExit() {
+                        if (!terminalReferenceMatches(S, sid, connectedWingId, ws)) return;
+                        // Exit keeps this identity until accepted output has drained.
+                        if (pendingExit) { setTimeout(reconnectAfterExit, 1000); return; }
+                        ptyReconnectAttach(sid, 0, connectedWingId);
                     }, 1000);
                 }
                 return;
@@ -397,8 +400,11 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                     S.ptyReconnecting = true;
                     DOM.ptyStatus.textContent = 'wing restarting...';
                     showReconnectBanner('wing restarting...');
-                    setTimeout(function () {
-                        if (terminalReferenceMatches(S, sid, connectedWingId, ws)) ptyReconnectAttach(sid, 0, connectedWingId);
+                    setTimeout(function reconnectAfterExit() {
+                        if (!terminalReferenceMatches(S, sid, connectedWingId, ws)) return;
+                        // Also defer timers armed before pty.exited arrived.
+                        if (pendingExit) { setTimeout(reconnectAfterExit, 1000); return; }
+                        ptyReconnectAttach(sid, 0, connectedWingId);
                     }, 1000);
                 }
                 return;
