@@ -236,6 +236,8 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
     // Keep decrypt/decompression in wire order for this connection only.
     var outputChain = Promise.resolve();
     var outputSessionId = requestedSessionId;
+    // Exit is ordered after accepted output, including terminal write callbacks.
+    var pendingExit = null;
 
     function outputCurrent(sessionId) {
         if (ws === S.ptyWs && connectedWingId === S.ptyWingId && sessionId === S.ptySessionId) return true;
@@ -247,6 +249,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
         var queued = pendingOutput;
         pendingOutput = [];
         queued.forEach(processOutput);
+        finishExitAfterOutput();
     }
 
     function gunzip(data) {
@@ -283,14 +286,16 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
             return item.compressed ? gunzip(bytes) : bytes;
         }).then(function (bytes) {
             if (!bytes || !outputCurrent(sessionId)) return;
-            S.term.write(bytes);
-            saveTermBuffer();
-            try {
-                var text = new TextDecoder().decode(bytes);
-                if (checkForNotification(text)) {
-                    setNotification(S.ptySessionId, S.ptyWingId);
-                }
-            } catch (ex) {}
+            return new Promise(function (resolve) {
+                S.term.write(bytes, resolve);
+                saveTermBuffer();
+                try {
+                    var text = new TextDecoder().decode(bytes);
+                    if (checkForNotification(text)) {
+                        setNotification(S.ptySessionId, S.ptyWingId);
+                    }
+                } catch (ex) {}
+            });
         }).catch(function (err) {
             if (outputCurrent(sessionId)) console.error('decrypt error, dropping frame:', err);
         });
@@ -301,7 +306,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
         if (!outputCurrent(sessionId)) return;
         var pending = pendingOutput;
         pendingOutput = [];
-        if (pending.length === 0) { S.term.reset(); replayDone = true; hideReplayOverlay(); return; }
+        if (pending.length === 0) { S.term.reset(); replayDone = true; hideReplayOverlay(); drainOutput(); return; }
         Promise.all(pending.map(function (item) {
             return e2eDecrypt(item.data).then(function (bytes) {
                 if (!outputCurrent(sessionId)) return null;
@@ -325,6 +330,45 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                 drainOutput();
             });
         }).catch(function () { if (outputCurrent(sessionId)) { replayDone = true; hideReplayOverlay(); drainOutput(); } });
+    }
+
+    function finishExitAfterOutput() {
+        if (!pendingExit || !keyReady || !replayDone) return;
+        var msg = pendingExit;
+        var sessionId = outputSessionId;
+        outputChain.then(function () {
+            if (pendingExit !== msg || !outputCurrent(sessionId)) return;
+            pendingExit = null;
+            completeExit(msg);
+        });
+    }
+
+    function completeExit(msg) {
+        discardPreview(msg.session_id, S.ptyWingId);
+        DOM.headerTitle.textContent = '';
+        DOM.sessionCloseBtn.style.display = 'none';
+        if (msg.session_id) clearTermBuffer(msg.session_id, S.ptyWingId);
+        clearNotification(msg.session_id, S.ptyWingId);
+        clearTerminalControl();
+        S.ptySessionId = null;
+        S.e2eKey = null;
+        setSessionActions(false);
+
+        if (msg.error) {
+            DOM.ptyStatus.textContent = 'crashed';
+            S.term.writeln('\r\n\x1b[31;1m--- egg crashed ---\x1b[0m');
+            S.term.writeln('\x1b[2m' + msg.error.replace(/\n/g, '\r\n') + '\x1b[0m');
+            S.term.writeln('');
+            S.term.writeln('\x1b[33mPlease report this bug: https://github.com/ehrlich-b/wingthing/issues\x1b[0m');
+        } else {
+            DOM.ptyStatus.textContent = 'exited';
+            S.term.writeln('\r\n\x1b[2m--- session ended ---\x1b[0m');
+        }
+        // The wing already exited; remove local state without sending a
+        // redundant pty.kill back to it.
+        if (msg.session_id) window._deleteSession(msg.session_id, true, S.ptyWingId);
+        renderSidebar();
+        loadHome();
     }
 
     ws.onmessage = function (e) {
@@ -393,6 +437,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                 if (outputSessionId && outputSessionId !== msg.session_id) {
                     // A replacement session must not wait on the old decrypt queue.
                     pendingOutput = [];
+                    pendingExit = null;
                     outputChain = Promise.resolve();
                     keyReady = false;
                     replayDone = !reattach;
@@ -487,6 +532,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                 break;
 
             case 'pty.output':
+                if (pendingExit) break;
                 if (msg.session_id && S.ptySessionId && msg.session_id !== S.ptySessionId) {
                     console.warn('pty.output for wrong session:', msg.session_id, 'expected:', S.ptySessionId);
                     break;
@@ -501,31 +547,10 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
             case 'pty.exited':
                 if (S.ptySessionId && msg.session_id !== S.ptySessionId) break;
                 if (!S.ptySessionId && !msg.error) break;
-                discardPreview(msg.session_id, S.ptyWingId);
-                DOM.headerTitle.textContent = '';
-                DOM.sessionCloseBtn.style.display = 'none';
-                if (msg.session_id) clearTermBuffer(msg.session_id, S.ptyWingId);
-                clearNotification(msg.session_id, S.ptyWingId);
-                clearTerminalControl();
-                S.ptySessionId = null;
-                S.e2eKey = null;
-                setSessionActions(false);
-
-                if (msg.error) {
-                    DOM.ptyStatus.textContent = 'crashed';
-                    S.term.writeln('\r\n\x1b[31;1m--- egg crashed ---\x1b[0m');
-                    S.term.writeln('\x1b[2m' + msg.error.replace(/\n/g, '\r\n') + '\x1b[0m');
-                    S.term.writeln('');
-                    S.term.writeln('\x1b[33mPlease report this bug: https://github.com/ehrlich-b/wingthing/issues\x1b[0m');
-                } else {
-                    DOM.ptyStatus.textContent = 'exited';
-                    S.term.writeln('\r\n\x1b[2m--- session ended ---\x1b[0m');
-                }
-                // The wing already exited; remove local state without sending a
-                // redundant pty.kill back to it.
-                if (msg.session_id) window._deleteSession(msg.session_id, true, S.ptyWingId);
-                renderSidebar();
-                loadHome();
+                // A startup failure may exit without ever starting key derivation.
+                if (!S.ptySessionId || (!keyReady && pendingOutput.length === 0)) { completeExit(msg); break; }
+                pendingExit = msg;
+                finishExitAfterOutput();
                 break;
 
             case 'bandwidth.exceeded':
@@ -591,7 +616,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
         if (ws.readyState !== WebSocket.OPEN) return;
         if (lastPong && Date.now() - lastPong > PTY_LIVENESS_TIMEOUT_MS) {
             clearInterval(liveness);
-            if (S.ptySessionId && !S.ptyReconnecting && !S.ptyInputBlocked) reconnectAfterLoss(0);
+            if (S.ptySessionId && !pendingExit && !S.ptyReconnecting && !S.ptyInputBlocked) reconnectAfterLoss(0);
             ws.close();
             return;
         }
@@ -601,6 +626,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
     ws.onclose = function () {
         clearInterval(liveness);
         if (ws !== S.ptyWs) return;
+        if (pendingExit) return;
         if (S.ptyInputBlocked) return;
         if (S.ptyBandwidthExceeded) {
             S.ptyBandwidthExceeded = false;

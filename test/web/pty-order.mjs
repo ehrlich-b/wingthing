@@ -64,10 +64,11 @@ async function fixture(t, options = {}) {
         const release = name => gates.get(name)?.resolve();
         const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(done => setTimeout(done, 0)); };
         const S = {
-            ptyWingId: 'wing-a', ptySessionId: 'session-a', wingsData: [], sessionsData: [],
+            ptyWingId: 'wing-a', ptySessionId: 'session-a', wingsData: [], sessionsData: [], e2eKey: {},
             currentUser: null, fitAddon: { fit: noop },
             term: {
                 cols: 80, rows: 24, reset: () => { output.length = 0; }, clear: noop,
+                writeln: text => output.push(...encoder.encode(text + '\r\n')),
                 focus: noop, onResize: () => ({ dispose: noop }),
                 write: (bytes, callback) => {
                     output.push(...bytes);
@@ -105,6 +106,7 @@ async function fixture(t, options = {}) {
                 return Uint8Array.from(atob(data), c => c.charCodeAt(0));
             },
         };
+        window._deleteSession = noop;
         const { setupPTYHandlers } = await import('/src/pty.js');
         const send = message => S.ptyWs.onmessage({ data: JSON.stringify({ session_id: S.ptySessionId, ...message }) });
         const attach = (reattach = false, session = 'session-a') => {
@@ -267,3 +269,114 @@ test('session-routed attachment works before a wing identity is known', async t 
     });
     await check(page, 'session route\r\n');
 });
+
+const ended = '\r\n\x1b[2m--- session ended ---\x1b[0m\r\n';
+for (const reattach of [false, true]) {
+    for (const phase of ['decrypt', 'gunzip', 'terminal-write', 'key']) {
+        test(`${reattach ? 'replay' : 'live'} exit drains accepted output during ${phase}`, async t => {
+            const page = await fixture(t, { reattach });
+            await page.evaluate(async ({ reattach, phase }) => {
+                const h = harness;
+                if (reattach || phase === 'key') h.hold('key');
+                if (phase === 'terminal-write') h.hold('terminal-write');
+                if (phase === 'gunzip') h.hold('gunzip');
+                h.start(); await h.settle();
+                const first = await h.frame('final compressed λ\r\n', true);
+                if (phase === 'decrypt') h.hold(first.data);
+                h.send(first); h.send(await h.frame('final plain\r\n'));
+                window.exitFrame = first.data;
+                if (reattach && phase !== 'key') h.release('key');
+            }, { reattach, phase });
+            if (phase === 'gunzip') await page.waitForFunction(() => harness.started.includes('gunzip'));
+            if (phase === 'terminal-write') await page.waitForFunction(() => harness.output.length > 0);
+            await page.evaluate(async () => {
+                const h = harness;
+                h.send({ type: 'pty.exited' }); await h.settle();
+            });
+            assert.equal(await page.evaluate(() => harness.S.ptySessionId), 'session-a');
+            assert.ok(await page.evaluate(() => harness.S.e2eKey));
+            await page.evaluate(async () => {
+                const h = harness;
+                // Frames after exit were not accepted and must not delay cleanup.
+                h.send(await h.frame('after exit\r\n'));
+                h.release(exitFrame); h.release('gunzip'); h.release('terminal-write'); h.release('key');
+            });
+            await check(page, 'final compressed λ\r\nfinal plain\r\n' + ended);
+            assert.deepEqual(await page.evaluate(() => [harness.S.ptySessionId, harness.S.e2eKey]), [null, null]);
+        });
+    }
+}
+
+test('socket close during exit drains without reconnecting', async t => {
+    const page = await fixture(t);
+    await page.evaluate(async () => {
+        const h = harness;
+        h.start(); await h.settle(); h.hold('gunzip');
+        h.send(await h.frame('last\r\n', true));
+    });
+    await page.waitForFunction(() => harness.started.includes('gunzip'));
+    await page.evaluate(() => {
+        harness.send({ type: 'pty.exited' });
+        harness.S.ptyWs.onclose();
+        harness.release('gunzip');
+    });
+    await check(page, 'last\r\n' + ended);
+    assert.notEqual(await page.evaluate(() => harness.S.ptyReconnecting), true);
+});
+
+for (const sameSocket of [false, true]) {
+    test(`replacement ${sameSocket ? 'session' : 'socket'} cancels a pending exit`, async t => {
+        const page = await fixture(t);
+        await page.evaluate(async sameSocket => {
+            const h = harness;
+            h.start(); await h.settle();
+            const old = await h.frame('old\r\n');
+            h.hold(old.data); h.send(old); await h.settle();
+            h.send({ type: 'pty.exited' });
+            if (sameSocket) h.S.ptySessionId = 'session-b';
+            else h.attach(false, 'session-b');
+            h.start(false); h.send(await h.frame('new\r\n'));
+            await h.settle(); h.release(old.data); await h.settle();
+        }, sameSocket);
+        await check(page, 'new\r\n');
+        assert.equal(await page.evaluate(() => harness.S.ptySessionId), 'session-b');
+    });
+}
+
+test('exit drains frames queued behind the replay write before the crash marker', async t => {
+    const page = await fixture(t, { reattach: true });
+    await page.evaluate(async () => {
+        const h = harness;
+        h.hold('key'); h.hold('terminal-write'); h.start();
+        h.send(await h.frame('replay\r\n', true)); h.release('key');
+    });
+    await page.waitForFunction(() => harness.output.length > 0);
+    await page.evaluate(async () => {
+        const h = harness;
+        h.send(await h.frame('queued compressed\r\n', true));
+        h.send(await h.frame('queued plain\r\n'));
+        h.send({ type: 'pty.exited', error: 'failure\ndetail' });
+        await h.settle(); h.release('terminal-write');
+    });
+    await check(page, 'replay\r\nqueued compressed\r\nqueued plain\r\n' +
+        '\r\n\x1b[31;1m--- egg crashed ---\x1b[0m\r\n' +
+        '\x1b[2mfailure\r\ndetail\x1b[0m\r\n\r\n' +
+        '\x1b[33mPlease report this bug: https://github.com/ehrlich-b/wingthing/issues\x1b[0m\r\n');
+});
+
+for (const reattach of [false, true]) {
+    for (const started of [false, true]) {
+        test(`empty ${reattach ? 'reattached' : 'new'} session exits ${started ? 'during key derivation' : 'before startup'}`, async t => {
+            const page = await fixture(t, { reattach });
+            await page.evaluate(async started => {
+                const h = harness;
+                h.hold('key');
+                if (started) h.start();
+                h.send({ type: 'pty.exited' });
+                await h.settle(); h.release('key'); await h.settle();
+            }, started);
+            await check(page, ended);
+            assert.deepEqual(await page.evaluate(() => [harness.S.ptySessionId, harness.S.e2eKey]), [null, null]);
+        });
+    }
+}
