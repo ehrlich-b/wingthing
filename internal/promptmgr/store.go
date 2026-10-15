@@ -2,6 +2,7 @@ package promptmgr
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -115,13 +116,33 @@ func (s *Store) Get(name, revision string) (*Asset, error) {
 
 // Save atomically updates the current asset and preserves the content-addressed
 // revision in _history. expectedRevision prevents one client from silently
-// overwriting a concurrent edit; omit it to create or force an update.
+// overwriting a concurrent edit; omit it to create or force an update. It waits
+// up to five seconds for another writer to release the prompt's lock.
 func (s *Store) Save(asset Asset, expectedRevision string) (*Asset, error) {
+	return s.SaveContext(context.Background(), asset, expectedRevision)
+}
+
+// SaveContext is Save with cancellation while waiting for another writer.
+// Lock acquisition is bounded by the earlier of ctx's deadline and five seconds.
+func (s *Store) SaveContext(ctx context.Context, asset Asset, expectedRevision string) (*Asset, error) {
 	if err := validateAsset(&asset); err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(s.dir, 0700); err != nil {
+		return nil, fmt.Errorf("create prompt directory: %w", err)
+	}
+	lock, err := acquirePromptLock(ctx, filepath.Join(s.dir, "."+asset.Name+".lock"))
+	if err != nil {
+		return nil, fmt.Errorf("lock prompt %q: %w", asset.Name, err)
+	}
+	defer lock.Close()
 	var existing *Asset
-	existing, err := s.Get(asset.Name, "")
+	existing, err = s.Get(asset.Name, "")
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
@@ -150,9 +171,6 @@ func (s *Store) Save(asset Asset, expectedRevision string) (*Asset, error) {
 	encoded, err := yaml.Marshal(&asset)
 	if err != nil {
 		return nil, fmt.Errorf("encode prompt: %w", err)
-	}
-	if err := os.MkdirAll(s.dir, 0700); err != nil {
-		return nil, fmt.Errorf("create prompt directory: %w", err)
 	}
 	historyDir := filepath.Join(s.dir, "_history", asset.Name)
 	if err := os.MkdirAll(historyDir, 0700); err != nil {
