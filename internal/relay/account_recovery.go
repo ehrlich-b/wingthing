@@ -15,6 +15,36 @@ func normalizeRecoveryEmail(email string) (string, error) {
 	return strings.ToLower(email), err
 }
 
+// An identity created before recovery shipped may belong to an empty account
+// left by the outage. Refuse a collision for manual investigation rather than
+// silently using that account or failing the unique email update with a 500.
+// Already recovered identities continue to resolve to their GitHub user.
+func (s *RelayStore) checkExistingRecoveryCollision(user *User, email string) error {
+	if user.Provider == "github" {
+		return nil
+	}
+	normalized, err := normalizeRecoveryEmail(email)
+	if err != nil {
+		return nil
+	}
+	rows, err := s.db.Query("SELECT email FROM users WHERE provider = 'github' AND email IS NOT NULL AND id <> ?", user.ID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var storedEmail string
+		if err := rows.Scan(&storedEmail); err != nil {
+			return err
+		}
+		stored, err := normalizeRecoveryEmail(storedEmail)
+		if err == nil && stored == normalized {
+			return ErrAccountRecoveryRefused
+		}
+	}
+	return rows.Err()
+}
+
 // Older magic-link users used the original spelling of the address as their
 // provider ID and did not populate users.email. Preserve those identities,
 // refusing legacy duplicates rather than choosing an arbitrary account.
@@ -98,6 +128,7 @@ func (s *RelayStore) RecoverGitHubUser(provider, providerID, email string, verif
 		return nil, err
 	}
 	var targetID string
+	var hasGitHubMatch bool
 	matches := make(map[string]struct{})
 	for rows.Next() {
 		var id, primaryProvider, storedEmail string
@@ -109,6 +140,9 @@ func (s *RelayStore) RecoverGitHubUser(provider, providerID, email string, verif
 		stored, err := normalizeRecoveryEmail(storedEmail)
 		if err == nil && stored == normalized {
 			matches[id] = struct{}{}
+			if primaryProvider == "github" {
+				hasGitHubMatch = true
+			}
 			// Email identities contribute ambiguity, but recovery still requires
 			// a match to the GitHub user's stored email.
 			if userEmail && primaryProvider == "github" {
@@ -124,7 +158,9 @@ func (s *RelayStore) RecoverGitHubUser(provider, providerID, email string, verif
 	if closeErr != nil {
 		return nil, closeErr
 	}
-	if len(matches) == 0 {
+	// Preserve separate alternate-provider signups for users who never used
+	// GitHub. A single non-GitHub match is outside account recovery's scope.
+	if len(matches) == 0 || (len(matches) == 1 && !hasGitHubMatch) {
 		return nil, nil
 	}
 	if len(matches) != 1 || targetID == "" {

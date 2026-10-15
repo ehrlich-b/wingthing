@@ -445,3 +445,121 @@ func TestRecoveryLoginPageGitHubOffAndOn(t *testing.T) {
 		})
 	}
 }
+
+// Recreate the pre-008 database writes: OAuth inserted a user before saving
+// its email, while magic-link signup saved only its email provider ID.
+func TestRecoveryRefusesOutageIdentityCollisionsAfterUpgrade(t *testing.T) {
+	for _, provider := range []string{"google", "email"} {
+		for _, address := range []string{"owner@example.com", "OWNER@EXAMPLE.COM"} {
+			t.Run(provider+"/"+address, func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "relay.db")
+				store, err := OpenRelay(path)
+				mustTest(t, err)
+				_, err = store.DB().Exec(`DROP TRIGGER users_register_identity;
+					DROP TABLE user_identities;
+					DELETE FROM schema_migrations WHERE version = '008_user_identities.sql'`)
+				mustTest(t, err)
+				recoveryUser(t, store, "github-owner", "github", "owner@example.com")
+				mustTest(t, store.CreateSession("original-session", "github-owner", time.Now().Add(time.Hour)))
+				mustTest(t, store.CreateDeviceToken("original-machine", "github-owner", "wing", nil))
+				providerID := "outage-google"
+				if provider == "email" {
+					providerID = address
+				}
+				mustTest(t, store.UpsertUser(&User{ID: "outage-user", Provider: provider, ProviderID: providerID}))
+				if provider == "google" {
+					err := store.UpdateUserEmail("outage-user", address)
+					if address == "owner@example.com" && err == nil {
+						t.Fatal("old Google callback should fail after persisting the empty user")
+					}
+					if address != "owner@example.com" {
+						mustTest(t, err)
+					}
+				}
+				mustTest(t, store.Close())
+				store, err = OpenRelay(path)
+				mustTest(t, err)
+				t.Cleanup(func() { _ = store.Close() })
+				s := NewServer(store, ServerConfig{SMTPHost: "fixture"})
+				for attempt := 0; attempt < 2; attempt++ {
+					var w *httptest.ResponseRecorder
+					if provider == "google" {
+						w = googleRecoveryCallback(t, s, providerID, address, true)
+					} else {
+						token := fmt.Sprintf("outage-token-%d", attempt)
+						mustTest(t, store.CreateMagicLink(fmt.Sprint(attempt), address, token, time.Now().Add(time.Minute)))
+						w = httptest.NewRecorder()
+						s.handleMagicVerify(w, httptest.NewRequest(http.MethodGet, "/auth/magic/verify?token="+token, nil))
+					}
+					if w.Code != http.StatusForbidden || recoverySession(t, s, w) != nil {
+						t.Fatalf("outage collision status=%d body=%s", w.Code, w.Body)
+					}
+				}
+				identity, err := store.GetUserByProvider(provider, providerID)
+				if err != nil || identity == nil || identity.ID != "outage-user" {
+					t.Fatalf("outage identity changed: %#v %v", identity, err)
+				}
+				owner, err := store.GetSession("original-session")
+				if err != nil || owner == nil || owner.ID != "github-owner" {
+					t.Fatalf("original session changed: %#v %v", owner, err)
+				}
+				userID, _, err := store.ValidateToken("original-machine")
+				if err != nil || userID != "github-owner" {
+					t.Fatalf("original machine changed: %s %v", userID, err)
+				}
+				var sessions int
+				mustTest(t, store.DB().QueryRow("SELECT COUNT(*) FROM sessions").Scan(&sessions))
+				if sessions != 1 {
+					t.Fatalf("refused collision created sessions: %d", sessions)
+				}
+			})
+		}
+	}
+}
+
+func TestRecoveryPreservesNonGitHubAlternateSignups(t *testing.T) {
+	for _, original := range []string{"google", "email"} {
+		t.Run(original, func(t *testing.T) {
+			store := testStore(t)
+			address := "owner@example.com"
+			if original == "email" {
+				mustTest(t, store.UpsertUser(&User{ID: "original", Provider: "email", ProviderID: address}))
+			} else {
+				recoveryUser(t, store, "original", original, address)
+			}
+			s := NewServer(store, ServerConfig{SMTPHost: "fixture"})
+			var w *httptest.ResponseRecorder
+			if original == "email" {
+				w = googleRecoveryCallback(t, s, "new-google", address, true)
+			} else {
+				mustTest(t, store.CreateMagicLink("link", address, "token", time.Now().Add(time.Minute)))
+				w = httptest.NewRecorder()
+				s.handleMagicVerify(w, httptest.NewRequest(http.MethodGet, "/auth/magic/verify?token=token", nil))
+			}
+			user := recoverySession(t, s, w)
+			if w.Code != http.StatusSeeOther || user == nil || user.ID == "original" {
+				t.Fatalf("alternate signup changed: status=%d user=%#v body=%s", w.Code, user, w.Body)
+			}
+		})
+	}
+}
+
+func TestRecoveryLoginHintRequiresRemainingOption(t *testing.T) {
+	for _, google := range []bool{false, true} {
+		for _, email := range []bool{false, true} {
+			cfg := ServerConfig{}
+			if google {
+				cfg.GoogleClientID = "fixture"
+			}
+			if email {
+				cfg.SMTPHost = "fixture"
+			}
+			s := NewServer(testStore(t), cfg)
+			w := httptest.NewRecorder()
+			s.handleLogin(w, httptest.NewRequest(http.MethodGet, "/login", nil))
+			if got := strings.Contains(w.Body.String(), "Signed up with GitHub?"); got != (google || email) {
+				t.Errorf("Google=%v email=%v recovery hint=%v", google, email, got)
+			}
+		}
+	}
+}

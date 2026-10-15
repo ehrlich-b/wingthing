@@ -34,6 +34,6 @@
 <button type="submit">send link</button>
 </form>
 {{end}}
-{{if not .HasGitHub}}<p class="subtitle">Signed up with GitHub? Continue with Google or email using the same address and your account carries over.</p>{{end}}
+{{if and (not .HasGitHub) (or .HasGoogle .HasSMTP)}}<p class="subtitle">Signed up with GitHub? Continue with Google or email using the same address and your account carries over.</p>{{end}}
 </div>
 {{end}}

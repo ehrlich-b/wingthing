@@ -662,8 +662,16 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this account is not enrolled in this roost", http.StatusForbidden)
 		return
 	}
-	if !existingUser {
-		recovered, err := s.Store.RecoverGitHubUser("google", gUser.ID, gUser.Email, gUser.VerifiedEmail)
+	{
+		var recovered *User
+		var err error
+		if existingUser {
+			if gUser.VerifiedEmail {
+				err = s.Store.checkExistingRecoveryCollision(user, gUser.Email)
+			}
+		} else {
+			recovered, err = s.Store.RecoverGitHubUser("google", gUser.ID, gUser.Email, gUser.VerifiedEmail)
+		}
 		if err != nil {
 			if errors.Is(err, ErrAccountRecoveryRefused) {
 				http.Error(w, "account recovery could not safely match this identity", http.StatusForbidden)
