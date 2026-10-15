@@ -165,6 +165,10 @@ func TestUpgradeEveryRelayMigrationBaselinePreservesRelationships(t *testing.T) 
 				t.Fatalf("open upgraded relay store: %v", err)
 			}
 			t.Cleanup(func() { _ = store.Close() })
+			identity, err := store.GetUserByProvider("google", "upgrade-owner")
+			if err != nil || identity == nil || identity.ID != "upgrade-owner" {
+				t.Fatalf("upgraded provider identity = %#v, %v", identity, err)
+			}
 			user, err := store.GetSession("upgrade-session")
 			if err != nil || user == nil || user.ID != "upgrade-owner" {
 				t.Fatalf("upgraded session user = %#v, %v", user, err)

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -661,10 +662,31 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this account is not enrolled in this roost", http.StatusForbidden)
 		return
 	}
-	// Preserve the historical non-enrollment behavior for operators without an
-	// allowlist. When an allowlist is active, the check above requires this same
-	// address to have been provider-verified.
-	if gUser.Email != "" {
+	{
+		var recovered *User
+		var err error
+		if existingUser {
+			if gUser.VerifiedEmail {
+				err = s.Store.checkExistingRecoveryCollision(user, gUser.Email)
+			}
+		} else {
+			recovered, err = s.Store.RecoverGitHubUser("google", gUser.ID, gUser.Email, gUser.VerifiedEmail)
+		}
+		if err != nil {
+			if errors.Is(err, ErrAccountRecoveryRefused) {
+				log.Printf("account recovery refused: provider=google user_id=%q: %v", user.ID, err)
+				http.Error(w, "account recovery could not safely match this identity", http.StatusForbidden)
+			} else {
+				http.Error(w, "db error", http.StatusInternalServerError)
+			}
+			return
+		}
+		if recovered != nil {
+			user = recovered
+		}
+	}
+	// An unverified provider address must never become a recovery credential.
+	if gUser.VerifiedEmail && gUser.Email != "" {
 		user.Email = &gUser.Email
 	}
 	if err := s.Store.UpsertUser(user); err != nil {
@@ -750,7 +772,12 @@ func (s *Server) handleMagicVerify(w http.ResponseWriter, r *http.Request) {
 
 	user, err := s.Store.GetOrCreateUserByEmail(email)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		if errors.Is(err, ErrAccountRecoveryRefused) {
+			log.Printf("account recovery refused: provider=email: %v", err)
+			http.Error(w, "account recovery could not safely match this identity", http.StatusForbidden)
+		} else {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
 		return
 	}
 
