@@ -1,0 +1,9 @@
+.gradle/
+.kotlin/
+**/build/
+local.properties
+app/libs/*.aar
+app/libs/*sources.jar
+*.jks
+*.keystore
+.local/

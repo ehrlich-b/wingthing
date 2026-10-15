@@ -7,7 +7,8 @@ package pake
 #cgo CFLAGS: -I${SRCDIR}/boringssl/include -DOPENSSL_NO_ASM
 #cgo CXXFLAGS: -I${SRCDIR}/boringssl/include -DOPENSSL_NO_ASM -std=c++17 -fno-exceptions
 #cgo darwin LDFLAGS: -lc++
-#cgo linux LDFLAGS: -lstdc++ -lpthread
+#cgo linux,!android LDFLAGS: -lstdc++ -lpthread
+#cgo android LDFLAGS: -lc++_shared
 #include <CCryptoBoringSSL_curve25519.h>
 */
 import "C"
