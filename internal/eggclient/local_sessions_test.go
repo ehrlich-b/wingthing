@@ -27,6 +27,7 @@ import (
 type inventoryStatusFixture struct {
 	pb.UnimplementedEggServer
 	slow                bool
+	teardownDelay       time.Duration
 	active, peak, calls *atomic.Int32
 }
 
@@ -41,12 +42,19 @@ func (f inventoryStatusFixture) Status(ctx context.Context, _ *pb.StatusRequest)
 	}
 	if f.slow {
 		<-ctx.Done()
+		// Canceled client RPCs can return before their server handlers finish.
+		time.Sleep(f.teardownDelay)
 		return nil, ctx.Err()
 	}
 	return &pb.StatusResponse{Readers: 3, Agent: "claude", TotalWritten: 99}, nil
 }
 
 func inventorySessionsFixture(t *testing.T, slowFrom int) (*config.Config, *atomic.Int32, *atomic.Int32, *atomic.Int32) {
+	t.Helper()
+	return inventorySessionsFixtureWithTeardown(t, slowFrom, 0)
+}
+
+func inventorySessionsFixtureWithTeardown(t *testing.T, slowFrom int, teardownDelay time.Duration) (*config.Config, *atomic.Int32, *atomic.Int32, *atomic.Int32) {
 	t.Helper()
 	// These fixtures use short explicit IDs; validate the canonical socket
 	// below rather than reserving the unrelated full runtime ID width.
@@ -101,7 +109,7 @@ func inventorySessionsFixture(t *testing.T, slowFrom int) (*config.Config, *atom
 			t.Fatal(err)
 		}
 		rpc := grpc.NewServer()
-		pb.RegisterEggServer(rpc, inventoryStatusFixture{slow: n >= slowFrom, active: active, peak: peak, calls: calls})
+		pb.RegisterEggServer(rpc, inventoryStatusFixture{slow: n >= slowFrom, teardownDelay: teardownDelay, active: active, peak: peak, calls: calls})
 		done := make(chan struct{})
 		go func() { defer close(done); _ = rpc.Serve(listener) }()
 		t.Cleanup(func() { rpc.Stop(); _ = listener.Close(); <-done })
@@ -174,42 +182,61 @@ func TestDiscoverActiveSessionsInventoryStatusFixture(t *testing.T) {
 }
 
 func TestDiscoverActiveSessionsInventoryDeadlineAndWorkerCap(t *testing.T) {
-	cfg, active, peak, calls := inventorySessionsFixture(t, 0)
-	// Missing native evidence remains unknown even with a live process.
-	for n := range 20 {
-		if err := os.Remove(filepath.Join(cfg.Dir, "eggs", fmt.Sprintf("s%02d", n), "lifecycle.jsonl")); err != nil {
-			t.Fatal(err)
-		}
+	for _, tc := range []struct {
+		name          string
+		parentTimeout time.Duration
+	}{
+		{name: "aggregate deadline with delayed teardown"},
+		{name: "worker cap", parentTimeout: localStatusTimeout / 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, active, peak, calls := inventorySessionsFixtureWithTeardown(t, 0, 100*time.Millisecond)
+			// Missing native evidence remains unknown even with a live process.
+			for n := range 20 {
+				if err := os.Remove(filepath.Join(cfg.Dir, "eggs", fmt.Sprintf("s%02d", n), "lifecycle.jsonl")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx := t.Context()
+			if tc.parentTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tc.parentTimeout)
+				defer cancel()
+			}
+			start := time.Now()
+			rows, err := DiscoverActiveSessions(ctx, cfg)
+			if err != nil || len(rows) != 20 {
+				t.Fatalf("deadline dropped metadata: %d, %v", len(rows), err)
+			}
+			// Correctness allows scheduling slack; the 1s target is recorded separately.
+			if elapsed := time.Since(start); elapsed > 3*time.Second {
+				t.Fatalf("aggregate deadline unbounded: %s", elapsed)
+			}
+			// A client timeout can start the next probe before a canceled server
+			// handler returns. Only the shorter parent deadline isolates one wave.
+			if peak.Load() < 2 || calls.Load() >= 20 ||
+				(tc.parentTimeout > 0 && (peak.Load() > 8 || calls.Load() > 8)) {
+				t.Fatalf("worker cap/admission: peak=%d calls=%d", peak.Load(), calls.Load())
+			}
+			for _, row := range rows {
+				if row.Status != "unknown" || row.Readers != 0 {
+					t.Fatalf("invented enrichment: %+v", row)
+				}
+			}
+			deadline := time.NewTimer(time.Second)
+			defer deadline.Stop()
+			ticker := time.NewTicker(5 * time.Millisecond)
+			defer ticker.Stop()
+			for active.Load() != 0 {
+				select {
+				case <-ticker.C:
+				case <-deadline.C:
+					t.Fatal("status readers were not canceled")
+				}
+			}
+			t.Logf("all-stalled inventory=%s peak_status=%d admitted=%d retained=%d", time.Since(start), peak.Load(), calls.Load(), len(rows))
+		})
 	}
-	start := time.Now()
-	rows, err := DiscoverActiveSessions(t.Context(), cfg)
-	if err != nil || len(rows) != 20 {
-		t.Fatalf("deadline dropped metadata: %d, %v", len(rows), err)
-	}
-	// Correctness allows scheduling slack; the 1s target is recorded separately.
-	if elapsed := time.Since(start); elapsed > 3*time.Second {
-		t.Fatalf("aggregate deadline unbounded: %s", elapsed)
-	}
-	if peak.Load() > 8 || peak.Load() < 2 || calls.Load() >= 20 {
-		t.Fatalf("worker cap/admission: peak=%d calls=%d", peak.Load(), calls.Load())
-	}
-	for _, row := range rows {
-		if row.Status != "unknown" || row.Readers != 0 {
-			t.Fatalf("invented enrichment: %+v", row)
-		}
-	}
-	deadline := time.NewTimer(time.Second)
-	defer deadline.Stop()
-	ticker := time.NewTicker(5 * time.Millisecond)
-	defer ticker.Stop()
-	for active.Load() != 0 {
-		select {
-		case <-ticker.C:
-		case <-deadline.C:
-			t.Fatal("status readers were not canceled")
-		}
-	}
-	t.Logf("all-stalled inventory=%s peak_status=%d admitted=%d retained=%d", time.Since(start), peak.Load(), calls.Load(), len(rows))
 }
 
 func TestDiscoverActiveSessionsInventoryLegacyAgentFallback(t *testing.T) {
