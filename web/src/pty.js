@@ -233,6 +233,21 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
     var pendingOutput = [];
     var keyReady = false;
     var replayDone = !reattach;
+    // Keep decrypt/decompression in wire order for this connection only.
+    var outputChain = Promise.resolve();
+    var outputSessionId = requestedSessionId;
+
+    function outputCurrent(sessionId) {
+        if (ws === S.ptyWs && connectedWingId === S.ptyWingId && sessionId === S.ptySessionId) return true;
+        if (sessionId === outputSessionId) pendingOutput = [];
+        return false;
+    }
+
+    function drainOutput() {
+        var queued = pendingOutput;
+        pendingOutput = [];
+        queued.forEach(processOutput);
+    }
 
     function gunzip(data) {
         var ds = new DecompressionStream('gzip');
@@ -258,12 +273,16 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
         return pump();
     }
 
-    function processOutput(dataStr, compressed) {
-        e2eDecrypt(dataStr).then(function (bytes) {
-            if (ws !== S.ptyWs) return;
-            return compressed ? gunzip(bytes) : bytes;
+    function processOutput(item) {
+        var sessionId = outputSessionId;
+        outputChain = outputChain.then(function () {
+            if (!outputCurrent(sessionId)) return;
+            return e2eDecrypt(item.data);
         }).then(function (bytes) {
-            if (!bytes || ws !== S.ptyWs) return;
+            if (!bytes || !outputCurrent(sessionId)) return;
+            return item.compressed ? gunzip(bytes) : bytes;
+        }).then(function (bytes) {
+            if (!bytes || !outputCurrent(sessionId)) return;
             S.term.write(bytes);
             saveTermBuffer();
             try {
@@ -273,24 +292,25 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                 }
             } catch (ex) {}
         }).catch(function (err) {
-            console.error('decrypt error, dropping frame:', err);
+            if (outputCurrent(sessionId)) console.error('decrypt error, dropping frame:', err);
         });
     }
 
     function flushReplay() {
+        var sessionId = outputSessionId;
+        if (!outputCurrent(sessionId)) return;
         var pending = pendingOutput;
         pendingOutput = [];
         if (pending.length === 0) { S.term.reset(); replayDone = true; hideReplayOverlay(); return; }
         Promise.all(pending.map(function (item) {
-            var dataStr = typeof item === 'string' ? item : item.data;
-            var isCompressed = typeof item === 'object' && item.compressed;
-            return e2eDecrypt(dataStr).then(function (bytes) {
-                return isCompressed ? gunzip(bytes) : bytes;
+            return e2eDecrypt(item.data).then(function (bytes) {
+                if (!outputCurrent(sessionId)) return null;
+                return item.compressed ? gunzip(bytes) : bytes;
             }).catch(function () { return null; });
         })).then(function (chunks) {
-            if (ws !== S.ptyWs) return;
+            if (!outputCurrent(sessionId)) return;
             var good = chunks.filter(function (c) { return c !== null; });
-            if (good.length === 0) { replayDone = true; hideReplayOverlay(); return; }
+            if (good.length === 0) { replayDone = true; hideReplayOverlay(); drainOutput(); return; }
             var total = 0;
             for (var i = 0; i < good.length; i++) total += good[i].length;
             var combined = new Uint8Array(total);
@@ -298,15 +318,13 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
             for (var i = 0; i < good.length; i++) { combined.set(good[i], off); off += good[i].length; }
             S.term.reset();
             S.term.write(combined, function () {
-                if (ws !== S.ptyWs) return;
+                if (!outputCurrent(sessionId)) return;
                 hideReplayOverlay();
                 S.term.focus();
                 replayDone = true;
-                var queued = pendingOutput;
-                pendingOutput = [];
-                queued.forEach(processOutput);
+                drainOutput();
             });
-        }).catch(function () { if (ws === S.ptyWs) { replayDone = true; hideReplayOverlay(); } });
+        }).catch(function () { if (outputCurrent(sessionId)) { replayDone = true; hideReplayOverlay(); drainOutput(); } });
     }
 
     ws.onmessage = function (e) {
@@ -372,7 +390,15 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                     return;
                 }
                 S.pendingResumeSessionId = null;
+                if (outputSessionId && outputSessionId !== msg.session_id) {
+                    // A replacement session must not wait on the old decrypt queue.
+                    pendingOutput = [];
+                    outputChain = Promise.resolve();
+                    keyReady = false;
+                    replayDone = !reattach;
+                }
                 S.ptySessionId = msg.session_id;
+                outputSessionId = msg.session_id;
                 clearTerminalControl();
                 S.ptyControllerId = typeof msg.controller_id === 'string' ? msg.controller_id : null;
                 setPreviewSession(msg.session_id, S.ptyWingId);
@@ -397,19 +423,20 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
 
                 if (msg.public_key) {
                     deriveE2EKey(msg.public_key, S.ptyWingId).then(function (key) {
-                        if (ws !== S.ptyWs) return;
+                        if (!outputCurrent(msg.session_id)) return;
                         S.e2eKey = key;
                         keyReady = true;
                         DOM.ptyStatus.textContent = key ? '\uD83D\uDD12' : '';
-                        if (reattach) { flushReplay(); } else { pendingOutput.forEach(processOutput); pendingOutput = []; }
+                        if (reattach) { flushReplay(); } else { drainOutput(); }
                     }).catch(function (err) {
-                        if (ws !== S.ptyWs) return;
+                        if (!outputCurrent(msg.session_id)) return;
                         DOM.ptyStatus.textContent = err && err.message ? err.message : 'wing identity verification failed';
                         ws.close();
                     });
                 } else {
                     keyReady = true;
                     DOM.ptyStatus.textContent = '';
+                    if (reattach) { flushReplay(); } else { drainOutput(); }
                 }
 
                 if (!reattach) {
@@ -467,7 +494,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                 if (!keyReady || !replayDone) {
                     pendingOutput.push({ data: msg.data, compressed: !!msg.compressed });
                 } else {
-                    processOutput(msg.data, !!msg.compressed);
+                    processOutput({ data: msg.data, compressed: !!msg.compressed });
                 }
                 break;
 
