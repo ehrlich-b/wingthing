@@ -136,6 +136,7 @@ endef
 check: test-deploy-guard web
 	cd web && $(NPM) exec -- playwright install chromium --only-shell
 	$(NODE) --test test/web/pty-order.mjs
+	$(NODE) --test test/web/pty-corruption.mjs
 	# Build once outside the PTY interaction deadlines, including CGO pairing.
 	$(stable-build)
 	$(preview-build)

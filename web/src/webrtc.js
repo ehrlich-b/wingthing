@@ -1,4 +1,5 @@
 import { S } from './state.js';
+import { showOutputIncomplete } from './output-notice.js';
 import { sendTunnelRequest } from './tunnel.js';
 import { e2eDecrypt } from './crypto.js';
 import { saveTermBuffer } from './terminal.js';
@@ -19,8 +20,9 @@ export var dcActive = {};
 function gunzip(data) {
     var ds = new DecompressionStream('gzip');
     var writer = ds.writable.getWriter();
-    writer.write(data);
-    writer.close();
+    // The readable side reports decode failures; consume writer rejections too.
+    writer.write(data).catch(function () {});
+    writer.close().catch(function () {});
     var reader = ds.readable.getReader();
     var chunks = [];
     function pump() {
@@ -302,7 +304,9 @@ function processP2POutput(dataStr, compressed, wingId, sessionId) {
             }
         } catch (ex) {}
     }).catch(function(err) {
-        console.error('[P2P] decrypt error, dropping frame:', err);
+        if (!terminalReferenceMatches(S, sessionId, wingId, socket)) return;
+        console.error('[P2P] output decode error:', err);
+        showOutputIncomplete(socket, sessionId, wingId);
     });
 }
 
