@@ -1,10 +1,6 @@
 import { S } from './state.js';
-import { showOutputIncomplete } from './output-notice.js';
 import { sendTunnelRequest } from './tunnel.js';
-import { e2eDecrypt } from './crypto.js';
-import { saveTermBuffer } from './terminal.js';
-import { checkForNotification, setNotification } from './notify.js';
-import { sessionResourceKey, terminalReferenceMatches } from './session-reference.js';
+import { sessionResourceKey } from './session-reference.js';
 import { sessionIsSelected } from './session-inventory.js';
 
 // Per-wing peer connections and per-session data channels
@@ -16,31 +12,6 @@ var sessionWings = {}; // [wingId,sessionId] -> wingId (tracks which wing owns e
 // Whether each session is actively using DC for I/O
 // Exported so pty.js and terminal.js can check
 export var dcActive = {};
-
-function gunzip(data) {
-    var ds = new DecompressionStream('gzip');
-    var writer = ds.writable.getWriter();
-    // The readable side reports decode failures; consume writer rejections too.
-    writer.write(data).catch(function () {});
-    writer.close().catch(function () {});
-    var reader = ds.readable.getReader();
-    var chunks = [];
-    function pump() {
-        return reader.read().then(function (result) {
-            if (result.done) {
-                var total = 0;
-                for (var i = 0; i < chunks.length; i++) total += chunks[i].length;
-                var out = new Uint8Array(total);
-                var off = 0;
-                for (var i = 0; i < chunks.length; i++) { out.set(chunks[i], off); off += chunks[i].length; }
-                return out;
-            }
-            chunks.push(new Uint8Array(result.value));
-            return pump();
-        });
-    }
-    return pump();
-}
 
 /**
  * Initiate a WebRTC connection to a wing for a given session.
@@ -260,16 +231,10 @@ function handleDCMessage(wingId, sessionId, rawData) {
         if (msg.session_id && msg.session_id !== sessionId) return;
         switch (msg.type) {
             case 'pty.output':
-                if (msg.session_id && S.ptySessionId && msg.session_id !== S.ptySessionId) return;
-                processP2POutput(msg.data, !!msg.compressed, wingId, sessionId);
-                break;
             case 'pty.exited':
-                // Forward to WS handler by dispatching on the WS
-                if (S.ptyWs) {
-                    S.ptyWs.dispatchEvent(new MessageEvent('message', { data: rawData }));
-                }
-                break;
             case 'pty.preview':
+                // Share the relay queue so output drains before exit, including
+                // messages flushed together when migration completes.
                 if (S.ptyWs) {
                     S.ptyWs.dispatchEvent(new MessageEvent('message', { data: rawData }));
                 }
@@ -283,31 +248,6 @@ function handleDCMessage(wingId, sessionId, rawData) {
     } catch (err) {
         console.error('[P2P] DC message parse error:', err);
     }
-}
-
-/**
- * Process encrypted PTY output received over P2P DataChannel.
- * Same decryption as relay path.
- */
-function processP2POutput(dataStr, compressed, wingId, sessionId) {
-    var socket = S.ptyWs;
-    e2eDecrypt(dataStr).then(function(bytes) {
-        return compressed ? gunzip(bytes) : bytes;
-    }).then(function(bytes) {
-        if (!bytes || !terminalReferenceMatches(S, sessionId, wingId, socket)) return;
-        S.term.write(bytes);
-        saveTermBuffer();
-        try {
-            var text = new TextDecoder().decode(bytes);
-            if (checkForNotification(text)) {
-                setNotification(sessionId, wingId);
-            }
-        } catch (ex) {}
-    }).catch(function(err) {
-        if (!terminalReferenceMatches(S, sessionId, wingId, socket)) return;
-        console.error('[P2P] output decode error:', err);
-        showOutputIncomplete(socket, sessionId, wingId);
-    });
 }
 
 /**

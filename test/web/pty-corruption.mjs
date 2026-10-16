@@ -23,7 +23,7 @@ for (const match of (source + nav + await readFile(path.join(root, 'web/src/webr
     match[1].split(',').forEach(value => exports.add(value.trim()));
     dependencies.set(name, exports);
 }
-const real = new Set(['crypto.js', 'helpers.js', 'security.js', 'session-reference.js', 'terminal-attachment.js', 'output-notice.js', 'nav.js']);
+const real = new Set(['crypto.js', 'helpers.js', 'security.js', 'session-reference.js', 'terminal-attachment.js', 'output-notice.js', 'nav.js', 'session-inventory.js']);
 const server = createServer(async (req, res) => {
     try {
         res.setHeader('Content-Type', 'text/javascript');
@@ -46,7 +46,7 @@ const server = createServer(async (req, res) => {
         } else if (req.url === '/src/pty.js') {
             res.end(source + '\nexport { setupPTYHandlers, ptyReconnectAttach };');
         } else if (req.url === '/src/webrtc.js') {
-            res.end(await readFile(path.join(root, 'web/src/webrtc.js'), 'utf8') + '\nexport { processP2POutput };');
+            res.end(await readFile(path.join(root, 'web/src/webrtc.js'), 'utf8') + '\nexport { handleDCMessage };');
         } else if (req.url === '/src/terminal.js') {
             res.end(`import { S, clearNotification, sendViaDC } from '/fixture.js';
                 import { e2eEncrypt } from './crypto.js';
@@ -155,6 +155,7 @@ async function fixture(t, { width = 1440, reattach = true } = {}) {
             static OPEN = 1; static CLOSED = 3; readyState = 1;
             constructor() { sockets.push(this); queueMicrotask(() => this.onopen?.()); }
             send(data) { sent.push(JSON.parse(data)); }
+            dispatchEvent(event) { this.onmessage(event); return true; }
             close() { this.readyState = 3; setTimeout(() => this.onclose?.(), 0); }
         }
         window.WebSocket = Socket;
@@ -198,7 +199,7 @@ async function fixture(t, { width = 1440, reattach = true } = {}) {
         const reconnect = () => { S.ptyReconnecting = true; pty.ptyReconnectAttach(S.ptySessionId, 0, S.ptyWingId); };
         const realAttach = () => { pty.detachPTY(); sent.length = 0; pty.attachPTY('session-a', 1, 'wing-a'); };
         window.h = { S, DOM, sent, sockets, send, attach, realAttach, start, frame, text, settle, hold, release, input: sendPTYInput, key, nativeDecrypt, detach: pty.detachPTY, reconnect,
-            holdDecode, holdKey, resumeKey, p2p: msg => p2p.processP2POutput(msg.data, msg.compressed, 'wing-a', 'session-a'), connect: () => pty.connectPTY('shell', null, 'wing-a') };
+            holdDecode, holdKey, resumeKey, p2p: msg => p2p.handleDCMessage('wing-a', 'session-a', JSON.stringify({ session_id: 'session-a', ...msg })), connect: () => pty.connectPTY('shell', null, 'wing-a') };
         attach();
     }, { reattach, width });
     return page;

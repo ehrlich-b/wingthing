@@ -7,8 +7,9 @@ import { createRequire } from 'node:module';
 import { after, before, test } from 'node:test';
 
 const source = await readFile(new URL('../../web/src/pty.js', import.meta.url), 'utf8');
+const webrtc = await readFile(new URL('../../web/src/webrtc.js', import.meta.url), 'utf8');
 const dependencies = new Map();
-for (const match of source.matchAll(/import \{([^}]+)\} from '([^']+)';/g)) {
+for (const match of (source + webrtc).matchAll(/import \{([^}]+)\} from '([^']+)';/g)) {
     const name = new URL(match[2], 'http://local/src/pty.js').pathname;
     const exports = dependencies.get(name) || new Set();
     match[1].split(',').forEach(value => exports.add(value.trim()));
@@ -22,6 +23,8 @@ const server = createServer((req, res) => {
     } else if (req.url === '/src/pty.js') {
         // Only expose the private entry point; keep its implementation intact.
         res.end(source + '\nexport { setupPTYHandlers, ptyReconnectAttach };\n');
+    } else if (req.url === '/src/webrtc.js') {
+        res.end(webrtc);
     } else if (dependencies.has(req.url)) {
         res.end([...dependencies.get(req.url)].map(name =>
             `export const ${name} = window.fixture[${JSON.stringify(name)}] || (() => {});`
@@ -100,6 +103,9 @@ async function fixture(t, options = {}) {
         window.fixture = {
             S, DOM, identityPubKey: '', resumeAckMatches: () => true,
             sessionRoute: () => '#terminal', findSessionResource: () => null,
+            sessionResourceKey: session => JSON.stringify([session.wing_id || session.wingId, session.id]),
+            sessionIsSelected: (session, id, wing) => session.id === id && session.wing_id === wing,
+            sendTunnelRequest: async () => ({ sdp: 'fixture answer' }),
             terminalReferenceMatches: (s, session, wing, socket) => s.ptySessionId === session && s.ptyWingId === wing && s.ptyWs === socket,
             deriveE2EKey: async () => {
                 await wait('key');
@@ -118,7 +124,8 @@ async function fixture(t, options = {}) {
         const send = message => S.ptyWs.onmessage({ data: JSON.stringify({ session_id: S.ptySessionId, ...message }) });
         const attach = (reattach = false, session = 'session-a') => {
             S.ptySessionId = session;
-            S.ptyWs = { readyState: WebSocket.OPEN, send: noop, close: noop };
+            S.ptyWs = { readyState: WebSocket.OPEN, send: noop, close: noop,
+                dispatchEvent(event) { this.onmessage(event); return true; } };
             setupPTYHandlers(S.ptyWs, reattach, session);
         };
         const start = (encrypted = true) => send({ type: 'pty.started', public_key: encrypted ? 'fixture-key' : undefined });
@@ -131,6 +138,27 @@ async function fixture(t, options = {}) {
             return { type: 'pty.output', data: btoa(String.fromCharCode(...bytes)), compressed };
         };
         const sockets = [];
+        let channel;
+        // Keep the production DataChannel buffering, migration and dispatch handlers.
+        window.RTCPeerConnection = class {
+            createDataChannel() { return channel = { readyState: 'open', close: noop, send: noop }; }
+            async createOffer() { return { sdp: 'fixture offer' }; }
+            async setLocalDescription(offer) {
+                this.localDescription = offer;
+                this.iceGatheringState = 'complete';
+                this.onicegatheringstatechange();
+            }
+            async setRemoteDescription() {}
+            close() {}
+        };
+        const { initWebRTC } = await import('/src/webrtc.js');
+        const dc = message => channel.onmessage({ data: JSON.stringify({ session_id: S.ptySessionId, ...message }) });
+        const migrate = async messages => {
+            await initWebRTC(S.ptyWingId, S.ptySessionId);
+            channel.onopen();
+            messages.forEach(dc);
+            send({ type: 'pty.migrated' });
+        };
         const reconnect = () => {
             S.ptyReconnecting = true;
             window.WebSocket = class {
@@ -145,7 +173,7 @@ async function fixture(t, options = {}) {
             };
             ptyReconnectAttach(S.ptySessionId, 0, S.ptyWingId);
         };
-        window.harness = { S, output, errors, started, hold, release, settle, send, attach, start, frame, reconnect, sockets };
+        window.harness = { S, output, errors, started, hold, release, settle, send, attach, start, frame, reconnect, sockets, dc, migrate };
         attach(options.reattach);
     }, options);
     return page;
@@ -293,6 +321,66 @@ test('session-routed attachment works before a wing identity is known', async t 
 });
 
 const ended = '\r\n\x1b[2m--- session ended ---\x1b[0m\r\n';
+for (const transport of ['migration', 'active P2P']) {
+    for (const phase of ['decrypt', 'gunzip', 'terminal-write', 'key']) {
+        test(`${transport} exit drains buffered final output during ${phase}`, async t => {
+            const page = await fixture(t);
+            await page.evaluate(async ({ transport, phase }) => {
+                const h = harness;
+                if (phase === 'key') h.hold('key');
+                h.start(); await h.settle();
+                const first = await h.frame('final compressed λ\r\n', true);
+                const messages = [first, await h.frame('final plain\r\n'),
+                    { type: 'pty.exited' }, await h.frame('after exit\r\n')];
+                if (phase !== 'key') h.hold(phase === 'decrypt' ? first.data : phase);
+                window.exitFrame = first.data;
+                if (transport === 'migration') await h.migrate(messages);
+                else { await h.migrate([]); messages.forEach(h.dc); }
+                await h.settle();
+            }, { transport, phase });
+            assert.equal(await page.evaluate(() => harness.S.ptySessionId), 'session-a');
+            if (phase === 'gunzip') await page.waitForFunction(() => harness.started.includes('gunzip'));
+            if (phase === 'terminal-write') await page.waitForFunction(() => harness.output.length > 0);
+            await page.evaluate(() => {
+                harness.release(exitFrame); harness.release('gunzip');
+                harness.release('terminal-write'); harness.release('key');
+            });
+            await check(page, 'final compressed λ\r\nfinal plain\r\n' + ended);
+            assert.deepEqual(await page.evaluate(() => [harness.S.ptySessionId, harness.S.e2eKey]), [null, null]);
+        });
+    }
+}
+
+for (const reattach of [false, true]) {
+    test(`migration preserves ${reattach ? 'replay' : 'relay'} output before final P2P output and exit`, async t => {
+        const page = await fixture(t, { reattach });
+        await page.evaluate(async reattach => {
+            const h = harness;
+            if (reattach) h.hold('key');
+            h.start(); await h.settle();
+            const first = await h.frame('before migration\r\n', true);
+            h.hold(first.data); h.send(first);
+            await h.migrate([await h.frame('after migration\r\n'), { type: 'pty.exited' }]);
+            h.release(first.data); h.release('key');
+        }, reattach);
+        await check(page, 'before migration\r\nafter migration\r\n' + ended);
+    });
+
+    test(`migration exit completes after ${reattach ? 'replay' : 'live'} key failure`, async t => {
+        const page = await fixture(t, { reattach, keyFailure: true });
+        await page.evaluate(async () => {
+            const h = harness;
+            h.hold('key'); h.start();
+            await h.migrate([await h.frame('unreadable\r\n'), { type: 'pty.exited' }]);
+            await h.settle();
+        });
+        assert.equal(await page.evaluate(() => harness.S.ptySessionId), 'session-a');
+        await page.evaluate(() => harness.release('key'));
+        await check(page, ended);
+        assert.deepEqual(await page.evaluate(() => [harness.S.ptySessionId, harness.S.e2eKey]), [null, null]);
+    });
+}
+
 for (const reattach of [false, true]) {
     test(`${reattach ? 'replay' : 'live'} exit completes after key failure with queued output`, async t => {
         const page = await fixture(t, { reattach, keyFailure: true });
