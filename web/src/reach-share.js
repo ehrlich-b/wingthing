@@ -101,10 +101,15 @@ function render() {
     panel.innerHTML = '<section class="reach-panel" aria-label="Connection and private access">' + nav() + body + '<div id="reach-action-status" role="status">' + esc(lastStatus) + '</div>' + (audience === 'alice' ? '' : '<button id="reach-close">Close details</button>') + '</section>';
     bind();
 }
-function resourceReview(resource, recipient = identity) {
+function resourceReview(resource, recipient = identity, controls = '') {
     const session = resource && S.sessionsData.find(s => s.wing_id === resource.wingId && s.id === resource.sessionId);
     const review = accessReview(resource, recipient, label(resource.wingId), session && sessionDisplayName(session));
-    return '<div class="share-access-review">' + field('Recipient', esc(review.recipient)) + field('Resource', esc(review.resource)) + field('Permission', esc(review.role)) + '</div>';
+    const wing = S.wingsData.find(w => w.wing_id === resource.wingId);
+    const host = wing?.hostname || resource.wingId;
+    return '<div class="share-access-review">' + field('Recipient', esc(review.recipient)) +
+        field('Host', esc(host) + (host !== resource.wingId ? '<br>' + esc(resource.wingId) : '')) +
+        field('Resource', esc(review.resource)) + (session?.cwd ? field('Path', esc(session.cwd)) : '') +
+        field('Permission', esc(review.role)) + controls + '</div>';
 }
 function renderSharing(wingSelector) {
     if (audience === 'alice') {
@@ -116,16 +121,21 @@ function renderSharing(wingSelector) {
     let resource = selectedResource;
     const resources = Array.from(share.resources.values());
     const grants = Array.from(share.grants.values()).filter(g => resource && g.resourceKey === resource.key);
+    const recipients = ['google', 'github'].map(provider => {
+        const account = previewIdentity(provider);
+        const name = provider === 'google' ? 'Google · ' + account.email : 'GitHub · @' + account.username;
+        return '<option value="' + provider + '"' + (identity.provider === provider ? ' selected' : '') + '>' + esc(name) + '</option>';
+    }).join('');
     return chip + '<h2>Publish privately &amp; grant exact access</h2>' + dormantNotice() + '<div class="reach-grid"><div>' + wingSelector +
         '<label for="share-port">Local port</label><input id="share-port" type="number" min="1" max="65535" value="3000"><button id="share-publish">Preview private publication</button>' +
         field('Default access', 'Owner only. Possession of the planned URL is insufficient. Publishing an app does not share a terminal.') + '</div><div>' +
         '<label for="share-resource">Qualified resource</label><select id="share-resource"><option value="">Select a resource</option>' + resources.map(r => '<option value="' + esc(r.key) + '"' + (r === resource ? ' selected' : '') + '>' + esc(label(r.wingId) + ' · ' + (r.kind === 'app' ? 'port ' + r.port : 'session ' + r.sessionId)) + '</option>').join('') + '</select>' +
         field('Private route draft', resource ? esc(label(resource.wingId) + ' · ' + resource.id) + '<br>Local draft identifier · no public URL exists' : 'Publish a fixture resource to review access.') +
-        '<label for="share-provider">Alice’s verified identity</label><select id="share-provider"><option value="google"' + (identity.provider === 'google' ? ' selected' : '') + '>Google · alice@example.test</option><option value="github"' + (identity.provider === 'github' ? ' selected' : '') + '>GitHub · @alice-example</option></select>' +
-        '<div id="share-access-review">' + (resource ? resourceReview(resource) : '<p>Select a resource to grant access.</p>') + '</div><button id="share-invite"' + (!resource ? ' disabled' : '') + '>Preview invitation grant</button><button id="share-alice"' + (!resource ? ' disabled' : '') + '>Open as invited Alice</button></div></div>' +
-        '<h3>' + (resource ? 'Access to ' + esc(label(resource.wingId) + ' · ' + (resource.kind === 'app' ? resource.id + ' · port ' + resource.port : resource.sessionId)) : 'Resource access') + '</h3><div id="share-grants">' + (grants.length ? grants.map(g => '<div class="reach-grant"><div>' + resourceReview(resource, g.identity) + '<p>' + (g.active ? 'Access granted' : 'Access revoked') + '</p></div><button data-revoke="' + esc(g.key) + '"' + (!g.active ? ' disabled' : '') + '>Revoke Alice</button></div>').join('') : '<p>No invited viewers. Owner only.</p>') + '</div>' +
+        '<label for="share-provider">Verified recipient</label><select id="share-provider">' + recipients + '</select>' +
+        '<div id="share-access-review">' + (resource ? resourceReview(resource, identity, '<button id="share-invite">Preview grant</button>') : '<p>Select a resource to grant access.</p><button id="share-invite" disabled>Preview grant</button>') + '</div><button id="share-alice"' + (!resource ? ' disabled' : '') + '>Open as invited Alice</button></div></div>' +
+        '<h3>' + (resource ? 'Access to ' + esc(label(resource.wingId) + ' · ' + (resource.kind === 'app' ? resource.id + ' · port ' + resource.port : resource.sessionId)) : 'Resource access') + '</h3><div id="share-grants">' + (grants.length ? grants.map(g => '<div class="reach-grant"><div>' + resourceReview(resource, g.identity, '<p>' + (g.active ? 'Access granted' : 'Access revoked') + '</p><button data-revoke="' + esc(g.key) + '"' + (!g.active ? ' disabled' : '') + '>Revoke access</button>') + '</div></div>').join('') : '<p>No invited viewers. Owner only.</p>') + '</div>' +
         '<p>Revocation closes fixture viewers and refuses later opens. Previously seen or downloaded content cannot be erased.</p>' +
-        '<label for="share-session">Separate live-session grant · read-only default</label><select id="share-session"><option value="">Select exact session</option>' + S.sessionsData.map(s => '<option value="' + esc(JSON.stringify([s.wing_id, s.id])) + '"' + (resource && resource.kind === 'session' && resource.wingId === s.wing_id && resource.sessionId === s.id ? ' selected' : '') + '>' + esc(label(s.wing_id) + ' · ' + sessionDisplayName(s) + ' · ' + s.id) + '</option>').join('') + '</select>' + (resource && resource.kind === 'session' ? '<div id="share-observer-review">' + resourceReview(resource) + '</div>' : '') + '<button id="share-observe"' + (!resource || resource.kind !== 'session' ? ' disabled' : '') + '>Preview observer grant</button>' +
+        '<label for="share-session">Separate live-session grant · read-only default</label><select id="share-session"><option value="">Select exact session</option>' + S.sessionsData.map(s => '<option value="' + esc(JSON.stringify([s.wing_id, s.id])) + '"' + (resource && resource.kind === 'session' && resource.wingId === s.wing_id && resource.sessionId === s.id ? ' selected' : '') + '>' + esc(label(s.wing_id) + ' · ' + sessionDisplayName(s) + ' · ' + s.id) + '</option>').join('') + '</select>' + (resource && resource.kind === 'session' ? '<div id="share-observer-review">' + resourceReview(resource, identity, '<button id="share-observe">Preview observer grant</button>') + '</div>' : '<button id="share-observe" disabled>Preview observer grant</button>') +
         (resource && resource.kind === 'session' ? '<div class="reach-status">Observe selected session · no input. Controller authorization is separate.<br><button disabled>Send terminal input</button></div>' : '') +
         '<label for="share-failure">Preview failure</label><select id="share-failure"><option value="healthy">Healthy</option><option value="app">App not listening</option><option value="wrong">Wrong identity</option><option value="expired">Pro expired</option></select><button id="share-check">Check fixture access</button><div id="share-failure-result" class="reach-status" role="status">Identity → exact resource grant → upstream availability.</div>';
 }

@@ -509,6 +509,11 @@ test-web-reach-share: web
 	$(stable-build)
 	$(NODE) test/web/reach-share.mjs
 
+.PHONY: test-web-share-confirmation
+test-web-share-confirmation: web
+	$(browser-install)
+	$(NODE) test/web/share-confirmation.mjs
+
 # Dormant UI fixtures. No provider, payment, real account or VM acceptance.
 .PHONY: test-paid-gate test-paid-ui
 test-paid-gate: | web/dist

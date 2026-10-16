@@ -27,8 +27,12 @@
 .reach-grant { display:flex; gap:12px; align-items:center; justify-content:space-between; border-bottom:1px solid #414157; padding:12px 0; flex-wrap:wrap; }
 @media(max-width:600px) { .reach-panel { padding:16px; } .reach-grid { grid-template-columns:1fr; gap:12px; } .reach-panel h2 { font-size:22px; } .reach-toolbar { gap:8px; } }
 
-.share-access-review{margin:12px 0;padding:12px;border:1px solid #7566bc;border-radius:8px;background:#171727;overflow-wrap:anywhere}
-.share-access-review .reach-kv{padding:8px 0}
-.reach-grant>div{min-width:0;width:100%}
-
-.share-access-review{scroll-margin-top:60px}
+/* Keep the exact target and its action in one wrapping card. */
+.share-access-review { margin:12px 0; padding:12px; border:1px solid var(--pp-rule-2, #7566bc); border-radius:8px; background:var(--pp-field, #171727); color:var(--pp-ink, #efeffa); min-width:0; font-size:16px; overflow-wrap:anywhere; scroll-margin-top:20px; }
+.share-access-review .reach-kv { padding:6px 0; border-color:var(--pp-rule, #39394e); }
+.share-access-review .reach-kv strong { color:inherit; margin-bottom:2px; }
+.share-access-review .reach-kv span, .share-access-review p { color:var(--pp-ink-2, #bcbccf); }
+.share-access-review .reach-kv span { display:block; white-space:normal; overflow:visible; text-overflow:clip; }
+.share-access-review button { background:var(--pp-folio, #303046); color:inherit; border-color:var(--pp-rule-2, #5b5975); max-width:100%; white-space:normal; overflow-wrap:anywhere; }
+.reach-grant>div { min-width:0; width:100%; }
+.reach-panel h3 { overflow-wrap:anywhere; }
