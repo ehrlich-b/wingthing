@@ -500,3 +500,137 @@ func TestRunTaskDirectProviderArguments(t *testing.T) {
 		})
 	}
 }
+
+func TestRunTaskDetachedOutputWriter(t *testing.T) {
+	if _, err := exec.LookPath("setsid"); err != nil {
+		t.Fatal("setsid is required for detached output coverage")
+	}
+	for _, provider := range []string{"codex", "claude", "ollama"} {
+		for _, mode := range []string{"write-failure", "leader-exited", "parent-cancel"} {
+			t.Run(provider+"/"+mode, func(t *testing.T) {
+				cfg, db, workDir, binDir := outputFailureFixture(t, provider, "exit")
+				path := filepath.Join(binDir, provider)
+				script, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Spawn before publishing output; keep stdout but close stderr so
+				// exec's stderr-copy WaitDelay cannot release the parser's read.
+				script = bytes.Replace(script, []byte("#!/bin/sh\n"), []byte(`#!/bin/sh
+setsid /bin/sh -c 'echo $$ > detached.pid; exec sleep 600' 2>/dev/null &
+while [ ! -s detached.pid ]; do sleep 0.01; done
+`), 1)
+				if mode != "leader-exited" {
+					script = append(script, []byte("wait\n")...)
+				}
+				if err := os.WriteFile(path, script, 0700); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if data, err := os.ReadFile(filepath.Join(workDir, "detached.pid")); err == nil {
+						pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+						if pid > 0 {
+							_ = syscall.Kill(pid, syscall.SIGKILL)
+						}
+					}
+				})
+				task := &store.Task{ID: "detached", Type: "skill", What: "output-failure", RunAt: time.Now(), Agent: provider, Isolation: "privileged", CWD: workDir}
+				if err := db.CreateTask(task); err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				done := make(chan error, 1)
+				destination := detachedOutputWriter{cancel: cancel, parentCancel: mode == "parent-cancel", workDir: workDir, leaderExited: mode == "leader-exited"}
+				go func() { done <- RunTaskTo(ctx, cfg, db, task, destination) }()
+				select {
+				case err := <-done:
+					message := errOutputDestination.Error()
+					if mode == "parent-cancel" {
+						if err == nil {
+							t.Fatal("cancellation succeeded unexpectedly")
+						}
+						message = err.Error()
+					} else if !errors.Is(err, errOutputDestination) {
+						t.Fatalf("lost writer error: %v", err)
+					}
+					assertOutputFailureReceipt(t, db, task.ID, message)
+				case <-time.After(8 * time.Second):
+					cancel()
+					t.Fatal("detached stdout blocked task failure")
+				}
+				assertOutputFailureTreeStopped(t, workDir)
+				pid := outputFailurePID(t, workDir, "detached")
+				deadline := time.Now().Add(2 * time.Second)
+				for {
+					stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+					_, state, _ := strings.Cut(string(stat), ") ")
+					if errors.Is(err, os.ErrNotExist) || strings.HasPrefix(state, "Z ") || strings.HasPrefix(state, "X ") {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatalf("detached child %d survived: %s, %v", pid, stat, err)
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+			})
+		}
+	}
+}
+
+type detachedOutputWriter struct {
+	cancel       context.CancelFunc
+	parentCancel bool
+	workDir      string
+	leaderExited bool
+}
+
+func (w detachedOutputWriter) Write(p []byte) (int, error) {
+	if !strings.Contains(string(p), "partial output") {
+		return len(p), nil
+	}
+	if w.leaderExited {
+		// /proc distinguishes an exited-but-not-yet-reaped leader from one
+		// still running; the parser cannot reap it until its pipe is closed.
+		data, _ := os.ReadFile(filepath.Join(w.workDir, "provider.pid"))
+		pid := strings.TrimSpace(string(data))
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			stat, err := os.ReadFile("/proc/" + pid + "/stat")
+			_, state, _ := strings.Cut(string(stat), ") ")
+			if errors.Is(err, os.ErrNotExist) || strings.HasPrefix(state, "Z ") {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if w.parentCancel {
+		w.cancel()
+		return len(p), nil
+	}
+	return 0, errOutputDestination
+}
+
+func TestRunTaskSuccessPreservesBackgroundChildren(t *testing.T) {
+	cfg, db, workDir, _ := outputFailureFixture(t, "codex", "exit")
+	task := &store.Task{ID: "successful-children", Type: "skill", What: "output-failure", RunAt: time.Now(), Agent: "codex", Isolation: "privileged", CWD: workDir}
+	if err := db.CreateTask(task); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := RunTaskTo(context.Background(), cfg, db, task, &output); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"child", "grandchild"} {
+		pid := outputFailurePID(t, workDir, name)
+		stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+		_, state, _ := strings.Cut(string(stat), ") ")
+		if err != nil || strings.HasPrefix(state, "Z ") || strings.HasPrefix(state, "X ") {
+			t.Errorf("successful task stopped %s: %s, %v", name, stat, err)
+		}
+	}
+	saved, err := db.GetTask(task.ID)
+	if err != nil || saved.Status != "done" || saved.Error != nil {
+		t.Fatalf("successful receipt changed: %#v, %v", saved, err)
+	}
+}

@@ -40,7 +40,18 @@ func (s *Stream) close(err error) {
 }
 
 func (s *Stream) Next() (Chunk, bool) {
-	c, ok := <-s.ch
+	return s.NextContext(context.Background())
+}
+
+// NextContext permits a caller to bound shutdown independently of the provider.
+func (s *Stream) NextContext(ctx context.Context) (Chunk, bool) {
+	var c Chunk
+	var ok bool
+	select {
+	case c, ok = <-s.ch:
+	case <-ctx.Done():
+		return Chunk{}, false
+	}
 	if ok {
 		s.mu.Lock()
 		s.chunks = append(s.chunks, c)

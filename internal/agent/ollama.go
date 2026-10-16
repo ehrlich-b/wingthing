@@ -61,17 +61,14 @@ func (o *Ollama) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 	}
 	cmd.Stdin = strings.NewReader(prompt)
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("stdout pipe: %w", err)
-	}
-	diagnostics, err := startAgentCommand(cmd)
+	stdout, diagnostics, err := startHeadlessCommand(ctx, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("start ollama: %w", err)
 	}
 
 	stream := newStream(ctx)
 	go func() {
+		defer stdout.Close()
 		readErr := readProviderPlaintext(ctx, stdout, func(text string) {
 			stream.send(Chunk{Text: text})
 		})
