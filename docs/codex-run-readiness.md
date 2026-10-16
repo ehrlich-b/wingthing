@@ -73,6 +73,16 @@ rejected request creates no records; an accepted idempotent retry keeps the
 original run and session. Claude prompts, later native turns, and interactive
 prompt transports retain their existing behavior.
 
+For Codex `agent_steer`, admission checks the composed follow-up, including
+the prior result and error, when the parent has finished. An active parent
+reserves **8,192 bytes (8 KiB)** for its deferred result/error context in
+addition to the original request, new direction and formatting. Admission
+rejects a request whose total reserved size exceeds the initial prompt limit.
+When the parent finishes, that context is bounded to the reserved bytes,
+including a visible truncation marker, without splitting UTF-8 characters.
+Accepted retries retain their original identities even after the parent
+finishes. Other providers retain their existing follow-up context behavior.
+
 Missing native admission ends as `provider_not_ready`; cleanup kills the same
 provider process group. The error contains only an allowlisted classification
 of the last rendered screen, with all arbitrary screen text discarded. A

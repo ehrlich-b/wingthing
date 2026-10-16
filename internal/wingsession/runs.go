@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
@@ -242,7 +243,7 @@ func (m *Runs) Admit(launch *Launch, request RunRequest, options StartOptions, a
 	if strings.TrimSpace(request.Prompt) == "" {
 		return nil, false, errors.New("prompt is required")
 	}
-	if request.Agent == "codex" {
+	if request.Agent == "codex" && request.ParentID == "" {
 		if err := egg.ValidateInitialCodexPrompt(request.Prompt); err != nil {
 			return nil, false, err
 		}
@@ -285,17 +286,41 @@ func (m *Runs) Admit(launch *Launch, request RunRequest, options StartOptions, a
 	if err = m.ctx.Err(); err != nil {
 		return nil, false, err
 	}
+	// Resolve accepted retries before recomputing a follow-up against a parent
+	// whose outcome may have changed since the original admission.
+	if saved, err := m.retryLocked(launch, request); err != nil || saved != nil {
+		return saved, false, err
+	}
 	if run.ParentID != "" {
-		if parent := m.records[run.ParentID]; parent != nil {
+		parent := m.records[run.ParentID]
+		if parent != nil {
 			if !m.owned(authority, parent) {
 				return nil, false, errors.New("agent run not found or not owned by caller")
 			}
 		} else {
-			parent, err := m.legacy(authority, run.ParentID)
+			parent, err = m.legacy(authority, run.ParentID)
 			if err != nil {
 				return nil, false, err
 			}
 			m.records[parent.ID] = parent
+		}
+		if run.Agent == "codex" {
+			var prompt string
+			if parent.Result.Terminal() {
+				prompt = SteerPrompt(parent.OriginalPrompt, parent.Result.Text, parent.Result.Error, run.Direction)
+			} else {
+				// Reserve the entire deferred context budget before persisting a
+				// child; reconciliation will bound the eventual parent outcome.
+				prompt = SteerPrompt(parent.OriginalPrompt, strings.Repeat(" ", maxQueuedCodexContextBytes), "", run.Direction)
+			}
+			if err := egg.ValidateInitialCodexPrompt(prompt); err != nil {
+				return nil, false, err
+			}
+			if parent.Result.Terminal() {
+				run.Prompt = prompt
+				run.Phase = "admitted"
+				run.QueueExpiresAt = time.Time{}
+			}
 		}
 	}
 	wire, err := json.Marshal(run)
@@ -392,7 +417,11 @@ func (m *Runs) reconcile(id string) {
 			return
 		}
 		if err := m.update(id, "dequeued", func(r *Run) {
-			r.Prompt = SteerPrompt(parent.OriginalPrompt, parent.Result.Text, parent.Result.Error, r.Direction)
+			if r.Agent == "codex" {
+				r.Prompt = queuedCodexSteerPrompt(parent.OriginalPrompt, parent.Result.Text, parent.Result.Error, r.Direction)
+			} else {
+				r.Prompt = SteerPrompt(parent.OriginalPrompt, parent.Result.Text, parent.Result.Error, r.Direction)
+			}
 			r.Phase = "admitted"
 		}); err != nil {
 			return
@@ -788,6 +817,27 @@ func SteerPrompt(request, result, priorError, direction string) string {
 	return prompt + "\n\nNew direction:\n" + direction
 }
 
+// Active Codex parents have no final outcome at admission. Reserve 8 KiB for
+// their combined result/error context, including the truncation marker, and
+// retain complete UTF-8 characters when that outcome eventually arrives.
+const maxQueuedCodexContextBytes = 8 * 1024
+
+func queuedCodexSteerPrompt(request, result, priorError, direction string) string {
+	context := result
+	if priorError != "" {
+		context += "\n\nPrior error:\n" + priorError
+	}
+	if len(context) > maxQueuedCodexContextBytes {
+		const marker = "\n\n[Wingthing truncated the prior context for this follow-up.]"
+		end := maxQueuedCodexContextBytes - len(marker)
+		for end > 0 && !utf8.RuneStart(context[end]) {
+			end--
+		}
+		context = context[:end] + marker
+	}
+	return SteerPrompt(request, context, "", direction)
+}
+
 func awaitNativeRunReady(ctx context.Context, cfg *config.Config, session eggclient.LocalSession) error {
 	meta := eggclient.ReadEggMetaValues(filepath.Join(cfg.Dir, "eggs", session.ID))
 	if meta["native_run"] != "true" {
@@ -832,6 +882,14 @@ func (m *Runs) Retry(launch *Launch, request RunRequest) (*Run, error) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.retryLocked(launch, request)
+}
+
+// retryLocked requires m.mu.
+func (m *Runs) retryLocked(launch *Launch, request RunRequest) (*Run, error) {
+	if request.RequestKey == "" {
+		return nil, nil
+	}
 	for _, r := range m.records {
 		if r.RequestKey == request.RequestKey && m.owned(launch.authority, r) {
 			if r.SpecHash != runRequestHash(launch, request) {
