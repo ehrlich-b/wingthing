@@ -18,3 +18,16 @@ test('same names keep provider accounts and subjects separate',()=>{
  assert.throws(()=>previewIdentity('unknown'));
  assert.throws(()=>accessReview({kind:'app',port:3000},{provider:'google',name:'Alice',subject:'opaque'},'Studio Mac'),/account/);
 });
+
+test('matching account labels keep the full provider subject for disambiguation', () => {
+ const resource = { kind: 'app', id: 'preview-1', port: 3000 };
+ const first = previewIdentity('google');
+ const second = { ...first, subject: 'sample-google-alice-43' };
+ const a = accessReview(resource, first, 'Preview host');
+ const b = accessReview(resource, second, 'Preview host');
+ assert.ok(a.recipient.includes(first.email));
+ assert.ok(b.recipient.includes(first.email));
+ assert.notEqual(a.recipient, b.recipient);
+ assert.ok(a.recipient.includes(first.subject));
+ assert.ok(b.recipient.includes(second.subject));
+});

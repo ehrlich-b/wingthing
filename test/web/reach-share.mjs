@@ -134,6 +134,13 @@ async function screenshot(page, flow, card, slug, suffix = '') {
     await page.screenshot({ path: path.join(shots, file) });
     captured.push({ flow, card, file, viewport: page.viewportSize() });
 }
+// The default home now uses the paper shell. This component contract needs
+// the legacy home after startup and each reload, without altering any gates.
+async function legacyHome(page) {
+    await page.waitForSelector('.egg-box[data-wing-id="fixture-mac"]', { state: 'attached' });
+    await page.evaluate(() => { location.hash = '#reach-fixture'; });
+    await page.waitForSelector('.egg-box[data-wing-id="fixture-mac"]');
+}
 async function tab(page, text) { await page.getByRole('tab', { name: text, exact: true }).click(); }
 async function verifyNoOverflow(page) {
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'horizontal overflow');
@@ -152,7 +159,7 @@ try {
         const page = await context.newPage(); pages.push(page);
         page.on('pageerror', error => errors.push(String(error)));
         await page.goto(base + '/app/');
-        await page.waitForSelector('.egg-box[data-wing-id="fixture-mac"]');
+        await legacyHome(page);
         const suffix = viewport.width === 390 ? '-mobile' : viewport.width === 430 ? '-430' : '';
         assert.equal(await page.locator('.egg-box[data-sid="same-id"]').count(), 2);
         assert.match(await page.locator('#sessions-list').innerText(), /blocked/);
@@ -168,7 +175,7 @@ try {
         await page.click('#inventory-clear');
         const reviewRow = fixtureRows.get(remoteID).find(row => row.session_id === 'review');
         reviewRow.output.cursor += 64;
-        await page.reload();
+        await page.reload(); await legacyHome(page);
         await page.locator('.egg-box[data-sid="review"][data-output-cursor="' + reviewRow.output.cursor + '"]').waitFor();
         assert.match(await page.locator('.egg-box[data-sid="review"]').innerText(), /unread output/);
         assert.match(await page.locator('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"]').innerText(), /blocked/);
@@ -181,11 +188,11 @@ try {
         await page.getByRole('button', { name: /^Mark displayed output/ }).click();
         assert.equal(await page.locator('.egg-box').count(), 0);
         await page.click('#inventory-clear');
-        await page.reload();
+        await page.reload(); await legacyHome(page);
         await page.waitForSelector('.egg-box[data-sid="review"]');
         assert.doesNotMatch(await page.locator('.egg-box[data-sid="review"]').innerText(), /unread output/);
         reviewRow.output.cursor += 64;
-        await page.reload();
+        await page.reload(); await legacyHome(page);
         await page.locator('.egg-box[data-sid="review"][data-output-cursor="' + reviewRow.output.cursor + '"]').waitFor();
         assert.match(await page.locator('.egg-box[data-sid="review"]').innerText(), /unread output/);
         record(`${viewport.width}: output cursor, explicit read, reload persistence and new unread without completion`);
@@ -260,7 +267,7 @@ try {
         const revokeButton=await page.locator('[data-revoke]').first().boundingBox();
         assert.ok(revokeReview.y>=36 && revokeButton.y+revokeButton.height<=viewport.height,'account, resource and revoke action visible together');
         await screenshot(page, 9, 4, 'revoke-confirmation', suffix);
-        await page.getByRole('button', { name: 'Revoke Alice', exact: true }).click();
+        await page.getByRole('button', { name: 'Revoke access', exact: true }).click();
         assert.match(await page.locator('#reach-action-status').innerText(), /1 active fixture viewer\(s\) closed/);
         await page.locator('#share-grants').scrollIntoViewIfNeeded();
         await screenshot(page, 9, 4, 'revoke-grant-dormant', suffix);
@@ -323,6 +330,7 @@ try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page = await context.newPage();
     await page.goto(base + '/app/');
+    await legacyHome(page);
     const stop = page.locator('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"] .egg-delete');
     await stop.waitFor(); await stop.click(); await stop.click();
     await page.waitForFunction(() => document.querySelector('.egg-box[data-wing-id="fixture-mac"][data-sid="same-id"]')?.textContent.includes('process exit unverified'));
