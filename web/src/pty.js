@@ -482,6 +482,11 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                     }).catch(function (err) {
                         if (!outputCurrent(msg.session_id)) return;
                         DOM.ptyStatus.textContent = err && err.message ? err.message : 'wing identity verification failed';
+                        // Queued output cannot drain without a key; honor an accepted exit.
+                        if (pendingExit) {
+                            completeExit(pendingExit);
+                            pendingExit = null;
+                        }
                         ws.close();
                     });
                 } else {
