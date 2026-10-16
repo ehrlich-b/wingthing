@@ -279,7 +279,7 @@ func TestContextSecretProtectsSymlinkTarget(t *testing.T) {
 	}
 	original := egg.DefaultEggConfig()
 	before := append([]string(nil), original.FS...)
-	protected, targets, err := ProtectContextSecret(original, &config.ContextConfig{URL: "https://context.pants.taxi", ClientID: "wingthing-stage", SecretFile: alias}, root, root)
+	protected, targets, err := ProtectContextSecret(original, &config.ContextConfig{URL: "https://context.example.com", ClientID: "wingthing-stage", SecretFile: alias}, root, root)
 	if err != nil {
 		t.Fatal(err)
 	}
