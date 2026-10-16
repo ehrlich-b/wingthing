@@ -134,7 +134,9 @@ endef
 # All untagged Go tests include android-contract and every former focused unit
 # selection (preview, conversation, socket, protected-target, remote and wake).
 check: test-deploy-guard web
-	cd web && $(NPM) exec -- playwright install chromium --only-shell
+	@if [ -z "$$CHROMIUM_PATH" ]; then \
+		cd web && $(NPM) exec -- playwright install chromium --only-shell; \
+	fi
 	$(NODE) --test test/web/pty-order.mjs
 	# Build once outside the PTY interaction deadlines, including CGO pairing.
 	$(stable-build)

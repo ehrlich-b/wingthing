@@ -11,7 +11,7 @@ disagree about which sessions exist.
 | --- | --- |
 | `make test-multiwing` | Qualified live/archive search, identity collisions, duplicate reconciliation, phone/tunnel scope and revocation, native import coverage and three built stable/preview disposable wings through fake SSH and an encrypted paired phone fixture. Includes qualified direct/gateway phone attachment, scope/pin revocation and a finite provider-free real egg PTY input/output and stop/exit check; no sandbox or live phone claim. |
 | `make test-multiwing-race` | The qualified inventory, merge, search, heartbeat and phone adapter selection under the race detector. |
-| `make check` | All untagged Go tests, including Android wire contract and every former focused unit selection; web syntax/Node unit tests, Vite and host binary build. Go and Node/npm; no provider or Docker requirement. |
+| `make check` | All untagged Go tests, including Android wire contract and every former focused unit selection; web syntax/Node unit tests, 43 PTY browser ordering tests, Vite and host binary builds. Go and Node/npm; first-run network for Playwright Chromium unless `CHROMIUM_PATH` supplies an installed browser; no provider or Docker requirement. |
 | `make test-parent-lifecycle-protocol` | Finite regular-file, in-memory RPC and fake-SSH Unix IPC fixtures for admission, lost acknowledgements, reconnect, scoped messages, delayed native results and an explicitly joined disposable Stop child. No TCP binding or provider call. |
 | `make test-parent-lifecycle-protocol-race` | The same selection with the Go race detector, once. |
 | `make test-parent-lifecycle-built` | Four built-wt fake-Codex fixtures using Unix IPC and the existing explicit outer-boundary test seam, including client exit and local-only wing restart. No native sandbox claim. |
@@ -34,10 +34,10 @@ disagree about which sessions exist.
 
 Profiles can be combined: `make gate GATE='integration compat'`. Real-provider
 profiles are opt-in; selecting one requires its fixtures. Fast `check` does not
-run tagged integration, compatibility, native sandbox, browser or provider tests.
-No single E2E target is the complete promotion matrix. `android-build` and
-`android-check` were retired because this checkout has no Android Makefile;
-the Android wire contract stays in `check`.
+run tagged integration, compatibility, native sandbox or provider tests.
+No single E2E target is the complete promotion matrix. `make check-android` runs
+local Android compile, unit tests and lint with staged SDK/NDK and offline Gradle
+dependencies; the Android wire contract stays in `check`.
 
 Static race selection uses buildable untagged packages with Go files changed
 from `RACE_BASE` (default `HEAD~1`), including uncommitted/untracked files.
