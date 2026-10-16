@@ -372,7 +372,7 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		}
 	}
 
-	runCtx := ctx
+	var runCtx context.Context
 	var cancel context.CancelFunc
 	timeout := pr.Timeout
 	if t.TimeoutSeconds > 0 {
@@ -380,8 +380,10 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 	}
 	if timeout > 0 {
 		runCtx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
+	} else {
+		runCtx, cancel = context.WithCancel(ctx)
 	}
+	defer cancel()
 	if sandboxNotice != "" {
 		if err := writeSandboxNotice(destination, sandboxNotice); err != nil {
 			return err
@@ -391,6 +393,22 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 	if err != nil {
 		return fmt.Errorf("run agent: %w", err)
 	}
+	defer func() {
+		// Cancel before draining: the provider may still be running or blocked
+		// on a full output buffer. Stream closure follows its process wait.
+		cancel()
+		for {
+			if _, ok := stream.Next(); !ok {
+				break
+			}
+		}
+	}()
+	outputFailure := func(err error) error {
+		if outputErr := s.SetTaskOutput(t.ID, stream.Text()); outputErr != nil {
+			return errors.Join(err, fmt.Errorf("record failed agent output: %w", outputErr))
+		}
+		return err
+	}
 
 	// Stream output to stdout
 	for {
@@ -399,11 +417,11 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 			break
 		}
 		if _, err := fmt.Fprint(destination, chunk.Text); err != nil {
-			return fmt.Errorf("write agent output: %w", err)
+			return outputFailure(fmt.Errorf("write agent output: %w", err))
 		}
 	}
 	if _, err := fmt.Fprintln(destination); err != nil {
-		return fmt.Errorf("finish agent output: %w", err)
+		return outputFailure(fmt.Errorf("finish agent output: %w", err))
 	}
 
 	if err := stream.Err(); err != nil {
