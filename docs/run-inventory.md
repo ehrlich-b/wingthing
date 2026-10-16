@@ -117,7 +117,7 @@ acceptance require coordinator execution outside the worker.
 Pinned source: `2c3688f1f59cee08713d77476a917d7bc4bf7867`; no fresh upstream,
 W7 lifecycle repair, installed runtime, provider or network operation was used.
 Plugin contract read from committed `e8a2b526a28927f78f10dbd238c3737537ac9def`.
-Go 1.26.9 and module/build caches were privately copied offline into this clone.
+The recorded checks used Go 1.26.9 with offline module and build caches.
 
 | Package | Artifact and independent result | Gate |
 |---|---|---|

@@ -4,9 +4,8 @@ For the **actual native iOS app**, start with [IOS-INSTALL.md](IOS-INSTALL.md).
 Its installer handles signing/install/launch and the hosted Home setup when
 The owner runs it. The Safari instructions below remain a separate access path.
 
-Baseline: this isolated clone, `2c3688f`, branch
-`codex/wingthing-phone-20261011`. No push, deployment, public exposure, Apple
-signing, production mutation, or real agent control is authorized or performed.
+Snapshot: 2026-10-11, source `2c3688f`. The web and native access paths below
+have separate requirements and acceptance checks.
 
 ## What works today
 

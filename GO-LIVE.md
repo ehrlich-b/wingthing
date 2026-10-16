@@ -43,7 +43,7 @@ the owner's already authenticated Claude CLI, so check `claude --version` and it
 existing login before proceeding. The app's New coordinator form takes an exact
 model ID; use the one supported by the owner's installed CLI/provider account.
 
-In Terminal A, from this clone (the subshell stops on any failed check):
+In Terminal A, from the Wingthing checkout (the subshell stops on any failed check):
 
 ```sh
 (
@@ -236,21 +236,20 @@ must perform it. **Signing does not close the transport gap:** the native client
 uses a pinned HTTPS Wingthing Home plus existing Wingthing bearer, and cannot
 perform tunn browser OAuth or supply this gateway's cookie. It also lacks the
 local-only SSH/MCP adapter. Main still does not advertise/handle native
-`conversation_stop` / `wingthing.exact_stop.v1`. The older e2e clone has an exact
-Stop implementation and synthetic encrypted peer, requiring rebase/review and
-live provider acceptance. Browser `pty.kill` Stop execution already exists and
-is the web route used here; do not claim native whole-conversation Stop works.
+`conversation_stop` / `wingthing.exact_stop.v1`. Native whole-conversation Stop
+requires a compatible server implementation and live provider acceptance.
+Browser `pty.kill` Stop execution already exists and is the web route used here.
 Use an already authorized compatible HTTPS Home for native experiments.
 
 ## Verification receipts and operator checks
 
-Local **PASS**: 197 Node tests, Vite build, gateway race tests, CLI rejection test and final embedded Go build. The tagged loopback test compiles but is **unrun** here.
+Recorded local results (2026-10-11): **PASS** for 197 Node tests, Vite build,
+gateway race tests, CLI rejection test and final embedded Go build. The tagged
+loopback test passed compilation; its execution remains required.
 
-Sandbox receipts: `.scratch/phone-check.log` (Node suite, Vite, Go gateway race
-tests, CLI validation and embedded Go build), `.scratch/phone-final-go.log`
-(final gateway/CLI race checks), `.scratch/phone-final-build.log` (final build), `.scratch/ios-core.log` (native
-manifest sandbox refusal). No loopback, Chromium, live tunn, real provider,
-signed device or public exposure was exercised here.
+Loopback, Chromium, live tunn, real provider and signed device acceptance remain
+required before phone access is considered verified. Run the checks below on
+hosts that support their runtime requirements.
 
 An operator runs the real HTTPS/WebSocket echo/revocation test on a host
 that allows loopback, before exposure:
@@ -289,6 +288,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 
 The imported native history fix bounds each read to 100 pages / 10 seconds and
 preserves a cursor for explicit continuation, with focused synthetic tests.
-Here the native core gate fails before compilation: `sandbox_apply: Operation
-not permitted`. This requires verification on a supported host before reporting a native PASS. Android
-has no app build target in this checkout and is not a native launch candidate.
+The recorded native core gate failed before compilation with
+`sandbox_apply: Operation not permitted`. Run it on a supported host before
+reporting a native PASS. Android has no app build target in this checkout and
+is not a native launch candidate.
