@@ -80,7 +80,7 @@ func TestMCPInitialCodexPromptLimit(t *testing.T) {
 func TestMCPCodexSteerPromptBudget(t *testing.T) {
 	const request = "review"
 	const direction = "continue"
-	boundaryResultBytes := egg.MaxInitialCodexPromptBytes - len(wingsession.SteerPrompt(request, "", "", direction))
+	boundaryResultBytes := egg.MaxInitialCodexPromptBytes - egg.InitialCodexPromptArgBytes(wingsession.SteerPrompt(request, "", "", direction))
 	boundaryDirectionBytes := egg.MaxInitialCodexPromptBytes - egg.InitialCodexPromptArgBytes(wingsession.SteerPrompt(request, "", "", ""))
 	for _, test := range []struct {
 		name, result, priorError, direction string
@@ -89,16 +89,20 @@ func TestMCPCodexSteerPromptBudget(t *testing.T) {
 		{name: "completed small result", result: "prior Ω", direction: direction},
 		{name: "completed small error", priorError: "prior error Ω", direction: direction},
 		{name: "active small result", active: true, result: "prior Ω", direction: direction},
-		{name: "completed oversized result", result: strings.Repeat("x", 20480), direction: direction},
+		{name: "completed 30 KiB result", result: strings.Repeat("x", 30*1024), direction: direction},
+		{name: "completed 100 KiB result", result: strings.Repeat("x", 100*1024), direction: direction},
+		{name: "completed oversized result", result: strings.Repeat("x", 140*1024), direction: direction},
 		{name: "completed multibyte overflow", result: strings.Repeat("Ω", boundaryResultBytes/2+1), direction: direction},
-		{name: "completed oversized error", priorError: strings.Repeat("e", 20480), direction: direction},
+		{name: "completed 20 KiB error", priorError: strings.Repeat("e", 20480), direction: direction},
 		{name: "completed oversized direction", result: "prior", direction: strings.Repeat("d", egg.MaxInitialCodexPromptBytes), reject: true},
-		{name: "completed large result", result: strings.Repeat("x", boundaryResultBytes), direction: direction},
+		{name: "completed exact limit with context", result: strings.Repeat("x", boundaryResultBytes), direction: direction},
 		{name: "completed exact limit without context", result: "prior", direction: strings.Repeat("d", boundaryDirectionBytes)},
 		{name: "completed reduced context budget", result: strings.Repeat("界", 10000), direction: strings.Repeat("d", boundaryDirectionBytes-100)},
-		{name: "active oversized result", active: true, result: strings.Repeat("x", 20480), direction: direction},
+		{name: "active 30 KiB result", active: true, result: strings.Repeat("x", 30*1024), direction: direction},
+		{name: "active 100 KiB result", active: true, result: strings.Repeat("x", 100*1024), direction: direction},
+		{name: "active oversized result", active: true, result: strings.Repeat("x", 140*1024), direction: direction},
 		{name: "active multibyte context", active: true, result: strings.Repeat("界", 10000), direction: direction},
-		{name: "active oversized error", active: true, priorError: strings.Repeat("界", 10000), direction: direction},
+		{name: "active multibyte error", active: true, priorError: strings.Repeat("界", 10000), direction: direction},
 		{name: "active reduced context budget", active: true, result: strings.Repeat("界", 10000), direction: strings.Repeat("d", boundaryDirectionBytes-100)},
 		{name: "active escaped context", active: true, result: strings.Repeat("\x01", 10000), direction: strings.Repeat("d", boundaryDirectionBytes-100)},
 		{name: "active exact limit without context", active: true, result: "prior", direction: strings.Repeat("d", boundaryDirectionBytes)},
@@ -213,7 +217,7 @@ func TestMCPCodexSteerPromptBudget(t *testing.T) {
 			if test.priorError != "" {
 				context += "\n\nPrior error:\n" + test.priorError
 			}
-			truncated := len(context) > 8*1024 || egg.InitialCodexPromptArgBytes(context) > budget
+			truncated := egg.InitialCodexPromptArgBytes(context) > budget
 			if truncated && budget >= 100 && !strings.Contains(prompt, marker) {
 				t.Fatal("missing prior context truncation marker")
 			}
@@ -221,7 +225,7 @@ func TestMCPCodexSteerPromptBudget(t *testing.T) {
 				t.Fatal("context should be omitted when the marker cannot fit")
 			}
 			if !truncated && prompt != wingsession.SteerPrompt(request, test.result, test.priorError, test.direction) {
-				t.Fatal("small prior context changed")
+				t.Fatal("prior context that fits changed")
 			}
 			db, err := store.Open(f.server.Cfg.DBPath())
 			if err != nil {

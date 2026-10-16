@@ -108,7 +108,7 @@ func TestQueuedCodexSteerPromptRecovery(t *testing.T) {
 			parent := recoveryRun(t, "parent", "terminal")
 			parent.Agent = "codex"
 			parent.Result.Status = "done"
-			parent.Result.Text = strings.Repeat("界", 10000)
+			parent.Result.Text = strings.Repeat("界", 50000)
 			child := recoveryRun(t, "child", "queued")
 			child.Agent, child.Launch.Options.Agent = "codex", "codex"
 			child.ParentID, child.Direction = parent.ID, tc.direction

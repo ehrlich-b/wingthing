@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
@@ -817,10 +816,6 @@ func SteerPrompt(request, result, priorError, direction string) string {
 	return prompt + "\n\nNew direction:\n" + direction
 }
 
-// Bound prior output for every Codex follow-up, regardless of parent timing.
-// Request, direction and formatting take priority over this context budget.
-const maxQueuedCodexContextBytes = 8 * 1024
-
 type codexSteerPromptTooLargeError struct {
 	cause *egg.InitialCodexPromptTooLargeError
 }
@@ -845,7 +840,7 @@ func queuedCodexSteerPrompt(request, result, priorError, direction string) strin
 	}
 	base := SteerPrompt(request, "", "", direction)
 	budget := egg.MaxInitialCodexPromptBytes - egg.InitialCodexPromptArgBytes(base)
-	if len(context) <= maxQueuedCodexContextBytes && egg.InitialCodexPromptArgBytes(context) <= budget {
+	if egg.InitialCodexPromptArgBytes(context) <= budget {
 		return SteerPrompt(request, context, "", direction)
 	}
 	const marker = "\n\n[Wingthing truncated the prior context for this follow-up.]"
@@ -854,10 +849,7 @@ func queuedCodexSteerPrompt(request, result, priorError, direction string) strin
 	if egg.InitialCodexPromptArgBytes(marker) > budget {
 		return base
 	}
-	end := min(len(context), maxQueuedCodexContextBytes-len(marker))
-	for end > 0 && end < len(context) && !utf8.RuneStart(context[end]) {
-		end--
-	}
+	end := len(context)
 	// Search complete rune prefixes: partial UTF-8 encodings have different
 	// JSON escaping costs and cannot be used to measure the final argument.
 	runes := []rune(context[:end])

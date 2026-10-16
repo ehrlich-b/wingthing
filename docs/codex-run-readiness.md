@@ -82,9 +82,10 @@ and formatting **without prior context**, whether the parent is running or
 finished. Only these required parts exceeding the budget cause rejection;
 the error names these parts and reports their encoded size and limit. Every
 child enters the queued phase and records a dequeued event before launching.
-Prior result/error context is bounded to **8,192 UTF-8 bytes (8 KiB)** and the
-remaining encoded argv budget, including a visible truncation marker, without
-splitting UTF-8 characters. If the marker cannot fit, prior context is omitted.
+Prior result/error context is preserved in full when it fits the remaining
+encoded argv budget. Otherwise it is truncated to that budget, including a
+visible truncation marker, without splitting UTF-8 characters. If the marker
+cannot fit, prior context is omitted.
 The original request and new direction are preserved in full. Accepted retries
 retain their original identities even after the parent finishes. Recovered
 children admitted before these checks use the same context bounds; if their
