@@ -1,7 +1,7 @@
 # Install Wingthing on the owner's phone
 
 These are **handoff commands, not commands executed by this task**. The owner runs
-them himself, or authorizes the coordinator to run the personal local setup and
+them themselves, or authorizes the coordinator to run the personal local setup and
 exposure. No production deployments, grants, billing changes or public endpoint
 are needed. Read [PHONE.md](PHONE.md) for authority and threat boundaries.
 
@@ -209,8 +209,8 @@ revocation. Account/production changes belong to the owner, not this task.
 ## Native iOS: exact Xcode handoff and remaining gap
 
 1. Open `/Applications/Xcode.app`, then
-   `mobile/ios/Wingthing.xcodeproj`. The owner accepts license/components himself.
-2. Xcode **Settings → Accounts → + → Apple ID**: the owner signs in himself.
+   `mobile/ios/Wingthing.xcodeproj`. The owner accepts license/components themselves.
+2. Xcode **Settings → Accounts → + → Apple ID**: the owner signs in themselves.
 3. Connect/unlock the iPhone, **Trust This Computer**, enable **Settings →
    Privacy & Security → Developer Mode** and restart if requested.
 4. Xcode **Window → Devices and Simulators**: select the phone and copy its

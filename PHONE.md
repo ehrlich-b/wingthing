@@ -1,4 +1,4 @@
-# Wingthing on My iPhone — 2026-10-11
+# Wingthing on your iPhone — 2026-10-11
 
 For the **actual native iOS app**, start with [IOS-INSTALL.md](IOS-INSTALL.md).
 Its installer handles signing/install/launch and the hosted Home setup when

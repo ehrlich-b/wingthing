@@ -7,9 +7,9 @@ echo "support marker $(date -u)" > /opt/wingthing/support/README.txt
 echo "external repository marker" > /opt/wingthing/repos/canary/source.txt
 ln -s /opt/wingthing/repos /opt/wingthing/eng/repos
 ln -s /opt/wingthing/repos /opt/wingthing/support/repos
-# Member sessions require a per-path egg.yaml (v0.48 folder-ACL design); the
-# A shared-host Ansible role installs one per role directory. Exercise the same sealed-jail
-# contract here.
+# Member sessions require a per-path egg.yaml (v0.48 folder-ACL design).
+# A shared-host Ansible role installs one per role directory. Exercise the same
+# sealed-jail contract here.
 cp /root/.wingthing/egg.yaml /opt/wingthing/eng/egg.yaml
 cp /root/.wingthing/egg.yaml /opt/wingthing/support/egg.yaml
 install -d -m 0700 /root/.claude

@@ -1,4 +1,4 @@
-# Wingthing on My iPhone
+# Wingthing on your iPhone
 
 Pair the native app with **my-mac's main wing first**, the same wing used by `wt` and the dashboard. Pair **my-server** separately afterward. A pairing lets this phone see, attach to, type into and stop sessions on that machine. It cannot change wing configuration, pair another device or control an unpaired machine.
 
@@ -6,7 +6,7 @@ Click through [the storyboard](docs/pairing/STORYBOARD.html) while pairing. [The
 
 ## Install or reconnect
 
-The owner runs the existing installer himself:
+The owner runs the existing installer themselves:
 
 ```sh
 WT_IOS_CLONE="$PWD" ./mobile/ios/scripts/wt-ios-install
@@ -23,7 +23,7 @@ The connect stage builds a pairing-capable CLI locally, uses the **normal main w
 ## Seven steps
 
 1. In my-mac's terminal run `wt pair`. Read the machine-specific permission header. It shows a terminal QR, six-word fallback code, five-minute countdown and “Waiting for scan...”.
-2. Open Wingthing on My iPhone. Its first-run screen is **Scan to pair**. Allow Camera and Local Network when the app requests them, then scan the terminal QR.
+2. Open Wingthing on your iPhone. Its first-run screen is **Scan to pair**. Allow Camera and Local Network when the app requests them, then scan the terminal QR.
 3. The phone shows **Pair with my-mac?**, the full SHA-256 wing fingerprint and four emoji. Compare all four with the terminal. Tap **Emoji match · Pair** on the phone and press Enter in the terminal. Both approvals are required. If they differ, cancel on both sides.
 4. BoringSSL SPAKE2 authenticates the one-time secret and binds it to the scanned wing key. The phone creates its own P-256 key in Secure Enclave when available, otherwise device-only Keychain. The wing records the phone's public key and returns a machine-specific credential through encryption. No account bearer goes to the phone.
 5. The phone opens my-mac's session list: names, status and blocked/unread badges. Tap a session to attach, type or stop. Stop requires an explicit confirmation. Input is never automatically replayed after a connection failure.

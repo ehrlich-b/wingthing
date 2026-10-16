@@ -588,7 +588,7 @@ Fallback: start an interactive `agent_start` parent (omit `-p`) through `"$WT_PH
 
 Native passkey approval is not implemented: locked wings need a locally pinned user passkey and an encryption-identity-bound auth token; unlocked wings also demand this for enrolled users. Use this fresh unlocked wing with no pinned passkeys; preserve the existing roost's lock.
 
-On wingthing.ai's login-node database, the owner needs `entitlements.user_id='<account-id>'` with `entitlements.subscription_id=subscriptions.id` and `subscriptions.status='active'` unless migration-eligible. the owner can run this read-only SQL there; at least one returned row satisfies `IsUserPro`:
+On wingthing.ai's login-node database, the owner needs `entitlements.user_id='<account-id>'` with `entitlements.subscription_id=subscriptions.id` and `subscriptions.status='active'` unless migration-eligible. The owner can run this read-only SQL there; at least one returned row satisfies `IsUserPro`:
 ```sql
 SELECT e.id, e.user_id, e.subscription_id, s.status
 FROM entitlements e
