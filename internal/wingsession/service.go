@@ -168,6 +168,11 @@ func (s *Service) Start(ctx context.Context, launch *Launch, opts StartOptions) 
 	if err := eggclient.ValidateSessionID(opts.SessionID); err != nil {
 		return nil, err
 	}
+	if opts.Agent == "codex" && opts.Egg.InitialRun != nil {
+		if err := egg.ValidateInitialCodexPrompt(opts.Egg.InitialRun.Prompt); err != nil {
+			return nil, err
+		}
+	}
 	if launch.authority.Principal != "" {
 		opts.Egg.Principal = launch.authority.Principal
 	} else if opts.Egg.Principal == "" {

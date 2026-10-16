@@ -61,6 +61,11 @@ type PreparedLaunch struct {
 // actual provider builders, and validates their spools. No proxy, native
 // sandbox, snapshot, control endpoint, PTY or provider process starts here.
 func PrepareLaunch(rc RunConfig, opts LaunchPreparationOptions, state LaunchState) (out PreparedLaunch, err error) {
+	if rc.Agent == "codex" && rc.InitialRun != nil {
+		if err := ValidateInitialCodexPrompt(rc.InitialRun.Prompt); err != nil {
+			return out, err
+		}
+	}
 	if state == nil || opts.CodexCapability == nil {
 		return out, errors.New("explicit launch state and provider capability required")
 	}

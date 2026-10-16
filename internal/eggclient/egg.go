@@ -755,13 +755,18 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if err := ValidateSessionID(sessionID); err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
-	if err := egg.ValidateSocketPath(filepath.Join(dir, "egg.sock")); err != nil {
-		return nil, err
-	}
 	var o SpawnEggOpts
 	if len(opts) > 0 {
 		o = opts[0]
+	}
+	if agentName == "codex" && o.InitialRun != nil {
+		if err := egg.ValidateInitialCodexPrompt(o.InitialRun.Prompt); err != nil {
+			return nil, err
+		}
+	}
+	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
+	if err := egg.ValidateSocketPath(filepath.Join(dir, "egg.sock")); err != nil {
+		return nil, err
 	}
 	var roleErr error
 	o.RoleMetadata, roleErr = spawnRoleMetadata(cfg, o)

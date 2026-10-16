@@ -242,6 +242,11 @@ func (m *Runs) Admit(launch *Launch, request RunRequest, options StartOptions, a
 	if strings.TrimSpace(request.Prompt) == "" {
 		return nil, false, errors.New("prompt is required")
 	}
+	if request.Agent == "codex" && request.ParentID == "" {
+		if err := egg.ValidateInitialCodexPrompt(request.Prompt); err != nil {
+			return nil, false, err
+		}
+	}
 	if request.TimeoutSeconds != 0 && request.TimeoutSeconds < 10 {
 		return nil, false, errors.New("timeout_seconds must be 0 (no deadline) or at least 10")
 	}
@@ -280,17 +285,28 @@ func (m *Runs) Admit(launch *Launch, request RunRequest, options StartOptions, a
 	if err = m.ctx.Err(); err != nil {
 		return nil, false, err
 	}
+	// Resolve accepted retries before recomputing a follow-up against a parent
+	// whose outcome may have changed since the original admission.
+	if saved, err := m.retryLocked(launch, request); err != nil || saved != nil {
+		return saved, false, err
+	}
 	if run.ParentID != "" {
-		if parent := m.records[run.ParentID]; parent != nil {
+		parent := m.records[run.ParentID]
+		if parent != nil {
 			if !m.owned(authority, parent) {
 				return nil, false, errors.New("agent run not found or not owned by caller")
 			}
 		} else {
-			parent, err := m.legacy(authority, run.ParentID)
+			parent, err = m.legacy(authority, run.ParentID)
 			if err != nil {
 				return nil, false, err
 			}
 			m.records[parent.ID] = parent
+		}
+		if run.Agent == "codex" {
+			if err := validateCodexSteerPrompt(parent.OriginalPrompt, run.Direction); err != nil {
+				return nil, false, err
+			}
 		}
 	}
 	wire, err := json.Marshal(run)
@@ -386,8 +402,25 @@ func (m *Runs) reconcile(id string) {
 			m.fail(id, agent.UnknownOutcome)
 			return
 		}
+		if r.Agent == "codex" {
+			if err := validateCodexSteerPrompt(parent.OriginalPrompt, r.Direction); err != nil {
+				_ = m.update(id, "prompt_rejected", func(r *Run) {
+					r.Phase = "terminal"
+					r.Result.Status = "failed"
+					r.Result.FailureKind = agent.ProviderError
+					r.Result.Error = err.Error()
+					r.Result.EndedAt = time.Now().UTC()
+				})
+				return
+			}
+		}
+
 		if err := m.update(id, "dequeued", func(r *Run) {
-			r.Prompt = SteerPrompt(parent.OriginalPrompt, parent.Result.Text, parent.Result.Error, r.Direction)
+			if r.Agent == "codex" {
+				r.Prompt = queuedCodexSteerPrompt(parent.OriginalPrompt, parent.Result.Text, parent.Result.Error, r.Direction)
+			} else {
+				r.Prompt = SteerPrompt(parent.OriginalPrompt, parent.Result.Text, parent.Result.Error, r.Direction)
+			}
 			r.Phase = "admitted"
 		}); err != nil {
 			return
@@ -783,6 +816,55 @@ func SteerPrompt(request, result, priorError, direction string) string {
 	return prompt + "\n\nNew direction:\n" + direction
 }
 
+type codexSteerPromptTooLargeError struct {
+	cause *egg.InitialCodexPromptTooLargeError
+}
+
+func (e *codexSteerPromptTooLargeError) Error() string {
+	return fmt.Sprintf("Codex follow-up request, direction and formatting require %d encoded argv bytes without prior context; limit is %d bytes", e.cause.SizeBytes, e.cause.LimitBytes)
+}
+
+func (e *codexSteerPromptTooLargeError) Unwrap() error { return e.cause }
+
+func validateCodexSteerPrompt(request, direction string) error {
+	if err := egg.ValidateInitialCodexPrompt(SteerPrompt(request, "", "", direction)); err != nil {
+		return &codexSteerPromptTooLargeError{cause: err.(*egg.InitialCodexPromptTooLargeError)}
+	}
+	return nil
+}
+
+func queuedCodexSteerPrompt(request, result, priorError, direction string) string {
+	context := result
+	if priorError != "" {
+		context += "\n\nPrior error:\n" + priorError
+	}
+	base := SteerPrompt(request, "", "", direction)
+	budget := egg.MaxInitialCodexPromptBytes - egg.InitialCodexPromptArgBytes(base)
+	if egg.InitialCodexPromptArgBytes(context) <= budget {
+		return SteerPrompt(request, context, "", direction)
+	}
+	const marker = "\n\n[Wingthing truncated the prior context for this follow-up.]"
+	// If even the marker cannot fit, omit context and preserve the full request
+	// and direction. Admission validates that these can fit by themselves.
+	if egg.InitialCodexPromptArgBytes(marker) > budget {
+		return base
+	}
+	end := len(context)
+	// Search complete rune prefixes: partial UTF-8 encodings have different
+	// JSON escaping costs and cannot be used to measure the final argument.
+	runes := []rune(context[:end])
+	low, high := 0, len(runes)
+	for low < high {
+		mid := low + (high-low+1)/2
+		if egg.InitialCodexPromptArgBytes(string(runes[:mid])+marker) <= budget {
+			low = mid
+		} else {
+			high = mid - 1
+		}
+	}
+	return SteerPrompt(request, string(runes[:low])+marker, "", direction)
+}
+
 func awaitNativeRunReady(ctx context.Context, cfg *config.Config, session eggclient.LocalSession) error {
 	meta := eggclient.ReadEggMetaValues(filepath.Join(cfg.Dir, "eggs", session.ID))
 	if meta["native_run"] != "true" {
@@ -827,6 +909,14 @@ func (m *Runs) Retry(launch *Launch, request RunRequest) (*Run, error) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.retryLocked(launch, request)
+}
+
+// retryLocked requires m.mu.
+func (m *Runs) retryLocked(launch *Launch, request RunRequest) (*Run, error) {
+	if request.RequestKey == "" {
+		return nil, nil
+	}
 	for _, r := range m.records {
 		if r.RequestKey == request.RequestKey && m.owned(launch.authority, r) {
 			if r.SpecHash != runRequestHash(launch, request) {

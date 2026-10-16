@@ -320,6 +320,20 @@ func TestConnectMCPStdioRoutesTwoWingsDirectlyAndPersistsAcrossReconnect(t *test
 
 }
 
+type notifyingConnectMCPWriter struct {
+	strings.Builder
+	written chan struct{}
+}
+
+func (w *notifyingConnectMCPWriter) Write(p []byte) (int, error) {
+	n, err := w.Builder.Write(p)
+	select {
+	case w.written <- struct{}{}:
+	default:
+	}
+	return n, err
+}
+
 func TestConnectMCPStdioBoundsConcurrentToolCalls(t *testing.T) {
 	tunnel := &blockingConnectMCPTunnel{
 		started: make(chan struct{}, maxConcurrentConnectMCPCalls),
@@ -329,7 +343,7 @@ func TestConnectMCPStdioBoundsConcurrentToolCalls(t *testing.T) {
 	for id := 1; id <= maxConcurrentConnectMCPCalls+1; id++ {
 		fmt.Fprintf(&input, `{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"wing_list","arguments":{}}}`+"\n", id)
 	}
-	var output strings.Builder
+	output := notifyingConnectMCPWriter{written: make(chan struct{}, 1)}
 	server := &ConnectMCPServer{Version: "dev",
 		In: strings.NewReader(input.String()), Out: &output, Actor: "test", Tunnel: tunnel,
 		Controls: map[string]*webrtcpkg.ControlClient{},
@@ -342,6 +356,13 @@ func TestConnectMCPStdioBoundsConcurrentToolCalls(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("only %d tool calls reached the bounded worker set", index)
 		}
+	}
+	// No blocked call can respond yet, so the first write is the overload
+	// response. Wait for it before freeing a worker for request 65.
+	select {
+	case <-output.written:
+	case <-time.After(2 * time.Second):
+		t.Fatal("overflow request was not rejected while all workers were blocked")
 	}
 	close(tunnel.release)
 	select {
