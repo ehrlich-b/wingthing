@@ -7,13 +7,16 @@ import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { removeState } from './fixture-state.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const revision=()=>({head:spawnSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).stdout.trim(),dirty:!!spawnSync('git',['status','--porcelain'],{cwd:root,encoding:'utf8'}).stdout});
 const source=revision(), screenshots=[];
 const out = process.env.WT_JOIN_OUT || path.join(root, '.scratch/browser-join');
 const shots = process.env.WT_JOIN_SHOTS || path.join(out, 'shots');
-const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { chromium } = process.env.PLAYWRIGHT_MODULE
+    ? await import(process.env.PLAYWRIGHT_MODULE)
+    : createRequire(new URL('../../web/package.json', import.meta.url))('playwright');
 fs.mkdirSync(out, {recursive:true}); fs.mkdirSync(shots, {recursive:true});
 fs.mkdirSync(path.join(root,'.scratch'), {recursive:true});
 const state = fs.mkdtempSync(path.join(process.env.WT_JOIN_STATE_ROOT || '/tmp', 'j-'));
@@ -153,7 +156,7 @@ try {
     cli('terminal','--unsandboxed','--detach','--name','join-proof-session','--cwd',home,'--','/bin/sleep','1800');
     sessionStarted=true;
     record('real-session','branch-built CLI started a real local terminal egg running sleep in lane HOME');
-    browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||chromium.executablePath(),headless:true,args:['--disable-background-networking','--disable-component-update','--disable-default-apps','--disable-sync','--metrics-recording-only','--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1',...(process.env.CHROMIUM_NO_SANDBOX==='1'?['--no-sandbox']:[])]});
+    browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,headless:true,args:['--disable-background-networking','--disable-component-update','--disable-default-apps','--disable-sync','--metrics-recording-only','--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1',...(process.env.CHROMIUM_NO_SANDBOX==='1'?['--no-sandbox']:[])]});
     for(const viewport of [{width:390,height:844},{width:1440,height:900}]) {
         const size=viewport.width;
         const {page,context}=await newPage(viewport);

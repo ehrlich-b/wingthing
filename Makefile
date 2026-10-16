@@ -131,10 +131,16 @@ cd dist-preview && shasum -a 256 wt-preview-* > SHA256SUMS
 ./wt-preview channel --json > dist-preview/channel.json
 endef
 
+define browser-install
+@if [ -z "$$CHROMIUM_PATH" ]; then \
+		cd web && $(NPM) exec -- playwright install chromium --only-shell; \
+	fi
+endef
+
 # All untagged Go tests include android-contract and every former focused unit
 # selection (preview, conversation, socket, protected-target, remote and wake).
 check: test-deploy-guard web
-	cd web && $(NPM) exec -- playwright install chromium --only-shell
+	$(browser-install)
 	$(NODE) --test test/web/pty-order.mjs
 	# Build once outside the PTY interaction deadlines, including CGO pairing.
 	$(stable-build)
@@ -590,6 +596,7 @@ test-browser-join-go: | web/dist
 	$(GO) test -p 2 -count=1 ./internal/pake ./internal/phonepair ./internal/relay ./internal/wing
 
 test-browser-join: web
+	$(browser-install)
 	$(stable-build)
 	$(NODE) test/web/browser-join.mjs
 .PHONY: generate-installer
