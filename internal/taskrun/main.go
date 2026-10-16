@@ -436,10 +436,8 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		}
 		// A failed destination must stop the provider even after its leader
 		// has exited. Successful tasks retain their existing child lifetime.
-		if providerCmd != nil && providerCmd.Process != nil && providerCmd.Cancel != nil {
-			if err := providerCmd.Cancel(); err != nil && !errors.Is(err, syscall.ESRCH) && !errors.Is(err, os.ErrProcessDone) {
-				runErr = errors.Join(runErr, fmt.Errorf("stop agent process tree: %w", err))
-			}
+		if err := stopAgentProcessTree(providerCmd); err != nil {
+			runErr = errors.Join(runErr, err)
 		}
 		cancel()
 		// Cancellation closes provider stdout independently of descendants.
@@ -581,6 +579,18 @@ func mergeAgentFailureOutput(stdout, diagnostics string) string {
 		stdout += "\n"
 	}
 	return stdout + diagnostics
+}
+
+func stopAgentProcessTree(cmd *exec.Cmd) error {
+	if cmd == nil || cmd.Process == nil || cmd.Cancel == nil {
+		return nil
+	}
+	err := cmd.Cancel()
+	// Some platforms deny process-group signaling after the leader exits.
+	if err == nil || errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.EPERM) {
+		return nil
+	}
+	return fmt.Errorf("stop agent process tree: %w", err)
 }
 
 func writeUnsandboxedWarning(destination io.Writer, completed bool) error {

@@ -12,8 +12,18 @@ import (
 // longer belong to the provider process group. Only holders of this private
 // pipe are eligible; unrelated processes are never selected by name or ancestry.
 func stopOutputWriters(reader *os.File) {
-	pipe, err := os.Readlink("/proc/self/fd/" + strconv.FormatUint(uint64(reader.Fd()), 10))
+	conn, err := reader.SyscallConn()
 	if err != nil {
+		return
+	}
+	var pipe string
+	var readErr error
+	// Fd switches the pipe to blocking mode, preventing Close from releasing
+	// a parser that re-enters Read during discovery. Control preserves its mode.
+	err = conn.Control(func(fd uintptr) {
+		pipe, readErr = os.Readlink("/proc/self/fd/" + strconv.FormatUint(uint64(fd), 10))
+	})
+	if err != nil || readErr != nil {
 		return
 	}
 	entries, _ := os.ReadDir("/proc")
