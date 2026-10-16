@@ -34,6 +34,10 @@ import (
 // Exercise the actual wing callback through a loopback relay, including its
 // encrypted inventory response and SIGHUP completion acknowledgement.
 func TestProjectRefreshInventoryAfterSIGHUP(t *testing.T) {
+	// Build before localOnlyState changes HOME, so repeated runs share the
+	// caller's Go cache instead of compiling into a fresh disposable home.
+	// Compilation has its own bound and cannot consume the refresh deadline.
+	binary := projectRefreshTestBinary(t)
 	state, home, _ := localOnlyState(t)
 	oldProject := filepath.Join(home, "old")
 	newProject := filepath.Join(home, "new")
@@ -49,7 +53,7 @@ func TestProjectRefreshInventoryAfterSIGHUP(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
-	checkSession := projectRefreshLiveSession(t, ctx, state, oldProject)
+	checkSession := projectRefreshLiveSession(t, ctx, binary, state, oldProject)
 	checkSession("before")
 	ready := make(chan *websocket.Conn, 1)
 	messages := make(chan json.RawMessage, 32)
@@ -203,18 +207,28 @@ func TestProjectRefreshInventoryAfterSIGHUP(t *testing.T) {
 	}
 }
 
-// The same real egg, child process and writer stream must survive refresh.
-func projectRefreshLiveSession(t *testing.T, ctx context.Context, state, work string) func(string) {
+// Keep cold Go/CGO compilation bounded independently of live-session waits.
+func projectRefreshTestBinary(t *testing.T) string {
 	t.Helper()
-	binary := os.Getenv("WT_TEST_BINARY")
-	if binary == "" {
-		binary = filepath.Join(t.TempDir(), "wt")
-		build := exec.CommandContext(ctx, "nice", "-n", "10", "go", "build", "-p", "2", "-o", binary, "./cmd/wt")
-		build.Dir = "../.."
-		if output, err := build.CombinedOutput(); err != nil {
-			t.Fatalf("build: %v\n%s", err, output)
-		}
+	if binary := os.Getenv("WT_TEST_BINARY"); binary != "" {
+		return binary
 	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	defer cancel()
+	binary := filepath.Join(t.TempDir(), "wt")
+	started := time.Now()
+	build := exec.CommandContext(ctx, "nice", "-n", "10", "go", "build", "-p", "2", "-o", binary, "./cmd/wt")
+	build.Dir = "../.."
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build test CLI after %s: %v\n%s", time.Since(started), err, output)
+	}
+	t.Logf("built test CLI in %s", time.Since(started))
+	return binary
+}
+
+// The same real egg, child process and writer stream must survive refresh.
+func projectRefreshLiveSession(t *testing.T, ctx context.Context, binary, state, work string) func(string) {
+	t.Helper()
 	script := `printf '%s' "$$" > child.pid; printf 'ready\n'; while IFS= read -r line; do printf 'reply:%s\n' "$line"; done`
 	cmd := exec.CommandContext(ctx, binary, "terminal", "--cwd", work, "--json", "--", "/bin/sh", "-c", script)
 	output, err := cmd.CombinedOutput()
