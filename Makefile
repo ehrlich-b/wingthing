@@ -143,6 +143,7 @@ check: test-deploy-guard web
 	$(browser-install)
 	$(NODE) --test test/web/pty-order.mjs
 	$(NODE) --test test/web/pty-corruption.mjs
+	$(NODE) --test test/web/canvas-output.mjs
 	# Build once outside the PTY interaction deadlines, including CGO pairing.
 	$(stable-build)
 	$(preview-build)

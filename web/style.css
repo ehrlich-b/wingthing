@@ -2945,7 +2945,7 @@ button:disabled { cursor: not-allowed; }
 .search-source-error p { margin:6px 0; font-size:12px; }
 .search-source-error button, [data-review-request] { min-height:44px; margin-top:6px; }
 
-#pty-output-notice {
+.output-notice {
     position: static;
     flex-shrink: 0;
     box-sizing: border-box;
@@ -2958,4 +2958,6 @@ button:disabled { cursor: not-allowed; }
     color: var(--text);
     background: var(--bg);
 }
-#pty-output-notice p { margin: 0 0 12px; }
+.output-notice p { margin: 0 0 12px; }
+.canvas-terminal .output-notice { margin: 8px; width: calc(100% - 16px); max-width: none; padding: 10px; font-size: 12px; }
+.canvas-terminal .output-notice button { min-height: 44px; }

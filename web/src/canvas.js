@@ -13,6 +13,7 @@ import { createCanvasSessionState } from './canvas-session-state.js';
 import { clearTermBuffer } from './terminal.js';
 import { terminalControlFailure, terminalControlOptions, ptyAttachRequest, ptyResizeRequest, renderTerminalControlNotice } from './terminal-attachment.js';
 import { requestCanvasStop } from './canvas-stop.js';
+import { createOutputNotice, endOutputNotice } from './output-notice-content.js';
 
 // Grid constants
 var CELL = 40;
@@ -631,7 +632,7 @@ function onMouseUp(e) {
 }
 
 function sendResize(sess) {
-    if (sessions[sess.key] !== sess || !sess.id || !sess.wingId || !sess.attached || sess.starting || sess.spectating || sess.inputBlocked) return;
+    if (sessions[sess.key] !== sess || !sess.id || !sess.wingId || !sess.attached || !sess.keyReady || sess.starting || sess.spectating || sess.inputBlocked) return;
     sendTunnelRequest(sess.wingId, ptyResizeRequest(sess.id, sess.controllerId, { cols: sess.term.cols, rows: sess.term.rows })).catch(function() {});
 }
 
@@ -670,18 +671,58 @@ function handleCanvasControlError(sess, message) {
         var currentWing = S.wingsData.find(function(item) { return item.wing_id === sess.wingId; });
         var options = terminalControlOptions(S.currentUser, currentWing, mode);
         if (!options) return;
-        var wasFocused = canvasState.focusedKey === sess.key;
-        // Replace this local attachment without stopping the agent or clearing
-        // its content/attention. A reconnect never repeats a prior takeover.
-        clearCells(sess.col, sess.row, sess.cellW, sess.cellH);
-        canvasState.remove(sess.key);
-        try { sess.ws.close(); } catch (error) {}
-        sess.el.remove();
-        sess.term.dispose();
-        canvasAttach(sess.id, sess.agent, sess.wingId, sess.col, sess.row, sess.cellW, sess.cellH, sess.label, options);
-        if (wasFocused) focusSession(sess.key);
+        reconnectCanvasSession(sess, options);
     });
     return true;
+}
+
+// Replace only the local attachment, preserving geometry and observation mode.
+// Explicit control actions may supply options; recovery never repeats takeover.
+function reconnectCanvasSession(sess, options) {
+    if (sessions[sess.key] !== sess || sess.exited || sess.starting || sess.stopPending) return;
+    var wasFocused = canvasState.focusedKey === sess.key;
+    clearCells(sess.col, sess.row, sess.cellW, sess.cellH);
+    canvasState.remove(sess.key);
+    try { sess.ws.close(); } catch (error) {}
+    sess.el.remove();
+    sess.term.dispose();
+    var replacement = canvasAttach(sess.id, sess.agent, sess.wingId, sess.col, sess.row, sess.cellW, sess.cellH, sess.label,
+        options || { spectate: !!sess.spectating });
+    if (wasFocused) focusSession(replacement.key);
+}
+
+function endCanvasOutput(sess, error) {
+    sess.exited = true;
+    if (sess.outputNotice) {
+        endOutputNotice(sess.outputNotice);
+        sess.fitAddon.fit();
+    }
+    function writeEnd() {
+        if (sessions[sess.key] !== sess) return;
+        sess.term.writeln('\r\n\x1b[2m--- session ended ---\x1b[0m');
+        if (error) sess.term.writeln('\x1b[31;1m' + error.replace(/\n/g, '\r\n') + '\x1b[0m');
+    }
+    // Final output can still be waiting on key setup or gzip decoding.
+    if (sess.keySetup || sess.outputQueue) {
+        Promise.resolve(sess.keySetup).then(function() { return sess.outputQueue; }).then(writeEnd);
+    } else {
+        writeEnd();
+    }
+}
+
+function showCanvasOutputIncomplete(sess) {
+    if (!sess.outputNotice) {
+        var notice = createOutputNotice(function() {
+            if (notice.isConnected) reconnectCanvasSession(sess);
+        });
+        if (sess.exited) endOutputNotice(notice);
+        sess.outputNotice = notice;
+        sess.el.querySelector('.canvas-terminal-body').before(notice);
+        // Show inline without dialog.show() moving keyboard focus to Reload.
+        notice.setAttribute('open', '');
+        sess.fitAddon.fit();
+        sendResize(sess);
+    }
 }
 
 function toggleExpand(id) {
@@ -773,8 +814,9 @@ function removeStoppedCanvasSession(sess) {
 function gunzip(data) {
     var ds = new DecompressionStream('gzip');
     var writer = ds.writable.getWriter();
-    writer.write(data);
-    writer.close();
+    // Decode errors are reported by the readable side.
+    writer.write(data).catch(function() {});
+    writer.close().catch(function() {});
     var reader = ds.readable.getReader();
     var chunks = [];
     function pump() {
@@ -894,7 +936,7 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
     var pendingOutput = [];
 
     ws.onmessage = function(e) {
-        if (sessions[sess.key] !== sess || sess.launchFailed) return;
+        if (sessions[sess.key] !== sess || sess.launchFailed || sess.exited) return;
         var msg = JSON.parse(e.data);
         var launchFailure = sess.starting && (msg.type === 'pty.exited' || msg.type === 'error');
         if (msg.session_id && msg.type !== 'pty.started' && msg.session_id !== sess.id && !launchFailure) return;
@@ -916,10 +958,11 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
                 parts.title.textContent = sessionTitle(agent, wingId);
 
                 if (msg.public_key) {
-                    deriveE2EKey(msg.public_key, wingId).then(function(key) {
+                    sess.keySetup = deriveE2EKey(msg.public_key, wingId).then(function(key) {
                         if (sessions[sess.key] !== sess) return;
                         sess.e2eKey = key;
                         sess.keyReady = true;
+                        sendResize(sess);
                         var pending = pendingOutput;
                         pendingOutput = [];
                         pending.forEach(function(item) {
@@ -953,10 +996,7 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
                 failCanvasLaunch(sess);
                 sess.attached = false;
                 sess.dead = true;
-                term.writeln('\r\n\x1b[2m--- session ended ---\x1b[0m');
-                if (msg.error) {
-                    term.writeln('\x1b[31;1m' + msg.error.replace(/\n/g, '\r\n') + '\x1b[0m');
-                }
+                endCanvasOutput(sess, msg.error);
                 parts.title.textContent = (parts.title.textContent || '') + ' (ended)';
                 if (sess.dotEl) {
                     sess.dotEl.classList.remove('dot-live', 'dot-attention');
@@ -1002,7 +1042,7 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
     };
 
     term.onData(function(data) {
-        if (canvasState.focusedKey !== sess.key || !sess.attached || sess.dead || sess.inputBlocked || sess.spectating) return;
+        if (sessions[sess.key] !== sess || canvasState.focusedKey !== sess.key || !sess.attached || !sess.keyReady || sess.dead || sess.inputBlocked || sess.spectating || sess.outputNotice) return;
         var encoded = sessionEncrypt(sess.e2eKey, data);
         if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
@@ -1028,22 +1068,23 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
 }
 
 function processOutput(sess, dataStr, compressed) {
-    if (sessions[sess.key] !== sess) return;
-    try {
-        var bytes = sessionDecrypt(sess.e2eKey, dataStr);
-        if (compressed) {
-            gunzip(bytes).then(function(decompressed) {
-                if (sessions[sess.key] !== sess) return;
-                sess.term.write(decompressed);
-                checkOutputForAttention(sess, decompressed);
-            }).catch(function() {});
-        } else {
-            sess.term.write(bytes);
-            checkOutputForAttention(sess, bytes);
-        }
-    } catch(err) {
-        console.error('canvas decrypt error:', err);
+    var sessionId = sess.id, wingId = sess.wingId, socket = sess.ws;
+    function current() {
+        return sessions[sess.key] === sess && sess.id === sessionId && sess.wingId === wingId && sess.ws === socket;
     }
+    if (!current()) return;
+    // Serialize decoding so a slow gzip frame cannot be overtaken by live data.
+    sess.outputQueue = (sess.outputQueue || Promise.resolve()).then(function() {
+        if (!current()) return;
+        var bytes = sessionDecrypt(sess.e2eKey, dataStr);
+        return compressed ? gunzip(bytes) : bytes;
+    }).then(function(bytes) {
+        if (!current() || !bytes) return;
+        sess.term.write(bytes);
+        checkOutputForAttention(sess, bytes);
+    }).catch(function() {
+        if (current()) showCanvasOutputIncomplete(sess);
+    });
 }
 
 function checkOutputForAttention(sess, bytes) {
@@ -1199,7 +1240,7 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, la
     var pendingOutput = [];
 
     ws.onmessage = function(e) {
-        if (sessions[sess.key] !== sess) return;
+        if (sessions[sess.key] !== sess || sess.exited) return;
         var msg = JSON.parse(e.data);
         if (msg.session_id && msg.session_id !== sess.id) return;
         switch (msg.type) {
@@ -1209,10 +1250,11 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, la
                 sess.inputBlocked = false;
                 renderTerminalControlNotice(sess.controlNotice, null);
                 if (msg.public_key) {
-                    deriveE2EKey(msg.public_key, wingId).then(function(key) {
+                    sess.keySetup = deriveE2EKey(msg.public_key, wingId).then(function(key) {
                         if (sessions[sess.key] !== sess) return;
                         sess.e2eKey = key;
                         sess.keyReady = true;
+                        sendResize(sess);
                         var pending = pendingOutput;
                         pendingOutput = [];
                         pending.forEach(function(item) {
@@ -1245,10 +1287,7 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, la
             case 'pty.exited':
                 sess.attached = false;
                 sess.dead = true;
-                term.writeln('\r\n\x1b[2m--- session ended ---\x1b[0m');
-                if (msg.error) {
-                    term.writeln('\x1b[31;1m' + msg.error.replace(/\n/g, '\r\n') + '\x1b[0m');
-                }
+                endCanvasOutput(sess, msg.error);
                 parts.title.textContent = (parts.title.textContent || '') + ' (ended)';
                 if (sess.dotEl) {
                     sess.dotEl.classList.remove('dot-live', 'dot-attention');
@@ -1287,7 +1326,7 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, la
     };
 
     term.onData(function(data) {
-        if (canvasState.focusedKey !== sess.key || !sess.attached || sess.dead || sess.inputBlocked || sess.spectating) return;
+        if (sessions[sess.key] !== sess || canvasState.focusedKey !== sess.key || !sess.attached || !sess.keyReady || sess.dead || sess.inputBlocked || sess.spectating || sess.outputNotice) return;
         var encoded = sessionEncrypt(sess.e2eKey, data);
         if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
@@ -1429,15 +1468,7 @@ export function showCanvasView() {
     for (var i = 0; i < reconnectIds.length; i++) {
         var rid = reconnectIds[i];
         var rs = sessions[rid];
-        var savedCol = rs.col, savedRow = rs.row;
-        var savedCellW = rs.cellW, savedCellH = rs.cellH;
-        var savedAgent = rs.agent, savedWingId = rs.wingId, savedLabel = rs.label;
-        clearCells(savedCol, savedRow, savedCellW, savedCellH);
-        if (rs.el && rs.el.parentNode) rs.el.parentNode.removeChild(rs.el);
-        try { rs.term.dispose(); } catch(e) {}
-        delete sessions[rid];
-        canvasAttach(rs.id, savedAgent, savedWingId, savedCol, savedRow, savedCellW, savedCellH, savedLabel, { spectate: !!rs.spectating });
-        if (canvasState.focusedKey === rid) focusSession(rid);
+        reconnectCanvasSession(rs);
     }
 
     // Auto-populate: connect to existing sessions that aren't already on the canvas
