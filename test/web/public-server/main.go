@@ -23,19 +23,9 @@ func main() {
 	}
 	defer store.Close()
 	server := relay.NewServer(store, relay.ServerConfig{BaseURL: "http://" + addr})
-	videoServer := relay.NewServer(store, relay.ServerConfig{BaseURL: "http://" + addr})
 	log.Fatal(http.ListenAndServe(addr, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.Error(w, "read only capture fixture", http.StatusMethodNotAllowed)
-			return
-		}
-		if r.URL.Path == "/hero.mp4" {
-			w.Header().Set("Content-Type", "video/mp4")
-			_, _ = w.Write([]byte("unsupported capture fixture"))
-			return
-		}
-		if r.URL.Path == "/" && r.URL.Query().Get("hero") != "" {
-			videoServer.ServeHTTP(w, r)
 			return
 		}
 		server.ServeHTTP(w, r)
