@@ -495,6 +495,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                     if (!outputCurrent(msg.session_id) || keyVersion !== keySetupVersion || keyFailed) return;
                     S.e2eKey = key;
                     keyReady = true;
+                    hideReconnectBanner();
                     DOM.ptyStatus.textContent = '\uD83D\uDD12';
                     if (reattach) { flushReplay(); } else { drainOutput(); }
                 }).catch(function (err) {
@@ -834,6 +835,7 @@ export function attachPTY(sessionId, _retries, wingId, requestId, options) {
 
 export function detachPTY() {
     clearOutputIncomplete();
+    hideReconnectBanner();
     attachRequestId++;
     S.ptyReconnecting = false;
     if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
@@ -860,6 +862,7 @@ export function detachPTY() {
 
 export function disconnectPTY() {
     clearOutputIncomplete();
+    hideReconnectBanner();
     attachRequestId++;
     S.ptyReconnecting = false;
     if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
