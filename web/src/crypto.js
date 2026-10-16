@@ -54,17 +54,26 @@ export function assertWingIdentity(wingId, wingPublicKeyB64) {
 
 // Pure JS HKDF + AES-GCM — works without crypto.subtle / secure context
 export async function deriveE2EKey(wingPublicKeyB64, wingId) {
+    if (!identityKey.priv) throw new Error('browser encryption identity unavailable; reload this page');
+    if (!wingPublicKeyB64) throw new Error('wing encryption key missing; update the wing and reconnect');
+    var shared;
+    try {
+        if (typeof wingPublicKeyB64 !== 'string') throw new Error('invalid key type');
+        var wingPubBytes = b64ToBytes(wingPublicKeyB64);
+        shared = x25519.getSharedSecret(identityKey.priv, wingPubBytes);
+    } catch (error) {
+        throw new Error('invalid wing encryption key; verify the wing and reconnect');
+    }
+    // Validate the key before persisting a TOFU pin, so a malformed start
+    // cannot poison a later legitimate reconnect.
     if (wingId) assertWingIdentity(wingId, wingPublicKeyB64);
-    if (!identityKey.priv) return null;
-    var wingPubBytes = b64ToBytes(wingPublicKeyB64);
-    var shared = x25519.getSharedSecret(identityKey.priv, wingPubBytes);
     var salt = new Uint8Array(32);
     var enc = new TextEncoder();
     return hkdf(sha256, shared, salt, enc.encode('wt-pty'), 32);
 }
 
 export async function e2eEncrypt(plaintext) {
-    if (!S.e2eKey) return btoa(unescape(encodeURIComponent(plaintext)));
+    if (!S.e2eKey) throw new Error('terminal encryption key unavailable');
     var enc = new TextEncoder();
     var iv = crypto.getRandomValues(new Uint8Array(12));
     var cipher = gcm(S.e2eKey, iv);

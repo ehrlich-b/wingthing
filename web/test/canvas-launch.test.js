@@ -50,6 +50,7 @@ function canvasHarness() {
         window: { _deleteSession: (...args) => deleted.push(args) },
         setTimeout() { return 1; }, clearTimeout() {},
         randomUUID: () => 'temporary', identityPubKey: 'browser-key',
+        deriveE2EKey: async () => new Uint8Array(32),
         clearNotification: (...args) => cleared.push(args), clearTermBuffer() {},
         terminalControlFailure: () => null,
         sendTunnelRequest: async (...args) => { requests.push(args); return { ok: true }; },
@@ -105,11 +106,13 @@ test('connection failure during canvas launch also enables local dismissal', () 
     }
 });
 
-test('canvas launch still rejects foreign data and failures after its session is acknowledged', () => {
+test('canvas launch still rejects foreign data and failures after its session is acknowledged', async () => {
     const h = canvasHarness(), { sess } = h;
     sess.ws.receive({ type: 'pty.output', session_id: 'other', data: 'a' });
     assert.equal(sess.starting, true);
-    sess.ws.receive({ type: 'pty.started', session_id: 'assigned', controller_id: 'controller' });
+    sess.ws.receive({ type: 'pty.started', session_id: 'assigned', public_key: 'wing-key', controller_id: 'controller' });
+    await sess.keySetup;
+    assert.equal(sess.keyReady, true);
     assert.equal(sess.id, 'assigned');
     assert.equal(sess.attached, true);
     assert.equal(sess.starting, false);
