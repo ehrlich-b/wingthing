@@ -354,7 +354,6 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
     }
 
     function completeExit(msg) {
-        clearOutputIncomplete();
         discardPreview(msg.session_id, S.ptyWingId);
         DOM.headerTitle.textContent = '';
         DOM.sessionCloseBtn.style.display = 'none';

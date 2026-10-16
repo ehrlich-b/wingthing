@@ -399,6 +399,33 @@ for (const reattach of [false, true]) {
     }
 }
 
+for (const reattach of [true, false]) {
+    test(`corrupt ${reattach ? 'gzip replay' : 'live output'} followed by exit keeps the notice beside session ended`, async t => {
+        const page = await fixture(t, { reattach });
+        await page.evaluate(async reattach => {
+            if (reattach) h.holdKey();
+            h.start();
+            if (!reattach) await h.settle();
+            const bad = await h.frame('missing final output\r\n', reattach, reattach);
+            if (!reattach) bad.data = bad.data.slice(0, -8) + 'AAAAAAA=';
+            h.send(bad);
+            h.send({ type: 'pty.exited' });
+            if (reattach) h.resumeKey();
+        }, reattach);
+        await page.waitForFunction(() => h.text().includes('--- session ended ---') && h.DOM.ptyStatus.textContent === 'exited');
+        const notice = page.getByRole('dialog', { name: 'Output incomplete' });
+        assert.equal(await notice.isVisible(), true);
+        assert.match(await notice.innerText(), /could not be decoded/);
+        assert.equal(await page.locator('#terminal-section').isVisible(), true);
+        assert.equal(await page.evaluate(() => h.S.ptySessionId), null);
+        await page.screenshot({ path: path.join(out, `corrupt-${reattach ? 'replay' : 'live'}-exited.png`), fullPage: true });
+        // Departure and starting a replacement session still clear the old notice.
+        if (reattach) await page.getByRole('button', { name: 'Home', exact: true }).click();
+        else await page.evaluate(() => h.connect());
+        assert.equal(await notice.count(), 0);
+    });
+}
+
 test('Reload retains observation mode and never takes over input', async t => {
     const page = await fixture(t);
     await page.evaluate(() => { h.S.spectating = true; });
