@@ -79,7 +79,7 @@ REQUIRED-UNRUN items and reasons:
 - Authorized real provider tool-call canary: no exact command/receipt was
   supplied. The existing real Codex canary is a no-tools completion canary and
   does not satisfy this gate. No provider invocation was attempted.
-- The specified 21:55–22:30 forge incidents: not found in committed RUNLOG
+- The specified 21:55–22:30 my-server incidents: not found in committed RUNLOG
   inputs at the available local source. The brief's named failure shapes are
   exercised as independent fixtures; no incident receipt was fabricated.
 

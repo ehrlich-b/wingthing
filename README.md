@@ -151,22 +151,22 @@ opening a local Wingthing store:
 
 ```bash
 # Reattach, choose, or start a persistent shell on the remote machine.
-wt --remote work1
-wt --remote work1 --remote-cwd /home/me/work/project
+wt --remote server.example.com
+wt --remote server.example.com --remote-cwd /home/me/work/project
 
 # Launch an agent in a remote checkout and return structured session data.
-wt --remote work1 egg codex --cwd /home/me/work/project --name review --json -- -m gpt-5.6-sol
+wt --remote server.example.com egg codex --cwd /home/me/work/project --name review --json -- -m gpt-5.6-sol
 
 # Inspect and control remote sessions without a TTY.
-wt --remote work1 --json
-wt --remote work1 session ps --json
-wt --remote work1 session read review --json
-wt --remote work1 session send review --stdin < input.txt
-wt --remote work1 session stop review --json
-wt --remote work1 attach review
+wt --remote server.example.com --json
+wt --remote server.example.com session ps --json
+wt --remote server.example.com session read review --json
+wt --remote server.example.com session send review --stdin < input.txt
+wt --remote server.example.com session stop review --json
+wt --remote server.example.com attach review
 ```
 
-`work1` is a normal OpenSSH destination or alias. The remote login user owns the
+`server.example.com` is a normal OpenSSH destination or alias. The remote login user owns the
 workspace, `WINGTHING_DIR`, egg policy, provider installation, and provider
 credentials. Wingthing does not copy any of them from the client. The same
 remote `egg.yaml` discovery and sandbox enforcement used by a local invocation

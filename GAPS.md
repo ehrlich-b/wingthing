@@ -6,8 +6,7 @@ workflow; P2 = broken contract or missing acceptance; P3 = polish/operability.
 “Fixture verified” means an isolated built-binary check, not real-provider,
 production, mobile, sandbox-confinement or weekend-long acceptance.
 
-The historical reports below were read in full from
-`~/repos/claude/state/wingthing-dogfood-bugs.md` (#1–#21). Some defects were fixed
+The historical dogfood reports below cover defects #1–#21. Some defects were fixed
 in superseded branches; that does not imply the fix exists in this stack or the
 installed binary. Every row preserves a concrete remaining check.
 Earlier dogfood observations are retained below with their original scope.

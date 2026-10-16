@@ -1,7 +1,7 @@
 # Bug Report: Egg Network Allowlist Cannot Be Narrowed Below the Agent Profile
 
 Found while dogfooding `wt egg opencode` as the sandbox for an untrusted
-DeepSeek coding stream (`~/repos/claude`, the arli hopper). Filed per the
+coding stream. Filed per the
 Dogfooding section of `CLAUDE.md`.
 
 **Version:** `wt version v0.143.0-24-gd121d71-dirty`, macOS (Seatbelt path).

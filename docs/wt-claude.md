@@ -81,7 +81,7 @@ the Linux host before promotion. A restricted outer sandbox's existing launch
 gates still apply. An SSH worker wing uses its supported sandbox. Install a compatible Wingthing build
 and authenticate the provider CLI on each execution machine beforehand. Each
 machine needs its own existing workspace and personal credentials. Authorize
-the `forge` SSH alias before proceeding.
+the `my-server` SSH alias before proceeding.
 
 On Linux, protected state, writable workspaces/configuration, temporary grants
 and HOME backing must use plain local ext4, xfs, btrfs without shared subvolume
@@ -101,16 +101,16 @@ export WINGTHING_DIR="$HOME/.local/share/wt-weekend"
 wt wing start --local-only --paths "$HOME/repos"
 ```
 
-Provision Forge's wing once:
+Provision my-server's wing once:
 
 ```sh
-ssh forge 'WINGTHING_DIR="$HOME/.local/share/wt-weekend" wt wing start --local-only --paths "$HOME/repos"'
+ssh my-server 'WINGTHING_DIR="$HOME/.local/share/wt-weekend" wt wing start --local-only --paths "$HOME/repos"'
 ```
 
 Remember that already running wing from the Mac:
 
 ```sh
-wt mcp connect add forge --ssh forge --wingthing-dir '~/.local/share/wt-weekend'
+wt mcp connect add my-server --ssh my-server --wingthing-dir '~/.local/share/wt-weekend'
 wt mcp connect ls
 ```
 
@@ -139,12 +139,12 @@ Paste this into Claude:
 
 ```text
 Use Wingthing MCP. Call wing_list and wingthing_capabilities; resolve local and
-forge to wing IDs. On EACH wing, call agent_run with agent=claude and omit
-timeout_seconds for no deadline. Use label=weekend-mac locally and label=weekend-forge
-on forge, with this prompt:
+my-server to wing IDs. On EACH wing, call agent_run with agent=claude and omit
+timeout_seconds for no deadline. Use label=weekend-mac locally and label=weekend-server
+on my-server, with this prompt:
 "In your existing workspace, read the project instructions and inventory the
 repositories read-only. Give me a short architecture map; do not modify files."
-Use an advertised allowed workspace on each wing, never copy my Mac cwd to forge.
+Use an advertised allowed workspace on each wing, never copy my Mac cwd to my-server.
 Show both durable run_id/session_id/wing_id receipts as soon as admitted.
 Wait for both results; do not stop either worker if this terminal disconnects.
 ```
@@ -170,7 +170,7 @@ wt attach weekend
 Tell the parent:
 
 ```text
-Reconnect to forge and read both recorded runs with agent_status and
+Reconnect to my-server and read both recorded runs with agent_status and
 agent_result; do not relaunch them.
 ```
 
@@ -179,7 +179,7 @@ can recover the same child IDs, transcripts, and semantic results. To observe a
 worker, substitute the actual receipt's session ID:
 
 ```sh
-wt attach --read-only forge:SESSION_ID
+wt attach --read-only my-server:SESSION_ID
 ```
 
 Read-only attachment does not claim input, resize, or change turn ownership.
@@ -193,7 +193,7 @@ MCP client using `wt mcp connect` can call `agent_status`, `agent_wait`, and
 `agent_result` with the saved owning wing and run IDs. The parent's exit does
 not cancel accepted workers.
 
-Forge continues while Forge stays awake. A sleeping Mac pauses local execution;
+The remote wing continues while my-server stays awake. A sleeping Mac pauses local execution;
 an absolute worker deadline can expire during sleep. Keep the Mac awake in an
 already configured docked or clamshell setup if both workers must compute
 continuously.
@@ -210,7 +210,7 @@ retain their launch ceiling. Legacy bound mailboxes keep their original tools.
 
 With a `clients.yaml` entry, explicitly grant remote stable wing IDs and
 absolute paths on those remote hosts using `wings`. For example, replace the
-ID and workspace below with values advertised by Forge:
+ID and workspace below with values advertised by my-server:
 
 ```yaml
 clients:
@@ -220,7 +220,7 @@ clients:
       max_sessions: 8
       max_spawns_per_hour: 60
     wings:
-      FORGE_STABLE_WING_ID:
+      SERVER_STABLE_WING_ID:
         - /home/me/repos
 ```
 
@@ -247,5 +247,5 @@ A host that forbids nested `sandbox-exec` skips that native gate explicitly.
 `TestBuiltClientScopedParentFakeProvidersSurviveDisconnect` in
 `internal/localmcp` verifies the built client, mailbox, child runtime, and
 recovery protocol through a declared fixture boundary; it does not prove OS
-sandbox enforcement. The real Mac-plus-Forge workflow above remains the
+sandbox enforcement. The Mac and Linux workflow above remains the
 provider compatibility gate.

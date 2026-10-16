@@ -62,9 +62,9 @@ verify descendant inventory; a host denial of `ps` is explicitly recorded in
 the cleanup receipt. Failure retains state and exits nonzero.
 Do not run two raw `canary.sh` invocations when a locked wrapper is intended.
 
-## Forge commands for the coordinator
+## my-server commands for the coordinator
 
-On Forge itself, in its dedicated checkout (no deployment or installed wt change):
+On my-server itself, in its dedicated checkout (no deployment or installed wt change):
 
 ```sh
 nice -n 15 make web
@@ -104,7 +104,7 @@ scheduler. A sleeping Mac cannot run the canary; inspect timestamp gaps.
 
 ```sh
 ./scripts/dogfood/run.sh --real-codex --model gpt-5.6-luna
-./scripts/dogfood/run.sh --ssh-target forge --ssh-wingthing-dir /ABSOLUTE/PERSONAL/STATE --ssh-wt-binary /ABSOLUTE/CHECKOUT/wt
+./scripts/dogfood/run.sh --ssh-target my-server --ssh-wingthing-dir /ABSOLUTE/PERSONAL/STATE --ssh-wt-binary /ABSOLUTE/CHECKOUT/wt
 ```
 
 The real Codex flag makes one bounded no-tools inference using a private copy of

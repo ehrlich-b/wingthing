@@ -43,10 +43,10 @@ uses ASCII borders. Bare `wt` without a terminal prints CLI help.
 Save an existing SSH destination, including its custom executable and state:
 
 ```sh
-wt remote add forge my-ssh-alias --wt-binary '/opt/wingthing/wt' --wingthing-dir /home/me/.wingthing
+wt remote add my-server my-ssh-alias --wt-binary '/opt/wingthing/wt' --wingthing-dir /home/me/.wingthing
 wt remote ls
-wt attach -- forge:FULL_SESSION_ID
-wt remote rm forge
+wt attach -- my-server:FULL_SESSION_ID
+wt remote rm my-server
 ```
 
 To change a profile, remove it and add the replacement, or atomically replace the

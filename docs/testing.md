@@ -529,7 +529,7 @@ malformed-registry recovery, an empty new machine and healthy local attach.
 Dashboard unit races deliver a retired result after the replacement starts and
 also check remove/re-add of an identical profile. Every fixture creates its own
 symlinked TMPDIR parent and checks lexical/canonical socket byte limits (103).
-The daily-loop PTY journey composes cold Claude, detach, bare wt, exact forge
+The daily-loop PTY journey composes cold Claude, detach, bare wt, exact my-server
 attach, native attention, client loss and discovery of the same durable run.
 The parent-lifecycle and roundtrip targets retain native policy and explicit
 snapshot recovery assertions. Logs/screens/receipts bind source and executable
