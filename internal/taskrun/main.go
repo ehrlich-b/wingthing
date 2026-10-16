@@ -8,9 +8,11 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/agent"
@@ -95,6 +97,12 @@ type TaskRunOptions struct {
 }
 
 func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Store, t *store.Task, destination io.Writer, options TaskRunOptions) (runErr error) {
+	// Writes to stdout or stderr normally terminate Go programs on EPIPE.
+	// Let them return errors while a task owns providers so cleanup and the
+	// durable failure recorder can run. Notify/Stop also supports concurrent runs.
+	brokenPipe := make(chan os.Signal, 1)
+	signal.Notify(brokenPipe, syscall.SIGPIPE)
+	defer signal.Stop(brokenPipe)
 	if err := s.UpdateTaskStatus(t.ID, "running"); err != nil {
 		return fmt.Errorf("mark task running: %w", err)
 	}
@@ -389,13 +397,48 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 			return err
 		}
 	}
+	// Retain the command's process-group cancellation hook even after Wait
+	// has stopped exec.CommandContext's watcher. Descendants may outlive the
+	// leader after closing their copies of its output pipes.
+	var providerCmd *exec.Cmd
+	commandFactory := runOpts.CmdFactory
+	runOpts.CmdFactory = func(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
+		var cmd *exec.Cmd
+		var err error
+		if commandFactory != nil {
+			cmd, err = commandFactory(ctx, name, args)
+		} else {
+			// A factory normally implies an outer sandbox to these adapters. Remove
+			// only the extra approval flag it introduces for direct execution, at
+			// its known argument position, preserving even flag-shaped prompt text.
+			switch agentName {
+			case "codex":
+				args = append(args[:2], args[3:]...)
+			case "claude":
+				args = append(args[:5], args[6:]...)
+			case "gemini":
+				args = args[:len(args)-1]
+			case "opencode":
+				args = append(args[:1], args[2:]...)
+			}
+			cmd = exec.CommandContext(ctx, name, args...)
+		}
+		providerCmd = cmd
+		return cmd, err
+	}
 	stream, err := a.Run(runCtx, pr.Prompt, runOpts)
 	if err != nil {
 		return fmt.Errorf("run agent: %w", err)
 	}
 	defer func() {
-		// Cancel before draining: the provider may still be running or blocked
-		// on a full output buffer. Stream closure follows its process wait.
+		// Stop the owned process group before draining, even if its leader was
+		// already reaped and the context watcher has exited. Stream closure
+		// joins the provider and unblocks any pending output sends.
+		if providerCmd != nil && providerCmd.Process != nil && providerCmd.Cancel != nil {
+			if err := providerCmd.Cancel(); err != nil && !errors.Is(err, syscall.ESRCH) && !errors.Is(err, os.ErrProcessDone) {
+				runErr = errors.Join(runErr, fmt.Errorf("stop agent process tree: %w", err))
+			}
+		}
 		cancel()
 		for {
 			if _, ok := stream.Next(); !ok {

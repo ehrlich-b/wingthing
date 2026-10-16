@@ -3,11 +3,13 @@
 package taskrun
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,7 +17,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/orchestrator"
 	"github.com/ehrlich-b/wingthing/internal/store"
 )
 
@@ -204,6 +208,294 @@ func TestRunTaskCompletedProviderReceipts(t *testing.T) {
 			}
 			if mode == "provider-failure" && (!strings.Contains(*saved.Output, "provider failed") || !strings.Contains(*saved.Error, "provider failed")) {
 				t.Fatalf("lost provider diagnostics: %#v", saved)
+			}
+		})
+	}
+}
+
+// Each fixture owns a process group whose descendants deliberately close the
+// provider pipes, allowing Wait to finish while they are still running.
+func outputFailureFixture(t *testing.T, provider, mode string) (*config.Config, *store.Store, string, string) {
+	t.Helper()
+	if config.Channel() == "preview" {
+		t.Skip("direct execution is unavailable in preview")
+	}
+	cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: provider, WingID: "test-wing"}
+	if err := os.MkdirAll(cfg.SkillsDir(), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfg.SkillsDir(), "output-failure.md"), []byte("---\nname: output-failure\ntimeout: 0s\nmemory: []\n---\nPrint output.\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(cfg.DBPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	workDir, binDir := t.TempDir(), t.TempDir()
+	event := func(text string) string {
+		switch provider {
+		case "codex":
+			return fmt.Sprintf(`{"type":"item.completed","item":{"type":"agent_message","text":%q}}`, text)
+		case "claude":
+			return fmt.Sprintf(`{"type":"content_block_delta","delta":{"type":"text_delta","text":%q}}`, text)
+		default:
+			return text
+		}
+	}
+	script := `#!/bin/sh
+printf '%s\n' "$$" > provider.pid
+/bin/sh -c 'sleep 600 & printf "%s\n" "$!" > grandchild.pid; printf "%s\n" "$$" > child.pid; wait' </dev/null >/dev/null 2>&1 &
+while [ ! -s child.pid ] || [ ! -s grandchild.pid ]; do sleep 0.01; done
+`
+	script += "printf '%s\\n' '" + event("partial output") + "'\n"
+	if mode == "pipe" {
+		script += "while [ ! -f release ]; do sleep 0.01; done\n"
+		script += "printf '%s\\n' '" + event("rejected output") + "'\nwait\n"
+	}
+	if err := os.WriteFile(filepath.Join(binDir, provider), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+	t.Cleanup(func() {
+		if data, err := os.ReadFile(filepath.Join(workDir, "provider.pid")); err == nil {
+			pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+			if pid > 0 {
+				_ = syscall.Kill(-pid, syscall.SIGKILL)
+			}
+		}
+	})
+	return cfg, db, workDir, binDir
+}
+
+func outputFailurePID(t *testing.T, workDir, name string) int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(workDir, name+".pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		t.Fatalf("invalid %s PID: %q", name, data)
+	}
+	return pid
+}
+
+func assertOutputFailureTreeStopped(t *testing.T, workDir string) {
+	t.Helper()
+	for _, name := range []string{"provider", "child", "grandchild"} {
+		pid := outputFailurePID(t, workDir, name)
+		if name == "provider" && !errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+			t.Errorf("provider %d was not reaped", pid)
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+			if errors.Is(err, os.ErrNotExist) {
+				break
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, state, _ := strings.Cut(string(stat), ") ")
+			if strings.HasPrefix(state, "Z ") || strings.HasPrefix(state, "X ") {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Errorf("%s %d survived output failure", name, pid)
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func assertOutputFailureReceipt(t *testing.T, db *store.Store, id, message string) {
+	t.Helper()
+	saved, err := db.GetTask(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Status != "failed" || saved.FinishedAt == nil || saved.Error == nil || !strings.Contains(*saved.Error, message) {
+		t.Errorf("missing durable failure: %#v", saved)
+	}
+	if saved.Output == nil || !strings.Contains(*saved.Output, "partial output") {
+		t.Errorf("missing partial output: %#v", saved.Output)
+	}
+}
+
+type reapedProviderFailureWriter struct {
+	t       *testing.T
+	workDir string
+	finish  bool
+}
+
+func (w reapedProviderFailureWriter) Write(p []byte) (int, error) {
+	if w.finish {
+		if string(p) != "\n" {
+			return len(p), nil
+		}
+	} else if !strings.Contains(string(p), "partial output") {
+		return len(p), nil
+	}
+	pid := outputFailurePID(w.t, w.workDir, "provider")
+	deadline := time.Now().Add(5 * time.Second)
+	for !errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+		if time.Now().After(deadline) {
+			w.t.Errorf("provider was not reaped before write failed")
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return 0, errOutputDestination
+}
+
+func TestRunTaskOutputFailureAfterProviderExit(t *testing.T) {
+	for _, provider := range []string{"codex", "claude", "ollama"} {
+		for _, mode := range []string{"chunk", "finish"} {
+			t.Run(provider+"/"+mode, func(t *testing.T) {
+				cfg, db, workDir, _ := outputFailureFixture(t, provider, "exit")
+				task := &store.Task{ID: "exited-provider", Type: "skill", What: "output-failure", RunAt: time.Now(), Agent: provider, Isolation: "privileged", CWD: workDir}
+				if err := db.CreateTask(task); err != nil {
+					t.Fatal(err)
+				}
+				err := RunTaskTo(context.Background(), cfg, db, task, reapedProviderFailureWriter{t: t, workDir: workDir, finish: mode == "finish"})
+				if !errors.Is(err, errOutputDestination) {
+					t.Errorf("lost writer error: %v", err)
+				}
+				assertOutputFailureTreeStopped(t, workDir)
+				assertOutputFailureReceipt(t, db, task.ID, errOutputDestination.Error())
+			})
+		}
+	}
+}
+
+func TestRunTaskCLIBrokenPipe(t *testing.T) {
+	if config.Channel() == "preview" {
+		t.Skip("direct execution is unavailable in preview")
+	}
+	binary := filepath.Join(t.TempDir(), "wt")
+	build := exec.Command("go", "build", "-p", "2", "-o", binary, "./cmd/wt")
+	build.Dir = filepath.Join("..", "..")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build CLI: %v\n%s", err, out)
+	}
+	for _, provider := range []string{"codex", "claude", "ollama"} {
+		t.Run(provider, func(t *testing.T) {
+			cfg, db, workDir, _ := outputFailureFixture(t, provider, "pipe")
+			t.Setenv("WINGTHING_DIR", cfg.Dir)
+			t.Setenv("WINGTHING_PREVIEW_DIR", cfg.Dir)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, binary, "run", "--skill", "output-failure", "--agent", provider, "--unsandboxed")
+			cmd.Dir = workDir
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			reader, writer, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reader.Close()
+			defer writer.Close()
+			cmd.Stdout = writer
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			_ = writer.Close()
+			// Deadlines ensure a broken fixture cannot leave a blocked test reader.
+			if err := reader.SetReadDeadline(time.Now().Add(8 * time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			var receivedOutput strings.Builder
+			buf := make([]byte, 4096)
+			received := false
+			for {
+				n, readErr := reader.Read(buf)
+				receivedOutput.Write(buf[:n])
+				if strings.Contains(receivedOutput.String(), "partial output") {
+					received = true
+					break
+				}
+				if readErr != nil {
+					break
+				}
+			}
+			_ = reader.Close()
+			if err := os.WriteFile(filepath.Join(workDir, "release"), nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			err = cmd.Wait()
+			if !received {
+				t.Fatalf("did not receive provider output: %s", stderr.String())
+			}
+			if ctx.Err() != nil {
+				t.Fatalf("CLI failed to stop without provider timeout: %s", stderr.String())
+			}
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+				t.Errorf("expected ordinary CLI failure, got %v", err)
+			}
+			if !strings.Contains(stderr.String(), "broken pipe") {
+				t.Errorf("missing output failure: %s", stderr.String())
+			}
+			assertOutputFailureTreeStopped(t, workDir)
+			tasks, err := db.ListRecent(1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(tasks) != 1 {
+				t.Fatalf("got %d tasks", len(tasks))
+			}
+			assertOutputFailureReceipt(t, db, tasks[0].ID, "broken pipe")
+		})
+	}
+}
+
+// Capturing a command must not change the provider's native approval policy,
+// model, prompt or other arguments on the unsandboxed path.
+func TestRunTaskDirectProviderArguments(t *testing.T) {
+	for _, provider := range []string{"codex", "claude", "ollama", "gemini", "opencode", "hermes", "cursor"} {
+		t.Run(provider, func(t *testing.T) {
+			cfg, db, workDir, binDir := outputFailureFixture(t, provider, "exit")
+			definition, _ := agent.LookupDefinition(provider)
+			script := "#!/bin/sh\nprintf '%s\\0' \"$@\" > argv\n"
+			if err := os.WriteFile(filepath.Join(binDir, definition.Command), []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			task := &store.Task{ID: "direct-arguments", Type: "prompt", What: "--dangerously-bypass-approvals-and-sandbox --dangerously-skip-permissions --yolo --auto", RunAt: time.Now(), Agent: provider, Isolation: "privileged", CWD: workDir, Model: "test-model"}
+			if provider == "cursor" {
+				task.Model = ""
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			stream, err := newAgent(provider).Run(ctx, task.What+"\n\n"+orchestrator.FormatDocs, agent.RunOpts{WorkDir: workDir, Model: task.Model})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for {
+				if _, ok := stream.Next(); !ok {
+					break
+				}
+			}
+			if err := stream.Err(); err != nil {
+				t.Fatal(err)
+			}
+			native, err := os.ReadFile(filepath.Join(workDir, "argv"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.CreateTask(task); err != nil {
+				t.Fatal(err)
+			}
+			if err := RunTaskTo(ctx, cfg, db, task, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			actual, err := os.ReadFile(filepath.Join(workDir, "argv"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(native, actual) {
+				t.Fatalf("direct provider arguments changed:\nnative %q\ntask   %q", native, actual)
 			}
 		})
 	}
