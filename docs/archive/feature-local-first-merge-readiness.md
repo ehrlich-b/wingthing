@@ -196,7 +196,7 @@ Shared-roost mode currently admits every account that completes a configured
 OAuth login, matching the existing web-roost policy. Native controls stay
 owner-scoped and workspace-bounded; executable host tools stay role-scoped.
 The private-roost milestone needs an allowlisted or invite-based enrollment
-policy before `ehrlich.dev` becomes a proving ground.
+policy before the private roost becomes a proving ground.
 
 ## Promotion sequence
 
@@ -210,7 +210,7 @@ policy before `ehrlich.dev` becomes a proving ground.
    rollback; monitor auth failures, reconnects, egg ownership, and task errors.
 7. Promote the public hosted service separately from private shared roosts.
 
-After the shared route is proven, use a private roost on `ehrlich.dev` and its
-Hopper as the final end-to-end workload canary.
+After the shared route is proven, use a private roost on `roost.example.com` and a
+representative workload as the final end-to-end canary.
 
 No merge, tag, release, or deployment is authorized by this document.
