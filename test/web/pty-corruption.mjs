@@ -23,7 +23,7 @@ for (const match of (source + nav + await readFile(path.join(root, 'web/src/webr
     match[1].split(',').forEach(value => exports.add(value.trim()));
     dependencies.set(name, exports);
 }
-const real = new Set(['crypto.js', 'helpers.js', 'security.js', 'session-reference.js', 'terminal-attachment.js', 'output-notice.js', 'nav.js']);
+const real = new Set(['crypto.js', 'helpers.js', 'security.js', 'session-reference.js', 'terminal-attachment.js', 'output-notice.js', 'output-notice-content.js', 'nav.js']);
 const server = createServer(async (req, res) => {
     try {
         res.setHeader('Content-Type', 'text/javascript');
