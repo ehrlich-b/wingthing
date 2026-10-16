@@ -11,15 +11,19 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const source = await readFile(path.join(root, 'web/src/pty.js'), 'utf8');
 const terminal = await readFile(path.join(root, 'web/src/terminal.js'), 'utf8');
+const nav = await readFile(path.join(root, 'web/src/nav.js'), 'utf8');
+const main = await readFile(path.join(root, 'web/src/main.js'), 'utf8');
+const html = await readFile(path.join(root, 'web/index.html'), 'utf8');
+const inputControls = html.slice(html.indexOf('<div id="passkey-overlay"'), html.indexOf('</section>', html.indexOf('<div id="passkey-overlay"')));
 const input = terminal.match(/^export function sendPTYInput\(text\) \{[\s\S]*?^\}/m)[0];
 const dependencies = new Map();
-for (const match of (source + await readFile(path.join(root, 'web/src/webrtc.js'), 'utf8')).matchAll(/import \{([^}]+)\} from '([^']+)';/g)) {
+for (const match of (source + nav + await readFile(path.join(root, 'web/src/webrtc.js'), 'utf8')).matchAll(/import \{([^}]+)\} from '([^']+)';/g)) {
     const name = new URL(match[2], 'http://local/src/pty.js').pathname;
     const exports = dependencies.get(name) || new Set();
     match[1].split(',').forEach(value => exports.add(value.trim()));
     dependencies.set(name, exports);
 }
-const real = new Set(['crypto.js', 'helpers.js', 'security.js', 'session-reference.js', 'terminal-attachment.js', 'output-notice.js']);
+const real = new Set(['crypto.js', 'helpers.js', 'security.js', 'session-reference.js', 'terminal-attachment.js', 'output-notice.js', 'nav.js']);
 const server = createServer(async (req, res) => {
     try {
         res.setHeader('Content-Type', 'text/javascript');
@@ -31,13 +35,14 @@ const server = createServer(async (req, res) => {
                 <script type="importmap">{"imports":{"@noble/":"/node_modules/@noble/"}}</script>
                 <script src="/node_modules/@xterm/xterm/lib/xterm.js"></script>
                 <main id="app" style="padding:16px;height:100vh;display:flex;flex-direction:column;gap:12px">
-                <header>Terminal <span id="pty-status"></span></header>
+                <header><button id="home-btn">Home</button> Terminal <span id="pty-status"></span></header>
+                <section id="home-section" style="display:none">Home</section>
                 <div id="terminal-control-notice" style="display:none"></div>
                 <section id="terminal-section" style="flex:1;min-height:300px">
                 <div id="terminal-container"></div>
                 <div id="replay-overlay" style="display:none"><div id="replay-bar"><div id="replay-fill"></div></div>
                 <div id="replay-label">restoring session...</div></div>
-                <div id="passkey-overlay" style="display:none"></div></section></main>`);
+                ${inputControls}</section></main>`);
         } else if (req.url === '/src/pty.js') {
             res.end(source + '\nexport { setupPTYHandlers, ptyReconnectAttach };');
         } else if (req.url === '/src/webrtc.js') {
@@ -48,6 +53,15 @@ const server = createServer(async (req, res) => {
                 import { terminalReferenceMatches } from './session-reference.js';
                 export const saveTermBuffer = () => {}, clearTermBuffer = () => {};
                 ${input}`);
+        } else if (req.url === '/src/fixture-controls.js') {
+            // Use the production navigation, authentication and mobile input bindings.
+            res.end(`import { S, DOM } from './state.js';
+                import { showHome } from './nav.js';
+                import { handlePTYPasskey } from './pty.js';
+                import { sendPTYInput } from './terminal.js';
+                ${main.match(/DOM.homeBtn.addEventListener\('click', showHome\);/)[0]}
+                ${main.slice(main.indexOf('// Passkey button'), main.indexOf('// Init chat view'))}
+                ${main.slice(main.indexOf('// Type overlay (mobile text input)'), main.indexOf('// Keyboard shortcuts'))}`);
         } else if (req.url === '/fixture.js') {
             res.end('export const { S, clearNotification, sendViaDC } = window.fixture;');
         } else if (req.url === '/src/crypto.js') {
@@ -81,7 +95,7 @@ before(async () => {
     await mkdir(out, { recursive: true });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
-    base = `http://127.0.0.1:${server.address().port}`;
+    base = `http://localhost:${server.address().port}`;
     const { chromium } = process.env.PLAYWRIGHT_MODULE ? await import(process.env.PLAYWRIGHT_MODULE)
         : createRequire(path.join(root, 'web/package.json'))('playwright');
     browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH || undefined,
@@ -107,7 +121,8 @@ async function fixture(t, { width = 1440, reattach = true } = {}) {
         term.open(document.getElementById('terminal-container'));
         const S = { term, fitAddon: { fit: noop }, ptySessionId: 'session-a', ptyWingId: 'wing-a',
             wingsData: [{ wing_id: 'wing-a', spectate: true }], sessionsData: [], tunnelAuthTokens: {}, currentUser: null };
-        const DOM = new Proxy({ ptyStatus: document.getElementById('pty-status'), terminalSection: document.getElementById('terminal-section') }, {
+        const DOM = new Proxy({ ptyStatus: document.getElementById('pty-status'), terminalSection: document.getElementById('terminal-section'),
+            homeBtn: document.getElementById('home-btn'), homeSection: document.getElementById('home-section') }, {
             get: (target, name) => target[name] ||= document.createElement('div'),
         });
         window.fixture = { S, DOM, clearNotification: noop, sendViaDC: () => false, sendTunnelRequest: async () => {},
@@ -118,6 +133,7 @@ async function fixture(t, { width = 1440, reattach = true } = {}) {
         window._deleteSession = noop;
         const cryptoModule = await import('/src/crypto.js');
         const { sendPTYInput } = await import('/src/terminal.js');
+        await import('/src/fixture-controls.js');
         term.onData(sendPTYInput);
         const { gcm } = await import('/node_modules/@noble/ciphers/aes.js');
         const { x25519 } = await import('/node_modules/@noble/curves/ed25519.js');
@@ -218,7 +234,7 @@ for (const width of [390, 1440]) {
         await page.evaluate(() => h.S.term.focus());
         await page.keyboard.type('typed while incomplete');
         await page.keyboard.press('Escape');
-        assert.equal(await notice.isVisible(), true, 'Escape cannot expose the terminal during recovery');
+        assert.equal(await notice.isVisible(), true, 'notice remains visible during recovery');
         assert.deepEqual(await page.evaluate(() => h.sent.filter(m => m.type === 'pty.input')), original);
         await page.screenshot({ path: path.join(out, `corrupt-replay-${width}.png`), fullPage: true });
         const before = await page.evaluate(() => h.sockets.length);
@@ -252,7 +268,115 @@ for (const width of [390, 1440]) {
         await page.keyboard.type('new input');
         await page.waitForFunction(count => h.sent.filter(m => m.type === 'pty.input').length > count, original.length);
     });
+
+    test(`Reload permits passkey authentication at ${width}px without early terminal input`, async t => {
+        const page = await fixture(t, { width });
+        const cdp = await page.context().newCDPSession(page);
+        await cdp.send('WebAuthn.enable');
+        await cdp.send('WebAuthn.addVirtualAuthenticator', { options: {
+            protocol: 'ctap2', transport: 'internal', hasResidentKey: true,
+            hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true,
+        } });
+        const credentialId = await page.evaluate(async () => {
+            const credential = await navigator.credentials.create({ publicKey: {
+                challenge: crypto.getRandomValues(new Uint8Array(32)),
+                rp: { name: 'Terminal recovery', id: location.hostname },
+                user: { id: new Uint8Array([1]), name: 'test', displayName: 'Test' },
+                pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+                authenticatorSelection: { userVerification: 'required' },
+            } });
+            return credential.id;
+        });
+        await page.route('**/api/app/passkey', route => route.fulfill({ json: [{ credential_id: credentialId }] }));
+        await brokenReplay(page);
+        await page.evaluate(() => { h.S.e2eKey = null; h.holdKey(); });
+        await page.getByRole('button', { name: 'Reload', exact: true }).click();
+        await page.waitForFunction(() => h.sent.some(m => m.type === 'pty.attach'));
+        await page.evaluate(() => h.send({ type: 'passkey.challenge', session_id: 'session-a',
+            viewer_id: 'viewer-a', challenge: 'cmVsb2FkLWNoYWxsZW5nZQ', rp_id: location.hostname }));
+        await page.evaluate(() => h.S.term.focus());
+        await page.keyboard.type('typed while passkey pending');
+        await page.keyboard.press('Enter');
+        await page.getByRole('button', { name: 'authenticate with passkey' }).click();
+        await page.waitForFunction(() => h.sent.some(m => m.type === 'passkey.response'));
+        const response = await page.evaluate(() => h.sent.find(m => m.type === 'passkey.response'));
+        assert.equal(response.credential_id, credentialId);
+        assert.equal(response.session_id, 'session-a');
+        assert.equal(response.viewer_id, 'viewer-a');
+        assert.equal(JSON.parse(Buffer.from(response.client_data_json, 'base64')).challenge, 'cmVsb2FkLWNoYWxsZW5nZQ');
+        await page.evaluate(async () => { h.start(); h.send(await h.frame('authenticated recovery\r\n', true)); await h.settle(); });
+        await page.evaluate(() => h.S.term.focus());
+        await page.keyboard.type('typed during key setup');
+        await page.keyboard.press('Enter');
+        assert.equal(await page.getByRole('dialog').isVisible(), true);
+        assert.deepEqual(await page.evaluate(() => h.sent.filter(m => m.type === 'pty.input')), []);
+        await page.evaluate(() => h.resumeKey());
+        await page.waitForFunction(() => h.text() === 'authenticated recovery');
+        assert.equal(await page.getByRole('dialog').count(), 0);
+        assert.deepEqual(await page.evaluate(() => h.sent.filter(m => m.type === 'pty.input')), []);
+    });
 }
+
+for (const phase of ['notice', 'authentication', 'failed reload']) {
+    test(`Home leaves a corrupted terminal during ${phase} and cancels recovery`, async t => {
+        const page = await fixture(t);
+        await brokenReplay(page);
+        await page.evaluate(() => { window.oldReload = document.querySelector('#pty-output-notice button'); });
+        if (phase !== 'notice') {
+            await page.getByRole('button', { name: 'Reload', exact: true }).click();
+            await page.waitForFunction(() => h.sent.some(m => m.type === 'pty.attach'));
+            await page.evaluate(phase => {
+                if (phase === 'authentication') h.send({ type: 'passkey.challenge', challenge: 'cmVsb2Fk', rp_id: location.hostname });
+                else h.send({ type: 'error', message: 'wing unavailable' });
+            }, phase);
+        }
+        await page.keyboard.press('Escape');
+        await page.getByRole('button', { name: 'Home', exact: true }).click();
+        assert.equal(await page.evaluate(() => h.S.activeView), 'home');
+        assert.equal(await page.evaluate(() => h.S.ptySessionId), null);
+        assert.equal(await page.getByRole('dialog').count(), 0);
+        assert.equal(await page.locator('#home-section').isVisible(), true);
+        assert.equal(await page.locator('#terminal-section').isVisible(), false);
+        const socketCount = await page.evaluate(() => { window.oldReload.click(); return h.sockets.length; });
+        // The failed reconnect already armed a one-second retry; Home must cancel it.
+        if (phase === 'failed reload') await page.waitForTimeout(1200);
+        assert.equal(await page.evaluate(() => h.sockets.length), socketCount);
+        assert.deepEqual(await page.evaluate(() => h.sent.filter(m => m.type === 'pty.input')), []);
+        assert.equal(await page.evaluate(() => document.querySelector('#terminal-container').inert), false);
+    });
+}
+
+test('mobile input controls stay inaccessible until recovery finishes', async t => {
+    const page = await fixture(t, { width: 390 });
+    await page.getByRole('button', { name: 'type', exact: true }).click();
+    await page.locator('#type-input').fill('unsent mobile text');
+    await brokenReplay(page);
+    await page.evaluate(() => { h.S.e2eKey = null; h.holdKey(); });
+    for (const phase of ['notice', 'reload', 'key setup']) {
+        if (phase === 'reload') {
+            await page.getByRole('button', { name: 'Reload', exact: true }).click();
+            await page.waitForFunction(() => h.sent.some(m => m.type === 'pty.attach'));
+        }
+        if (phase === 'key setup') {
+            await page.evaluate(async () => { h.start(); h.send(await h.frame('mobile recovery\r\n')); await h.settle(); });
+        }
+        // Real pointer events aimed at inert mobile controls must not send input.
+        for (const selector of ['#type-send', '[data-key="esc"]', '[data-seq="↑"]']) {
+            const box = await page.locator(selector).boundingBox();
+            await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        }
+        await page.locator('#type-input').evaluate(input => input.focus());
+        await page.keyboard.type('early input');
+        await page.keyboard.press('Enter');
+        await page.evaluate(() => h.settle());
+        assert.deepEqual(await page.evaluate(() => h.sent.filter(m => m.type === 'pty.input')), [], phase);
+    }
+    await page.evaluate(() => h.resumeKey());
+    await page.waitForFunction(() => h.text() === 'mobile recovery');
+    await page.locator('#type-send').click();
+    await page.waitForFunction(() => h.sent.some(m => m.type === 'pty.input'));
+    assert.equal(await page.evaluate(async () => new TextDecoder().decode(await h.nativeDecrypt(h.sent.find(m => m.type === 'pty.input').data))), 'unsent mobile text\r');
+});
 
 for (const reattach of [false, true]) {
     for (const corruption of ['checksum', 'truncated', 'authentication', 'base64']) {

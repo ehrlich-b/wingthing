@@ -2946,8 +2946,12 @@ button:disabled { cursor: not-allowed; }
 .search-source-error button, [data-review-request] { min-height:44px; margin-top:6px; }
 
 #pty-output-notice {
-    margin: auto;
-    max-width: min(420px, calc(100vw - 48px));
+    position: static;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    margin: 12px auto;
+    width: calc(100% - 24px);
+    max-width: 420px;
     padding: 16px;
     border: 1px solid var(--yellow);
     border-radius: 6px;
@@ -2955,4 +2959,3 @@ button:disabled { cursor: not-allowed; }
     background: var(--bg);
 }
 #pty-output-notice p { margin: 0 0 12px; }
-#pty-output-notice::backdrop { background: rgba(0, 0, 0, 0.35); }

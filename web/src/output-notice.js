@@ -5,7 +5,10 @@ export function clearOutputIncomplete(recoveredSocket) {
     var notice = document.getElementById('pty-output-notice');
     // A successful replay may clear an earlier connection's notice, but never
     // one raised by a corrupt chunk in that same replay.
-    if (notice && (!recoveredSocket || notice.outputSocket !== recoveredSocket)) notice.remove();
+    if (notice && (!recoveredSocket || notice.outputSocket !== recoveredSocket)) {
+        notice.outputControls.forEach(function (control) { control.inert = false; });
+        notice.remove();
+    }
 }
 
 export function showOutputIncomplete(socket, sessionId, wingId) {
@@ -30,10 +33,12 @@ export function showOutputIncomplete(socket, sessionId, wingId) {
         retryReconnect();
     });
     notice.appendChild(reload);
-    // Keep keyboard focus out of xterm while the notice is open, including
-    // reconnect/key setup, without changing the terminal's input lifecycle.
-    notice.addEventListener('cancel', function (event) { event.preventDefault(); });
-    document.body.appendChild(notice);
-    notice.showModal();
+    // Keep terminal input inaccessible through reconnect/key setup while leaving
+    // authentication and navigation available. Preserve any existing inert UI.
+    notice.outputControls = Array.from(document.querySelectorAll('#terminal-container, #modifier-keys, #type-overlay'))
+        .filter(function (control) { return !control.inert; });
+    notice.outputControls.forEach(function (control) { control.inert = true; });
+    document.getElementById('terminal-section').before(notice);
+    notice.show();
     notice.focus();
 }
