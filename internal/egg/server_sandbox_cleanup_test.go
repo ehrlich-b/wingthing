@@ -26,11 +26,15 @@ func TestRunSessionDestroysSandbox(t *testing.T) {
 	}
 	for _, scenario := range []string{"exit", "initial turn", "endpoint", "pty", "cancel"} {
 		t.Run(scenario, func(t *testing.T) {
-			dir, err := os.MkdirTemp(root, "s")
+			temp, err := os.MkdirTemp(root, "s")
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = os.RemoveAll(dir) })
+			t.Cleanup(func() { _ = os.RemoveAll(temp) })
+			dir := filepath.Join(temp, "state", "eggs", "s")
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
 			home, tmp := t.TempDir(), t.TempDir()
 			t.Setenv("HOME", home)
 			t.Setenv("TMPDIR", tmp)
