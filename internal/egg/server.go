@@ -857,6 +857,11 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			close(processStarted)
 			s.runTurns.stopActive()
 			_ = sess.vterm.Close()
+			if sb != nil {
+				if err := sb.Destroy(); err != nil {
+					log.Printf("egg: destroy sandbox after startup failure: %v", err)
+				}
+			}
 		}
 	}()
 	if rc.InitialRun != nil {
@@ -1089,7 +1094,11 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		s.shutdown()
 		return ctx.Err()
 	case err := <-errCh:
-		s.cleanup()
+		if err != nil {
+			s.shutdown()
+		} else {
+			s.cleanup()
+		}
 		return err
 	}
 }
