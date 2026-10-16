@@ -122,8 +122,8 @@ func testBuiltWTConnectRememberedSSHRun(t *testing.T, nativeTask bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.Host(t, "forge", meta)
-	add := exec.Command(binary, "mcp", "connect", "add", "forge", "--ssh", "forge", "--wingthing-dir", remoteState)
+	h.Host(t, "devbox", meta)
+	add := exec.Command(binary, "mcp", "connect", "add", "devbox", "--ssh", "devbox", "--wingthing-dir", remoteState)
 	add.Env = environment(localState)
 	add.Dir = work
 	if output, err := add.CombinedOutput(); err == nil || !strings.Contains(string(output), "remote wt is too old for this build") || !strings.Contains(string(output), "--wt-binary") {
@@ -135,20 +135,20 @@ func testBuiltWTConnectRememberedSSHRun(t *testing.T, nativeTask bool) {
 	}
 	// The storyboard prepares a CLI profile first, then verifies that same alias
 	// for parent orchestration. Existing pins are never replaced by this upgrade.
-	prepare := exec.Command(binary, "remote", "add", "forge", "forge", "--wingthing-dir", remoteState)
+	prepare := exec.Command(binary, "remote", "add", "devbox", "devbox", "--wingthing-dir", remoteState)
 	prepare.Env = environment(localState)
 	prepare.Dir = work
 	if output, err := prepare.CombinedOutput(); err != nil {
 		t.Fatalf("prepare CLI profile: %v\n%s", err, output)
 	}
-	add = exec.Command(binary, "mcp", "connect", "add", "forge", "--ssh", "forge", "--wingthing-dir", remoteState, "--wt-binary", remoteBinary)
+	add = exec.Command(binary, "mcp", "connect", "add", "devbox", "--ssh", "devbox", "--wingthing-dir", remoteState, "--wt-binary", remoteBinary)
 	add.Env = environment(localState)
 	add.Dir = work
 	if output, err := add.CombinedOutput(); err != nil {
 		t.Fatalf("built add: %v\n%s", err, output)
 	}
 	registry, err = config.LoadRemotes(localState)
-	if err != nil || registry["forge"].WingID != meta.WingID || registry["forge"].WingthingDir != meta.WingthingDir || registry["forge"].WTBinary != remoteBinary {
+	if err != nil || registry["devbox"].WingID != meta.WingID || registry["devbox"].WingthingDir != meta.WingthingDir || registry["devbox"].WTBinary != remoteBinary {
 		t.Fatalf("built registry: %v %v", registry, err)
 	}
 	process := exec.Command(binary, "mcp", "connect", "--unsandboxed")
@@ -265,7 +265,7 @@ func testBuiltWTConnectRememberedSSHRun(t *testing.T, nativeTask bool) {
 		storyboardParentReceipt(t, binary, localState, remoteState, work, environment(localState), id, "built-original")
 	}
 	forward := <-h.Started
-	h.Offline(t, "forge", true)
+	h.Offline(t, "devbox", true)
 	forward.Drop()
 	offline := rawCall("agent_status", map[string]any{"wing_id": meta.WingID, "run_id": id})
 	if !offline.Result.IsError {
@@ -281,7 +281,7 @@ func testBuiltWTConnectRememberedSSHRun(t *testing.T, nativeTask bool) {
 	if len(local["sessions"].([]any)) != 0 {
 		t.Fatalf("remote provider ran locally: %v", local)
 	}
-	h.Offline(t, "forge", false)
+	h.Offline(t, "devbox", false)
 	status := call("agent_status", map[string]any{"wing_id": meta.WingID, "run_id": id})
 	if status["session_id"] != session || status["wing_id"] != meta.WingID {
 		t.Fatalf("reconnect changed receipt: %v", status)

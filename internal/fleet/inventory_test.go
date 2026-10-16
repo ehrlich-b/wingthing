@@ -9,14 +9,14 @@ func TestMergeCollisionTwoRoutesAndFallback(t *testing.T) {
 	now := time.Now().UTC()
 	at := now.Format(time.RFC3339Nano)
 	mac := Session{Identity: Identity{"mac-wing", "same-short-id"}, MachineLabel: "my-mac", Name: "local run", Routes: []Route{{WingID: "mac-wing", Kind: "direct", Healthy: true, ObservedAt: at}}}
-	forge := Session{Identity: Identity{"forge-wing", "same-short-id"}, MachineLabel: "forge", Name: "wing", Pinned: true, Role: "coordinator", Routes: []Route{{WingID: "forge-wing", Kind: "direct", Healthy: true, ObservedAt: at}}}
-	via := forge
-	via.Routes = []Route{{WingID: "mac-wing", MachineLabel: "my-mac", Kind: "via", Remote: "forge", Healthy: true, ObservedAt: at}}
-	inv := Merge([]Inventory{{Complete: true, Sessions: []Session{mac, via}}, {Complete: true, Sessions: []Session{forge}}})
-	if len(inv.Sessions) != 2 || inv.Sessions[0].OriginWingID != "forge-wing" || len(inv.Sessions[0].Routes) != 2 {
+	devbox := Session{Identity: Identity{"devbox-wing", "same-short-id"}, MachineLabel: "devbox", Name: "wing", Pinned: true, Role: "coordinator", Routes: []Route{{WingID: "devbox-wing", Kind: "direct", Healthy: true, ObservedAt: at}}}
+	via := devbox
+	via.Routes = []Route{{WingID: "mac-wing", MachineLabel: "my-mac", Kind: "via", Remote: "devbox", Healthy: true, ObservedAt: at}}
+	inv := Merge([]Inventory{{Complete: true, Sessions: []Session{mac, via}}, {Complete: true, Sessions: []Session{devbox}}})
+	if len(inv.Sessions) != 2 || inv.Sessions[0].OriginWingID != "devbox-wing" || len(inv.Sessions[0].Routes) != 2 {
 		t.Fatalf("collision or pin lost: %+v", inv)
 	}
-	row, e := Resolve(inv.Sessions, forge.Identity)
+	row, e := Resolve(inv.Sessions, devbox.Identity)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -36,7 +36,7 @@ func TestMergeCollisionTwoRoutesAndFallback(t *testing.T) {
 func TestMergeUnprovenOriginsStaySeparateAndRoutesExpire(t *testing.T) {
 	now := time.Now().UTC()
 	at := now.Format(time.RFC3339Nano)
-	a := Session{Identity: Identity{"", "abc"}, Name: "same", MachineLabel: "forge", Routes: []Route{{WingID: "gateway", Kind: "via", Healthy: true, ObservedAt: at}}}
+	a := Session{Identity: Identity{"", "abc"}, Name: "same", MachineLabel: "devbox", Routes: []Route{{WingID: "gateway", Kind: "via", Healthy: true, ObservedAt: at}}}
 	b := a
 	b.OriginWingID = "origin"
 	b.Routes = []Route{{WingID: "origin", Kind: "direct", Healthy: true, ObservedAt: at}}

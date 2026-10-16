@@ -115,8 +115,8 @@ func TestScopedParentLocalAndSSHChildrenSurviveReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.Host(t, "forge", meta)
-	if err := config.SaveRemotes(local.server.Cfg.Dir, map[string]config.Remote{"forge": {SSHTarget: "forge", WingID: meta.WingID, WingthingDir: meta.WingthingDir, ControlSocket: meta.ControlSocket, ControlVersion: meta.Version}}); err != nil {
+	h.Host(t, "devbox", meta)
+	if err := config.SaveRemotes(local.server.Cfg.Dir, map[string]config.Remote{"devbox": {SSHTarget: "devbox", WingID: meta.WingID, WingthingDir: meta.WingthingDir, ControlSocket: meta.ControlSocket, ControlVersion: meta.Version}}); err != nil {
 		t.Fatal(err)
 	}
 	work := wingpolicy.CanonicalPolicyPath(h.Root)
@@ -236,8 +236,8 @@ func TestScopedParentRevocationAndReceivingWingPathCeiling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.Host(t, "forge", meta)
-	if err := config.SaveRemotes(local.server.Cfg.Dir, map[string]config.Remote{"forge": {SSHTarget: "forge", WingID: meta.WingID, WingthingDir: meta.WingthingDir, ControlSocket: meta.ControlSocket, ControlVersion: meta.Version}}); err != nil {
+	h.Host(t, "devbox", meta)
+	if err := config.SaveRemotes(local.server.Cfg.Dir, map[string]config.Remote{"devbox": {SSHTarget: "devbox", WingID: meta.WingID, WingthingDir: meta.WingthingDir, ControlSocket: meta.ControlSocket, ControlVersion: meta.Version}}); err != nil {
 		t.Fatal(err)
 	}
 	reg := scopedRegistration(t, local, map[string][]string{local.server.Cfg.WingID: {work}, meta.WingID: {narrow}}, "parent")
@@ -329,8 +329,8 @@ func TestScopedParentUnknownRemoteAdmissionPreservesCallerKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.Host(t, "forge", meta)
-	if err := config.SaveRemotes(local.server.Cfg.Dir, map[string]config.Remote{"forge": {SSHTarget: "forge", WingID: meta.WingID, WingthingDir: meta.WingthingDir, ControlSocket: meta.ControlSocket, ControlVersion: meta.Version}}); err != nil {
+	h.Host(t, "devbox", meta)
+	if err := config.SaveRemotes(local.server.Cfg.Dir, map[string]config.Remote{"devbox": {SSHTarget: "devbox", WingID: meta.WingID, WingthingDir: meta.WingthingDir, ControlSocket: meta.ControlSocket, ControlVersion: meta.Version}}); err != nil {
 		t.Fatal(err)
 	}
 	reg := scopedRegistration(t, local, map[string][]string{local.server.Cfg.WingID: {work}, meta.WingID: {work}}, "parent")
@@ -348,13 +348,13 @@ func TestScopedParentUnknownRemoteAdmissionPreservesCallerKey(t *testing.T) {
 	}()
 	forward := <-h.Started
 	namespaced := <-admitted
-	h.Offline(t, "forge", true)
+	h.Offline(t, "devbox", true)
 	forward.Drop()
 	data := <-result
 	if data["outcome"] != "unknown" || data["wing_id"] != meta.WingID || data["idempotency_key"] != "original-key" || strings.Contains(fmt.Sprint(data["error"]), namespaced) {
 		t.Fatalf("ambiguous admission lost the caller's retry key: %v", data)
 	}
-	h.Offline(t, "forge", false)
+	h.Offline(t, "devbox", false)
 	args["idempotency_key"] = data["idempotency_key"]
 	recovered := scopedCall(t, client, "agent_run", args)
 	if recovered["run_id"] != "original-run" || recovered["session_id"] != "original-session" || <-admitted != namespaced {

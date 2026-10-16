@@ -70,40 +70,40 @@ func TestAttentionNativeTransitionsAndExactAcknowledgement(t *testing.T) {
 }
 
 func TestAttentionMachineProfilesStaleReconnectAndAttachment(t *testing.T) {
-	s := &state{machines: map[string]machine{"local": {}, "forge": {}}, remotes: map[string]config.Remote{"forge": {SSHTarget: "first", WingthingDir: "/first"}}, bell: true}
-	for _, name := range []string{"local", "forge"} {
+	s := &state{machines: map[string]machine{"local": {}, "devbox": {}}, remotes: map[string]config.Remote{"devbox": {SSHTarget: "first", WingthingDir: "/first"}}, bell: true}
+	for _, name := range []string{"local", "devbox"} {
 		attentionApply(s, name, attentionSession("working", 1, 0))
 	}
-	for _, name := range []string{"local", "forge"} {
+	for _, name := range []string{"local", "devbox"} {
 		attentionApply(s, name, attentionSession("completed", 2, 2))
 	}
 	if s.takeBells() != "\a\a" {
 		t.Fatal("identical session IDs collided across machines")
 	}
-	local, forge := s.rows()[0], s.rows()[1]
+	local, devbox := s.rows()[0], s.rows()[1]
 	s.acknowledge(local)
 	if s.rows()[0].attention != "none" || s.rows()[1].attention != "unread" {
 		t.Fatal("local acknowledgement cleared remote result")
 	}
-	newInventory(nil).apply(s, inventoryResult{name: "forge", err: errors.New("fixture offline")})
+	newInventory(nil).apply(s, inventoryResult{name: "devbox", err: errors.New("fixture offline")})
 	if s.takeBells() != "" || s.rows()[1].attention != "unread" {
 		t.Fatal("stale machine altered attention")
 	}
-	attentionApply(s, "forge", attentionSession("completed", 2, 2))
+	attentionApply(s, "devbox", attentionSession("completed", 2, 2))
 	if s.takeBells() != "" {
 		t.Fatal("reconnect duplicated the alert")
 	}
-	s.remotes["forge"] = config.Remote{SSHTarget: "second", WingthingDir: "/second"}
-	attentionApply(s, "forge", attentionSession("completed", 2, 2))
-	attentionApply(s, "forge", attentionSession("completed", 3, 3))
-	s.acknowledge(forge)
+	s.remotes["devbox"] = config.Remote{SSHTarget: "second", WingthingDir: "/second"}
+	attentionApply(s, "devbox", attentionSession("completed", 2, 2))
+	attentionApply(s, "devbox", attentionSession("completed", 3, 3))
+	s.acknowledge(devbox)
 	if s.rows()[1].attention != "unread" {
 		t.Fatal("old profile acknowledged new machine")
 	}
 	s.takeBells()
 	key := s.rows()[1].identity
 	s.attached = &key
-	attentionApply(s, "forge", attentionSession("completed", 4, 4))
+	attentionApply(s, "devbox", attentionSession("completed", 4, 4))
 	if s.takeBells() != "" || s.rows()[1].attention != "none" {
 		t.Fatal("attached target rang or retained viewed completion")
 	}
@@ -112,7 +112,7 @@ func TestAttentionMachineProfilesStaleReconnectAndAttachment(t *testing.T) {
 		t.Fatal("attachment suppressed another machine")
 	}
 	s.attached = nil
-	attentionApply(s, "forge", attentionSession("needs_input", 5, 0))
+	attentionApply(s, "devbox", attentionSession("needs_input", 5, 0))
 	s.acknowledge(s.rows()[1])
 	if s.rows()[1].attention != "blocked" {
 		t.Fatal("attachment/acknowledgement hid input request")
@@ -154,15 +154,15 @@ func TestAttentionUnknownIdleAndBellToggle(t *testing.T) {
 
 func TestAttentionProfileGenerationDoesNotReuseSeenState(t *testing.T) {
 	first := config.Remote{SSHTarget: "first", WingthingDir: "/first"}
-	s := &state{machines: map[string]machine{"forge": {}}, remotes: map[string]config.Remote{"forge": first}}
-	attentionApply(s, "forge", attentionSession("working", 1, 0))
-	attentionApply(s, "forge", attentionSession("completed", 2, 2))
+	s := &state{machines: map[string]machine{"devbox": {}}, remotes: map[string]config.Remote{"devbox": first}}
+	attentionApply(s, "devbox", attentionSession("working", 1, 0))
+	attentionApply(s, "devbox", attentionSession("completed", 2, 2))
 	old := s.rows()[0]
-	s.remotes["forge"] = config.Remote{SSHTarget: "second", WingthingDir: "/second"}
-	attentionApply(s, "forge", attentionSession("working", 1, 0))
-	s.remotes["forge"] = first
-	attentionApply(s, "forge", attentionSession("working", 1, 0))
-	attentionApply(s, "forge", attentionSession("completed", 2, 2))
+	s.remotes["devbox"] = config.Remote{SSHTarget: "second", WingthingDir: "/second"}
+	attentionApply(s, "devbox", attentionSession("working", 1, 0))
+	s.remotes["devbox"] = first
+	attentionApply(s, "devbox", attentionSession("working", 1, 0))
+	attentionApply(s, "devbox", attentionSession("completed", 2, 2))
 	current := s.rows()[0]
 	if current.identity == old.identity || current.attention != "unread" {
 		t.Fatal("recreated profile inherited old seen state")
@@ -171,10 +171,10 @@ func TestAttentionProfileGenerationDoesNotReuseSeenState(t *testing.T) {
 	if s.rows()[0].attention != "unread" {
 		t.Fatal("previous generation acknowledged the replacement")
 	}
-	delete(s.machines, "forge")
+	delete(s.machines, "devbox")
 	s.reconcile()
-	s.machines["forge"] = machine{}
-	attentionApply(s, "forge", attentionSession("completed", 2, 2))
+	s.machines["devbox"] = machine{}
+	attentionApply(s, "devbox", attentionSession("completed", 2, 2))
 	if s.rows()[0].attention != "none" || s.rows()[0].identity == current.identity {
 		t.Fatal("removed/readded profile did not establish a fresh baseline")
 	}

@@ -24,11 +24,11 @@ func TestMCPConnectRegistryAddListRemove(t *testing.T) {
 	var out bytes.Buffer
 	streams := remotepkg.IO{SSHPath: h.SSHPath, Out: &out, ErrOut: &out}
 	run := func(args ...string) error { return executeCLI(context.Background(), args, streams) }
-	if err := run("mcp", "connect", "add", "forge", "--ssh", "host", "--wingthing-dir", "~/state", "--wt-binary", "/opt/wt builds/wt-dev"); err != nil {
+	if err := run("mcp", "connect", "add", "devbox", "--ssh", "host", "--wingthing-dir", "~/state", "--wt-binary", "/opt/wt builds/wt-dev"); err != nil {
 		t.Fatal(err)
 	}
 	remotes, err := config.LoadRemotes(state)
-	if err != nil || remotes["forge"].WingID != "pinned-wing" || remotes["forge"].WingthingDir != "/remote/canonical" || remotes["forge"].WTBinary != "/opt/wt builds/wt-dev" {
+	if err != nil || remotes["devbox"].WingID != "pinned-wing" || remotes["devbox"].WingthingDir != "/remote/canonical" || remotes["devbox"].WTBinary != "/opt/wt builds/wt-dev" {
 		t.Fatalf("pin not persisted: %+v %v", remotes, err)
 	}
 	if err := run("remote", "ls"); err != nil || !strings.Contains(out.String(), "/remote/canonical") {
@@ -38,10 +38,10 @@ func TestMCPConnectRegistryAddListRemove(t *testing.T) {
 	if err := run("mcp", "connect", "ls"); err != nil || !strings.Contains(out.String(), "WT_BINARY") || !strings.Contains(out.String(), "/opt/wt builds/wt-dev") {
 		t.Fatalf("binary not listed: %v %s", err, &out)
 	}
-	if err := run("mcp", "connect", "add", "forge", "--ssh", "host"); err == nil {
+	if err := run("mcp", "connect", "add", "devbox", "--ssh", "host"); err == nil {
 		t.Fatal("overwrote existing pin")
 	}
-	if err := run("mcp", "connect", "rm", "forge"); err != nil {
+	if err := run("mcp", "connect", "rm", "devbox"); err != nil {
 		t.Fatal(err)
 	}
 	remotes, err = config.LoadRemotes(state)
@@ -58,7 +58,7 @@ func TestMCPConnectAddRejectsInvalidBinaryBeforeSSHOrWrites(t *testing.T) {
 		t.Run(binary, func(t *testing.T) {
 			state := t.TempDir()
 			t.Setenv("WINGTHING_DIR", state)
-			err := executeCLI(context.Background(), []string{"mcp", "connect", "add", "forge", "--ssh", "host", "--wt-binary=" + binary}, remotepkg.IO{Out: io.Discard, ErrOut: io.Discard, SSHPath: filepath.Join(state, "must-not-run-ssh")})
+			err := executeCLI(context.Background(), []string{"mcp", "connect", "add", "devbox", "--ssh", "host", "--wt-binary=" + binary}, remotepkg.IO{Out: io.Discard, ErrOut: io.Discard, SSHPath: filepath.Join(state, "must-not-run-ssh")})
 			if err == nil || !strings.Contains(err.Error(), "wt-binary") {
 				t.Fatalf("invalid binary %q: %v", binary, err)
 			}

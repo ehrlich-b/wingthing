@@ -43,10 +43,10 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 			}
 		}
 		local := northstarStandaloneEgg(t, f, f.local, "same", "surviving-parent", "working", "RECOVERY_LOCAL_LIVE")
-		forge := northstarStandaloneEgg(t, f, f.remote, "same", "forge-parent", "working", "RECOVERY_FORGE_LIVE")
+		devbox := northstarStandaloneEgg(t, f, f.remote, "same", "devbox-parent", "working", "RECOVERY_DEVBOX_LIVE")
 		// Preserve the existing fake SSH path; the aggregate wing socket owns all
 		// history routing, with identities that collide only before qualification.
-		northstarWrite(t, filepath.Join(f.local, "remotes.yaml"), fmt.Sprintf("remotes:\n  forge:\n    ssh_target: ns-forge\n    wing_id: wing-forge\n    wingthing_dir: %s\n    control_socket: %s/control.sock\n    control_version: v1\n  legacy:\n    ssh_target: ns-offline\n", f.remote, f.remote), 0600)
+		northstarWrite(t, filepath.Join(f.local, "remotes.yaml"), fmt.Sprintf("remotes:\n  devbox:\n    ssh_target: ns-devbox\n    wing_id: wing-devbox\n    wingthing_dir: %s\n    control_socket: %s/control.sock\n    control_version: v1\n  legacy:\n    ssh_target: ns-offline\n", f.remote, f.remote), 0600)
 		f.env = append(f.env, "WT_MCP_CLIENT=recovery-fixture")
 		var mutations atomic.Int32
 		var mu sync.Mutex
@@ -85,7 +85,7 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 				wing, _ := args["wing_id"].(string)
 				switch req.Tool {
 				case "wing_list":
-					response.Result = map[string]any{"count": 3, "wings": []any{map[string]any{"name": "local", "wing_id": "wing-local", "mcp_control": true}, map[string]any{"name": "forge", "wing_id": "wing-forge", "hostname": "ns-forge", "wingthing_dir": f.remote, "mcp_control": true}, map[string]any{"name": "legacy", "mcp_control": false}}}
+					response.Result = map[string]any{"count": 3, "wings": []any{map[string]any{"name": "local", "wing_id": "wing-local", "mcp_control": true}, map[string]any{"name": "devbox", "wing_id": "wing-devbox", "hostname": "ns-devbox", "wingthing_dir": f.remote, "mcp_control": true}, map[string]any{"name": "legacy", "mcp_control": false}}}
 				case "agent_list":
 					if mode == "denied" {
 						response.Error = "policy denied history"
@@ -95,7 +95,7 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 						response.Result = map[string]any{"wing_id": wing, "count": 0, "snapshot_revision": "fixture"}
 						break
 					}
-					if args["limit"] != float64(100) || (wing != "wing-local" && wing != "wing-forge") {
+					if args["limit"] != float64(100) || (wing != "wing-local" && wing != "wing-devbox") {
 						response.Error = "unbounded or unqualified request"
 						break
 					}
@@ -109,7 +109,7 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 						return map[string]any{"wing_id": wing, "run_id": id, "session_id": "same", "agent": "fixture", "cwd": f.work, "status": status, "failure_kind": failure, "terminal": status != "running", "created_at": created, "output_availability": "available", "parent_id": "parent-run", "cleanup": "unknown"}
 					}
 					next := ""
-					if wing == "wing-forge" {
+					if wing == "wing-devbox" {
 						rows = []any{row("same-run", "running", "")}
 					} else if cursor == "" {
 						rows = []any{row("same-run", "running", ""), row("complete-record", "done", ""), row("failed-record", "failed", "provider_error"), row("cancelled-record", "stopped", "stopped"), row("unknown-record", "failed", "unknown_outcome")}
@@ -126,7 +126,7 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 					response.Result = map[string]any{"wing_id": wing, "count": len(rows), "runs": rows, "snapshot_revision": "fixture", "next_cursor": next}
 				case "terminal_list":
 					state := f.local
-					if wing == "wing-forge" {
+					if wing == "wing-devbox" {
 						state = f.remote
 					} else if wing != "wing-local" {
 						response.Error = "unknown wing"
@@ -158,7 +158,7 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = server.Close() })
-		remoteServer, err := controlsocket.Listen(t.Context(), f.remote, "wing-forge", func(hello controlsocket.Hello) (controlsocket.Welcome, controlsocket.Handler, error) {
+		remoteServer, err := controlsocket.Listen(t.Context(), f.remote, "wing-devbox", func(hello controlsocket.Hello) (controlsocket.Welcome, controlsocket.Handler, error) {
 			if hello.Client != "recovery-fixture" {
 				return controlsocket.Welcome{}, nil, fmt.Errorf("fixture client mismatch")
 			}
@@ -201,21 +201,21 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 		}
 		fresh := northstarStartPTY(t, f, binary, 160, 36)
 		fresh.expect("fresh parent inventory", 0, "surviving parent")
-		fresh.expect("fresh wt recovers same durable IDs", fresh.send("h"), "This machine", "forge", "Working")
-		fresh.expect("same ID on another wing", fresh.send("/wing-forge:same-run"), "Search runs /wing-forge:same-run_", "* Working")
-		fresh.expect("keep qualified forge run", fresh.send("\r"), "Newest first", "Enter open")
-		fresh.expect("saved exact forge route attach", fresh.send("\r"), "RECOVERY_FORGE_LIVE")
+		fresh.expect("fresh wt recovers same durable IDs", fresh.send("h"), "This machine", "devbox", "Working")
+		fresh.expect("same ID on another wing", fresh.send("/wing-devbox:same-run"), "Search runs /wing-devbox:same-run_", "* Working")
+		fresh.expect("keep qualified devbox run", fresh.send("\r"), "Newest first", "Enter open")
+		fresh.expect("saved exact devbox route attach", fresh.send("\r"), "RECOVERY_DEVBOX_LIVE")
 		select {
-		case id := <-forge.attached:
+		case id := <-devbox.attached:
 			if id != "same" {
 				t.Fatal(id)
 			}
 		case <-time.After(time.Second):
-			t.Fatal("qualified forge attachment did not execute")
+			t.Fatal("qualified devbox attachment did not execute")
 		}
-		northstarRecoveryDetach(t, fresh, "forge detach", "* Working")
+		northstarRecoveryDetach(t, fresh, "devbox detach", "* Working")
 		if len(local.attached) != 0 {
-			t.Fatal("forge attach hit colliding local egg")
+			t.Fatal("devbox attach hit colliding local egg")
 		}
 		// Remove active egg metadata; durable terminal records remain in the wing
 		// response and cannot become attachable simply because their ID survives.
@@ -265,7 +265,7 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 		}
 		fresh.expect("return from denied result", fresh.send("\x1b"), "Recent runs")
 		fresh.exit("q")
-		if mutations.Load() != 0 || local.killed.Load() != 0 || forge.killed.Load() != 0 {
+		if mutations.Load() != 0 || local.killed.Load() != 0 || devbox.killed.Load() != 0 {
 			t.Fatal("recovery admitted/stopped/steered a run")
 		}
 		northstarWrite(t, filepath.Join(f.evidence, "recovery-receipt.txt"), "same wing/run/session IDs survive parent loss; metadata-only outputs; explicit page calls=1; no mutations\n", 0600)

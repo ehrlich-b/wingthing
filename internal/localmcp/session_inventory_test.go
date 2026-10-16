@@ -47,31 +47,31 @@ func asInventory(t *testing.T, m map[string]any) fleet.Inventory {
 }
 func TestSessionInventoryTwoMachinesSameIDAndVerifiedRemoteSearch(t *testing.T) {
 	mac := inventoryFixture(t, "mac-wing", "my-mac")
-	forge := inventoryFixture(t, "forge-wing", "forge")
-	if e := sessionrole.Write(filepath.Join(forge.Cfg.Dir, "eggs", "same-short-id"), sessionrole.Metadata{Role: "coordinator", Pinned: true}); e != nil {
+	devbox := inventoryFixture(t, "devbox-wing", "devbox")
+	if e := sessionrole.Write(filepath.Join(devbox.Cfg.Dir, "eggs", "same-short-id"), sessionrole.Metadata{Role: "coordinator", Pinned: true}); e != nil {
 		t.Fatal(e)
 	}
-	if e := config.SaveRemotes(mac.Cfg.Dir, map[string]config.Remote{"forge": {SSHTarget: "fixture-host", WingID: "forge-wing", WingthingDir: "/fixture/state", ControlSocket: "/fixture/state/control.sock", ControlVersion: control.ContractVersion}}); e != nil {
+	if e := config.SaveRemotes(mac.Cfg.Dir, map[string]config.Remote{"devbox": {SSHTarget: "fixture-host", WingID: "devbox-wing", WingthingDir: "/fixture/state", ControlSocket: "/fixture/state/control.sock", ControlVersion: control.ContractVersion}}); e != nil {
 		t.Fatal(e)
 	}
 	calls := 0
 	mac.remoteToolCall = func(ctx context.Context, name, op string, args []byte) (map[string]any, error) {
 		calls++
-		if name != "forge" || op != "session_inventory" || strings.Contains(string(args), `"include_remotes":true`) {
+		if name != "devbox" || op != "session_inventory" || strings.Contains(string(args), `"include_remotes":true`) {
 			t.Fatalf("recursive/wrong remote call: %s %s %s", name, op, args)
 		}
-		return forge.ToolSessionInventory(ctx, args)
+		return devbox.ToolSessionInventory(ctx, args)
 	}
 	gateway, e := mac.ToolSessionInventory(t.Context(), json.RawMessage(`{"include_remotes":true,"query":"DNS-helper"}`))
 	if e != nil {
 		t.Fatal(e)
 	}
-	direct, e := forge.ToolSessionInventory(t.Context(), json.RawMessage(`{"query":"DNS-helper"}`))
+	direct, e := devbox.ToolSessionInventory(t.Context(), json.RawMessage(`{"query":"DNS-helper"}`))
 	if e != nil {
 		t.Fatal(e)
 	}
 	inv := fleet.Merge([]fleet.Inventory{asInventory(t, gateway), asInventory(t, direct)})
-	if calls != 1 || !inv.Complete || len(inv.Sessions) != 2 || inv.Sessions[0].OriginWingID != "forge-wing" || len(inv.Sessions[0].Routes) != 2 {
+	if calls != 1 || !inv.Complete || len(inv.Sessions) != 2 || inv.Sessions[0].OriginWingID != "devbox-wing" || len(inv.Sessions[0].Routes) != 2 {
 		t.Fatalf("merge=%+v calls=%d", inv, calls)
 	}
 	if _, e := fleet.Resolve(inv.Sessions, fleet.Identity{SessionID: "same-short-id"}); e == nil {
@@ -103,7 +103,7 @@ func TestSessionInventoryStrictSchemaPrivacyAndRemoteFailureCoverage(t *testing.
 	if e != nil || len(asInventory(t, inv).Sessions) != 0 {
 		t.Fatal("foreign content leaked", e)
 	}
-	_ = config.SaveRemotes(s.Cfg.Dir, map[string]config.Remote{"forge": {SSHTarget: "fixture-host", WingID: "forge-wing", WingthingDir: "/fixture/state", ControlSocket: "/fixture/control.sock", ControlVersion: control.ContractVersion}})
+	_ = config.SaveRemotes(s.Cfg.Dir, map[string]config.Remote{"devbox": {SSHTarget: "fixture-host", WingID: "devbox-wing", WingthingDir: "/fixture/state", ControlSocket: "/fixture/control.sock", ControlVersion: control.ContractVersion}})
 	s.remoteToolCall = func(context.Context, string, string, []byte) (map[string]any, error) {
 		return nil, errors.New("fixture remote unreachable")
 	}
@@ -128,9 +128,9 @@ func TestSessionInventoryStrictSchemaPrivacyAndRemoteFailureCoverage(t *testing.
 }
 func TestQualifiedSessionActionExactTargetAndNoReplay(t *testing.T) {
 	mac := inventoryFixture(t, "mac-wing", "my-mac")
-	forge := inventoryFixture(t, "forge-wing", "forge")
-	_ = config.SaveRemotes(mac.Cfg.Dir, map[string]config.Remote{"forge": {SSHTarget: "fixture-host", WingID: "forge-wing", WingthingDir: "/fixture/state", ControlSocket: "/fixture/control.sock", ControlVersion: control.ContractVersion}})
-	for _, server := range []*Server{mac, forge} {
+	devbox := inventoryFixture(t, "devbox-wing", "devbox")
+	_ = config.SaveRemotes(mac.Cfg.Dir, map[string]config.Remote{"devbox": {SSHTarget: "fixture-host", WingID: "devbox-wing", WingthingDir: "/fixture/state", ControlSocket: "/fixture/control.sock", ControlVersion: control.ContractVersion}})
+	for _, server := range []*Server{mac, devbox} {
 		if e := os.WriteFile(filepath.Join(server.Cfg.Dir, "eggs", "same-short-id", "egg.pid"), []byte(strconv.Itoa(os.Getpid())), 0600); e != nil {
 			t.Fatal(e)
 		}
@@ -138,15 +138,15 @@ func TestQualifiedSessionActionExactTargetAndNoReplay(t *testing.T) {
 	calls := 0
 	mac.remoteToolCall = func(ctx context.Context, name, op string, args []byte) (map[string]any, error) {
 		calls++
-		return forge.ToolSessionAction(ctx, args)
+		return devbox.ToolSessionAction(ctx, args)
 	}
-	raw := json.RawMessage(`{"origin_wing_id":"forge-wing","session_id":"same-short-id","operation":"terminal_rename","arguments":{"name":"remote-only"}}`)
+	raw := json.RawMessage(`{"origin_wing_id":"devbox-wing","session_id":"same-short-id","operation":"terminal_rename","arguments":{"name":"remote-only"}}`)
 	result, e := mac.ToolSessionAction(t.Context(), raw)
 	if e != nil {
 		t.Fatal(e)
 	}
 	// Optional arguments survive forwarding without becoming JSON null.
-	if _, err := mac.ToolSessionAction(t.Context(), json.RawMessage(`{"origin_wing_id":"forge-wing","session_id":"same-short-id","operation":"session_read"}`)); err != nil {
+	if _, err := mac.ToolSessionAction(t.Context(), json.RawMessage(`{"origin_wing_id":"devbox-wing","session_id":"same-short-id","operation":"session_read"}`)); err != nil {
 		t.Fatal(err)
 	}
 	calls--
@@ -154,7 +154,7 @@ func TestQualifiedSessionActionExactTargetAndNoReplay(t *testing.T) {
 	if calls != 1 || !strings.Contains(string(data), `"kind":"via"`) {
 		t.Fatalf("route receipt %s", data)
 	}
-	if eggclient.ReadSessionName(filepath.Join(mac.Cfg.Dir, "eggs", "same-short-id")) == "remote-only" || eggclient.ReadSessionName(filepath.Join(forge.Cfg.Dir, "eggs", "same-short-id")) != "remote-only" {
+	if eggclient.ReadSessionName(filepath.Join(mac.Cfg.Dir, "eggs", "same-short-id")) == "remote-only" || eggclient.ReadSessionName(filepath.Join(devbox.Cfg.Dir, "eggs", "same-short-id")) != "remote-only" {
 		t.Fatal("action crossed origin")
 	}
 	for _, raw := range []string{`{"origin_wing_id":"mac-wing","session_id":"same","operation":"terminal_rename","arguments":{"name":"never"}}`, `{"session_id":"same-short-id","operation":"session_read"}`, `{"origin_wing_id":"mac-wing","session_id":"same-short-id","operation":"terminal_rename","arguments":{"session":"other","name":"never"}}`, `{"origin_wing_id":"mac-wing","session_id":"same-short-id","operation":"session_read","extra":1}`} {

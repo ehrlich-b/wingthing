@@ -217,7 +217,7 @@ func TestNorthstarPTYLaunchFailure(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				f := northstarNewFixture(t)
-				binary, state, cwd := scopedNewMachine(t, f, built, "forge")
+				binary, state, cwd := scopedNewMachine(t, f, built, "devbox")
 				python, err := exec.LookPath("python3")
 				if err != nil {
 					t.Fatal(err)
@@ -230,7 +230,7 @@ func TestNorthstarPTYLaunchFailure(t *testing.T) {
 mode=$1
 case "$mode" in -t|-T) shift ;; *) exit 90 ;; esac
 [ "$1" = -o ] && shift 2
-[ "$1" = ns-forge ] || exit 91
+[ "$1" = ns-devbox ] || exit 91
 shift
 printf '%s\n%s\n' "$mode" "$1" > "$NORTHSTAR_SCOPED_SSH_LOG/$$"
 if [ "$mode" = -t ]; then exec "$NORTHSTAR_PTY_PYTHON" "$NORTHSTAR_PTY_SSH_WRAPPER" "$1"; fi
@@ -264,7 +264,7 @@ exec /bin/sh -c "$1"
 				defer server.Close()
 				h := northstarStartPTY(t, f, binary, 120, 35)
 				h.expect("remote navigator ready", 0, "wt   ", "m machines")
-				h.expect("select fixture remote", h.send("mjj\r"), "forge", "No sessions yet")
+				h.expect("select fixture remote", h.send("mjj\r"), "devbox", "No sessions yet")
 				h.expect("remote provider prompt", h.send("n"), "Agent (blank = shell)")
 				h.expect("remote cwd prompt", h.send("\x15claude\r"), "Working directory")
 				mark := h.send("\x15" + cwd + "\r")

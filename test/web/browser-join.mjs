@@ -155,7 +155,7 @@ try {
     await ready();
     cli('terminal','--unsandboxed','--detach','--name','join-proof-session','--cwd',home,'--','/bin/sleep','1800');
     sessionStarted=true;
-    record('real-session','branch-built CLI started a real local terminal egg running sleep in lane HOME');
+    record('real-session','checkout-built CLI started a real local terminal egg running sleep in fixture HOME');
     browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,headless:true,args:['--disable-background-networking','--disable-component-update','--disable-default-apps','--disable-sync','--metrics-recording-only','--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1',...(process.env.CHROMIUM_NO_SANDBOX==='1'?['--no-sandbox']:[])]});
     for(const viewport of [{width:390,height:844},{width:1440,height:900}]) {
         const size=viewport.width;

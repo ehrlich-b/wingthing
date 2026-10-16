@@ -18,7 +18,7 @@ import (
 
 func TestParseRemoteInvocationPreservesCommandArgv(t *testing.T) {
 	argv := []string{
-		"--remote", "work1", "egg", "codex", "--cwd", "/home/dogfood/work/one two",
+		"--remote", "buildhost", "egg", "codex", "--cwd", "/home/dogfood/work/one two",
 		"--name", "review", "--", "-m", "gpt-5.6-sol", "--tools", "", " \t ", "quote'and\nnewline",
 	}
 	invocation, remote, err := remotepkg.ParseRemoteInvocation(argv, true, newRootCommand)
@@ -35,7 +35,7 @@ func TestParseRemoteInvocationPreservesCommandArgv(t *testing.T) {
 	if !reflect.DeepEqual(invocation.Args, wantArgs) {
 		t.Fatalf("remote args = %#v, want %#v", invocation.Args, wantArgs)
 	}
-	if invocation.Target != "work1" || invocation.Binary != "wt" || !invocation.AllocateTTY {
+	if invocation.Target != "buildhost" || invocation.Binary != "wt" || !invocation.AllocateTTY {
 		t.Fatalf("remote invocation = %#v", invocation)
 	}
 }
@@ -44,13 +44,13 @@ func TestPreviewRemoteSelectsPreviewBinaryAndBindsChannel(t *testing.T) {
 	previous := config.ReleaseChannel
 	config.ReleaseChannel = "preview"
 	t.Cleanup(func() { config.ReleaseChannel = previous })
-	invocation, remote, err := remotepkg.ParseRemoteInvocation([]string{"--remote", "work1", "attach", "research"}, false, newRootCommand)
+	invocation, remote, err := remotepkg.ParseRemoteInvocation([]string{"--remote", "buildhost", "attach", "research"}, false, newRootCommand)
 	if err != nil || !remote || invocation.Binary != "wt-preview" {
 		t.Fatalf("preview route = %+v remote=%v err=%v", invocation, remote, err)
 	}
 	// The explicit staged path still carries the identity guard. Its basename
 	// is not trusted as proof that it is a preview build.
-	invocation, _, err = remotepkg.ParseRemoteInvocation([]string{"--remote", "work1", "--remote-binary", "/staged/build", "attach", "research"}, false, newRootCommand)
+	invocation, _, err = remotepkg.ParseRemoteInvocation([]string{"--remote", "buildhost", "--remote-binary", "/staged/build", "attach", "research"}, false, newRootCommand)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,9 +96,9 @@ func TestParseRemoteInvocationSkipsCommandFlagValues(t *testing.T) {
 			if invocation, remote, err := remotepkg.ParseRemoteInvocation(args, false, newRootCommand); err != nil || remote {
 				t.Fatalf("local flag value routed remotely: %+v remote=%v err=%v", invocation, remote, err)
 			}
-			argv := append(append([]string(nil), args...), "--remote", "work1")
+			argv := append(append([]string(nil), args...), "--remote", "buildhost")
 			invocation, remote, err := remotepkg.ParseRemoteInvocation(argv, false, newRootCommand)
-			if err != nil || !remote || invocation.Target != "work1" || !reflect.DeepEqual(invocation.Args, args) {
+			if err != nil || !remote || invocation.Target != "buildhost" || !reflect.DeepEqual(invocation.Args, args) {
 				t.Fatalf("remote flag value changed argv: %+v remote=%v err=%v", invocation, remote, err)
 			}
 		})
@@ -106,7 +106,7 @@ func TestParseRemoteInvocationSkipsCommandFlagValues(t *testing.T) {
 }
 
 func TestParseBareRemoteChoosesInteractiveEntryOrReadOnlyJSON(t *testing.T) {
-	interactive, remote, err := remotepkg.ParseRemoteInvocation([]string{"--remote=work1", "--remote-cwd", "/work/project"}, true, newRootCommand)
+	interactive, remote, err := remotepkg.ParseRemoteInvocation([]string{"--remote=buildhost", "--remote-cwd", "/work/project"}, true, newRootCommand)
 	if err != nil || !remote {
 		t.Fatalf("interactive parse: remote=%v err=%v", remote, err)
 	}
@@ -114,7 +114,7 @@ func TestParseBareRemoteChoosesInteractiveEntryOrReadOnlyJSON(t *testing.T) {
 		t.Fatalf("interactive entry = %#v", interactive)
 	}
 
-	noninteractive, remote, err := remotepkg.ParseRemoteInvocation([]string{"-r=work1"}, false, newRootCommand)
+	noninteractive, remote, err := remotepkg.ParseRemoteInvocation([]string{"-r=buildhost"}, false, newRootCommand)
 	if err != nil || !remote {
 		t.Fatalf("noninteractive parse: remote=%v err=%v", remote, err)
 	}
@@ -125,7 +125,7 @@ func TestParseBareRemoteChoosesInteractiveEntryOrReadOnlyJSON(t *testing.T) {
 
 func TestBareRemoteJSONIsDiscoverableAndNeverAttaches(t *testing.T) {
 	for _, interactive := range []bool{true, false} {
-		invocation, remote, err := remotepkg.ParseRemoteInvocation([]string{"--remote", "work1", "--remote-cwd", "/work", "--json"}, interactive, newRootCommand)
+		invocation, remote, err := remotepkg.ParseRemoteInvocation([]string{"--remote", "buildhost", "--remote-cwd", "/work", "--json"}, interactive, newRootCommand)
 		if err != nil || !remote || invocation.AllocateTTY {
 			t.Fatalf("interactive=%v invocation=%+v remote=%v err=%v", interactive, invocation, remote, err)
 		}
@@ -178,18 +178,18 @@ func TestRemoteNoninteractiveEmptyInventoryIsJSONArray(t *testing.T) {
 
 func TestRemoteRoutingRejectsUnsupportedOrIncompleteTransport(t *testing.T) {
 	tests := [][]string{
-		{"--remote", "work1", "start"},
-		{"--remote", "work1", "doctor"},
-		{"--remote", "work1", "mcp", "stdio", "--client", "codex"},
-		{"--remote", "work1", "mcp", "connect"},
-		{"--remote", "work1", "sandbox", "run", "internal"},
-		{"--remote", "work1", "egg", "--json", "codex"},
-		{"--remote", "work1", "session", "sync", "abc", "--from", "wing"},
+		{"--remote", "buildhost", "start"},
+		{"--remote", "buildhost", "doctor"},
+		{"--remote", "buildhost", "mcp", "stdio", "--client", "codex"},
+		{"--remote", "buildhost", "mcp", "connect"},
+		{"--remote", "buildhost", "sandbox", "run", "internal"},
+		{"--remote", "buildhost", "egg", "--json", "codex"},
+		{"--remote", "buildhost", "session", "sync", "abc", "--from", "wing"},
 		{"--remote"},
 		{"--remote="},
 		{"--remote-binary", "/opt/wt", "doctor"},
 		{"--remote", "-bad", "doctor"},
-		{"--remote", "work1", "--remote-cwd", "/work", "doctor"},
+		{"--remote", "buildhost", "--remote-cwd", "/work", "doctor"},
 	}
 	for _, argv := range tests {
 		if _, _, err := remotepkg.ParseRemoteInvocation(argv, false, newRootCommand); err == nil {
@@ -212,7 +212,7 @@ func TestRemoteSessionListCommandIsExecutable(t *testing.T) {
 
 func TestRemoteFlagsAfterDashStayWithRemoteCommand(t *testing.T) {
 	invocation, remote, err := remotepkg.ParseRemoteInvocation([]string{
-		"--remote", "work1", "terminal", "--json", "--", "printf", "%s", "--remote", "literal-host-flag",
+		"--remote", "buildhost", "terminal", "--json", "--", "printf", "%s", "--remote", "literal-host-flag",
 	}, false, newRootCommand)
 	if err != nil || !remote {
 		t.Fatalf("parse: remote=%v err=%v", remote, err)
@@ -225,7 +225,7 @@ func TestRemoteFlagsAfterDashStayWithRemoteCommand(t *testing.T) {
 
 func TestNewRootCommandFailsClosedWhenRemotePreflightIsBypassed(t *testing.T) {
 	root := newRootCommand()
-	root.SetArgs([]string{"--remote", "work1", "terminal", "--json"})
+	root.SetArgs([]string{"--remote", "buildhost", "terminal", "--json"})
 	err := root.ExecuteContext(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "remote routing was not initialized") {
 		t.Fatalf("root error = %v", err)
@@ -241,15 +241,15 @@ func TestRemoteStateParsesBeforeDashAndStaysLexical(t *testing.T) {
 		wantArgs []string
 	}{
 		{
-			argv:     []string{"--remote", "work1", "--remote-state", state, "terminal", "--json", "--", "printf", "--remote-state", "relative"},
+			argv:     []string{"--remote", "buildhost", "--remote-state", state, "terminal", "--json", "--", "printf", "--remote-state", "relative"},
 			wantArgs: []string{"terminal", "--json", "--", "printf", "--remote-state", "relative"},
 		},
 		{
-			argv:     []string{"--remote-state=" + state, "--remote=work1", "session", "ps", "--json"},
+			argv:     []string{"--remote-state=" + state, "--remote=buildhost", "session", "ps", "--json"},
 			wantArgs: []string{"session", "ps", "--json"},
 		},
 		{
-			argv:     []string{"attach", "review", "--remote-state", state, "-r", "work1"},
+			argv:     []string{"attach", "review", "--remote-state", state, "-r", "buildhost"},
 			wantArgs: []string{"attach", "review"},
 		},
 	}
@@ -258,7 +258,7 @@ func TestRemoteStateParsesBeforeDashAndStaysLexical(t *testing.T) {
 		if err != nil || !remote {
 			t.Fatalf("parse %q: remote=%v err=%v", tt.argv, remote, err)
 		}
-		if invocation.State != state || invocation.Target != "work1" {
+		if invocation.State != state || invocation.Target != "buildhost" {
 			t.Fatalf("parse %q: state=%q target=%q", tt.argv, invocation.State, invocation.Target)
 		}
 		if !reflect.DeepEqual(invocation.Args, tt.wantArgs) {
@@ -266,7 +266,7 @@ func TestRemoteStateParsesBeforeDashAndStaysLexical(t *testing.T) {
 		}
 	}
 
-	bare, remote, err := remotepkg.ParseRemoteInvocation([]string{"--remote", "work1", "--remote-state", "/state", "--remote-cwd", "/work"}, true, newRootCommand)
+	bare, remote, err := remotepkg.ParseRemoteInvocation([]string{"--remote", "buildhost", "--remote-state", "/state", "--remote-cwd", "/work"}, true, newRootCommand)
 	if err != nil || !remote || bare.State != "/state" {
 		t.Fatalf("bare entry with state: %+v remote=%v err=%v", bare, remote, err)
 	}
@@ -280,21 +280,21 @@ func TestRemoteStateRejectsInvalidOrAmbiguousSelection(t *testing.T) {
 		argv []string
 		want string
 	}{
-		{[]string{"--remote", "work1", "--remote-state", "", "session", "ps"}, "non-empty absolute path"},
-		{[]string{"--remote", "work1", "--remote-state=", "session", "ps"}, "non-empty absolute path"},
-		{[]string{"--remote", "work1", "--remote-state", "state", "session", "ps"}, "must be an absolute path"},
-		{[]string{"--remote", "work1", "--remote-state", "./state", "session", "ps"}, "must be an absolute path"},
-		{[]string{"--remote", "work1", "--remote-state", "~/state", "session", "ps"}, "must be an absolute path"},
-		{[]string{"--remote", "work1", "--remote-state", "/a\x00b", "session", "ps"}, "must not contain NUL, CR, or LF"},
-		{[]string{"--remote", "work1", "--remote-state", "/a\nb", "session", "ps"}, "must not contain NUL, CR, or LF"},
-		{[]string{"--remote", "work1", "--remote-state", "/a\rb", "session", "ps"}, "must not contain NUL, CR, or LF"},
-		{[]string{"--remote", "work1", "--remote-state", "\n/a", "session", "ps"}, "must not contain NUL, CR, or LF"},
+		{[]string{"--remote", "buildhost", "--remote-state", "", "session", "ps"}, "non-empty absolute path"},
+		{[]string{"--remote", "buildhost", "--remote-state=", "session", "ps"}, "non-empty absolute path"},
+		{[]string{"--remote", "buildhost", "--remote-state", "state", "session", "ps"}, "must be an absolute path"},
+		{[]string{"--remote", "buildhost", "--remote-state", "./state", "session", "ps"}, "must be an absolute path"},
+		{[]string{"--remote", "buildhost", "--remote-state", "~/state", "session", "ps"}, "must be an absolute path"},
+		{[]string{"--remote", "buildhost", "--remote-state", "/a\x00b", "session", "ps"}, "must not contain NUL, CR, or LF"},
+		{[]string{"--remote", "buildhost", "--remote-state", "/a\nb", "session", "ps"}, "must not contain NUL, CR, or LF"},
+		{[]string{"--remote", "buildhost", "--remote-state", "/a\rb", "session", "ps"}, "must not contain NUL, CR, or LF"},
+		{[]string{"--remote", "buildhost", "--remote-state", "\n/a", "session", "ps"}, "must not contain NUL, CR, or LF"},
 		// A repeated selection is ambiguous even when both values match.
-		{[]string{"--remote", "work1", "--remote-state", "/a", "--remote-state", "/a", "session", "ps"}, "only once"},
-		{[]string{"--remote", "work1", "--remote-state=/a", "attach", "x", "--remote-state", "/b"}, "only once"},
-		{[]string{"--remote", "work1", "--remote-state"}, "requires a value"},
+		{[]string{"--remote", "buildhost", "--remote-state", "/a", "--remote-state", "/a", "session", "ps"}, "only once"},
+		{[]string{"--remote", "buildhost", "--remote-state=/a", "attach", "x", "--remote-state", "/b"}, "only once"},
+		{[]string{"--remote", "buildhost", "--remote-state"}, "requires a value"},
 		{[]string{"--remote-state", "/a", "session", "ps"}, "--remote requires"},
-		{[]string{"--remote", "work1", "--remote-state", "/a", "doctor"}, "not available over SSH"},
+		{[]string{"--remote", "buildhost", "--remote-state", "/a", "doctor"}, "not available over SSH"},
 	}
 	for _, tt := range tests {
 		_, _, err := remotepkg.ParseRemoteInvocation(tt.argv, false, newRootCommand)
@@ -308,7 +308,7 @@ func TestRemoteStateRejectsInvalidOrAmbiguousSelection(t *testing.T) {
 	if err := os.WriteFile(sshPath, []byte("#!/bin/sh\ntouch '"+sshMarker+"'\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	err := remotepkg.RunRemoteInvocation(context.Background(), remotepkg.Invocation{Target: "work1", Binary: "wt", State: "relative", Args: []string{"session", "ps"}}, remotepkg.IO{In: strings.NewReader(""), Out: io.Discard, ErrOut: io.Discard, SSHPath: sshPath})
+	err := remotepkg.RunRemoteInvocation(context.Background(), remotepkg.Invocation{Target: "buildhost", Binary: "wt", State: "relative", Args: []string{"session", "ps"}}, remotepkg.IO{In: strings.NewReader(""), Out: io.Discard, ErrOut: io.Discard, SSHPath: sshPath})
 	if err == nil {
 		t.Fatal("transport accepted a relative remote state")
 	}
@@ -322,7 +322,7 @@ func TestRemoteStateByteContractRejectsOnlyNULCRLF(t *testing.T) {
 	// --remote-binary. Other bytes are legal POSIX path bytes and stay inert
 	// inside single quotes; the receiver sees them literally.
 	for _, state := range []string{"/a\tb", "/a\x1bb", "/a\x7fb", "/a\x01b", "/é/ü"} {
-		invocation, remote, err := remotepkg.ParseRemoteInvocation([]string{"--remote", "work1", "--remote-state", state, "session", "ps"}, false, newRootCommand)
+		invocation, remote, err := remotepkg.ParseRemoteInvocation([]string{"--remote", "buildhost", "--remote-state", state, "session", "ps"}, false, newRootCommand)
 		if err != nil || !remote || invocation.State != state {
 			t.Errorf("state %q: remote=%v state=%q err=%v", state, remote, invocation.State, err)
 		}
@@ -351,7 +351,7 @@ func receivedRemoteArgv(t *testing.T, channel string, invocation remotepkg.Invoc
 	previous := config.ReleaseChannel
 	config.ReleaseChannel = channel
 	defer func() { config.ReleaseChannel = previous }()
-	invocation.Target, invocation.Binary = "work1", receiver
+	invocation.Target, invocation.Binary = "buildhost", receiver
 	var out bytes.Buffer
 	if err := remotepkg.RunRemoteInvocation(context.Background(), invocation, remotepkg.IO{In: strings.NewReader(""), Out: &out, ErrOut: io.Discard, SSHPath: sshPath}); err != nil {
 		t.Fatal(err)
@@ -411,7 +411,7 @@ func TestRemoteStateStableRequiresChannelAwareReceiver(t *testing.T) {
 
 func TestRemoteChannelInspectionIsForwardedWithoutATTY(t *testing.T) {
 	for _, interactive := range []bool{true, false} {
-		invocation, remote, err := remotepkg.ParseRemoteInvocation([]string{"--remote", "work1", "--remote-state", "/state", "channel", "--json"}, interactive, newRootCommand)
+		invocation, remote, err := remotepkg.ParseRemoteInvocation([]string{"--remote", "buildhost", "--remote-state", "/state", "channel", "--json"}, interactive, newRootCommand)
 		if err != nil || !remote {
 			t.Fatalf("channel inspection: remote=%v err=%v", remote, err)
 		}

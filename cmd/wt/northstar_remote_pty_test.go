@@ -65,7 +65,7 @@ parsed:
 	}
 	record.Target, record.Command = args[0], args[1]
 	switch record.Target {
-	case "ns-forge", "ns-mirror", "ns-offline":
+	case "ns-devbox", "ns-mirror", "ns-offline":
 	default:
 		return 93
 	}
@@ -85,7 +85,7 @@ parsed:
 		return 95
 	}
 	_, offline := os.Stat(os.Getenv("NORTHSTAR_SSH_OFFLINE_FILE"))
-	if record.Target == "ns-offline" || (record.Target == "ns-forge" && offline == nil) {
+	if record.Target == "ns-offline" || (record.Target == "ns-devbox" && offline == nil) {
 		fmt.Fprintln(os.Stderr, "fixture offline")
 		return 255
 	}
@@ -328,9 +328,9 @@ func TestNorthstarPTYRemoteAttach(t *testing.T) {
 	if err := os.Mkdir(mirror, 0700); err != nil {
 		t.Fatal(err)
 	}
-	profile := config.Remote{SSHTarget: "ns-forge", WTBinary: custom, WingthingDir: f.remote}
+	profile := config.Remote{SSHTarget: "ns-devbox", WTBinary: custom, WingthingDir: f.remote}
 	if err := config.SaveRemotes(f.local, map[string]config.Remote{
-		"forge": profile, "mirror": {SSHTarget: "ns-mirror", WingthingDir: mirror}, "offline": {SSHTarget: "ns-offline"},
+		"devbox": profile, "mirror": {SSHTarget: "ns-mirror", WingthingDir: mirror}, "offline": {SSHTarget: "ns-offline"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +357,7 @@ func TestNorthstarPTYRemoteAttach(t *testing.T) {
 	})
 	const id = "shared-id"
 	local := northstarRemoteSession(t, f, f.local, id, "LOCAL_ONLY")
-	forge := northstarRemoteSession(t, f, f.remote, id, "FORGE_ONLY")
+	devbox := northstarRemoteSession(t, f, f.remote, id, "DEVBOX_ONLY")
 	peer := northstarRemoteSession(t, f, mirror, id, "MIRROR_ONLY")
 	assertSurvives := func(egg *northstarRemoteEgg) {
 		t.Helper()
@@ -373,25 +373,25 @@ func TestNorthstarPTYRemoteAttach(t *testing.T) {
 	started := time.Now()
 	h := northstarStartPTY(t, f, binary, 80, 24)
 	h.waitScreen("colliding local and two peers / one offline", 0, func(s string) bool {
-		return strings.Count(s, "shared name") == 4 && strings.Contains(s, "offline unreachable") && strings.Contains(s, "mirror") && strings.Contains(s, "forge")
+		return strings.Count(s, "shared name") == 4 && strings.Contains(s, "offline unreachable") && strings.Contains(s, "mirror") && strings.Contains(s, "devbox")
 	})
 	t.Logf("launch-to-fleet inventory: %s", time.Since(started))
-	h.expect("select exact forge", h.send("/forge\r"), "> shared name")
-	h.expect("attach forge only", h.send("\r"), "FORGE_ONLY")
+	h.expect("select exact devbox", h.send("/devbox\r"), "> shared name")
+	h.expect("attach devbox only", h.send("\r"), "DEVBOX_ONLY")
 	select {
-	case attached := <-forge.attached:
+	case attached := <-devbox.attached:
 		if attached != id {
 			t.Fatal(attached)
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("forge did not attach")
+		t.Fatal("devbox did not attach")
 	}
 	if len(local.attached) != 0 || len(peer.attached) != 0 {
 		t.Fatal("colliding ID attached on another machine")
 	}
 	h.expect("resize traverses remote PTY", h.resize(101, 31), "REMOTE_SIZE:101x31")
 	select {
-	case size := <-forge.resized:
+	case size := <-devbox.resized:
 		if size.Cols != 101 || size.Rows != 31 {
 			t.Fatalf("remote resize: %+v", size)
 		}
@@ -399,53 +399,53 @@ func TestNorthstarPTYRemoteAttach(t *testing.T) {
 		t.Fatal("remote PTY never resized")
 	}
 	h.send("\x02")
-	h.expect("detach returns to exact forge row", h.send("q"), "> shared name", "Enter open")
-	assertSurvives(forge)
-	h.expect("rename exact forge", h.send("r\x15forge-renamed\r"), "> forge renamed")
-	if eggclient.ReadSessionName(local.dir) != "shared-name" || eggclient.ReadSessionName(peer.dir) != "shared-name" || eggclient.ReadSessionName(forge.dir) != "forge-renamed" {
+	h.expect("detach returns to exact devbox row", h.send("q"), "> shared name", "Enter open")
+	assertSurvives(devbox)
+	h.expect("rename exact devbox", h.send("r\x15devbox-renamed\r"), "> devbox renamed")
+	if eggclient.ReadSessionName(local.dir) != "shared-name" || eggclient.ReadSessionName(peer.dir) != "shared-name" || eggclient.ReadSessionName(devbox.dir) != "devbox-renamed" {
 		t.Fatal("rename crossed exact machine identity")
 	}
-	northstarWrite(t, filepath.Join(f.home, "forge-offline"), "fixture offline", 0600)
-	h.expect("retain stale forge row", h.send("R"), "Last seen", "forge renamed")
-	h.expect("stale rename refused", h.send("r\x15must-not-rename\r"), "Saved machine changed", "forge")
-	if eggclient.ReadSessionName(forge.dir) != "forge-renamed" {
+	northstarWrite(t, filepath.Join(f.home, "devbox-offline"), "fixture offline", 0600)
+	h.expect("retain stale devbox row", h.send("R"), "Last seen", "devbox renamed")
+	h.expect("stale rename refused", h.send("r\x15must-not-rename\r"), "Saved machine changed", "devbox")
+	if eggclient.ReadSessionName(devbox.dir) != "devbox-renamed" {
 		t.Fatal("unvalidated stale rename dispatched")
 	}
-	h.expect("stale stop confirmation", h.send("x"), "forge renamed on forge")
-	h.expect("stale stop refused", h.send("y"), "Saved machine changed", "forge")
-	assertSurvives(forge)
-	// Local work remains reachable while both forge and the offline peer fail.
+	h.expect("stale stop confirmation", h.send("x"), "devbox renamed on devbox")
+	h.expect("stale stop refused", h.send("y"), "Saved machine changed", "devbox")
+	assertSurvives(devbox)
+	// Local work remains reachable while both devbox and the offline peer fail.
 	h.expect("select healthy local", h.send("/\x15local\r"), "shared name")
 	h.expect("attach local despite offline peers", h.send("\r"), "LOCAL_ONLY")
 	h.expect("detach local", h.send("\x02q"), "shared name", "Enter open")
 	assertSurvives(local)
-	if err := os.Remove(filepath.Join(f.home, "forge-offline")); err != nil {
+	if err := os.Remove(filepath.Join(f.home, "devbox-offline")); err != nil {
 		t.Fatal(err)
 	}
-	h.expect("recover exact forge", h.send("/\x15forge\rR"), "* Working", "forge renamed")
+	h.expect("recover exact devbox", h.send("/\x15devbox\rR"), "* Working", "devbox renamed")
 	h.exit("q")
 	// Exercise both receiving CLI paths on real PTYs, including the delimiter.
 	for _, test := range []struct {
 		name string
 		args []string
 	}{
-		{"named", []string{"attach", "--", "forge:" + id}},
+		{"named", []string{"attach", "--", "devbox:" + id}},
 		{"generic", []string{"--remote", profile.SSHTarget, "--remote-binary", profile.Binary(), "--remote-state", profile.WingthingDir, "attach", "--", id}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			attached := northstarStartPTY(t, f, binary, 80, 24, test.args...)
-			attached.expect("exact configured remote attach", 0, "FORGE_ONLY")
+			attached.expect("exact configured remote attach", 0, "DEVBOX_ONLY")
 			select {
-			case got := <-forge.attached:
+			case got := <-devbox.attached:
 				if got != id {
 					t.Fatal(got)
 				}
 			case <-time.After(3 * time.Second):
-				t.Fatal("exact forge attach missing")
+				t.Fatal("exact devbox attach missing")
 			}
 			attached.expect("generic/named resize", attached.resize(94, 28), "REMOTE_SIZE:94x28")
 			select {
-			case size := <-forge.resized:
+			case size := <-devbox.resized:
 				if size.Cols != 94 || size.Rows != 28 {
 					t.Fatal(size)
 				}
@@ -453,18 +453,18 @@ func TestNorthstarPTYRemoteAttach(t *testing.T) {
 				t.Fatal("resize missing")
 			}
 			attached.exit("\x02q")
-			assertSurvives(forge)
+			assertSurvives(devbox)
 		})
 	}
 	h = northstarStartPTY(t, f, binary, 80, 24)
-	h.expect("fresh fleet", 0, "forge renamed", "shared name")
-	h.expect("stop exact forge selection", h.send("/forge\r"), "forge renamed")
-	h.expect("stop exact forge confirmation", h.send("x"), "forge renamed on forge")
-	h.waitScreen("stop exact forge", h.send("y"), func(s string) bool {
-		return strings.Contains(s, "No matching sessions") && strings.Contains(s, "Enter open") && !strings.Contains(s, "forge renamed") && !strings.Contains(s, "Running")
+	h.expect("fresh fleet", 0, "devbox renamed", "shared name")
+	h.expect("stop exact devbox selection", h.send("/devbox\r"), "devbox renamed")
+	h.expect("stop exact devbox confirmation", h.send("x"), "devbox renamed on devbox")
+	h.waitScreen("stop exact devbox", h.send("y"), func(s string) bool {
+		return strings.Contains(s, "No matching sessions") && strings.Contains(s, "Enter open") && !strings.Contains(s, "devbox renamed") && !strings.Contains(s, "Running")
 	})
 	h.exit("q")
-	if forge.killed.Load() != 1 || local.killed.Load() != 0 || peer.killed.Load() != 0 {
+	if devbox.killed.Load() != 1 || local.killed.Load() != 0 || peer.killed.Load() != 0 {
 		t.Fatal("stop crossed colliding machine ID")
 	}
 	assertSurvives(local)
@@ -476,13 +476,13 @@ func TestNorthstarPTYRemoteAttach(t *testing.T) {
 		attach := strings.Contains(record.Command, "'attach'")
 		if attach {
 			attaches++
-			if record.Target != "ns-forge" || record.Mode != "-t" || record.Batch || !strings.Contains(record.Command, "'--' '"+id+"'") {
+			if record.Target != "ns-devbox" || record.Mode != "-t" || record.Batch || !strings.Contains(record.Command, "'--' '"+id+"'") {
 				t.Fatalf("foreground exact/auth route: %+v", record)
 			}
 		} else if record.Mode != "-T" || !record.Batch {
 			t.Fatalf("background query/action can prompt or allocate TTY: %+v", record)
 		}
-		if record.Target == "ns-forge" && !strings.HasPrefix(record.Command, prefix) {
+		if record.Target == "ns-devbox" && !strings.HasPrefix(record.Command, prefix) {
 			t.Fatalf("custom binary/state/channel route lost: %+v", record)
 		}
 		if strings.Contains(record.Command, "'session' 'rename'") {

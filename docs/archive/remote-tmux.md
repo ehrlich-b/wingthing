@@ -78,13 +78,13 @@ The SSH route runs the remote machine's installed `wt` under the ordinary login
 user. It covers persistent launches, attach, and session inspection/control:
 
 ```bash
-wt --remote work1
-wt --remote work1 --remote-cwd /home/me/work/project
-wt --remote work1 terminal --cwd /home/me/work/project --name shell
-wt --remote work1 egg codex --cwd /home/me/work/project --name review --json -- -m gpt-5.6-sol
-wt --remote work1 attach review
-wt --remote work1 session ps --json
-wt --remote work1 session stop review --json
+wt --remote buildhost
+wt --remote buildhost --remote-cwd /home/me/work/project
+wt --remote buildhost terminal --cwd /home/me/work/project --name shell
+wt --remote buildhost egg codex --cwd /home/me/work/project --name review --json -- -m gpt-5.6-sol
+wt --remote buildhost attach review
+wt --remote buildhost session ps --json
+wt --remote buildhost session stop review --json
 ```
 
 The existing `wt attach <session-id> --remote <ssh-host>` spelling remains

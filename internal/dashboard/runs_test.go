@@ -131,14 +131,14 @@ func TestRecentRunsDirectoryUsesVerifiedRoutesAndLabelsLegacy(t *testing.T) {
 		if tool != "wing_list" {
 			t.Fatal(tool)
 		}
-		return map[string]any{"count": 3, "wings": []any{map[string]any{"name": "local", "wing_id": "one", "mcp_control": true}, map[string]any{"name": "forge", "wing_id": "two", "mcp_control": true, "hostname": "fixture", "wingthing_dir": "/state"}, map[string]any{"name": "old", "mcp_control": false}}}, nil
+		return map[string]any{"count": 3, "wings": []any{map[string]any{"name": "local", "wing_id": "one", "mcp_control": true}, map[string]any{"name": "devbox", "wing_id": "two", "mcp_control": true, "hostname": "fixture", "wingthing_dir": "/state"}, map[string]any{"name": "old", "mcp_control": false}}}, nil
 	}
-	routes, unavailable, err := readRunDirectory(t.Context(), call, map[string]config.Remote{"forge": remote, "old": {SSHTarget: "legacy"}})
+	routes, unavailable, err := readRunDirectory(t.Context(), call, map[string]config.Remote{"devbox": remote, "old": {SSHTarget: "legacy"}})
 	if err != nil || len(routes) != 2 || routes[1].remote != remote || len(unavailable) != 1 || !strings.Contains(unavailable[0], "legacy SSH-only") {
 		t.Fatal(routes, unavailable, err)
 	}
 	remote.WingID = "changed"
-	routes, unavailable, err = readRunDirectory(t.Context(), call, map[string]config.Remote{"forge": remote})
+	routes, unavailable, err = readRunDirectory(t.Context(), call, map[string]config.Remote{"devbox": remote})
 	if err != nil || len(routes) != 1 || len(unavailable) != 2 {
 		t.Fatal(routes, unavailable, err)
 	}

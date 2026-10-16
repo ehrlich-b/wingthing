@@ -230,22 +230,22 @@ func TestAttachRemoteUnknownOutcomePrintsExactReconnectOnlyOnStderr(t *testing.T
 	state := t.TempDir()
 	t.Setenv("WINGTHING_DIR", state)
 	t.Setenv("WINGTHING_PREVIEW_DIR", "")
-	if err := config.SaveRemotes(state, map[string]config.Remote{"forge": {SSHTarget: "fixture-host", WTBinary: "/custom binary/wt", WingthingDir: "/saved state"}}); err != nil {
+	if err := config.SaveRemotes(state, map[string]config.Remote{"devbox": {SSHTarget: "fixture-host", WTBinary: "/custom binary/wt", WingthingDir: "/saved state"}}); err != nil {
 		t.Fatal(err)
 	}
 	ssh := writeFakeRemoteSSH(t, "exit 255\n")
 	var output, diagnostic bytes.Buffer
-	err := executeCLI(t.Context(), []string{"attach", "--takeover", "forge:full-id"}, remotepkg.IO{In: strings.NewReader(""), Out: &output, ErrOut: &diagnostic, SSHPath: ssh})
+	err := executeCLI(t.Context(), []string{"attach", "--takeover", "devbox:full-id"}, remotepkg.IO{In: strings.NewReader(""), Out: &output, ErrOut: &diagnostic, SSHPath: ssh})
 	var exit *cmdutil.CommandExitError
 	if !errors.As(err, &exit) || exit.Code != 255 || output.Len() != 0 {
 		t.Fatal(output.String(), err)
 	}
-	for _, want := range []string{"forge (fixture-host)", "session outcome unknown", "'--remote-binary' '/custom binary/wt'", "'--remote-state' '/saved state'", "'attach' '--' 'full-id'"} {
+	for _, want := range []string{"devbox (fixture-host)", "session outcome unknown", "'--remote-binary' '/custom binary/wt'", "'--remote-state' '/saved state'", "'attach' '--' 'full-id'"} {
 		if !strings.Contains(diagnostic.String(), want) {
 			t.Fatalf("missing %q: %s", want, diagnostic.String())
 		}
 	}
-	if !strings.Contains(diagnostic.String(), "'attach' '--' 'forge:full-id'") {
+	if !strings.Contains(diagnostic.String(), "'attach' '--' 'devbox:full-id'") {
 		t.Fatal("reconnect did not qualify the saved profile")
 	}
 	if strings.Contains(diagnostic.String(), "'--takeover'") {

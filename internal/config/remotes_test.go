@@ -23,7 +23,7 @@ func TestRemotesValidation(t *testing.T) {
 			t.Errorf("accepted invalid name %q", name)
 		}
 	}
-	for _, target := range []string{"work1", "me@example.com", "me@2001:db8::1"} {
+	for _, target := range []string{"buildhost", "me@example.com", "me@2001:db8::1"} {
 		if err := ValidateSSHTarget(target); err != nil {
 			t.Errorf("valid SSH target %q: %v", target, err)
 		}

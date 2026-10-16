@@ -13,14 +13,14 @@ android {
   ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
  }
  signingConfigs {
-  create("lane") {
+  create("upload") {
    storeFile = rootProject.file(System.getenv("WT_SIGNING_STORE") ?: "signing/wingthing-upload.jks")
    storePassword = System.getenv("WT_SIGNING_PASSWORD")
    keyAlias = "wingthing"
    keyPassword = System.getenv("WT_SIGNING_PASSWORD")
   }
  }
- buildTypes { release { signingConfig = signingConfigs.getByName("lane"); isMinifyEnabled = false } }
+ buildTypes { release { signingConfig = signingConfigs.getByName("upload"); isMinifyEnabled = false } }
  buildFeatures { compose = true; buildConfig = true }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
  packaging { resources.excludes += listOf("META-INF/AL2.0", "META-INF/LGPL2.1") }

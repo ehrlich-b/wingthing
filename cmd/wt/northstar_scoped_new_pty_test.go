@@ -84,11 +84,11 @@ func scopedNewNativeFixture(t *testing.T, f *northstarFixture, state, cwd string
 // Exercise the native provider's preference check even on hosts that cannot
 // apply Seatbelt. A misplaced agent_settings source must fail before native QA.
 func TestNorthstarScopedNewFixturePersonalProfile(t *testing.T) {
-	for _, machine := range []string{"local", "forge"} {
+	for _, machine := range []string{"local", "devbox"} {
 		t.Run(machine, func(t *testing.T) {
 			f := northstarNewFixture(t)
 			state := f.local
-			if machine == "forge" {
+			if machine == "devbox" {
 				state = f.remote
 			}
 			cwd := filepath.Join(f.work, machine+" project space")
@@ -126,9 +126,9 @@ func scopedNewMachine(t *testing.T, f *northstarFixture, built, machine string) 
 	binary = coldInstallBinary(t, f, built)
 	state = f.local
 	cwd = filepath.Join(f.work, "local project space")
-	if machine == "forge" {
+	if machine == "devbox" {
 		state = f.remote
-		cwd = filepath.Join(f.root, "forge project space")
+		cwd = filepath.Join(f.root, "devbox project space")
 	}
 	if err := os.Mkdir(cwd, 0700); err != nil {
 		t.Fatal(err)
@@ -139,8 +139,8 @@ func scopedNewMachine(t *testing.T, f *northstarFixture, built, machine string) 
 		t.Fatal(err)
 	}
 	profiles := map[string]config.Remote{}
-	if machine == "forge" {
-		profiles["forge"] = config.Remote{SSHTarget: "ns-forge", WTBinary: custom, WingthingDir: state}
+	if machine == "devbox" {
+		profiles["devbox"] = config.Remote{SSHTarget: "ns-devbox", WTBinary: custom, WingthingDir: state}
 	}
 	if err := config.SaveRemotes(f.local, profiles); err != nil {
 		t.Fatal(err)
@@ -151,7 +151,7 @@ func scopedNewMachine(t *testing.T, f *northstarFixture, built, machine string) 
 mode=$1
 case "$mode" in -t|-T) shift ;; *) exit 90 ;; esac
 [ "$1" = -o ] && shift 2
-[ "$1" = ns-forge ] || exit 91
+[ "$1" = ns-devbox ] || exit 91
 shift
 printf '%s\n%s\n' "$mode" "$1" > "$NORTHSTAR_SCOPED_SSH_LOG/$$"
 exec /bin/sh -c "$1"
@@ -181,8 +181,8 @@ func scopedNewFromDashboard(t *testing.T, f *northstarFixture, binary, machine, 
 	t.Helper()
 	h := northstarStartPTY(t, f, binary, 120, 30)
 	h.expect("new scoped parent / dashboard", 0, "wt   ", "n new", "m machines")
-	if machine == "forge" {
-		h.expect("select exact saved forge", h.send("mjj\r"), "forge", "No sessions yet")
+	if machine == "devbox" {
+		h.expect("select exact saved devbox", h.send("mjj\r"), "devbox", "No sessions yet")
 	}
 	h.expect("n / provider prompt", h.send("n"), "Agent (blank = shell)")
 	h.expect("Claude / receiving cwd prompt", h.send("\x15claude\r"), "Machine: "+func() string {
@@ -224,7 +224,7 @@ func TestNorthstarPTYScopedNew(t *testing.T) {
 	if !strings.HasPrefix(built, build.tmp+string(filepath.Separator)) {
 		t.Fatal("built CLI did not traverse the fixture TMPDIR alias")
 	}
-	for _, machine := range []string{"local", "forge"} {
+	for _, machine := range []string{"local", "devbox"} {
 		// This transport-only subcase remains runnable on restricted hosts. It
 		// checks actual TUI/CLI argv and attachment; it is not a sandbox pass.
 		t.Run("routing/"+machine, func(t *testing.T) {
@@ -283,9 +283,9 @@ func TestNorthstarPTYScopedNew(t *testing.T) {
 			h.expect("detach / back to navigator", h.send("\x02q"), "wt   ", "n new")
 			h.exit("q")
 			ref := id
-			if machine == "forge" {
+			if machine == "devbox" {
 				scopedNewAssertSSH(t, f, state, cwd)
-				ref = "forge:" + id
+				ref = "devbox:" + id
 			}
 			fresh := northstarStartPTY(t, f, binary, 120, 30, "attach", "--", ref)
 			fresh.expect("fresh client / same parent", 0, marker)
@@ -372,9 +372,9 @@ func TestNorthstarPTYScopedNew(t *testing.T) {
 			h.expect("native detach / parent and child retained", h.send("\x02q"), "wt   ", "n new")
 			h.exit("q")
 			ref := captured.ParentSessionID
-			if machine == "forge" {
+			if machine == "devbox" {
 				scopedNewAssertSSH(t, f, state, cwd)
-				ref = "forge:" + ref
+				ref = "devbox:" + ref
 				if _, err := os.Stat(filepath.Join(f.local, "wing.pid")); !os.IsNotExist(err) {
 					t.Fatalf("remote cold launch started a local wing: %v", err)
 				}

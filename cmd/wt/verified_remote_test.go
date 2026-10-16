@@ -78,7 +78,7 @@ func TestBuiltWTVerifiedSSHRefusesReplacedWingBeforeIO(t *testing.T) {
 		}
 		return s
 	}
-	profile := config.Remote{SSHTarget: "ns-forge", WTBinary: binary, WingthingDir: f.remote, WingID: "wing-a", ControlVersion: control.ContractVersion, ControlSocket: f.remote + "/control.sock"}
+	profile := config.Remote{SSHTarget: "ns-devbox", WTBinary: binary, WingthingDir: f.remote, WingID: "wing-a", ControlVersion: control.ContractVersion, ControlSocket: f.remote + "/control.sock"}
 	if err := config.SaveRemotes(f.local, map[string]config.Remote{"peer": profile}); err != nil {
 		t.Fatal(err)
 	}

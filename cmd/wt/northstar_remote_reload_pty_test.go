@@ -119,23 +119,23 @@ func TestNorthstarPTYRemoteReload(t *testing.T) {
 	h.expect("new empty machine without restart or R", h.send("m"), "empty", "Machines")
 	h.expect("back from live picker", h.send("\x1b"), "healthy local", "Enter open")
 	profiles["empty"] = config.Remote{SSHTarget: "ns-mirror", WTBinary: custom, WingthingDir: filepath.Join(f.home, "e")}
-	profiles["forge"] = config.Remote{SSHTarget: "ns-forge", WTBinary: binary, WingthingDir: f.remote}
+	profiles["devbox"] = config.Remote{SSHTarget: "ns-devbox", WTBinary: binary, WingthingDir: f.remote}
 	save()
-	h.expect("R loads added forge", h.send("R"), "old profile", "healthy local")
+	h.expect("R loads added devbox", h.send("R"), "old profile", "healthy local")
 	h.expect("capture rename against original generation", h.send("/old-profile\rr\x15forbidden-name"), "Name: forbidden-name")
 	// Replace only binary/state; the SSH alias and session ID still collide.
-	profiles["forge"] = config.Remote{SSHTarget: "ns-forge", WTBinary: custom, WingthingDir: mirror}
+	profiles["devbox"] = config.Remote{SSHTarget: "ns-devbox", WTBinary: custom, WingthingDir: mirror}
 	save()
 	h.expect("cadence cancels original rename", 0, "Saved machine changed", "R refresh")
-	h.expect("clear old filter for replacement", h.send("/\x15forge\rR"), "replacement profile")
-	h.expect("capture stop against replacement", h.send("x"), "replacement profile on forge")
-	profiles["forge"] = config.Remote{SSHTarget: "ns-delayed", WTBinary: custom, WingthingDir: mirror}
+	h.expect("clear old filter for replacement", h.send("/\x15devbox\rR"), "replacement profile")
+	h.expect("capture stop against replacement", h.send("x"), "replacement profile on devbox")
+	profiles["devbox"] = config.Remote{SSHTarget: "ns-delayed", WTBinary: custom, WingthingDir: mirror}
 	save()
 	h.expect("replacement refuses old stop", 0, "Saved machine changed")
 	northstarInventoryWait(t, "old query in flight", func() bool { _, err := os.Stat(filepath.Join(mailbox, "started")); return err == nil })
-	profiles["forge"] = config.Remote{SSHTarget: "ns-forge", WTBinary: custom, WingthingDir: mirror}
+	profiles["devbox"] = config.Remote{SSHTarget: "ns-devbox", WTBinary: custom, WingthingDir: mirror}
 	save()
-	h.expect("replace profile while old SSH is outstanding", h.send("R"), "replacement profile", "forge")
+	h.expect("replace profile while old SSH is outstanding", h.send("R"), "replacement profile", "devbox")
 	data, err := os.ReadFile(filepath.Join(mailbox, "started"))
 	if err != nil {
 		t.Fatal(err)
@@ -145,20 +145,20 @@ func TestNorthstarPTYRemoteReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	northstarInventoryWait(t, "retired SSH joined", func() bool { return syscall.Kill(pid, 0) == syscall.ESRCH })
-	h.expect("capture pending stop before removal", h.send("x"), "replacement profile on forge")
-	cli("remote", "rm", "forge")
+	h.expect("capture pending stop before removal", h.send("x"), "replacement profile on devbox")
+	cli("remote", "rm", "devbox")
 	h.expect("removed generation cancels confirmation", 0, "Saved machine changed")
 	h.expect("confirmation key cannot mutate removed target", h.send("y/\x15\rR"), "healthy local", "2 machines")
 	h.waitScreen("no retired result can resurrect machine", h.send("R"), func(s string) bool {
-		return strings.Contains(s, "healthy local") && !strings.Contains(s, "replacement profile") && !strings.Contains(s, "retired host result") && !strings.Contains(s, "forge  ")
+		return strings.Contains(s, "healthy local") && !strings.Contains(s, "replacement profile") && !strings.Contains(s, "retired host result") && !strings.Contains(s, "devbox  ")
 	})
-	profiles = map[string]config.Remote{"forge": {SSHTarget: "ns-forge", WTBinary: custom, WingthingDir: mirror}}
+	profiles = map[string]config.Remote{"devbox": {SSHTarget: "ns-devbox", WTBinary: custom, WingthingDir: mirror}}
 	save()
-	h.expect("route restored", h.send("R"), "replacement profile", "forge")
+	h.expect("route restored", h.send("R"), "replacement profile", "devbox")
 	northstarWrite(t, filepath.Join(f.local, "remotes.yaml"), "remotes: [malformed", 0600)
 	h.expect("malformed registry retains stale rows and local work", h.send("R"), "Saved machines could not be loaded", "replacement profile", "Last seen", "healthy local")
 	h.expect("local attach while registry malformed", h.send("/healthy-local\r\r"), "RELOAD_LOCAL_READY")
-	h.expect("local detach preserves healthy work", h.send("\x02q"), "healthy local", "forge not searched")
+	h.expect("local detach preserves healthy work", h.send("\x02q"), "healthy local", "devbox not searched")
 	h.expect("malformed remote mutation selection", h.send("/\x15replacement-profile\rr\x15forbidden-name\r"), "Saved machine changed", "R refresh")
 	save()
 	h.waitScreen("valid registry recovers without restart", h.send("/\x15\rR"), func(s string) bool {
@@ -194,7 +194,7 @@ func TestNorthstarPTYRemoteReload(t *testing.T) {
 	startup := northstarStartPTY(t, f, binary, 160, 40)
 	startup.expect("malformed registry at startup keeps local inventory", 0, "healthy local", "Saved machines could not be loaded", "1 machine")
 	save()
-	startup.expect("startup registry recovers", startup.send("R"), "replacement profile", "forge")
+	startup.expect("startup registry recovers", startup.send("R"), "replacement profile", "devbox")
 	startup.exit("q")
 	northstarWrite(t, filepath.Join(f.local, "config.yaml"), "wing_id: [bad", 0600)
 	invalid := northstarStartPTY(t, f, binary, 160, 40)
@@ -241,22 +241,22 @@ func TestNorthstarPTYDailyLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	parent.exit("\x02q")
-	forge := northstarStandaloneEgg(t, f, f.remote, "forge", "daily-forge", "working", "DAILY_FORGE_READY")
-	hooks := northstarAttentionHooks(t, f, f.remote, "forge", false)
+	devbox := northstarStandaloneEgg(t, f, f.remote, "devbox", "daily-devbox", "working", "DAILY_DEVBOX_READY")
+	hooks := northstarAttentionHooks(t, f, f.remote, "devbox", false)
 	hooks.emit(t, "SessionStart")
 	hooks.emit(t, "UserPromptSubmit")
-	if err := config.SaveRemotes(f.local, map[string]config.Remote{"forge": {SSHTarget: "ns-forge", WTBinary: binary, WingthingDir: f.remote}}); err != nil {
+	if err := config.SaveRemotes(f.local, map[string]config.Remote{"devbox": {SSHTarget: "ns-devbox", WTBinary: binary, WingthingDir: f.remote}}); err != nil {
 		t.Fatal(err)
 	}
 	h := northstarStartPTY(t, f, binary, 160, 36)
-	h.expect("bare navigator retains cold local parent", 0, "daily parent", "daily forge")
-	h.expect("exact forge attach", h.send("/daily-forge\r\r"), "DAILY_FORGE_READY")
-	if receiveNorthstarID(t, forge.attached) != "forge" {
+	h.expect("bare navigator retains cold local parent", 0, "daily parent", "daily devbox")
+	h.expect("exact devbox attach", h.send("/daily-devbox\r\r"), "DAILY_DEVBOX_READY")
+	if receiveNorthstarID(t, devbox.attached) != "devbox" {
 		t.Fatal("daily loop attached wrong remote")
 	}
-	h.expect("forge detach returns to navigator", h.send("\x02q"), "daily forge", "Enter open")
+	h.expect("devbox detach returns to navigator", h.send("\x02q"), "daily devbox", "Enter open")
 	hooks.emit(t, "PermissionRequest")
-	h.expect("native forge attention", h.send("R"), "daily forge", "! Needs you")
+	h.expect("native devbox attention", h.send("R"), "daily devbox", "! Needs you")
 	if err := syscall.Kill(-h.cmd.Process.Pid, syscall.SIGKILL); err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestNorthstarPTYDailyLoop(t *testing.T) {
 		t.Fatalf("daily child result: %v %v", result, err)
 	}
 	fresh := northstarStartPTY(t, f, binary, 160, 36)
-	fresh.expect("fresh navigator after client loss", 0, "daily parent", "daily forge", "! Needs you")
+	fresh.expect("fresh navigator after client loss", 0, "daily parent", "daily devbox", "! Needs you")
 	fresh.expect("discover original durable run", fresh.send("h/"+runID+"\r"), "Recent runs", "Done", "Codex")
 	fresh.expect("terminal run metadata", fresh.send("i"), "Ran: Codex in", "Result: + Done", "o result")
 	fresh.expect("recovery steps behind r", fresh.send("r"), "Recovery steps", "original request", "agent", "recover", "--snapshot FILE")
@@ -297,8 +297,8 @@ func TestNorthstarPTYDailyLoop(t *testing.T) {
 		t.Fatalf("explicit durable recovery: %v %s", err, recovered)
 	}
 	northstarWrite(t, filepath.Join(f.evidence, "recovery.json"), string(recovered), 0600)
-	if forge.killed.Load() != 0 {
-		t.Fatal("daily client loss stopped forge")
+	if devbox.killed.Load() != 0 {
+		t.Fatal("daily client loss stopped devbox")
 	}
 }
 

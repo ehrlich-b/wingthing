@@ -132,7 +132,7 @@ func TestRemoteSessionFreshIdentityUsesExactBatchRoute(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			err = ValidateRemoteSession(t.Context(), "forge", config.Remote{SSHTarget: "fixture-peer", WTBinary: binary, WingthingDir: state}, test.id, remotepkg.IO{In: strings.NewReader("foreground must not be consumed"), StdinTTY: true, StdoutTTY: true, SSHPath: ssh})
+			err = ValidateRemoteSession(t.Context(), "devbox", config.Remote{SSHTarget: "fixture-peer", WTBinary: binary, WingthingDir: state}, test.id, remotepkg.IO{In: strings.NewReader("foreground must not be consumed"), StdinTTY: true, StdoutTTY: true, SSHPath: ssh})
 			if (err != nil) != test.fail {
 				t.Fatalf("validate %q => %v; fail=%v", test.id, err, test.fail)
 			}
@@ -159,7 +159,7 @@ func TestRemoteInventoryOriginIdentityAndLegacyUnknown(t *testing.T) {
 	}{{"origin", "origin", false}, {"changed", "origin", true}, {"", "origin", true}, {"", "", false}} {
 		root := t.TempDir()
 		ssh := filepath.Join(root, "ssh")
-		payload, _ := json.Marshal(RemoteSessionInventory{WingID: tc.wing, MachineLabel: "forge", Version: "fixture", ContractVersion: RemoteSessionContractVersion, Sessions: []LocalSession{{ID: "same-short-id", OriginWingID: "forged-row-origin"}}})
+		payload, _ := json.Marshal(RemoteSessionInventory{WingID: tc.wing, MachineLabel: "devbox", Version: "fixture", ContractVersion: RemoteSessionContractVersion, Sessions: []LocalSession{{ID: "same-short-id", OriginWingID: "forged-row-origin"}}})
 		if e := os.WriteFile(ssh, []byte("#!/bin/sh\nprintf '%s' "+remotepkg.ShellQuote(string(payload))+"\n"), 0700); e != nil {
 			t.Fatal(e)
 		}
@@ -170,7 +170,7 @@ func TestRemoteInventoryOriginIdentityAndLegacyUnknown(t *testing.T) {
 			}
 			continue
 		}
-		if e != nil || len(rows) != 1 || rows[0].OriginWingID != tc.wing || rows[0].MachineLabel != "forge" {
+		if e != nil || len(rows) != 1 || rows[0].OriginWingID != tc.wing || rows[0].MachineLabel != "devbox" {
 			t.Fatalf("origin guessed or row spoof accepted: %+v %v", rows, e)
 		}
 	}
