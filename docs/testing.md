@@ -403,11 +403,11 @@ Code's gateway environment, Codex custom model providers using the Responses
 wire API, Hermes's custom OpenAI-compatible provider, and OpenCode's local
 Ollama provider.
 
-### Running on NewPC
+### Running on a Windows/WSL test machine
 
-NewPC keeps real binaries behind `*-real` canary names so the synthetic Linux
-suite can continue to own the ordinary command names. Run the matrix from the
-WSL checkout with explicit paths:
+The Windows/WSL test machine keeps real binaries behind `*-real` canary names
+so the synthetic Linux suite can continue to own the ordinary command names.
+Run the matrix from the WSL checkout with explicit paths:
 
 ```bash
 WT_SMOKE_WT_BIN=/usr/local/bin/wt \

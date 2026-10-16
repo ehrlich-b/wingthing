@@ -485,7 +485,7 @@ stdio interface used by Claude and Codex. It must prove:
 - disconnecting the MCP client does not kill the durable terminal or agent;
 - reconnecting can list and continue that work.
 
-Run the same canary on the WSL rig after coordinating around existing work there. The
+Run the same canary on a WSL host after coordinating around existing work there. The
 recent WSL battery proves sandbox behavior only; it does not prove the remote
 agent-manager path.
 

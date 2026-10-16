@@ -26,23 +26,23 @@ func TestFormatUserIdentity(t *testing.T) {
 	}{
 		{
 			"full info",
-			auth.UserInfo{DisplayName: "Phil Heckel", Email: "phil@test.com", Provider: "github"},
-			"Phil Heckel (phil@test.com) via github",
+			auth.UserInfo{DisplayName: "Test User", Email: "user@example.com", Provider: "github"},
+			"Test User (user@example.com) via github",
 		},
 		{
 			"email only",
-			auth.UserInfo{Email: "phil@test.com", Provider: "google"},
-			"phil@test.com via google",
+			auth.UserInfo{Email: "user@example.com", Provider: "google"},
+			"user@example.com via google",
 		},
 		{
 			"name only",
-			auth.UserInfo{DisplayName: "Phil Heckel"},
-			"Phil Heckel",
+			auth.UserInfo{DisplayName: "Test User"},
+			"Test User",
 		},
 		{
 			"name and provider",
-			auth.UserInfo{DisplayName: "Phil Heckel", Provider: "github"},
-			"Phil Heckel via github",
+			auth.UserInfo{DisplayName: "Test User", Provider: "github"},
+			"Test User via github",
 		},
 		{
 			"user_id fallback",

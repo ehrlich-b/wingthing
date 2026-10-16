@@ -100,7 +100,7 @@ when AppArmor rejects the capability probe. The Linux host can create the namesp
 
 ## Validation
 
-CI's original logs used Go `1.26.9`; no macOS validation is claimed by this lane.
+CI's original logs used Go `1.26.9`; no macOS validation is claimed here.
 
 The three reported PTY tests passed three times with `-race -count=3` on the final
 source (75.582s; an earlier three-run check also passed in 83.708s).

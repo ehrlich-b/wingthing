@@ -771,7 +771,7 @@ func TestAuthCheckReturnsUserInfo(t *testing.T) {
 	// Create a user with profile data
 	token, userID := createTestToken(t, srv.Store, "dev1")
 	mustTestExec(t, srv.Store.DB(), "UPDATE users SET display_name = ?, email = ?, provider = ? WHERE id = ?",
-		"Phil Heckel", "phil@test.com", "github", userID)
+		"Test User", "user@example.com", "github", userID)
 
 	req, _ := http.NewRequest("GET", ts.URL+"/auth/check", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -792,11 +792,11 @@ func TestAuthCheckReturnsUserInfo(t *testing.T) {
 	if body["user_id"] != userID {
 		t.Errorf("user_id = %v, want %s", body["user_id"], userID)
 	}
-	if body["display_name"] != "Phil Heckel" {
-		t.Errorf("display_name = %v, want Phil Heckel", body["display_name"])
+	if body["display_name"] != "Test User" {
+		t.Errorf("display_name = %v, want Test User", body["display_name"])
 	}
-	if body["email"] != "phil@test.com" {
-		t.Errorf("email = %v, want phil@test.com", body["email"])
+	if body["email"] != "user@example.com" {
+		t.Errorf("email = %v, want user@example.com", body["email"])
 	}
 	if body["provider"] != "github" {
 		t.Errorf("provider = %v, want github", body["provider"])

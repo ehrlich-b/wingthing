@@ -370,8 +370,8 @@ func TestFetchUserInfo_OK(t *testing.T) {
 		if err := json.NewEncoder(w).Encode(map[string]any{
 			"ok":           true,
 			"user_id":      "u1",
-			"display_name": "Phil Heckel",
-			"email":        "phil@test.com",
+			"display_name": "Test User",
+			"email":        "user@example.com",
 			"provider":     "github",
 		}); err != nil {
 			t.Errorf("encode check response: %v", err)
@@ -386,11 +386,11 @@ func TestFetchUserInfo_OK(t *testing.T) {
 	if info.UserID != "u1" {
 		t.Errorf("user_id = %q, want u1", info.UserID)
 	}
-	if info.DisplayName != "Phil Heckel" {
-		t.Errorf("display_name = %q, want Phil Heckel", info.DisplayName)
+	if info.DisplayName != "Test User" {
+		t.Errorf("display_name = %q, want Test User", info.DisplayName)
 	}
-	if info.Email != "phil@test.com" {
-		t.Errorf("email = %q, want phil@test.com", info.Email)
+	if info.Email != "user@example.com" {
+		t.Errorf("email = %q, want user@example.com", info.Email)
 	}
 	if info.Provider != "github" {
 		t.Errorf("provider = %q, want github", info.Provider)

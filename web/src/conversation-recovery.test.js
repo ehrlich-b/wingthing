@@ -1,5 +1,5 @@
 // Fake-only node:test suite for the conversation reader/recovery slice. It
-// lives beside its modules because this lane owns web/src/conversation*; the
+// lives beside its modules in web/src/conversation*; the
 // root `node --test` discovery used by `make web` picks it up unchanged.
 import test from 'node:test';
 import assert from 'node:assert/strict';

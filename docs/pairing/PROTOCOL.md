@@ -1,6 +1,6 @@
 # Wingthing phone pairing v1
 
-The contract is the operator-maintained `wingthing-pairing-spec.md` (11 October 2026). Pair My iPhone to **my-mac's main wing** first; pair **my-server's wing** separately. A phone grant permits session inventory, attachment, input and stop on precisely one wing. It confers no account, configuration, enrollment, shell-launch or other-machine authority. `wt pair` must contact the running wing's local control endpoint, not start a second wing with a new identity.
+The contract is the operator-maintained `wingthing-pairing-spec.md` (11 October 2026). Pair your iPhone to **my-mac's main wing** first; pair **my-server's wing** separately. A phone grant permits session inventory, attachment, input and stop on precisely one wing. It confers no account, configuration, enrollment, shell-launch or other-machine authority. `wt pair` must contact the running wing's local control endpoint, not start a second wing with a new identity.
 
 This document specifies the implemented v1 messages and boundaries. The storyboard is a visual specification; simulator tests do not establish camera or cellular acceptance.
 
@@ -15,7 +15,7 @@ Primary references: [BoringSSL SPAKE2 API](https://commondatastorage.googleapis.
 The wing already has a persistent X25519 `wing_key` and WingID. Its SHA-256 fingerprint is the full lowercase hex digest of the decoded 32-byte public key. The QR is `wingthing://pair#v1z.` followed by unpadded base64url of RFC 1951 raw-DEFLATE compression (Go `compress/flate`, Apple Foundation `NSData` zlib API) of a compact JSON array in this exact order: `[v, wing_id, name, key, local, relay, id, secret, expires_unix_seconds]`. Compressing the isolated invitation keeps the real QR within ordinary terminal widths even with tailnet endpoints. This compresses only a locally displayed invitation, never credential/session traffic; the input QR is limited to 4 KiB and decompressed JSON to 4 KiB. The app also accepts uncompressed `v1.` arrays. When there are additional direct endpoints, field `local` in this array is an ordered array `[primary_lan, other_lan, tailnet_ip, magicdns]` instead of one string. The expanded form retains `local` plus optional `endpoints`. The equivalent expanded object below describes the fields; the app also accepts percent-encoded expanded JSON after `wingthing://pair#` for the hidden paste fallback:
 
 ```json
-{"v":1,"wing_id":"persistent-wing-id","name":"my-mac","key":"base64-X25519-key","local":"http://192.168.1.40:6078","endpoints":["http://100.91.2.3:6078","http://my-mac.fixture.ts.net:6078"],"relay":"","id":"random-invitation-id","secret":"six randomly selected words","expires_at":"2026-10-11T21:00:00Z"}
+{"v":1,"wing_id":"persistent-wing-id","name":"my-mac","key":"base64-X25519-key","local":"http://192.168.1.40:6078","endpoints":["http://100.91.2.3:6078","http://my-mac.example.ts.net:6078"],"relay":"","id":"random-invitation-id","secret":"six randomly selected words","expires_at":"2026-10-11T21:00:00Z"}
 ```
 
 The secret is in the fragment, never an HTTP URL/query. Six independent words from a fixed 2048-word vocabulary provide 66 bits of entropy. Show the same six words in the terminal as the fallback code. A fallback additionally needs the invitation's address and public identity; the app's hidden paste-link route carries these together. A secret alone cannot identify a machine on an arbitrary network.
@@ -26,7 +26,7 @@ Local-only is the default and requires no Wingthing account or payment. A person
 
 ```sh
 wt wing start   # if the main wing is not already running
-wt pair         # scan on My iPhone; approve both emoji checks
+wt pair         # scan on your iPhone; approve both emoji checks
 ```
 
 On Wi-Fi all pairing and control traffic stays on the LAN. Tailnet mode sends it directly over the existing Tailscale network; it never uses the Wingthing relay. `wt pair` prints “Local network only. That's fine; nothing else needed.” when there is no registered relay. On Wi-Fi, connect directly to the QR's LAN endpoint. If that address changed, Bonjour discovers `_wingthing-phone._tcp.local.` with instance `wt-` plus the first 16 hex characters of SHA-256(WingID). TXT records contain only version, WingID and pinned public key, never an invitation secret or credential. The phone accepts a discovered address only for the scanned instance with matching WingID and key; normal encrypted authentication still follows. The daemon advertises only while running and withdraws on exit. iOS declares that Bonjour service and asks Local Network permission.

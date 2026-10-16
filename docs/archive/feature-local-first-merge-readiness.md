@@ -51,7 +51,7 @@ pass: a minimal `MS_REMOUNT|MS_BIND|MS_RDONLY` call discarded inherited mount
 flags and failed with `EPERM`. The corrected remount path preserves the live
 mount's supported VFS flags, the capability probe now exercises that exact
 deny-file operation, and the focused native regression passes. AppArmor is
-disabled on this WSL host, so the separate Arli AppArmor canary remains a
+disabled on this WSL host, so the separate AppArmor canary remains a
 deployment gate rather than evidence supplied by this run.
 
 The final seccomp install uses `SECCOMP_FILTER_FLAG_TSYNC`, checks both errno

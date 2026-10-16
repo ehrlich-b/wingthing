@@ -250,7 +250,7 @@ account management, org settings, audit display.
 ### Cross-harness agent handoffs
 
 - [x] Prove a live Codex–Claude conversation using an owner-local mailbox and
-  exact-TTY notification while dogfooding the Arli workload.
+  exact-TTY notification while dogfooding a test workload.
 
 
 ### Narrow agent egress
