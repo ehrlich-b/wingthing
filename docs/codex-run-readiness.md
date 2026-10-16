@@ -56,32 +56,40 @@ then reads its own fresh hook and notify spools from their beginning, including
 events that arrived before the socket became available. Completion still
 requires matching native thread, turn and prompt receipts and final notify.
 
-The initial native Codex prompt is limited to **16,384 bytes (16 KiB)**,
-inclusive, measured as UTF-8 bytes without trimming. The wing passes this
-prompt to the egg as JSON in a single argv element before the egg passes the
-literal prompt to Codex. JSON escaping can expand each input byte sixfold;
-this limit leaves room below Linux's 128 KiB per-argument ceiling at both
-boundaries. It does not guarantee that arbitrary environment or other argv
-values fit the operating system's total argument budget.
+The initial native Codex prompt has an inclusive **130,048-byte** argv budget.
+Admission measures the prompt's actual JSON-encoded content (excluding its
+surrounding quotes), using the same encoding as the wing-to-egg argument. This
+also bounds the literal UTF-8 prompt argument received by Codex. Linux's
+`MAX_ARG_STRLEN` is **131,072 bytes**, including the terminating NUL; the
+**1,024-byte margin** covers that NUL, the flag prefix, JSON framing, run ID and
+deadline. Printable text generally counts at its UTF-8 byte size; characters
+escaped by JSON (such as quotes, newlines, control characters and HTML
+characters) count at their actual escaped size. For example, 100 KiB of ordinary ASCII fits, while a 140 KiB
+prompt does not. This does not guarantee that arbitrary environment or other
+argv values fit the operating system's total argument budget.
 
 Wing admission (including MCP `agent_run`) rejects oversized prompts before
 creating a run, task, pending session or provider process. Direct egg launch
 and launch preparation enforce the same limit. The typed
-`egg.InitialCodexPromptTooLargeError` reports only `SizeBytes` and `LimitBytes`,
-and its message includes both byte counts without prompt content. Repeating a
-rejected request creates no records; an accepted idempotent retry keeps the
-original run and session. Claude prompts, later native turns, and interactive
-prompt transports retain their existing behavior.
+`egg.InitialCodexPromptTooLargeError` reports only encoded `SizeBytes` and
+`LimitBytes`, and its message includes both byte counts without prompt content.
+Repeating a rejected request creates no records; an accepted idempotent retry
+keeps the original run and session. Claude prompts, later native turns, and
+interactive prompt transports retain their existing behavior.
 
-For Codex `agent_steer`, admission checks the composed follow-up, including
-the prior result and error, when the parent has finished. An active parent
-reserves **8,192 bytes (8 KiB)** for its deferred result/error context in
-addition to the original request, new direction and formatting. Admission
-rejects a request whose total reserved size exceeds the initial prompt limit.
-When the parent finishes, that context is bounded to the reserved bytes,
-including a visible truncation marker, without splitting UTF-8 characters.
-Accepted retries retain their original identities even after the parent
-finishes. Other providers retain their existing follow-up context behavior.
+For Codex `agent_steer`, admission checks the original request, new direction
+and formatting **without prior context**, whether the parent is running or
+finished. Only these required parts exceeding the budget cause rejection;
+the error names these parts and reports their encoded size and limit. Every
+child enters the queued phase and records a dequeued event before launching.
+Prior result/error context is bounded to **8,192 UTF-8 bytes (8 KiB)** and the
+remaining encoded argv budget, including a visible truncation marker, without
+splitting UTF-8 characters. If the marker cannot fit, prior context is omitted.
+The original request and new direction are preserved in full. Accepted retries
+retain their original identities even after the parent finishes. Recovered
+children admitted before these checks use the same context bounds; if their
+required parts cannot fit, they fail before spawn with the specific size-only
+follow-up error. Other providers retain their existing follow-up behavior.
 
 Missing native admission ends as `provider_not_ready`; cleanup kills the same
 provider process group. The error contains only an allowlisted classification

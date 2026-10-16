@@ -18,7 +18,12 @@ func TestInitialCodexPromptLimit(t *testing.T) {
 		{"small", "small startup prompt", false},
 		{"at limit", strings.Repeat("x", MaxInitialCodexPromptBytes), false},
 		{"multibyte at limit", strings.Repeat("Ω", MaxInitialCodexPromptBytes/2), false},
-		{"escaped at limit", strings.Repeat("\x01", MaxInitialCodexPromptBytes), false},
+		{"100 KiB ASCII", strings.Repeat("x", 100*1024), false},
+		{"escaped at limit", strings.Repeat("\x01", MaxInitialCodexPromptBytes/6) + strings.Repeat("x", MaxInitialCodexPromptBytes%6), false},
+		{"escaped over", strings.Repeat("\x01", MaxInitialCodexPromptBytes/6+1), true},
+		{"HTML escaped over", strings.Repeat("<", MaxInitialCodexPromptBytes/6+1), true},
+		{"newline at limit", strings.Repeat("\n", MaxInitialCodexPromptBytes/2), false},
+		{"quote over", strings.Repeat("\"", MaxInitialCodexPromptBytes/2+1), true},
 		{"one byte over", strings.Repeat("x", MaxInitialCodexPromptBytes) + " ", true},
 		{"140 KiB", "private-prompt-canary" + strings.Repeat("x", 140*1024-len("private-prompt-canary")), true},
 		{"multibyte over", strings.Repeat("Ω", MaxInitialCodexPromptBytes/2+1), true},
@@ -30,8 +35,8 @@ func TestInitialCodexPromptLimit(t *testing.T) {
 			prepared, err := PrepareLaunch(rc, opts, NativeLaunchState())
 			if tc.tooLarge {
 				var sizeErr *InitialCodexPromptTooLargeError
-				want := fmt.Sprintf("initial native Codex prompt is %d bytes; limit is %d bytes", len(tc.prompt), MaxInitialCodexPromptBytes)
-				if !errors.As(err, &sizeErr) || sizeErr.SizeBytes != len(tc.prompt) || sizeErr.LimitBytes != MaxInitialCodexPromptBytes || err.Error() != want {
+				want := fmt.Sprintf("initial native Codex prompt requires %d encoded argv bytes; limit is %d bytes", InitialCodexPromptArgBytes(tc.prompt), MaxInitialCodexPromptBytes)
+				if !errors.As(err, &sizeErr) || sizeErr.SizeBytes != InitialCodexPromptArgBytes(tc.prompt) || sizeErr.LimitBytes != MaxInitialCodexPromptBytes || err.Error() != want {
 					t.Fatalf("unsafe or incorrect size error: %v", err)
 				}
 				// RunSession also rejects before recording startup failure or
@@ -62,7 +67,7 @@ func TestInitialCodexPromptLimit(t *testing.T) {
 
 func TestCodexLaterPromptUnaffectedByInitialLimit(t *testing.T) {
 	rt, home, request, sent := codexRunFixture(t)
-	request.Prompt = strings.Repeat("x", 64*1024)
+	request.Prompt = strings.Repeat("<", 64*1024)
 	if _, err := rt.submit(request); err != nil {
 		t.Fatal(err)
 	}

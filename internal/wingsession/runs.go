@@ -305,21 +305,8 @@ func (m *Runs) Admit(launch *Launch, request RunRequest, options StartOptions, a
 			m.records[parent.ID] = parent
 		}
 		if run.Agent == "codex" {
-			var prompt string
-			if parent.Result.Terminal() {
-				prompt = SteerPrompt(parent.OriginalPrompt, parent.Result.Text, parent.Result.Error, run.Direction)
-			} else {
-				// Reserve the entire deferred context budget before persisting a
-				// child; reconciliation will bound the eventual parent outcome.
-				prompt = SteerPrompt(parent.OriginalPrompt, strings.Repeat(" ", maxQueuedCodexContextBytes), "", run.Direction)
-			}
-			if err := egg.ValidateInitialCodexPrompt(prompt); err != nil {
+			if err := validateCodexSteerPrompt(parent.OriginalPrompt, run.Direction); err != nil {
 				return nil, false, err
-			}
-			if parent.Result.Terminal() {
-				run.Prompt = prompt
-				run.Phase = "admitted"
-				run.QueueExpiresAt = time.Time{}
 			}
 		}
 	}
@@ -416,6 +403,19 @@ func (m *Runs) reconcile(id string) {
 			m.fail(id, agent.UnknownOutcome)
 			return
 		}
+		if r.Agent == "codex" {
+			if err := validateCodexSteerPrompt(parent.OriginalPrompt, r.Direction); err != nil {
+				_ = m.update(id, "prompt_rejected", func(r *Run) {
+					r.Phase = "terminal"
+					r.Result.Status = "failed"
+					r.Result.FailureKind = agent.ProviderError
+					r.Result.Error = err.Error()
+					r.Result.EndedAt = time.Now().UTC()
+				})
+				return
+			}
+		}
+
 		if err := m.update(id, "dequeued", func(r *Run) {
 			if r.Agent == "codex" {
 				r.Prompt = queuedCodexSteerPrompt(parent.OriginalPrompt, parent.Result.Text, parent.Result.Error, r.Direction)
@@ -817,25 +817,60 @@ func SteerPrompt(request, result, priorError, direction string) string {
 	return prompt + "\n\nNew direction:\n" + direction
 }
 
-// Active Codex parents have no final outcome at admission. Reserve 8 KiB for
-// their combined result/error context, including the truncation marker, and
-// retain complete UTF-8 characters when that outcome eventually arrives.
+// Bound prior output for every Codex follow-up, regardless of parent timing.
+// Request, direction and formatting take priority over this context budget.
 const maxQueuedCodexContextBytes = 8 * 1024
+
+type codexSteerPromptTooLargeError struct {
+	cause *egg.InitialCodexPromptTooLargeError
+}
+
+func (e *codexSteerPromptTooLargeError) Error() string {
+	return fmt.Sprintf("Codex follow-up request, direction and formatting require %d encoded argv bytes without prior context; limit is %d bytes", e.cause.SizeBytes, e.cause.LimitBytes)
+}
+
+func (e *codexSteerPromptTooLargeError) Unwrap() error { return e.cause }
+
+func validateCodexSteerPrompt(request, direction string) error {
+	if err := egg.ValidateInitialCodexPrompt(SteerPrompt(request, "", "", direction)); err != nil {
+		return &codexSteerPromptTooLargeError{cause: err.(*egg.InitialCodexPromptTooLargeError)}
+	}
+	return nil
+}
 
 func queuedCodexSteerPrompt(request, result, priorError, direction string) string {
 	context := result
 	if priorError != "" {
 		context += "\n\nPrior error:\n" + priorError
 	}
-	if len(context) > maxQueuedCodexContextBytes {
-		const marker = "\n\n[Wingthing truncated the prior context for this follow-up.]"
-		end := maxQueuedCodexContextBytes - len(marker)
-		for end > 0 && !utf8.RuneStart(context[end]) {
-			end--
-		}
-		context = context[:end] + marker
+	base := SteerPrompt(request, "", "", direction)
+	budget := egg.MaxInitialCodexPromptBytes - egg.InitialCodexPromptArgBytes(base)
+	if len(context) <= maxQueuedCodexContextBytes && egg.InitialCodexPromptArgBytes(context) <= budget {
+		return SteerPrompt(request, context, "", direction)
 	}
-	return SteerPrompt(request, context, "", direction)
+	const marker = "\n\n[Wingthing truncated the prior context for this follow-up.]"
+	// If even the marker cannot fit, omit context and preserve the full request
+	// and direction. Admission validates that these can fit by themselves.
+	if egg.InitialCodexPromptArgBytes(marker) > budget {
+		return base
+	}
+	end := min(len(context), maxQueuedCodexContextBytes-len(marker))
+	for end > 0 && end < len(context) && !utf8.RuneStart(context[end]) {
+		end--
+	}
+	// Search complete rune prefixes: partial UTF-8 encodings have different
+	// JSON escaping costs and cannot be used to measure the final argument.
+	runes := []rune(context[:end])
+	low, high := 0, len(runes)
+	for low < high {
+		mid := low + (high-low+1)/2
+		if egg.InitialCodexPromptArgBytes(string(runes[:mid])+marker) <= budget {
+			low = mid
+		} else {
+			high = mid - 1
+		}
+	}
+	return SteerPrompt(request, string(runes[:low])+marker, "", direction)
 }
 
 func awaitNativeRunReady(ctx context.Context, cfg *config.Config, session eggclient.LocalSession) error {

@@ -17,7 +17,7 @@ import (
 
 func TestMCPInitialCodexPromptLimit(t *testing.T) {
 	f := newRunWingFixture(t, nil)
-	for _, prompt := range []string{strings.Repeat("x", 140*1024), strings.Repeat("Ω", egg.MaxInitialCodexPromptBytes/2+1)} {
+	for _, prompt := range []string{strings.Repeat("x", 140*1024), strings.Repeat("Ω", egg.MaxInitialCodexPromptBytes/2+1), strings.Repeat("\x01", egg.MaxInitialCodexPromptBytes/6+1)} {
 		wire, err := json.Marshal(map[string]any{"agent": "codex", "prompt": prompt, "cwd": f.server.Cfg.Dir, "idempotency_key": "retry"})
 		if err != nil {
 			t.Fatal(err)
@@ -26,7 +26,7 @@ func TestMCPInitialCodexPromptLimit(t *testing.T) {
 		for _, task := range []*control.MCPTaskParams{nil, {TTL: new(int64(60000))}, nil} {
 			data, err := f.server.toolAgentRunTask(wire, task)
 			var sizeErr *egg.InitialCodexPromptTooLargeError
-			if data != nil || !errors.As(err, &sizeErr) || sizeErr.SizeBytes != len(prompt) || sizeErr.LimitBytes != egg.MaxInitialCodexPromptBytes {
+			if data != nil || !errors.As(err, &sizeErr) || sizeErr.SizeBytes != egg.InitialCodexPromptArgBytes(prompt) || sizeErr.LimitBytes != egg.MaxInitialCodexPromptBytes {
 				t.Fatalf("MCP rejection: %v", err)
 			}
 		}
@@ -80,24 +80,32 @@ func TestMCPInitialCodexPromptLimit(t *testing.T) {
 func TestMCPCodexSteerPromptBudget(t *testing.T) {
 	const request = "review"
 	const direction = "continue"
-	const deferredContextBytes = 8 * 1024
 	boundaryResultBytes := egg.MaxInitialCodexPromptBytes - len(wingsession.SteerPrompt(request, "", "", direction))
-	boundaryDirectionBytes := egg.MaxInitialCodexPromptBytes - len(wingsession.SteerPrompt(request, "", "", "")) - deferredContextBytes
+	boundaryDirectionBytes := egg.MaxInitialCodexPromptBytes - egg.InitialCodexPromptArgBytes(wingsession.SteerPrompt(request, "", "", ""))
 	for _, test := range []struct {
 		name, result, priorError, direction string
 		active, reject                      bool
 	}{
-		{name: "completed oversized result", result: strings.Repeat("x", 20480), direction: direction, reject: true},
-		{name: "completed multibyte overflow", result: strings.Repeat("Ω", boundaryResultBytes/2+1), direction: direction, reject: true},
-		{name: "completed oversized error", priorError: strings.Repeat("e", 20480), direction: direction, reject: true},
+		{name: "completed small result", result: "prior Ω", direction: direction},
+		{name: "completed small error", priorError: "prior error Ω", direction: direction},
+		{name: "active small result", active: true, result: "prior Ω", direction: direction},
+		{name: "completed oversized result", result: strings.Repeat("x", 20480), direction: direction},
+		{name: "completed multibyte overflow", result: strings.Repeat("Ω", boundaryResultBytes/2+1), direction: direction},
+		{name: "completed oversized error", priorError: strings.Repeat("e", 20480), direction: direction},
 		{name: "completed oversized direction", result: "prior", direction: strings.Repeat("d", egg.MaxInitialCodexPromptBytes), reject: true},
-		{name: "completed exact limit", result: strings.Repeat("x", boundaryResultBytes), direction: direction},
+		{name: "completed large result", result: strings.Repeat("x", boundaryResultBytes), direction: direction},
+		{name: "completed exact limit without context", result: "prior", direction: strings.Repeat("d", boundaryDirectionBytes)},
+		{name: "completed reduced context budget", result: strings.Repeat("界", 10000), direction: strings.Repeat("d", boundaryDirectionBytes-100)},
 		{name: "active oversized result", active: true, result: strings.Repeat("x", 20480), direction: direction},
 		{name: "active multibyte context", active: true, result: strings.Repeat("界", 10000), direction: direction},
 		{name: "active oversized error", active: true, priorError: strings.Repeat("界", 10000), direction: direction},
-		{name: "active exact reserved limit", active: true, result: strings.Repeat("x", 20480), direction: strings.Repeat("d", boundaryDirectionBytes)},
-		{name: "active reservation overflow", active: true, direction: strings.Repeat("d", boundaryDirectionBytes+1), reject: true},
+		{name: "active reduced context budget", active: true, result: strings.Repeat("界", 10000), direction: strings.Repeat("d", boundaryDirectionBytes-100)},
+		{name: "active escaped context", active: true, result: strings.Repeat("\x01", 10000), direction: strings.Repeat("d", boundaryDirectionBytes-100)},
+		{name: "active exact limit without context", active: true, result: "prior", direction: strings.Repeat("d", boundaryDirectionBytes)},
+		{name: "active marker cannot fit", active: true, result: "prior context", direction: strings.Repeat("d", boundaryDirectionBytes-1)},
+		{name: "active one byte over", active: true, direction: strings.Repeat("d", boundaryDirectionBytes+1), reject: true},
 		{name: "active oversized direction", active: true, direction: strings.Repeat("d", egg.MaxInitialCodexPromptBytes), reject: true},
+		{name: "completed escaped direction overflow", direction: strings.Repeat("d\n", boundaryDirectionBytes/3+1), reject: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newRunWingFixture(t, nil)
@@ -127,14 +135,14 @@ func TestMCPCodexSteerPromptBudget(t *testing.T) {
 			wire, _ = json.Marshal(map[string]any{"run_id": parent, "prompt": test.direction, "idempotency_key": "steer-retry"})
 			childData, err := f.server.toolAgentSteer(wire)
 			if test.reject {
-				wantSize := len(wingsession.SteerPrompt(request, test.result, test.priorError, test.direction))
-				if test.active {
-					wantSize = len(wingsession.SteerPrompt(request, "", "", test.direction)) + deferredContextBytes
-				}
+				wantSize := egg.InitialCodexPromptArgBytes(wingsession.SteerPrompt(request, "", "", test.direction))
 				for range 2 {
 					var sizeErr *egg.InitialCodexPromptTooLargeError
 					if childData != nil || !errors.As(err, &sizeErr) || sizeErr.SizeBytes != wantSize || sizeErr.LimitBytes != egg.MaxInitialCodexPromptBytes {
 						t.Fatalf("steer rejection: %v, want size %d", err, wantSize)
+					}
+					if !strings.Contains(err.Error(), "request, direction and formatting") || strings.Contains(err.Error(), "initial native") {
+						t.Fatalf("misleading follow-up error: %v", err)
 					}
 					childData, err = f.server.toolAgentSteer(wire)
 				}
@@ -191,18 +199,38 @@ func TestMCPCodexSteerPromptBudget(t *testing.T) {
 				t.Fatal("wrong child submitted")
 			}
 			opts := <-f.spawned
-			if opts.Egg.InitialRun == nil || len(opts.Egg.InitialRun.Prompt) > egg.MaxInitialCodexPromptBytes || !utf8.ValidString(opts.Egg.InitialRun.Prompt) {
+			if opts.Egg.InitialRun == nil || egg.InitialCodexPromptArgBytes(opts.Egg.InitialRun.Prompt) > egg.MaxInitialCodexPromptBytes || !utf8.ValidString(opts.Egg.InitialRun.Prompt) {
 				t.Fatal("child initial prompt exceeds budget or splits UTF-8")
 			}
 			prompt := opts.Egg.InitialRun.Prompt
 			if !strings.Contains(prompt, "Prior request:\n"+request) || !strings.HasSuffix(prompt, "New direction:\n"+test.direction) {
 				t.Fatal("follow-up lost request or direction")
 			}
-			if test.active && !strings.Contains(prompt, "[Wingthing truncated the prior context for this follow-up.]") {
-				t.Fatal("missing deferred context truncation marker")
+			base := wingsession.SteerPrompt(request, "", "", test.direction)
+			budget := egg.MaxInitialCodexPromptBytes - egg.InitialCodexPromptArgBytes(base)
+			marker := "[Wingthing truncated the prior context for this follow-up.]"
+			context := test.result
+			if test.priorError != "" {
+				context += "\n\nPrior error:\n" + test.priorError
 			}
-			if !test.active && len(prompt) != egg.MaxInitialCodexPromptBytes {
-				t.Fatal("exact-limit follow-up changed")
+			truncated := len(context) > 8*1024 || egg.InitialCodexPromptArgBytes(context) > budget
+			if truncated && budget >= 100 && !strings.Contains(prompt, marker) {
+				t.Fatal("missing prior context truncation marker")
+			}
+			if truncated && budget < 100 && prompt != base {
+				t.Fatal("context should be omitted when the marker cannot fit")
+			}
+			if !truncated && prompt != wingsession.SteerPrompt(request, test.result, test.priorError, test.direction) {
+				t.Fatal("small prior context changed")
+			}
+			db, err := store.Open(f.server.Cfg.DBPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			var dequeued int
+			if err := db.DB().QueryRow("SELECT COUNT(*) FROM task_log WHERE task_id=? AND event='dequeued'", child).Scan(&dequeued); err != nil || dequeued != 1 {
+				t.Fatalf("follow-up did not dequeue exactly once: %d %v", dequeued, err)
 			}
 			f.finish(t, child, "done", "")
 			f.wait(t, child)
