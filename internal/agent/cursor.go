@@ -54,17 +54,14 @@ func (c *Cursor) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 		cmd.Dir = opts.WorkDir
 	}
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("stdout pipe: %w", err)
-	}
-	diagnostics, err := startAgentCommand(cmd)
+	stdout, diagnostics, err := startHeadlessCommand(ctx, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("start cursor agent: %w", err)
 	}
 
 	stream := newStream(ctx)
 	go func() {
+		defer stdout.Close()
 		var failureKind ErrorKind
 		readErr := readProviderLines(stdout, "cursor", func(line string) {
 			// Cursor stream-json uses the same event format as Claude Code

@@ -65,17 +65,14 @@ func (c *Claude) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 	if opts.WorkDir != "" {
 		cmd.Dir = opts.WorkDir
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("stdout pipe: %w", err)
-	}
-	diagnostics, err := startAgentCommand(cmd)
+	stdout, diagnostics, err := startHeadlessCommand(ctx, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("start claude: %w", err)
 	}
 
 	stream := newStream(ctx)
 	go func() {
+		defer stdout.Close()
 		var failureKind ErrorKind
 		readErr := readProviderLines(stdout, "claude", func(line string) {
 			if kind, failed := parseClaudeFailure(line); failed {

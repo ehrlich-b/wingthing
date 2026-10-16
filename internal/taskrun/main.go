@@ -431,17 +431,26 @@ func RunTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		return fmt.Errorf("run agent: %w", err)
 	}
 	defer func() {
-		// Stop the owned process group before draining, even if its leader was
-		// already reaped and the context watcher has exited. Stream closure
-		// joins the provider and unblocks any pending output sends.
+		if runErr == nil {
+			return
+		}
+		// A failed destination must stop the provider even after its leader
+		// has exited. Successful tasks retain their existing child lifetime.
 		if providerCmd != nil && providerCmd.Process != nil && providerCmd.Cancel != nil {
 			if err := providerCmd.Cancel(); err != nil && !errors.Is(err, syscall.ESRCH) && !errors.Is(err, os.ErrProcessDone) {
 				runErr = errors.Join(runErr, fmt.Errorf("stop agent process tree: %w", err))
 			}
 		}
 		cancel()
+		// Cancellation closes provider stdout independently of descendants.
+		// Keep a final bound in case a provider cannot finish its shutdown.
+		drainCtx, stopDrain := context.WithTimeout(context.Background(), 6*time.Second)
+		defer stopDrain()
 		for {
-			if _, ok := stream.Next(); !ok {
+			if _, ok := stream.NextContext(drainCtx); !ok {
+				if err := drainCtx.Err(); err != nil {
+					runErr = errors.Join(runErr, fmt.Errorf("drain agent output: %w", err))
+				}
 				break
 			}
 		}
