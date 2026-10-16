@@ -8,8 +8,17 @@ defaults are beneath it. The scripts do not install or download a toolchain.
 Go modules are pinned in the root `go.mod` and `go.sum`.
 `build-bridge.sh` does not run `go get` or change those pins.
 
-From the repository root, build the native bridge, release APK, debug APK and
-instrumentation APK:
+From the repository root, run the unsigned build and test gate:
+
+```sh
+nice -n 10 make check-android
+```
+
+This sources `mobile/android/toolchain.sh` for both the native bridge build and
+Gradle, then runs JVM unit tests, debug lint, and both debug APK builds offline.
+It needs the installed tools and dependency caches described above.
+
+To also build a signed release APK:
 
 ```sh
 source mobile/android/toolchain.sh
