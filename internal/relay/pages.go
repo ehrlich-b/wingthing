@@ -91,7 +91,6 @@ func (s *Server) template(cached *template.Template, files ...string) *template.
 type pageData struct {
 	User                        *User
 	LocalMode                   bool
-	HeroVideo                   bool
 	AppURL                      string
 	SandboxBuilderAgents        []string
 	SandboxBuilderAgentProfiles map[string]egg.AgentProfile
@@ -125,21 +124,11 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	data := pageData{
 		User:                        s.sessionUser(r),
 		LocalMode:                   s.LocalMode,
-		HeroVideo:                   s.Config.HeroVideo != "",
 		AppURL:                      s.appURL(),
 		SandboxBuilderAgents:        sandboxBuilderAgents,
 		SandboxBuilderAgentProfiles: sandboxBuilderAgentProfiles(),
 	}
 	s.executePageTemplate(w, s.template(homeTmpl, "base.html", "home.html"), data)
-}
-
-func (s *Server) handleHeroVideo(w http.ResponseWriter, r *http.Request) {
-	if s.Config.HeroVideo == "" {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Cache-Control", "public, max-age=86400")
-	http.ServeFile(w, r, s.Config.HeroVideo)
 }
 
 func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {

@@ -134,7 +134,6 @@ func serveCmd() *cobra.Command {
 				FlyMachineID:         flyMachineID,
 				FlyRegion:            flyRegion,
 				FlyAppName:           flyApp,
-				HeroVideo:            os.Getenv("WT_HERO_VIDEO"),
 				RelayPolicy:          relayPolicy,
 				RelayMigrationBefore: relayMigrationBefore,
 				RoostAllowedEmails:   allowedEmails,

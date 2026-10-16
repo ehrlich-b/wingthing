@@ -23,7 +23,7 @@ func main() {
 	}
 	defer store.Close()
 	server := relay.NewServer(store, relay.ServerConfig{BaseURL: "http://" + addr})
-	videoServer := relay.NewServer(store, relay.ServerConfig{BaseURL: "http://" + addr, HeroVideo: "capture-only"})
+	videoServer := relay.NewServer(store, relay.ServerConfig{BaseURL: "http://" + addr})
 	log.Fatal(http.ListenAndServe(addr, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.Error(w, "read only capture fixture", http.StatusMethodNotAllowed)

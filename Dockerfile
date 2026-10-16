@@ -21,8 +21,6 @@ WORKDIR /app
 COPY --from=build /app/wt .
 COPY downloads/ /app/downloads/
 ENV WT_DOWNLOAD_DIR=/app/downloads
-COPY hero.mp4 .
-ENV WT_HERO_VIDEO=/app/hero.mp4
 ENV HOME=/data
 EXPOSE 8080
 # The standalone image defaults to the same loopback-only, no-login gateway as

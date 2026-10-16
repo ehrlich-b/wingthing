@@ -496,9 +496,8 @@ func TestSignedInHomeUsesConfiguredAppURLForLinkAndShortcut(t *testing.T) {
 	}
 }
 
-func TestPublicHomeLeadsWithBenefitAndPersistentProductPreview(t *testing.T) {
-	server, ts := testServer(t)
-	server.Config.HeroVideo = "hero.mp4"
+func TestPublicHomeLeadsWithBenefitAndPersistentProductPreviewWithoutVideo(t *testing.T) {
+	_, ts := testServer(t)
 	resp, err := http.Get(ts.URL + "/")
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
@@ -528,8 +527,6 @@ func TestPublicHomeLeadsWithBenefitAndPersistentProductPreview(t *testing.T) {
 		`aria-label="Example session list and wing conversation"`,
 		"Example · 2 machines",
 		"Claude · Studio · Working",
-		"onplaying=",
-		"onerror=",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Errorf("home is missing %q", contract)
@@ -537,10 +534,17 @@ func TestPublicHomeLeadsWithBenefitAndPersistentProductPreview(t *testing.T) {
 	}
 	install := strings.Index(page, `class="hero-install"`)
 	preview := strings.Index(page, `<section class="product-preview"`)
-	video := strings.Index(page, `<div class="hero-video" hidden>`)
 	glossary := strings.Index(page, `<h3>portal</h3>`)
-	if install < 0 || preview <= install || video <= preview || glossary <= video {
-		t.Fatalf("home order install=%d preview=%d video=%d glossary=%d", install, preview, video, glossary)
+	if install < 0 || preview <= install || glossary <= preview {
+		t.Fatalf("home order install=%d preview=%d glossary=%d", install, preview, glossary)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET / status = %d", resp.StatusCode)
+	}
+	for _, forbidden := range []string{"hero.mp4", "<video"} {
+		if strings.Contains(page, forbidden) {
+			t.Errorf("home includes removed video or request source %q", forbidden)
+		}
 	}
 	for _, forbidden := range []string{">hosted app</a>", ">hosted login</a>"} {
 		if strings.Contains(page, forbidden) {
