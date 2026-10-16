@@ -56,6 +56,23 @@ then reads its own fresh hook and notify spools from their beginning, including
 events that arrived before the socket became available. Completion still
 requires matching native thread, turn and prompt receipts and final notify.
 
+The initial native Codex prompt is limited to **16,384 bytes (16 KiB)**,
+inclusive, measured as UTF-8 bytes without trimming. The wing passes this
+prompt to the egg as JSON in a single argv element before the egg passes the
+literal prompt to Codex. JSON escaping can expand each input byte sixfold;
+this limit leaves room below Linux's 128 KiB per-argument ceiling at both
+boundaries. It does not guarantee that arbitrary environment or other argv
+values fit the operating system's total argument budget.
+
+Wing admission (including MCP `agent_run`) rejects oversized prompts before
+creating a run, task, pending session or provider process. Direct egg launch
+and launch preparation enforce the same limit. The typed
+`egg.InitialCodexPromptTooLargeError` reports only `SizeBytes` and `LimitBytes`,
+and its message includes both byte counts without prompt content. Repeating a
+rejected request creates no records; an accepted idempotent retry keeps the
+original run and session. Claude prompts, later native turns, and interactive
+prompt transports retain their existing behavior.
+
 Missing native admission ends as `provider_not_ready`; cleanup kills the same
 provider process group. The error contains only an allowlisted classification
 of the last rendered screen, with all arbitrary screen text discarded. A

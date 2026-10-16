@@ -242,6 +242,11 @@ func (m *Runs) Admit(launch *Launch, request RunRequest, options StartOptions, a
 	if strings.TrimSpace(request.Prompt) == "" {
 		return nil, false, errors.New("prompt is required")
 	}
+	if request.Agent == "codex" {
+		if err := egg.ValidateInitialCodexPrompt(request.Prompt); err != nil {
+			return nil, false, err
+		}
+	}
 	if request.TimeoutSeconds != 0 && request.TimeoutSeconds < 10 {
 		return nil, false, errors.New("timeout_seconds must be 0 (no deadline) or at least 10")
 	}
