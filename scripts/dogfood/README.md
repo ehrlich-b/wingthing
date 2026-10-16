@@ -1,6 +1,6 @@
 # Weekend canary
 
-Run from a dedicated checkout on branch `codex/dogfood-weekend-20261010`.
+Run from a dedicated Wingthing checkout.
 Requires Bash, Python 3.9+, and a locally built `wt`; build prerequisites are
 Go and npm. It never resolves `wt` from PATH, installs a binary, logs in, or
 reuses a real wing's state. Every invocation allocates a mode-0700 fixture under
@@ -116,6 +116,7 @@ exact remote build and state paths. Do not point either option at production.
 Without these flags their checks remain explicit skips. `--wt` can select a
 different build within this checkout, including a regression build.
 
-See [GAPS.md](../../GAPS.md) for unresolved bugs and acceptance limits. Timer
-units are supplied here; this task does not install or activate them on either
-machine, replace the coordinator's MCP binary, publish, or release anything.
+See [GAPS.md](../../GAPS.md) for unresolved bugs and acceptance limits. The
+supplied timer units require separate installation and activation on each
+machine using the operator commands above. The canary does not update the
+installed MCP binary or publish a release.

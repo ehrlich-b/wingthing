@@ -1,8 +1,8 @@
 # What keeps Wingthing from perfect
 
-Snapshot: 2026-10-10, wave3 run-recovery stack based on `ac90fdc`, branch
-`codex/wave3-wingthing-runs-20261010`. P1 = security, lost work or a blocked primary
-workflow; P2 = broken contract or missing acceptance; P3 = polish/operability.
+Snapshot: 2026-10-10, run-recovery stack based on `ac90fdc`.
+P1 = security, lost work or a blocked primary workflow; P2 = broken contract or
+missing acceptance; P3 = polish/operability.
 “Fixture verified” means an isolated built-binary check, not real-provider,
 production, mobile, sandbox-confinement or weekend-long acceptance.
 
@@ -22,7 +22,7 @@ Earlier dogfood observations are retained below with their original scope.
 | #5 isolation changes between admission/status | P2 | Current runs persist `sandbox` or `privileged` in one durable record (`internal/wingsession/runs.go:256`), replacing the old `none`/`standard` path. Compare admission/status/result with the actual platform enforcement and `egg explain`, including an inherited egg.yaml and outer-boundary mode. This canary requests outer-boundary fixtures and does not prove confinement. |
 | #6 steering after a timed-out parent refused | P2 | **Local fixtures PASS:** a real egg deadline followed by steering completes the child with preserved parent/context/native result across three wing replacements. Deterministic fixtures cover ten persisted boundaries twice each. Remembered steering now retains and retries its original admission key; CLI/MCP expose the saved phase, parent and key. Real-provider and other-host acceptance remain open. |
 | #7 refusal hidden behind generic stdin error | P2 | **Local fixtures PASS:** Codex native refusal/auth/rate-limit failures retain typed kinds across three wing replacements, with CLI/MCP parity and credential-sentinel exclusion. Three Claude failure fixtures preserve prior ordinary assistant output while discarding the diagnostic record. Exercise a real provider failure before promotion. |
-| #8 cwd egg.yaml silently blocks launch | P2 | **REQUIRED-UNRUN:** nested `sandbox-exec` fails with `sandbox_apply: Operation not permitted`; no policy was relaxed. The minimal checkout-local reproduction requires `sandbox_denied`, the exact inherited policy path and `egg explain` guidance. Run `taskpolicy -b nice -n 15 python3 -B .scratch/notes/reproduce-policy-denial.py` from this clone in an ordinary Mac shell; this acceptance gate remains open. |
+| #8 cwd egg.yaml silently blocks launch | P2 | **REQUIRED-UNRUN:** nested `sandbox-exec` fails with `sandbox_apply: Operation not permitted`; no policy was relaxed. The minimal checkout-local reproduction requires `sandbox_denied`, the exact inherited policy path and `egg explain` guidance. Run `taskpolicy -b nice -n 15 python3 -B .scratch/notes/reproduce-policy-denial.py` from the checkout in an ordinary Mac shell; this acceptance gate remains open. |
 | #9 interactive provider text leaks secrets | P1 | **Open design item:** chat captures explicitly may contain secrets (`internal/egg/chat_capture.go:77`); raw PTY/transcript/lifecycle surfaces are not universally redacted. Send a fake credential through `agent_start`, `session_read`, terminal reads and stored archives. Decide whether to exclude secrets at source or change the exposure contract; deny-list filtering cannot prove complete redaction. |
 | #10 Codex completion waits forever for stdout EOF | P1 | Egg semantic results follow native notify/hooks, independently of the persistent TUI; gated fake completion passes. PR #33 and the superseded reaper branch use another architecture. Verify a real completion while the provider/descendant holds output open; `agent_wait` must return the native outcome. A live interactive egg after turn completion is expected and must be stopped explicitly. |
 | #11 stop silently loses queued steer follow-up | P2 | **Local fixtures PASS:** stop of an active parent durably cancels its queued child with an explicit reason across two replacements; stop of a terminal parent preserves its started child, which completes after replacement. Unit fixtures additionally cover admitted-child cancellation and timeout-terminal parents. MCP's frozen cancellation result reports terminal phase before and after replacement while the wing retains its unacknowledged stop intent. Accepted keys/parent IDs survive restart and lost-ack retry; no extra spawn/submission occurs. Real-provider and two-host acceptance remain open. |
@@ -92,7 +92,7 @@ transport/checkout-binary measurements; no live CI or remote host was queried.
   Go advisory database and valid npm audit evidence are still required; an
   offline npm audit skip would not establish vulnerability coverage.
 
-From this clone in an ordinary Mac shell, with the required offline inputs staged:
+From the checkout in an ordinary Mac shell, with the required offline inputs staged:
 
 ```sh
 source .scratch/offline-env.sh
@@ -139,8 +139,8 @@ that violated the brief's no-SSH rule. No additional network operation followed.
   coordinator's installed `v0.148.5`. Fetched tags reach `v0.148.7`, also before
   the egg/local-only/remembered-wing/Tasks/scoped-parent stack. Build success is
   not a release, update, or installed-version acceptance. The maintainer must choose
-  promotion and verify the exact binary/hash on each host. This task leaves the
-  installed MCP host unchanged.
+  promotion and verify the exact binary/hash on each host. Updating the installed
+  MCP host is a separate operator step.
 - **P1 — Linux scoped Claude is unavailable:** the host preflight models provider
   writes only for macOS (`internal/localmcp/conversation_broker_policy.go:46`),
   and the Linux backend refuses every nonempty protected-write set before its
@@ -233,8 +233,8 @@ that violated the brief's no-SSH rule. No additional network operation followed.
   naming this unique fixture. Escaped arbitrary provider descendants still need
   the #12/#13 containment design; failed cleanup retains private state.
 - **P2 — live checks were not run:** real Codex and configured real SSH are
-  opt-in; this task performs neither login nor remote execution. Use the exact
-  coordinator commands in `scripts/dogfood/README.md`. Missing configuration is
+  opt-in and require an existing provider login or configured remote wing. Follow
+  the commands in `scripts/dogfood/README.md`. Missing configuration is
   a skip, never a pass. The optional SSH check is read-only on the remote wing.
 - **P2 — continuous weekend operation is not yet installed:** timer units and
   commands are delivered, not activated. The Linux host needs an already-running systemd
@@ -266,5 +266,5 @@ defects. They are concrete acceptance gaps beyond the weekend MCP smoke path.
 | P3 | UI/latency and compatibility/refactor cleanup remains | Compare personal/org UI, other-provider cursor behavior and round-trip latency; retire replay fallback only after supported-client acceptance. |
 
 Paid hosted billing activation and direct hosted WebSocket routing are also
-unchecked roadmap items. Neither is required for the isolated local-only canary,
-and neither is authorized for production execution by this task.
+unchecked roadmap items. Neither is required for the isolated local-only canary.
+Production activation requires separate operator authorization.

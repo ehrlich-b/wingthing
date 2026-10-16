@@ -1,6 +1,10 @@
 # Phone coordinator through wingthing.ai
 
-Use a **stable build of this branch**, an awake, online Mac, and an installed/authenticated Claude CLI. The separate wing uses the Mac's normal provider login; its Wingthing state, bearer, key, sessions and daemon files are isolated. Preview remains loopback-only. From this clone, build into a new executable outside the coordinator workspace:
+Use a **stable Wingthing build**, an awake, online Mac, and an installed and
+authenticated Claude CLI. The separate wing uses the Mac's normal provider
+login; its Wingthing state, bearer, key, sessions and daemon files are isolated.
+Preview remains loopback-only. From the Wingthing checkout, build into a new
+executable outside the agent's writable workspace:
 ```sh
 nice -n 15 make web
 mkdir -p "$HOME/.local/bin"
