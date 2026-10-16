@@ -98,7 +98,11 @@ async function fixture(t, options = {}) {
             S, DOM, identityPubKey: '', resumeAckMatches: () => true,
             sessionRoute: () => '#terminal', findSessionResource: () => null,
             terminalReferenceMatches: (s, session, wing, socket) => s.ptySessionId === session && s.ptyWingId === wing && s.ptyWs === socket,
-            deriveE2EKey: async () => { await wait('key'); return {}; },
+            deriveE2EKey: async () => {
+                await wait('key');
+                if (options.keyFailure) throw Error('key setup failed');
+                return {};
+            },
             e2eDecrypt: async data => {
                 if (typeof data !== 'string') throw Error('ciphertext must be a string');
                 started.push(data);
@@ -286,6 +290,39 @@ test('session-routed attachment works before a wing identity is known', async t 
 });
 
 const ended = '\r\n\x1b[2m--- session ended ---\x1b[0m\r\n';
+for (const reattach of [false, true]) {
+    test(`${reattach ? 'replay' : 'live'} exit completes after key failure with queued output`, async t => {
+        const page = await fixture(t, { reattach, keyFailure: true });
+        await page.evaluate(async () => {
+            const h = harness;
+            h.deleted = [];
+            window._deleteSession = (...args) => h.deleted.push(args);
+            h.S.ptyWs.close = function () {
+                this.readyState = WebSocket.CLOSED;
+                setTimeout(() => this.onclose(), 0);
+            };
+            h.hold('key'); h.start();
+            h.send(await h.frame('unreadable output\r\n'));
+            h.send({ type: 'pty.exited' });
+            await h.settle();
+        });
+        assert.equal(await page.evaluate(() => harness.S.ptySessionId), 'session-a');
+        await page.evaluate(async () => { harness.release('key'); await harness.settle(); });
+        await check(page, ended);
+        assert.deepEqual(await page.evaluate(() => ({
+            session: harness.S.ptySessionId,
+            key: harness.S.e2eKey,
+            closed: harness.S.ptyWs.readyState === WebSocket.CLOSED,
+            reconnecting: !!harness.S.ptyReconnecting,
+            deleted: harness.deleted,
+            decrypted: harness.started,
+        })), {
+            session: null, key: null, closed: true, reconnecting: false,
+            deleted: [['session-a', true, 'wing-a']], decrypted: [],
+        });
+    });
+}
+
 for (const reattach of [false, true]) {
     for (const phase of ['decrypt', 'gunzip', 'terminal-write', 'key']) {
         test(`${reattach ? 'replay' : 'live'} exit drains accepted output during ${phase}`, async t => {
