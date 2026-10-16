@@ -95,7 +95,7 @@ public struct PhoneKeychainStore: PhoneSecretStore {
         guard let message = reply["message"]?.string else { throw PairingError.protocolFailure }
         let channel = try exchange.finish(message, invitation: invitation); cipher = channel; pake = nil
         if cancelled { try? await cancel(); throw PairingError.cancelled }
-        let proved = try await encrypted("prove", extras: ["name": .string("Bryan's iPhone"), "public_key": .string(try signingKey.publicKey)])
+        let proved = try await encrypted("prove", extras: ["name": .string("My iPhone"), "public_key": .string(try signingKey.publicKey)])
         guard proved["op"]?.string == "proved", proved["emoji"]?.string == channel.emoji else { try? await cancel(); throw PairingError.emojiMismatch }
         guard !cancelled else { throw PairingError.cancelled }; emoji = channel.emoji
     }

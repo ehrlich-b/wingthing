@@ -14,7 +14,7 @@ failures. The first build downloaded all modules; the next was still compiling
 `internal/pake`'s new BoringSSL C++ code. `northstarBuild` forcibly selected empty
 `.scratch/northstar/go-build` and `go-mod` caches, discarding the caches populated
 by the outer Go invocation and CI setup. Main has no Northstar tests or this
-helper. Forge reproduced AttachReturn at 60.02 seconds in `make check`, and
+helper. The Linux host reproduced AttachReturn at 60.02 seconds in `make check`, and
 Attention at 60.02 seconds in the focused race run.
 
 The helper now inherits the invoking build environment and its cache selectors.
@@ -27,7 +27,7 @@ assertions are unchanged.
 `northstarStartPTY` drained emulator query replies with `Emulator.Read` while
 cleanup called `Emulator.Close`. The dependency's `closed` flag is unsynchronized;
 the fixture mutex did not protect its drain goroutine. CI reported this race;
-Forge also reproduced it in RemoteAttach, which shares the helper.
+The Linux host also reproduced it in RemoteAttach, which shares the helper.
 
 Cleanup now closes the emulator's query pipe, joins its reader, and only then
 closes the emulator. Terminal rendering, hook publication, bell counts, and
@@ -38,7 +38,7 @@ privacy assertions remain intact.
 The fake SSH transport's SIGWINCH worker called `pty.Setsize(master)` (and hence
 `master.Fd()`) while the output reader released the closed master descriptor.
 The race-instrumented SSH child exited with code 66, overwriting the expected
-navigator screen with its race report. CI's stack names both operations; Forge
+navigator screen with its race report. CI's stack names both operations; the Linux host
 reproduced the failing SSH child and shared emulator race.
 
 The SSH fixture now stops signal delivery and joins its resize worker before
@@ -61,7 +61,7 @@ No sandbox requirement, CI sysctl, AppArmor policy, or test assertion was relaxe
 
 ### Failures hidden behind the container preflight failure
 
-Forge's full Debian battery reached the compiled CLI tests and found that the new
+The Linux host's full Debian battery reached the compiled CLI tests and found that the new
 Northstar helper tried to invoke Go inside a runtime-only image. Preview binaries
 and the new run-inspect snapshot fixture were also absent. Main lacks these
 Northstar and run-inspect tests.
@@ -72,10 +72,10 @@ copies the selected CLI under its test-created TMPDIR alias. Both channels still
 execute the real CLI and retain their channel assertions. No toolchain or live
 provider is needed inside the container for these fixtures.
 
-## Additional failures exposed by Forge's namespace-capable kernel
+## Additional failures exposed by the Linux host's namespace-capable kernel
 
 These tests also exist on main, whose Ubuntu host jobs skip native sandbox tests
-when AppArmor rejects the capability probe. Forge can create the namespaces.
+when AppArmor rejects the capability probe. The Linux host can create the namespaces.
 
 * `TestClaudeLifecycleRefusesHostSettingsOutsideFinalPolicy/allowed`: the egg
   test binary had no `_deny_init` dispatch. Sandbox re-execution entered the test
@@ -100,14 +100,13 @@ when AppArmor rejects the capability probe. Forge can create the namespaces.
 
 ## Validation
 
-Forge: Linux amd64, kernel `6.12.111+deb13-cloud-amd64`, Go `1.27.2`.
-CI's original logs used Go `1.26.9`; no macOS validation is claimed by this lane.
+CI's original logs used Go `1.26.9`; no macOS validation is claimed here.
 
 The three reported PTY tests passed three times with `-race -count=3` on the final
 source (75.582s; an earlier three-run check also passed in 83.708s).
 The additional native egg/relay tests passed three times with the race detector.
 Both namespace-failure tests passed three times in each distro's ordinary
-Docker security boundary. Forge has no AppArmor userns sysctl, so this negative
+Docker security boundary. The Linux host has no AppArmor userns sysctl, so this negative
 reproduction uses Docker's namespace rejection; the same product reason and
 repair assertion run without a skip. The privileged batteries exercise namespace
 success separately. Existing platform/capability skips are preserved; none added.

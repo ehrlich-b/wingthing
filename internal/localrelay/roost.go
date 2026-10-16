@@ -113,7 +113,6 @@ func RunRoostForeground(version string, addrFlag string, devFlag bool, labelsFla
 		SMTPUser:           os.Getenv("SMTP_USER"),
 		SMTPPass:           os.Getenv("SMTP_PASS"),
 		SMTPFrom:           os.Getenv("SMTP_FROM"),
-		HeroVideo:          os.Getenv("WT_HERO_VIDEO"),
 		RoostAllowedEmails: roostAllowedEmails,
 	}
 

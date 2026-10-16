@@ -438,6 +438,10 @@ try {
     const publicPages = [['09-landing', '/'], ['10-install', '/install'], ['11-docs', '/docs'], ['12-patterns', '/patterns'], ['13-login', '/login'], ['14-terms', '/terms'], ['15-privacy', '/privacy'], ['16-abuse', '/abuse']];
     for (const [index, v] of themes.entries()) {
         const page = await contexts[index].newPage();
+        const videoRequests = [];
+        page.on('request', request => {
+            if (new URL(request.url()).pathname === '/hero.mp4') videoRequests.push(request.url());
+        });
         // Block external resources and navigation, including any account links.
         await page.route('**/*', route => new URL(route.request().url()).origin === publicBase ? route.continue() : route.abort());
         for (const [name, route] of publicPages) {
@@ -448,16 +452,10 @@ try {
             await page.evaluate(() => document.fonts.ready);
             await checkPublic(page, name, v.suffix);
             await shoot(page, name, v.suffix);
-            if (name === '09-landing') for (const mode of ['blocked','unsupported']) {
-                if(mode === 'blocked') await page.route('**/hero.mp4', route=>route.abort());
-                await page.goto(publicBase + '/?hero=' + mode);
-                await page.locator('video').waitFor({state:'attached'});
-                await page.waitForTimeout(400);
-                assert.ok(await page.locator('.product-preview').isVisible());
-                assert.ok(await page.locator('.hero-video').isHidden());
-                checked('09-landing-' + mode + v.suffix, 'HTML preview visible; failed video hidden');
-                await shoot(page, '09-landing-' + mode, v.suffix);
-                if(mode === 'blocked') await page.unroute('**/hero.mp4');
+            if (name === '09-landing') {
+                assert.equal(await page.locator('video').count(), 0);
+                assert.deepEqual(videoRequests, [], 'Homepage requested the removed recording');
+                checked('09-landing' + v.suffix + '-no-video-requests', 'Homepage rendered with no video or recording requests');
             }
         }
         await page.close();
@@ -538,7 +536,7 @@ try {
         await contexts[index].setOffline(false);
         await page.close();
     }
-    const expected = only.length ? (only.length + 1 + (only.includes('09-landing') ? 2 : 0)) * themes.length : 88;
+    const expected = only.length ? (only.length + 1) * themes.length : 80;
     if (captures.length !== expected) throw Error('Incomplete capture: ' + captures.length + ' of ' + expected);
     complete = true;
     if (overflow.length) throw Error('Horizontal overflow in ' + overflow.length + ' phone captures');

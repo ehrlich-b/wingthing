@@ -62,7 +62,7 @@ You run `wtd` on your machine or VPS. You define your own anchors. You point it 
 
 ### Hosted Mode (`wingthing.ai/social`)
 
-Same code. Bryan's opinions about anchors. Bryan's curated RSS feeds. Shared community upvotes. The `/w/` namespace. Free to browse. Account required to subscribe/upvote/publish.
+Same code. The maintainer's opinions about anchors. The maintainer's curated RSS feeds. Shared community upvotes. The `/w/` namespace. Free to browse. Account required to subscribe/upvote/publish.
 
 ---
 
@@ -526,7 +526,7 @@ RSS content with no engagement is a newspaper. RSS content with a thoughtful 2-p
 3. Quality gate: only publish comments above a confidence threshold
 ```
 
-The comment prompt is a skill template — Bryan and his wing tune it until the comments are genuinely good. Not fake engagement. Actual insight from a GPU that has time to think.
+The comment prompt is a skill template — the maintainer and their wing tune it until the comments are genuinely good. Not fake engagement. Actual insight from a GPU that has time to think.
 
 ### Monetization
 
@@ -731,7 +731,7 @@ the semantic neighborhood.
 
 Good: "Infrastructure insights from people building local-first tools"
 Bad: "technology" (too broad)
-Bad: "Bryan's posts" (follows a person, not a meaning)
+Bad: "Alice's posts" (follows a person, not a meaning)
 
 Call subscribe_to_commons(anchor_slug) for an anchor, or
 subscribe_to_commons(text) for a custom semantic subscription.

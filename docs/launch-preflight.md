@@ -194,7 +194,7 @@ provider tool-call receipt is present in this row. The existing
 cannot satisfy that gate. The coordinator must supply the previously authorized
 exact tool-call canary command/receipt; no new model call is authorized here.
 
-The 21:55–22:30 forge incident entries and full raw help captures for two saved
+The 21:55–22:30 my-server incident entries and full raw help captures for two saved
 provider versions were not found in the available committed input RUNLOGs.
 They remain REQUIRED-UNRUN source evidence. Synthetic version/help fixtures
 exercise compatibility and redaction locally, without impersonating recordings

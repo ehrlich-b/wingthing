@@ -95,11 +95,11 @@ adapters.
 A local-only convenience is incomplete unless it is a deliberate intermediate
 step toward that parity.
 
-The Slide shared roost is the highest-risk compatibility canary, and personal
-local/remote wings plus native direct MCP are also real workflows. Preserve all
+Test shared organization-mode roosts, personal local/remote wings, and native
+direct MCP before release. Preserve all
 deployed contracts by default while iterating. Breaking changes are allowed when
-they materially simplify or improve the product, but first present Bryan with the
-concrete benefit, affected workflow, and migration plan and get his agreement.
+they materially simplify or improve the product, but first present the maintainer with the
+concrete benefit, affected workflow, and migration plan and get their agreement.
 Compatibility remains a conscious tradeoff.
 
 ## Architecture
@@ -343,14 +343,13 @@ CI runs via **GitHub Actions** (`.github/workflows/ci.yml` on push/PR; `release.
 
 ### Development is LOCAL
 
-**Prod (wingthing.fly.dev) is Bryan's daily driver.** Do not deploy to Fly during development unless explicitly asked. All development and testing happens locally.
+**Prod (wingthing.fly.dev) is the maintainer's daily driver.** Do not deploy to Fly during development unless explicitly asked. All development and testing happens locally.
 
 ### Release and deployment discipline
 
-The August local-first vacation freeze has expired and is historical. Use the
-current product brief plus CI/release workflows for promotion gates. Do not merge,
-tag, deploy Fly, or change the Slide deployment unless the active task explicitly
-authorizes that state change. Build the repository binary and use an isolated
+Use the current product brief plus CI/release workflows for promotion gates.
+Do not merge, tag, deploy Fly, or change a private deployment unless the active
+task explicitly authorizes that state change. Build the repository binary and use an isolated
 `WINGTHING_DIR` for local dogfooding.
 
 - `make serve` starts a local relay on `:8080`

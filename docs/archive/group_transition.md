@@ -13,7 +13,7 @@ as the original risk analysis; they are not a current deploy runbook.
 - Volume `wt_data` mounted at `/data` with no process group scope
 - CMD from Dockerfile: `sh -c 'mkdir -p /data/.wingthing && exec ./wt serve --addr :8080'`
 - `WT_JWT_KEY` already set in Fly secrets
-- Bryan uses this daily — zero downtime tolerance for screwups
+- The maintainer uses this daily — zero downtime tolerance for screwups
 
 ## What the deploy changes
 
@@ -78,7 +78,7 @@ fly apps destroy wingthing-staging
 
 ## Prod deploy plan
 
-Do this when Bryan is NOT actively using prod (no open PTY sessions).
+Do this when the maintainer is NOT actively using prod (no open PTY sessions).
 
 ```bash
 # 1. Check current state

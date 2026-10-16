@@ -171,4 +171,4 @@ shape and proves each selected baseline binary can reopen candidate state. Neith
 default pin is automatically the immediately previous release. The direct-MCP
 canary remains an in-process network test; the release gate still requires the built
 `wt mcp connect` process and a real Codex/Claude client against two distinct hosts,
-including the WSL rig.
+including a WSL host.

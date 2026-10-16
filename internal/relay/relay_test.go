@@ -496,9 +496,8 @@ func TestSignedInHomeUsesConfiguredAppURLForLinkAndShortcut(t *testing.T) {
 	}
 }
 
-func TestPublicHomeLeadsWithBenefitAndPersistentProductPreview(t *testing.T) {
-	server, ts := testServer(t)
-	server.Config.HeroVideo = "hero.mp4"
+func TestPublicHomeLeadsWithBenefitAndPersistentProductPreviewWithoutVideo(t *testing.T) {
+	_, ts := testServer(t)
 	resp, err := http.Get(ts.URL + "/")
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
@@ -528,8 +527,6 @@ func TestPublicHomeLeadsWithBenefitAndPersistentProductPreview(t *testing.T) {
 		`aria-label="Example session list and wing conversation"`,
 		"Example · 2 machines",
 		"Claude · Studio · Working",
-		"onplaying=",
-		"onerror=",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Errorf("home is missing %q", contract)
@@ -537,10 +534,17 @@ func TestPublicHomeLeadsWithBenefitAndPersistentProductPreview(t *testing.T) {
 	}
 	install := strings.Index(page, `class="hero-install"`)
 	preview := strings.Index(page, `<section class="product-preview"`)
-	video := strings.Index(page, `<div class="hero-video" hidden>`)
 	glossary := strings.Index(page, `<h3>portal</h3>`)
-	if install < 0 || preview <= install || video <= preview || glossary <= video {
-		t.Fatalf("home order install=%d preview=%d video=%d glossary=%d", install, preview, video, glossary)
+	if install < 0 || preview <= install || glossary <= preview {
+		t.Fatalf("home order install=%d preview=%d glossary=%d", install, preview, glossary)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET / status = %d", resp.StatusCode)
+	}
+	for _, forbidden := range []string{"hero.mp4", "<video"} {
+		if strings.Contains(page, forbidden) {
+			t.Errorf("home includes removed video or request source %q", forbidden)
+		}
 	}
 	for _, forbidden := range []string{">hosted app</a>", ">hosted login</a>"} {
 		if strings.Contains(page, forbidden) {
@@ -767,7 +771,7 @@ func TestAuthCheckReturnsUserInfo(t *testing.T) {
 	// Create a user with profile data
 	token, userID := createTestToken(t, srv.Store, "dev1")
 	mustTestExec(t, srv.Store.DB(), "UPDATE users SET display_name = ?, email = ?, provider = ? WHERE id = ?",
-		"Phil Heckel", "phil@test.com", "github", userID)
+		"Test User", "user@example.com", "github", userID)
 
 	req, _ := http.NewRequest("GET", ts.URL+"/auth/check", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -788,11 +792,11 @@ func TestAuthCheckReturnsUserInfo(t *testing.T) {
 	if body["user_id"] != userID {
 		t.Errorf("user_id = %v, want %s", body["user_id"], userID)
 	}
-	if body["display_name"] != "Phil Heckel" {
-		t.Errorf("display_name = %v, want Phil Heckel", body["display_name"])
+	if body["display_name"] != "Test User" {
+		t.Errorf("display_name = %v, want Test User", body["display_name"])
 	}
-	if body["email"] != "phil@test.com" {
-		t.Errorf("email = %v, want phil@test.com", body["email"])
+	if body["email"] != "user@example.com" {
+		t.Errorf("email = %v, want user@example.com", body["email"])
 	}
 	if body["provider"] != "github" {
 		t.Errorf("provider = %v, want github", body["provider"])
@@ -846,7 +850,7 @@ func TestAuthTokenReturnsUserInfo(t *testing.T) {
 	// Set user profile on the auto-created dev user before polling for token
 	// Dev mode creates user with ID = "test-user"
 	mustTestExec(t, srv.Store.DB(), "UPDATE users SET display_name = ?, email = ?, provider = ? WHERE id = ?",
-		"Bryan Ehrlich", "bryan@test.com", "google", "test-user")
+		"Alice Example", "alice@example.com", "google", "test-user")
 
 	// Poll for token
 	resp2, err := http.Post(ts.URL+"/auth/token", "application/json",
@@ -861,11 +865,11 @@ func TestAuthTokenReturnsUserInfo(t *testing.T) {
 	if tokenResp["token"] == nil || tokenResp["token"] == "" {
 		t.Fatal("expected token in response")
 	}
-	if tokenResp["display_name"] != "Bryan Ehrlich" {
-		t.Errorf("display_name = %v, want Bryan Ehrlich", tokenResp["display_name"])
+	if tokenResp["display_name"] != "Alice Example" {
+		t.Errorf("display_name = %v, want Alice Example", tokenResp["display_name"])
 	}
-	if tokenResp["email"] != "bryan@test.com" {
-		t.Errorf("email = %v, want bryan@test.com", tokenResp["email"])
+	if tokenResp["email"] != "alice@example.com" {
+		t.Errorf("email = %v, want alice@example.com", tokenResp["email"])
 	}
 	if tokenResp["provider"] != "google" {
 		t.Errorf("provider = %v, want google", tokenResp["provider"])

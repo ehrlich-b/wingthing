@@ -157,7 +157,7 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 		}
 		return process
 	}
-	gatewayProcess := start(macState, "EhrlichMac", binary)
+	gatewayProcess := start(macState, "my-mac", binary)
 	start(remoteState, "forge", binary)
 	macMeta, e := sshcontrol.InspectLocal(t.Context(), macState, "")
 	if e != nil {

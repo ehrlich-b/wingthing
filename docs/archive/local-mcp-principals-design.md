@@ -10,7 +10,7 @@ Companion to [MCP service accounts](mcp-service-accounts-design.md), which cover
 ## The problem
 
 Every AI agent on a personal machine runs as the same person. Claude Code, Codex, Cursor,
-and whatever gets installed next all execute as `ehrlich`, and `wt mcp stdio` grants
+and whatever gets installed next all execute as `alice`, and `wt mcp stdio` grants
 whoever launched it the full local control plane. So today:
 
 - Any agent can `terminal_list` and see every other agent's sessions, with labels and
@@ -97,11 +97,11 @@ Per client, in `~/.wingthing/clients.yaml`:
 require_client: true
 clients:
   claude-code:
-    owner: ehrlich
+    owner: alice
     grants: [terminal.start, terminal.read, terminal.send, terminal.stop, agent.run]
     bounds: {max_sessions: 4, max_spawns_per_hour: 20}
   codex:
-    owner: ehrlich
+    owner: alice
     grants: [terminal.read]
   cron-jobs:
     grants: [agent.run]

@@ -29,7 +29,7 @@ when their resolved target stays inside the selected preview state tree.
 Provider settings, shell files, tokens, environment credentials and
 platform credential environment are not copied from the host. Read-only
 provider executables may be shared; authenticating a clean preview provider home
-is a separate deliberate setup action. Existing Slide Claude authentication is
+is a separate deliberate setup action. Existing shared-roost Claude authentication is
 not a personal preview login route.
 
 `wt-preview provider setup-guide claude --json` prints preparation and first-class
@@ -92,13 +92,10 @@ suggestion. Preview also accepts `WINGTHING_PREVIEW_DIR`. Use a short dedicated
 state root when the checkout path is long; state need not live in the checkout.
 MCP configuration and refusal audit records retain their normal behavior.
 
-On the two admitted Ubuntu guests, an isolated temporary preview executable
-failed the unprivileged mount capability probe before session creation. Existing
-SSH transport worked. The preview's `doctor --fix` refuses the shared Linux
-installer because it uses the stable `wingthing` AppArmor profile. A separately
-reviewed root-owned preview executable and executable-specific profile is a
-live host setup action; see [the archived access review](archive/personal-access-review.md). No host policy was
-changed and no outer-boundary fallback was used for those tests.
+The preview's `doctor --fix` refuses the shared Linux installer because it uses
+the stable `wingthing` AppArmor profile. A separately reviewed root-owned preview
+executable and executable-specific profile requires an explicit host setup action
+and verification of the unprivileged sandbox capability before session creation.
 
 ## Local package journey
 

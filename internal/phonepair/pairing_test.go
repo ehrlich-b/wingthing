@@ -50,7 +50,7 @@ func fixture(t *testing.T) *phoneFixture {
 		t.Fatal(e)
 	}
 	handler := &fixtureHandler{}
-	m, e := New(t.TempDir(), "main-wing", "EhrlichMac", "http://192.168.1.40:6078", nil, private, handler)
+	m, e := New(t.TempDir(), "main-wing", "my-mac", "http://192.168.1.40:6078", nil, private, handler)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -101,7 +101,7 @@ func (f *phoneFixture) send(t *testing.T, op string, fields map[string]any) Resp
 }
 func (f *phoneFixture) prove(t *testing.T) {
 	t.Helper()
-	response := f.send(t, "prove", map[string]any{"name": "Bryan's iPhone", "public_key": base64.StdEncoding.EncodeToString(elliptic.Marshal(elliptic.P256(), f.signing.X, f.signing.Y))})
+	response := f.send(t, "prove", map[string]any{"name": "My iPhone", "public_key": base64.StdEncoding.EncodeToString(elliptic.Marshal(elliptic.P256(), f.signing.X, f.signing.Y))})
 	if response.Error != "" {
 		t.Fatal(response.Error)
 	}
@@ -319,7 +319,7 @@ func TestDeviceScopeReplayRevocationAndLiveClosure(t *testing.T) {
 	if r.Error != "denied" || f.handler.calls != 1 {
 		t.Fatal("combined operation bypassed exact session scope")
 	}
-	if e := f.m.Revoke("Bryan's iPhone"); e != nil {
+	if e := f.m.Revoke("My iPhone"); e != nil {
 		t.Fatal(e)
 	}
 	if len(f.handler.closed) != 1 || f.handler.closed[0] != c.id {
@@ -417,7 +417,7 @@ func TestRevocationInterruptsInFlightSessionWithoutWaiting(t *testing.T) {
 	finished := make(chan Response, 1)
 	go func() { finished <- f.m.Handle(context.Background(), c.request(1, "read")) }()
 	<-h.entered
-	if e := f.m.Revoke("Bryan's iPhone"); e != nil {
+	if e := f.m.Revoke("My iPhone"); e != nil {
 		t.Fatal(e)
 	}
 	select {
@@ -450,7 +450,7 @@ func TestPhoneFleetOperationsRetainEncryptedReplayAndRevocationGates(t *testing.
 			t.Fatalf("qualified operation replayed: %s %+v", op, replay)
 		}
 	}
-	if e := f.m.Revoke("Bryan's iPhone"); e != nil {
+	if e := f.m.Revoke("My iPhone"); e != nil {
 		t.Fatal(e)
 	}
 	for _, op := range []string{"inventory", "search", "action", "launch", "fleet_attach", "fleet_read", "fleet_input", "fleet_detach"} {

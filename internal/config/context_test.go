@@ -16,7 +16,7 @@ func TestContextToolConfigValidation(t *testing.T) {
 	}{
 		{name: "both", yaml: "name: tickets\nrun: echo x\ncontext: happyfox-tickets\n", want: "mutually exclusive"},
 		{name: "missing block", yaml: "name: tickets\ncontext: happyfox-tickets\n", want: "wing context block"},
-		{name: "enabled", yaml: "name: tickets\ncontext: happyfox-tickets\n", context: &ContextConfig{URL: "https://context.pants.taxi", ClientID: "wingthing-stage", SecretFile: "/opt/context.secret"}},
+		{name: "enabled", yaml: "name: tickets\ncontext: happyfox-tickets\n", context: &ContextConfig{URL: "https://context.example.com", ClientID: "wingthing-stage", SecretFile: "/opt/context.secret"}},
 		{name: "legacy", yaml: "name: tickets\nrun: echo x\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -38,7 +38,7 @@ func TestContextToolConfigValidation(t *testing.T) {
 
 func TestWingContextRoundTripAndValidation(t *testing.T) {
 	dir := t.TempDir()
-	c := &ContextConfig{URL: "https://context.pants.taxi", ClientID: "wingthing-stage", SecretFile: filepath.Join(dir, "secret"), Scopes: []string{"happyfox"}}
+	c := &ContextConfig{URL: "https://context.example.com", ClientID: "wingthing-stage", SecretFile: filepath.Join(dir, "secret"), Scopes: []string{"happyfox"}}
 	if err := SaveWingConfig(dir, &WingConfig{Context: c}); err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestWingContextRoundTripAndValidation(t *testing.T) {
 		t.Fatal("clone shares scopes")
 	}
 	for _, bad := range []ContextConfig{
-		{URL: "https://user:secret@context.pants.taxi", ClientID: "wingthing-stage", SecretFile: c.SecretFile},
+		{URL: "https://user:secret@context.example.com", ClientID: "wingthing-stage", SecretFile: c.SecretFile},
 		{URL: c.URL, ClientID: "wingthing-stage", SecretFile: "relative"},
 		{URL: c.URL, SecretFile: c.SecretFile},
 	} {

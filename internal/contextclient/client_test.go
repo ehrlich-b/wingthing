@@ -61,7 +61,7 @@ func TestClientExchangeCacheAndErrors(t *testing.T) {
 				t.Fatal("wrong form contract")
 			}
 			owner := r.Form.Get("subject_token")
-			if owner != "owner@slide.tech" && owner != "second@slide.tech" {
+			if owner != "owner@example.com" && owner != "second@example.com" {
 				t.Fatalf("bad subject %q", owner)
 			}
 			grants++
@@ -85,7 +85,7 @@ func TestClientExchangeCacheAndErrors(t *testing.T) {
 			t.Fatal(err)
 		}
 		params := request["params"].(map[string]any)
-		if params["name"] != "jira-search" || params["arguments"].(map[string]any)["subject"] != "spoof@slide.tech" {
+		if params["name"] != "jira-search" || params["arguments"].(map[string]any)["subject"] != "spoof@example.com" {
 			t.Fatal("wrong arguments")
 		}
 		if rpcError {
@@ -94,7 +94,7 @@ func TestClientExchangeCacheAndErrors(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{"isError": operationError, "content": []map[string]string{{"type": "text", "text": owners[token]}, {"type": "text", "text": secret + " " + token}}}})
 	})}
-	args := map[string]any{"subject": "spoof@slide.tech"}
+	args := map[string]any{"subject": "spoof@example.com"}
 	call := func(owner string) {
 		t.Helper()
 		output, err := client.Call(context.Background(), owner, "jira-search", args)
@@ -102,22 +102,22 @@ func TestClientExchangeCacheAndErrors(t *testing.T) {
 			t.Fatalf("output=%q err=%v", output, err)
 		}
 	}
-	call("Owner@slide.tech")
-	call("Owner@slide.tech")
+	call("Owner@example.com")
+	call("Owner@example.com")
 	if grants != 1 {
 		t.Fatalf("cache missed: %d", grants)
 	}
 	now = now.Add(91 * time.Second)
-	call("Owner@slide.tech")
+	call("Owner@example.com")
 	if grants != 2 {
 		t.Fatal("did not refresh before expiry")
 	}
-	call("second@slide.tech")
+	call("second@example.com")
 	if grants != 3 {
 		t.Fatal("cross-user cache reuse")
 	}
 	beforeCalls := calls
-	for _, owner := range []string{"", "Owner <owner@slide.tech>", "invalid"} {
+	for _, owner := range []string{"", "Owner <owner@example.com>", "invalid"} {
 		if _, err := client.Call(context.Background(), owner, "jira-search", args); err == nil || !strings.Contains(err.Error(), "verified owner email") {
 			t.Fatalf("unverified owner: %v", err)
 		}
@@ -127,19 +127,19 @@ func TestClientExchangeCacheAndErrors(t *testing.T) {
 	}
 	for _, status := range []int{401, 403, 429, 500, 503} {
 		httpStatus = status
-		_, err := client.Call(context.Background(), "owner@slide.tech", "jira-search", args)
+		_, err := client.Call(context.Background(), "owner@example.com", "jira-search", args)
 		if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("HTTP %d", status)) || strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "token-") {
 			t.Fatalf("HTTP error=%v", err)
 		}
 	}
 	httpStatus = 0
 	rpcError = true
-	if _, err := client.Call(context.Background(), "owner@slide.tech", "jira-search", args); err == nil || err.Error() != "context: MCP error -32001: [redacted][redacted]" {
+	if _, err := client.Call(context.Background(), "owner@example.com", "jira-search", args); err == nil || err.Error() != "context: MCP error -32001: [redacted][redacted]" {
 		t.Fatalf("RPC error=%v", err)
 	}
 	rpcError = false
 	operationError = true
-	if _, err := client.Call(context.Background(), "owner@slide.tech", "jira-search", args); err == nil || strings.Contains(err.Error(), secret) {
+	if _, err := client.Call(context.Background(), "owner@example.com", "jira-search", args); err == nil || strings.Contains(err.Error(), secret) {
 		t.Fatalf("operation error=%v", err)
 	}
 }
@@ -163,10 +163,10 @@ func TestClientRefusesRedirectAndSanitizesReadErrors(t *testing.T) {
 		w.Header().Set("Location", "https://other.example")
 		w.WriteHeader(307)
 	})}
-	if _, err := client.Call(context.Background(), "owner@slide.tech", "jira-search", nil); err == nil || !strings.Contains(err.Error(), "HTTP 307") {
+	if _, err := client.Call(context.Background(), "owner@example.com", "jira-search", nil); err == nil || !strings.Contains(err.Error(), "HTTP 307") {
 		t.Fatalf("redirect result: %v", err)
 	}
-	if _, err := (*Client)(nil).Call(context.Background(), "owner@slide.tech", "jira-search", nil); err == nil {
+	if _, err := (*Client)(nil).Call(context.Background(), "owner@example.com", "jira-search", nil); err == nil {
 		t.Fatal("missing block accepted")
 	}
 }
@@ -176,7 +176,7 @@ func TestTokenCacheWaitHonorsCancellation(t *testing.T) {
 	client.tokenLock <- struct{}{}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := client.Call(ctx, "owner@slide.tech", "jira-search", nil); err == nil || err.Error() != "context: request timed out or cancelled" {
+	if _, err := client.Call(ctx, "owner@example.com", "jira-search", nil); err == nil || err.Error() != "context: request timed out or cancelled" {
 		t.Fatalf("cancelled cache wait: %v", err)
 	}
 }
@@ -288,7 +288,7 @@ func TestClientPreservesUsefulErrorsAndRedactsCredentials(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(tc.body)
 				}
 			})}
-			output, err := client.Call(context.Background(), "owner@slide.tech", "database-query", nil)
+			output, err := client.Call(context.Background(), "owner@example.com", "database-query", nil)
 			if output != "" || err == nil || err.Error() != tc.want {
 				t.Fatalf("output=%q err=%v, want %q", output, err, tc.want)
 			}
@@ -322,7 +322,7 @@ func TestClientTokenErrorsRedactAssertionAndRequest(t *testing.T) {
 		w.WriteHeader(400)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error_description": "missing entitlement: ask an admin; " + string(client.secret) + "; request=" + request + "; assertion=" + assertion})
 	})}
-	_, err := client.Call(context.Background(), "owner@slide.tech", "jira-search", nil)
+	_, err := client.Call(context.Background(), "owner@example.com", "jira-search", nil)
 	want := "context: HTTP 400 (Bad Request): missing entitlement: ask an admin; [redacted]; request=[redacted]; assertion=[redacted]"
 	if err == nil || err.Error() != want || strings.Contains(err.Error(), assertion) || strings.Contains(err.Error(), request) {
 		t.Fatalf("token error=%v", err)
@@ -333,8 +333,8 @@ func TestClientRefreshesUnauthorizedOwnerOnce(t *testing.T) {
 	for _, outcome := range []string{"success", "HTTP 401", "HTTP 403", "RPC error", "operation error", "refresh failure"} {
 		t.Run(outcome, func(t *testing.T) {
 			client := newErrorTestClient(t)
-			const owner = "owner@slide.tech"
-			const other = "other@slide.tech"
+			const owner = "owner@example.com"
+			const other = "other@example.com"
 			const rejected = "rejected-owner-token"
 			const replacement = "replacement-owner-token"
 			client.tokens[owner] = cachedToken{rejected, time.Now().Add(time.Hour)}
@@ -392,7 +392,7 @@ func TestClientRefreshesUnauthorizedOwnerOnce(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{"isError": outcome == "operation error", "content": []map[string]string{{"type": "text", "text": text}}}})
 				}
 			})}
-			output, err := client.Call(context.Background(), "Owner@slide.tech", "jira-search", map[string]any{"query": "project = SLIDE"})
+			output, err := client.Call(context.Background(), "Owner@example.com", "jira-search", map[string]any{"query": "project = EXAMPLE"})
 			wantCalls := 2
 			if outcome == "refresh failure" {
 				wantCalls = 1
@@ -433,14 +433,14 @@ func TestClientRefreshesUnauthorizedOwnerOnce(t *testing.T) {
 func TestClientRefreshErrorRedactsRejectedTokenBeforeTruncation(t *testing.T) {
 	client := newErrorTestClient(t)
 	const rejected = "rejected-owner-token-crossing-the-boundary"
-	client.tokens["owner@slide.tech"] = cachedToken{rejected, time.Now().Add(time.Hour)}
+	client.tokens["owner@example.com"] = cachedToken{rejected, time.Now().Add(time.Hour)}
 	client.http.Transport = handlerTransport{http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)
 		if r.URL.Path == "/oauth/token" {
 			_ = json.NewEncoder(w).Encode(map[string]string{"message": strings.Repeat("x", 490) + rejected})
 		}
 	})}
-	_, err := client.Call(context.Background(), "owner@slide.tech", "jira-search", nil)
+	_, err := client.Call(context.Background(), "owner@example.com", "jira-search", nil)
 	want := "context: HTTP 401 (Unauthorized): " + strings.Repeat("x", 490) + "[redacted]"
 	if err == nil || err.Error() != want {
 		t.Fatalf("refresh error=%v, want %q", err, want)
@@ -450,7 +450,7 @@ func TestClientRefreshErrorRedactsRejectedTokenBeforeTruncation(t *testing.T) {
 func TestClientConcurrent401PreservesRefreshedToken(t *testing.T) {
 	client := newErrorTestClient(t)
 	const rejected, replacement = "rejected-owner-token", "replacement-owner-token"
-	client.tokens["owner@slide.tech"] = cachedToken{rejected, time.Now().Add(time.Hour)}
+	client.tokens["owner@example.com"] = cachedToken{rejected, time.Now().Add(time.Hour)}
 	var grants, oldCalls, newCalls atomic.Int32
 	arrived := make(chan struct{}, 2)
 	release := make(chan struct{})
@@ -489,7 +489,7 @@ func TestClientConcurrent401PreservesRefreshedToken(t *testing.T) {
 	errors := make(chan error, 2)
 	for range 2 {
 		go func() {
-			_, err := client.Call(ctx, "owner@slide.tech", "jira-search", nil)
+			_, err := client.Call(ctx, "owner@example.com", "jira-search", nil)
 			errors <- err
 		}()
 	}
@@ -506,7 +506,7 @@ func TestClientConcurrent401PreservesRefreshedToken(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if grants.Load() != 1 || oldCalls.Load() != 2 || newCalls.Load() != 2 || client.tokens["owner@slide.tech"].value != replacement {
+	if grants.Load() != 1 || oldCalls.Load() != 2 || newCalls.Load() != 2 || client.tokens["owner@example.com"].value != replacement {
 		t.Fatalf("concurrent refresh: grants=%d rejected=%d replacement=%d", grants.Load(), oldCalls.Load(), newCalls.Load())
 	}
 }

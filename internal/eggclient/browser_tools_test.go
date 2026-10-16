@@ -153,7 +153,7 @@ func TestBrowserControllerClaimsTaintToolsOnlyForOtherUsers(t *testing.T) {
 	defer client.Close()
 	tools := []*config.ToolConfig{{Name: "context", Context: "jira-search"}, {Name: "command", Run: "true"}}
 	toolPath := filepath.Join(root, "tools.sock")
-	listener, err := egg.NewToolListener(toolPath, tools, egg.ToolContext{OwnerID: "owner", Owner: "owner@slide.tech"})
+	listener, err := egg.NewToolListener(toolPath, tools, egg.ToolContext{OwnerID: "owner", Owner: "owner@example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}

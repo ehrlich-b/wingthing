@@ -5,7 +5,7 @@ The host must already have a compatible Wingthing binary and an authenticated
 provider CLI. Wingthing uses the remote owner's configuration and credentials;
 it does not copy a workspace or install a binary.
 
-`wt attach`, including `forge:SESSION_ID` and `--remote HOST`, streams through
+`wt attach`, including `my-server:SESSION_ID` and `--remote HOST`, streams through
 the receiving wing and checks current client grants and session ownership.
 Start that wing beforehand. `--read-only` receives output without claiming input,
 resizing the terminal, or changing a native worker's turn ownership.
@@ -14,17 +14,17 @@ For an aggregate MCP client, start an independent local-only wing on each
 machine beforehand. Remember an already running remote once, as in herdr:
 
 ```sh
-wt mcp connect add forge --ssh forge --wingthing-dir '~/my-wing-state'
+wt mcp connect add my-server --ssh my-server --wingthing-dir '~/my-wing-state'
 wt mcp connect ls
 wt mcp connect
-# Later: wt mcp connect rm forge
+# Later: wt mcp connect rm my-server
 ```
 
 If the compatible binary is outside the remote PATH, or PATH still selects an
 older `wt`, name the executable when adding the wing:
 
 ```sh
-wt mcp connect add forge --ssh forge --wingthing-dir '~/my-wing-state' \
+wt mcp connect add my-server --ssh my-server --wingthing-dir '~/my-wing-state' \
   --wt-binary /home/me/bin/wt-dev
 ```
 
@@ -90,7 +90,7 @@ conversation-bound MCP connections retain their existing local-only ceiling.
 Register machines once to list their sessions together:
 
 ```sh
-wt remote add work me@work1
+wt remote add work me@server.example.com
 wt remote add lab lab-alias --wingthing-dir /home/me/isolated-state
 wt remote ls
 wt session ps
@@ -125,26 +125,26 @@ Wingthing account or relay.
 
 ```sh
 # Discover before creating anything. This command never attaches or launches.
-wt --remote work1 --json
+wt --remote server.example.com --json
 
 # Launch a sandboxed agent. --json starts detached and returns its exact ID.
-wt --remote work1 egg codex --cwd /home/me/projects/example --name review --json
+wt --remote server.example.com egg codex --cwd /home/me/projects/example --name review --json
 
 # Use the ID from the launch response for automation. Names work for people.
-wt --remote work1 attach review
-# Detach with Ctrl+B, then Q. The process keeps running on work1.
+wt --remote server.example.com attach review
+# Detach with Ctrl+B, then Q. The process keeps running on server.example.com.
 
 # Close the connection, then inspect and attach the same session again.
-wt --remote work1 session ps --json
-wt --remote work1 session read SESSION_ID --json
-wt --remote work1 attach SESSION_ID
+wt --remote server.example.com session ps --json
+wt --remote server.example.com session read SESSION_ID --json
+wt --remote server.example.com attach SESSION_ID
 
 # Scripted input and a terminal-output condition do not require a TTY.
-wt --remote work1 session send SESSION_ID --stdin --enter --json < prompt.txt
-wt --remote work1 session wait SESSION_ID --contains 'expected text' --timeout 30s --json
+wt --remote server.example.com session send SESSION_ID --stdin --enter --json < prompt.txt
+wt --remote server.example.com session wait SESSION_ID --contains 'expected text' --timeout 30s --json
 
 # Explicit stop affects only this session and confirms its process exited.
-wt --remote work1 session stop SESSION_ID --json
+wt --remote server.example.com session stop SESSION_ID --json
 ```
 
 `session read` is a raw terminal snapshot. `session wait --contains` observes
@@ -159,7 +159,7 @@ before receiving an exit event, the CLI reports an unconfirmed exit. SSH status
 255 means the session's state is unknown. Reconnect and list sessions before
 deciding whether another launch is needed. The CLI never retries a launch.
 
-Bare `wt --remote work1` on a terminal attaches the sole session or offers a
+Bare `wt --remote server.example.com` on a terminal attaches the sole session or offers a
 picker. Add `--remote-cwd /existing/path` to restrict the picker; if there are no
 matching sessions, it starts a sandboxed shell in that directory. Bare entry
 without a terminal prints JSON and never starts a shell. Use explicit `--json`
@@ -175,8 +175,8 @@ Wingthing does not relax them or accept SSH options in the host argument.
 Preview uses a separate executable on both ends:
 
 ```sh
-wt-preview --remote work1 --json
-wt-preview --remote work1 --remote-binary /home/me/preview/wt-preview attach review
+wt-preview --remote server.example.com --json
+wt-preview --remote server.example.com --remote-binary /home/me/preview/wt-preview attach review
 ```
 
 The default remote executable is `wt-preview` for a preview client. Every
@@ -195,9 +195,9 @@ sessions in one state directory are invisible from another.
 
 ```sh
 S="/home/me/wt preview/it's isolated"
-wt-preview --remote work1 --remote-state "$S" channel --json
-wt-preview --remote work1 --remote-state "$S" terminal --cwd /home/me/work --json -- /bin/sh
-wt-preview --remote work1 --remote-state "$S" session ps --json
+wt-preview --remote server.example.com --remote-state "$S" channel --json
+wt-preview --remote server.example.com --remote-state "$S" terminal --cwd /home/me/work --json -- /bin/sh
+wt-preview --remote server.example.com --remote-state "$S" session ps --json
 ```
 
 The client parses the flag before `--`, so an agent argument with the same
@@ -250,9 +250,9 @@ one writer for both input and resize. A second writer receives an ownership
 error before submitting input; taking control requires an explicit action.
 
 ```sh
-wt-preview --remote work1 attach SESSION_ID --read-only
-wt-preview --remote work1 attach SESSION_ID --takeover
-wt-preview --remote work1 session ps --json
+wt-preview --remote server.example.com attach SESSION_ID --read-only
+wt-preview --remote server.example.com attach SESSION_ID --takeover
+wt-preview --remote server.example.com session ps --json
 ```
 
 Read-only attachments keep receiving replay and live output without claiming
@@ -308,8 +308,8 @@ every egg under the fixture's temporary tree, including any it did not record,
 before removing the tree. The fixture does not exercise real OpenSSH or sshd,
 receivers older than this release, macOS Seatbelt, or separate hosts.
 
-The existing work1/work2 SSH route was inspected separately. Their installed
-stable binary rejected the new `_remote` entry command; it was not replaced.
+The existing SSH route between server.example.com and backup.example.com was
+inspected separately. Their installed stable binary rejected the new `_remote` entry command; it was not replaced.
 Physical preview acceptance needs an admitted temporary workspace and a
 separately staged preview executable, selected with `--remote-binary` and
 `--remote-state`; a wrapper script is no longer needed. The flag does not

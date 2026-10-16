@@ -53,11 +53,8 @@ Evidence in the composed source:
 - `internal/egg/codex_native.go`: second-provider native protocol draft. The
   active Codex lifecycle remains unsupported until the real supervisor exists.
 
-The original Mac checkout is `~/repos/wingthing`, clean at `a763434` on
-`feature/session-file-upload`. Saved September review/checkpoint receipts are
-under `~/repos/claude/state/wingthing-org-review-20260929`. Development is an
-independent local clone with no publication remote; source promotion remains
-selective review rather than promotion of an entire historical snapshot.
+Source promotion remains selective review rather than promotion of an entire
+historical snapshot.
 
 ## Minimum coherent slice and acceptance
 

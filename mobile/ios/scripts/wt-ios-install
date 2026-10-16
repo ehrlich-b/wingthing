@@ -1,5 +1,5 @@
 #!/bin/bash
-# Personal native iPhone installer; signing and account actions run as Bryan.
+# Personal native iPhone installer; signing and account actions run as the device owner.
 set +x
 set -euo pipefail
 CLONE=${WT_IOS_CLONE:-$(cd "$(dirname "$0")/../../.." && pwd)}

@@ -34,7 +34,7 @@ docker run -d --name wt-web-roost --network wt-web-net --network-alias roost \
   -e WT_BASE_URL=http://roost:8080 \
   -e GOOGLE_CLIENT_ID=canary-dummy-client \
   -e GOOGLE_CLIENT_SECRET=canary-dummy-secret \
-  -e WT_ROOST_ALLOWED_EMAILS=alice@slide.tech,bob@slide.tech,carol@slide.tech \
+  -e WT_ROOST_ALLOWED_EMAILS=alice@example.com,bob@example.com,carol@example.com \
   -e WT_JWT_SECRET=canary-jwt-secret-not-production \
   wt-web-roost
 

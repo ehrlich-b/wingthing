@@ -184,9 +184,9 @@ the private namespace.
 | Human, local wing | unit plus Linux/macOS sandbox and native attach | real interactive agent startup | covered across separate tiers |
 | LLM, local wing | registry-defined local tool schemas, owner isolation, run lifecycle | Codex and Claude start/wait/result | provider smoke covers older prompt tools, not the current run lifecycle |
 | Human, personal remote wing | relay/tunnel plus browser session lifecycle | browser attaches to a real registered wing | shared-roost browser canary is the closest automated case |
-| LLM, personal remote wing | encrypted remote control RPC, target auth, qualified resources, grants, bounds, and two-wing connector reconnect | real MCP client controls two external wings without relay payloads | Passed on an external macOS wing plus Bryan: one built connector listed both direct targets, launched real Codex and Claude sessions, observed distinct responses, and stopped the qualified sessions. Fresh-user production enrollment remains a separate gate. |
-| Human, shared roost | two-user browser, path ACL, per-identity provider profile, credential home, restart | canary shared deployment | automated tier asserts one identity loads its persisted Claude profile while a second identity cannot inherit it; Bryan's public HTTPS org canary covers the real deployment path |
-| LLM, shared roost | OAuth HTTP MCP plus direct MCP, two owners, two actors, path bounds | Codex and Claude OAuth login and semantic run | native local MCP launched and controlled real Claude on Bryan; real OAuth-client semantic runs remain missing |
+| LLM, personal remote wing | encrypted remote control RPC, target auth, qualified resources, grants, bounds, and two-wing connector reconnect | real MCP client controls two external wings without relay payloads | Passed on an external macOS wing plus the maintainer's wing: one built connector listed both direct targets, launched real Codex and Claude sessions, observed distinct responses, and stopped the qualified sessions. Fresh-user production enrollment remains a separate gate. |
+| Human, shared roost | two-user browser, path ACL, per-identity provider profile, credential home, restart | canary shared deployment | automated tier asserts one identity loads its persisted Claude profile while a second identity cannot inherit it; the maintainer's public HTTPS org canary covers the real deployment path |
+| LLM, shared roost | OAuth HTTP MCP plus direct MCP, two owners, two actors, path bounds | Codex and Claude OAuth login and semantic run | native local MCP launched and controlled real Claude on the maintainer's wing; real OAuth-client semantic runs remain missing |
 | Several portals | qualified IDs, independent auth, fan-out inventory | one client routes work to two real portals | target registry doesn't exist |
 
 ## Compatibility matrix
@@ -403,11 +403,11 @@ Code's gateway environment, Codex custom model providers using the Responses
 wire API, Hermes's custom OpenAI-compatible provider, and OpenCode's local
 Ollama provider.
 
-### Running on NewPC
+### Running on a Windows/WSL test machine
 
-NewPC keeps real binaries behind `*-real` canary names so the synthetic Linux
-suite can continue to own the ordinary command names. Run the matrix from the
-WSL checkout with explicit paths:
+The Windows/WSL test machine keeps real binaries behind `*-real` canary names
+so the synthetic Linux suite can continue to own the ordinary command names.
+Run the matrix from the WSL checkout with explicit paths:
 
 ```bash
 WT_SMOKE_WT_BIN=/usr/local/bin/wt \
@@ -425,7 +425,7 @@ provider/harness failures or use `--phase wingthing` to retest only the
 Wingthing boundary. On failure the script retains its isolated workspace and
 per-case logs under `/tmp`; on success it removes only that self-created
 workspace. It never uses the daily Wingthing database, deploys a roost, tags a
-release, or touches Slide.
+release, or changes a private deployment.
 
 ### Compatibility controls
 
@@ -529,7 +529,7 @@ malformed-registry recovery, an empty new machine and healthy local attach.
 Dashboard unit races deliver a retired result after the replacement starts and
 also check remove/re-add of an identical profile. Every fixture creates its own
 symlinked TMPDIR parent and checks lexical/canonical socket byte limits (103).
-The daily-loop PTY journey composes cold Claude, detach, bare wt, exact forge
+The daily-loop PTY journey composes cold Claude, detach, bare wt, exact my-server
 attach, native attention, client loss and discovery of the same durable run.
 The parent-lifecycle and roundtrip targets retain native policy and explicit
 snapshot recovery assertions. Logs/screens/receipts bind source and executable

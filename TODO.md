@@ -250,7 +250,7 @@ account management, org settings, audit display.
 ### Cross-harness agent handoffs
 
 - [x] Prove a live Codex–Claude conversation using an owner-local mailbox and
-  exact-TTY notification while dogfooding the Arli workload.
+  exact-TTY notification while dogfooding a test workload.
 
 
 ### Narrow agent egress
@@ -283,7 +283,7 @@ account management, org settings, audit display.
 
 ### Private roost proving ground
 
-- [ ] Dogfood a private roost on `ehrlich.dev`, with its Hopper as a real
+- [ ] Dogfood a private roost on `roost.example.com`, with a representative
   owner-scoped workload target. Prove private enrollment, personal Codex and
   Claude login homes, typed task control, sealed workspace access, model
   selection, lifecycle supervision, and audit records end to end. Keep this as

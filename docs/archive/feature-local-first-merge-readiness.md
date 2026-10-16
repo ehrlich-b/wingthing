@@ -51,7 +51,7 @@ pass: a minimal `MS_REMOUNT|MS_BIND|MS_RDONLY` call discarded inherited mount
 flags and failed with `EPERM`. The corrected remount path preserves the live
 mount's supported VFS flags, the capability probe now exercises that exact
 deny-file operation, and the focused native regression passes. AppArmor is
-disabled on this WSL host, so the separate Arli AppArmor canary remains a
+disabled on this WSL host, so the separate AppArmor canary remains a
 deployment gate rather than evidence supplied by this run.
 
 The final seccomp install uses `SECCOMP_FILTER_FLAG_TSYNC`, checks both errno
@@ -196,7 +196,7 @@ Shared-roost mode currently admits every account that completes a configured
 OAuth login, matching the existing web-roost policy. Native controls stay
 owner-scoped and workspace-bounded; executable host tools stay role-scoped.
 The private-roost milestone needs an allowlisted or invite-based enrollment
-policy before `ehrlich.dev` becomes a proving ground.
+policy before the private roost becomes a proving ground.
 
 ## Promotion sequence
 
@@ -205,12 +205,12 @@ policy before `ehrlich.dev` becomes a proving ground.
 3. Canary a separate shared roost with copied configuration but no production
    provider credentials or user data.
 4. Exercise browser compatibility and OAuth MCP against the canary.
-5. Agree on any breaking migration before updating the Slide roost.
+5. Agree on any breaking migration before updating a shared roost.
 6. Roll out with a pinned previous binary and database backup available for
    rollback; monitor auth failures, reconnects, egg ownership, and task errors.
-7. Promote the public hosted service separately from the Slide roost.
+7. Promote the public hosted service separately from private shared roosts.
 
-After the shared route is proven, use a private roost on `ehrlich.dev` and its
-Hopper as the final end-to-end workload canary.
+After the shared route is proven, use a private roost on `roost.example.com` and a
+representative workload as the final end-to-end canary.
 
 No merge, tag, release, or deployment is authorized by this document.

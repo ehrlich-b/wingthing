@@ -7,7 +7,6 @@ Last reviewed: 2026-08-28
 Related designs:
 
 - [Direct agent manager and coordination-only free tier](archive/direct-agent-manager-design.md)
-- [Bryan direct-control field report](archive/bryan-wingthing-direct-control-field-report.md)
 - [wingthing.ai production canary](archive/wingthing-ai-production-canary-2026-08-25.md)
 - [Roost deployment model](archive/roost_design.md)
 - [Local agent meta-layer](archive/agent-meta-layer.md)
@@ -117,7 +116,7 @@ they become usable product workflows.
 
 | Requested workflow | How to do it now | Pattern or gap |
 | --- | --- | --- |
-| One office VM and one home VM, durable Claude/Codex sessions, one parent-agent inventory | Register both wings with one coordinator; run `wt mcp connect`; call `wing_list`; qualify every operation with `wing_id`. | `remote-orchestration`; working direct MCP, including the 2026-08-28 Mac-plus-Bryan physical two-host canary. |
+| One office VM and one home VM, durable Claude/Codex sessions, one parent-agent inventory | Register both wings with one coordinator; run `wt mcp connect`; call `wing_list`; qualify every operation with `wing_id`. | `remote-orchestration`; working direct MCP, including the 2026-08-28 physical Mac-plus-Linux two-host canary. |
 | The same multi-machine view for a person, without trusting public payload relay | Run one private roost behind a VPN/tailnet and valid HTTPS, enroll exact account emails, then register the wings with its gateway. The private roost supplies the browser relay inside the operator's trust boundary. | `shared-web-roost`; browser-direct hosted transport and roost federation remain gaps. |
 | Run shell setup, make a directory or Git worktree, then launch the chosen agent there | Use an existing idempotent setup script through `terminal_start`, wait for its completion canary, then call `agent_run` or `agent_start` with the resulting `cwd`. | Compose now; typed `workspace_prepare`/worktree lifecycle is P0. |
 | Let an outer agent supervise inner Claude, Codex, OpenCode, or another worker | Register local stdio MCP or the native direct connector; use semantic start/status/wait/result/steer/stop plus durable conversation checkpoints. | `local-subagents` and `remote-orchestration`; working. |
@@ -153,7 +152,7 @@ and routing that do not exist yet.
 | --- | --- | --- |
 | Durable local Claude/Codex/OpenCode sessions | Working | Persistent PTYs and semantic agent runs survive client disconnects; the default idle timeout is disabled. |
 | Local agent orchestrates agents | Working | `wt mcp stdio` forwards typed terminal, agent-run, conversation, and sandbox controls to the local wing. |
-| Remote agent controls multiple wings | Field-proven across two physical wings | `wt mcp connect` listed an external macOS wing and Bryan simultaneously, reported `direct-webrtc` for both, started real Codex and Claude sessions on the qualified targets, received distinct exact responses, and stopped only the returned session IDs. A real Claude Sonnet orchestrator separately exercised the richer lifecycle on Bryan. |
+| Remote agent controls multiple wings | Field-proven across two physical wings | `wt mcp connect` listed an external macOS wing and a Linux wing simultaneously, reported `direct-webrtc` for both, started real Codex and Claude sessions on the qualified targets, received distinct exact responses, and stopped only the returned session IDs. A real Claude Sonnet orchestrator separately exercised the richer lifecycle on the Linux wing. |
 | Mixed agent backends | Working | Claude, Codex, Cursor, Gemini, Hermes, Ollama, and OpenCode adapters exist. |
 | Long-running semantic runs | Working | Start, status, events, wait, result, steer, and stop operations exist. |
 | Unified human browser | Entitled/self-hosted only | Accounts with hosted relay access and enrolled private-roost users can use the relay browser. A hosted direct-only free account receives setup/readiness UI and no session inventory. |
@@ -486,7 +485,7 @@ stdio interface used by Claude and Codex. It must prove:
 - disconnecting the MCP client does not kill the durable terminal or agent;
 - reconnecting can list and continue that work.
 
-Run the same canary on the WSL rig after coordinating around existing work there. The
+Run the same canary on a WSL host after coordinating around existing work there. The
 recent WSL battery proves sandbox behavior only; it does not prove the remote
 agent-manager path.
 
@@ -745,7 +744,7 @@ At the time of this review:
   the verified pre-feature database backup remain rollback inputs;
 - the direct-control implementation and Linux egress fix have passed unit,
   integration, static, cross-build, and WSL sandbox testing;
-- a real `wt mcp connect` process controlled two physical wings through Bryan's
+- a real `wt mcp connect` process controlled two physical wings through a
   coordination plane without hosted payload relay, and real Codex and Claude
   sessions on the two targets returned distinct canary responses;
 - the branch is not merged to main, but its committed runtime is deployed as the

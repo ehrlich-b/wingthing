@@ -227,7 +227,7 @@ func TestPublicDocumentationContractsStayAligned(t *testing.T) {
 	}
 }
 
-func TestPublicHomeKeepsPreviewAheadOfOptionalVideo(t *testing.T) {
+func TestPublicHomeKeepsPreviewWithoutVideo(t *testing.T) {
 	root := repositoryRoot(t)
 	data, err := os.ReadFile(filepath.Join(root, "internal/relay/templates/home.html"))
 	if err != nil {
@@ -240,9 +240,12 @@ func TestPublicHomeKeepsPreviewAheadOfOptionalVideo(t *testing.T) {
 		t.Fatalf("homepage contains %d benefit intros, want 1", got)
 	}
 	preview := strings.Index(home, `<section class="product-preview"`)
-	video := strings.Index(home, `{{if .HeroVideo}}<div class="hero-video" hidden>`)
-	if preview < 0 || video <= preview {
-		t.Fatal("homepage must show its HTML preview before optional video")
+	glossary := strings.Index(home, `<h3>portal</h3>`)
+	if preview < 0 || glossary <= preview {
+		t.Fatal("homepage must show its HTML preview before the glossary")
+	}
+	if strings.Contains(home, "<video") {
+		t.Fatal("homepage must not include the removed recording")
 	}
 	if strings.Contains(home, `data-route=`) {
 		t.Fatal("homepage must not contain the detailed data-route map")

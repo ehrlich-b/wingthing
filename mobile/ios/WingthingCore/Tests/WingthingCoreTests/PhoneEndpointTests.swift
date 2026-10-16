@@ -5,8 +5,8 @@ import Testing
 private let lanRoute = URL(string: "http://192.168.1.40:6078")!
 private let otherLANRoute = URL(string: "http://192.168.1.41:6078")!
 private let tailnetRoute = URL(string: "http://100.91.2.3:6078")!
-private let magicDNSRoute = URL(string: "http://ehrlichmac.fixture.TS.NET:6078")!
-private let discoveredRoute = URL(string: "http://ehrlichmac.local:6078")!
+private let magicDNSRoute = URL(string: "http://my-mac.fixture.TS.NET:6078")!
+private let discoveredRoute = URL(string: "http://my-mac.local:6078")!
 private let relayRoute = URL(string: "https://relay.fixture.invalid")!
 
 private actor EndpointFixture {

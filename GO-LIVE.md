@@ -1,7 +1,7 @@
-# Install Wingthing on Bryan's phone
+# Install Wingthing on the owner's phone
 
-These are **handoff commands, not commands executed by this task**. Bryan runs
-them himself, or authorizes the coordinator to run the personal local setup and
+These are **handoff commands, not commands executed by this task**. The owner runs
+them themselves, or authorizes the coordinator to run the personal local setup and
 exposure. No production deployments, grants, billing changes or public endpoint
 are needed. Read [PHONE.md](PHONE.md) for authority and threat boundaries.
 
@@ -17,7 +17,7 @@ The script runs all Node tests, builds embedded web assets, runs gateway race
 tests and CLI configuration tests, then builds `.scratch/bin/wt-phone`. It uses
 clone-local Go/npm caches. The Go module cache was seeded by a local copy of
 the invoking Go module download cache; no secret files were copied. If
-moving to forge, set `WT_PHONE_GO` to its Go **1.26.9** binary and seed that
+moving to my-server, set `WT_PHONE_GO` to its Go **1.26.9** binary and seed that
 clone's `.scratch/gomod/cache/download` from its existing module cache, or
 deliberately allow dependency downloads with `GOPROXY=https://proxy.golang.org`
 and `GOSUMDB=sum.golang.org`. Linux uses `nice -n 15` without `taskpolicy`.
@@ -40,9 +40,9 @@ ready. A local-only Unix socket alone is insufficient.
 
 If none exists, create a fresh, restricted personal roost. This explicitly
 opts a new wing into conversations without changing an existing wing. It uses
-Bryan's already authenticated Claude CLI, so check `claude --version` and its
+the owner's already authenticated Claude CLI, so check `claude --version` and its
 existing login before proceeding. The app's New coordinator form takes an exact
-model ID; use the one supported by Bryan's installed CLI/provider account.
+model ID; use the one supported by the owner's installed CLI/provider account.
 
 In Terminal A, from this clone (the subshell stops on any failed check):
 
@@ -57,7 +57,7 @@ test ! -e "$WT_PHONE_WORK" || { echo 'Workspace exists: inspect it instead of ov
 umask 077
 mkdir -m 700 "$WINGTHING_DIR" "$WT_PHONE_WORK"
 cat > "$WINGTHING_DIR/wing.yaml" <<YAML
-label: bryans-phone
+label: my-phone
 paths: ["$WT_PHONE_WORK"]
 conversations: enabled
 YAML
@@ -83,7 +83,7 @@ is needed on the phone: tunn supplies external HTTPS.
 
 ## 3. Start private tunn and the authenticated gateway (about 5 minutes)
 
-In Terminal B, substitute **Bryan's exact verified GitHub email**, with no
+In Terminal B, substitute **the owner's exact verified GitHub email**, with no
 wildcards. [tunn's public site](https://tunn.to/) documents the exact-email
 allow-list and GitHub login. The local tunn WebSocket implementation preserves
 Host/Origin and authenticates browser upgrades with its email-login cookie;
@@ -134,7 +134,7 @@ caffeinate -i "$WT_PHONE" phone serve --origin "$WT_PHONE_ORIGIN" \
 The gateway pins the printed origin and checks its own key/session on **all**
 forwarded HTTP and WebSocket paths, then rewrites authenticated requests for the
 roost's existing loopback checks. It does not trust `X-Forwarded-*`, expose the
-wing Unix socket, or require changes to wing-control messages. On forge use
+wing Unix socket, or require changes to wing-control messages. On my-server use
 `nice -n 15` as appropriate and omit the Mac-only `caffeinate` wrapper.
 
 If restarting a random-name tunn publisher changes its origin, restart the
@@ -203,20 +203,20 @@ does not revoke access. Do not infer revocation from an MCP-grant operation;
 this route uses browser identity and independent gateway sessions.
 
 For the fresh disposable roost, Ctrl+C in Terminal A separately stops its
-runtime. Do not remove state or terminate Bryan's unrelated wings during access
-revocation. Account/production changes belong to Bryan, not this task.
+runtime. Do not remove state or terminate the owner's unrelated wings during access
+revocation. Account/production changes belong to the owner, not this task.
 
 ## Native iOS: exact Xcode handoff and remaining gap
 
 1. Open `/Applications/Xcode.app`, then
-   `mobile/ios/Wingthing.xcodeproj`. Bryan accepts license/components himself.
-2. Xcode **Settings → Accounts → + → Apple ID**: Bryan signs in himself.
+   `mobile/ios/Wingthing.xcodeproj`. The owner accepts license/components themselves.
+2. Xcode **Settings → Accounts → + → Apple ID**: the owner signs in themselves.
 3. Connect/unlock the iPhone, **Trust This Computer**, enable **Settings →
    Privacy & Security → Developer Mode** and restart if requested.
 4. Xcode **Window → Devices and Simulators**: select the phone and copy its
    **Identifier/UDID**. In the Wingthing target **Signing & Capabilities**, check
-   **Automatically manage signing**, select Bryan's **Team**, and enter a unique
-   bundle ID such as `dev.ehrlich.wingthing.personal` if that Team owns it.
+   **Automatically manage signing**, select the owner's **Team**, and enter a unique
+   bundle ID such as `dev.example.wingthing` if that Team owns it.
 5. Select that phone as the run destination and press **Run**. Allow registration/
    provisioning and device trust prompts deliberately. A Personal Team install
    needs periodic renewal; inspect the profile's expiry in Xcode.
@@ -232,7 +232,7 @@ taskpolicy -b nice -n 15 make -C mobile/ios device-install \
   IOS_SIGNED_DERIVED_DATA="$PWD/.scratch/ios/device-signed"
 ```
 
-This signs, can register provisioning assets with Apple, and installs; Bryan
+This signs, can register provisioning assets with Apple, and installs; the owner
 must perform it. **Signing does not close the transport gap:** the native client
 uses a pinned HTTPS Wingthing Home plus existing Wingthing bearer, and cannot
 perform tunn browser OAuth or supply this gateway's cookie. It also lacks the

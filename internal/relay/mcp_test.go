@@ -162,7 +162,7 @@ func TestPortalNativeMCPWingListMatchesBrowserRoster(t *testing.T) {
 }
 
 // mcpTestServer builds a roost with the MCP surface enabled, one email'd user in role "eng"
-// (which is denied slide-db), and a web session for that user.
+// (which is denied example-db), and a web session for that user.
 func mcpTestServer(t *testing.T) (*Server, *httptest.Server, string) {
 	t.Helper()
 	srv, ts := testServer(t)
@@ -177,14 +177,14 @@ func mcpTestServer(t *testing.T) (*Server, *httptest.Server, string) {
 		t.Fatalf("create session: %v", err)
 	}
 	tools := []*config.ToolConfig{
-		{Name: "slide-db", Run: `echo "db:$1"`, Timeout: "5s"},
+		{Name: "example-db", Run: `echo "db:$1"`, Timeout: "5s"},
 		{Name: "crm-lookup", Run: `echo "crm:$1"`, Timeout: "5s"},
 		{Name: "whoami", Run: `echo "$WT_MCP_USER|$WT_MCP_EMAIL|$WT_MCP_ROLES"`, Timeout: "5s"},
 	}
 	policy := &mcp.Policy{
 		DefaultAllowAll: false,
 		Roles: map[string]*mcp.RolePolicy{
-			"eng":   {Enabled: true, Deny: []string{"slide-db"}, Members: []string{"alice@example.com"}},
+			"eng":   {Enabled: true, Deny: []string{"example-db"}, Members: []string{"alice@example.com"}},
 			"sales": {Enabled: false, Members: []string{"alice@example.com"}},
 		},
 	}
@@ -256,10 +256,10 @@ func TestMCPOAuthFlowAndScoping(t *testing.T) {
 		t.Fatal("empty access token")
 	}
 
-	// 5. Authenticated tools/list is scoped to alice's role (eng denies slide-db).
+	// 5. Authenticated tools/list is scoped to alice's role (eng denies example-db).
 	names := mcpToolNames(t, ts.URL, token)
-	if _, ok := names["slide-db"]; ok {
-		t.Errorf("eng must NOT see slide-db; got %v", names)
+	if _, ok := names["example-db"]; ok {
+		t.Errorf("eng must NOT see example-db; got %v", names)
 	}
 	if _, ok := names["crm-lookup"]; !ok {
 		t.Errorf("eng should see crm-lookup; got %v", names)
@@ -272,8 +272,8 @@ func TestMCPOAuthFlowAndScoping(t *testing.T) {
 	if out, isErr := mcpCall(t, ts.URL, token, "crm-lookup", []string{"Acme"}); isErr || !strings.Contains(out, "crm:Acme") {
 		t.Errorf("crm-lookup call failed: out=%q isErr=%v", out, isErr)
 	}
-	if _, isErr := mcpCall(t, ts.URL, token, "slide-db", []string{"SELECT 1"}); !isErr {
-		t.Error("slide-db call should be rejected for eng")
+	if _, isErr := mcpCall(t, ts.URL, token, "example-db", []string{"SELECT 1"}); !isErr {
+		t.Error("example-db call should be rejected for eng")
 	}
 	if out, isErr := mcpCall(t, ts.URL, token, "whoami", nil); isErr || !strings.Contains(out, "alice|alice@example.com|eng") {
 		t.Errorf("MCP identity env missing: out=%q isErr=%v", out, isErr)
@@ -932,7 +932,7 @@ func TestRoostMCPContextUsesAuthenticatedEmail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := egg.NewToolRunner([]*config.ToolConfig{{Name: "tickets", Context: "happyfox-tickets", Env: map[string]string{"WT_MCP_EMAIL": "spoof@slide.tech"}}}, client)
+	runner := egg.NewToolRunner([]*config.ToolConfig{{Name: "tickets", Context: "happyfox-tickets", Env: map[string]string{"WT_MCP_EMAIL": "spoof@example.com"}}}, client)
 	srv.ReloadMCP(runner, srv.mcpPolicySnapshot())
 	clientID := oauthRegister(t, ts.URL, "http://localhost:9999/cb")
 	verifier := "verifier-abcdefghijklmnopqrstuvwxyz-0123456789"

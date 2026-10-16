@@ -182,7 +182,7 @@ VS Code and all Electron apps run under XWayland on Wayland desktops. In theory,
 | Any Wayland + Electron app | Xvfb fallback inside egg | No |
 
 The pragmatic v1 path:
-1. **macOS:** ScreenCaptureKit (primary target, Bryan's daily driver)
+1. **macOS:** ScreenCaptureKit (primary target, the maintainer's daily driver)
 2. **Linux headless:** Xvfb + X11 capture (servers, containers, CI)
 3. **Linux desktop Wayland:** PipeWire portal (universal but interactive)
 4. **Linux desktop wlroots:** ext-image-copy-capture-v1 (bonus, non-interactive)

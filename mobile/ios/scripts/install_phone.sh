@@ -1,5 +1,5 @@
 #!/bin/bash
-# Bryan runs this through ~/repos/claude/bin/wt-ios-install.
+# Run this through your local wt-ios-install wrapper.
 set +x
 set -euo pipefail
 umask 077

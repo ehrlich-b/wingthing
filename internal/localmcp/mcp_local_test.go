@@ -511,7 +511,7 @@ func TestLocalMCPClientConfigGrantsAndBounds(t *testing.T) {
 	contents := []byte(`require_client: true
 clients:
   observer:
-    owner: ehrlich
+    owner: alice
     grants: [terminal.read]
     bounds:
       max_sessions: 2
@@ -533,7 +533,7 @@ clients:
 		MaxSessions:      client.Bounds.MaxSessions,
 		MaxSpawnsPerHour: client.Bounds.MaxSpawnsPerHour,
 	})
-	if !loaded.RequireClient || client.Owner != "ehrlich" || !server.toolAllowed("terminal_list") || server.toolAllowed("terminal_send") || server.toolAllowed("agent_start") {
+	if !loaded.RequireClient || client.Owner != "alice" || !server.toolAllowed("terminal_list") || server.toolAllowed("terminal_send") || server.toolAllowed("agent_start") {
 		t.Fatalf("grant evaluation is wrong: %#v", loaded)
 	}
 	result, isError, protocolErr := server.callTool(context.Background(), "terminal_send", json.RawMessage(`{"session":"x","input":"oops"}`))

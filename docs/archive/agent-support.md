@@ -39,8 +39,8 @@ The full Linux battery covers namespace capability detection, sensitive-path
 denies, home write isolation, seccomp, support bundles, doctor, trace mode, and
 clear negative behavior when enforcement is unavailable.
 
-NewPC's local Ollama canary keeps `qwen3:4b` (2.5 GB) and `qwen3:8b` (5.2 GB),
-both running on its RTX 5080. The 4B model is the cheap native adapter and
+The Windows/WSL test machine's local Ollama canary keeps `qwen3:4b` (2.5 GB)
+and `qwen3:8b` (5.2 GB), both running on its RTX 5080. The 4B model is the cheap native adapter and
 structured-call canary; the 8B model handles the larger harness system prompts
 and tool schemas. In 12 temperature-zero trials across three file
 paths and contents, it returned exactly one correctly named structured
@@ -48,11 +48,11 @@ paths and contents, it returned exactly one correctly named structured
 one validated call and read back `Hello World!`. FunctionGemma 270M was also
 tested because its size is appealing, but produced zero exact successes in 12
 trials, including missing and duplicated calls. That result is retained as
-comparison evidence, but the failed model was removed from NewPC so it cannot
-be mistaken for the supported default.
+comparison evidence, but the failed model was removed from the Windows/WSL
+test machine so it cannot be mistaken for the supported default.
 
 The strongest release result is now the fresh-home provider-substitution
-matrix: 17/17 assertions passed in one NewPC WSL run. Claude Code, Codex,
+matrix: 17/17 assertions passed in one Windows/WSL test run. Claude Code, Codex,
 Gemini, Hermes, and OpenCode each created the exact artifact both directly and
 through Wingthing; Ollama produced and dispatched an exact structured tool call; and
 the same run semantically verified MCP discovery, raw and versioned prompts,
@@ -98,13 +98,14 @@ not that credentials and billing work. A deterministic paid/free model canary
 proves one configured provider path, not every account or model.
 
 The opt-in provider-swap promotion battery is `make gate GATE=provider-swap`; its
-setup, exact assertions, compatibility controls, and NewPC invocation are in
+setup, exact assertions, compatibility controls, and Windows/WSL test invocation
+are in
 [release-e2e.md](release-e2e.md). Direct controls run beside the Wingthing path
 so a provider regression is distinguishable from a routing, sandbox, cwd, or
 adapter regression.
 
-On NewPC, the complete fresh-home run passes 17/17 assertions. Its Wingthing
-phase is 11/11: Claude Code, Codex, Gemini, Hermes, OpenCode, and Ollama through
+On the Windows/WSL test machine, the complete fresh-home run passes 17/17
+assertions. Its Wingthing phase is 11/11: Claude Code, Codex, Gemini, Hermes, OpenCode, and Ollama through
 Wingthing, followed by MCP discovery, raw prompt, saved prompt, loop, and
 swarm. Direct controls pass for all five provider-substituted harnesses plus
 Ollama's structured tool API. The catalog now declares provider substitution
@@ -154,9 +155,8 @@ lying about semantic equivalence.
 
 ## Reproducing the isolated WSL canaries
 
-The vacation machine is Windows `NewPC`, reached through the existing `ngn`
-inventory. WSL is Ubuntu 24.04.3. Branch-built `wt` and `run-tests` binaries are
-copied through `C:\Users\ehrli\wingthing-wsl-test`; dedicated upstream binaries
+A Windows/WSL test machine runs Ubuntu 24.04.3 under WSL. Branch-built `wt`
+and `run-tests` binaries are copied through `C:\Users\you\wingthing-wsl-test`; dedicated upstream binaries
 live behind `/usr/local/bin/*-real`. Gemini and OpenCode packages live under
 `/opt/wingthing-agent-canaries/npm`; Hermes code/data lives under
 `/opt/wingthing-agent-canaries/hermes-home`.
@@ -171,10 +171,10 @@ ollama pull qwen3:8b
 ollama list
 ```
 
-The normal `ehrli` WSL user can reach the service and model; root ownership is
+The normal WSL user can reach the service and model; root ownership is
 not required for ordinary CLI/API use. The opt-in Linux E2E test skips when the
 service or pinned model is absent.
 
 Tests create temporary homes and Wingthing state under `/tmp`. They do not use
 the daily-driver Wingthing database, reclaim running production eggs, deploy a
-roost, tag a release, or change Slide infrastructure.
+roost, tag a release, or change private infrastructure.

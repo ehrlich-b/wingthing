@@ -28,8 +28,8 @@ import Testing
             expectTrue(text.contains(argument))
         }
         expectFalse(text.contains("device-unsigned-build"))
-        let overridden = try recipe("device-build", bundle: "dev.ehrlich.wingthing.custom")
-        expectTrue(overridden.contains("PRODUCT_BUNDLE_IDENTIFIER=\"dev.ehrlich.wingthing.custom\""))
+        let overridden = try recipe("device-build", bundle: "dev.example.wingthing.custom")
+        expectTrue(overridden.contains("PRODUCT_BUNDLE_IDENTIFIER=\"dev.example.wingthing.custom\""))
     }
     @Test func simulatorAndUnsignedDeviceRecipesRetainDisabledSigning() throws {
         for target in ["simulator-build", "device-unsigned-check"] {

@@ -108,8 +108,8 @@ with tempfile.TemporaryDirectory(prefix="wtp-", dir="/tmp") as temporary:
     alias.symlink_to(stable_state)
     run(preview_binary, "init", extra={"WINGTHING_DIR": str(alias)}, ok=False)
     run(stable_install, "--expected-channel", "preview", "init", ok=False)
-    run(preview_binary, "start", "--org", "slide", ok=False)
-    run(preview_binary, "login", "--roost", "https://slide.example.test", ok=False)
+    run(preview_binary, "start", "--org", "example", ok=False)
+    run(preview_binary, "login", "--roost", "https://example.example.test", ok=False)
     intact()
 
     run(package / "preview-package.sh", "install")

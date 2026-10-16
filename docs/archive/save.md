@@ -20,18 +20,18 @@ When you open app.wingthing.ai, you should see your machine, what's running on i
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  wt                                        bryan [·]    │
+│  wt                                        owner [·]    │
 ├────┬────────────────────────────────────────────────────┤
 │    │                                                    │
-│ +  │  ehrlich-mbp                            ● online   │
+│ +  │  my-mac                                 ● online   │
 │    │                                                    │
 │ W  │  Projects                                          │
 │    │  wingthing        ~/repos/wingthing          [→]   │
-│ S  │  slideMCP         ~/repos/slideMCP           [→]   │
+│ S  │  demo-app         ~/repos/demo-app           [→]   │
 │    │                                                    │
 │    │  Sessions                                          │
 │    │  ● wingthing · claude                 2h    [↗]    │
-│    │  ○ slideMCP · claude              detached  [↗]    │
+│    │  ○ demo-app · claude              detached  [↗]    │
 │    │                                                    │
 └────┴────────────────────────────────────────────────────┘
 ```
@@ -49,11 +49,11 @@ Click `+` (or keyboard shortcut). A command-palette overlay appears, like Cmd+K 
 ┌─────────────────────────────────────────┐
 │  Open terminal                          │
 │ ┌─────────────────────────────────────┐ │
-│ │ slide                               │ │
+│ │ example                             │ │
 │ └─────────────────────────────────────┘ │
 │                                         │
-│  slideMCP         ~/repos/slideMCP      │
-│  slide-infra      ~/repos/slide-infra   │
+│  demo-app         ~/repos/demo-app      │
+│  tools-infra      ~/repos/tools-infra │
 │                                         │
 │                    claude ▾     ⏎ open   │
 └─────────────────────────────────────────┘

@@ -24,9 +24,9 @@ const TOKENS = {
   outsider: required('WT_E2E_OUTSIDER_TOKEN'),
 };
 const EMAILS = {
-  admin: process.env.WT_E2E_ADMIN_EMAIL || 'bryan@slide.tech',
-  member: process.env.WT_E2E_MEMBER_EMAIL || 'chad@slide.tech',
-  support: process.env.WT_E2E_SUPPORT_EMAIL || 'ehrlich.bryan@gmail.com',
+  admin: process.env.WT_E2E_ADMIN_EMAIL || 'admin@example.com',
+  member: process.env.WT_E2E_MEMBER_EMAIL || 'member@example.com',
+  support: process.env.WT_E2E_SUPPORT_EMAIL || 'support@example.com',
 };
 const REPOS_PATH = process.env.WT_E2E_REPOS_PATH || '';
 

@@ -27,19 +27,19 @@ tags: [personal, name]
 
 # Identity
 
-Name: Bryan Ehrlich
+Name: Alice Example
 Role: Staff Engineer
 `)
 
 	writeFile(t, dir, "projects.md", `---
 topic: projects
-tags: [work, slide, pr, deploy]
+tags: [work, example, pr, deploy]
 ---
 
 # Active Projects
 
-## Slide (Work)
-- Current sprint: SLIDE-4521
+## Example (Work)
+- Current sprint: EXAMPLE-4521
 - PR open: #892
 
 ## Lang (Side Project)
@@ -66,7 +66,7 @@ func writeFile(t *testing.T, dir, name, content string) {
 func TestParseFrontmatter(t *testing.T) {
 	data := []byte(`---
 topic: projects
-tags: [work, slide]
+tags: [work, example]
 ---
 
 # Projects
@@ -118,7 +118,7 @@ func TestLoad(t *testing.T) {
 	if body == "" {
 		t.Fatal("expected non-empty body")
 	}
-	if body != "# Identity\n\nName: Bryan Ehrlich\nRole: Staff Engineer\n" {
+	if body != "# Identity\n\nName: Alice Example\nRole: Staff Engineer\n" {
 		t.Errorf("body = %q", body)
 	}
 }
