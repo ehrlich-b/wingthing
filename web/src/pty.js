@@ -1,5 +1,5 @@
 import { S, DOM } from './state.js';
-import { showOutputIncomplete, clearOutputIncomplete } from './output-notice.js';
+import { showOutputIncomplete, clearOutputIncomplete, endOutputIncomplete } from './output-notice.js';
 import { findSessionResource } from './session-inventory.js';
 import { terminalReferenceMatches } from './session-reference.js';
 import { sessionRoute } from './session-route.js';
@@ -362,6 +362,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
         clearTerminalControl();
         S.ptySessionId = null;
         S.e2eKey = null;
+        endOutputIncomplete();
         setSessionActions(false);
 
         if (msg.error) {

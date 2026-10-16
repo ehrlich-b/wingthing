@@ -11,6 +11,20 @@ export function clearOutputIncomplete(recoveredSocket) {
     }
 }
 
+export function endOutputIncomplete() {
+    var notice = document.getElementById('pty-output-notice');
+    if (!notice) return;
+    notice.querySelector('p').textContent = 'Output incomplete. Some terminal output could not be decoded. The session has ended.';
+    var reload = notice.querySelector('button');
+    if (reload) reload.remove();
+    // The ended session cannot accept input, but its output remains readable.
+    notice.outputControls = notice.outputControls.filter(function (control) {
+        if (control.id !== 'terminal-container') return true;
+        control.inert = false;
+        return false;
+    });
+}
+
 export function showOutputIncomplete(socket, sessionId, wingId) {
     if (S.ptyWs !== socket || S.ptySessionId !== sessionId || S.ptyWingId !== wingId) return;
     clearOutputIncomplete();

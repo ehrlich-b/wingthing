@@ -229,7 +229,9 @@ for (const width of [390, 1440]) {
         await brokenReplay(page);
         const notice = page.getByRole('dialog', { name: 'Output incomplete' });
         await notice.waitFor({ state: 'visible' });
-        assert.match(await notice.innerText(), /could not be decoded/);
+        assert.equal(await notice.innerText(), 'Output incomplete. Some terminal output could not be decoded. Reload to restore the session.\n\nReload');
+        assert.equal(await notice.getByRole('button', { name: 'Reload', exact: true }).isEnabled(), true);
+        assert.equal(await page.locator('#terminal-container').evaluate(el => el.inert), true);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         await page.evaluate(() => h.S.term.focus());
         await page.keyboard.type('typed while incomplete');
@@ -400,30 +402,56 @@ for (const reattach of [false, true]) {
 }
 
 for (const reattach of [true, false]) {
-    test(`corrupt ${reattach ? 'gzip replay' : 'live output'} followed by exit keeps the notice beside session ended`, async t => {
-        const page = await fixture(t, { reattach });
-        await page.evaluate(async reattach => {
-            if (reattach) h.holdKey();
-            h.start();
-            if (!reattach) await h.settle();
-            const bad = await h.frame('missing final output\r\n', reattach, reattach);
-            if (!reattach) bad.data = bad.data.slice(0, -8) + 'AAAAAAA=';
-            h.send(bad);
-            h.send({ type: 'pty.exited' });
-            if (reattach) h.resumeKey();
-        }, reattach);
-        await page.waitForFunction(() => h.text().includes('--- session ended ---') && h.DOM.ptyStatus.textContent === 'exited');
-        const notice = page.getByRole('dialog', { name: 'Output incomplete' });
-        assert.equal(await notice.isVisible(), true);
-        assert.match(await notice.innerText(), /could not be decoded/);
-        assert.equal(await page.locator('#terminal-section').isVisible(), true);
-        assert.equal(await page.evaluate(() => h.S.ptySessionId), null);
-        await page.screenshot({ path: path.join(out, `corrupt-${reattach ? 'replay' : 'live'}-exited.png`), fullPage: true });
-        // Departure and starting a replacement session still clear the old notice.
-        if (reattach) await page.getByRole('button', { name: 'Home', exact: true }).click();
-        else await page.evaluate(() => h.connect());
-        assert.equal(await notice.count(), 0);
-    });
+    for (const width of [390, 1440]) {
+        test(`corrupt ${reattach ? 'gzip replay' : 'live output'} followed by exit permits reading but no input at ${width}px`, async t => {
+            const page = await fixture(t, { reattach, width });
+            await page.evaluate(async reattach => {
+                if (reattach) h.holdKey();
+                h.start();
+                if (!reattach) await h.settle();
+                h.send(await h.frame(Array.from({ length: 90 }, (_, i) => `retained line ${String(i).padStart(2, '0')}\r\n`).join(''), reattach));
+                const bad = await h.frame('missing final output\r\n', reattach, reattach);
+                if (!reattach) bad.data = bad.data.slice(0, -8) + 'AAAAAAA=';
+                h.send(bad);
+                h.send({ type: 'pty.exited' });
+                if (reattach) h.resumeKey();
+            }, reattach);
+            await page.waitForFunction(() => h.text().includes('--- session ended ---') && h.DOM.ptyStatus.textContent === 'exited');
+            const notice = page.getByRole('dialog', { name: 'Output incomplete' });
+            assert.equal(await notice.isVisible(), true);
+            assert.equal(await notice.innerText(), 'Output incomplete. Some terminal output could not be decoded. The session has ended.');
+            assert.equal(await notice.getByRole('button', { name: 'Reload', exact: true }).count(), 0);
+            assert.equal(await page.locator('#terminal-section').isVisible(), true);
+            assert.equal(await page.evaluate(() => h.S.ptySessionId), null);
+            assert.equal(await page.locator('#terminal-container').evaluate(el => el.inert), false);
+            await page.waitForFunction(() => h.S.term.buffer.active.viewportY > 0);
+            const beforeScroll = await page.evaluate(() => h.S.term.buffer.active.viewportY);
+            const screen = await page.locator('.xterm-screen').boundingBox();
+            await page.mouse.move(screen.x + screen.width / 2, screen.y + screen.height / 2);
+            await page.mouse.wheel(0, -500);
+            await page.waitForFunction(before => h.S.term.buffer.active.viewportY < before, beforeScroll);
+            const selectedLine = await page.evaluate(() => h.S.term.buffer.active.getLine(h.S.term.buffer.active.viewportY).translateToString(true));
+            assert.match(selectedLine, /^retained line \d{2}$/);
+            const { cols, rows } = await page.evaluate(() => ({ cols: h.S.term.cols, rows: h.S.term.rows }));
+            const y = screen.y + screen.height / rows / 2;
+            await page.mouse.move(screen.x + 1, y);
+            await page.mouse.down();
+            await page.mouse.move(screen.x + screen.width / cols * 16, y, { steps: 16 });
+            await page.mouse.up();
+            assert.equal(await page.evaluate(() => h.S.term.getSelection()), selectedLine, 'pointer selection works on ended output');
+            await page.screenshot({ path: path.join(out, `corrupt-${reattach ? 'replay' : 'live'}-exited-${width}.png`), fullPage: true });
+            const before = await page.evaluate(() => ({ sent: h.sent, sockets: h.sockets.length }));
+            await page.evaluate(() => h.S.term.focus());
+            await page.keyboard.type('typed after exit');
+            await page.keyboard.press('Enter');
+            await page.evaluate(async () => { h.input('direct input after exit'); await h.settle(); });
+            assert.deepEqual(await page.evaluate(() => ({ sent: h.sent, sockets: h.sockets.length })), before, 'ended session cannot send input or reconnect');
+            // Departure and starting a replacement session still clear the old notice.
+            if (reattach) await page.getByRole('button', { name: 'Home', exact: true }).click();
+            else await page.evaluate(() => h.connect());
+            assert.equal(await notice.count(), 0);
+        });
+    }
 }
 
 test('Reload retains observation mode and never takes over input', async t => {
