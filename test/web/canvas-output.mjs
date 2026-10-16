@@ -187,6 +187,37 @@ async function corrupt(page, corruption = 'checksum') {
 const inputs = page => page.evaluate(() => h.sent.filter(msg => msg.type === 'pty.input'));
 
 for (const launch of [false, true]) {
+    for (const corruption of ['checksum', 'authentication']) {
+        test(`${launch ? 'launched' : 'attached'} background tile preserves keyboard focus after ${corruption} corruption`, async t => {
+            const page = await fixture(t, { launch });
+            await started(page);
+            await page.evaluate(() => {
+                h.focusHealthy();
+                window.healthyInput = document.activeElement;
+            });
+            await page.keyboard.type('before');
+            await page.waitForFunction(() => h.sent.filter(msg => msg.type === 'pty.input')
+                .map(msg => h.decryptInput(msg.data)).join('') === 'before');
+            await corrupt(page, corruption);
+            // Continue through the browser's focused element without refocusing
+            // xterm or invoking its input API; Enter must never activate Reload.
+            await page.keyboard.type('after');
+            await page.keyboard.press('Enter');
+            await page.evaluate(() => h.settle());
+            assert.equal(await page.evaluate(() => h.sockets.length), 2, 'Enter does not reconnect the background tile');
+            assert.equal(await page.evaluate(() => h.sent.filter(msg => msg.type === 'pty.attach' && msg.wing_id === 'wing-a').length),
+                launch ? 0 : 1, 'no recovery attach was sent');
+            assert.equal(await page.evaluate(() => document.activeElement === window.healthyInput), true,
+                'the healthy terminal retains DOM focus');
+            const sent = await inputs(page);
+            assert.ok(sent.every(msg => msg.socket === 1), 'only the healthy tile sent input');
+            assert.equal(await page.evaluate(messages => messages.map(msg => h.decryptInput(msg.data)).join(''), sent),
+                'beforeafter\r', 'all physical keystrokes reach the healthy terminal');
+        });
+    }
+}
+
+for (const launch of [false, true]) {
     for (const corruption of ['checksum', 'truncated', 'authentication', 'base64']) {
         test(`${launch ? 'launched' : 'attached'} tile reports ${corruption} corruption only on its own wing`, async t => {
             const page = await fixture(t, { launch });

@@ -718,7 +718,8 @@ function showCanvasOutputIncomplete(sess) {
         if (sess.exited) endOutputNotice(notice);
         sess.outputNotice = notice;
         sess.el.querySelector('.canvas-terminal-body').before(notice);
-        notice.show();
+        // Show inline without dialog.show() moving keyboard focus to Reload.
+        notice.setAttribute('open', '');
         sess.fitAddon.fit();
         sendResize(sess);
     }
