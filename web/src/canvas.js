@@ -693,7 +693,10 @@ function reconnectCanvasSession(sess, options) {
 
 function endCanvasOutput(sess, error) {
     sess.exited = true;
-    if (sess.outputNotice) endOutputNotice(sess.outputNotice);
+    if (sess.outputNotice) {
+        endOutputNotice(sess.outputNotice);
+        sess.fitAddon.fit();
+    }
     function writeEnd() {
         if (sessions[sess.key] !== sess) return;
         sess.term.writeln('\r\n\x1b[2m--- session ended ---\x1b[0m');
@@ -712,13 +715,13 @@ function showCanvasOutputIncomplete(sess) {
         var notice = createOutputNotice(function() {
             if (notice.isConnected) reconnectCanvasSession(sess);
         });
+        if (sess.exited) endOutputNotice(notice);
         sess.outputNotice = notice;
         sess.el.querySelector('.canvas-terminal-body').before(notice);
         notice.show();
         sess.fitAddon.fit();
         sendResize(sess);
     }
-    if (sess.exited) endOutputNotice(sess.outputNotice);
 }
 
 function toggleExpand(id) {
