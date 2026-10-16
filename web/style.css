@@ -2944,3 +2944,18 @@ button:disabled { cursor: not-allowed; }
 .search-source-error { padding:12px; border:1px solid var(--yellow); border-radius:8px; margin:12px 0; }
 .search-source-error p { margin:6px 0; font-size:12px; }
 .search-source-error button, [data-review-request] { min-height:44px; margin-top:6px; }
+
+#pty-output-notice {
+    position: static;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    margin: 12px auto;
+    width: calc(100% - 24px);
+    max-width: 420px;
+    padding: 16px;
+    border: 1px solid var(--yellow);
+    border-radius: 6px;
+    color: var(--text);
+    background: var(--bg);
+}
+#pty-output-notice p { margin: 0 0 12px; }

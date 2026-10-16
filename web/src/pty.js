@@ -1,4 +1,5 @@
 import { S, DOM } from './state.js';
+import { showOutputIncomplete, clearOutputIncomplete, endOutputIncomplete } from './output-notice.js';
 import { findSessionResource } from './session-inventory.js';
 import { terminalReferenceMatches } from './session-reference.js';
 import { sessionRoute } from './session-route.js';
@@ -33,6 +34,7 @@ function clearTerminalControl() {
 function handleTerminalControlError(ws, sessionId, wingId, message) {
     var failure = terminalControlFailure(message);
     if (!failure || !sessionId || !wingId || !S.currentUser || S.currentUser.release_channel !== 'preview') return false;
+    clearOutputIncomplete();
     S.ptyControllerId = null;
     S.ptyInputBlocked = true;
     S.ptyReconnecting = false;
@@ -255,8 +257,9 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
     function gunzip(data) {
         var ds = new DecompressionStream('gzip');
         var writer = ds.writable.getWriter();
-        writer.write(data);
-        writer.close();
+        // The readable side reports decode failures; consume writer rejections too.
+        writer.write(data).catch(function () {});
+        writer.close().catch(function () {});
         var reader = ds.readable.getReader();
         var chunks = [];
         function pump() {
@@ -297,7 +300,10 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                 } catch (ex) {}
             });
         }).catch(function (err) {
-            if (outputCurrent(sessionId)) console.error('decrypt error, dropping frame:', err);
+            if (outputCurrent(sessionId)) {
+                console.error('output decode error:', err);
+                showOutputIncomplete(ws, sessionId, connectedWingId);
+            }
         });
     }
 
@@ -306,14 +312,18 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
         if (!outputCurrent(sessionId)) return;
         var pending = pendingOutput;
         pendingOutput = [];
-        if (pending.length === 0) { S.term.reset(); replayDone = true; hideReplayOverlay(); drainOutput(); return; }
+        if (pending.length === 0) { clearOutputIncomplete(ws); S.term.reset(); replayDone = true; hideReplayOverlay(); drainOutput(); return; }
         Promise.all(pending.map(function (item) {
             return e2eDecrypt(item.data).then(function (bytes) {
                 if (!outputCurrent(sessionId)) return null;
                 return item.compressed ? gunzip(bytes) : bytes;
-            }).catch(function () { return null; });
+            }).catch(function () {
+                if (outputCurrent(sessionId)) showOutputIncomplete(ws, sessionId, connectedWingId);
+                return null;
+            });
         })).then(function (chunks) {
             if (!outputCurrent(sessionId)) return;
+            clearOutputIncomplete(ws);
             var good = chunks.filter(function (c) { return c !== null; });
             if (good.length === 0) { replayDone = true; hideReplayOverlay(); drainOutput(); return; }
             var total = 0;
@@ -352,6 +362,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
         clearTerminalControl();
         S.ptySessionId = null;
         S.e2eKey = null;
+        endOutputIncomplete();
         setSessionActions(false);
 
         if (msg.error) {
@@ -441,6 +452,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                 }
                 S.pendingResumeSessionId = null;
                 if (outputSessionId && outputSessionId !== msg.session_id) {
+                    clearOutputIncomplete();
                     // A replacement session must not wait on the old decrypt queue.
                     pendingOutput = [];
                     pendingExit = null;
@@ -565,6 +577,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                 break;
 
             case 'bandwidth.exceeded':
+                clearOutputIncomplete();
                 clearTerminalControl();
                 S.ptyBandwidthExceeded = true;
                 DOM.ptyStatus.textContent = 'bandwidth exceeded';
@@ -810,6 +823,7 @@ export function attachPTY(sessionId, _retries, wingId, requestId, options) {
 }
 
 export function detachPTY() {
+    clearOutputIncomplete();
     attachRequestId++;
     S.ptyReconnecting = false;
     if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
@@ -835,6 +849,7 @@ export function detachPTY() {
 }
 
 export function disconnectPTY() {
+    clearOutputIncomplete();
     attachRequestId++;
     S.ptyReconnecting = false;
     if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
