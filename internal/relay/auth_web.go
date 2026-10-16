@@ -674,7 +674,7 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			if errors.Is(err, ErrAccountRecoveryRefused) {
-				log.Printf("account recovery refused: provider=google user_id=%q: %v", user.ID, err)
+				log.Printf("account recovery refused: provider=google provider_id=%q: %v", gUser.ID, err)
 				http.Error(w, "account recovery could not safely match this identity", http.StatusForbidden)
 			} else {
 				http.Error(w, "db error", http.StatusInternalServerError)
