@@ -216,7 +216,7 @@ revocation. Account/production changes belong to the owner, not this task.
 4. Xcode **Window → Devices and Simulators**: select the phone and copy its
    **Identifier/UDID**. In the Wingthing target **Signing & Capabilities**, check
    **Automatically manage signing**, select the owner's **Team**, and enter a unique
-   bundle ID such as `dev.ehrlich.wingthing.personal` if that Team owns it.
+   bundle ID such as `dev.example.wingthing` if that Team owns it.
 5. Select that phone as the run destination and press **Run**. Allow registration/
    provisioning and device trust prompts deliberately. A Personal Team install
    needs periodic renewal; inspect the profile's expiry in Xcode.

@@ -117,7 +117,7 @@ that violated the brief's no-SSH rule. No additional network operation followed.
   59 changed files, 3,417 added lines against its merge base. Its
   `internal/localmcp/agent_supervisor.go` creates detached `egg supervise-run`
   processes from MCP and executes the old taskrun adapter. The historical
-  report says Bryan rejected that architecture in favor of MCP-as-wing-client
+  report says the maintainer rejected that architecture in favor of MCP-as-wing-client
   and normal eggs. This stack implements the replacement; blindly merging #33
   would reintroduce a competing execution owner. Extract only individually
   justified, still-missing fixes, with current egg regressions. Its reported
@@ -139,7 +139,7 @@ that violated the brief's no-SSH rule. No additional network operation followed.
 - **P1 — installed runtime predates the stack:** the brief reports the
   coordinator's installed `v0.148.5`. Fetched tags reach `v0.148.7`, also before
   the egg/local-only/remembered-wing/Tasks/scoped-parent stack. Build success is
-  not a release, update, or installed-version acceptance. Bryan must choose
+  not a release, update, or installed-version acceptance. The maintainer must choose
   promotion and verify the exact binary/hash on each host. This task leaves the
   installed MCP host unchanged.
 - **P1 — Linux scoped Claude is unavailable:** the host preflight models provider

@@ -7,8 +7,8 @@ Status: Fly release v306 healthy; rollback releases and database backup retained
 ## Initial v301 deployment identity
 
 - application: `wingthing`
-- Fly organization/account: the personal organization owned by
-  `ehrlich.bryan@gmail.com`, which owns the existing application
+- Fly organization/account: the maintainer's organization, which owns
+  the existing application
 - source branch: `feature/direct-control-free-tier`
 - source commit: `db0dc78` (`feat: dogfood direct agent orchestration`)
 - release: v301

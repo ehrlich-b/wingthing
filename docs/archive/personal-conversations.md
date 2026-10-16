@@ -116,7 +116,7 @@ and `/ws/relay`; `pty_relay.go:handlePTYWS` forwards generic `tunnel.req` and
 browser/phone. The relay does not decode `session.control` or its operation.
 These native operations require the new **wing** build, not a relay code
 deployment. This is a source-level finding, not verification of the live
-wingthing.ai deployment or Bryan's account entitlement.
+wingthing.ai deployment or the owner's account entitlement.
 
 1. The phone's `mobile/ios/WingthingCore/Sources/WingthingCore/HomeConnection.swift`
    requires an exact HTTPS origin, account ID, wing ID and base64 32-byte public

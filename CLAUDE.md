@@ -98,8 +98,8 @@ step toward that parity.
 Test shared organization-mode roosts, personal local/remote wings, and native
 direct MCP before release. Preserve all
 deployed contracts by default while iterating. Breaking changes are allowed when
-they materially simplify or improve the product, but first present Bryan with the
-concrete benefit, affected workflow, and migration plan and get his agreement.
+they materially simplify or improve the product, but first present the maintainer with the
+concrete benefit, affected workflow, and migration plan and get their agreement.
 Compatibility remains a conscious tradeoff.
 
 ## Architecture
@@ -343,7 +343,7 @@ CI runs via **GitHub Actions** (`.github/workflows/ci.yml` on push/PR; `release.
 
 ### Development is LOCAL
 
-**Prod (wingthing.fly.dev) is Bryan's daily driver.** Do not deploy to Fly during development unless explicitly asked. All development and testing happens locally.
+**Prod (wingthing.fly.dev) is the maintainer's daily driver.** Do not deploy to Fly during development unless explicitly asked. All development and testing happens locally.
 
 ### Release and deployment discipline
 
