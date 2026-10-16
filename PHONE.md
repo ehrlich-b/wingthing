@@ -1,8 +1,8 @@
-# Wingthing on Bryan's iPhone — 2026-10-11
+# Wingthing on My iPhone — 2026-10-11
 
 For the **actual native iOS app**, start with [IOS-INSTALL.md](IOS-INSTALL.md).
 Its installer handles signing/install/launch and the hosted Home setup when
-Bryan runs it. The Safari instructions below remain a separate access path.
+The owner runs it. The Safari instructions below remain a separate access path.
 
 Baseline: this isolated clone, `2c3688f`, branch
 `codex/wingthing-phone-20261011`. No push, deployment, public exposure, Apple
@@ -12,26 +12,26 @@ signing, production mutation, or real agent control is authorized or performed.
 
 | Path | Implemented | Missing proof / limitations |
 | --- | --- | --- |
-| **Installable mobile web coordinator** (`web/`) | `/app/` standalone manifest, 180/192/512 px icons, viewport handling, parent/child agent inventory, lifecycle status, native transcript, persisted drafts, explicit uncertain-input recovery, `session_prompt` steering and continuation, confirmed `pty.kill` Stop execution. Uses the existing encrypted relay control APIs. | No signed native binary needed. Requires an awake Mac/forge, an existing reachable local roost with conversation-enabled wing and authenticated Claude. Loopback-only roost cannot be forwarded directly: it rejects external Host and Origin. Authenticated phone gateway, touch polish, install/sign-out help and foreground read refresh are implemented in this branch. No offline control, push/background delivery or generic durable `agent_run` UI. Stop acknowledgement is distinct from observed process exit and does not cancel external effects. Physical Safari/keyboard/home-screen and live tunn WebSocket acceptance remain coordinator gates. |
-| **Native iOS** (`mobile/ios/`) | SwiftUI iOS 16+ conversation client, pinned HTTPS Home identity, bearer verification, encrypted relay transport, Keychain credential storage, inventory/transcript, creation/follow-up/recovery and a capability-bound exact Stop adapter; development signing/install Make targets. | No demonstrated signed install on Bryan's phone. No native tunn OAuth/cookie login or second gateway credential header. No local-only Unix socket/SSH MCP adapter, generic runs/tasks UI, passkeys or push. Main lacks the native `conversation_stop` / `wingthing.exact_stop.v1` server contract: native Stop remains unavailable. Historical simulator/unsigned builds do not prove this checkout. |
+| **Installable mobile web coordinator** (`web/`) | `/app/` standalone manifest, 180/192/512 px icons, viewport handling, parent/child agent inventory, lifecycle status, native transcript, persisted drafts, explicit uncertain-input recovery, `session_prompt` steering and continuation, confirmed `pty.kill` Stop execution. Uses the existing encrypted relay control APIs. | No signed native binary needed. Requires an awake Mac/my-server, an existing reachable local roost with conversation-enabled wing and authenticated Claude. Loopback-only roost cannot be forwarded directly: it rejects external Host and Origin. Authenticated phone gateway, touch polish, install/sign-out help and foreground read refresh are implemented in this branch. No offline control, push/background delivery or generic durable `agent_run` UI. Stop acknowledgement is distinct from observed process exit and does not cancel external effects. Physical Safari/keyboard/home-screen and live tunn WebSocket acceptance remain coordinator gates. |
+| **Native iOS** (`mobile/ios/`) | SwiftUI iOS 16+ conversation client, pinned HTTPS Home identity, bearer verification, encrypted relay transport, Keychain credential storage, inventory/transcript, creation/follow-up/recovery and a capability-bound exact Stop adapter; development signing/install Make targets. | No demonstrated signed install on the owner's phone. No native tunn OAuth/cookie login or second gateway credential header. No local-only Unix socket/SSH MCP adapter, generic runs/tasks UI, passkeys or push. Main lacks the native `conversation_stop` / `wingthing.exact_stop.v1` server contract: native Stop remains unavailable. Historical simulator/unsigned builds do not prove this checkout. |
 | **Android** | This checkout tracks only Go wire-contract generation and a tunnel test vector in `android/contract/`; no `mobile/android` app exists. | No APK or runnable native app here. The earlier recovery branch contains an uncompiled Compose draft with pinned Gradle/JDK/SDK dependencies missing and debug signing disabled. It is not an installable phone app. The web route can also run on Android. |
 
 ## Fastest path: Safari home-screen app through private tunn
 
 Use this Mac's existing authorized **local roost**, the new loopback phone
-gateway, then a tunn HTTPS endpoint restricted to Bryan's exact verified email.
+gateway, then a tunn HTTPS endpoint restricted to the owner's exact verified email.
 Sign in through tunn's GitHub OAuth, enter the independently generated phone
 access key, open a coordinator, and choose Safari → Share → Add to Home Screen.
 Budget 5 minutes for local setup/build, 5 for tunn login and gateway, 5 for
 phone login/install and 5 for a real read/steer/stop check: **under 30 minutes of
-Bryan time if his Claude login, local wing and tunn account are already ready**.
+the owner time if their Claude login, local wing and tunn account are already ready**.
 First-time provider/account setup or native signing is outside that budget.
 Exact commands and acceptance checks are in [GO-LIVE.md](GO-LIVE.md).
 
 No Wingthing hosted account/subscription is required for a self-hosted local
 roost. Forward the gateway, never the bare roost or `control.sock`. A wing that
 only runs `--local-only` has no web relay: it needs the explicitly started local
-roost path in GO-LIVE. Do not replace or unlock Bryan's existing wing.
+roost path in GO-LIVE. Do not replace or unlock the owner's existing wing.
 
 ## Authentication, authority and threats
 
@@ -54,7 +54,7 @@ roost path in GO-LIVE. Do not replace or unlock Bryan's existing wing.
    This is full owner control, not a read-only dashboard or a per-agent grant.
    Existing wing path, provider, sandbox and passkey/lock policy still applies.
 
-Trust Bryan's Mac OS account, phone/browser, Wingthing assets and tunn operator.
+Trust the owner's Mac OS account, phone/browser, Wingthing assets and tunn operator.
 tunn terminates HTTPS and can read/modify the JavaScript and login request;
 encrypted browser-to-wing payloads do not protect against a malicious served
 client. A compromised Mac account already has local control; the gateway is not
@@ -84,13 +84,13 @@ exact native Stop server and `1e3edc4` encrypted Go-peer fixture are useful
 unmerged candidates, not live acceptance. Do not blindly cherry-pick their older
 server/storage changes over evolved main just to claim native readiness.
 
-For native iOS Bryan opens `mobile/ios/Wingthing.xcodeproj` with full Xcode,
-adds his Apple ID under Settings → Accounts, selects his Team and a unique
+For native iOS the owner opens `mobile/ios/Wingthing.xcodeproj` with full Xcode,
+adds their Apple ID under Settings → Accounts, selects their Team and a unique
 bundle ID under Signing & Capabilities, connects/unlocks/trusts the iPhone,
 enables Developer Mode, selects its UDID under Devices and Simulators, and
 presses Run. The exact CLI equivalent and remaining protocol gap are in
 GO-LIVE. Personal Team provisioning needs periodic renewal. These actions are
-Bryan's; no Apple authentication or provisioning is performed here.
+the owner's; no Apple authentication or provisioning is performed here.
 
 ## Verification
 

@@ -177,4 +177,4 @@ service or pinned model is absent.
 
 Tests create temporary homes and Wingthing state under `/tmp`. They do not use
 the daily-driver Wingthing database, reclaim running production eggs, deploy a
-roost, tag a release, or change Slide infrastructure.
+roost, tag a release, or change private infrastructure.

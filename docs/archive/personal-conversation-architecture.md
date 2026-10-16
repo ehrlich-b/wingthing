@@ -6,8 +6,8 @@ and inspects its children as tasks with native messages, tool activity, lifecycl
 evidence and terminal access. The compact dot is an entry point to that parent;
 its shape is not the orchestration contract.
 
-The original public coordinator role and the next home-roost identity/network
-direction are specified in [personal-home-roost.md](personal-home-roost.md).
+The original public coordinator role is embedded from
+[the public prompt](../../internal/localmcp/prompts/personal_coordinator.md).
 DotID, HomeRoostID and ExecutorID have distinct responsibilities; the current
 typed context reports a local root/executor while leaving home identity and
 owner epoch explicitly unimplemented. The proposed personal default uses LAN
@@ -129,12 +129,11 @@ independent local repository, with no publication remote. Mainline comparison
 base is `26f2400` (`v0.147.0`). Promotion requires selective review of the feature
 diffs and their dependencies rather than wholesale promotion of that snapshot.
 
-Slide/org-mode Context is a separate workstream. Overnight commits `267c343`,
+Organization-mode Context is a separate workstream. Overnight commits `267c343`,
 `bf254601` and `0077675` concern caller binding, token exchange, sealed native
 provider isolation and preflight in a separate cloud checkout. Their live
 integration was not verified here, and they do not constitute this controller.
 
-See [the acceptance backlog](personal-preview-parity-plan.md),
-[preview setup and promotion](../preview-channel.md),
+See [preview setup and promotion](../preview-channel.md),
 [remote sessions](../ssh-remote-sessions.md) and
 [the existing resource model](agent-meta-layer.md).

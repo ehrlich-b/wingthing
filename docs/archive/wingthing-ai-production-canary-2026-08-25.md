@@ -170,9 +170,6 @@ checks are:
 - typed workspace/worktree preparation; and
 - remote schedules, service identities, and delivery targets.
 
-Bryan remains the deeper organization-mode and real-Sonnet field canary; see the
-[Bryan field report](bryan-wingthing-direct-control-field-report.md).
-
 As rechecked on 2026-08-27, the latest GitHub release remains `v0.144.1`, which
 predates `wt mcp connect` and local `--https` even though the Fly website documents
 them. Do not treat the current `curl .../install.sh | sh` path as a successful
@@ -180,7 +177,7 @@ feature install until a matching GitHub release is published. This branch makes 
 installer fail safely in that state and adds a checksum/command contract plus
 release-workflow gates; those changes are not present in Fly v306.
 
-After v301 was deployed, Bryan was pinned to the exact `db0dc78` runtime. A fresh
+After v301 was deployed, the shared-roost canary was pinned to the exact `db0dc78` runtime. A fresh
 authenticated native connector listed its one authorized wing and fetched
 `wingthing_capabilities` over direct WebRTC while `hosted_relay: deny` remained in
 force. Its three tracked pre-existing session PIDs survived the final restart.

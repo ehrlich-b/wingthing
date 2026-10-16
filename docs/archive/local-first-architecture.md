@@ -221,7 +221,7 @@ team clients ──SSH or HTTPS──> roost gateway + local wing ──> shared
                                       └── team access policy
 ```
 
-This is what the Slide deployment actually is: an Ansible-managed, always-on roost host with centrally synchronized repositories, role-scoped paths, per-user homes, audit, and privileged tools. It is successful because it is a shared agent workstation/appliance, not because every employee installed a wing and joined an org.
+A shared agent workstation can use an always-on roost host with centrally synchronized repositories, role-scoped paths, per-user homes, audit, and privileged tools. This deployment model does not require every team member to install a wing and join an org.
 
 That deployment is a first-class product shape. It should be described as a **team runtime** or **shared roost**, not used as the internal model for personal Wingthing.
 

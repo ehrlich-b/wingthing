@@ -205,10 +205,10 @@ policy before `ehrlich.dev` becomes a proving ground.
 3. Canary a separate shared roost with copied configuration but no production
    provider credentials or user data.
 4. Exercise browser compatibility and OAuth MCP against the canary.
-5. Agree on any breaking migration before updating the Slide roost.
+5. Agree on any breaking migration before updating a shared roost.
 6. Roll out with a pinned previous binary and database backup available for
    rollback; monitor auth failures, reconnects, egg ownership, and task errors.
-7. Promote the public hosted service separately from the Slide roost.
+7. Promote the public hosted service separately from private shared roosts.
 
 After the shared route is proven, use a private roost on `ehrlich.dev` and its
 Hopper as the final end-to-end workload canary.

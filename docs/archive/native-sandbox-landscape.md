@@ -318,7 +318,7 @@ The AI agent is a configuration, not the product. The product is:
 - **Remote access via wing/relay.** Application-encrypted payloads, wing-verified passkeys, direct transport where available, and an entitled relay transport. See `security.md` for the exact trust boundary.
 - **Audit.** Full session recording. Already built.
 - **Multi-user path ACLs.** Already built (v0.113.0: strict whitelist).
-- **Privilege broker pattern.** Give sandboxed processes access to specific APIs without exposing credentials. Already built (Slide shim pattern).
+- **Privilege broker pattern.** Give sandboxed processes access to specific APIs without exposing credentials. Already built using the tool shim pattern.
 
 The AI agents are the killer app that gets people in the door. The infrastructure underneath — sandbox, remote access, audit, ACLs — is useful without them.
 

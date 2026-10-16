@@ -1,10 +1,10 @@
 # Native Wingthing iOS client
 
-The default native SwiftUI flow opens **Scan to pair**, pairs Bryan's iPhone with EhrlichMac's main wing using `wt pair`, and shows that machine's existing sessions. Forge is a separate pairing. LAN/Bonjour and tailnet work without a Wingthing account; the optional hosted relay remains encrypted to the scanned wing key. Both the terminal and phone must approve the same four emoji. Per-wing device keys/credentials use Secure Enclave and device-only Keychain storage; the phone does not restore an old account connection on startup.
+The default native SwiftUI flow opens **Scan to pair**, pairs My iPhone with my-mac's main wing using `wt pair`, and shows that machine's existing sessions. my-server is a separate pairing. LAN/Bonjour and tailnet work without a Wingthing account; the optional hosted relay remains encrypted to the scanned wing key. Both the terminal and phone must approve the same four emoji. Per-wing device keys/credentials use Secure Enclave and device-only Keychain storage; the phone does not restore an old account connection on startup.
 
 Use [IOS-INSTALL.md](../../IOS-INSTALL.md), [STORYBOARD.html](../../docs/pairing/STORYBOARD.html) and [PROTOCOL.md](../../docs/pairing/PROTOCOL.md). The installer connect step runs `wt pair` against the normal main wing. The hidden paste-link fallback uses the same pairing checks. **Existing Home setup** separately preserves the older account-based conversation adapter described below.
 
-October 11 QR validation: 133 Swift tests (including real Go SPAKE2/device proof interoperability), mocked installer checks and an unsigned simulator build pass. Invocation-local manifest sandbox flags are needed in this managed environment; no global Xcode or signing setting changed. Actual camera, Local Network permission, Secure Enclave/Keychain on Bryan's phone and cellular acceptance remain required. Counts below describe earlier conversation milestones.
+October 11 QR validation: 133 Swift tests (including real Go SPAKE2/device proof interoperability), mocked installer checks and an unsigned simulator build pass. Invocation-local manifest sandbox flags are needed in this managed environment; no global Xcode or signing setting changed. Actual camera, Local Network permission, Secure Enclave/Keychain on the owner's phone and cellular acceptance remain required. Counts below describe earlier conversation milestones.
 
 ## Implemented slice
 

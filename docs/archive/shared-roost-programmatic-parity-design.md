@@ -30,7 +30,7 @@ rules and audit trail. Codex, Claude Code, and other MCP clients authenticate to
 the roost as the human using them, then create and control only that human's
 eggs and tasks.
 
-The current real product is Slide's multi-user shared roost in the web UI. That
+The existing product supports a multi-user shared roost in the web UI. That
 flow is the compatibility baseline while the programmatic adapter is built.
 The existing workflow stays working by default. A breaking simplification may
 still be worthwhile after its benefit, affected workflow, and migration have
@@ -362,7 +362,7 @@ model, and workspace ID. They never include raw prompts or secrets by default.
   reclaimable under the compatibility rules.
 - Quota, TTL, cancellation, and explicit administrative grants are enforced and
   audited.
-- Existing Slide shared-roost browser sessions still start, reconnect, resize,
+- Existing shared-roost browser sessions still start, reconnect, resize,
   read history, and stop eggs.
 - Codex Terra and Claude Opus can each be selected with the same `model` field,
   complete a real task using the user's subscription login, and return a

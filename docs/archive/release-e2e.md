@@ -84,7 +84,7 @@ provider/harness failures or use `--phase wingthing` to retest only the
 Wingthing boundary. On failure the script retains its isolated workspace and
 per-case logs under `/tmp`; on success it removes only that self-created
 workspace. It never uses the daily Wingthing database, deploys a roost, tags a
-release, or touches Slide.
+release, or changes a private deployment.
 
 ## Compatibility controls
 

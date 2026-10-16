@@ -75,7 +75,7 @@ We built an audit trail and did not notice we had one.
 
 `egg-sandbox-design.md` says "you can't hide the agent's credentials from the
 agent." True of the *agent process*, false of the *task*. We already run a
-privilege-broker pattern for Slide's tools. Applied to the agent's own API key,
+privilege-broker pattern for shared tools. Applied to the agent's own API key,
 the token never enters the sandbox at all.
 
 ## Part 2 — The compatibility contract

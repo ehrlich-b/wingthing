@@ -19,12 +19,12 @@ whether the browser should load the page.
 
 ## Why This Matters
 
-The Slide sandbox flow today:
+A shared sandbox workflow:
 
 ```
 1. Sales rep: "track my partner's orders"
 2. Sonnet builds the app, deploys it
-3. Sonnet says: "Your dashboard is at https://wingthing.slide.tech/apps/sarah/order-tracker/"
+3. Sonnet says: "Your dashboard is at https://wingthing.example.com/apps/sarah/order-tracker/"
 4. User copies URL, opens new tab, navigates there
 ```
 
@@ -50,7 +50,7 @@ attached browser as an egress path.
 <agent working directory>/.wt-preview-{sessionID}
 ```
 
-The agent writes this in its normal writable start directory (e.g. `~/sales/` in the Slide deployment). No sandbox changes needed --- it's already writable. The per-session suffix prevents collisions when multiple sessions share a working directory.
+The agent writes this in its normal writable start directory (e.g. `~/sales/` in a shared deployment). No sandbox changes needed --- it's already writable. The per-session suffix prevents collisions when multiple sessions share a working directory.
 
 ### Format: Three forms
 
@@ -59,7 +59,7 @@ The file contents determine what the preview panel shows:
 **Mode 1: URL preview** --- file starts with `url:` prefix
 
 ```
-url:https://wingthing.slide.tech/apps/sarah/order-tracker/
+url:https://wingthing.example.com/apps/sarah/order-tracker/
 ```
 
 The frontend displays the URL with load, copy, and open controls. It does not load
@@ -176,7 +176,7 @@ When a preview URL is active, the terminal view splits:
 The header bar above the iframe is the **main thing the user interacts with**. It must make the URL obvious and copyable --- this is a preview of a real, permanent, shareable URL.
 
 - **Title:** "Preview" in URL mode, or the sanitized filename in content mode.
-- **Full URL displayed prominently**: `https://wingthing.slide.tech/apps/sarah/order-tracker/` --- not truncated, not hidden behind a tooltip. This is a real link they can share.
+- **Full URL displayed prominently**: `https://wingthing.example.com/apps/sarah/order-tracker/` --- not truncated, not hidden behind a tooltip. This is a real link they can share.
 - **Copy button** right next to the URL. One click, URL in clipboard, brief "Copied!" confirmation. This is how they grab the link to send to a coworker, paste in Slack, bookmark, etc.
 - **Load preview button.** The iframe remains network-inert until the user reviews
   the address and chooses this button. Every replacement URL requires a fresh click.
@@ -226,7 +226,7 @@ Add to the CLAUDE.md template:
 You can show content in a preview panel next to the terminal. Two modes:
 
 **Show a URL (deployed app, dashboard, etc.):**
-printf '%s\n' 'url:https://wingthing.slide.tech/apps/$WT_USER/<app-name>/' > "$WT_PREVIEW_DIR/$WT_PREVIEW_FILE"
+printf '%s\n' 'url:https://wingthing.example.com/apps/$WT_USER/<app-name>/' > "$WT_PREVIEW_DIR/$WT_PREVIEW_FILE"
 
 The user sees the URL with load, copy, and open controls. Wingthing does not fetch
 it until the user chooses load or open.
@@ -280,7 +280,7 @@ Two options:
 
 ## Scope / Phasing
 
-### v0 (ship with Slide sandbox)
+### v0 (ship with shared sandbox)
 - One session-specific preview file with URL, named text-content, and raw
   Markdown forms
 - Wing watches the working directory, consumes the file, and pushes encrypted
