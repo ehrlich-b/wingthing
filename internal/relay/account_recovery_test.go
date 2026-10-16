@@ -629,6 +629,9 @@ func TestRecoveryRefusalLogsUserIDsWithoutEmail(t *testing.T) {
 			if strings.Count(entry, "account recovery refused:") != 1 || !strings.Contains(entry, "provider="+tc.provider) || !strings.Contains(entry, wantID) || strings.Contains(entry, "@") {
 				t.Fatalf("refusal log must identify user and provider without email: %q", entry)
 			}
+			if tc.provider == "google" && !strings.Contains(entry, `provider_id="existing-google"`) {
+				t.Fatalf("Google refusal log must identify the provider subject: %q", entry)
+			}
 		})
 	}
 }
