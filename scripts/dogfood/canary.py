@@ -470,7 +470,7 @@ class Canary:
         root = self.root / "ssh"
         root.mkdir(mode=0o700)
         metadata = json.loads(self.command(["mcp", "inspect"], remote_state))
-        (root / "forge.json").write_text(json.dumps(metadata))
+        (root / "devbox.json").write_text(json.dumps(metadata))
         listener = socket.socket(socket.AF_UNIX)
         listener.bind(str(root / "supervisor.sock"))
         listener.listen()
@@ -488,7 +488,7 @@ class Canary:
         (self.bin / "ssh").write_text("#!" + sys.executable + "\n" + script)
         (self.bin / "ssh").chmod(0o700)
         self.env.update(WT_FAKE_SSH_ROOT=str(root), WT_FAKE_SSH_EXECUTE="1")
-        self.command(["mcp", "connect", "add", "forge", "--ssh", "forge",
+        self.command(["mcp", "connect", "add", "devbox", "--ssh", "devbox",
                       "--wingthing-dir", str(remote_state), "--wt-binary", str(self.binary)])
         return metadata
 

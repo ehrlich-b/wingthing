@@ -118,7 +118,7 @@ func TestNorthstarPTYAttention(t *testing.T) {
 			t.Fatal("TMPDIR parent was not a test-created symlink")
 		}
 		localEgg := northstarStandaloneEgg(t, f, f.local, "same", "local-agent", "working", "ATTENTION_LOCAL_ATTACH_READY")
-		remoteEgg := northstarStandaloneEgg(t, f, f.remote, "same", "forge-agent", "working", "ATTENTION_REMOTE_ATTACH_READY")
+		remoteEgg := northstarStandaloneEgg(t, f, f.remote, "same", "devbox-agent", "working", "ATTENTION_REMOTE_ATTACH_READY")
 		northstarStandaloneEgg(t, f, f.local, "nohooks", "hooks-off", "working", "Allow private text? [Y/n]")
 		local := northstarAttentionHooks(t, f, f.local, "same", false)
 		remote := northstarAttentionHooks(t, f, f.remote, "same", false)
@@ -128,13 +128,13 @@ func TestNorthstarPTYAttention(t *testing.T) {
 			provider.emit(t, "UserPromptSubmit")
 		}
 		h := northstarStartPTY(t, f, binary, 120, 32)
-		initial := h.expect("working and disabled native evidence / no bell", 0, "3 known sessions", "local agent", "forge agent", "hooks off", "0 unread")
+		initial := h.expect("working and disabled native evidence / no bell", 0, "3 known sessions", "local agent", "devbox agent", "hooks off", "0 unread")
 		// Names also appear in LAST LINE while the table is still painting.
 		// Wait for the exact native states on all three inventory rows.
 		initial = h.waitScreen("native states on exact rows", 0, func(screen string) bool {
-			return northstarNamedState(screen, "local agent", "* Working") && northstarNamedState(screen, "forge agent", "* Working") && northstarNamedState(screen, "hooks off", "? Unknown")
+			return northstarNamedState(screen, "local agent", "* Working") && northstarNamedState(screen, "devbox agent", "* Working") && northstarNamedState(screen, "hooks off", "? Unknown")
 		})
-		if !northstarNamedState(initial, "local agent", "* Working") || !northstarNamedState(initial, "forge agent", "* Working") || !northstarNamedState(initial, "hooks off", "? Unknown") {
+		if !northstarNamedState(initial, "local agent", "* Working") || !northstarNamedState(initial, "devbox agent", "* Working") || !northstarNamedState(initial, "hooks off", "? Unknown") {
 			t.Fatal("native lifecycle state was not shown on its exact row")
 		}
 		if northstarAttentionBells(h) != 0 {
@@ -176,15 +176,15 @@ func TestNorthstarPTYAttention(t *testing.T) {
 		h.expect("return after exact acknowledgement", h.send("\x1b"), "local agent", "0 unread")
 		h.expect("filter disabled hooks", h.send("/\x15hooks-off\r"), "> hooks off")
 		h.expect("unknown evidence explains itself", h.send("i"), "State: ? Unknown", "does not report whether it is working")
-		h.expect("clear disabled filter", h.send("\x1b/\x15\r"), "local agent", "forge agent")
+		h.expect("clear disabled filter", h.send("\x1b/\x15\r"), "local agent", "devbox agent")
 		// Identical session IDs belong to separate machines and hook spools.
 		local.emit(t, "UserPromptSubmit")
 		local.emit(t, "Stop")
 		remote.emit(t, "Stop")
-		northstarAttentionRefresh(t, h, "two same IDs / two unread results", 4, "local agent *", "forge agent *", "2 unread")
+		northstarAttentionRefresh(t, h, "two same IDs / two unread results", 4, "local agent *", "devbox agent *", "2 unread")
 		h.expect("select only local result", h.send("/local-agent\r"), "> local agent")
 		h.expect("ack only local result", h.send("i"), "Machine: This machine", "1 unread")
-		h.expect("select forge after local acknowledgement", h.send("\x1b/\x15forge-agent\r"), "> forge agent", "1 unread")
+		h.expect("select devbox after local acknowledgement", h.send("\x1b/\x15devbox-agent\r"), "> devbox agent", "1 unread")
 		h.expect("attach exact remote result", h.send("\r"), "ATTENTION_REMOTE_ATTACH_READY")
 		select {
 		case id := <-remoteEgg.attached:
@@ -194,21 +194,21 @@ func TestNorthstarPTYAttention(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("remote exact-ID attachment did not execute")
 		}
-		h.expect("remote detach acknowledges captured completion", h.send("\x02q"), "forge agent", "0 unread")
+		h.expect("remote detach acknowledges captured completion", h.send("\x02q"), "devbox agent", "0 unread")
 		if northstarAttentionBells(h) != 4 {
 			t.Fatal("attach/detach replayed a completion alert")
 		}
-		h.expect("restore all rows", h.send("/\x15\r"), "local agent", "forge agent")
+		h.expect("restore all rows", h.send("/\x15\r"), "local agent", "devbox agent")
 		remote.emit(t, "UserPromptSubmit")
 		remote.emit(t, "Stop")
-		northstarAttentionRefresh(t, h, "new remote completion", 5, "forge agent *", "1 unread")
-		northstarWrite(t, filepath.Join(f.home, "forge-offline"), "fixture offline", 0600)
-		northstarAttentionRefresh(t, h, "stale machine retains visual unread", 5, "forge unreachable", "forge agent *", "1 unread")
-		if err := os.Remove(filepath.Join(f.home, "forge-offline")); err != nil {
+		northstarAttentionRefresh(t, h, "new remote completion", 5, "devbox agent *", "1 unread")
+		northstarWrite(t, filepath.Join(f.home, "devbox-offline"), "fixture offline", 0600)
+		northstarAttentionRefresh(t, h, "stale machine retains visual unread", 5, "devbox unreachable", "devbox agent *", "1 unread")
+		if err := os.Remove(filepath.Join(f.home, "devbox-offline")); err != nil {
 			t.Fatal(err)
 		}
 		h.waitScreen("reconnect without repeated cursor bell", h.send("R"), func(screen string) bool {
-			return northstarContainsRow(screen, "forge agent *") && strings.Contains(screen, "1 unread") && !strings.Contains(screen, "forge unreachable")
+			return northstarContainsRow(screen, "devbox agent *") && strings.Contains(screen, "1 unread") && !strings.Contains(screen, "devbox unreachable")
 		})
 		if northstarAttentionBells(h) != 5 {
 			t.Fatal("reconnect replayed an alert")
@@ -221,12 +221,12 @@ func TestNorthstarPTYAttention(t *testing.T) {
 		// the filtered header and complete rows in the same rendered snapshot.
 		h.waitScreen("attention filter excludes unknown", h.send("!"), func(screen string) bool {
 			return strings.Contains(screen, "All machines · needs you") &&
-				strings.Contains(screen, "local agent") && northstarContainsRow(screen, "forge agent *") &&
+				strings.Contains(screen, "local agent") && northstarContainsRow(screen, "devbox agent *") &&
 				!strings.Contains(screen, "hooks off")
 		})
 		h.exit("q")
 		fresh := northstarStartPTY(t, f, binary, 120, 32)
-		fresh.expect("fresh instance / durable unread cursor / known blocked", 0, "local agent", "forge agent *", "1 unread")
+		fresh.expect("fresh instance / durable unread cursor / known blocked", 0, "local agent", "devbox agent *", "1 unread")
 		fresh.exit("q")
 		for _, pty := range []*northstarPTY{h, fresh} {
 			pty.mu.Lock()

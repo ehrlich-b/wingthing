@@ -156,17 +156,17 @@ func TestClaudeCWDRefusalsRetainWingPolicy(t *testing.T) {
 }
 
 func TestClaudeRemoteRoutingPreservesCWDAndProviderDelimiter(t *testing.T) {
-	for _, cwd := range []string{"../forge project space", "--remote", "-r", "--remote-state", "--remote-batch"} {
+	for _, cwd := range []string{"../devbox project space", "--remote", "-r", "--remote-state", "--remote-batch"} {
 		for _, interactive := range []bool{false, true} {
 			want := []string{"claude", "--cwd", cwd, "--name", "--remote-cwd", "--", "--remote", "provider-host", "--remote-cwd", "provider path", "--remote-state", "provider state", "--json", "--remote-batch"}
-			argv := append([]string{"--remote", "fixture-forge", "--remote-binary", "/opt/wt custom", "--remote-state", "/forge state"}, want...)
+			argv := append([]string{"--remote", "fixture-devbox", "--remote-binary", "/opt/wt custom", "--remote-state", "/devbox state"}, want...)
 			route, remote, err := remotepkg.ParseRemoteInvocation(argv, interactive, newRootCommand)
-			if err != nil || !remote || route.Target != "fixture-forge" || route.Binary != "/opt/wt custom" || route.State != "/forge state" || route.CWD != "" || route.NonInteractive || route.AllocateTTY != interactive || !reflect.DeepEqual(route.Args, want) {
+			if err != nil || !remote || route.Target != "fixture-devbox" || route.Binary != "/opt/wt custom" || route.State != "/devbox state" || route.CWD != "" || route.NonInteractive || route.AllocateTTY != interactive || !reflect.DeepEqual(route.Args, want) {
 				t.Fatalf("remote cwd/args changed: %+v remote=%t err=%v", route, remote, err)
 			}
 		}
 	}
-	if _, _, err := remotepkg.ParseRemoteInvocation([]string{"--remote", "fixture-forge", "--remote-cwd", "/forge", "claude"}, true, newRootCommand); err == nil || !strings.Contains(err.Error(), "command's --cwd") {
+	if _, _, err := remotepkg.ParseRemoteInvocation([]string{"--remote", "fixture-devbox", "--remote-cwd", "/devbox", "claude"}, true, newRootCommand); err == nil || !strings.Contains(err.Error(), "command's --cwd") {
 		t.Fatalf("bare remote cwd became a launch flag: %v", err)
 	}
 }

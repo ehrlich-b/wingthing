@@ -88,7 +88,7 @@ func northstarNewFixture(t *testing.T) *northstarFixture {
 		}
 	}
 	f.env = []string{"HOME=" + home, "WINGTHING_DIR=" + local, "PATH=" + f.bin + ":/usr/bin:/bin:/usr/sbin:/sbin", "TMPDIR=" + f.tmp,
-		"TERM=xterm-256color", "LANG=en_US.UTF-8", "PYTHONDONTWRITEBYTECODE=1", "NORTHSTAR_SSH_OFFLINE_FILE=" + filepath.Join(home, "forge-offline")}
+		"TERM=xterm-256color", "LANG=en_US.UTF-8", "PYTHONDONTWRITEBYTECODE=1", "NORTHSTAR_SSH_OFFLINE_FILE=" + filepath.Join(home, "devbox-offline")}
 	// Only these exact fixture aliases can reach the shell executor. The command
 	// still runs the built wt with the literal state/argv produced by real SSH code.
 	northstarWrite(t, filepath.Join(f.bin, "ssh"), `#!/bin/sh
@@ -98,7 +98,7 @@ done
 host=$1
 shift
 case "$host" in
- ns-forge)
+ ns-devbox)
  if [ -f "$NORTHSTAR_SSH_OFFLINE_FILE" ]; then printf 'fixture query failure\n' >&2; exit 255; fi
  exec /bin/sh -c "$1" ;;
  ns-empty) exec /bin/sh -c "$1" ;;
@@ -111,8 +111,8 @@ esac
 		t.Fatal(err)
 	}
 	northstarWrite(t, filepath.Join(local, "remotes.yaml"), fmt.Sprintf(`remotes:
-  forge:
-    ssh_target: ns-forge
+  devbox:
+    ssh_target: ns-devbox
     wingthing_dir: %s
   empty:
     ssh_target: ns-empty
@@ -567,7 +567,7 @@ func TestNorthstarPTYSessionNavigator(t *testing.T) {
 	// Current UI changes are channel-independent. Native preview egg identity
 	// and upstream provider/SSH canaries retain their separate acceptance gates.
 	local := northstarStandaloneEgg(t, f, f.local, "same", "local-parent", "working", "LOCAL_FIXTURE_READY")
-	forge := northstarStandaloneEgg(t, f, f.remote, "same", "forge-parent", "needs_input", "FORGE_FIXTURE_READY")
+	devbox := northstarStandaloneEgg(t, f, f.remote, "same", "devbox-parent", "needs_input", "DEVBOX_FIXTURE_READY")
 	disposable := northstarStandaloneEgg(t, f, f.remote, "stop-me", "disposable", "working", "STOP_FIXTURE_READY")
 	// Prove root help bytes for the built CLI without a PTY as well as unit routing.
 	help := exec.CommandContext(t.Context(), binary)
@@ -579,33 +579,33 @@ func TestNorthstarPTYSessionNavigator(t *testing.T) {
 	h := northstarStartPTY(t, f, binary, 80, 24)
 	h.expect("first dashboard frame", 0, "wt   ", "m machines")
 	t.Logf("fixture launch-to-first-frame: %s", time.Since(started))
-	h.expect("all machines / initial inventory", 0, "local parent", "forge parent", "disposable", "offline unreachable", "Claude", "2m", "? help")
+	h.expect("all machines / initial inventory", 0, "local parent", "devbox parent", "disposable", "offline unreachable", "Claude", "2m", "? help")
 	t.Logf("fixture launch-to-full-inventory: %s", time.Since(started))
 	rev := h.send("?")
 	h.expect("help / detach and legend", rev, "Ctrl+B then q", "Move", "Manage", "keeps sessions running")
-	h.expect("help close", h.send("\x1b"), "local parent", "forge parent", "Enter open")
+	h.expect("help close", h.send("\x1b"), "local parent", "devbox parent", "Enter open")
 	rev = h.send("!")
 	h.waitScreen("attention filter", rev, func(s string) bool {
-		return strings.Contains(s, "forge parent") && !strings.Contains(s, "local parent") && !strings.Contains(s, "disposable")
+		return strings.Contains(s, "devbox parent") && !strings.Contains(s, "local parent") && !strings.Contains(s, "disposable")
 	})
 	h.expect("attention off", h.send("!"), "local parent", "disposable")
-	rev = h.send("/FORGE\r")
+	rev = h.send("/DEVBOX\r")
 	h.waitScreen("qualified filter / colliding IDs", rev, func(s string) bool {
-		return strings.Contains(s, "forge parent") && !strings.Contains(s, "local parent") && northstarContainsRow(s, "> forge parent")
+		return strings.Contains(s, "devbox parent") && !strings.Contains(s, "local parent") && northstarContainsRow(s, "> devbox parent")
 	})
-	h.expect("full details / exact route", h.send("i"), "Machine: forge", "Project: work", "Permissions: Not reported")
-	h.expect("details close", h.send("\x1b"), "forge parent", "Enter open")
-	h.expect("rename prompt", h.send("r\x15forge-renamed"), "Name: forge-renamed")
-	h.expect("rename refresh", h.send("\r"), "> forge renamed")
+	h.expect("full details / exact route", h.send("i"), "Machine: devbox", "Project: work", "Permissions: Not reported")
+	h.expect("details close", h.send("\x1b"), "devbox parent", "Enter open")
+	h.expect("rename prompt", h.send("r\x15devbox-renamed"), "Name: devbox-renamed")
+	h.expect("rename refresh", h.send("\r"), "> devbox renamed")
 	if got := eggclient.ReadSessionName(local.dir); got != "local-parent" {
 		t.Fatalf("colliding local ID renamed: %s", got)
 	}
-	if got := eggclient.ReadSessionName(forge.dir); got != "forge-renamed" {
+	if got := eggclient.ReadSessionName(devbox.dir); got != "devbox-renamed" {
 		t.Fatalf("remote not renamed: %s", got)
 	}
-	h.expect("fixture attach output", h.send("\r"), "FORGE_FIXTURE_READY")
+	h.expect("fixture attach output", h.send("\r"), "DEVBOX_FIXTURE_READY")
 	select {
-	case id := <-forge.attached:
+	case id := <-devbox.attached:
 		if id != "same" {
 			t.Fatal(id)
 		}
@@ -617,42 +617,42 @@ func TestNorthstarPTYSessionNavigator(t *testing.T) {
 	}
 	// The split prefix crosses separate PTY writes; no list key intercepts q.
 	h.send("\x02")
-	h.expect("detached / same qualified selection", h.send("q"), "> forge renamed", "Enter open")
-	if forge.killed.Load() != 0 {
+	h.expect("detached / same qualified selection", h.send("q"), "> devbox renamed", "Enter open")
+	if devbox.killed.Load() != 0 {
 		t.Fatal("detach stopped the egg")
 	}
-	northstarWrite(t, filepath.Join(f.home, "forge-offline"), "offline", 0600)
-	h.expect("retained remote rows / stale query failure", h.send("R"), "forge not searched", "Last seen", "> forge renamed")
-	if err := os.Remove(filepath.Join(f.home, "forge-offline")); err != nil {
+	northstarWrite(t, filepath.Join(f.home, "devbox-offline"), "offline", 0600)
+	h.expect("retained remote rows / stale query failure", h.send("R"), "devbox not searched", "Last seen", "> devbox renamed")
+	if err := os.Remove(filepath.Join(f.home, "devbox-offline")); err != nil {
 		t.Fatal(err)
 	}
 	rev = h.send("R")
 	h.waitScreen("remote recovery / same qualified selection", rev, func(s string) bool {
-		return northstarContainsRow(s, "> forge renamed") && strings.Contains(s, "! Needs you") && !strings.Contains(s, "forge unreachable")
+		return northstarContainsRow(s, "> devbox renamed") && strings.Contains(s, "! Needs you") && !strings.Contains(s, "devbox unreachable")
 	})
 	h.expect("clear filter", h.send("/\x15\r"), "local parent", "disposable")
 	h.expect("stop filter", h.send("/disposable\r"), "> disposable", "* Working")
-	h.expect("captured stop confirmation", h.send("x"), "disposable on forge", "Enter keep running")
+	h.expect("captured stop confirmation", h.send("x"), "disposable on devbox", "Enter keep running")
 	h.expect("stop cancelled", h.send("n"), "Enter open", "disposable")
 	if disposable.killed.Load() != 0 {
 		t.Fatal("cancel stopped the fixture")
 	}
-	h.expect("stop confirmation again", h.send("x"), "disposable on forge")
+	h.expect("stop confirmation again", h.send("x"), "disposable on devbox")
 	rev = h.send("y")
 	h.waitScreen("confirmed stop / no matches", rev, func(s string) bool {
 		return strings.Contains(s, "No matching sessions") && strings.Contains(s, "Enter open") && !northstarContainsRow(s, "> disposable")
 	})
-	if disposable.killed.Load() != 1 || local.killed.Load() != 0 || forge.killed.Load() != 0 {
+	if disposable.killed.Load() != 1 || local.killed.Load() != 0 || devbox.killed.Load() != 0 {
 		t.Fatal("stop addressed wrong exact target")
 	}
-	h.expect("clear filter after stop", h.send("/\x15\r"), "local parent", "forge renamed")
+	h.expect("clear filter after stop", h.send("/\x15\r"), "local parent", "devbox renamed")
 	h.expect("machine picker includes empty/offline", h.send("m"), "All machines", "empty", "offline", "Enter select")
-	h.expect("selected empty remote", h.send("jj\r"), "empty", "No sessions yet on empty")
+	h.expect("selected empty remote", h.send("jjj\r"), "empty", "No sessions yet on empty")
 	h.expect("empty remote new agent", h.send("n"), "Agent (blank = shell)")
 	h.expect("empty remote requires remote cwd", h.send("\r"), "Machine: empty", "Working directory", "_")
 	h.expect("empty cwd rejected", h.send("\r"), "Working directory cannot be empty")
 	h.expect("cancel new / no launch", h.send("\x1b"), "empty", "n new session")
-	h.expect("restore all machines", h.send("m\x1b[H\r"), "local parent", "forge renamed")
+	h.expect("restore all machines", h.send("m\x1b[H\r"), "local parent", "devbox renamed")
 	rev = h.resize(40, 12)
 	h.expect("40x12 compact navigator", rev, "local parent", "Working", "! attention", "m scope")
 	rev = h.send("?")
@@ -660,9 +660,9 @@ func TestNorthstarPTYSessionNavigator(t *testing.T) {
 	h.expect("40x12 help scroll / detach", h.send("\x1b[6~"), "Ctrl+B then q")
 	h.expect("40x12 return", h.send("\x1b"), "local parent")
 	rev = h.resize(120, 40)
-	h.expect("120x40 restored", rev, "local parent", "forge renamed", "offline unreachable", "R reconnect")
+	h.expect("120x40 restored", rev, "local parent", "devbox renamed", "offline unreachable", "R reconnect")
 	h.exit("q")
-	if local.killed.Load() != 0 || forge.killed.Load() != 0 {
+	if local.killed.Load() != 0 || devbox.killed.Load() != 0 {
 		t.Fatal("quitting stopped surviving sessions")
 	}
 	h2 := northstarStartPTY(t, f, binary, 40, 12)

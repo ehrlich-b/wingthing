@@ -215,8 +215,8 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool, roles ...stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.Host(t, "forge", meta)
-	add := exec.Command(binary, "mcp", "connect", "add", "forge", "--ssh", "forge", "--wingthing-dir", remoteState, "--wt-binary", binary)
+	h.Host(t, "devbox", meta)
+	add := exec.Command(binary, "mcp", "connect", "add", "devbox", "--ssh", "devbox", "--wingthing-dir", remoteState, "--wt-binary", binary)
 	add.Env, add.Dir = environment(localState), work
 	if output, err := add.CombinedOutput(); err != nil {
 		t.Fatalf("remember fake SSH wing: %v\n%s", err, output)

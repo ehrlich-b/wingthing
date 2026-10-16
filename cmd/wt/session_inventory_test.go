@@ -158,7 +158,7 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 		return process
 	}
 	gatewayProcess := start(macState, "my-mac", binary)
-	start(remoteState, "forge", binary)
+	start(remoteState, "devbox", binary)
 	macMeta, e := sshcontrol.InspectLocal(t.Context(), macState, "")
 	if e != nil {
 		t.Fatal(e)
@@ -305,7 +305,7 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(previewState, "egg.yaml"), []byte("isolation: privileged\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	start(previewState, "forge", peerBinary)
+	start(previewState, "devbox", peerBinary)
 	writerMeta, err := sshcontrol.InspectLocal(t.Context(), previewState, "")
 	if err != nil {
 		t.Fatal(err)

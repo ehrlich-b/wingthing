@@ -136,7 +136,7 @@ async function machine(id) {
 }
 
 async function shoot(page, name, suffix) {
-    if (only.length && !only.includes(name) && !(name.startsWith('09-landing-') && only.includes('09-landing'))) return;
+    if (only.length && !only.includes(name)) return;
     await page.waitForTimeout(700);
     if (name === '02-sessions') {
         const pinned = await page.locator('.pp-pin').innerText();

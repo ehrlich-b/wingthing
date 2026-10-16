@@ -106,7 +106,7 @@ func TestRunRemoteInvocationStreamsStdioAndPreservesExitStatus(t *testing.T) {
 	input := "remote stdin canary\n"
 	var stdout, stderr bytes.Buffer
 	err := RunRemoteInvocation(context.Background(), Invocation{
-		Target: "work1", Binary: remoteBinary,
+		Target: "buildhost", Binary: remoteBinary,
 		Args: []string{"terminal", "--detach", "--name", "codex's remote"},
 	}, IO{In: strings.NewReader(input), Out: &stdout, ErrOut: &stderr, SSHPath: sshPath})
 	var exitErr *cmdutil.CommandExitError
@@ -117,7 +117,7 @@ func TestRunRemoteInvocationStreamsStdioAndPreservesExitStatus(t *testing.T) {
 	if stdout.String() != wantStdout {
 		t.Fatalf("stdout = %q, want %q", stdout.String(), wantStdout)
 	}
-	if got := stderr.String(); !strings.Contains(got, "ssh-mode=-T\nssh-host=work1\n") || !strings.Contains(got, "remote-stderr\n") {
+	if got := stderr.String(); !strings.Contains(got, "ssh-mode=-T\nssh-host=buildhost\n") || !strings.Contains(got, "remote-stderr\n") {
 		t.Fatalf("stderr = %q", got)
 	}
 }
@@ -137,7 +137,7 @@ func TestRunRemoteInvocationPreservesEmptyAndWhitespaceArgs(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := RunRemoteInvocation(context.Background(), Invocation{
-		Target: "work1", Binary: remoteBinary,
+		Target: "buildhost", Binary: remoteBinary,
 		Args: []string{"egg", "claude", "--", "--tools", "", " \t "},
 	}, IO{In: strings.NewReader(""), Out: &stdout, ErrOut: &stderr, SSHPath: sshPath})
 	if err != nil {
@@ -186,16 +186,16 @@ func TestRemoteClaudeAllowlistAndLiteralProviderArgs(t *testing.T) {
 	if err := os.WriteFile(ssh, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"claude", "--cwd", "../forge project space", "--name", "week end", "--", "--remote", "provider host", "--remote-cwd", "provider cwd", "--remote-state", "provider state", "--remote-batch", "--json", ""}
+	args := []string{"claude", "--cwd", "../devbox project space", "--name", "week end", "--", "--remote", "provider host", "--remote-cwd", "provider cwd", "--remote-state", "provider state", "--remote-batch", "--json", ""}
 	var out bytes.Buffer
-	if err := RunRemoteInvocation(t.Context(), Invocation{Target: "fixture-forge", Binary: "/opt/wt custom", Args: args, AllocateTTY: true}, IO{SSHPath: ssh, Out: &out, ErrOut: io.Discard}); err != nil {
+	if err := RunRemoteInvocation(t.Context(), Invocation{Target: "fixture-devbox", Binary: "/opt/wt custom", Args: args, AllocateTTY: true}, IO{SSHPath: ssh, Out: &out, ErrOut: io.Discard}); err != nil {
 		t.Fatal(err)
 	}
 	quoted := []string{ShellQuote("/opt/wt custom")}
 	for _, arg := range args {
 		quoted = append(quoted, ShellQuote(arg))
 	}
-	if want := "-t\nfixture-forge\n" + strings.Join(quoted, " ") + "\n"; out.String() != want {
+	if want := "-t\nfixture-devbox\n" + strings.Join(quoted, " ") + "\n"; out.String() != want {
 		t.Fatalf("Claude transport changed provider arguments: %q want %q", out.String(), want)
 	}
 }
@@ -210,7 +210,7 @@ func TestRunRemoteInvocationCancellationStopsSSHClient(t *testing.T) {
 	defer cancel()
 	started := time.Now()
 	err := RunRemoteInvocation(ctx, Invocation{
-		Target: "work1", Binary: "wt", Args: []string{"terminal", "--json"},
+		Target: "buildhost", Binary: "wt", Args: []string{"terminal", "--json"},
 	}, IO{In: strings.NewReader(""), Out: &bytes.Buffer{}, ErrOut: &bytes.Buffer{}, SSHPath: sshPath})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("cancellation error = %v", err)
@@ -236,7 +236,7 @@ func TestRemoteStateSendsQuotedPOSIXAssignmentsOnlyWhenSelected(t *testing.T) {
 		}
 		return out.String()
 	}
-	base := Invocation{Target: "work1", Args: []string{"session", "ps", "--json"}}
+	base := Invocation{Target: "buildhost", Args: []string{"session", "ps", "--json"}}
 
 	// Absent flag: byte-identical legacy argv for both channels.
 	stable := base
@@ -298,7 +298,7 @@ func TestRemoteStateReachesReceiverEnvironmentLiterally(t *testing.T) {
 	state := "/remote/it's a state/$(touch " + canary + ")/`touch " + canary + "`/../x\ttab\x1besc\x7fdel"
 	var stdout, stderr bytes.Buffer
 	err := RunRemoteInvocation(context.Background(), Invocation{
-		Target: "work1", Binary: remoteBinary, State: state, Args: []string{"channel", "--json"},
+		Target: "buildhost", Binary: remoteBinary, State: state, Args: []string{"channel", "--json"},
 	}, IO{In: strings.NewReader(""), Out: &stdout, ErrOut: &stderr, SSHPath: sshPath})
 	if err != nil {
 		t.Fatalf("remote run: %v stderr=%s", err, stderr.String())
@@ -317,7 +317,7 @@ func TestRemoteStateDisconnectNamesTheSameStateForReconnect(t *testing.T) {
 	if err := os.WriteFile(sshPath, []byte("#!/bin/sh\nexit 255\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	err := RunRemoteInvocation(context.Background(), Invocation{Target: "work1", Binary: "wt", State: "/state", Args: []string{"attach", "research"}}, IO{In: strings.NewReader(""), Out: io.Discard, ErrOut: io.Discard, SSHPath: sshPath})
+	err := RunRemoteInvocation(context.Background(), Invocation{Target: "buildhost", Binary: "wt", State: "/state", Args: []string{"attach", "research"}}, IO{In: strings.NewReader(""), Out: io.Discard, ErrOut: io.Discard, SSHPath: sshPath})
 	var exitErr *cmdutil.CommandExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 255 || !strings.Contains(exitErr.Message, "state is unknown; reconnect with the same --remote-state and list sessions before relaunching") {
 		t.Fatalf("SSH disconnect result = %+v", err)
@@ -330,7 +330,7 @@ func TestRemoteDisconnectPreserves255AndDoesNotSuggestRelaunch(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer
-	err := RunRemoteInvocation(context.Background(), Invocation{Target: "work1", Binary: "wt", Args: []string{"attach", "research"}}, IO{In: strings.NewReader(""), Out: io.Discard, ErrOut: &stderr, SSHPath: sshPath})
+	err := RunRemoteInvocation(context.Background(), Invocation{Target: "buildhost", Binary: "wt", Args: []string{"attach", "research"}}, IO{In: strings.NewReader(""), Out: io.Discard, ErrOut: &stderr, SSHPath: sshPath})
 	var exitErr *cmdutil.CommandExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 255 || !strings.Contains(exitErr.Message, "state is unknown") || !strings.Contains(exitErr.Message, "list sessions before relaunching") {
 		t.Fatalf("SSH disconnect result = %+v", err)

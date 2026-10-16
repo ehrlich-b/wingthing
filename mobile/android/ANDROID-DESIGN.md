@@ -1,7 +1,6 @@
 # Wingthing Android
 
-Recovered from `174842f26e1a053d73a1466dc448e97347e81231` onto
-`f468099` on `codex/wt-android-20261015`. Scope is the phone flow in the whole-app spec:
+The Android app supports the phone flow in the whole-app spec:
 independently pair wings, see attention, attach, type, stop, detach and forget.
 No phone login, billing, cloud provisioning, push, or configuration authority.
 

@@ -1,7 +1,6 @@
 # PR #47 Linux CI repair
 
-Base: `codex/wt-integration-20261011`, `d0bc2b7614c412df8ba03554b17065caaef91777`.
-Fix branch: `codex/wt-int-ci-linux-20261011`.
+Base: `d0bc2b7614c412df8ba03554b17065caaef91777`.
 Compared with main `1eda0ddb` (PR #46).
 Read the complete failed-job logs from [run 38195328965](https://github.com/ehrlich-b/wingthing/actions/runs/38195328965).
 
@@ -142,4 +141,4 @@ fixture fail with `unknown_outcome`; it passed 20 unchanged repetitions and the
 final full check and race gate. No assertion or deadline was changed for it.
 
 macOS-specific sandbox fixtures and their existing conditions remain intact;
-that lane's native acceptance is separate. No new test skips were introduced.
+native macOS acceptance is separate. No new test skips were introduced.

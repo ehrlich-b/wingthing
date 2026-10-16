@@ -135,7 +135,7 @@ func TestDashboardFreshnessDetailsHelpAndAttention(t *testing.T) {
 	m := s.machines["work"]
 	m.updated, m.attempted, m.err = now.Add(-5*time.Minute), now, "query failed\x1b]52;c;secret\a"
 	s.machines["work"] = m
-	s.remotes = map[string]config.Remote{"work": {SSHTarget: "fake-forge", WTBinary: "/opt/wing thing/wt", WingthingDir: "/remote/state"}}
+	s.remotes = map[string]config.Remote{"work": {SSHTarget: "fake-devbox", WTBinary: "/opt/wing thing/wt", WingthingDir: "/remote/state"}}
 	s.selected = "work:one"
 	text := render(s, 80, 24, now)
 	for _, want := range []string{"work unreachable", "Last seen 5m ago", "remote · ", "? Last seen", "R reconnect", "? help"} {
@@ -150,7 +150,7 @@ func TestDashboardFreshnessDetailsHelpAndAttention(t *testing.T) {
 			t.Errorf("missing %q", want)
 		}
 	}
-	for _, bad := range []string{"work:one", "/home/me/app", "fake-forge", "/remote/state", "secret"} {
+	for _, bad := range []string{"work:one", "/home/me/app", "fake-devbox", "/remote/state", "secret"} {
 		if strings.Contains(detail, bad) {
 			t.Errorf("internal field %q", bad)
 		}

@@ -1,8 +1,7 @@
 # Install Wingthing on the owner's phone
 
-These are **handoff commands, not commands executed by this task**. The owner runs
-them themselves, or authorizes the coordinator to run the personal local setup and
-exposure. No production deployments, grants, billing changes or public endpoint
+The owner or an authorized operator runs these commands for local setup and
+phone access. No production deployments, grants, billing changes or public endpoint
 are needed. Read [PHONE.md](PHONE.md) for authority and threat boundaries.
 
 ## 1. Use the verified local build (about 5 minutes)
@@ -22,7 +21,7 @@ clone's `.scratch/gomod/cache/download` from its existing module cache, or
 deliberately allow dependency downloads with `GOPROXY=https://proxy.golang.org`
 and `GOSUMDB=sum.golang.org`. Linux uses `nice -n 15` without `taskpolicy`.
 
-Use a protected executable path outside the coordinator's writable workspace:
+Use a protected executable path outside the agent's writable workspace:
 
 ```sh
 mkdir -p "$HOME/.local/bin"
@@ -204,7 +203,7 @@ this route uses browser identity and independent gateway sessions.
 
 For the fresh disposable roost, Ctrl+C in Terminal A separately stops its
 runtime. Do not remove state or terminate the owner's unrelated wings during access
-revocation. Account/production changes belong to the owner, not this task.
+revocation. Only the owner may change accounts or production settings.
 
 ## Native iOS: exact Xcode handoff and remaining gap
 
@@ -243,7 +242,7 @@ live provider acceptance. Browser `pty.kill` Stop execution already exists and
 is the web route used here; do not claim native whole-conversation Stop works.
 Use an already authorized compatible HTTPS Home for native experiments.
 
-## Verification receipts and coordinator gates
+## Verification receipts and operator checks
 
 Local **PASS**: 197 Node tests, Vite build, gateway race tests, CLI rejection test and final embedded Go build. The tagged loopback test compiles but is **unrun** here.
 
@@ -253,7 +252,7 @@ tests, CLI validation and embedded Go build), `.scratch/phone-final-go.log`
 manifest sandbox refusal). No loopback, Chromium, live tunn, real provider,
 signed device or public exposure was exercised here.
 
-Coordinator executes the real HTTPS/WebSocket echo/revocation test on a host
+An operator runs the real HTTPS/WebSocket echo/revocation test on a host
 that allows loopback, before exposure:
 
 ```sh
@@ -291,5 +290,5 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 The imported native history fix bounds each read to 100 pages / 10 seconds and
 preserves a cursor for explicit continuation, with focused synthetic tests.
 Here the native core gate fails before compilation: `sandbox_apply: Operation
-not permitted`. This is a named coordinator gate, not a native PASS. Android
+not permitted`. This requires verification on a supported host before reporting a native PASS. Android
 has no app build target in this checkout and is not a native launch candidate.

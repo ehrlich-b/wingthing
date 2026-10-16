@@ -41,7 +41,7 @@ dependencies; the Android wire contract stays in `check`.
 
 Static race selection uses buildable untagged packages with Go files changed
 from `RACE_BASE` (default `HEAD~1`), including uncommitted/untracked files.
-Tag-only or other-platform directories stay in their integration/E2E lanes. Set it to the branch's comparison commit
+Tag-only or other-platform directories use their integration/E2E suites. Set it to the branch's comparison commit
 for local work. CI uses the PR base or previous push commit. `RACE_PACKAGES=./...`
 requests the full repository and remains mandatory in the release workflow.
 `GOVULNCHECK_VERSION` pins the scanner, while advisory databases remain current.

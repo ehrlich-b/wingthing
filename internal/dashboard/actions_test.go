@@ -178,14 +178,14 @@ func TestDashboardRemoteMutationValidatesSameCurrentProfile(t *testing.T) {
 	t.Setenv("TMPDIR", alias)
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", state)
-	profile := config.Remote{SSHTarget: "fixture-forge", WTBinary: "/opt/custom wt", WingthingDir: remoteState}
+	profile := config.Remote{SSHTarget: "fixture-devbox", WTBinary: "/opt/custom wt", WingthingDir: remoteState}
 	log := filepath.Join(home, "ssh-routes")
 	ssh := filepath.Join(alias, "ssh")
 	data, err := json.Marshal(eggclient.RemoteSessionInventory{Version: "fixture", ContractVersion: eggclient.RemoteSessionContractVersion, Sessions: []eggclient.LocalSession{{ID: "full-id", PID: 42}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\n[ \"$1\" = -T ] && [ \"$2\" = -o ] && [ \"$3\" = BatchMode=yes ] && [ \"$4\" = fixture-forge ] || exit 91\n" +
+	script := "#!/bin/sh\n[ \"$1\" = -T ] && [ \"$2\" = -o ] && [ \"$3\" = BatchMode=yes ] && [ \"$4\" = fixture-devbox ] || exit 91\n" +
 		"printf '%s\\n' \"$5\" >> " + remotepkg.ShellQuote(log) + "\ncase \"$5\" in\n" +
 		"*\"'--version'\"*) echo 'wt version fixture' ;;\n" +
 		"*\"'session' 'ps' '--json' '--remote-inventory'\"*) printf '%s\\n' " + remotepkg.ShellQuote(string(data)) + " ;;\n*) exit 92 ;; esac\n"
@@ -207,7 +207,7 @@ func TestDashboardRemoteMutationValidatesSameCurrentProfile(t *testing.T) {
 			_ = os.Remove(log)
 			profiles := map[string]config.Remote{}
 			if test.present {
-				profiles["forge"] = test.current
+				profiles["devbox"] = test.current
 			}
 			if err := config.SaveRemotes(state, profiles); err != nil {
 				t.Fatal(err)

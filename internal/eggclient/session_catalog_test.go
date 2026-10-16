@@ -41,8 +41,8 @@ func TestSessionCatalogSearchLivePastAndUnauthorizedContent(t *testing.T) {
 		q     string
 		count int
 		id    string
-	}{{"DNS helper", 1, "archived-codex"}, {"repo", 2, ""}, {"forge", 2, ""}, {"archived legacy", 1, "archived-claude"}, {"forbidden", 0, ""}} {
-		rows, full, e := SessionCatalog(t.Context(), cfg, "origin", "forge", tc.q, owns)
+	}{{"DNS helper", 1, "archived-codex"}, {"repo", 2, ""}, {"devbox", 2, ""}, {"archived legacy", 1, "archived-claude"}, {"forbidden", 0, ""}} {
+		rows, full, e := SessionCatalog(t.Context(), cfg, "origin", "devbox", tc.q, owns)
 		if e != nil || !full || len(rows) != tc.count {
 			t.Fatalf("q=%s rows=%+v full=%t err=%v", tc.q, rows, full, e)
 		}

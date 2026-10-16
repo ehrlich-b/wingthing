@@ -19,8 +19,8 @@ class ScreensTest {
     @Test fun everyScreenInLightAndDarkAndDestructiveActionsNeedConfirmation() {
         val profile = "{\"wing_id\":\"fixture-wing\",\"name\":\"Studio Mac\"}"
         val mac = SavedWing(profile, "fixture")
-        val forge = SavedWing("{\"wing_id\":\"fixture-forge\",\"name\":\"forge\"}", "fixture")
-        val base = PhoneState(wings = listOf(mac, forge), selected = mac, machine = "Studio Mac", confirmationLabels = "tree · octopus · bicycle · moon",
+        val devbox = SavedWing("{\"wing_id\":\"fixture-devbox\",\"name\":\"devbox\"}", "fixture")
+        val base = PhoneState(wings = listOf(mac, devbox), selected = mac, machine = "Studio Mac", confirmationLabels = "tree · octopus · bicycle · moon",
             fingerprint = "66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925",
             route = "Connected on your network · Encrypted",
             sessions = listOf(PhoneSession("1", "QR pairing", "Codex", "working", false, true), PhoneSession("2", "Release notes", "Claude", "blocked", true, false), PhoneSession("3", "Shell", "shell", "idle", false, false)),

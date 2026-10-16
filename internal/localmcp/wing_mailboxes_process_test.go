@@ -253,8 +253,8 @@ func builtScopedParentProtocol(t *testing.T, exitParent bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.Host(t, "forge", meta)
-	if err := config.SaveRemotes(localState, map[string]config.Remote{"forge": {SSHTarget: "forge", WingID: meta.WingID, WingthingDir: meta.WingthingDir, ControlSocket: meta.ControlSocket, ControlVersion: meta.Version}}); err != nil {
+	h.Host(t, "devbox", meta)
+	if err := config.SaveRemotes(localState, map[string]config.Remote{"devbox": {SSHTarget: "devbox", WingID: meta.WingID, WingthingDir: meta.WingthingDir, ControlSocket: meta.ControlSocket, ControlVersion: meta.Version}}); err != nil {
 		t.Fatal(err)
 	}
 	controlPath, err := controlsocket.Path(localState)

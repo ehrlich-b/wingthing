@@ -274,7 +274,7 @@ func TestNorthstarPTYAttachReturn(t *testing.T) {
 	if err := os.Symlink(binary, custom); err != nil {
 		t.Fatal(err)
 	}
-	if err := config.SaveRemotes(f.local, map[string]config.Remote{"forge": {SSHTarget: "ns-forge", WTBinary: custom, WingthingDir: f.remote}}); err != nil {
+	if err := config.SaveRemotes(f.local, map[string]config.Remote{"devbox": {SSHTarget: "ns-devbox", WTBinary: custom, WingthingDir: f.remote}}); err != nil {
 		t.Fatal(err)
 	}
 	sshLog := filepath.Join(f.home, "return-ssh.jsonl")
@@ -315,7 +315,7 @@ func TestNorthstarPTYAttachReturn(t *testing.T) {
 		name, ref, marker string
 		fixture           *northstarReturnEgg
 	}{
-		{"local", "same", "LOCAL_RETURN_READY", local}, {"remote", "forge:same", "REMOTE_RETURN_READY", remote},
+		{"local", "same", "LOCAL_RETURN_READY", local}, {"remote", "devbox:same", "REMOTE_RETURN_READY", remote},
 	} {
 		t.Run(target.name+"-eof", func(t *testing.T) {
 			h := northstarStartPTY(t, f, binary, 120, 30, "attach", target.ref)
@@ -325,8 +325,8 @@ func TestNorthstarPTYAttachReturn(t *testing.T) {
 			northstarReturnWait(t, h, true)
 			h.waitNativeBytes("Reconnect:")
 			if target.name == "remote" {
-				h.waitNativeBytes("'attach' '--' 'forge:same'")
-				for _, want := range []string{"forge (ns-forge)", "'--remote-binary' " + remotepkg.ShellQuote(custom), "'--remote-state' " + remotepkg.ShellQuote(f.remote)} {
+				h.waitNativeBytes("'attach' '--' 'devbox:same'")
+				for _, want := range []string{"devbox (ns-devbox)", "'--remote-binary' " + remotepkg.ShellQuote(custom), "'--remote-state' " + remotepkg.ShellQuote(f.remote)} {
 					h.waitNativeBytes(want)
 				}
 			} else {
