@@ -35,19 +35,22 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	binary := os.Getenv("WT_TEST_BINARY")
-	if binary == "" {
-		binary = filepath.Join(repo, "wt")
-	}
+	binary := localOnlyFixtureBinary(t, repo, t.TempDir())
 	if _, e := os.Stat(binary); e != nil {
-		t.Fatal("build with make ops ACTION=build before this fixture")
+		t.Fatalf("fixture wt: %v", e)
 	}
 	peerBinary := os.Getenv("WT_TEST_PREVIEW_BINARY")
 	if peerBinary == "" {
-		peerBinary = filepath.Join(repo, "wt-preview")
+		peerBinary = filepath.Join(t.TempDir(), "wt-preview")
+		build := exec.CommandContext(t.Context(), "nice", "-n", "15", "go", "build", "-p", "2", "-buildvcs=false",
+			"-ldflags", "-X github.com/ehrlich-b/wingthing/internal/config.ReleaseChannel=preview", "-o", peerBinary, "./cmd/wt")
+		build.Dir = repo
+		if output, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("build fixture wt-preview: %v\n%s", err, output)
+		}
 	}
 	if _, err := os.Stat(peerBinary); err != nil {
-		t.Fatal("build both channels with make test-multiwing before this fixture")
+		t.Fatalf("fixture wt-preview: %v", err)
 	}
 	binaryHashes := map[string]string{}
 	for _, executable := range []string{binary, peerBinary} {

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { createRequire } from 'node:module';
 import { after, before, test } from 'node:test';
 
 const source = await readFile(new URL('../../web/src/pty.js', import.meta.url), 'utf8');
@@ -34,7 +35,9 @@ before(async () => {
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     base = `http://127.0.0.1:${server.address().port}`;
-    const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
+    const { chromium } = process.env.PLAYWRIGHT_MODULE
+        ? await import(process.env.PLAYWRIGHT_MODULE)
+        : createRequire(new URL('../../web/package.json', import.meta.url))('playwright');
     browser = await chromium.launch({
         headless: true, executablePath: process.env.CHROMIUM_PATH || undefined,
         args: ['--disable-background-networking', '--renderer-process-limit=2'],

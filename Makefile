@@ -134,10 +134,20 @@ endef
 # All untagged Go tests include android-contract and every former focused unit
 # selection (preview, conversation, socket, protected-target, remote and wake).
 check: test-deploy-guard web
+	cd web && $(NPM) exec -- playwright install chromium --only-shell
+	$(NODE) --test test/web/pty-order.mjs
 	# Build once outside the PTY interaction deadlines, including CGO pairing.
 	$(stable-build)
 	$(preview-build)
 	WT_TEST_BINARY="$(CURDIR)/wt" WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 ./...
+
+# Local Android compile, unit-test and lint gate; no release signing required.
+.PHONY: check-android
+check-android:
+	cd mobile/android && bash -eu -c 'source ./toolchain.sh; \
+		./build-bridge.sh; \
+		./gradlew --offline --no-daemon --max-workers=2 -Dorg.gradle.jvmargs=-Xmx3g \
+		:app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest'
 
 web:
 	cd web && $(NPM) ci
