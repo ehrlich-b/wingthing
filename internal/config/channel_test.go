@@ -313,13 +313,13 @@ func TestPreviewRejectsAliasedEggsAndOrganizationConfig(t *testing.T) {
 	if err := os.Remove(filepath.Join(cfg.Dir, "eggs")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(cfg.Dir, "wing.yaml"), []byte("org: slide\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(cfg.Dir, "wing.yaml"), []byte("org: example\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := LoadWingConfig(cfg.Dir); err == nil {
 		t.Fatal("preview accepted org")
 	}
-	for _, address := range []string{"https://ws.wingthing.ai", "https://slide.test", "http://localhost@slide.test", "localhost:8180"} {
+	for _, address := range []string{"https://ws.wingthing.ai", "https://example.test", "http://localhost@example.test", "localhost:8180"} {
 		if err := ValidatePreviewRelay(address); err == nil {
 			t.Fatal("accepted coordinator", address)
 		}

@@ -8,10 +8,10 @@ import (
 func TestMergeCollisionTwoRoutesAndFallback(t *testing.T) {
 	now := time.Now().UTC()
 	at := now.Format(time.RFC3339Nano)
-	mac := Session{Identity: Identity{"mac-wing", "same-short-id"}, MachineLabel: "EhrlichMac", Name: "local run", Routes: []Route{{WingID: "mac-wing", Kind: "direct", Healthy: true, ObservedAt: at}}}
+	mac := Session{Identity: Identity{"mac-wing", "same-short-id"}, MachineLabel: "my-mac", Name: "local run", Routes: []Route{{WingID: "mac-wing", Kind: "direct", Healthy: true, ObservedAt: at}}}
 	forge := Session{Identity: Identity{"forge-wing", "same-short-id"}, MachineLabel: "forge", Name: "wing", Pinned: true, Role: "coordinator", Routes: []Route{{WingID: "forge-wing", Kind: "direct", Healthy: true, ObservedAt: at}}}
 	via := forge
-	via.Routes = []Route{{WingID: "mac-wing", MachineLabel: "EhrlichMac", Kind: "via", Remote: "forge", Healthy: true, ObservedAt: at}}
+	via.Routes = []Route{{WingID: "mac-wing", MachineLabel: "my-mac", Kind: "via", Remote: "forge", Healthy: true, ObservedAt: at}}
 	inv := Merge([]Inventory{{Complete: true, Sessions: []Session{mac, via}}, {Complete: true, Sessions: []Session{forge}}})
 	if len(inv.Sessions) != 2 || inv.Sessions[0].OriginWingID != "forge-wing" || len(inv.Sessions[0].Routes) != 2 {
 		t.Fatalf("collision or pin lost: %+v", inv)

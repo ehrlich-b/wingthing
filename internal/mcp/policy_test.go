@@ -14,7 +14,7 @@ func TestPolicyMaximumSubsetAcrossEnabledRoles(t *testing.T) {
 		Roles: map[string]*RolePolicy{
 			"eng": {
 				Enabled: true,
-				Allow:   []string{"slide-db"},
+				Allow:   []string{"example-db"},
 				Members: []string{"both@example.com"},
 			},
 			"sales": {
@@ -23,7 +23,7 @@ func TestPolicyMaximumSubsetAcrossEnabledRoles(t *testing.T) {
 			},
 			"support": {
 				Enabled: true,
-				Deny:    []string{"slide-db"},
+				Deny:    []string{"example-db"},
 				Members: []string{"both@example.com", "disabled-plus-support@example.com"},
 			},
 		},
@@ -42,15 +42,15 @@ func TestPolicyMaximumSubsetAcrossEnabledRoles(t *testing.T) {
 	if want := []string{"support"}; !reflect.DeepEqual(p.EnabledRoles(roles), want) {
 		t.Fatalf("enabled roles = %v, want %v", p.EnabledRoles(roles), want)
 	}
-	if !p.AllowedAny(roles, "slide-jira") {
+	if !p.AllowedAny(roles, "example-jira") {
 		t.Fatal("disabled sales must not suppress support's effective tool set")
 	}
-	if p.AllowedAny(roles, "slide-db") {
-		t.Fatal("support denies slide-db and disabled sales contributes no grant")
+	if p.AllowedAny(roles, "example-db") {
+		t.Fatal("support denies example-db and disabled sales contributes no grant")
 	}
 
 	roles = p.RolesForEmail("both@example.com")
-	if !p.AllowedAny(roles, "slide-db") {
+	if !p.AllowedAny(roles, "example-db") {
 		t.Fatal("eng's grant must win over support's deny under maximum-subset semantics")
 	}
 }

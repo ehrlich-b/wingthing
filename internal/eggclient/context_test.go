@@ -79,7 +79,7 @@ func TestContextThroughEggTools(t *testing.T) {
 				t.Errorf("invalid token exchange envelope")
 			}
 			owner := r.Form.Get("subject_token")
-			if owner != "owner@slide.tech" && owner != "second@slide.tech" {
+			if owner != "owner@example.com" && owner != "second@example.com" {
 				t.Errorf("spoofed subject: %q", owner)
 			}
 			grants++
@@ -109,7 +109,7 @@ func TestContextThroughEggTools(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Error(err)
 			}
-			if request.JSONRPC != "2.0" || request.ID != 1 || request.Method != "tools/call" || request.Params.Name != "happyfox-tickets" || request.Params.Arguments["subject"] != "spoof@slide.tech" || request.Params.Arguments["page"] != float64(2) || request.Params.Meta["io.modelcontextprotocol/protocolVersion"] != "2026-07-28" {
+			if request.JSONRPC != "2.0" || request.ID != 1 || request.Method != "tools/call" || request.Params.Name != "happyfox-tickets" || request.Params.Arguments["subject"] != "spoof@example.com" || request.Params.Arguments["page"] != float64(2) || request.Params.Meta["io.modelcontextprotocol/protocolVersion"] != "2026-07-28" {
 				t.Errorf("bad tools/call: %+v", request)
 			}
 			calls++
@@ -144,18 +144,18 @@ func TestContextThroughEggTools(t *testing.T) {
 	}
 	cfg := &config.Config{Dir: root}
 	tools := []*config.ToolConfig{
-		{Name: "tickets", Context: "happyfox-tickets", Params: []config.ToolParam{{Name: "subject", Required: true}, {Name: "page", Type: "integer"}}, Env: map[string]string{"WT_USER_EMAIL": "spoof@slide.tech"}},
+		{Name: "tickets", Context: "happyfox-tickets", Params: []config.ToolParam{{Name: "subject", Required: true}, {Name: "page", Type: "integer"}}, Env: map[string]string{"WT_USER_EMAIL": "spoof@example.com"}},
 		{Name: "environment", Run: "env"},
 	}
 	opts := SpawnEggOpts{}
-	identity := EggIdentity{UserID: "verified-owner", Email: "Owner@slide.tech"}
+	identity := EggIdentity{UserID: "verified-owner", Email: "Owner@example.com"}
 	listener, err := PrepareBrowserTools(cfg, "owner", tools, &opts, identity)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	t.Setenv("WT_USER_EMAIL", "spoof@slide.tech")
-	request := map[string]any{"tool": "tickets", "args": []string{"spoof@slide.tech", "2"}, "owner": "spoof@slide.tech", "env": map[string]string{"WT_USER_EMAIL": "spoof@slide.tech"}}
+	t.Setenv("WT_USER_EMAIL", "spoof@example.com")
+	request := map[string]any{"tool": "tickets", "args": []string{"spoof@example.com", "2"}, "owner": "spoof@example.com", "env": map[string]string{"WT_USER_EMAIL": "spoof@example.com"}}
 	call := func(path, wantOwner string) {
 		t.Helper()
 		response := contextSocketCall(t, path, request)
@@ -167,9 +167,9 @@ func TestContextThroughEggTools(t *testing.T) {
 		}
 	}
 	listener.ObserveController(identity.UserID) // owner reattach
-	call(opts.ToolSocketPath, "owner@slide.tech")
+	call(opts.ToolSocketPath, "owner@example.com")
 	listener.ObserveController(identity.UserID) // owner takeover
-	call(opts.ToolSocketPath, "owner@slide.tech")
+	call(opts.ToolSocketPath, "owner@example.com")
 	mu.Lock()
 	count := grants
 	mu.Unlock()
@@ -177,7 +177,7 @@ func TestContextThroughEggTools(t *testing.T) {
 		t.Fatalf("token was not cached: %d grants", count)
 	}
 	time.Sleep(1100 * time.Millisecond)
-	call(opts.ToolSocketPath, "owner@slide.tech")
+	call(opts.ToolSocketPath, "owner@example.com")
 	mu.Lock()
 	count = grants
 	mu.Unlock()
@@ -186,12 +186,12 @@ func TestContextThroughEggTools(t *testing.T) {
 	}
 	// A separate verified owner must never reuse another owner's token.
 	secondOpts := SpawnEggOpts{}
-	second, err := PrepareBrowserTools(cfg, "second", tools, &secondOpts, EggIdentity{Email: "second@slide.tech"})
+	second, err := PrepareBrowserTools(cfg, "second", tools, &secondOpts, EggIdentity{Email: "second@example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer second.Close()
-	call(secondOpts.ToolSocketPath, "second@slide.tech")
+	call(secondOpts.ToolSocketPath, "second@example.com")
 	noOwnerOpts := SpawnEggOpts{}
 	noOwner, err := PrepareBrowserTools(cfg, "anonymous", tools, &noOwnerOpts)
 	if err != nil {

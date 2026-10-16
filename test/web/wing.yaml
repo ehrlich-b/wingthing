@@ -1,23 +1,23 @@
-org: slide
+org: example
 locked: false
 spectate: false
 admins:
-  - alice@slide.tech
+  - alice@example.com
 egg_config: /root/.wingthing/egg.yaml
 paths:
   - path: /opt/wingthing/eng
     members:
-      - alice@slide.tech
-      - bob@slide.tech
+      - alice@example.com
+      - bob@example.com
   - path: /opt/wingthing/support
     members:
-      - alice@slide.tech
-      - carol@slide.tech
+      - alice@example.com
+      - carol@example.com
 exports:
   - name: isolated-review
     path: /opt/wingthing/exports
     members:
-      - carol@slide.tech
+      - carol@example.com
 audit: true
 idle_timeout: 4h
 mcp:
@@ -27,10 +27,10 @@ mcp:
     eng:
       enabled: true
       members:
-        - alice@slide.tech
-        - bob@slide.tech
+        - alice@example.com
+        - bob@example.com
     support:
       enabled: true
       members:
-        - alice@slide.tech
-        - carol@slide.tech
+        - alice@example.com
+        - carol@example.com

@@ -12,7 +12,7 @@ import (
 )
 
 func TestPairTerminalHasRealScannableLayoutAndPermissionCopy(t *testing.T) {
-	q := phonepair.Invitation{Version: 1, WingID: "8761234abcef8761234abc", Name: "EhrlichMac", Key: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)), Local: "http://192.168.1.40:6078", Relay: "https://wingthing.ai", ID: strings.Repeat("a", 43), Secret: "apple bridge cedar delta ember frost", ExpiresAt: time.Now().Add(5 * time.Minute)}
+	q := phonepair.Invitation{Version: 1, WingID: "8761234abcef8761234abc", Name: "my-mac", Key: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)), Local: "http://192.168.1.40:6078", Relay: "https://wingthing.ai", ID: strings.Repeat("a", 43), Secret: "apple bridge cedar delta ember frost", ExpiresAt: time.Now().Add(5 * time.Minute)}
 	var out bytes.Buffer
 	if e := showInvitation(&out, q); e != nil {
 		t.Fatal(e)
@@ -21,7 +21,7 @@ func TestPairTerminalHasRealScannableLayoutAndPermissionCopy(t *testing.T) {
 	if runtime.GOOS == "darwin" {
 		place = "this Mac"
 	}
-	for _, copy := range []string{"Pair a device with wing EhrlichMac (" + place + "). Access will be shown here before you approve.", q.Secret, "5:00 · Waiting for scan...", "Same Wi-Fi: no account needed. Away from home: needs " + place + " registered once (`wt login`)."} {
+	for _, copy := range []string{"Pair a device with wing my-mac (" + place + "). Access will be shown here before you approve.", q.Secret, "5:00 · Waiting for scan...", "Same Wi-Fi: no account needed. Away from home: needs " + place + " registered once (`wt login`)."} {
 		if !strings.Contains(out.String(), copy) {
 			t.Fatal("missing required terminal copy", copy)
 		}
@@ -57,7 +57,7 @@ func TestPairTerminalHasRealScannableLayoutAndPermissionCopy(t *testing.T) {
 	}
 }
 func TestPhoneLocalOnlyTerminalExplainsNoAccount(t *testing.T) {
-	q := phonepair.Invitation{Version: 1, WingID: "main-wing", Name: "EhrlichMac", Key: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)), Local: "http://192.168.1.40:6078", Endpoints: []string{"http://100.91.2.3:6078", "http://ehrlichmac.fixture.ts.net:6078"}, ID: strings.Repeat("a", 43), Secret: "apple bridge cedar delta ember frost", ExpiresAt: time.Now().Add(5 * time.Minute)}
+	q := phonepair.Invitation{Version: 1, WingID: "main-wing", Name: "my-mac", Key: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)), Local: "http://192.168.1.40:6078", Endpoints: []string{"http://100.91.2.3:6078", "http://my-mac.fixture.ts.net:6078"}, ID: strings.Repeat("a", 43), Secret: "apple bridge cedar delta ember frost", ExpiresAt: time.Now().Add(5 * time.Minute)}
 	var out bytes.Buffer
 	if e := showInvitation(&out, q); e != nil {
 		t.Fatal(e)

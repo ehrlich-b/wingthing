@@ -8,7 +8,7 @@ echo "external repository marker" > /opt/wingthing/repos/canary/source.txt
 ln -s /opt/wingthing/repos /opt/wingthing/eng/repos
 ln -s /opt/wingthing/repos /opt/wingthing/support/repos
 # Member sessions require a per-path egg.yaml (v0.48 folder-ACL design); the
-# Slide ansible role installs one per role dir. Exercise the same sealed-jail
+# A shared-host Ansible role installs one per role directory. Exercise the same sealed-jail
 # contract here.
 cp /root/.wingthing/egg.yaml /opt/wingthing/eng/egg.yaml
 cp /root/.wingthing/egg.yaml /opt/wingthing/support/egg.yaml
@@ -22,7 +22,7 @@ ROOST_PID=$!
 DB=/root/.wingthing/roost.db
 seeded=0
 for _attempt in $(seq 1 90); do
-  if [ -f "$DB" ] && [ "$(sqlite3 "$DB" "SELECT count(*) FROM orgs WHERE slug='slide';" 2>/dev/null)" = "1" ]; then
+  if [ -f "$DB" ] && [ "$(sqlite3 "$DB" "SELECT count(*) FROM orgs WHERE slug='example';" 2>/dev/null)" = "1" ]; then
     sqlite3 "$DB" < /opt/canary/seed.sql
     seeded=1
     break
@@ -43,7 +43,7 @@ if [ "$seeded" = "1" ]; then
   echo CANARY_SEEDED
   touch /tmp/seeded
 else
-  echo "CANARY_SEED_FAILED: org 'slide' never appeared in $DB" >&2
+  echo "CANARY_SEED_FAILED: org 'example' never appeared in $DB" >&2
 fi
 
 wait $ROOST_PID

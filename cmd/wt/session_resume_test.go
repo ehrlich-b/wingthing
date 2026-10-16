@@ -56,7 +56,7 @@ func TestPrepareBrowserResumeRestoresOwnedProviderConversationWithoutChangingSou
 	if err != nil {
 		t.Fatal(err)
 	}
-	wingCfg := &config.WingConfig{Org: "slide"}
+	wingCfg := &config.WingConfig{Org: "example"}
 	start := ws.PTYStart{SessionID: "new-session", ResumeSessionID: "old-session", UserID: "alice", Agent: "claude", CWD: cwd}
 	providerID, restoredCWD, release, err := eggclient.PrepareBrowserResume(cfg, wingCfg, start, []string{cwd}, true)
 	if err != nil {
@@ -92,7 +92,7 @@ func TestPrepareBrowserResumeRequiresExactOwnerAgentAndCurrentPath(t *testing.T)
 			start := base
 			paths := []string{cwd}
 			mutate(&start, &paths)
-			if _, _, _, err := eggclient.PrepareBrowserResume(cfg, &config.WingConfig{Org: "slide"}, start, paths, true); err == nil {
+			if _, _, _, err := eggclient.PrepareBrowserResume(cfg, &config.WingConfig{Org: "example"}, start, paths, true); err == nil {
 				t.Fatal("resume unexpectedly allowed")
 			}
 		})
@@ -118,7 +118,7 @@ func TestPrepareBrowserResumeAllowsPersonalOwnerWithoutConfiguredPaths(t *testin
 	member := start
 	member.SessionID = "member-session"
 	member.OrgRole = "member"
-	if _, _, _, err := eggclient.PrepareBrowserResume(cfg, &config.WingConfig{Org: "slide"}, member, nil, true); err == nil {
+	if _, _, _, err := eggclient.PrepareBrowserResume(cfg, &config.WingConfig{Org: "example"}, member, nil, true); err == nil {
 		t.Fatal("org member without paths was allowed to resume")
 	}
 }
@@ -127,7 +127,7 @@ func TestPrepareBrowserResumeReservesIdenticalProviderConversationUntilRelease(t
 	cfg := &config.Config{Dir: t.TempDir()}
 	cwd := t.TempDir()
 	writeResumeSessionFixture(t, cfg, "old-session", "alice", "claude", cwd, "provider-id", "conversation\n")
-	wingCfg := &config.WingConfig{Org: "slide"}
+	wingCfg := &config.WingConfig{Org: "example"}
 	first := ws.PTYStart{SessionID: "new-one", ResumeSessionID: "old-session", UserID: "alice", Agent: "claude", CWD: cwd}
 	_, _, release, err := eggclient.PrepareBrowserResume(cfg, wingCfg, first, []string{cwd}, true)
 	if err != nil {

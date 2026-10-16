@@ -125,7 +125,7 @@ async function screenshot(page, flow, card, slug, suffix = '') {
         if (slug === 'stop-unverified') {assert.match(await target.innerText(), /still listed|process exit unverified/);assert.ok(await target.locator('.check-stop').isVisible());}
         if (slug === 'stop-verified') {
             assert.equal(await page.locator('.egg-box[data-sid="same-id"][data-wing-id="fixture-mac"]').count(), 0);
-            assert.match(await target.innerText(), /forge/);
+            assert.match(await target.innerText(), /my-server/);
         }
         if (slug === 'unread-output') assert.match(await target.innerText(), /unread output/);
     }
@@ -145,7 +145,7 @@ try {
     record('existing --dev and local mode expose dormant UI');
     const macID = 'fixture-mac', remoteID = 'fixture-remote';
     await fixtureWing(macID, 'Studio Mac', 'darwin', [row('same-id', 'pairing', 'blocked', '/Users/example/pairing'), {...row('coordinator','wing','working','/Users/example/pairing'),pinned:true,role:'coordinator'}]);
-    const remote = await fixtureWing(remoteID, 'forge', 'linux', [row('same-id', 'pairing', 'working', '/home/example/pairing'), row('review', 'review', 'idle', '/home/example/pairing')]);
+    const remote = await fixtureWing(remoteID, 'my-server', 'linux', [row('same-id', 'pairing', 'working', '/home/example/pairing'), row('review', 'review', 'idle', '/home/example/pairing')]);
     browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH });
     for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }, { width: 430, height: 932 }]) {
         const context = await browser.newContext({ viewport });
@@ -160,7 +160,7 @@ try {
         await page.locator('#coordinator-home .coordinator-message').waitFor();await page.waitForFunction(()=>document.querySelector('#coordinator-home [data-presence]').dataset.presence==='awake');assert.match(await page.locator('#coordinator-home').innerText(),/wing/);assert.equal(await page.locator('#conversation-inventory').isVisible(),false);await page.waitForFunction(()=>document.querySelector('[data-search-retry="fixture-mac"]')&&document.querySelector('[data-search-retry="fixture-remote"]')).catch(async error=>{await page.screenshot({path:path.join(shots,'startup-search-error.png')});throw Error(error.message+'; status: '+await page.locator('#session-search-status').textContent());});assert.doesNotMatch(await page.locator('#session-search-results').innerText(),/No authorized wings available/);await page.locator('#home-section').evaluate(el=>el.scrollTop=0);await screenshot(page,3,1,'overview-coordinator',suffix);await page.locator('#machine-diagnostics summary').click();await page.locator('#wing-status').screenshot({path:path.join(shots,`03-1-computers${suffix}.png`)});await page.locator('#machine-diagnostics summary').click();
         record(`${viewport.width}: qualified overlapping IDs and lifecycle groups`);
         await screenshot(page, 3, 1, 'dashboard-groups', suffix);
-        await page.fill('#inventory-query', 'forge');
+        await page.fill('#inventory-query', 'my-server');
         assert.equal(await page.locator('.egg-box[data-wing-id="fixture-mac"]').count(), 0);
         await page.click('#inventory-clear');
         await page.selectOption('#inventory-status', 'attention');
@@ -294,13 +294,13 @@ try {
         await page.click('#share-alice');
         assert.match(await page.locator('.reach-preview-app').innerText(), /read-only fixture/);
         assert.ok(await page.getByRole('button', { name: 'Send terminal input', exact: true }).isDisabled());
-        assert.match(await page.locator('.reach-preview-app').innerText(), /forge/);
+        assert.match(await page.locator('.reach-preview-app').innerText(), /my-server/);
         assert.match(await page.locator('.reach-preview-app').innerText(), /Observe session/);
         await screenshot(page, 9, 7, 'alice-observer-dormant', suffix);
         await page.click('#share-owner');
         await tab(page, 'SSH preview');
         await page.fill('#reach-os-user', 'example'); await page.click('#reach-ssh');
-        assert.match(await page.locator('#reach-ssh-command').innerText(), /wt ssh forge --user example/);
+        assert.match(await page.locator('#reach-ssh-command').innerText(), /wt ssh my-server --user example/);
         assert.match(await page.locator('#reach-ssh-command').innerText(), /no shell opened/);
         await screenshot(page, 9, 5, 'ssh-review-dormant', suffix);
         record(`${viewport.width}: resource/identity grants, preview, revoke, failures, observer and SSH review`);

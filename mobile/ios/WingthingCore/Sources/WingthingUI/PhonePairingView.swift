@@ -205,7 +205,7 @@ public struct PhonePairingView: View {
                 #else
                 Image(systemName: "qrcode.viewfinder").resizable().scaledToFit().padding(40)
                 #endif
-                Text(model.wings.isEmpty ? "On EhrlichMac, run **wt pair**.\nPoint at the QR in the terminal." : "On the computer you want to pair, run **wt pair**.\nPoint at its QR in the terminal.").multilineTextAlignment(.center).padding()
+                Text(model.wings.isEmpty ? "On your computer, run **wt pair**.\nPoint at the QR in the terminal." : "On the computer you want to pair, run **wt pair**.\nPoint at its QR in the terminal.").multilineTextAlignment(.center).padding()
                 if !model.wings.isEmpty { Button("Back to machines") { if let first = model.wings.first { Task { await model.select(first) } } } }
             } else if let attached = model.attached {
                 Text(attached.title).font(.headline)

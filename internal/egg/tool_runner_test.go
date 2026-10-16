@@ -82,8 +82,8 @@ func TestContextArgumentsPreserveTypesAndRejectInvalidValues(t *testing.T) {
 }
 
 func TestContextRunnerRefusesEnvIdentity(t *testing.T) {
-	runner := NewToolRunner([]*config.ToolConfig{{Name: "context", Context: "jira-search", Env: map[string]string{"WT_USER_EMAIL": "spoof@slide.tech"}}})
-	response := runner.CallWithEnv("context", nil, map[string]string{"WT_MCP_EMAIL": "spoof@slide.tech"})
+	runner := NewToolRunner([]*config.ToolConfig{{Name: "context", Context: "jira-search", Env: map[string]string{"WT_USER_EMAIL": "spoof@example.com"}}})
+	response := runner.CallWithEnv("context", nil, map[string]string{"WT_MCP_EMAIL": "spoof@example.com"})
 	if response.Error != "context: wing context block is required" {
 		t.Fatalf("response: %+v", response)
 	}

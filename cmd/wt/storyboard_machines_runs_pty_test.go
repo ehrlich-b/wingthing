@@ -77,7 +77,7 @@ func TestStoryboardMachinesRunsPTY(t *testing.T) {
 	if err := config.SaveRemotes(f.local, profiles); err != nil {
 		t.Fatal(err)
 	}
-	local := northstarStandaloneEgg(t, f, f.local, "same-id", "coordinator", "working", "EhrlichMac fixture / exact local session same-id")
+	local := northstarStandaloneEgg(t, f, f.local, "same-id", "coordinator", "working", "my-mac fixture / exact local session same-id")
 	remote := northstarStandaloneEgg(t, f, f.remote, "same-id", "coordinator", "working", "forge fixture / exact remote session same-id")
 	h := northstarStartPTY(t, f, binary, 120, 36)
 	h.expect("two isolated session origins", 0, "machines connected", "coordinator")

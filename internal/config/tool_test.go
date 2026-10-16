@@ -176,7 +176,7 @@ func TestLoadToolsDir_ShellMetacharName(t *testing.T) {
 
 func TestLoadToolsDir_ValidNameChars(t *testing.T) {
 	dir := t.TempDir()
-	writeToolTestFile(t, dir, "a.yaml", "name: slide-db\nrun: echo\n")
+	writeToolTestFile(t, dir, "a.yaml", "name: example-db\nrun: echo\n")
 	writeToolTestFile(t, dir, "b.yaml", "name: my_tool2\nrun: echo\n")
 	tools, err := LoadToolsDir(dir)
 	if err != nil {

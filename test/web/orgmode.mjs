@@ -762,8 +762,8 @@ try {
     const resp = await alice.ctx.request.get(BASE + '/api/orgs');
     let orgs = [];
     try { orgs = await resp.json(); } catch {}
-    const slide = Array.isArray(orgs) ? orgs.find((o) => o.slug === 'slide') : null;
-    record('api: /api/orgs returns org slide for alice', !!slide, JSON.stringify(orgs).slice(0, 200));
+    const example = Array.isArray(orgs) ? orgs.find((o) => o.slug === 'example') : null;
+    record('api: /api/orgs returns org example for alice', !!example, JSON.stringify(orgs).slice(0, 200));
   }
 
   // ---------- Enrollment negative control ----------

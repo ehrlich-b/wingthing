@@ -9,15 +9,15 @@ import (
 
 func TestCleanSessionTitle(t *testing.T) {
 	cases := map[string]string{
-		"◐ Math question":              "Math question",
-		"✳ Arithmetic calculation":     "Arithmetic calculation",
-		"✳ Claude Code":                "",
-		"codex":                        "",
-		"  SLIDE-1234 refund   check":  "SLIDE-1234 refund check",
-		"<img src=x onerror=alert(1)>": "img src=x onerror=alert(1)",
-		"case \"42\" & 'quotes'":       "case 42 quotes",
-		"\x1b[31mred\x07":              "31mred",
-		"":                             "",
+		"◐ Math question":               "Math question",
+		"✳ Arithmetic calculation":      "Arithmetic calculation",
+		"✳ Claude Code":                 "",
+		"codex":                         "",
+		"  EXAMPLE-1234 refund   check": "EXAMPLE-1234 refund check",
+		"<img src=x onerror=alert(1)>":  "img src=x onerror=alert(1)",
+		"case \"42\" & 'quotes'":        "case 42 quotes",
+		"\x1b[31mred\x07":               "31mred",
+		"":                              "",
 	}
 	for raw, want := range cases {
 		if got := CleanSessionTitle(raw); got != want {

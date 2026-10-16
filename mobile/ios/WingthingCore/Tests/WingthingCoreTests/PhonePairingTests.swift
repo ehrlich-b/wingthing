@@ -15,7 +15,7 @@ private actor PairingFailureWire: PhoneWire {
     }
 }
 private func fixturePairingLink(expires: Date = Date().addingTimeInterval(299), local: String = "http://192.168.1.40:6078", key: String = Data(repeating: 1, count: 32).base64EncodedString(), relay: String = "") throws -> String {
-    let value: [String: String] = ["wing_id":"fixture-wing","name":"EhrlichMac","key":key,"local":local,"relay":relay,"id":"test-invitation-long-enough","secret":"apple bridge cedar delta ember frost","expires_at":ISO8601DateFormatter().string(from: expires)]
+    let value: [String: String] = ["wing_id":"fixture-wing","name":"my-mac","key":key,"local":local,"relay":relay,"id":"test-invitation-long-enough","secret":"apple bridge cedar delta ember frost","expires_at":ISO8601DateFormatter().string(from: expires)]
     var fields = value.mapValues(JSONValue.string); fields["v"] = .integer(1)
     let json = String(decoding: try JSONEncoder().encode(JSONValue.object(fields)), as: UTF8.self)
     return "wingthing://pair#" + json.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)!
@@ -24,7 +24,7 @@ private func fixturePairingLink(expires: Date = Date().addingTimeInterval(299), 
 @Suite @MainActor struct PhonePairingTests {
     @Test func qrValidationAndExpiredSecretMakeNoRequest() async throws {
         let link = try fixturePairingLink(), q = try PairingInvitation(link: link)
-        #expect(q.name == "EhrlichMac"); #expect(q.secret.split(separator: " ").count == 6); #expect(q.relay == nil)
+        #expect(q.name == "my-mac"); #expect(q.secret.split(separator: " ").count == 6); #expect(q.relay == nil)
         #expect(q.fingerprint.count == 64)
         #expect(throws: PairingError.expired) { try PairingInvitation(link: fixturePairingLink(expires: Date().addingTimeInterval(-1))) }
         for origin in ["http://example.com:6078", "https://192.168.1.40:6078", "http://192.168.1.40:6078/path", "http://user:pass@192.168.1.40:6078", "http://127.1:6078", "http://10.0.0.1.evil:6078"] {
@@ -34,12 +34,12 @@ private func fixturePairingLink(expires: Date = Date().addingTimeInterval(299), 
         #expect(throws: PairingError.invalidQR) { try PairingInvitation(link: "wingthing://home#bad") }
     }
     @Test func lanThenTailnetRoutesNeedNoAccount() throws {
-        let local = URL(string: "http://192.168.1.40:6078")!, tail = URL(string: "http://100.91.2.3:6078")!, magic = URL(string: "http://ehrlichmac.fixture.ts.net:6078")!
+        let local = URL(string: "http://192.168.1.40:6078")!, tail = URL(string: "http://100.91.2.3:6078")!, magic = URL(string: "http://my-mac.fixture.ts.net:6078")!
         #expect(PairingInvitation.localAllowed(tail)); #expect(PairingInvitation.localAllowed(magic))
         #expect(!PairingInvitation.localAllowed(URL(string: "http://100.128.2.3:6078")!))
-        #expect(!PairingInvitation.localAllowed(URL(string: "http://ehrlichmac.fixture.ts.net.evil:6078")!))
+        #expect(!PairingInvitation.localAllowed(URL(string: "http://my-mac.fixture.ts.net.evil:6078")!))
         #expect(URLSessionPhoneWire.orderedDirect(tail, endpoints: [magic, local, tail]) == [local, tail, magic])
-        let fields: JSONValue = .array([.integer(1), .string("fixture-wing"), .string("EhrlichMac"), .string(Data(repeating: 1, count: 32).base64EncodedString()), .array([.string(local.absoluteString), .string(tail.absoluteString), .string(magic.absoluteString)]), .string(""), .string("test-invitation-long-enough"), .string("apple bridge cedar delta ember frost"), .integer(Int64(Date().addingTimeInterval(299).timeIntervalSince1970))])
+        let fields: JSONValue = .array([.integer(1), .string("fixture-wing"), .string("my-mac"), .string(Data(repeating: 1, count: 32).base64EncodedString()), .array([.string(local.absoluteString), .string(tail.absoluteString), .string(magic.absoluteString)]), .string(""), .string("test-invitation-long-enough"), .string("apple bridge cedar delta ember frost"), .integer(Int64(Date().addingTimeInterval(299).timeIntervalSince1970))])
         let base64 = try JSONEncoder().encode(fields).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
         let qr = try PairingInvitation(link: "wingthing://pair#v1." + base64)
         #expect(qr.local == local); #expect(qr.endpoints == [tail, magic]); #expect(qr.relay == nil)
@@ -53,7 +53,7 @@ private func fixturePairingLink(expires: Date = Date().addingTimeInterval(299), 
             #expect(await wire.count == 1)
         }
         let unreachable = try PhoneEnrollment(invitation: q, wire: PairingFailureWire(reply: nil), signingKey: PhoneSigningKey(useEnclave: false))
-        do { try await unreachable.start(); Issue.record("Accepted unreachable wing") } catch { #expect(error as? PairingError == .unreachable("EhrlichMac")); #expect(error.localizedDescription.contains("wt login")) }
+        do { try await unreachable.start(); Issue.record("Accepted unreachable wing") } catch { #expect(error as? PairingError == .unreachable("my-mac")); #expect(error.localizedDescription.contains("wt login")) }
     }
     @Test func fingerprintMismatchStopsBeforePublicKeyOrCredential() async throws {
         let wire = PairingFailureWire(reply: .object(["key": .string(Data(repeating: 2, count: 32).base64EncodedString()), "message": .string("irrelevant")]))
@@ -81,8 +81,8 @@ private func fixturePairingLink(expires: Date = Date().addingTimeInterval(299), 
         #expect(try !publicKey.isValidSignature(P256.Signing.ECDSASignature(derRepresentation: Data(base64Encoded: secret.sign("wing A"))!), for: Data("wing B".utf8)))
     }
     @Test func metadataContainsNoDeviceSecretAndScopesEachWing() throws {
-        let a = PairedWing(wingID: "ehrlichmac", name: "EhrlichMac", key: "pin-a", deviceID: "phone-a", local: URL(string: "http://192.168.1.40:6078")!, relay: nil)
-        let b = PairedWing(wingID: "forge", name: "forge", key: "pin-b", deviceID: "phone-b", local: URL(string: "http://192.168.1.41:6078")!, relay: nil)
+        let a = PairedWing(wingID: "my-mac", name: "my-mac", key: "pin-a", deviceID: "phone-a", local: URL(string: "http://192.168.1.40:6078")!, relay: nil)
+        let b = PairedWing(wingID: "my-server", name: "my-server", key: "pin-b", deviceID: "phone-b", local: URL(string: "http://192.168.1.41:6078")!, relay: nil)
         #expect(a.id != b.id)
         let json = String(decoding: try JSONEncoder().encode([a,b]), as: UTF8.self)
         #expect(!json.contains("credential")); #expect(!json.contains("signingRepresentation"))
@@ -121,7 +121,7 @@ private final class PairingPeer {
         try peer.control("allow")
         let paired = try await enrollment.status(); #expect(paired != nil)
         let (wing, secret) = paired!
-        #expect(wing.name == "EhrlichMac"); #expect(wing.wingID == "fixture-main-wing")
+        #expect(wing.name == "my-mac"); #expect(wing.wingID == "fixture-main-wing")
         #expect(wing.relay == nil)
         let client = PhoneConnection(wing: wing, secret: secret)
         try await client.connect()

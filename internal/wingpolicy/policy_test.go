@@ -398,11 +398,11 @@ func TestDiscoverWingProjectsWithoutPathsPreservesCWDDiscovery(t *testing.T) {
 
 func TestRoostBrowserURL(t *testing.T) {
 	tests := map[string]string{
-		"wss://ws.wingthing.ai":              "https://app.wingthing.ai/",
-		"https://wingthing.ai":               "https://app.wingthing.ai/",
-		"https://bryan-wingthing.pants.taxi": "https://bryan-wingthing.pants.taxi/app/",
-		"ws://localhost:8080":                "http://localhost:8080/app/",
-		"https://user:secret@roost.example":  "https://roost.example/app/",
+		"wss://ws.wingthing.ai":             "https://app.wingthing.ai/",
+		"https://wingthing.ai":              "https://app.wingthing.ai/",
+		"https://roost.example.com":         "https://roost.example.com/app/",
+		"ws://localhost:8080":               "http://localhost:8080/app/",
+		"https://user:secret@roost.example": "https://roost.example/app/",
 	}
 	for input, want := range tests {
 		if got := RoostBrowserURL(input); got != want {

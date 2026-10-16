@@ -46,7 +46,7 @@ func asInventory(t *testing.T, m map[string]any) fleet.Inventory {
 	return inv
 }
 func TestSessionInventoryTwoMachinesSameIDAndVerifiedRemoteSearch(t *testing.T) {
-	mac := inventoryFixture(t, "mac-wing", "EhrlichMac")
+	mac := inventoryFixture(t, "mac-wing", "my-mac")
 	forge := inventoryFixture(t, "forge-wing", "forge")
 	if e := sessionrole.Write(filepath.Join(forge.Cfg.Dir, "eggs", "same-short-id"), sessionrole.Metadata{Role: "coordinator", Pinned: true}); e != nil {
 		t.Fatal(e)
@@ -84,7 +84,7 @@ func TestSessionInventoryTwoMachinesSameIDAndVerifiedRemoteSearch(t *testing.T) 
 	}
 }
 func TestSessionInventoryStrictSchemaPrivacyAndRemoteFailureCoverage(t *testing.T) {
-	s := inventoryFixture(t, "mac-wing", "EhrlichMac")
+	s := inventoryFixture(t, "mac-wing", "my-mac")
 	for _, name := range []string{"session_inventory", "session_action", "coordinator_heartbeat"} {
 		tool, ok := control.Lookup(name)
 		if !ok || tool.InputSchema["additionalProperties"] != false {
@@ -127,7 +127,7 @@ func TestSessionInventoryStrictSchemaPrivacyAndRemoteFailureCoverage(t *testing.
 	}
 }
 func TestQualifiedSessionActionExactTargetAndNoReplay(t *testing.T) {
-	mac := inventoryFixture(t, "mac-wing", "EhrlichMac")
+	mac := inventoryFixture(t, "mac-wing", "my-mac")
 	forge := inventoryFixture(t, "forge-wing", "forge")
 	_ = config.SaveRemotes(mac.Cfg.Dir, map[string]config.Remote{"forge": {SSHTarget: "fixture-host", WingID: "forge-wing", WingthingDir: "/fixture/state", ControlSocket: "/fixture/control.sock", ControlVersion: control.ContractVersion}})
 	for _, server := range []*Server{mac, forge} {

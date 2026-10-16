@@ -1241,7 +1241,7 @@ func TestSealedJailNonRoot(t *testing.T) {
 	data, readErr := os.ReadFile(resultsPath)
 	if readErr != nil {
 		// A failed preflight is part of the product path, not grounds to skip the
-		// isolation test. This caught bryan-wingthing's non-writable /tmp: the old
+		// isolation test. This caught a shared host with non-writable /tmp: the old
 		// generic userns message hid the real mkdir failure and this test silently
 		// skipped even though every new org-mode run was broken.
 		t.Fatalf("sealed jail agent never launched / wrote no results (the v0.144.0 failure mode)\nsu/wt err: %v\noutput:\n%s", runErr, out)

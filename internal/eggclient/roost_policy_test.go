@@ -397,7 +397,7 @@ func TestRoostPolicyPinsRegardlessOfWriteRules(t *testing.T) {
 		want  []string
 	}{
 		{
-			name: "Slide sibling roles",
+			name: "Example sibling roles",
 			fs: []string{"deny:/", "ro:/usr", "rw:/opt/wingthing/a",
 				"deny:/opt/wingthing/b", "deny-write:/opt/wingthing/a/egg.yaml"},
 			roots: []string{"/opt/wingthing/a", "/opt/wingthing/b"},
