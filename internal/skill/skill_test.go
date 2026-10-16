@@ -131,7 +131,7 @@ func TestInterpolate(t *testing.T) {
 	body := "Hello {{identity.name}}, here is {{memory.projects}}. Thread: {{thread.summary}}. Task: {{task.what}}."
 	data := InterpolateData{
 		Memory:   map[string]string{"projects": "project list here"},
-		Identity: map[string]string{"name": "Bryan"},
+		Identity: map[string]string{"name": "Alice"},
 		Thread:   "morning briefing done",
 		Task:     "check PR status",
 	}
@@ -140,7 +140,7 @@ func TestInterpolate(t *testing.T) {
 	if len(warnings) != 0 {
 		t.Errorf("unexpected warnings: %v", warnings)
 	}
-	expected := "Hello Bryan, here is project list here. Thread: morning briefing done. Task: check PR status."
+	expected := "Hello Alice, here is project list here. Thread: morning briefing done. Task: check PR status."
 	if result != expected {
 		t.Errorf("result = %q, want %q", result, expected)
 	}

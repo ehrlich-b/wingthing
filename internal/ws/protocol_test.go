@@ -97,7 +97,7 @@ func TestWingRegisterFields(t *testing.T) {
 		Agents:            []string{"claude", "ollama"},
 		Skills:            []string{"compress", "scorer"},
 		Labels:            []string{"gpu", "home"},
-		Identities:        []string{"bryan", "team-ml"},
+		Identities:        []string{"alice", "team-ml"},
 		PurposeBinding:    true,
 		BrowserPhoneScope: true,
 		DirectMCP:         true,
@@ -120,8 +120,8 @@ func TestWingRegisterFields(t *testing.T) {
 	if len(decoded.Labels) != 2 || decoded.Labels[1] != "home" {
 		t.Errorf("labels = %v, want [gpu, home]", decoded.Labels)
 	}
-	if len(decoded.Identities) != 2 || decoded.Identities[0] != "bryan" {
-		t.Errorf("identities = %v, want [bryan, team-ml]", decoded.Identities)
+	if len(decoded.Identities) != 2 || decoded.Identities[0] != "alice" {
+		t.Errorf("identities = %v, want [alice, team-ml]", decoded.Identities)
 	}
 	if !decoded.PurposeBinding {
 		t.Error("purpose binding capability was lost in registration")

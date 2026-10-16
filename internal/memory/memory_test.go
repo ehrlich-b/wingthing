@@ -27,7 +27,7 @@ tags: [personal, name]
 
 # Identity
 
-Name: Bryan Ehrlich
+Name: Alice Example
 Role: Staff Engineer
 `)
 
@@ -118,7 +118,7 @@ func TestLoad(t *testing.T) {
 	if body == "" {
 		t.Fatal("expected non-empty body")
 	}
-	if body != "# Identity\n\nName: Bryan Ehrlich\nRole: Staff Engineer\n" {
+	if body != "# Identity\n\nName: Alice Example\nRole: Staff Engineer\n" {
 		t.Errorf("body = %q", body)
 	}
 }
