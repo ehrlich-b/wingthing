@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -34,6 +35,10 @@ import (
 // Exercise the actual wing callback through a loopback relay, including its
 // encrypted inventory response and SIGHUP completion acknowledgement.
 func TestProjectRefreshInventoryAfterSIGHUP(t *testing.T) {
+	// Build before localOnlyState changes HOME, so repeated runs share the
+	// caller's Go cache instead of compiling into a fresh disposable home.
+	// Compilation has its own bound and cannot consume the refresh deadline.
+	binary := projectRefreshTestBinary(t)
 	state, home, _ := localOnlyState(t)
 	oldProject := filepath.Join(home, "old")
 	newProject := filepath.Join(home, "new")
@@ -49,7 +54,7 @@ func TestProjectRefreshInventoryAfterSIGHUP(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
-	checkSession := projectRefreshLiveSession(t, ctx, state, oldProject)
+	checkSession := projectRefreshLiveSession(t, ctx, binary, state, oldProject)
 	checkSession("before")
 	ready := make(chan *websocket.Conn, 1)
 	messages := make(chan json.RawMessage, 32)
@@ -203,18 +208,125 @@ func TestProjectRefreshInventoryAfterSIGHUP(t *testing.T) {
 	}
 }
 
-// The same real egg, child process and writer stream must survive refresh.
-func projectRefreshLiveSession(t *testing.T, ctx context.Context, state, work string) func(string) {
+// Keep cold Go/CGO compilation bounded independently of live-session waits.
+func projectRefreshTestBinary(t *testing.T) string {
 	t.Helper()
-	binary := os.Getenv("WT_TEST_BINARY")
-	if binary == "" {
-		binary = filepath.Join(t.TempDir(), "wt")
-		build := exec.CommandContext(ctx, "nice", "-n", "10", "go", "build", "-p", "2", "-o", binary, "./cmd/wt")
-		build.Dir = "../.."
-		if output, err := build.CombinedOutput(); err != nil {
-			t.Fatalf("build: %v\n%s", err, output)
-		}
+	if binary := os.Getenv("WT_TEST_BINARY"); binary != "" {
+		return binary
 	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	defer cancel()
+	binary := filepath.Join(t.TempDir(), "wt")
+	started := time.Now()
+	if output, err := projectRefreshBuild(ctx, binary); err != nil {
+		t.Fatalf("build test CLI after %s: %v\n%s", time.Since(started), err, output)
+	}
+	t.Logf("built test CLI in %s", time.Since(started))
+	return binary
+}
+
+// A wrapper can leave compiler children holding the output pipe after it exits.
+// Kill the build group on cancellation and after waiting, and bound pipe draining
+// even if a descendant has escaped the group.
+func projectRefreshBuild(ctx context.Context, binary string) ([]byte, error) {
+	build := exec.CommandContext(ctx, "nice", "-n", "10", "go", "build", "-p", "2", "-o", binary, "./cmd/wt")
+	build.Dir = "../.."
+	build.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	build.Cancel = func() error {
+		err := syscall.Kill(-build.Process.Pid, syscall.SIGKILL)
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return err
+	}
+	build.WaitDelay = time.Second
+	defer func() {
+		if build.Process != nil {
+			_ = syscall.Kill(-build.Process.Pid, syscall.SIGKILL)
+		}
+	}()
+	return build.CombinedOutput()
+}
+
+func TestProjectRefreshBuildOutputBound(t *testing.T) {
+	for _, exitWrapper := range []bool{false, true} {
+		t.Run(fmt.Sprintf("wrapperExits=%t", exitWrapper), func(t *testing.T) {
+			dir := t.TempDir()
+			pidFile := filepath.Join(dir, "child.pid")
+			// The child inherits both output pipes. In the second case the
+			// wrapper exits successfully without waiting for that child.
+			script := "#!/bin/sh\nsleep 30 &\necho build-wrapper-output\necho $! > \"" + pidFile + "\"\n"
+			if !exitWrapper {
+				script += "wait\n"
+			}
+			if err := os.WriteFile(filepath.Join(dir, "go"), []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			type result struct {
+				output []byte
+				err    error
+			}
+			done := make(chan result, 1)
+			go func() {
+				output, err := projectRefreshBuild(ctx, filepath.Join(dir, "wt"))
+				done <- result{output, err}
+			}()
+			// Wait until the inherited-pipe child exists before cancelling.
+			var pid int
+			deadline := time.After(5 * time.Second)
+			for pid == 0 {
+				if data, err := os.ReadFile(pidFile); err == nil {
+					_, _ = fmt.Sscanf(string(data), "%d", &pid)
+				}
+				if pid != 0 {
+					break
+				}
+				select {
+				case <-deadline:
+					t.Fatal("build wrapper did not start its child")
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+			t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+			started := time.Now()
+			if !exitWrapper {
+				cancel()
+			}
+			select {
+			case got := <-done:
+				if got.err == nil || !strings.Contains(string(got.output), "build-wrapper-output") {
+					t.Fatalf("build result: %v, output %q", got.err, got.output)
+				}
+				if exitWrapper && !errors.Is(got.err, exec.ErrWaitDelay) {
+					t.Fatalf("build error = %v, want output drain timeout", got.err)
+				}
+				t.Logf("returned after %s: %v", time.Since(started), got.err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("build remained blocked on inherited output pipes")
+			}
+			// A killed orphan may remain a zombie until its new parent reaps
+			// it; it must no longer be executing or holding output pipes.
+			for {
+				status, err := exec.Command("ps", "-o", "stat=", "-p", fmt.Sprint(pid)).Output()
+				if err != nil || strings.HasPrefix(strings.TrimSpace(string(status)), "Z") {
+					break
+				}
+				select {
+				case <-deadline:
+					t.Fatalf("build child %d survived: %s", pid, status)
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+		})
+	}
+}
+
+// The same real egg, child process and writer stream must survive refresh.
+func projectRefreshLiveSession(t *testing.T, ctx context.Context, binary, state, work string) func(string) {
+	t.Helper()
 	script := `printf '%s' "$$" > child.pid; printf 'ready\n'; while IFS= read -r line; do printf 'reply:%s\n' "$line"; done`
 	cmd := exec.CommandContext(ctx, binary, "terminal", "--cwd", work, "--json", "--", "/bin/sh", "-c", script)
 	output, err := cmd.CombinedOutput()
