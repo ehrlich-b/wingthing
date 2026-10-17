@@ -149,13 +149,34 @@ install -m 700 "$CLONE/.scratch/bin/wt-ios-pair" "$BIN"
 WT=(env -u WINGTHING_PREVIEW_DIR WINGTHING_DIR="$WING" "$BIN")
 "${WT[@]}" wing status >"$STATE/wing-status.log" 2>&1 || die 'Main wing status is invalid; inspect it.'
 if ! grep -q '^wing daemon is running ' "$STATE/wing-status.log"; then
-  "${WT[@]}" wing start --local-only >"$STATE/wing-start.log" 2>&1 \
+  "${WT[@]}" wing start --local-only --listen 0.0.0.0 >"$STATE/wing-start.log" 2>&1 \
     || die "Main wing startup failed; inspect $STATE/wing-start.log."
 fi
 # An existing daemon must already run the pairing-capable binary. Do not replace
 # or restart a running main wing while its sessions may be in use.
 [[ -f $WING/phone-control.json ]] || die 'Your running main wing needs the pairing-capable binary. Update/restart that wing yourself, preserving this same state directory, then rerun --connect-only.'
+# Inspect the actual listener before offering a QR or a retry. Never restart a
+# pre-existing main wing, which may have active sessions.
+LISTENER=$(python3 - "$WING/phone-control.json" <<'PYTHON'
+import ipaddress
+import json
+import sys
+with open(sys.argv[1]) as control_file:
+    address = json.load(control_file).get("address", "")
+host = address.rsplit(":", 1)[0].strip("[]")
+ip = ipaddress.ip_address(host) if host else None
+mapped = getattr(ip, "ipv4_mapped", None)
+print("loopback" if ip and (ip.is_loopback or (mapped and mapped.is_loopback)) else "other")
+PYTHON
+) || die 'Main wing pairing control is invalid; inspect phone-control.json.'
+if [[ $LISTENER == loopback ]]; then
+  printf '%s\n' 'Main wing listens on loopback only; a phone cannot connect over the LAN.' \
+    'When ready to interrupt this wing, run these commands, retaining any other startup flags:' >&2
+  printf '%q ' "${WT[@]}" wing stop >&2; printf '\n' >&2
+  printf '%q ' "${WT[@]}" wing start --listen 0.0.0.0 >&2; printf '\n' >&2
+  die 'Then rerun --connect-only. The installer has left the running wing untouched.'
+fi
 step '7/7 Scan this with the Wingthing app'
 printf '%s\n' 'Open Wingthing → Scan to pair. Scan this QR, compare all four emoji, confirm on the phone, then press Enter here.' \
   'Keep this Mac awake. The QR expires in five minutes. Ctrl-C cancels. No phone account or browser handoff.'
-"${WT[@]}" pair || die 'Pairing did not finish. Press Enter for a new QR or rerun --connect-only.'
+"${WT[@]}" pair || die 'Pairing did not finish. Resolve the wt pair error above before rerunning --connect-only; Enter only refreshes a QR while wt pair is still running.'

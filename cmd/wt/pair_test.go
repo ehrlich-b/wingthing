@@ -15,7 +15,7 @@ import (
 func TestPairTerminalHasRealScannableLayoutAndPermissionCopy(t *testing.T) {
 	q := phonepair.Invitation{Version: 1, WingID: "8761234abcef8761234abc", Name: "my-mac", Key: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)), Local: "http://192.168.1.40:6078", Relay: "https://wingthing.ai", ID: strings.Repeat("a", 43), Secret: "apple bridge cedar delta ember frost", ExpiresAt: time.Now().Add(5 * time.Minute)}
 	var out bytes.Buffer
-	if e := showInvitation(&out, q); e != nil {
+	if e := showInvitation(&out, q, ""); e != nil {
 		t.Fatal(e)
 	}
 	place := "this machine"
@@ -60,7 +60,7 @@ func TestPairTerminalHasRealScannableLayoutAndPermissionCopy(t *testing.T) {
 func TestPhoneLocalOnlyTerminalExplainsNoAccount(t *testing.T) {
 	q := phonepair.Invitation{Version: 1, WingID: "main-wing", Name: "my-mac", Key: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)), Local: "http://192.168.1.40:6078", Endpoints: []string{"http://100.91.2.3:6078", "http://my-mac.fixture.ts.net:6078"}, ID: strings.Repeat("a", 43), Secret: "apple bridge cedar delta ember frost", ExpiresAt: time.Now().Add(5 * time.Minute)}
 	var out bytes.Buffer
-	if e := showInvitation(&out, q); e != nil {
+	if e := showInvitation(&out, q, ""); e != nil {
 		t.Fatal(e)
 	}
 	qr, err := qrcode.New(q.Link(), qrcode.Low)
@@ -109,20 +109,44 @@ func TestPairLoopbackOnlyWarning(t *testing.T) {
 		t.Run(endpoint, func(t *testing.T) {
 			q := phonepair.Invitation{Local: endpoint, Endpoints: []string{endpoint}, Secret: "private test secret"}
 			var out bytes.Buffer
-			err := showInvitation(&out, q)
-			if err == nil || !strings.Contains(err.Error(), "listens on loopback only") || !strings.Contains(err.Error(), "a phone cannot connect over the LAN") || !strings.Contains(err.Error(), "wt wing start --local-only --listen 0.0.0.0") {
+			err := showInvitation(&out, q, "")
+			if err == nil || !strings.Contains(err.Error(), "listens on loopback only") || !strings.Contains(err.Error(), "a phone cannot connect over the LAN") || !strings.Contains(err.Error(), "wt wing start --listen 0.0.0.0") {
 				t.Fatalf("missing loopback warning: %v", err)
+			}
+			if strings.Contains(err.Error(), "restart with "+lanPairStartCommand) || !strings.Contains(err.Error(), "keeping your existing startup flags") {
+				t.Fatalf("restart guidance could disable an existing relay: %v", err)
 			}
 			if out.Len() != 0 {
 				t.Fatalf("unusable invitation was displayed: %s", out.String())
 			}
 			q.Relay = "https://wingthing.ai"
-			if err := showInvitation(&out, q); err != nil {
+			if err := showInvitation(&out, q, ""); err != nil {
 				t.Fatalf("registered relay is usable: %v", err)
 			}
 			if !strings.Contains(out.String(), "listens on loopback only") || !strings.Contains(out.String(), "Pair through the registered relay") || !strings.Contains(out.String(), "\x1b[30;47m") || strings.Contains(out.String(), "Direct endpoint:") || strings.Contains(out.String(), "Same Wi-Fi: no account needed") {
 				t.Fatalf("relay invitation misrepresents LAN access: %s", out.String())
 			}
 		})
+	}
+}
+
+func TestPairNoLANInterfaceDoesNotSuggestRebinding(t *testing.T) {
+	q := phonepair.Invitation{Local: "http://127.0.0.1:6078", Secret: "private test secret"}
+	for _, relay := range []string{"", "https://wingthing.ai"} {
+		q.Relay = relay
+		var out bytes.Buffer
+		err := showInvitation(&out, q, "0.0.0.0:6078")
+		message := out.String()
+		if relay == "" {
+			if err == nil || out.Len() != 0 {
+				t.Fatalf("unusable invitation displayed: %v %s", err, &out)
+			}
+			message = err.Error()
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(message, "no advertised LAN endpoint") || strings.Contains(message, "--listen 0.0.0.0") || strings.Contains(message, "listens on loopback only") {
+			t.Fatalf("incorrect missing-interface guidance: %s", message)
+		}
 	}
 }

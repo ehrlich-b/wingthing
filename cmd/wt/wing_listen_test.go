@@ -178,6 +178,15 @@ func TestBuiltWTLocalOnlyListen(t *testing.T) {
 			if !strings.Contains(string(startup), "phone pairing: listening on "+control.Address) {
 				t.Fatalf("startup missing bound address: %s", startup)
 			}
+			if tt.daemon {
+				wantsRestart := net.ParseIP(host).IsLoopback()
+				if strings.Contains(string(startup), "for LAN phone pairing, stop with") != wantsRestart {
+					t.Fatalf("startup restart advice disagrees with listener: %s", startup)
+				}
+				if strings.Contains(string(startup), "relay: disabled; local control is ready") {
+					t.Fatalf("duplicate local control readiness: %s", startup)
+				}
+			}
 			client := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: nil}}
 			defer client.CloseIdleConnections()
 			req, err := http.NewRequestWithContext(t.Context(), "POST", control.AdminURL(), strings.NewReader(`{"Op":"create"}`))
@@ -205,7 +214,7 @@ func TestBuiltWTLocalOnlyListen(t *testing.T) {
 				pair := exec.CommandContext(ctx, binary, "pair", "--show-link")
 				pair.Env = environment
 				output, err := pair.CombinedOutput()
-				if ctx.Err() != nil || err == nil || !strings.Contains(string(output), "main wing listens on loopback only") || !strings.Contains(string(output), "wt wing start --local-only --listen 0.0.0.0") {
+				if ctx.Err() != nil || err == nil || !strings.Contains(string(output), "main wing listens on loopback only") || !strings.Contains(string(output), "wt wing start --listen 0.0.0.0") {
 					t.Fatalf("pair did not explain loopback restriction promptly: %v: %s", err, output)
 				}
 				if bytes.Contains(output, []byte("wingthing://pair")) || bytes.Contains(output, []byte("\x1b[30;47m")) || bytes.Contains(output, []byte("Direct endpoint:")) {

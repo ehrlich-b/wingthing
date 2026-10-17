@@ -11,7 +11,7 @@ test-permission-spike:
 
 test-permission-spike-race:
 	$(GO) test -p 2 -race -count=1 ./internal/permissionbridge ./internal/egg -run 'PermissionBridge|PermissionSpike' -timeout=60s -v
-.PHONY: browser-pake check-browser-pake test-pairing
+.PHONY: browser-pake check-browser-pake test-pairing test-ios-installer
 
 # Build the browser PAKE asset from the vendored native BoringSSL sources.
 browser-pake:
@@ -27,6 +27,9 @@ check-browser-pake: check-browser-pake-env
 check-browser-pake-env:
 	@test -n "$(strip $(CHROMIUM_PATH))" || { echo 'Set CHROMIUM_PATH to a local Chromium executable; browser checks are required' >&2; exit 1; }
 	@$(MAKE) --no-print-directory browser-pake
+
+test-ios-installer:
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s mobile/ios/scripts -p test_ios_install_support.py -v
 
 test-pairing:
 	$(GO) test -p 2 -count=1 ./internal/pake ./internal/phonepair
@@ -139,7 +142,7 @@ endef
 
 # All untagged Go tests include android-contract and every former focused unit
 # selection (preview, conversation, socket, protected-target, remote and wake).
-check: test-deploy-guard web
+check: test-deploy-guard test-ios-installer web
 	$(browser-install)
 	$(NODE) --test test/web/pty-order.mjs
 	$(NODE) --test test/web/pty-corruption.mjs

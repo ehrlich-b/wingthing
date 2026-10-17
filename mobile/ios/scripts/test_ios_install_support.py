@@ -105,6 +105,10 @@ class InstallerTests(unittest.TestCase):
             prefs = root / "prefs.plist"
             prefs.write_bytes(plistlib.dumps({"IDEProvisioningTeams": [{"teamID": "TESTTEAM01"}]}))
             mocks = {
+                "uname": 'printf "Darwin\\n"',
+                "plutil": ':',
+                "pbcopy": ':',
+                "open": ':',
                 "defaults": 'cp "$MOCK_PREFS" "$3"',
                 "taskpolicy": 'shift; exec "$@"',
                 "nice": 'shift 2; exec "$@"',
@@ -135,7 +139,7 @@ fi''',
                 result = subprocess.run(command, env=environment, text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             # The connect step uses the main wing and never shares an account bearer.
-            wing = root / "main-wing"; wing.mkdir(); (wing / "phone-control.json").write_text('{}')
+            wing = root / "main-wing"; wing.mkdir()
             fake_go = mockbin / "fake-go"
             fake_go.write_text("""#!/bin/bash
 set -euo pipefail
@@ -146,21 +150,50 @@ done
 cat >"$target" <<'SH'
 #!/bin/bash
 printf '%s\\n' "$*" >>"$MOCK_PAIR_CALLS"
-if [[ $1 == wing && $2 == status ]]; then printf 'wing daemon is running (pid 123)\\n'; fi
-if [[ $1 == pair ]]; then printf 'Scan this with the Wingthing app\\n'; fi
+if [[ $1 == wing && $2 == status ]]; then
+  if [[ $MOCK_WING_INITIAL != missing ]]; then
+    printf 'wing daemon is running (pid 123)\\n'
+    printf '{"address":"%s:6078"}\\n' "$MOCK_WING_INITIAL" >"$WINGTHING_DIR/phone-control.json"
+  fi
+fi
+if [[ $1 == wing && $2 == start ]]; then
+  address=127.0.0.1
+  [[ $* != *'--listen 0.0.0.0'* ]] || address=0.0.0.0
+  printf '{"address":"%s:6078"}\\n' "$address" >"$WINGTHING_DIR/phone-control.json"
+fi
+if [[ $1 == pair ]]; then
+  grep -q '0.0.0.0' "$WINGTHING_DIR/phone-control.json" || exit 1
+  printf 'Scan this with the Wingthing app\\n'
+fi
 SH
 chmod 700 "$target"
 """)
             fake_go.chmod(0o755)
             environment.update(WT_IOS_GO=str(fake_go), WT_IOS_WING_DIR=str(wing), MOCK_PAIR_CALLS=str(root / "pair-calls"))
             environment.pop("WT_IOS_SETUP_LINK_FILE", None)
-            result = subprocess.run(command[:-1] + ["--connect-only"], env=environment, text=True, capture_output=True)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn("wing status", (root / "pair-calls").read_text())
-            self.assertIn("pair", (root / "pair-calls").read_text())
-            self.assertNotIn("login", (root / "pair-calls").read_text())
-            self.assertNotIn("phone link", (root / "pair-calls").read_text())
-            self.assertFalse((root / "state/setup-link").exists())
+            for initial in ("missing", "0.0.0.0", "127.0.0.1", "[::1]", "[::ffff:127.0.0.1]", "127.0.0.1"):
+                with self.subTest(wing=initial):
+                    environment["MOCK_WING_INITIAL"] = initial
+                    (root / "pair-calls").write_text("")
+                    result = subprocess.run(command[:-1] + ["--connect-only"], env=environment,
+                                            text=True, capture_output=True, timeout=30)
+                    pair_calls = (root / "pair-calls").read_text().splitlines()
+                    if initial not in ("missing", "0.0.0.0"):
+                        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertEqual(pair_calls, ["wing status"])
+                        self.assertIn("listens on loopback only", result.stderr)
+                        self.assertIn("WINGTHING_DIR=" + str(wing), result.stderr)
+                        self.assertIn("wing stop", result.stderr)
+                        self.assertIn("wing start --listen 0.0.0.0", result.stderr)
+                        self.assertNotIn("Press Enter", result.stderr)
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        expected = ["wing status"]
+                        if initial == "missing":
+                            expected.append("wing start --local-only --listen 0.0.0.0")
+                        expected.append("pair")
+                        self.assertEqual(pair_calls, expected)
+                    self.assertFalse((root / "state/setup-link").exists())
             calls = (root / "calls").read_text()
             self.assertNotIn("--payload-url", calls)
             for expected in ["generic/platform=iOS", "DEVELOPMENT_TEAM=TESTTEAM01", "CODE_SIGNING_ALLOWED=YES",

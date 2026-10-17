@@ -154,7 +154,7 @@ func wingStartCmd() *cobra.Command {
 				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
 				fmt.Println("  local control: ready")
 				if localOnlyFlag {
-					fmt.Println("  relay: disabled; local control is ready")
+					fmt.Println("  relay: disabled")
 				}
 			case "auth_failed":
 				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
@@ -167,11 +167,13 @@ func wingStartCmd() *cobra.Command {
 				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
 				fmt.Printf("  relay: connecting...\n")
 			}
+			pairingLoopback := false
 			if state, err := config.StateDir(); err == nil {
 				if data, err := os.ReadFile(filepath.Join(state, "phone-control.json")); err == nil {
 					var control phonepair.Control
 					if json.Unmarshal(data, &control) == nil && control.Address != "" {
 						fmt.Printf("  phone pairing: listening on %s\n", control.Address)
+						pairingLoopback = loopbackEndpoint("http://" + control.Address)
 					}
 				}
 			}
@@ -192,7 +194,11 @@ func wingStartCmd() *cobra.Command {
 			fmt.Printf("  log: %s\n", daemonctl.WingLogPath())
 			fmt.Println()
 			if localOnlyFlag {
-				fmt.Println("use wt pair to connect your phone (loopback listeners need a restart with --listen 0.0.0.0 for LAN access), or wt mcp stdio to control the wing")
+				if pairingLoopback {
+					fmt.Println("for LAN phone pairing, stop with wt wing stop, then start with " + lanPairStartCommand + "; use wt mcp stdio for local control")
+				} else {
+					fmt.Println("use wt pair to connect your phone, or wt mcp stdio to control the wing")
+				}
 			} else if cfgLoaded, cfgErr := config.Load(); cfgErr == nil {
 				browserURL := wingpolicy.RoostBrowserURL(wingpolicy.ResolveWingRelayHTTPURL(cfgLoaded, roostFlag, localFlag))
 				fmt.Printf("open %s for wing status and direct-agent setup\n", browserURL)
