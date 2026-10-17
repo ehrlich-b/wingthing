@@ -129,7 +129,10 @@ async function fixture(t, { width = 1440, reattach = true } = {}) {
             homeBtn: document.getElementById('home-btn'), homeSection: document.getElementById('home-section') }, {
             get: (target, name) => target[name] ||= document.createElement('div'),
         });
-        window.fixture = { S, DOM, handlePreview: preview => previews.push(preview), clearNotification: noop, sendViaDC: () => false, sendTunnelRequest: async () => {},
+        window.fixture = { S, DOM, handlePreview: preview => {
+            if (window.h.previewError) throw Error('preview rendering failed');
+            previews.push(preview);
+        }, clearNotification: noop, sendViaDC: () => false, sendTunnelRequest: async () => {},
             resumeAckMatches: () => true, sessionRoute: () => '#terminal',
             findSessionResource: () => null, wingDisplayName: () => 'Local wing', formatSessionTitle: () => 'Terminal' };
         const pty = await import('/src/pty.js');
@@ -734,3 +737,92 @@ test('plaintext preview during key setup is dropped and reported', async t => {
     assert.match(await page.getByRole('dialog').innerText(), /Can't decrypt output/);
     await page.evaluate(() => h.resumeKey());
 });
+
+
+for (const transport of ['relay', 'p2p']) {
+    for (const failure of ['invalid JSON', 'handler exception']) {
+        test(`${transport} authenticated preview with ${failure} logs and skips without locking input`, async t => {
+            const page = await fixture(t, { reattach: false });
+            const logged = page.waitForEvent('console', {
+                predicate: message => message.type() === 'error' && message.text().startsWith('preview '),
+            });
+            await page.evaluate(async ({ transport, failure }) => {
+                h.start(); await h.settle();
+                h.previewError = failure === 'handler exception';
+                const bad = await h.frame(failure === 'invalid JSON' ? '{invalid' : JSON.stringify({ html: 'Rejected preview' }));
+                (transport === 'p2p' ? h.p2p : h.send)({ ...bad, type: 'pty.preview' });
+            }, { transport, failure });
+            assert.match((await logged).text(), failure === 'invalid JSON' ? /SyntaxError/ : /preview rendering failed/);
+            assert.equal(await page.getByRole('dialog').count(), 0);
+            assert.equal(await page.locator('#terminal-container').evaluate(el => el.inert), false);
+            assert.deepEqual(await page.evaluate(() => h.previews), []);
+            await page.evaluate(async transport => {
+                h.previewError = false;
+                const good = await h.frame(JSON.stringify({ html: 'Following preview' }));
+                (transport === 'p2p' ? h.p2p : h.send)({ ...good, type: 'pty.preview' });
+                h.send(await h.frame('Following terminal output\r\n'));
+                h.S.term.focus();
+            }, transport);
+            await page.waitForFunction(() => h.previews.length === 1 && h.text() === 'Following terminal output');
+            assert.deepEqual(await page.evaluate(() => h.previews), [{ html: 'Following preview' }]);
+            await page.keyboard.type('still usable');
+            await page.waitForFunction(() => h.sent.some(msg => msg.type === 'pty.input'));
+            assert.equal(await page.evaluate(async () => {
+                const messages = h.sent.filter(msg => msg.type === 'pty.input');
+                return (await Promise.all(messages.map(async msg => new TextDecoder().decode(await h.nativeDecrypt(msg.data))))).join('');
+            }), 'still usable');
+            await page.screenshot({ path: path.join(out, `preview-error-${transport}-${failure.replaceAll(' ', '-')}.png`), fullPage: true });
+        });
+    }
+}
+
+for (const reattach of [false, true]) {
+    test(`${reattach ? 'replay' : 'live'} decryption notice upgrades decode wording and survives later decode failures`, async t => {
+        const page = await fixture(t, { reattach });
+        await page.evaluate(async reattach => {
+            if (reattach) h.holdKey();
+            h.start();
+            if (!reattach) await h.settle();
+            h.releaseAuthentication = h.holdDecode('%%%');
+            const later = await h.frame('later corrupt gzip\r\n', true, true);
+            h.releaseLater = h.holdDecode(later.data);
+            h.send(await h.frame('first corrupt gzip\r\n', true, true));
+            h.send({ type: 'pty.output', data: '%%%' });
+            h.send(later);
+            h.send(await h.frame('Remaining output\r\n'));
+            if (reattach) h.resumeKey();
+        }, reattach);
+        const notice = page.getByRole('dialog', { name: 'Output incomplete' });
+        await notice.waitFor({ state: 'visible' });
+        assert.match(await notice.innerText(), /Some terminal output could not be decoded/);
+        await page.evaluate(() => h.releaseAuthentication());
+        await page.waitForFunction(() => document.querySelector('#pty-output-notice p')?.textContent.includes("Can't decrypt output"));
+        await page.evaluate(async () => { h.releaseLater(); await h.settle(); });
+        await page.waitForFunction(() => h.text().includes('Remaining output'));
+        assert.match(await notice.innerText(), /Can't decrypt output/);
+        assert.doesNotMatch(await notice.innerText(), /could not be decoded/);
+        assert.equal(await page.locator('#terminal-container').evaluate(el => el.inert), true);
+        await page.evaluate(() => h.S.term.focus());
+        await page.keyboard.type('blocked input');
+        await page.evaluate(() => h.settle());
+        assert.deepEqual(await page.evaluate(() => h.sent.filter(msg => msg.type === 'pty.input')), []);
+        await page.screenshot({ path: path.join(out, `sticky-decryption-${reattach ? 'replay' : 'live'}.png`), fullPage: true });
+        await notice.getByRole('button', { name: 'Reload', exact: true }).click();
+        await page.waitForFunction(() => h.sent.some(msg => msg.type === 'pty.attach'));
+        await page.evaluate(async () => {
+            h.holdKey(); h.start();
+            h.send(await h.frame('corrupt reload\r\n', true, true));
+            h.send(await h.frame('Partial recovery\r\n'));
+            h.resumeKey();
+        });
+        await page.waitForFunction(() => h.text() === 'Partial recovery');
+        assert.match(await notice.innerText(), /Can't decrypt output/);
+        assert.equal(await page.locator('#terminal-container').evaluate(el => el.inert), true);
+        await notice.getByRole('button', { name: 'Reload', exact: true }).click();
+        await page.waitForFunction(() => h.sent.filter(msg => msg.type === 'pty.attach').length === 2);
+        await page.evaluate(async () => { h.start(); h.send(await h.frame('Recovered output\r\n')); });
+        await page.waitForFunction(() => h.text() === 'Recovered output');
+        assert.equal(await notice.count(), 0);
+        assert.equal(await page.locator('#terminal-container').evaluate(el => el.inert), false);
+    });
+}

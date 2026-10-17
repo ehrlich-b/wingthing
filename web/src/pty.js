@@ -621,8 +621,10 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                     handlePreview(preview);
                 }).catch(function(err) {
                     if (!terminalReferenceMatches(S, msg.session_id, connectedWingId, ws)) return;
-                    console.error('preview decrypt error:', err);
-                    showOutputIncomplete(ws, msg.session_id, connectedWingId, err && err.name === 'OutputDecryptionError');
+                    console.error('preview error:', err);
+                    if (err && err.name === 'OutputDecryptionError') {
+                        showOutputIncomplete(ws, msg.session_id, connectedWingId, true);
+                    }
                 });
                 break;
 
