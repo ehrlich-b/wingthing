@@ -452,3 +452,39 @@ test('disconnected output can reload and a corrupt replacement gets its own noti
     assert.equal(await page.getByRole('dialog').count(), 1);
     assert.equal(await page.evaluate(() => h.sockets.length), 3);
 });
+
+for (const launch of [false, true]) {
+    for (const [keyCase, publicKey] of ['missing', null, '', '%%%', 'YWJj', 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=', 42].entries()) {
+        test(`${launch ? 'launch' : 'attach'} rejects key ${JSON.stringify(publicKey)} and reconnects securely`, async t => {
+            const page = await fixture(t, { launch });
+            await page.evaluate(async publicKey => {
+                h.send({ type: 'pty.started', session_id: 'session-a', ...(publicKey === 'missing' ? {} : { public_key: publicKey }) });
+                h.affected.term.focus();
+                await h.settle();
+            }, publicKey);
+            const reconnect = page.getByRole('button', { name: 'Reconnect', exact: true });
+            await reconnect.waitFor({ state: 'visible' });
+            await page.keyboard.type('private before reconnect');
+            await page.keyboard.press('Enter');
+            await page.evaluate(() => h.input('direct private input'));
+            assert.deepEqual(await inputs(page), []);
+            assert.deepEqual(await page.evaluate(() => ({ ready: h.affected.keyReady, key: h.affected.e2eKey,
+                blocked: h.affected.inputBlocked, socket: h.affected.ws.readyState })),
+                { ready: false, key: null, blocked: true, socket: 3 });
+            assert.match(await reconnect.locator('..').innerText(), /Cannot secure terminal/);
+            await page.screenshot({ path: path.join(out, `key-error-${launch ? 'launch' : 'attach'}-${keyCase}.png`), fullPage: true });
+            await reconnect.click();
+            await page.evaluate(() => { h.adoptReload(); h.affected.term.focus(); });
+            await page.keyboard.type('private before key setup');
+            assert.deepEqual(await inputs(page), []);
+            await started(page);
+            await page.evaluate(() => h.affected.term.focus());
+            await page.keyboard.type('secure input');
+            await page.waitForFunction(() => h.sent.some(msg => msg.type === 'pty.input'));
+            assert.equal(await page.evaluate(() => h.sent.filter(msg => msg.type === 'pty.input')
+                .map(msg => h.decryptInput(msg.data)).join('')), 'secure input');
+            await writeFile(path.join(out, `key-recovery-${launch ? 'launch' : 'attach'}-${keyCase}.json`),
+                JSON.stringify(await page.evaluate(() => ({ sent: h.sent, ready: h.affected.keyReady })), null, 2));
+        });
+    }
+}

@@ -241,11 +241,11 @@ test('new session drains frames queued while deriving the key', async t => {
     await check(page, 'queued compressed\r\nqueued plain\r\nlive\r\n');
 });
 
-test('unkeyed replay and startup frames drain on pty.started', async t => {
+test('replay queued before pty.started drains after key derivation', async t => {
     const page = await fixture(t, { reattach: true });
     await page.evaluate(async () => {
         const h = harness;
-        h.send(await h.frame('replay\r\n', true)); h.start(false);
+        h.send(await h.frame('replay\r\n', true)); h.start();
         await h.settle(); h.send(await h.frame('live\r\n'));
     });
     await check(page, 'replay\r\nlive\r\n');
@@ -270,7 +270,7 @@ for (const phase of ['decrypt', 'gunzip', 'replay-write', 'key']) {
         if (phase === 'replay-write') await page.waitForFunction(() => harness.output.length > 0);
         await page.evaluate(async () => {
             const h = harness;
-            h.attach(false, 'session-b'); h.output.length = 0; h.start(false);
+            h.attach(false, 'session-b'); h.output.length = 0; h.start();
             h.send(await h.frame('new\r\n')); await h.settle();
             h.release(oldFrame); h.release('gunzip'); h.release('key'); h.release('terminal-write');
             await h.settle();
@@ -301,7 +301,7 @@ test('same-socket replacement starts a fresh queue before old decrypt completes'
         h.hold(old.data); h.send(old); h.send(await h.frame('old queued\r\n'));
         await h.settle();
         window.oldFrame = old.data;
-        h.S.ptySessionId = 'session-b'; h.start(false);
+        h.S.ptySessionId = 'session-b'; h.start();
         h.send(await h.frame('new session\r\n'));
     });
     await check(page, 'new session\r\n');
@@ -314,7 +314,7 @@ test('session-routed attachment works before a wing identity is known', async t 
     const page = await fixture(t);
     await page.evaluate(async () => {
         const h = harness;
-        h.S.ptyWingId = null; h.attach(); h.start(false);
+        h.S.ptyWingId = null; h.attach(); h.start();
         h.send(await h.frame('session route\r\n'));
     });
     await check(page, 'session route\r\n');
@@ -437,7 +437,8 @@ for (const reattach of [false, true]) {
                 h.send({ type: 'pty.exited' }); await h.settle();
             });
             assert.equal(await page.evaluate(() => harness.S.ptySessionId), 'session-a');
-            assert.ok(await page.evaluate(() => harness.S.e2eKey));
+            if (phase === 'key') assert.equal(await page.evaluate(() => harness.S.e2eKey), null);
+            else assert.ok(await page.evaluate(() => harness.S.e2eKey));
             await page.evaluate(async () => {
                 const h = harness;
                 // Frames after exit were not accepted and must not delay cleanup.
@@ -568,7 +569,7 @@ for (const sameSocket of [false, true]) {
             h.send({ type: 'pty.exited' });
             if (sameSocket) h.S.ptySessionId = 'session-b';
             else h.attach(false, 'session-b');
-            h.start(false); h.send(await h.frame('new\r\n'));
+            h.start(); h.send(await h.frame('new\r\n'));
             await h.settle(); h.release(old.data); await h.settle();
         }, sameSocket);
         await check(page, 'new\r\n');

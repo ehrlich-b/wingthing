@@ -243,7 +243,7 @@ function updateZoomDisplay() {
 // --- Encryption ---
 
 function sessionEncrypt(key, plaintext) {
-    if (!key) return btoa(unescape(encodeURIComponent(plaintext)));
+    if (!key) throw new Error('terminal encryption key unavailable');
     var enc = new TextEncoder();
     var iv = crypto.getRandomValues(new Uint8Array(12));
     var cipher = gcm(key, iv);
@@ -252,6 +252,44 @@ function sessionEncrypt(key, plaintext) {
     result.set(iv);
     result.set(ct, 12);
     return bytesToB64(result);
+}
+
+function setupCanvasKey(sess, publicKey, drainOutput) {
+    sess.keyReady = false;
+    sess.e2eKey = null;
+    var setup = deriveE2EKey(publicKey, sess.wingId).then(function(key) {
+        if (sessions[sess.key] !== sess || sess.keySetup !== setup || sess.keyFailed) return;
+        sess.e2eKey = key;
+        sess.keyReady = true;
+        sendResize(sess);
+        drainOutput();
+    }).catch(function(error) {
+        if (sessions[sess.key] !== sess || sess.keySetup !== setup) return;
+        sess.keyFailed = true;
+        sess.keyReady = false;
+        sess.e2eKey = null;
+        sess.inputBlocked = true;
+        sess.attached = false;
+        var message = 'Cannot secure terminal: ' + error.message;
+        sess.term.writeln('\r\n\x1b[31m' + message + '\x1b[0m');
+        var notice = sess.controlNotice;
+        notice.replaceChildren();
+        notice.style.display = '';
+        var text = document.createElement('span');
+        text.textContent = message + '. ';
+        notice.appendChild(text);
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn-sm';
+        button.textContent = 'Reconnect';
+        button.addEventListener('click', function(event) {
+            event.stopPropagation();
+            reconnectCanvasSession(sess);
+        });
+        notice.appendChild(button);
+        sess.ws.close();
+    });
+    sess.keySetup = setup;
 }
 
 function sessionDecrypt(key, encoded) {
@@ -936,7 +974,7 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
     var pendingOutput = [];
 
     ws.onmessage = function(e) {
-        if (sessions[sess.key] !== sess || sess.launchFailed || sess.exited) return;
+        if (sessions[sess.key] !== sess || sess.launchFailed || sess.exited || sess.keyFailed) return;
         var msg = JSON.parse(e.data);
         var launchFailure = sess.starting && (msg.type === 'pty.exited' || msg.type === 'error');
         if (msg.session_id && msg.type !== 'pty.started' && msg.session_id !== sess.id && !launchFailure) return;
@@ -957,25 +995,11 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
 
                 parts.title.textContent = sessionTitle(agent, wingId);
 
-                if (msg.public_key) {
-                    sess.keySetup = deriveE2EKey(msg.public_key, wingId).then(function(key) {
-                        if (sessions[sess.key] !== sess) return;
-                        sess.e2eKey = key;
-                        sess.keyReady = true;
-                        sendResize(sess);
-                        var pending = pendingOutput;
-                        pendingOutput = [];
-                        pending.forEach(function(item) {
-                            processOutput(sess, item.data, item.compressed);
-                        });
-                    }).catch(function(err) {
-                        if (sessions[sess.key] !== sess) return;
-                        sess.term.writeln('\r\n\x1b[31m' + (err && err.message ? err.message : 'wing identity verification failed') + '\x1b[0m');
-                        ws.close();
-                    });
-                } else {
-                    sess.keyReady = true;
-                }
+                setupCanvasKey(sess, msg.public_key, function() {
+                    var pending = pendingOutput;
+                    pendingOutput = [];
+                    pending.forEach(function(item) { processOutput(sess, item.data, item.compressed); });
+                });
 
                 term.onResize(function(size) {
                     sendResize(sess);
@@ -1042,7 +1066,7 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
     };
 
     term.onData(function(data) {
-        if (sessions[sess.key] !== sess || canvasState.focusedKey !== sess.key || !sess.attached || !sess.keyReady || sess.dead || sess.inputBlocked || sess.spectating || sess.outputNotice) return;
+        if (sessions[sess.key] !== sess || canvasState.focusedKey !== sess.key || !sess.attached || !sess.keyReady || !sess.e2eKey || sess.dead || sess.inputBlocked || sess.spectating || sess.outputNotice) return;
         var encoded = sessionEncrypt(sess.e2eKey, data);
         if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
@@ -1240,7 +1264,7 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, la
     var pendingOutput = [];
 
     ws.onmessage = function(e) {
-        if (sessions[sess.key] !== sess || sess.exited) return;
+        if (sessions[sess.key] !== sess || sess.exited || sess.keyFailed) return;
         var msg = JSON.parse(e.data);
         if (msg.session_id && msg.session_id !== sess.id) return;
         switch (msg.type) {
@@ -1249,25 +1273,11 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, la
                 sess.controllerId = typeof msg.controller_id === 'string' ? msg.controller_id : null;
                 sess.inputBlocked = false;
                 renderTerminalControlNotice(sess.controlNotice, null);
-                if (msg.public_key) {
-                    sess.keySetup = deriveE2EKey(msg.public_key, wingId).then(function(key) {
-                        if (sessions[sess.key] !== sess) return;
-                        sess.e2eKey = key;
-                        sess.keyReady = true;
-                        sendResize(sess);
-                        var pending = pendingOutput;
-                        pendingOutput = [];
-                        pending.forEach(function(item) {
-                            processOutput(sess, item.data, item.compressed);
-                        });
-                    }).catch(function(err) {
-                        if (sessions[sess.key] !== sess) return;
-                        sess.term.writeln('\r\n\x1b[31m' + (err && err.message ? err.message : 'wing identity verification failed') + '\x1b[0m');
-                        ws.close();
-                    });
-                } else {
-                    sess.keyReady = true;
-                }
+                setupCanvasKey(sess, msg.public_key, function() {
+                    var pending = pendingOutput;
+                    pendingOutput = [];
+                    pending.forEach(function(item) { processOutput(sess, item.data, item.compressed); });
+                });
 
                 term.onResize(function(size) {
                     sendResize(sess);
@@ -1326,7 +1336,7 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, la
     };
 
     term.onData(function(data) {
-        if (sessions[sess.key] !== sess || canvasState.focusedKey !== sess.key || !sess.attached || !sess.keyReady || sess.dead || sess.inputBlocked || sess.spectating || sess.outputNotice) return;
+        if (sessions[sess.key] !== sess || canvasState.focusedKey !== sess.key || !sess.attached || !sess.keyReady || !sess.e2eKey || sess.dead || sess.inputBlocked || sess.spectating || sess.outputNotice) return;
         var encoded = sessionEncrypt(sess.e2eKey, data);
         if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({

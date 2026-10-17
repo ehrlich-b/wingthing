@@ -129,6 +129,18 @@ Wingthing uses X25519 ECDH, HKDF-SHA256, and AES-256-GCM in two domains:
 Encrypted messages are `base64(nonce || ciphertext || GCM tag)`. A modified
 ciphertext fails authentication.
 
+Browser terminal and canvas input requires a valid wing `public_key` on
+`pty.started` and successful key derivation. Missing, malformed or low-order keys,
+a changed pinned identity, and an unavailable browser identity block input and
+show an error with a reconnect action. Reconnect attaches to the same session
+without replaying keystrokes or repeating takeover; input resumes only after a
+valid key is derived. There is no base64-plaintext fallback for input.
+
+The supported compatibility baselines, v0.144.1 and v0.147.0, already send the
+wing key from every production start/attach path (`cmd/wt/wing.go` in those tags).
+Keyless wings are not supported by the browser: update the wing and reconnect.
+The former plaintext branch was a fallback, not a required legacy protocol.
+
 The browser and native tunnel client pin the first public key seen for a wing ID
 and reject later changes. This is trust on first use (TOFU): it detects accidental
 rotation and later control-plane substitution while trusted client code is still

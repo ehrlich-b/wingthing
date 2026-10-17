@@ -12,18 +12,19 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const source = await readFile(path.join(root, 'web/src/pty.js'), 'utf8');
 const terminal = await readFile(path.join(root, 'web/src/terminal.js'), 'utf8');
 const nav = await readFile(path.join(root, 'web/src/nav.js'), 'utf8');
+const dashboard = await readFile(path.join(root, 'web/src/dashboard.js'), 'utf8');
 const main = await readFile(path.join(root, 'web/src/main.js'), 'utf8');
 const html = await readFile(path.join(root, 'web/index.html'), 'utf8');
 const inputControls = html.slice(html.indexOf('<div id="passkey-overlay"'), html.indexOf('</section>', html.indexOf('<div id="passkey-overlay"')));
 const input = terminal.match(/^export function sendPTYInput\(text\) \{[\s\S]*?^\}/m)[0];
 const dependencies = new Map();
-for (const match of (source + nav + await readFile(path.join(root, 'web/src/webrtc.js'), 'utf8')).matchAll(/import \{([^}]+)\} from '([^']+)';/g)) {
+for (const match of (source + nav + dashboard + await readFile(path.join(root, 'web/src/webrtc.js'), 'utf8')).matchAll(/import \{([^}]+)\} from '([^']+)';/g)) {
     const name = new URL(match[2], 'http://local/src/pty.js').pathname;
     const exports = dependencies.get(name) || new Set();
     match[1].split(',').forEach(value => exports.add(value.trim()));
     dependencies.set(name, exports);
 }
-const real = new Set(['crypto.js', 'helpers.js', 'security.js', 'session-reference.js', 'terminal-attachment.js', 'output-notice.js', 'output-notice-content.js', 'nav.js', 'session-inventory.js']);
+const real = new Set(['crypto.js', 'helpers.js', 'security.js', 'session-reference.js', 'terminal-attachment.js', 'output-notice.js', 'output-notice-content.js', 'nav.js', 'session-inventory.js', 'dashboard.js']);
 const server = createServer(async (req, res) => {
     try {
         res.setHeader('Content-Type', 'text/javascript');
@@ -37,6 +38,7 @@ const server = createServer(async (req, res) => {
                 <main id="app" style="padding:16px;height:100vh;display:flex;flex-direction:column;gap:12px">
                 <header><button id="home-btn">Home</button> Terminal <span id="pty-status"></span></header>
                 <section id="home-section" style="display:none">Home</section>
+                ${html.slice(html.indexOf('<div id="reconnect-banner"'), html.indexOf('<div id="terminal-control-notice"'))}
                 <div id="terminal-control-notice" style="display:none"></div>
                 <section id="terminal-section" style="flex:1;min-height:300px">
                 <div id="terminal-container"></div>
@@ -57,9 +59,10 @@ const server = createServer(async (req, res) => {
             // Use the production navigation, authentication and mobile input bindings.
             res.end(`import { S, DOM } from './state.js';
                 import { showHome } from './nav.js';
-                import { handlePTYPasskey } from './pty.js';
+                import { handlePTYPasskey, retryReconnect } from './pty.js';
                 import { sendPTYInput } from './terminal.js';
                 ${main.match(/DOM.homeBtn.addEventListener\('click', showHome\);/)[0]}
+                ${main.slice(main.indexOf('// Reconnect button'), main.indexOf('// Passkey button'))}
                 ${main.slice(main.indexOf('// Passkey button'), main.indexOf('// Init chat view'))}
                 ${main.slice(main.indexOf('// Type overlay (mobile text input)'), main.indexOf('// Keyboard shortcuts'))}`);
         } else if (req.url === '/fixture.js') {
@@ -129,6 +132,7 @@ async function fixture(t, { width = 1440, reattach = true } = {}) {
             resumeAckMatches: () => true, sessionRoute: () => '#terminal',
             findSessionResource: () => null, wingDisplayName: () => 'Local wing', formatSessionTitle: () => 'Terminal' };
         const pty = await import('/src/pty.js');
+        const nav = await import('/src/nav.js');
         const p2p = await import('/src/webrtc.js');
         window._deleteSession = noop;
         const cryptoModule = await import('/src/crypto.js');
@@ -199,7 +203,9 @@ async function fixture(t, { width = 1440, reattach = true } = {}) {
         const reconnect = () => { S.ptyReconnecting = true; pty.ptyReconnectAttach(S.ptySessionId, 0, S.ptyWingId); };
         const realAttach = () => { pty.detachPTY(); sent.length = 0; pty.attachPTY('session-a', 1, 'wing-a'); };
         window.h = { S, DOM, sent, sockets, send, attach, realAttach, start, frame, text, settle, hold, release, input: sendPTYInput, key, nativeDecrypt, detach: pty.detachPTY, reconnect,
-            holdDecode, holdKey, resumeKey, p2p: msg => p2p.handleDCMessage('wing-a', 'session-a', JSON.stringify({ session_id: 'session-a', ...msg })), connect: () => pty.connectPTY('shell', null, 'wing-a') };
+            holdDecode, holdKey, resumeKey, disconnect: pty.disconnectPTY,
+            replace: () => { nav.showTerminal(); pty.attachPTY('session-a', 1, 'wing-a'); },
+            p2p: msg => p2p.handleDCMessage('wing-a', 'session-a', JSON.stringify({ session_id: 'session-a', ...msg })), connect: () => pty.connectPTY('shell', null, 'wing-a') };
         attach();
     }, { reattach, width });
     return page;
@@ -587,3 +593,75 @@ test('session-routed replay corruption is visible before the wing is known', asy
     await brokenReplay(page);
     await page.getByRole('dialog', { name: 'Output incomplete' }).waitFor({ state: 'visible' });
 });
+
+for (const reattach of [false, true]) {
+    for (const exit of ['Home', 'Home before display', 'disconnect', 'replacement']) {
+        test(`${reattach ? 'attached' : 'started'} terminal clears its key-error banner on ${exit}`, async t => {
+            const page = await fixture(t, { reattach });
+            await page.evaluate(async exit => {
+                h.send({ type: 'pty.started', public_key: '%%%' });
+                if (exit !== 'Home before display') return;
+                // Cancel after failure, before the pending display timer can run.
+                for (let i = 0; i < 100 && !h.S.ptyInputBlocked; i++) await Promise.resolve();
+                if (!h.S.ptyInputBlocked) throw Error('key failure did not finish');
+                if (document.getElementById('reconnect-banner').style.display !== 'none') throw Error('banner timer already ran');
+                h.DOM.homeBtn.click();
+                await h.settle();
+            }, exit);
+            if (exit !== 'Home before display') {
+                await page.getByRole('button', { name: 'retry', exact: true }).waitFor({ state: 'visible' });
+                if (exit === 'Home') await page.getByRole('button', { name: 'Home', exact: true }).click();
+                if (exit === 'disconnect') await page.evaluate(() => h.disconnect());
+            }
+            if (exit !== 'replacement') {
+                assert.equal(await page.locator('#reconnect-banner').isVisible(), false);
+                assert.equal(await page.evaluate(() => h.S.ptySessionId), null);
+            }
+            // Use ordinary attachment, without the Retry wrapper's banner cleanup.
+            await page.evaluate(async () => {
+                h.replace(); await h.settle(); h.start('session-a'); await h.settle(); h.S.term.focus();
+            });
+            assert.equal(await page.locator('#reconnect-banner').isVisible(), false);
+            await page.keyboard.type('healthy input');
+            await page.waitForFunction(() => h.sent.some(msg => msg.type === 'pty.input'));
+            assert.equal(await page.evaluate(async () => {
+                const messages = h.sent.filter(msg => msg.type === 'pty.input');
+                return (await Promise.all(messages.map(async msg => new TextDecoder().decode(await h.nativeDecrypt(msg.data))))).join('');
+            }), 'healthy input');
+        });
+    }
+    for (const [keyCase, publicKey] of ['missing', null, '', '%%%', 'YWJj', 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=', 42].entries()) {
+        test(`${reattach ? 'attached' : 'started'} terminal rejects key ${JSON.stringify(publicKey)} and Retry reconnects securely`, async t => {
+            const page = await fixture(t, { reattach });
+            await page.evaluate(async publicKey => {
+                h.send({ type: 'pty.started', ...(publicKey === 'missing' ? {} : { public_key: publicKey }) });
+                h.S.term.focus();
+                await h.settle();
+            }, publicKey);
+            const retry = page.getByRole('button', { name: 'retry', exact: true });
+            await retry.waitFor({ state: 'visible' });
+            assert.match(await page.locator('#reconnect-text').innerText(), /Cannot secure terminal/);
+            await page.keyboard.type('must stay private');
+            await page.keyboard.press('Enter');
+            await page.evaluate(() => h.input('direct private input'));
+            assert.deepEqual(await page.evaluate(() => h.sent.filter(msg => msg.type === 'pty.input')), []);
+            assert.deepEqual(await page.evaluate(() => ({ key: h.S.e2eKey, blocked: h.S.ptyInputBlocked,
+                socket: h.S.ptyWs.readyState })), { key: null, blocked: true, socket: 3 });
+            await page.screenshot({ path: path.join(out, `key-error-${reattach ? 'attach' : 'start'}-${keyCase}.png`), fullPage: true });
+            await retry.click();
+            await page.waitForFunction(() => h.sent.some(msg => msg.type === 'pty.attach'));
+            await page.evaluate(() => h.S.term.focus());
+            await page.keyboard.type('before new key');
+            assert.deepEqual(await page.evaluate(() => h.sent.filter(msg => msg.type === 'pty.input')), []);
+            await page.evaluate(async () => { h.start(); await h.settle(); h.S.term.focus(); });
+            await page.keyboard.type('secure input');
+            await page.waitForFunction(() => h.sent.some(msg => msg.type === 'pty.input'));
+            assert.equal(await page.evaluate(async () => {
+                const messages = h.sent.filter(msg => msg.type === 'pty.input');
+                return (await Promise.all(messages.map(async msg => new TextDecoder().decode(await h.nativeDecrypt(msg.data))))).join('');
+            }), 'secure input');
+            await writeFile(path.join(out, `key-recovery-${reattach ? 'attach' : 'start'}-${keyCase}.json`),
+                JSON.stringify(await page.evaluate(() => ({ sent: h.sent, blocked: h.S.ptyInputBlocked, keyReady: !!h.S.e2eKey })), null, 2));
+        });
+    }
+}

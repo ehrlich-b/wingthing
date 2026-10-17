@@ -541,11 +541,11 @@ function showSpectateToast() {
 }
 
 export function sendPTYInput(text) {
-    if (!S.ptySessionId || S.spectating || S.ptyInputBlocked) return;
+    if (!S.ptySessionId || !S.e2eKey || S.spectating || S.ptyInputBlocked) return;
     var sessionId = S.ptySessionId, wingId = S.ptyWingId, socket = S.ptyWs;
     clearNotification(sessionId, wingId);
     e2eEncrypt(text).then(function (encoded) {
-        if (!terminalReferenceMatches(S, sessionId, wingId, socket)) return;
+        if (!terminalReferenceMatches(S, sessionId, wingId, socket) || S.ptyInputBlocked || !S.e2eKey) return;
         var msg = { type: 'pty.input', session_id: sessionId, data: encoded };
         // P2P: try DataChannel first, fall back to relay WS
         if (sendViaDC(sessionId, msg, wingId)) return;

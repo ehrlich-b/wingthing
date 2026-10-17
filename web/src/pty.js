@@ -234,6 +234,9 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
     var connectedWingId = S.ptyWingId;
     var pendingOutput = [];
     var keyReady = false;
+    var keySetupVersion = 0;
+    var keyFailed = false;
+    S.e2eKey = null;
     var replayDone = !reattach;
     // Keep decrypt/decompression in wire order for this connection only.
     var outputChain = Promise.resolve();
@@ -383,6 +386,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
     }
 
     ws.onmessage = function (e) {
+        if (keyFailed) return;
         if (ws !== S.ptyWs) return;
         var msg = JSON.parse(e.data);
         switch (msg.type) {
@@ -484,28 +488,35 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                     history.pushState({ view: 'terminal', sessionId: msg.session_id, wingId: S.ptyWingId }, '', sessionRoute(msg.session_id, S.ptyWingId));
                 }
 
-                if (msg.public_key) {
-                    deriveE2EKey(msg.public_key, S.ptyWingId).then(function (key) {
-                        if (!outputCurrent(msg.session_id)) return;
-                        S.e2eKey = key;
-                        keyReady = true;
-                        DOM.ptyStatus.textContent = key ? '\uD83D\uDD12' : '';
-                        if (reattach) { flushReplay(); } else { drainOutput(); }
-                    }).catch(function (err) {
-                        if (!outputCurrent(msg.session_id)) return;
-                        DOM.ptyStatus.textContent = err && err.message ? err.message : 'wing identity verification failed';
-                        // Queued output cannot drain without a key; honor an accepted exit.
-                        if (pendingExit) {
-                            completeExit(pendingExit);
-                            pendingExit = null;
-                        }
-                        ws.close();
-                    });
-                } else {
+                keyReady = false;
+                S.e2eKey = null;
+                var keyVersion = ++keySetupVersion;
+                deriveE2EKey(msg.public_key, connectedWingId).then(function (key) {
+                    if (!outputCurrent(msg.session_id) || keyVersion !== keySetupVersion || keyFailed) return;
+                    S.e2eKey = key;
                     keyReady = true;
-                    DOM.ptyStatus.textContent = '';
+                    hideReconnectBanner();
+                    DOM.ptyStatus.textContent = '\uD83D\uDD12';
                     if (reattach) { flushReplay(); } else { drainOutput(); }
-                }
+                }).catch(function (err) {
+                    if (!outputCurrent(msg.session_id) || keyVersion !== keySetupVersion) return;
+                    keyFailed = true;
+                    keyReady = false;
+                    S.e2eKey = null;
+                    S.ptyInputBlocked = true;
+                    S.ptyReconnecting = false;
+                    cleanupSession(msg.session_id, connectedWingId);
+                    hideReplayOverlay();
+                    var message = 'Cannot secure terminal: ' + err.message;
+                    DOM.ptyStatus.textContent = message;
+                    showReconnectBanner(message, true);
+                    // Queued output cannot drain without a key; honor an accepted exit.
+                    if (pendingExit) {
+                        completeExit(pendingExit);
+                        pendingExit = null;
+                    }
+                    ws.close();
+                });
 
                 if (!reattach) {
                     S.term.clear();
@@ -824,6 +835,7 @@ export function attachPTY(sessionId, _retries, wingId, requestId, options) {
 
 export function detachPTY() {
     clearOutputIncomplete();
+    hideReconnectBanner();
     attachRequestId++;
     S.ptyReconnecting = false;
     if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
@@ -850,6 +862,7 @@ export function detachPTY() {
 
 export function disconnectPTY() {
     clearOutputIncomplete();
+    hideReconnectBanner();
     attachRequestId++;
     S.ptyReconnecting = false;
     if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
