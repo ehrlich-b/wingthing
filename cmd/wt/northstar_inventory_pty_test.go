@@ -211,8 +211,10 @@ func TestNorthstarPTYInventoryBudget(t *testing.T) {
 			if err := os.MkdirAll(dir, 0700); err != nil {
 				t.Fatal(err)
 			}
+			// Search also matches CWD. Keep reported metadata independent of the
+			// checkout path, which may itself contain the filter term "local-1".
 			for file, value := range map[string]string{"egg.pid": strconv.Itoa(identity.Process.Pid), "egg.token": "fixture", "session.name": fmt.Sprintf("local-%02d", n),
-				"egg.meta": "kind=agent\nagent=claude\nprovider_home=" + home + "\ncwd=" + f.work + "\n"} {
+				"egg.meta": "kind=agent\nagent=claude\nprovider_home=" + home + "\ncwd=/fixture/work\n"} {
 				northstarWrite(t, filepath.Join(dir, file), value, 0600)
 			}
 			// Native lifecycle evidence is deliberately absent for slow eggs.
