@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/pake"
 	"github.com/ehrlich-b/wingthing/internal/phonepair"
 	"github.com/skip2/go-qrcode"
@@ -25,6 +26,8 @@ import (
 )
 
 const lanPairStartCommand = "wt wing start --local-only --listen 0.0.0.0"
+
+const lanPairModeGuidance = "For a running wing, keep its mode and all other startup flags, replacing any existing --listen value with 0.0.0.0. The restart hint asks the running wing for its mode over authenticated local control; an unavailable or ambiguous answer shows both variants. Add other startup flags by hand."
 
 func phoneAdmin(ctx context.Context, op, id, name string, result any) error {
 	if !pake.Available {
@@ -44,7 +47,7 @@ func phoneAdmin(ctx context.Context, op, id, name string, result any) error {
 	defer client.CloseIdleConnections()
 	resp, e := client.Do(req)
 	if e != nil {
-		return errors.New("main wing pairing endpoint is unavailable; update and restart that wing before pairing")
+		return errors.New("main wing pairing endpoint is unavailable; update and restart that wing before pairing.\n" + phonepair.RestartGuidance("", true))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
@@ -76,7 +79,10 @@ func readPhoneControl() (phonepair.Control, error) {
 	}
 	b, e := os.ReadFile(filepath.Join(cfg.Dir, "phone-control.json"))
 	if e != nil {
-		return phonepair.Control{}, fmt.Errorf("main wing is not ready for pairing; for LAN pairing, start it with %s (or wt wing start --listen 0.0.0.0 if registered)", lanPairStartCommand)
+		if _, pidErr := daemonctl.ReadPidFrom(daemonctl.WingPidPath(), daemonctl.WingDaemon); daemonctl.DaemonAbsentError(pidErr) {
+			return phonepair.Control{}, fmt.Errorf("main wing is not ready for pairing.\n%s\nThen run wt pair", lanPairRestartGuidance())
+		}
+		return phonepair.Control{}, fmt.Errorf("main wing is not ready for pairing; update the running wing, then stop it with wt wing stop before restarting.\n%s", lanPairRestartGuidance())
 	}
 	var control phonepair.Control
 	if json.Unmarshal(b, &control) != nil || control.Port < 1 || control.Port > 65535 || control.WingID != cfg.WingID || control.Token == "" {
@@ -93,7 +99,7 @@ func pairCmd() *cobra.Command {
 		Long: "Pair a device with this machine's running main wing.\n" +
 			"For LAN pairing without a relay, start the wing with:\n  " + lanPairStartCommand + "\n" +
 			"The --local-only flag alone listens on loopback only; phones cannot reach it over the LAN.\n" +
-			"If the wing is already running, stop it with wt wing stop before restarting with --listen.",
+			"If the wing is already running, stop it with wt wing stop before restarting.\n" + lanPairModeGuidance,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runPairWithLink(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), showLink)
@@ -248,7 +254,7 @@ func showInvitation(out io.Writer, q phonepair.Invitation, listenAddress string)
 		}
 	}
 	if loopbackOnly {
-		hint := "main wing listens on loopback only; a phone cannot connect over the LAN. For LAN pairing, stop it with wt wing stop, restart with wt wing start --listen 0.0.0.0 keeping your existing startup flags (including --local-only if used), then run wt pair"
+		hint := "main wing listens on loopback only; a phone cannot connect over the LAN. For LAN pairing, stop it with wt wing stop before restarting.\n" + lanPairRestartGuidance() + "\nThen run wt pair"
 		if listenAddress != "" && !loopbackEndpoint("http://"+listenAddress) {
 			hint = "main wing has no advertised LAN endpoint; connect this host to a LAN or tailnet, then restart the wing with its existing flags and run wt pair"
 		}

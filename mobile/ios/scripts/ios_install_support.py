@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Read-only parsers and bounded identity checks for the personal installer."""
 import base64
+import http.client
 import json
+import ipaddress
 import os
 from pathlib import Path
 import plistlib
@@ -49,6 +51,37 @@ def signing_teams(preferences):
     if isinstance(selected, str) and re.fullmatch(r"[A-Z0-9]{10}", selected):
         teams.add(selected)
     return sorted(teams)
+
+
+def running_mode(directory):
+    """Ask the live owner of the private control token; never infer from files."""
+    try:
+        control = json.loads((Path(directory) / "phone-control.json").read_text())
+        port, token, wing = control["port"], control["token"], control["wing_id"]
+        if (type(port) is not int or not 1 <= port <= 65535
+                or not isinstance(token, str) or not token or not isinstance(wing, str) or not wing):
+            return None
+        address = control.get("address", "")
+        host = urllib.parse.urlsplit("http://" + address).hostname if address else "127.0.0.1"
+        ip = ipaddress.ip_address(host)
+        if ip.is_unspecified:
+            host = "127.0.0.1" if ip.version == 4 else "::1"
+        if ":" in host:
+            host = "[" + host + "]"
+        url = "http://" + host + ":" + str(port) + "/admin"
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirects())
+        request = urllib.request.Request(url, data=b'{"Op":"mode"}',
+                                         headers={"Authorization": "Bearer " + token})
+        with opener.open(request, timeout=2) as response:
+            data = response.read(4097)
+            if response.status != 200 or response.url != url or len(data) > 4096:
+                return None
+            reply = json.loads(data)
+        if reply.get("wing_id") == wing and reply.get("mode") in {"local-only", "relay"}:
+            return reply["mode"]
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, http.client.HTTPException):
+        pass
+    return None
 
 
 def setup_fields(text):
@@ -128,7 +161,9 @@ def verify_home(fields, timeout=60):
 
 def main():
     command, path, *extra = sys.argv[1:]
-    if command == "devices":
+    if command == "lan-restart":
+        print(running_mode(path) or "unknown")
+    elif command == "devices":
         phones = connected_iphones(json.loads(Path(path).read_text()))
         requested = extra[0] if extra else ""
         for identifier, udid, name, mode in phones:

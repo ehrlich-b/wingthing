@@ -1,9 +1,12 @@
 import contextlib
 import io
+import http.server
+import threading
 import json
 import os
 from pathlib import Path
 import plistlib
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -12,6 +15,36 @@ from unittest.mock import patch
 import urllib.parse
 
 import ios_install_support as support
+
+
+@contextlib.contextmanager
+def mode_server(mode):
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            if self.path != "/admin" or self.headers.get("Authorization") != "Bearer fixture-token":
+                self.send_error(403)
+                return
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if body != {"Op": "mode"}:
+                self.send_error(400)
+                return
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps({"wing_id": "fixture-wing", "mode": mode}).encode())
+
+        def log_message(self, *_):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        yield {"port": server.server_port, "address": "127.0.0.1:" + str(server.server_port),
+               "token": "fixture-token", "wing_id": "fixture-wing"}
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 FIELDS = {"v": "1", "origin": "https://home.example", "account": "owner", "wing": "mac",
@@ -89,6 +122,25 @@ class InstallerTests(unittest.TestCase):
             with self.assertRaises(ValueError): support.verify_home(FIELDS)
         self.assertIsNone(support.NoRedirects().redirect_request(None, None, 302, None, None, "https://other.example"))
 
+    def test_live_mode_ignores_dead_daemon_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "wing.args").write_text("wing\nstart\n--foreground\n--local-only\n--labels=--listen")
+            (root / "wing.status").write_text('{"roost_url":"https://dead.example"}')
+            self.assertIsNone(support.running_mode(root))
+            for mode in ("local-only", "relay", "", "connecting", None, True):
+                with self.subTest(mode=mode), mode_server(mode) as control:
+                    (root / "phone-control.json").write_text(json.dumps(control))
+                    self.assertEqual(support.running_mode(root), mode if mode in ("local-only", "relay") else None)
+                    # Identity mismatch and rejected control credentials are ambiguous.
+                    for key in ("wing_id", "token"):
+                        wrong = dict(control, **{key: "wrong"})
+                        (root / "phone-control.json").write_text(json.dumps(wrong))
+                        self.assertIsNone(support.running_mode(root))
+                # The old control descriptor also cannot establish a dead daemon's mode.
+                (root / "phone-control.json").write_text(json.dumps(control))
+                self.assertIsNone(support.running_mode(root))
+
     def test_installer_reuses_team_and_builds_installs_launches_only_selected_device(self):
         clone = Path(__file__).resolve().parents[3]
         scratch = clone / ".scratch/ios"
@@ -139,7 +191,6 @@ fi''',
                 result = subprocess.run(command, env=environment, text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             # The connect step uses the main wing and never shares an account bearer.
-            wing = root / "main-wing"; wing.mkdir()
             fake_go = mockbin / "fake-go"
             fake_go.write_text("""#!/bin/bash
 set -euo pipefail
@@ -153,7 +204,13 @@ printf '%s\\n' "$*" >>"$MOCK_PAIR_CALLS"
 if [[ $1 == wing && $2 == status ]]; then
   if [[ $MOCK_WING_INITIAL != missing ]]; then
     printf 'wing daemon is running (pid 123)\\n'
-    printf '{"address":"%s:6078"}\\n' "$MOCK_WING_INITIAL" >"$WINGTHING_DIR/phone-control.json"
+    python3 - "$MOCK_CONTROL" "$MOCK_WING_INITIAL" "$WINGTHING_DIR/phone-control.json" <<'PYCONTROL'
+import json, sys
+control = json.loads(sys.argv[1])
+control["address"] = sys.argv[2] + ":" + str(control.get("port", 0))
+with open(sys.argv[3], "w") as output:
+    json.dump(control, output)
+PYCONTROL
   fi
 fi
 if [[ $1 == wing && $2 == start ]]; then
@@ -169,14 +226,27 @@ SH
 chmod 700 "$target"
 """)
             fake_go.chmod(0o755)
-            environment.update(WT_IOS_GO=str(fake_go), WT_IOS_WING_DIR=str(wing), MOCK_PAIR_CALLS=str(root / "pair-calls"))
+            environment.update(WT_IOS_GO=str(fake_go), MOCK_PAIR_CALLS=str(root / "pair-calls"))
             environment.pop("WT_IOS_SETUP_LINK_FILE", None)
-            for initial in ("missing", "0.0.0.0", "127.0.0.1", "[::1]", "[::ffff:127.0.0.1]", "127.0.0.1"):
-                with self.subTest(wing=initial):
+            cases = [("missing", "unknown"), ("0.0.0.0", "unknown"),
+                     ("127.0.0.1", "local-only"), ("[::1]", "unknown"),
+                     ("[::ffff:127.0.0.1]", "relay"), ("127.0.0.1", "unknown"),
+                     ("127.0.0.1", "relay"), ("127.0.0.1", "ambiguous")]
+            for index, (initial, metadata) in enumerate(cases):
+                with self.subTest(wing=initial, metadata=metadata):
+                    wing = root / ("main-wing-" + str(index)); wing.mkdir()
+                    environment["WT_IOS_WING_DIR"] = str(wing)
+                    # Dead daemon files must never determine the restart mode.
+                    (wing / "wing.args").write_text("wing\nstart\n--foreground\n--roost\nhttps://dead.example\n--labels=--listen")
+                    (wing / "wing.status").write_text('{"roost_url":"https://dead.example"}')
                     environment["MOCK_WING_INITIAL"] = initial
                     (root / "pair-calls").write_text("")
-                    result = subprocess.run(command[:-1] + ["--connect-only"], env=environment,
-                                            text=True, capture_output=True, timeout=30)
+                    with mode_server(metadata) as control:
+                        environment["MOCK_CONTROL"] = json.dumps(control)
+                        if metadata == "unknown":
+                            environment["MOCK_CONTROL"] = '{"port":0}'
+                        result = subprocess.run(command[:-1] + ["--connect-only"], env=environment,
+                                                text=True, capture_output=True, timeout=30)
                     pair_calls = (root / "pair-calls").read_text().splitlines()
                     if initial not in ("missing", "0.0.0.0"):
                         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -184,7 +254,24 @@ chmod 700 "$target"
                         self.assertIn("listens on loopback only", result.stderr)
                         self.assertIn("WINGTHING_DIR=" + str(wing), result.stderr)
                         self.assertIn("wing stop", result.stderr)
-                        self.assertIn("wing start --listen 0.0.0.0", result.stderr)
+                        starts = [shlex.split(line) for line in result.stderr.splitlines()
+                                  if " wing start " in line]
+                        if metadata in {"unknown", "ambiguous"}:
+                            self.assertEqual(len(starts), 2, result.stderr)
+                            self.assertIn("unavailable or ambiguous", result.stderr)
+                            self.assertIn("wing start --local-only --listen 0.0.0.0", result.stderr)
+                            self.assertIn("wing start --listen 0.0.0.0", result.stderr)
+                        else:
+                            self.assertEqual(len(starts), 1, result.stderr)
+                            self.assertNotIn("unavailable or ambiguous", result.stderr)
+                            restart = starts[0][starts[0].index("wing"):]
+                            expected = ["wing", "start"]
+                            if metadata == "local-only":
+                                expected.append("--local-only")
+                            self.assertEqual(restart, expected + ["--listen", "0.0.0.0"])
+                        self.assertIn("must be added by hand", result.stderr)
+                        self.assertNotIn("--labels", result.stderr)
+                        self.assertNotIn("--roost", result.stderr)
                         self.assertNotIn("Press Enter", result.stderr)
                     else:
                         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

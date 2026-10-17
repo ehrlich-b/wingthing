@@ -364,3 +364,16 @@ func TestSignalDaemonStoppedInstallationIsNoOpButInvalidMetadataRejects(t *testi
 		t.Fatal("signal reached an unrelated process")
 	}
 }
+
+func TestManualWingRestartGuidanceIgnoresStaleStatus(t *testing.T) {
+	t.Setenv("WINGTHING_DIR", t.TempDir())
+	if err := os.WriteFile(WingStatusPath(), []byte(`{"roost_url":"https://dead.example"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got := ManualWingRestartGuidance()
+	for _, want := range []string{"wt wing start --local-only", "\nwt wing start\n", "unavailable or ambiguous", "must be added by hand"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q: %s", want, got)
+		}
+	}
+}

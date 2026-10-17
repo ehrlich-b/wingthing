@@ -2,14 +2,19 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdh"
+	"crypto/rand"
 	"encoding/base64"
-	"github.com/ehrlich-b/wingthing/internal/pake"
-	"github.com/ehrlich-b/wingthing/internal/phonepair"
-	"github.com/skip2/go-qrcode"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/pake"
+	"github.com/ehrlich-b/wingthing/internal/phonepair"
+	"github.com/skip2/go-qrcode"
 )
 
 func TestPairTerminalHasRealScannableLayoutAndPermissionCopy(t *testing.T) {
@@ -99,22 +104,28 @@ func TestPairGuidanceNamesLANListenFlag(t *testing.T) {
 	}
 	t.Setenv("WINGTHING_DIR", t.TempDir())
 	err := runPair(t.Context(), strings.NewReader(""), &out)
-	if err == nil || !strings.Contains(err.Error(), "wt wing start --local-only --listen 0.0.0.0") {
+	if err == nil || !strings.Contains(err.Error(), "wt wing start --local-only --listen 0.0.0.0") || !strings.Contains(err.Error(), "unavailable or ambiguous") || !strings.Contains(err.Error(), "wt wing start --listen 0.0.0.0") {
 		t.Fatalf("missing LAN guidance when wing is absent: %v", err)
 	}
 }
 
 func TestPairLoopbackOnlyWarning(t *testing.T) {
+	t.Setenv("WINGTHING_DIR", t.TempDir())
 	for _, endpoint := range []string{"http://127.0.0.1:6078", "http://127.0.0.2:6078", "http://[::1]:6078", "http://[::ffff:127.0.0.1]:6078", "http://localhost:6078"} {
 		t.Run(endpoint, func(t *testing.T) {
 			q := phonepair.Invitation{Local: endpoint, Endpoints: []string{endpoint}, Secret: "private test secret"}
 			var out bytes.Buffer
 			err := showInvitation(&out, q, "")
-			if err == nil || !strings.Contains(err.Error(), "listens on loopback only") || !strings.Contains(err.Error(), "a phone cannot connect over the LAN") || !strings.Contains(err.Error(), "wt wing start --listen 0.0.0.0") {
+			if err == nil || !strings.Contains(err.Error(), "listens on loopback only") || !strings.Contains(err.Error(), "a phone cannot connect over the LAN") || !strings.Contains(err.Error(), lanPairStartCommand) {
 				t.Fatalf("missing loopback warning: %v", err)
 			}
-			if strings.Contains(err.Error(), "restart with "+lanPairStartCommand) || !strings.Contains(err.Error(), "keeping your existing startup flags") {
-				t.Fatalf("restart guidance could disable an existing relay: %v", err)
+			for _, want := range []string{lanPairStartCommand, "Other flags the wing was started with must be added by hand."} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("restart guidance missing %q: %v", want, err)
+				}
+			}
+			if !strings.Contains(err.Error(), "unavailable or ambiguous") || !strings.Contains(err.Error(), "wt wing start --listen 0.0.0.0") {
+				t.Fatalf("unqueried mode must offer both variants: %v", err)
 			}
 			if out.Len() != 0 {
 				t.Fatalf("unusable invitation was displayed: %s", out.String())
@@ -122,6 +133,9 @@ func TestPairLoopbackOnlyWarning(t *testing.T) {
 			q.Relay = "https://wingthing.ai"
 			if err := showInvitation(&out, q, ""); err != nil {
 				t.Fatalf("registered relay is usable: %v", err)
+			}
+			if !strings.Contains(out.String(), "unavailable or ambiguous") || !strings.Contains(out.String(), "wt wing start --listen 0.0.0.0") {
+				t.Fatalf("relay restart guidance changes mode: %s", out.String())
 			}
 			if !strings.Contains(out.String(), "listens on loopback only") || !strings.Contains(out.String(), "Pair through the registered relay") || !strings.Contains(out.String(), "\x1b[30;47m") || strings.Contains(out.String(), "Direct endpoint:") || strings.Contains(out.String(), "Same Wi-Fi: no account needed") {
 				t.Fatalf("relay invitation misrepresents LAN access: %s", out.String())
@@ -148,5 +162,51 @@ func TestPairNoLANInterfaceDoesNotSuggestRebinding(t *testing.T) {
 		if !strings.Contains(message, "no advertised LAN endpoint") || strings.Contains(message, "--listen 0.0.0.0") || strings.Contains(message, "listens on loopback only") {
 			t.Fatalf("incorrect missing-interface guidance: %s", message)
 		}
+	}
+}
+
+func TestLANPairRestartGuidanceUsesLiveMode(t *testing.T) {
+	for _, mode := range []string{phonepair.ModeLocalOnly, phonepair.ModeRelay, "", "ambiguous"} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("WINGTHING_DIR", dir)
+			// Deliberately stale, conflicting files and flag-looking string values.
+			for name, data := range map[string]string{
+				"wing.args":   "wing\nstart\n--foreground\n--roost\nhttps://dead.example\n--labels=--listen",
+				"wing.status": `{"state":"connected","roost_url":"https://dead.example"}`,
+			} {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode != "" {
+				private, err := ecdh.X25519().GenerateKey(rand.Reader)
+				if err != nil {
+					t.Fatal(err)
+				}
+				server, err := phonepair.Listen(t.Context(), dir, "fixture-wing", "Fixture", nil, private, nil, "127.0.0.1", mode)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if server == nil {
+					t.Skip("PAKE unavailable")
+				}
+				defer server.Close()
+			}
+			got := lanPairRestartGuidance()
+			// An empty invitation relay must not override the live mode.
+			var out bytes.Buffer
+			err := showInvitation(&out, phonepair.Invitation{Local: "http://127.0.0.1:6078"}, "")
+			if err == nil || !strings.Contains(err.Error(), got) {
+				t.Fatalf("invitation changed live restart guidance: %v", err)
+			}
+			local, relay := strings.Contains(got, lanPairStartCommand), strings.Contains(got, "wt wing start --listen 0.0.0.0")
+			if local != (mode != phonepair.ModeRelay) || relay != (mode != phonepair.ModeLocalOnly) {
+				t.Fatalf("wrong commands for mode %q: %s", mode, got)
+			}
+			if strings.Contains(got, "--roost") || strings.Contains(got, "--labels") || !strings.Contains(got, "must be added by hand") {
+				t.Fatalf("reconstructed stale arguments or missing note: %s", got)
+			}
+		})
 	}
 }

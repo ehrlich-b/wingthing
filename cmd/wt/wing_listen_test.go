@@ -183,6 +183,9 @@ func TestBuiltWTLocalOnlyListen(t *testing.T) {
 				if strings.Contains(string(startup), "for LAN phone pairing, stop with") != wantsRestart {
 					t.Fatalf("startup restart advice disagrees with listener: %s", startup)
 				}
+				if wantsRestart && (!strings.Contains(string(startup), lanPairStartCommand) || !strings.Contains(string(startup), "Other flags the wing was started with must be added by hand.")) {
+					t.Fatalf("startup restart advice drops local-only mode or other flags: %s", startup)
+				}
 				if strings.Contains(string(startup), "relay: disabled; local control is ready") {
 					t.Fatalf("duplicate local control readiness: %s", startup)
 				}
@@ -214,11 +217,14 @@ func TestBuiltWTLocalOnlyListen(t *testing.T) {
 				pair := exec.CommandContext(ctx, binary, "pair", "--show-link")
 				pair.Env = environment
 				output, err := pair.CombinedOutput()
-				if ctx.Err() != nil || err == nil || !strings.Contains(string(output), "main wing listens on loopback only") || !strings.Contains(string(output), "wt wing start --listen 0.0.0.0") {
+				if ctx.Err() != nil || err == nil || !strings.Contains(string(output), "main wing listens on loopback only") || !strings.Contains(string(output), "--listen 0.0.0.0") {
 					t.Fatalf("pair did not explain loopback restriction promptly: %v: %s", err, output)
 				}
 				if bytes.Contains(output, []byte("wingthing://pair")) || bytes.Contains(output, []byte("\x1b[30;47m")) || bytes.Contains(output, []byte("Direct endpoint:")) {
 					t.Fatalf("pair displayed an unusable invitation: %s", output)
+				}
+				if !strings.Contains(string(output), "--local-only") || strings.Contains(string(output), "wt wing start --listen 0.0.0.0") || strings.Contains(string(output), "Current startup flags are unknown") || strings.Contains(string(output), "otherwise use") {
+					t.Fatalf("pair restart advice drops --local-only: %s", output)
 				}
 				t.Log("pair=clear-loopback-warning invitation=hidden")
 			}

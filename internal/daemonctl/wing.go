@@ -11,6 +11,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/phonepair"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 )
 
@@ -48,11 +49,11 @@ func restartWingDaemonIfRunning(enableRelay bool) error {
 	// Read saved args so we can restart with same flags
 	argsData, err := os.ReadFile(WingArgsPath())
 	if err != nil {
-		return fmt.Errorf("can't read wing.args (stop and restart manually: wt stop && wt start): %w", err)
+		return fmt.Errorf("can't read wing.args (%s): %w", ManualWingRestartGuidance(), err)
 	}
 	savedArgs, err := ParseSavedDaemonArgs(argsData, WingDaemon)
 	if err != nil {
-		return fmt.Errorf("can't use wing.args (stop and restart manually: wt stop && wt start): %w", err)
+		return fmt.Errorf("can't use wing.args (%s): %w", ManualWingRestartGuidance(), err)
 	}
 
 	if enableRelay {
@@ -129,6 +130,15 @@ func restartWingDaemonIfRunning(enableRelay bool) error {
 		log.Printf("warning: failed to release restarted daemon process handle: %v", err)
 	}
 	return nil
+}
+
+// ManualWingRestartGuidance queries the live wing before any lifecycle change.
+func ManualWingRestartGuidance() string {
+	mode := ""
+	if cfg, err := config.Load(); err == nil {
+		mode = phonepair.RunningMode(cfg.Dir)
+	}
+	return "Stop with wt wing stop before restarting.\n" + phonepair.RestartGuidance(mode, false)
 }
 
 func wingRoostFlags(args []string) (roost string, local bool) {
