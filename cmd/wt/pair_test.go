@@ -3,13 +3,16 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
-	"github.com/ehrlich-b/wingthing/internal/pake"
-	"github.com/ehrlich-b/wingthing/internal/phonepair"
-	"github.com/skip2/go-qrcode"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/pake"
+	"github.com/ehrlich-b/wingthing/internal/phonepair"
+	"github.com/skip2/go-qrcode"
 )
 
 func TestPairTerminalHasRealScannableLayoutAndPermissionCopy(t *testing.T) {
@@ -99,24 +102,28 @@ func TestPairGuidanceNamesLANListenFlag(t *testing.T) {
 	}
 	t.Setenv("WINGTHING_DIR", t.TempDir())
 	err := runPair(t.Context(), strings.NewReader(""), &out)
-	if err == nil || !strings.Contains(err.Error(), "wt wing start --local-only --listen 0.0.0.0") {
+	if err == nil || !strings.Contains(err.Error(), "wt wing start --local-only --listen 0.0.0.0") || strings.Contains(err.Error(), "unknown") || strings.Contains(err.Error(), "stop") {
 		t.Fatalf("missing LAN guidance when wing is absent: %v", err)
 	}
 }
 
 func TestPairLoopbackOnlyWarning(t *testing.T) {
+	t.Setenv("WINGTHING_DIR", t.TempDir())
 	for _, endpoint := range []string{"http://127.0.0.1:6078", "http://127.0.0.2:6078", "http://[::1]:6078", "http://[::ffff:127.0.0.1]:6078", "http://localhost:6078"} {
 		t.Run(endpoint, func(t *testing.T) {
 			q := phonepair.Invitation{Local: endpoint, Endpoints: []string{endpoint}, Secret: "private test secret"}
 			var out bytes.Buffer
 			err := showInvitation(&out, q, "")
-			if err == nil || !strings.Contains(err.Error(), "listens on loopback only") || !strings.Contains(err.Error(), "a phone cannot connect over the LAN") || !strings.Contains(err.Error(), "wt wing start --listen 0.0.0.0") {
+			if err == nil || !strings.Contains(err.Error(), "listens on loopback only") || !strings.Contains(err.Error(), "a phone cannot connect over the LAN") || !strings.Contains(err.Error(), lanPairStartCommand) {
 				t.Fatalf("missing loopback warning: %v", err)
 			}
-			for _, want := range []string{lanPairStartCommand, "Current startup flags are unknown", "keeps the relay disabled", "keeps the existing relay mode", "Keep all other startup flags"} {
+			for _, want := range []string{lanPairStartCommand, "retain any other startup flags"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Fatalf("restart guidance missing %q: %v", want, err)
 				}
+			}
+			if strings.Contains(err.Error(), "Current startup flags are unknown") || strings.Contains(err.Error(), "otherwise use") {
+				t.Fatalf("known local-only mode offered a relay variant: %v", err)
 			}
 			if out.Len() != 0 {
 				t.Fatalf("unusable invitation was displayed: %s", out.String())
@@ -124,6 +131,9 @@ func TestPairLoopbackOnlyWarning(t *testing.T) {
 			q.Relay = "https://wingthing.ai"
 			if err := showInvitation(&out, q, ""); err != nil {
 				t.Fatalf("registered relay is usable: %v", err)
+			}
+			if strings.Contains(out.String(), "--local-only") || strings.Contains(out.String(), "Current startup flags are unknown") || !strings.Contains(out.String(), "--roost https://wingthing.ai --listen 0.0.0.0") {
+				t.Fatalf("relay restart guidance changes mode: %s", out.String())
 			}
 			if !strings.Contains(out.String(), "listens on loopback only") || !strings.Contains(out.String(), "Pair through the registered relay") || !strings.Contains(out.String(), "\x1b[30;47m") || strings.Contains(out.String(), "Direct endpoint:") || strings.Contains(out.String(), "Same Wi-Fi: no account needed") {
 				t.Fatalf("relay invitation misrepresents LAN access: %s", out.String())
@@ -150,5 +160,41 @@ func TestPairNoLANInterfaceDoesNotSuggestRebinding(t *testing.T) {
 		if !strings.Contains(message, "no advertised LAN endpoint") || strings.Contains(message, "--listen 0.0.0.0") || strings.Contains(message, "listens on loopback only") {
 			t.Fatalf("incorrect missing-interface guidance: %s", message)
 		}
+	}
+}
+
+func TestLANPairRestartGuidancePreservesRecordedFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name, args, status, want string
+		unknown                  bool
+	}{
+		{name: "bare local-only", args: "wing\nstart\n--foreground\n--local-only", status: `{"roost_url":"https://other.example"}`, want: lanPairStartCommand},
+		{name: "mode and quoted paths", args: "wing\nstart\n--foreground\n--local-only\n--local\n--audit\n--paths\n/fixture/space '$()\n--listen=127.0.0.1", want: `wt wing start --local-only --local --audit --paths '/fixture/space '"'"'$()' --listen 0.0.0.0`},
+		{name: "relay", args: "wing\nstart\n--foreground\n--roost\nhttps://relay.example\n--listen\n127.0.0.1\n--audit", want: "wt wing start --roost https://relay.example --audit --listen 0.0.0.0"},
+		{name: "path with trailing spaces", args: "wing\nstart\n--foreground\n--local-only\n--paths\n/fixture/path  ", want: "wt wing start --local-only --paths '/fixture/path  ' --listen 0.0.0.0"},
+		{name: "local status", status: `{"state":"local","roost_url":""}`, want: lanPairStartCommand},
+		{name: "omitted roost status", status: `{"state":"local"}`, want: lanPairStartCommand},
+		{name: "invalid args fallback", args: "invalid", status: `{"roost_url":""}`, want: lanPairStartCommand},
+		{name: "relay status", status: `{"roost_url":"https://relay.example"}`, want: "wt wing start --roost https://relay.example --listen 0.0.0.0"},
+		{name: "missing metadata", want: lanPairStartCommand, unknown: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("WINGTHING_DIR", dir)
+			for name, content := range map[string]string{"wing.args": tc.args, "wing.status": tc.status} {
+				if content != "" {
+					if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			got := lanPairRestartGuidance(nil)
+			if !strings.Contains(got, tc.want) || strings.Contains(got, "Current startup flags are unknown") != tc.unknown {
+				t.Fatalf("restart guidance = %s; want %s, unknown %v", got, tc.want, tc.unknown)
+			}
+			if tc.unknown != strings.Contains(got, "otherwise use wt wing start --listen 0.0.0.0") {
+				t.Fatalf("incorrect relay variant: %s", got)
+			}
+		})
 	}
 }

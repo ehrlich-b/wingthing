@@ -171,13 +171,20 @@ PYTHON
 ) || die 'Main wing pairing control is invalid; inspect phone-control.json.'
 if [[ $LISTENER == loopback ]]; then
   printf '%s\n' 'Main wing listens on loopback only; a phone cannot connect over the LAN.' \
-    'Current startup flags are unknown. When ready to interrupt this wing, stop it:' >&2
+    'When ready to interrupt this wing, stop it:' >&2
   printf '%q ' "${WT[@]}" wing stop >&2; printf '\n' >&2
-  printf '%s\n' 'If started with --local-only, keep it to leave the relay disabled:' >&2
-  printf '%q ' "${WT[@]}" wing start --local-only --listen 0.0.0.0 >&2; printf '\n' >&2
-  printf '%s\n' 'Otherwise, keep the existing relay mode:' >&2
-  printf '%q ' "${WT[@]}" wing start --listen 0.0.0.0 >&2; printf '\n' >&2
-  printf '%s\n' 'Keep all other startup flags; replace any existing --listen value with 0.0.0.0.' >&2
+  RESTART=$(python3 "$SUPPORT" lan-restart "$WING")
+  if [[ -n $RESTART ]]; then
+    printf '%s\n' 'Restart with the recorded mode and LAN listener:' >&2
+    printf '%q ' "${WT[@]}" >&2; printf '%s\n' "$RESTART" >&2
+  else
+    printf '%s\n' 'Current startup flags are unknown: neither wing.args nor wing.status supplied usable metadata.' \
+      'If started with --local-only, keep it to leave the relay disabled:' >&2
+    printf '%q ' "${WT[@]}" wing start --local-only --listen 0.0.0.0 >&2; printf '\n' >&2
+    printf '%s\n' 'Otherwise, keep the existing relay mode:' >&2
+    printf '%q ' "${WT[@]}" wing start --listen 0.0.0.0 >&2; printf '\n' >&2
+  fi
+  printf '%s\n' 'Keep all other startup flags if only wing.status was available; replace any existing --listen value with 0.0.0.0.' >&2
   die 'Then rerun --connect-only. The installer has left the running wing untouched.'
 fi
 step '7/7 Scan this with the Wingthing app'

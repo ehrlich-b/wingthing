@@ -364,3 +364,27 @@ func TestSignalDaemonStoppedInstallationIsNoOpButInvalidMetadataRejects(t *testi
 		t.Fatal("signal reached an unrelated process")
 	}
 }
+
+func TestManualWingRestartGuidancePreservesMode(t *testing.T) {
+	for _, tc := range []struct {
+		name, status, want string
+		unknown            bool
+	}{
+		{name: "local-only", status: `{"roost_url":""}`, want: "wt wing start --local-only"},
+		{name: "relay", status: `{"roost_url":"https://relay.example"}`, want: "wt wing start --roost 'https://relay.example'"},
+		{name: "unknown", want: "wt wing start --local-only if the relay was disabled, or wt wing start otherwise", unknown: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("WINGTHING_DIR", t.TempDir())
+			if tc.status != "" {
+				if err := os.WriteFile(WingStatusPath(), []byte(tc.status), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := manualWingRestartGuidance()
+			if !strings.Contains(got, tc.want) || strings.Contains(got, "current startup flags are unknown") != tc.unknown || strings.Contains(got, "otherwise") != tc.unknown {
+				t.Fatalf("mode was lost in restart guidance: %s", got)
+			}
+		})
+	}
+}

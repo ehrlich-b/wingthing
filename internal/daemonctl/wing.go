@@ -48,11 +48,11 @@ func restartWingDaemonIfRunning(enableRelay bool) error {
 	// Read saved args so we can restart with same flags
 	argsData, err := os.ReadFile(WingArgsPath())
 	if err != nil {
-		return fmt.Errorf("can't read wing.args (stop and restart manually: wt stop && wt start): %w", err)
+		return fmt.Errorf("can't read wing.args (%s): %w", manualWingRestartGuidance(), err)
 	}
 	savedArgs, err := ParseSavedDaemonArgs(argsData, WingDaemon)
 	if err != nil {
-		return fmt.Errorf("can't use wing.args (stop and restart manually: wt stop && wt start): %w", err)
+		return fmt.Errorf("can't use wing.args (%s): %w", manualWingRestartGuidance(), err)
 	}
 
 	if enableRelay {
@@ -129,6 +129,21 @@ func restartWingDaemonIfRunning(enableRelay bool) error {
 		log.Printf("warning: failed to release restarted daemon process handle: %v", err)
 	}
 	return nil
+}
+
+// Saved flags are unavailable on this error path, but status can still identify
+// the transport mode. No lifecycle changes happen until the user restarts.
+func manualWingRestartGuidance() string {
+	command := "wt wing start --local-only if the relay was disabled, or wt wing start otherwise"
+	source := "current startup flags are unknown"
+	if status, err := ReadWingStatus(); err == nil {
+		source = "startup flags are unavailable; mode read from wing.status"
+		command = "wt wing start --local-only"
+		if status.RoostURL != "" {
+			command = "wt wing start --roost '" + strings.ReplaceAll(status.RoostURL, "'", "'\"'\"'") + "'"
+		}
+	}
+	return source + "; stop with wt wing stop, then restart with " + command + ", retaining all other startup flags"
 }
 
 func wingRoostFlags(args []string) (roost string, local bool) {

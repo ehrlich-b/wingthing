@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -139,7 +140,6 @@ fi''',
                 result = subprocess.run(command, env=environment, text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             # The connect step uses the main wing and never shares an account bearer.
-            wing = root / "main-wing"; wing.mkdir()
             fake_go = mockbin / "fake-go"
             fake_go.write_text("""#!/bin/bash
 set -euo pipefail
@@ -169,10 +169,36 @@ SH
 chmod 700 "$target"
 """)
             fake_go.chmod(0o755)
-            environment.update(WT_IOS_GO=str(fake_go), WT_IOS_WING_DIR=str(wing), MOCK_PAIR_CALLS=str(root / "pair-calls"))
+            environment.update(WT_IOS_GO=str(fake_go), MOCK_PAIR_CALLS=str(root / "pair-calls"))
             environment.pop("WT_IOS_SETUP_LINK_FILE", None)
-            for initial in ("missing", "0.0.0.0", "127.0.0.1", "[::1]", "[::ffff:127.0.0.1]", "127.0.0.1"):
-                with self.subTest(wing=initial):
+            cases = [("missing", "unknown"), ("0.0.0.0", "unknown"),
+                     ("127.0.0.1", "args-local"), ("[::1]", "args-flags"),
+                     ("[::ffff:127.0.0.1]", "status-local"), ("127.0.0.1", "unknown"),
+                     ("127.0.0.1", "args-relay"), ("127.0.0.1", "status-relay"),
+                     ("127.0.0.1", "bad-args-status")]
+            for index, (initial, metadata) in enumerate(cases):
+                with self.subTest(wing=initial, metadata=metadata):
+                    wing = root / ("main-wing-" + str(index)); wing.mkdir()
+                    environment["WT_IOS_WING_DIR"] = str(wing)
+                    saved = None
+                    if metadata == "args-local":
+                        saved = ["wing", "start", "--foreground", "--local-only"]
+                    elif metadata == "args-flags":
+                        saved = ["wing", "start", "--foreground", "--local-only", "--local", "--audit",
+                                 "--paths", "/fixture/space ' $()", "--roost", "https://relay.example",
+                                 "--listen=127.0.0.1", "--labels", "test"]
+                    elif metadata == "args-relay":
+                        saved = ["wing", "start", "--foreground", "--local", "--roost", "https://relay.example",
+                                 "--listen", "127.0.0.1", "--audit"]
+                    if saved:
+                        (wing / "wing.args").write_text("\n".join(saved))
+                        # Args take priority over status, including explicit local-only mode.
+                        (wing / "wing.status").write_text('{"roost_url":"https://other.example"}')
+                    elif metadata.startswith("status-") or metadata == "bad-args-status":
+                        roost = "https://relay.example" if metadata == "status-relay" else ""
+                        (wing / "wing.status").write_text(json.dumps({"state": "local", "roost_url": roost}))
+                        if metadata == "bad-args-status":
+                            (wing / "wing.args").write_text("invalid args")
                     environment["MOCK_WING_INITIAL"] = initial
                     (root / "pair-calls").write_text("")
                     result = subprocess.run(command[:-1] + ["--connect-only"], env=environment,
@@ -184,12 +210,29 @@ chmod 700 "$target"
                         self.assertIn("listens on loopback only", result.stderr)
                         self.assertIn("WINGTHING_DIR=" + str(wing), result.stderr)
                         self.assertIn("wing stop", result.stderr)
-                        self.assertIn("wing start --listen 0.0.0.0", result.stderr)
-                        self.assertIn("wing start --local-only --listen 0.0.0.0", result.stderr)
-                        self.assertIn("Current startup flags are unknown", result.stderr)
-                        self.assertIn("leave the relay disabled", result.stderr)
-                        self.assertIn("Otherwise, keep the existing relay mode", result.stderr)
-                        self.assertIn("Keep all other startup flags", result.stderr)
+                        starts = [shlex.split(line) for line in result.stderr.splitlines()
+                                  if " wing start " in line]
+                        if metadata == "unknown":
+                            self.assertEqual(len(starts), 2, result.stderr)
+                            self.assertIn("Current startup flags are unknown", result.stderr)
+                            self.assertIn("wing start --local-only --listen 0.0.0.0", result.stderr)
+                            self.assertIn("wing start --listen 0.0.0.0", result.stderr)
+                        else:
+                            self.assertEqual(len(starts), 1, result.stderr)
+                            self.assertNotIn("Current startup flags are unknown", result.stderr)
+                            restart = starts[0][starts[0].index("wing"):]
+                            expected = {
+                                "args-local": ["wing", "start", "--local-only"],
+                                "args-flags": ["wing", "start", "--local-only", "--local", "--audit",
+                                               "--paths", "/fixture/space ' $()", "--roost", "https://relay.example",
+                                               "--labels", "test"],
+                                "args-relay": ["wing", "start", "--local", "--roost", "https://relay.example", "--audit"],
+                                "status-local": ["wing", "start", "--local-only"],
+                                "status-relay": ["wing", "start", "--roost", "https://relay.example"],
+                                "bad-args-status": ["wing", "start", "--local-only"],
+                            }[metadata]
+                            self.assertEqual(restart, expected + ["--listen", "0.0.0.0"])
+                            self.assertEqual("--local-only" in restart, metadata not in {"args-relay", "status-relay"})
                         self.assertNotIn("Press Enter", result.stderr)
                     else:
                         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
