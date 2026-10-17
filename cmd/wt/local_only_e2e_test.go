@@ -356,7 +356,7 @@ func TestBuiltWTDefaultDaemonBootsWithoutAccountOrRelay(t *testing.T) {
 	if err != nil || !strings.Contains(string(output), "local control: ready") {
 		t.Fatalf("default local-only daemon start: %v\n%s", err, output)
 	}
-	if !strings.Contains(string(output), "Local network only. That's fine; nothing else needed.") || strings.Contains(string(output), "wingthing.ai") || strings.Contains(string(output), "require relay access") {
+	if !strings.Contains(string(output), "relay: disabled; local control is ready") || !strings.Contains(string(output), "--listen 0.0.0.0 for LAN access") || strings.Contains(string(output), "wingthing.ai") || strings.Contains(string(output), "require relay access") {
 		t.Fatalf("no-account startup advertised hosted access: %s", output)
 	}
 	statusData, err := os.ReadFile(filepath.Join(state, "wing.status"))

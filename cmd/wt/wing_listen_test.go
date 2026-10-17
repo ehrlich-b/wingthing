@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -197,6 +198,20 @@ func TestBuiltWTLocalOnlyListen(t *testing.T) {
 				if invitation.Local != "http://"+control.Address || len(invitation.Endpoints) != 0 {
 					t.Fatalf("invitation advertises unbound endpoints: %+v", invitation)
 				}
+			}
+			if net.ParseIP(host).IsLoopback() {
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				pair := exec.CommandContext(ctx, binary, "pair", "--show-link")
+				pair.Env = environment
+				output, err := pair.CombinedOutput()
+				if ctx.Err() != nil || err == nil || !strings.Contains(string(output), "main wing listens on loopback only") || !strings.Contains(string(output), "wt wing start --local-only --listen 0.0.0.0") {
+					t.Fatalf("pair did not explain loopback restriction promptly: %v: %s", err, output)
+				}
+				if bytes.Contains(output, []byte("wingthing://pair")) || bytes.Contains(output, []byte("\x1b[30;47m")) || bytes.Contains(output, []byte("Direct endpoint:")) {
+					t.Fatalf("pair displayed an unusable invitation: %s", output)
+				}
+				t.Log("pair=clear-loopback-warning invitation=hidden")
 			}
 			if tt.want == "127.0.0.1" && lan != "" {
 				connection, err := net.DialTimeout("tcp4", net.JoinHostPort(lan, port), time.Second)

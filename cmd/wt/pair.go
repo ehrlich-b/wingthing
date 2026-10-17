@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -22,6 +24,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const lanPairStartCommand = "wt wing start --local-only --listen 0.0.0.0"
+
 func phoneAdmin(ctx context.Context, op, id, name string, result any) error {
 	if !pake.Available {
 		return pakeUnavailable()
@@ -32,7 +36,7 @@ func phoneAdmin(ctx context.Context, op, id, name string, result any) error {
 	}
 	b, e := os.ReadFile(filepath.Join(cfg.Dir, "phone-control.json"))
 	if e != nil {
-		return errors.New("main wing is not ready for pairing; start it with wt wing start --local-only (or wt wing start if registered)")
+		return fmt.Errorf("main wing is not ready for pairing; for LAN pairing, start it with %s (or wt wing start if registered)", lanPairStartCommand)
 	}
 	var control phonepair.Control
 	if json.Unmarshal(b, &control) != nil || control.Port < 1 || control.Port > 65535 || control.WingID != cfg.WingID || control.Token == "" {
@@ -72,9 +76,18 @@ func phoneAdmin(ctx context.Context, op, id, name string, result any) error {
 }
 func pairCmd() *cobra.Command {
 	var showLink bool
-	cmd := &cobra.Command{Use: "pair", Short: "Pair a device with this machine's main wing", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		return runPairWithLink(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), showLink)
-	}}
+	cmd := &cobra.Command{
+		Use:   "pair",
+		Short: "Pair a device with this machine's main wing",
+		Long: "Pair a device with this machine's running main wing.\n" +
+			"For LAN pairing without a relay, start the wing with:\n  " + lanPairStartCommand + "\n" +
+			"The --local-only flag alone listens on loopback only; phones cannot reach it over the LAN.\n" +
+			"If the wing is already running, stop it with wt wing stop before restarting with --listen.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runPairWithLink(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), showLink)
+		},
+	}
 	cmd.Flags().BoolVar(&showLink, "show-link", false, "show the one-time invitation for browser or phone paste")
 	return cmd
 }
@@ -204,7 +217,29 @@ func runPairWithLink(ctx context.Context, in io.Reader, out io.Writer, showLink 
 
 var errPaired = errors.New("paired")
 
+func loopbackEndpoint(endpoint string) bool {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(u.Hostname())
+	return strings.EqualFold(u.Hostname(), "localhost") || (ip != nil && ip.IsLoopback())
+}
+
 func showInvitation(out io.Writer, q phonepair.Invitation) error {
+	loopbackOnly := loopbackEndpoint(q.Local)
+	for _, endpoint := range q.Endpoints {
+		if !loopbackEndpoint(endpoint) {
+			loopbackOnly = false
+		}
+	}
+	if loopbackOnly {
+		hint := fmt.Sprintf("main wing listens on loopback only; a phone cannot connect over the LAN. For LAN pairing, stop it with wt wing stop, restart with %s, then run wt pair", lanPairStartCommand)
+		if q.Relay == "" {
+			return errors.New(hint)
+		}
+		fmt.Fprintln(out, "Warning: "+hint+". This invitation can still use the registered relay.")
+	}
 	place := "this machine"
 	if runtime.GOOS == "darwin" {
 		place = "this Mac"
@@ -241,9 +276,16 @@ func showInvitation(out io.Writer, q phonepair.Invitation) error {
 		fmt.Fprintln(out, "Local network only. That's fine; nothing else needed.")
 	}
 	for _, endpoint := range q.Endpoints {
-		fmt.Fprintf(out, "Direct endpoint: %s\n", endpoint)
+		if !loopbackEndpoint(endpoint) {
+			fmt.Fprintf(out, "Direct endpoint: %s\n", endpoint)
+		}
 	}
-	fmt.Fprintf(out, "\n%s\n5:00 · Waiting for scan...\nSame Wi-Fi: no account needed. Away from home: needs %s registered once (`wt login`).\n", q.Secret, place)
+	fmt.Fprintf(out, "\n%s\n5:00 · Waiting for scan...\n", q.Secret)
+	if loopbackOnly {
+		fmt.Fprintln(out, "Pair through the registered relay; LAN access is unavailable.")
+	} else {
+		fmt.Fprintf(out, "Same Wi-Fi: no account needed. Away from home: needs %s registered once (`wt login`).\n", place)
+	}
 	return nil
 }
 func devicesCmd() *cobra.Command {

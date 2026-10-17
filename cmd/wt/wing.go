@@ -154,7 +154,7 @@ func wingStartCmd() *cobra.Command {
 				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
 				fmt.Println("  local control: ready")
 				if localOnlyFlag {
-					fmt.Println("  Local network only. That's fine; nothing else needed.")
+					fmt.Println("  relay: disabled; local control is ready")
 				}
 			case "auth_failed":
 				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
@@ -192,7 +192,7 @@ func wingStartCmd() *cobra.Command {
 			fmt.Printf("  log: %s\n", daemonctl.WingLogPath())
 			fmt.Println()
 			if localOnlyFlag {
-				fmt.Println("use wt pair to connect your phone, or wt mcp stdio to control the wing")
+				fmt.Println("use wt pair to connect your phone (loopback listeners need a restart with --listen 0.0.0.0 for LAN access), or wt mcp stdio to control the wing")
 			} else if cfgLoaded, cfgErr := config.Load(); cfgErr == nil {
 				browserURL := wingpolicy.RoostBrowserURL(wingpolicy.ResolveWingRelayHTTPURL(cfgLoaded, roostFlag, localFlag))
 				fmt.Printf("open %s for wing status and direct-agent setup\n", browserURL)
