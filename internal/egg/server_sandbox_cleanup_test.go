@@ -24,7 +24,7 @@ func TestRunSessionDestroysSandbox(t *testing.T) {
 	if err := os.MkdirAll(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	for _, scenario := range []string{"exit", "initial turn", "endpoint", "pty", "cancel"} {
+	for _, scenario := range []string{"exit", "initial turn", "endpoint", "pty", "cancel", "serve error"} {
 		t.Run(scenario, func(t *testing.T) {
 			temp, err := os.MkdirTemp(root, "s")
 			if err != nil {
@@ -70,8 +70,58 @@ func TestRunSessionDestroysSandbox(t *testing.T) {
 				rc.Command = []string{"/bin/sh", "-c", "exec sleep 30"}
 				cancel()
 				want = "context canceled"
+			case "serve error":
+				rc.Command = []string{"/bin/sh", "-c", "exec sleep 30"}
+				want = "closed network connection"
 			}
-			err = (&Server{dir: dir, token: "fixture"}).RunSession(ctx, rc)
+			s := &Server{dir: dir, token: "fixture"}
+			if scenario == "serve error" {
+				result := make(chan error, 1)
+				go func() { result <- s.RunSession(ctx, rc) }()
+				// Session publication under mu happens after listener preparation
+				// and PTY startup. Closing that listener forces Serve to fail while
+				// the provider is still alive, exercising the shutdown branch.
+				var sess *Session
+				for sess == nil {
+					s.mu.RLock()
+					sess = s.session
+					s.mu.RUnlock()
+					if sess != nil {
+						break
+					}
+					select {
+					case err := <-result:
+						t.Fatalf("session failed before Serve: %v", err)
+					case <-ctx.Done():
+						t.Fatal("session did not start")
+					case <-time.After(5 * time.Millisecond):
+					}
+				}
+				left, globErr := filepath.Glob(filepath.Join(tmp, "wt-sandbox-*"))
+				if globErr != nil || len(left) != 1 {
+					t.Fatalf("expected active sandbox before serve failure: %v (%v)", left, globErr)
+				}
+				if err := s.listener.Close(); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case err = <-result:
+				case <-ctx.Done():
+					t.Fatal("serve-error shutdown did not finish")
+				}
+				select {
+				case <-sess.done:
+				case <-ctx.Done():
+					t.Fatal("serve-error shutdown did not reap provider")
+				}
+				for _, name := range []string{"egg.sock", "egg.token", "egg.pid"} {
+					if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+						t.Fatalf("endpoint %s survived serve failure: %v", name, err)
+					}
+				}
+			} else {
+				err = s.RunSession(ctx, rc)
+			}
 			if (want == "" && err != nil) || (want != "" && (err == nil || !strings.Contains(err.Error(), want))) {
 				t.Fatalf("RunSession error = %v, want %q", err, want)
 			}

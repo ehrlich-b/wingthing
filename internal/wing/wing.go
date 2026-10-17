@@ -42,6 +42,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/phonepair"
 	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	relaypkg "github.com/ehrlich-b/wingthing/internal/relay"
+	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/ehrlich-b/wingthing/internal/sessionrole"
 	"github.com/ehrlich-b/wingthing/internal/tunnel"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
@@ -698,6 +699,7 @@ func sendReplayChunked(sessionID string, raw []byte, gcm cipher.AEAD, write ws.P
 func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-chan os.Signal, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local, vte, sharedHost bool, tokenOverride *auth.DeviceToken) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	sandbox.SweepStaleDirectories()
 	version := options.Version
 	cfg, err := config.Load()
 	if err != nil {

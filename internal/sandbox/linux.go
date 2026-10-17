@@ -70,6 +70,7 @@ var deniedSyscallsCommon = []uint32{
 }
 
 type linuxSandbox struct {
+	directory     *sandboxDirectory
 	cfg           Config
 	tmpDir        string
 	cgroup        *cgroupManager
@@ -106,10 +107,11 @@ func newLinuxSandbox(cfg Config, checkNamespace func(bool) error, createCgroup f
 		return nil, fmt.Errorf("linux sandbox capability probe: %w", err)
 	}
 
-	dir, err := os.MkdirTemp("", "wt-sandbox-*")
+	directory, err := newSandboxDirectory()
 	if err != nil {
 		return nil, fmt.Errorf("create sandbox tmpdir: %w", err)
 	}
+	dir := directory.path
 
 	// Configured RSS and process-tree limits require cgroups. RLIMIT_AS
 	// cannot replace either control.
@@ -117,7 +119,7 @@ func newLinuxSandbox(cfg Config, checkNamespace func(bool) error, createCgroup f
 	if cfg.MemLimit > 0 || cfg.PidLimit > 0 {
 		cg, err = createCgroup(cfg.SessionID, cfg.MemLimit, cfg.PidLimit)
 		if err != nil || cg == nil {
-			os.RemoveAll(dir)
+			directory.destroy()
 			if err == nil {
 				err = fmt.Errorf("cgroup support is unavailable")
 			}
@@ -126,7 +128,7 @@ func newLinuxSandbox(cfg Config, checkNamespace func(bool) error, createCgroup f
 	}
 
 	logDiagnostic(cfg, "linux sandbox: created tmpdir=%s network=%s cgroup=%v", dir, cfg.NetworkNeed, cg != nil)
-	return &linuxSandbox{cfg: cfg, tmpDir: dir, cgroup: cg, userNamespace: !hasNamespaceCapability}, nil
+	return &linuxSandbox{directory: directory, cfg: cfg, tmpDir: dir, cgroup: cg, userNamespace: !hasNamespaceCapability}, nil
 }
 
 func hasEffectiveCAPSYSADMIN() bool {
@@ -494,7 +496,11 @@ func (s *linuxSandbox) Destroy() error {
 				log.Printf("linux sandbox: cgroup destroy: %v", err)
 			}
 		}
-		s.destroyErr = os.RemoveAll(s.tmpDir)
+		if s.directory != nil {
+			s.destroyErr = s.directory.destroy()
+		} else {
+			s.destroyErr = os.RemoveAll(s.tmpDir)
+		}
 	})
 	return s.destroyErr
 }
