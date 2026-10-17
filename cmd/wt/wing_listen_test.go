@@ -183,6 +183,9 @@ func TestBuiltWTLocalOnlyListen(t *testing.T) {
 				if strings.Contains(string(startup), "for LAN phone pairing, stop with") != wantsRestart {
 					t.Fatalf("startup restart advice disagrees with listener: %s", startup)
 				}
+				if wantsRestart && (!strings.Contains(string(startup), lanPairStartCommand) || !strings.Contains(string(startup), "retaining all other startup flags")) {
+					t.Fatalf("startup restart advice drops local-only mode or other flags: %s", startup)
+				}
 				if strings.Contains(string(startup), "relay: disabled; local control is ready") {
 					t.Fatalf("duplicate local control readiness: %s", startup)
 				}
@@ -219,6 +222,9 @@ func TestBuiltWTLocalOnlyListen(t *testing.T) {
 				}
 				if bytes.Contains(output, []byte("wingthing://pair")) || bytes.Contains(output, []byte("\x1b[30;47m")) || bytes.Contains(output, []byte("Direct endpoint:")) {
 					t.Fatalf("pair displayed an unusable invitation: %s", output)
+				}
+				if !strings.Contains(string(output), lanPairStartCommand) || !strings.Contains(string(output), "Current startup flags are unknown") {
+					t.Fatalf("pair restart advice drops --local-only: %s", output)
 				}
 				t.Log("pair=clear-loopback-warning invitation=hidden")
 			}

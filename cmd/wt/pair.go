@@ -26,6 +26,9 @@ import (
 
 const lanPairStartCommand = "wt wing start --local-only --listen 0.0.0.0"
 
+// Listener and relay metadata cannot establish which startup flags were used.
+const lanPairModeGuidance = "Current startup flags are unknown. If started with --local-only, use " + lanPairStartCommand + " (keeps the relay disabled); otherwise use wt wing start --listen 0.0.0.0 (keeps the existing relay mode). Keep all other startup flags; replace any existing --listen value with 0.0.0.0."
+
 func phoneAdmin(ctx context.Context, op, id, name string, result any) error {
 	if !pake.Available {
 		return pakeUnavailable()
@@ -76,7 +79,7 @@ func readPhoneControl() (phonepair.Control, error) {
 	}
 	b, e := os.ReadFile(filepath.Join(cfg.Dir, "phone-control.json"))
 	if e != nil {
-		return phonepair.Control{}, fmt.Errorf("main wing is not ready for pairing; for LAN pairing, start it with %s (or wt wing start --listen 0.0.0.0 if registered)", lanPairStartCommand)
+		return phonepair.Control{}, fmt.Errorf("main wing is not ready for pairing; for LAN pairing, stop any running wing with wt wing stop before restarting. %s", lanPairModeGuidance)
 	}
 	var control phonepair.Control
 	if json.Unmarshal(b, &control) != nil || control.Port < 1 || control.Port > 65535 || control.WingID != cfg.WingID || control.Token == "" {
@@ -93,7 +96,7 @@ func pairCmd() *cobra.Command {
 		Long: "Pair a device with this machine's running main wing.\n" +
 			"For LAN pairing without a relay, start the wing with:\n  " + lanPairStartCommand + "\n" +
 			"The --local-only flag alone listens on loopback only; phones cannot reach it over the LAN.\n" +
-			"If the wing is already running, stop it with wt wing stop before restarting with --listen.",
+			"If the wing is already running, stop it with wt wing stop before restarting.\n" + lanPairModeGuidance,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runPairWithLink(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), showLink)
@@ -248,7 +251,7 @@ func showInvitation(out io.Writer, q phonepair.Invitation, listenAddress string)
 		}
 	}
 	if loopbackOnly {
-		hint := "main wing listens on loopback only; a phone cannot connect over the LAN. For LAN pairing, stop it with wt wing stop, restart with wt wing start --listen 0.0.0.0 keeping your existing startup flags (including --local-only if used), then run wt pair"
+		hint := "main wing listens on loopback only; a phone cannot connect over the LAN. For LAN pairing, stop it with wt wing stop before restarting. " + lanPairModeGuidance + " Then run wt pair"
 		if listenAddress != "" && !loopbackEndpoint("http://"+listenAddress) {
 			hint = "main wing has no advertised LAN endpoint; connect this host to a LAN or tailnet, then restart the wing with its existing flags and run wt pair"
 		}

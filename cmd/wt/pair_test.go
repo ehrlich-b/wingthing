@@ -113,8 +113,10 @@ func TestPairLoopbackOnlyWarning(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "listens on loopback only") || !strings.Contains(err.Error(), "a phone cannot connect over the LAN") || !strings.Contains(err.Error(), "wt wing start --listen 0.0.0.0") {
 				t.Fatalf("missing loopback warning: %v", err)
 			}
-			if strings.Contains(err.Error(), "restart with "+lanPairStartCommand) || !strings.Contains(err.Error(), "keeping your existing startup flags") {
-				t.Fatalf("restart guidance could disable an existing relay: %v", err)
+			for _, want := range []string{lanPairStartCommand, "Current startup flags are unknown", "keeps the relay disabled", "keeps the existing relay mode", "Keep all other startup flags"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("restart guidance missing %q: %v", want, err)
+				}
 			}
 			if out.Len() != 0 {
 				t.Fatalf("unusable invitation was displayed: %s", out.String())

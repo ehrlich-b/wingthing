@@ -185,6 +185,11 @@ chmod 700 "$target"
                         self.assertIn("WINGTHING_DIR=" + str(wing), result.stderr)
                         self.assertIn("wing stop", result.stderr)
                         self.assertIn("wing start --listen 0.0.0.0", result.stderr)
+                        self.assertIn("wing start --local-only --listen 0.0.0.0", result.stderr)
+                        self.assertIn("Current startup flags are unknown", result.stderr)
+                        self.assertIn("leave the relay disabled", result.stderr)
+                        self.assertIn("Otherwise, keep the existing relay mode", result.stderr)
+                        self.assertIn("Keep all other startup flags", result.stderr)
                         self.assertNotIn("Press Enter", result.stderr)
                     else:
                         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

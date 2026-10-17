@@ -195,7 +195,7 @@ func wingStartCmd() *cobra.Command {
 			fmt.Println()
 			if localOnlyFlag {
 				if pairingLoopback {
-					fmt.Println("for LAN phone pairing, stop with wt wing stop, then start with " + lanPairStartCommand + "; use wt mcp stdio for local control")
+					fmt.Println("for LAN phone pairing, stop with wt wing stop, then start with " + lanPairStartCommand + " retaining all other startup flags and replacing any existing --listen value; use wt mcp stdio for local control")
 				} else {
 					fmt.Println("use wt pair to connect your phone, or wt mcp stdio to control the wing")
 				}

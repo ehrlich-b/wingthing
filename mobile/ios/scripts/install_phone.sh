@@ -171,9 +171,13 @@ PYTHON
 ) || die 'Main wing pairing control is invalid; inspect phone-control.json.'
 if [[ $LISTENER == loopback ]]; then
   printf '%s\n' 'Main wing listens on loopback only; a phone cannot connect over the LAN.' \
-    'When ready to interrupt this wing, run these commands, retaining any other startup flags:' >&2
+    'Current startup flags are unknown. When ready to interrupt this wing, stop it:' >&2
   printf '%q ' "${WT[@]}" wing stop >&2; printf '\n' >&2
+  printf '%s\n' 'If started with --local-only, keep it to leave the relay disabled:' >&2
+  printf '%q ' "${WT[@]}" wing start --local-only --listen 0.0.0.0 >&2; printf '\n' >&2
+  printf '%s\n' 'Otherwise, keep the existing relay mode:' >&2
   printf '%q ' "${WT[@]}" wing start --listen 0.0.0.0 >&2; printf '\n' >&2
+  printf '%s\n' 'Keep all other startup flags; replace any existing --listen value with 0.0.0.0.' >&2
   die 'Then rerun --connect-only. The installer has left the running wing untouched.'
 fi
 step '7/7 Scan this with the Wingthing app'
