@@ -84,17 +84,22 @@ export async function e2eEncrypt(plaintext) {
     return bytesToB64(result);
 }
 
-export async function e2eDecrypt(encoded) {
-    if (!S.e2eKey) {
-        var binary = atob(encoded);
-        var bytes = new Uint8Array(binary.length);
-        for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        return bytes;
+// Live PTY sessions always require E2E, just like terminal input. Plain
+// archive data is decoded by its own format reader, never by this function.
+export function decryptOutput(key, encoded) {
+    try {
+        if (!key) throw new Error('terminal encryption key unavailable');
+        var data = b64ToBytes(encoded);
+        var iv = data.slice(0, 12);
+        var ciphertext = data.slice(12);
+        return new Uint8Array(gcm(key, iv).decrypt(ciphertext));
+    } catch (cause) {
+        var error = new Error("Can't decrypt output", { cause: cause });
+        error.name = 'OutputDecryptionError';
+        throw error;
     }
-    var data = b64ToBytes(encoded);
-    var iv = data.slice(0, 12);
-    var ciphertext = data.slice(12);
-    var cipher = gcm(S.e2eKey, iv);
-    var plaintext = cipher.decrypt(ciphertext);
-    return new Uint8Array(plaintext);
+}
+
+export async function e2eDecrypt(encoded) {
+    return decryptOutput(S.e2eKey, encoded);
 }

@@ -46,3 +46,21 @@ test('input encryption has no plaintext fallback and keyed Unicode input round t
         S.e2eKey = null;
     }
 });
+
+
+test('output decryption rejects plaintext, absent keys and unauthenticated frames', async () => {
+    const plaintext = bytesToB64(new TextEncoder().encode('injected terminal output'));
+    S.e2eKey = null;
+    await assert.rejects(e2eDecrypt(plaintext), { name: 'OutputDecryptionError', message: "Can't decrypt output" });
+    S.e2eKey = new Uint8Array(32).fill(7);
+    try {
+        await assert.rejects(e2eDecrypt(plaintext), { name: 'OutputDecryptionError' });
+        const encoded = await e2eEncrypt('authentic output');
+        assert.equal(new TextDecoder().decode(await e2eDecrypt(encoded)), 'authentic output');
+        S.e2eKey = new Uint8Array(32).fill(8);
+        await assert.rejects(e2eDecrypt(encoded), { name: 'OutputDecryptionError' });
+        for (const data of ['', '%%%', 'YWJj']) {
+            await assert.rejects(e2eDecrypt(data), { name: 'OutputDecryptionError' });
+        }
+    } finally { S.e2eKey = null; }
+});

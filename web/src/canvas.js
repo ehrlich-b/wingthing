@@ -3,8 +3,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { gcm } from '@noble/ciphers/aes.js';
 import { S, DOM } from './state.js';
-import { deriveE2EKey, identityPubKey } from './crypto.js';
-import { b64ToBytes, bytesToB64, wingDisplayName, agentWithIcon } from './helpers.js';
+import { deriveE2EKey, identityPubKey, decryptOutput } from './crypto.js';
+import { bytesToB64, wingDisplayName, agentWithIcon } from './helpers.js';
 import { onlineWings, showPalette, setCanvasLaunchCallback } from './palette.js';
 import { sendTunnelRequest, randomUUID } from './tunnel.js';
 import { checkForNotification, setNotification, clearNotification } from './notify.js';
@@ -13,7 +13,7 @@ import { createCanvasSessionState } from './canvas-session-state.js';
 import { clearTermBuffer } from './terminal.js';
 import { terminalControlFailure, terminalControlOptions, ptyAttachRequest, ptyResizeRequest, renderTerminalControlNotice } from './terminal-attachment.js';
 import { requestCanvasStop } from './canvas-stop.js';
-import { createOutputNotice, endOutputNotice } from './output-notice-content.js';
+import { createOutputNotice, endOutputNotice, updateOutputNotice } from './output-notice-content.js';
 
 // Grid constants
 var CELL = 40;
@@ -270,7 +270,7 @@ function setupCanvasKey(sess, publicKey, drainOutput) {
         sess.e2eKey = null;
         sess.inputBlocked = true;
         sess.attached = false;
-        var message = 'Cannot secure terminal: ' + error.message;
+        var message = "Can't decrypt output. Cannot secure terminal: " + error.message;
         sess.term.writeln('\r\n\x1b[31m' + message + '\x1b[0m');
         var notice = sess.controlNotice;
         notice.replaceChildren();
@@ -290,20 +290,6 @@ function setupCanvasKey(sess, publicKey, drainOutput) {
         sess.ws.close();
     });
     sess.keySetup = setup;
-}
-
-function sessionDecrypt(key, encoded) {
-    if (!key) {
-        var binary = atob(encoded);
-        var bytes = new Uint8Array(binary.length);
-        for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        return bytes;
-    }
-    var data = b64ToBytes(encoded);
-    var iv = data.slice(0, 12);
-    var ct = data.slice(12);
-    var cipher = gcm(key, iv);
-    return new Uint8Array(cipher.decrypt(ct));
 }
 
 // --- World transform ---
@@ -748,11 +734,14 @@ function endCanvasOutput(sess, error) {
     }
 }
 
-function showCanvasOutputIncomplete(sess) {
-    if (!sess.outputNotice) {
+function showCanvasOutputIncomplete(sess, error) {
+    var decryptionFailed = error && error.name === 'OutputDecryptionError';
+    if (sess.outputNotice) {
+        updateOutputNotice(sess.outputNotice, decryptionFailed);
+    } else {
         var notice = createOutputNotice(function() {
             if (notice.isConnected) reconnectCanvasSession(sess);
-        });
+        }, decryptionFailed);
         if (sess.exited) endOutputNotice(notice);
         sess.outputNotice = notice;
         sess.el.querySelector('.canvas-terminal-body').before(notice);
@@ -1100,14 +1089,14 @@ function processOutput(sess, dataStr, compressed) {
     // Serialize decoding so a slow gzip frame cannot be overtaken by live data.
     sess.outputQueue = (sess.outputQueue || Promise.resolve()).then(function() {
         if (!current()) return;
-        var bytes = sessionDecrypt(sess.e2eKey, dataStr);
+        var bytes = decryptOutput(sess.e2eKey, dataStr);
         return compressed ? gunzip(bytes) : bytes;
     }).then(function(bytes) {
         if (!current() || !bytes) return;
         sess.term.write(bytes);
         checkOutputForAttention(sess, bytes);
-    }).catch(function() {
-        if (current()) showCanvasOutputIncomplete(sess);
+    }).catch(function(error) {
+        if (current()) showCanvasOutputIncomplete(sess, error);
     });
 }
 
