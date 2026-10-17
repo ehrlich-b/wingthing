@@ -39,7 +39,7 @@ func phoneAdmin(ctx context.Context, op, id, name string, result any) error {
 		return errors.New("invalid main wing pairing control")
 	}
 	body, _ := json.Marshal(map[string]string{"Op": op, "ID": id, "Name": name})
-	req, e := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("http://127.0.0.1:%d/admin", control.Port), bytes.NewReader(body))
+	req, e := http.NewRequestWithContext(ctx, "POST", control.AdminURL(), bytes.NewReader(body))
 	if e != nil {
 		return e
 	}

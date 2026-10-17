@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,6 +22,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
+	"github.com/ehrlich-b/wingthing/internal/phonepair"
 	"github.com/ehrlich-b/wingthing/internal/wing"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/spf13/cobra"
@@ -58,19 +61,23 @@ func wingStartCmd() *cobra.Command {
 	var auditFlag bool
 	var localFlag bool
 	var localOnlyFlag bool
+	var listenFlag string
 	var rawReplayFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the wing runtime and local control socket",
-		Long:  "Start a wing and its local MCP control socket. Without registration, local-only is the default. Use --local-only to keep an already registered wing off the relay. Runs as a background daemon by default. Use --foreground for debugging.",
+		Long:  "Start a wing and its local MCP control socket. Without registration, local-only is the default. Use --local-only to keep an already registered wing off the relay. With --local-only, phone pairing listens on 127.0.0.1; use --listen 0.0.0.0 to allow LAN access without a relay. Runs as a background daemon by default. Use --foreground for debugging.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if localOnlyFlag && (localFlag || roostFlag != "" || orgFlag != "") {
 				return fmt.Errorf("--local-only cannot be combined with --local, --roost or --org")
 			}
+			if cmd.Flags().Changed("listen") && net.ParseIP(listenFlag) == nil {
+				return fmt.Errorf("--listen must be an IP address (for example 127.0.0.1, ::1 or 0.0.0.0)")
+			}
 			// Foreground mode: run directly
 			if foregroundFlag {
-				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debugFlag, auditFlag, localFlag, !rawReplayFlag, localOnlyFlag)
+				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debugFlag, auditFlag, localFlag, !rawReplayFlag, localOnlyFlag, listenFlag)
 			}
 			lifecycleLock, err := daemonctl.AcquireDaemonLifecycleLock()
 			if err != nil {
@@ -121,6 +128,9 @@ func wingStartCmd() *cobra.Command {
 			if localOnlyFlag {
 				childArgs = append(childArgs, "--local-only")
 			}
+			if listenFlag != "" {
+				childArgs = append(childArgs, "--listen", listenFlag)
+			}
 			if rawReplayFlag {
 				childArgs = append(childArgs, "--raw-replay")
 			}
@@ -156,6 +166,14 @@ func wingStartCmd() *cobra.Command {
 				// Timeout or still connecting — daemon is running, relay might be slow
 				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
 				fmt.Printf("  relay: connecting...\n")
+			}
+			if state, err := config.StateDir(); err == nil {
+				if data, err := os.ReadFile(filepath.Join(state, "phone-control.json")); err == nil {
+					var control phonepair.Control
+					if json.Unmarshal(data, &control) == nil && control.Address != "" {
+						fmt.Printf("  phone pairing: listening on %s\n", control.Address)
+					}
+				}
 			}
 			if err := child.Process.Release(); err != nil {
 				log.Printf("warning: failed to release daemon process handle: %v", err)
@@ -200,7 +218,8 @@ func wingStartCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&allowFlags, "allow", nil, "ephemeral passkey public key(s) for this session")
 	cmd.Flags().StringVar(&pathsFlag, "paths", "", "comma-separated directories the wing can browse (default: ~/)")
 	cmd.Flags().BoolVar(&auditFlag, "audit", false, "enable audit logging for all egg sessions")
-	cmd.Flags().BoolVar(&localOnlyFlag, "local-only", false, "serve local MCP without an account, token, roost or relay connection")
+	cmd.Flags().BoolVar(&localOnlyFlag, "local-only", false, "serve local MCP without an account or relay; bind phone pairing to loopback unless --listen is set")
+	cmd.Flags().StringVar(&listenFlag, "listen", "", "phone pairing listen IP (default with --local-only: 127.0.0.1; otherwise: 0.0.0.0); use 0.0.0.0 for LAN access")
 	cmd.Flags().BoolVar(&localFlag, "local", false, "connect to localhost:8080 (for self-hosted wt serve)")
 	cmd.Flags().BoolVar(&rawReplayFlag, "raw-replay", false, "use raw replay buffer for reconnect instead of VTerm snapshot")
 
@@ -270,7 +289,7 @@ func startBackgroundWing(childArgs []string) (*exec.Cmd, error) {
 	return child, nil
 }
 
-func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local, vte, localOnly bool) error {
+func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local, vte, localOnly bool, listenAddress string) error {
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	defer cmdutil.RemoveWithLog(daemonctl.WingStatusPath())
@@ -279,7 +298,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	signal.Notify(sighupCh, syscall.SIGHUP)
 	defer signal.Stop(sighupCh)
 
-	return wing.RunWingWithContext(wing.EntryOptions{Version: version, LocalOnly: localOnly}, ctx, sighupCh, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debug, audit, local, vte, false, nil)
+	return wing.RunWingWithContext(wing.EntryOptions{Version: version, LocalOnly: localOnly, ListenAddress: listenAddress}, ctx, sighupCh, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debug, audit, local, vte, false, nil)
 }
 
 func wingStopCmd() *cobra.Command {

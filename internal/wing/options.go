@@ -10,6 +10,7 @@ import (
 type EntryOptions struct {
 	Version           string
 	LocalOnly         bool
+	ListenAddress     string
 	SetSessionService func(*wingsession.Service)
 	// RelayState observes the optional adapter without controlling wing lifetime.
 	RelayState func(string, error)
