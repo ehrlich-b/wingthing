@@ -53,7 +53,7 @@ type Server struct {
 	closeOnce   sync.Once
 }
 
-func Listen(ctx context.Context, dir, wingID, name string, relay func() string, private *ecdh.PrivateKey, handler Handler, host string) (*Server, error) {
+func Listen(ctx context.Context, dir, wingID, name string, relay func() string, private *ecdh.PrivateKey, handler Handler, host, mode string) (*Server, error) {
 	if !pake.Available {
 		return nil, nil
 	}
@@ -114,6 +114,8 @@ func Listen(ctx context.Context, dir, wingID, name string, relay func() string, 
 		var result any
 		var e error
 		switch req.Op {
+		case "mode":
+			result = RuntimeMode{WingID: wingID, Mode: mode}
 		case "create":
 			result, e = m.Create()
 		case "status":

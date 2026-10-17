@@ -365,26 +365,15 @@ func TestSignalDaemonStoppedInstallationIsNoOpButInvalidMetadataRejects(t *testi
 	}
 }
 
-func TestManualWingRestartGuidancePreservesMode(t *testing.T) {
-	for _, tc := range []struct {
-		name, status, want string
-		unknown            bool
-	}{
-		{name: "local-only", status: `{"roost_url":""}`, want: "wt wing start --local-only"},
-		{name: "relay", status: `{"roost_url":"https://relay.example"}`, want: "wt wing start --roost 'https://relay.example'"},
-		{name: "unknown", want: "wt wing start --local-only if the relay was disabled, or wt wing start otherwise", unknown: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("WINGTHING_DIR", t.TempDir())
-			if tc.status != "" {
-				if err := os.WriteFile(WingStatusPath(), []byte(tc.status), 0600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			got := manualWingRestartGuidance()
-			if !strings.Contains(got, tc.want) || strings.Contains(got, "current startup flags are unknown") != tc.unknown || strings.Contains(got, "otherwise") != tc.unknown {
-				t.Fatalf("mode was lost in restart guidance: %s", got)
-			}
-		})
+func TestManualWingRestartGuidanceIgnoresStaleStatus(t *testing.T) {
+	t.Setenv("WINGTHING_DIR", t.TempDir())
+	if err := os.WriteFile(WingStatusPath(), []byte(`{"roost_url":"https://dead.example"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got := ManualWingRestartGuidance()
+	for _, want := range []string{"wt wing start --local-only", "\nwt wing start\n", "unavailable or ambiguous", "must be added by hand"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q: %s", want, got)
+		}
 	}
 }

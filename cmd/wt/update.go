@@ -83,9 +83,13 @@ func updateCmd() *cobra.Command {
 			// neither can create a duplicate listener.
 			if daemonState != nil {
 				kind := string(daemonState.Kind)
+				restartGuidance := fmt.Sprintf("Run wt %s stop before restarting with wt %s start.", kind, kind)
+				if daemonState.Kind == daemonctl.WingDaemon {
+					restartGuidance = daemonctl.ManualWingRestartGuidance()
+				}
 				fmt.Printf("restarting %s daemon (pid %d)...\n", kind, daemonState.Pid)
 				if err := daemonctl.StopDaemonAndWait(daemonState.Pid, daemonState.Kind, 5*time.Second); err != nil {
-					return fmt.Errorf("updated to %s but could not restart daemon: %w; run 'wt %s stop' and 'wt %s start' manually", rel.TagName, err, kind, kind)
+					return fmt.Errorf("updated to %s but could not restart daemon: %w; %s", rel.TagName, err, restartGuidance)
 				}
 				if daemonState.Kind == daemonctl.RoostDaemon {
 					if err := cmdutil.RemoveFiles(daemonctl.RoostPidPath(), daemonctl.RoostArgsPath()); err != nil {
@@ -106,7 +110,7 @@ func updateCmd() *cobra.Command {
 				child.Stderr = os.Stderr
 				if err := child.Run(); err != nil {
 					fmt.Printf("warning: failed to restart %s: %v\n", kind, err)
-					fmt.Printf("run 'wt %s start' manually to restart\n", kind)
+					fmt.Println(restartGuidance)
 				}
 			} else if err := lifecycleLock.Close(); err != nil {
 				return fmt.Errorf("release daemon lifecycle lock: %w", err)

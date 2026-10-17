@@ -148,7 +148,7 @@ func wingStartCmd() *cobra.Command {
 				startupErr := fmt.Errorf("wing daemon exited before readiness; inspect %s", daemonctl.WingLogPath())
 				return errors.Join(startupErr, cmdutil.RemoveFiles(daemonctl.WingPidPath(), daemonctl.WingArgsPath(), daemonctl.WingStatusPath()))
 			case "local":
-				if status, err := daemonctl.ReadWingStatus(); err == nil && status.RoostURL == "" {
+				if state, err := config.StateDir(); err == nil && phonepair.RunningMode(state) == phonepair.ModeLocalOnly {
 					localOnlyFlag = true
 				}
 				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
@@ -195,7 +195,7 @@ func wingStartCmd() *cobra.Command {
 			fmt.Println()
 			if localOnlyFlag {
 				if pairingLoopback {
-					fmt.Println("for LAN phone pairing, stop with wt wing stop, then start with " + lanPairStartCommand + " retaining all other startup flags and replacing any existing --listen value; use wt mcp stdio for local control")
+					fmt.Println("for LAN phone pairing, stop with wt wing stop before restarting.\n" + lanPairRestartGuidance() + "\nUse wt mcp stdio for local control.")
 				} else {
 					fmt.Println("use wt pair to connect your phone, or wt mcp stdio to control the wing")
 				}

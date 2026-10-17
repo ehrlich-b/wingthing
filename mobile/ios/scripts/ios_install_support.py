@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Read-only parsers and bounded identity checks for the personal installer."""
 import base64
+import http.client
 import json
+import ipaddress
 import os
 from pathlib import Path
 import plistlib
 import re
-import shlex
 import sys
 import time
 import urllib.parse
@@ -52,39 +53,35 @@ def signing_teams(preferences):
     return sorted(teams)
 
 
-def lan_restart_args(directory):
-    """Preserve recorded launch flags, replacing only the phone listen address."""
-    directory = Path(directory)
+def running_mode(directory):
+    """Ask the live owner of the private control token; never infer from files."""
     try:
-        args = (directory / "wing.args").read_text().rstrip("\n").split("\n")
-        if (len(args) < 3 or args[0] not in {"wing", "daemon"}
-                or args[1] != "start" or "--foreground" not in args[2:]
-                or any("\0" in arg for arg in args)):
-            raise ValueError()
-        result = args[:2]
-        index = 2
-        while index < len(args):
-            arg = args[index]
-            # --foreground is injected by the daemon launcher, not a mode flag.
-            if arg == "--listen":
-                if index + 1 == len(args):
-                    raise ValueError()
-                index += 2
-                continue
-            if arg != "--foreground" and not arg.startswith("--listen="):
-                result.append(arg)
-            index += 1
-    except (OSError, ValueError):
-        try:
-            status = json.loads((directory / "wing.status").read_text())
-            roost = status.get("roost_url", "")
-            if not isinstance(roost, str):
-                raise ValueError()
-            result = ["wing", "start"]
-            result += ["--roost", roost] if roost else ["--local-only"]
-        except (OSError, ValueError, AttributeError):
+        control = json.loads((Path(directory) / "phone-control.json").read_text())
+        port, token, wing = control["port"], control["token"], control["wing_id"]
+        if (type(port) is not int or not 1 <= port <= 65535
+                or not isinstance(token, str) or not token or not isinstance(wing, str) or not wing):
             return None
-    return result + ["--listen", "0.0.0.0"]
+        address = control.get("address", "")
+        host = urllib.parse.urlsplit("http://" + address).hostname if address else "127.0.0.1"
+        ip = ipaddress.ip_address(host)
+        if ip.is_unspecified:
+            host = "127.0.0.1" if ip.version == 4 else "::1"
+        if ":" in host:
+            host = "[" + host + "]"
+        url = "http://" + host + ":" + str(port) + "/admin"
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirects())
+        request = urllib.request.Request(url, data=b'{"Op":"mode"}',
+                                         headers={"Authorization": "Bearer " + token})
+        with opener.open(request, timeout=2) as response:
+            data = response.read(4097)
+            if response.status != 200 or response.url != url or len(data) > 4096:
+                return None
+            reply = json.loads(data)
+        if reply.get("wing_id") == wing and reply.get("mode") in {"local-only", "relay"}:
+            return reply["mode"]
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, http.client.HTTPException):
+        pass
+    return None
 
 
 def setup_fields(text):
@@ -165,9 +162,7 @@ def verify_home(fields, timeout=60):
 def main():
     command, path, *extra = sys.argv[1:]
     if command == "lan-restart":
-        args = lan_restart_args(path)
-        if args is not None:
-            print(" ".join(shlex.quote(arg) for arg in args))
+        print(running_mode(path) or "unknown")
     elif command == "devices":
         phones = connected_iphones(json.loads(Path(path).read_text()))
         requested = extra[0] if extra else ""

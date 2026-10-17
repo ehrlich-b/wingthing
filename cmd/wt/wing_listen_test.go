@@ -183,7 +183,7 @@ func TestBuiltWTLocalOnlyListen(t *testing.T) {
 				if strings.Contains(string(startup), "for LAN phone pairing, stop with") != wantsRestart {
 					t.Fatalf("startup restart advice disagrees with listener: %s", startup)
 				}
-				if wantsRestart && (!strings.Contains(string(startup), lanPairStartCommand) || !strings.Contains(string(startup), "retaining all other startup flags")) {
+				if wantsRestart && (!strings.Contains(string(startup), lanPairStartCommand) || !strings.Contains(string(startup), "Other flags the wing was started with must be added by hand.")) {
 					t.Fatalf("startup restart advice drops local-only mode or other flags: %s", startup)
 				}
 				if strings.Contains(string(startup), "relay: disabled; local control is ready") {

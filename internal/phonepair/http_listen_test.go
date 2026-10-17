@@ -18,7 +18,7 @@ func TestLoopbackPhoneListenerDoesNotAdvertiseLAN(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := Listen(t.Context(), dir, "fixture-loopback-wing", "Fixture", nil, private, &fixtureHandler{}, "127.0.0.1")
+	server, err := Listen(t.Context(), dir, "fixture-loopback-wing", "Fixture", nil, private, &fixtureHandler{}, "127.0.0.1", ModeLocalOnly)
 	if err != nil {
 		t.Fatal(err)
 	}

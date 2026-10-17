@@ -1156,9 +1156,13 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		if pairName == "" {
 			pairName = strings.TrimSuffix(cfg.Hostname, ".local")
 		}
+		mode := phonepair.ModeLocalOnly
+		if roostURL != "" {
+			mode = phonepair.ModeRelay
+		}
 		phoneServer, err = phonepair.Listen(ctx, cfg.Dir, cfg.WingID, pairName, func() string {
 			return phoneRelayURL(roostURL, tok != nil)
-		}, privKey, &phoneSessions{service: sessions, owner: localOwner.ID, attachments: map[string]*phoneAttachment{}, seen: map[string]map[string]int64{}}, phoneListenAddress)
+		}, privKey, &phoneSessions{service: sessions, owner: localOwner.ID, attachments: map[string]*phoneAttachment{}, seen: map[string]map[string]int64{}}, phoneListenAddress, mode)
 		if err != nil {
 			return fmt.Errorf("phone pairing: %w", err)
 		}
