@@ -58,8 +58,13 @@ func TestNetworkNeedFromDomains(t *testing.T) {
 }
 
 func TestNewRejectsWithoutPlatformSandbox(t *testing.T) {
-	_, err := New(Config{NetworkNeed: NetworkNone})
+	sb, err := New(Config{NetworkNeed: NetworkNone})
 	if err == nil {
+		t.Cleanup(func() {
+			if err := sb.Destroy(); err != nil {
+				t.Errorf("destroy sandbox: %v", err)
+			}
+		})
 		// Platform sandbox is available (e.g. running as root or with Apple Containers).
 		// That's fine — this test only checks the rejection path on systems without one.
 		t.Skip("platform sandbox available, skipping enforcement error test")
@@ -168,6 +173,11 @@ func TestFallbackDestroy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newFallback error: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := sb.Destroy(); err != nil {
+			t.Errorf("destroy sandbox: %v", err)
+		}
+	})
 	fb := sb.(*fallbackSandbox)
 	dir := fb.tmpDir
 
