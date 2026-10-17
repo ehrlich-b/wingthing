@@ -24,7 +24,7 @@ export function endOutputIncomplete() {
     });
 }
 
-export function showOutputIncomplete(socket, sessionId, wingId) {
+export function showOutputIncomplete(socket, sessionId, wingId, decryptionFailed) {
     if (S.ptyWs !== socket || S.ptySessionId !== sessionId || S.ptyWingId !== wingId) return;
     clearOutputIncomplete();
     var notice = createOutputNotice(function () {
@@ -32,7 +32,7 @@ export function showOutputIncomplete(socket, sessionId, wingId) {
         notice.focus();
         notice.querySelector('p').textContent = 'Output incomplete. Reloading session…';
         retryReconnect();
-    });
+    }, decryptionFailed);
     notice.id = 'pty-output-notice';
     notice.outputSocket = socket;
     // Keep terminal input inaccessible through reconnect/key setup while leaving

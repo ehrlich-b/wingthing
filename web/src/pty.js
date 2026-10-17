@@ -305,7 +305,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
         }).catch(function (err) {
             if (outputCurrent(sessionId)) {
                 console.error('output decode error:', err);
-                showOutputIncomplete(ws, sessionId, connectedWingId);
+                showOutputIncomplete(ws, sessionId, connectedWingId, err && err.name === 'OutputDecryptionError');
             }
         });
     }
@@ -320,8 +320,8 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
             return e2eDecrypt(item.data).then(function (bytes) {
                 if (!outputCurrent(sessionId)) return null;
                 return item.compressed ? gunzip(bytes) : bytes;
-            }).catch(function () {
-                if (outputCurrent(sessionId)) showOutputIncomplete(ws, sessionId, connectedWingId);
+            }).catch(function (err) {
+                if (outputCurrent(sessionId)) showOutputIncomplete(ws, sessionId, connectedWingId, err && err.name === 'OutputDecryptionError');
                 return null;
             });
         })).then(function (chunks) {
@@ -507,7 +507,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                     S.ptyReconnecting = false;
                     cleanupSession(msg.session_id, connectedWingId);
                     hideReplayOverlay();
-                    var message = 'Cannot secure terminal: ' + err.message;
+                    var message = "Can't decrypt output. Cannot secure terminal: " + err.message;
                     DOM.ptyStatus.textContent = message;
                     showReconnectBanner(message, true);
                     // Queued output cannot drain without a key; honor an accepted exit.
@@ -620,7 +620,9 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                     var preview = JSON.parse(new TextDecoder().decode(bytes));
                     handlePreview(preview);
                 }).catch(function(err) {
+                    if (!terminalReferenceMatches(S, msg.session_id, connectedWingId, ws)) return;
                     console.error('preview decrypt error:', err);
+                    showOutputIncomplete(ws, msg.session_id, connectedWingId, err && err.name === 'OutputDecryptionError');
                 });
                 break;
 

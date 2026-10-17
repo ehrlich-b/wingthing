@@ -120,6 +120,7 @@ async function fixture(t, { width = 1440, reattach = true } = {}) {
     await page.goto(base);
     await page.evaluate(async ({ reattach, width }) => {
         const noop = () => {};
+        const previews = [];
         const term = new Terminal({ cols: width === 390 ? 36 : 100, rows: 28 });
         term.open(document.getElementById('terminal-container'));
         const S = { term, fitAddon: { fit: noop }, ptySessionId: 'session-a', ptyWingId: 'wing-a',
@@ -128,7 +129,7 @@ async function fixture(t, { width = 1440, reattach = true } = {}) {
             homeBtn: document.getElementById('home-btn'), homeSection: document.getElementById('home-section') }, {
             get: (target, name) => target[name] ||= document.createElement('div'),
         });
-        window.fixture = { S, DOM, clearNotification: noop, sendViaDC: () => false, sendTunnelRequest: async () => {},
+        window.fixture = { S, DOM, handlePreview: preview => previews.push(preview), clearNotification: noop, sendViaDC: () => false, sendTunnelRequest: async () => {},
             resumeAckMatches: () => true, sessionRoute: () => '#terminal',
             findSessionResource: () => null, wingDisplayName: () => 'Local wing', formatSessionTitle: () => 'Terminal' };
         const pty = await import('/src/pty.js');
@@ -202,7 +203,7 @@ async function fixture(t, { width = 1440, reattach = true } = {}) {
         const release = () => { gates.get('gunzip')?.release(); gates.delete('gunzip'); };
         const reconnect = () => { S.ptyReconnecting = true; pty.ptyReconnectAttach(S.ptySessionId, 0, S.ptyWingId); };
         const realAttach = () => { pty.detachPTY(); sent.length = 0; pty.attachPTY('session-a', 1, 'wing-a'); };
-        window.h = { S, DOM, sent, sockets, send, attach, realAttach, start, frame, text, settle, hold, release, input: sendPTYInput, key, nativeDecrypt, detach: pty.detachPTY, reconnect,
+        window.h = { S, DOM, previews, sent, sockets, send, attach, realAttach, start, frame, text, settle, hold, release, input: sendPTYInput, key, nativeDecrypt, detach: pty.detachPTY, reconnect,
             holdDecode, holdKey, resumeKey, disconnect: pty.disconnectPTY,
             replace: () => { nav.showTerminal(); pty.attachPTY('session-a', 1, 'wing-a'); },
             p2p: msg => p2p.handleDCMessage('wing-a', 'session-a', JSON.stringify({ session_id: 'session-a', ...msg })), connect: () => pty.connectPTY('shell', null, 'wing-a') };
@@ -426,7 +427,7 @@ for (const reattach of [true, false]) {
             await page.waitForFunction(() => h.text().includes('--- session ended ---') && h.DOM.ptyStatus.textContent === 'exited');
             const notice = page.getByRole('dialog', { name: 'Output incomplete' });
             assert.equal(await notice.isVisible(), true);
-            assert.equal(await notice.innerText(), 'Output incomplete. Some terminal output could not be decoded. The session has ended.');
+            assert.equal(await notice.innerText(), 'Output incomplete. ' + (reattach ? 'Some terminal output could not be decoded.' : "Can't decrypt output.") + ' The session has ended.');
             assert.equal(await notice.getByRole('button', { name: 'Reload', exact: true }).count(), 0);
             assert.equal(await page.locator('#terminal-section').isVisible(), true);
             assert.equal(await page.evaluate(() => h.S.ptySessionId), null);
@@ -635,12 +636,16 @@ for (const reattach of [false, true]) {
             const page = await fixture(t, { reattach });
             await page.evaluate(async publicKey => {
                 h.send({ type: 'pty.started', ...(publicKey === 'missing' ? {} : { public_key: publicKey }) });
+                h.send({ type: 'pty.output', data: btoa('INJECTED WITHOUT VALID KEY') });
+                h.send({ type: 'pty.preview', data: btoa('{"html":"INJECTED WITHOUT VALID KEY"}') });
                 h.S.term.focus();
                 await h.settle();
             }, publicKey);
             const retry = page.getByRole('button', { name: 'retry', exact: true });
             await retry.waitFor({ state: 'visible' });
-            assert.match(await page.locator('#reconnect-text').innerText(), /Cannot secure terminal/);
+            assert.match(await page.locator('#reconnect-text').innerText(), /Can't decrypt output.*Cannot secure terminal/);
+            assert.doesNotMatch(await page.evaluate(() => h.text()), /INJECTED/);
+            assert.deepEqual(await page.evaluate(() => h.previews), []);
             await page.keyboard.type('must stay private');
             await page.keyboard.press('Enter');
             await page.evaluate(() => h.input('direct private input'));
@@ -665,3 +670,67 @@ for (const reattach of [false, true]) {
         });
     }
 }
+
+
+for (const reattach of [false, true]) {
+    for (const keyAvailable of [false, true]) {
+        test(`${reattach ? 'replay' : 'live'} plaintext output is dropped with ${keyAvailable ? 'a key' : 'no key'}`, async t => {
+            const page = await fixture(t, { reattach });
+            await page.evaluate(async ({ keyAvailable, reattach }) => {
+                const injection = { type: 'pty.output', data: btoa('INJECTED TERMINAL OUTPUT') };
+                if (reattach) h.send(injection);
+                h.start(); await h.settle();
+                if (!keyAvailable) h.S.e2eKey = null;
+                if (!reattach || !keyAvailable) h.send(injection);
+            }, { keyAvailable, reattach });
+            const notice = page.getByRole('dialog', { name: 'Output incomplete' });
+            await notice.waitFor({ state: 'visible' });
+            assert.match(await notice.innerText(), /Can't decrypt output/);
+            assert.doesNotMatch(await page.evaluate(() => h.text()), /INJECTED/);
+            await page.screenshot({ path: path.join(out, `plaintext-${reattach ? 'replay' : 'live'}-${keyAvailable ? 'key' : 'keyless'}.png`), fullPage: true });
+            await page.evaluate(async () => {
+                h.S.e2eKey = h.key;
+                h.send(await h.frame('Authenticated output still renders\r\n'));
+            });
+            await page.waitForFunction(() => h.text().includes('Authenticated output still renders'));
+        });
+    }
+}
+
+for (const transport of ['relay', 'p2p']) {
+    for (const keyAvailable of [false, true]) {
+        test(`${transport} rejects plaintext preview with ${keyAvailable ? 'a key' : 'no key'}`, async t => {
+            const page = await fixture(t, { reattach: false });
+            await page.evaluate(async ({ transport, keyAvailable }) => {
+                h.start(); await h.settle();
+                if (!keyAvailable) h.S.e2eKey = null;
+                const message = { type: 'pty.preview', data: btoa(JSON.stringify({ html: 'INJECTED PREVIEW' })) };
+                (transport === 'p2p' ? h.p2p : h.send)(message);
+            }, { transport, keyAvailable });
+            const notice = page.getByRole('dialog', { name: 'Output incomplete' });
+            await notice.waitFor({ state: 'visible' });
+            assert.match(await notice.innerText(), /Can't decrypt output/);
+            assert.deepEqual(await page.evaluate(() => h.previews), []);
+            await page.screenshot({ path: path.join(out, `plaintext-preview-${transport}-${keyAvailable ? 'key' : 'keyless'}.png`), fullPage: true });
+            await page.evaluate(async transport => {
+                h.S.e2eKey = h.key;
+                const frame = await h.frame(JSON.stringify({ html: 'Authenticated preview' }));
+                (transport === 'p2p' ? h.p2p : h.send)({ ...frame, type: 'pty.preview' });
+            }, transport);
+            await page.waitForFunction(() => h.previews.length === 1);
+            assert.deepEqual(await page.evaluate(() => h.previews), [{ html: 'Authenticated preview' }]);
+        });
+    }
+}
+
+test('plaintext preview during key setup is dropped and reported', async t => {
+    const page = await fixture(t, { reattach: false });
+    await page.evaluate(async () => {
+        h.holdKey(); h.start();
+        h.send({ type: 'pty.preview', data: btoa('{"html":"INJECTED BEFORE KEY"}') });
+        await h.settle();
+    });
+    assert.deepEqual(await page.evaluate(() => h.previews), []);
+    assert.match(await page.getByRole('dialog').innerText(), /Can't decrypt output/);
+    await page.evaluate(() => h.resumeKey());
+});

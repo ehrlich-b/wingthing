@@ -459,6 +459,7 @@ for (const launch of [false, true]) {
             const page = await fixture(t, { launch });
             await page.evaluate(async publicKey => {
                 h.send({ type: 'pty.started', session_id: 'session-a', ...(publicKey === 'missing' ? {} : { public_key: publicKey }) });
+                h.send({ type: 'pty.output', data: btoa('INJECTED WITHOUT VALID KEY') });
                 h.affected.term.focus();
                 await h.settle();
             }, publicKey);
@@ -471,7 +472,8 @@ for (const launch of [false, true]) {
             assert.deepEqual(await page.evaluate(() => ({ ready: h.affected.keyReady, key: h.affected.e2eKey,
                 blocked: h.affected.inputBlocked, socket: h.affected.ws.readyState })),
                 { ready: false, key: null, blocked: true, socket: 3 });
-            assert.match(await reconnect.locator('..').innerText(), /Cannot secure terminal/);
+            assert.match(await reconnect.locator('..').innerText(), /Can't decrypt output.*Cannot secure terminal/);
+            assert.doesNotMatch(await page.evaluate(() => h.text()), /INJECTED/);
             await page.screenshot({ path: path.join(out, `key-error-${launch ? 'launch' : 'attach'}-${keyCase}.png`), fullPage: true });
             await reconnect.click();
             await page.evaluate(() => { h.adoptReload(); h.affected.term.focus(); });
@@ -488,3 +490,54 @@ for (const launch of [false, true]) {
         });
     }
 }
+
+
+for (const launch of [false, true]) {
+    for (const keyAvailable of [false, true]) {
+        test(`${launch ? 'launched' : 'attached'} canvas rejects plaintext with ${keyAvailable ? 'a key' : 'no key'}`, async t => {
+            const page = await fixture(t, { launch });
+            await started(page);
+            await page.evaluate(keyAvailable => {
+                if (!keyAvailable) h.affected.e2eKey = null;
+                h.send({ type: 'pty.output', data: btoa('INJECTED CANVAS OUTPUT') });
+            }, keyAvailable);
+            const notice = page.getByRole('dialog', { name: 'Output incomplete' });
+            await notice.waitFor({ state: 'visible' });
+            assert.match(await notice.innerText(), /Can't decrypt output/);
+            assert.doesNotMatch(await page.evaluate(() => h.text()), /INJECTED/);
+            assert.equal(await page.evaluate(() => !!h.healthy.outputNotice), false);
+            await page.screenshot({ path: path.join(out, `plaintext-${launch ? 'launch' : 'attach'}-${keyAvailable ? 'key' : 'keyless'}.png`), fullPage: true });
+            await page.evaluate(async () => {
+                h.affected.e2eKey = h.healthy.e2eKey;
+                h.send(await h.frame('Authenticated canvas output\r\n'));
+            });
+            await page.waitForFunction(() => h.text().includes('Authenticated canvas output'));
+        });
+    }
+}
+
+for (const launch of [false, true]) {
+    test(`${launch ? 'launch' : 'attach'} drops plaintext queued during canvas key setup`, async t => {
+        const page = await fixture(t, { launch });
+        await page.evaluate(async () => {
+            h.holdKey(); h.start();
+            h.send({ type: 'pty.output', data: btoa('INJECTED BEFORE KEY') });
+            await h.settle();
+        });
+        assert.equal(await page.evaluate(() => h.text()), '');
+        await page.evaluate(() => h.releaseKey());
+        const notice = page.getByRole('dialog', { name: 'Output incomplete' });
+        await notice.waitFor({ state: 'visible' });
+        assert.match(await notice.innerText(), /Can't decrypt output/);
+        assert.doesNotMatch(await page.evaluate(() => h.text()), /INJECTED/);
+    });
+}
+
+
+test('decryption failure updates an existing canvas decode notice', async t => {
+    const page = await fixture(t);
+    await started(page); await corrupt(page, 'checksum');
+    await page.evaluate(() => h.send({ type: 'pty.output', data: btoa('INJECTED AFTER DECODE FAILURE') }));
+    await page.waitForFunction(() => h.affected.outputNotice.textContent.includes("Can't decrypt output"));
+    assert.doesNotMatch(await page.evaluate(() => h.text()), /INJECTED/);
+});
