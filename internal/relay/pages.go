@@ -20,9 +20,15 @@ import (
 //go:embed templates
 var templateFS embed.FS
 
+// pageIconLinks is trusted, embedded markup shared by template and inline pages.
+//
+//go:embed templates/icons.html
+var pageIconLinks string
+
 var installScript = []byte(downloads.Installer())
 
 var tmplFuncs = template.FuncMap{
+	"pageIcons": func() template.HTML { return template.HTML(pageIconLinks) },
 	"deref": func(s *string) string {
 		if s == nil {
 			return ""

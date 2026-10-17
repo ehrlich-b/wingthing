@@ -259,6 +259,8 @@ func (s *Server) JWTPubKey() *ecdsa.PublicKey {
 func (s *Server) registerStaticRoutes() {
 	sub, _ := fs.Sub(web.FS, "dist")
 	fileServer := http.FileServer(http.FS(sub))
+
+	s.mux.Handle("GET /favicon.ico", fileServer)
 	s.mux.Handle("GET /app/", http.StripPrefix("/app/", fileServer))
 	// Public font files only. A cache lifetime lets the app's fonts render
 	// offline without the worker caching them.
@@ -514,6 +516,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/auth/") ||
 			strings.HasPrefix(path, "/ws/") || strings.HasPrefix(path, "/app/") ||
 			strings.HasPrefix(path, "/assets/") ||
+			path == "/favicon.ico" ||
 			path == "/mcp" || strings.HasPrefix(path, "/oauth/") ||
 			strings.HasPrefix(path, "/.well-known/") {
 			s.mux.ServeHTTP(w, r)

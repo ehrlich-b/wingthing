@@ -379,8 +379,9 @@ func (s *Server) renderMCPConsent(w http.ResponseWriter, rid string, pa pendingA
 	}
 }
 
-var mcpConsentTmpl = template.Must(template.New("mcpConsent").Parse(`<!doctype html>
+var mcpConsentTmpl = template.Must(template.New("mcpConsent").Funcs(tmplFuncs).Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
+{{pageIcons}}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Authorize access · wingthing</title>
 <style>

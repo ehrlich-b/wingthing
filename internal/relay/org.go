@@ -732,7 +732,7 @@ func (s *Server) renderInviteStatusPage(w http.ResponseWriter, inv *OrgInvite, o
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
-<html><head>
+<html><head>%s
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>invite — %s</title>
 <style>%s</style>
@@ -746,7 +746,7 @@ func (s *Server) renderInviteStatusPage(w http.ResponseWriter, inv *OrgInvite, o
 <div class="row"><span class="key">status</span><span class="val %s">%s</span></div>
 <div class="actions">
 <a href="/app/#account/%s" class="btn btn-back">back to org</a>`,
-		escapeHTML(org.Name),
+		pageIconLinks, escapeHTML(org.Name),
 		invitePageStyle,
 		escapeHTML(org.Name),
 		escapeHTML(inv.Email),
@@ -812,7 +812,7 @@ p{font-size:14px;color:#888;margin:8px 0}
 func (s *Server) renderInviteAcceptPage(w http.ResponseWriter, inv *OrgInvite, org *Org) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html><head>%s<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>join %s — wingthing</title><style>%s</style></head><body>
 <div class="card">
 <h2>join %s</h2>
@@ -822,7 +822,7 @@ func (s *Server) renderInviteAcceptPage(w http.ResponseWriter, inv *OrgInvite, o
 </div>
 </div>
 </body></html>`,
-		escapeHTML(org.Name), invitePageStyle,
+		pageIconLinks, escapeHTML(org.Name), invitePageStyle,
 		escapeHTML(org.Name), escapeHTML(org.Name),
 		escapeHTML(inv.Role), escapeHTML(inv.Token))
 }
@@ -830,7 +830,7 @@ func (s *Server) renderInviteAcceptPage(w http.ResponseWriter, inv *OrgInvite, o
 func (s *Server) renderInviteLoginPage(w http.ResponseWriter, inv *OrgInvite, org *Org) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html><head>%s<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>join %s — wingthing</title><style>%s</style></head><body>
 <div class="card">
 <h2>join %s</h2>
@@ -841,7 +841,7 @@ func (s *Server) renderInviteLoginPage(w http.ResponseWriter, inv *OrgInvite, or
 </div>
 </div>
 </body></html>`,
-		escapeHTML(org.Name), invitePageStyle,
+		pageIconLinks, escapeHTML(org.Name), invitePageStyle,
 		escapeHTML(org.Name), escapeHTML(org.Name),
 		escapeHTML(inv.Role),
 		"/invite/"+escapeHTML(inv.Token))
@@ -851,7 +851,7 @@ func (s *Server) renderInviteErrorPage(w http.ResponseWriter, inviteEmail, userE
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusForbidden)
 	_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html><head>%s<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>invite — wingthing</title><style>%s</style></head><body>
 <div class="card">
 <h2>email mismatch</h2>
@@ -861,7 +861,7 @@ func (s *Server) renderInviteErrorPage(w http.ResponseWriter, inviteEmail, userE
 <form method="POST" action="/auth/logout"><button type="submit" class="btn btn-back">log out</button></form>
 </div>
 </div>
-</body></html>`, invitePageStyle, escapeHTML(inviteEmail), escapeHTML(userEmail))
+</body></html>`, pageIconLinks, invitePageStyle, escapeHTML(inviteEmail), escapeHTML(userEmail))
 }
 
 // handleRevokeInvite revokes a pending invite. POST /api/orgs/{slug}/invites/{token}/revoke
