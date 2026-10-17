@@ -65,7 +65,7 @@ func TestDeployGuardNormalEntryPoint(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				makefile = []byte(strings.ReplaceAll(strings.ReplaceAll(string(makefile), "check: test-deploy-guard web", "check:"), "gate: | web/dist", "gate:"))
+				makefile = []byte(strings.ReplaceAll(strings.ReplaceAll(string(makefile), "check: test-deploy-guard test-ios-installer web", "check:"), "gate: | web/dist", "gate:"))
 				makefile = append(makefile, []byte("\ncheck gate:\n\t@touch checks-ran\n")...)
 				if err := os.WriteFile(filepath.Join(root, "Makefile"), makefile, 0644); err != nil {
 					t.Fatal(err)

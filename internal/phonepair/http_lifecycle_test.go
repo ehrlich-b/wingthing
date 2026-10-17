@@ -25,7 +25,7 @@ func TestPhoneListenerImmediateShutdown(t *testing.T) {
 			if cancelled {
 				cancel()
 			}
-			server, err := Listen(ctx, dir, "fixture-discovery-wing", "Fixture", nil, private, &fixtureHandler{})
+			server, err := Listen(ctx, dir, "fixture-discovery-wing", "Fixture", nil, private, &fixtureHandler{}, "")
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -415,14 +415,16 @@ func TestNorthstarPTYRemoteAttach(t *testing.T) {
 	h.expect("stale stop refused", h.send("y"), "Saved machine changed", "devbox")
 	assertSurvives(devbox)
 	// Local work remains reachable while both devbox and the offline peer fail.
-	h.expect("select healthy local", h.send("/\x15local\r"), "shared name")
+	// Scope by machine instead of searching "local": every session's cwd can
+	// contain that word when the checkout directory itself contains it.
+	h.expect("select healthy local", h.send("/\x15\rmj\r"), "> shared name", "This machine")
 	h.expect("attach local despite offline peers", h.send("\r"), "LOCAL_ONLY")
 	h.expect("detach local", h.send("\x02q"), "shared name", "Enter open")
 	assertSurvives(local)
 	if err := os.Remove(filepath.Join(f.home, "devbox-offline")); err != nil {
 		t.Fatal(err)
 	}
-	h.expect("recover exact devbox", h.send("/\x15devbox\rR"), "* Working", "devbox renamed")
+	h.expect("recover exact devbox", h.send("m\x1b[H\r/\x15devbox\rR"), "* Working", "devbox renamed")
 	h.exit("q")
 	// Exercise both receiving CLI paths on real PTYs, including the delimiter.
 	for _, test := range []struct {

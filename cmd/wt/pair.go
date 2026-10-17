@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -22,24 +24,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const lanPairStartCommand = "wt wing start --local-only --listen 0.0.0.0"
+
 func phoneAdmin(ctx context.Context, op, id, name string, result any) error {
 	if !pake.Available {
 		return pakeUnavailable()
 	}
-	cfg, e := config.Load()
+	control, e := readPhoneControl()
 	if e != nil {
 		return e
 	}
-	b, e := os.ReadFile(filepath.Join(cfg.Dir, "phone-control.json"))
-	if e != nil {
-		return errors.New("main wing is not ready for pairing; start it with wt wing start --local-only (or wt wing start if registered)")
-	}
-	var control phonepair.Control
-	if json.Unmarshal(b, &control) != nil || control.Port < 1 || control.Port > 65535 || control.WingID != cfg.WingID || control.Token == "" {
-		return errors.New("invalid main wing pairing control")
-	}
 	body, _ := json.Marshal(map[string]string{"Op": op, "ID": id, "Name": name})
-	req, e := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("http://127.0.0.1:%d/admin", control.Port), bytes.NewReader(body))
+	req, e := http.NewRequestWithContext(ctx, "POST", control.AdminURL(), bytes.NewReader(body))
 	if e != nil {
 		return e
 	}
@@ -54,7 +50,7 @@ func phoneAdmin(ctx context.Context, op, id, name string, result any) error {
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("main wing pairing endpoint refused (%d)", resp.StatusCode)
 	}
-	b, e = io.ReadAll(io.LimitReader(resp.Body, phonepair.MaxPayload))
+	b, e := io.ReadAll(io.LimitReader(resp.Body, phonepair.MaxPayload))
 	if e != nil {
 		return e
 	}
@@ -70,11 +66,39 @@ func phoneAdmin(ctx context.Context, op, id, name string, result any) error {
 	}
 	return nil
 }
+
+// readPhoneControl describes the listener, independently of advertised endpoints:
+// a wildcard listener can advertise loopback when the host has no LAN interface.
+func readPhoneControl() (phonepair.Control, error) {
+	cfg, e := config.Load()
+	if e != nil {
+		return phonepair.Control{}, e
+	}
+	b, e := os.ReadFile(filepath.Join(cfg.Dir, "phone-control.json"))
+	if e != nil {
+		return phonepair.Control{}, fmt.Errorf("main wing is not ready for pairing; for LAN pairing, start it with %s (or wt wing start --listen 0.0.0.0 if registered)", lanPairStartCommand)
+	}
+	var control phonepair.Control
+	if json.Unmarshal(b, &control) != nil || control.Port < 1 || control.Port > 65535 || control.WingID != cfg.WingID || control.Token == "" {
+		return phonepair.Control{}, errors.New("invalid main wing pairing control")
+	}
+	return control, nil
+}
+
 func pairCmd() *cobra.Command {
 	var showLink bool
-	cmd := &cobra.Command{Use: "pair", Short: "Pair a device with this machine's main wing", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		return runPairWithLink(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), showLink)
-	}}
+	cmd := &cobra.Command{
+		Use:   "pair",
+		Short: "Pair a device with this machine's main wing",
+		Long: "Pair a device with this machine's running main wing.\n" +
+			"For LAN pairing without a relay, start the wing with:\n  " + lanPairStartCommand + "\n" +
+			"The --local-only flag alone listens on loopback only; phones cannot reach it over the LAN.\n" +
+			"If the wing is already running, stop it with wt wing stop before restarting with --listen.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runPairWithLink(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), showLink)
+		},
+	}
 	cmd.Flags().BoolVar(&showLink, "show-link", false, "show the one-time invitation for browser or phone paste")
 	return cmd
 }
@@ -104,7 +128,10 @@ func runPairWithLink(ctx context.Context, in io.Reader, out io.Writer, showLink 
 		if e := phoneAdmin(ctx, "create", "", "", &q); e != nil {
 			return e
 		}
-		err := showInvitation(out, q)
+		control, err := readPhoneControl()
+		if err == nil {
+			err = showInvitation(out, q, control.Address)
+		}
 		if err != nil {
 			_ = phoneAdmin(ctx, "cancel", q.ID, "", nil)
 			return err
@@ -204,7 +231,32 @@ func runPairWithLink(ctx context.Context, in io.Reader, out io.Writer, showLink 
 
 var errPaired = errors.New("paired")
 
-func showInvitation(out io.Writer, q phonepair.Invitation) error {
+func loopbackEndpoint(endpoint string) bool {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(u.Hostname())
+	return strings.EqualFold(u.Hostname(), "localhost") || (ip != nil && ip.IsLoopback())
+}
+
+func showInvitation(out io.Writer, q phonepair.Invitation, listenAddress string) error {
+	loopbackOnly := loopbackEndpoint(q.Local)
+	for _, endpoint := range q.Endpoints {
+		if !loopbackEndpoint(endpoint) {
+			loopbackOnly = false
+		}
+	}
+	if loopbackOnly {
+		hint := "main wing listens on loopback only; a phone cannot connect over the LAN. For LAN pairing, stop it with wt wing stop, restart with wt wing start --listen 0.0.0.0 keeping your existing startup flags (including --local-only if used), then run wt pair"
+		if listenAddress != "" && !loopbackEndpoint("http://"+listenAddress) {
+			hint = "main wing has no advertised LAN endpoint; connect this host to a LAN or tailnet, then restart the wing with its existing flags and run wt pair"
+		}
+		if q.Relay == "" {
+			return errors.New(hint)
+		}
+		fmt.Fprintln(out, "Warning: "+hint+". This invitation can still use the registered relay.")
+	}
 	place := "this machine"
 	if runtime.GOOS == "darwin" {
 		place = "this Mac"
@@ -241,9 +293,16 @@ func showInvitation(out io.Writer, q phonepair.Invitation) error {
 		fmt.Fprintln(out, "Local network only. That's fine; nothing else needed.")
 	}
 	for _, endpoint := range q.Endpoints {
-		fmt.Fprintf(out, "Direct endpoint: %s\n", endpoint)
+		if !loopbackEndpoint(endpoint) {
+			fmt.Fprintf(out, "Direct endpoint: %s\n", endpoint)
+		}
 	}
-	fmt.Fprintf(out, "\n%s\n5:00 · Waiting for scan...\nSame Wi-Fi: no account needed. Away from home: needs %s registered once (`wt login`).\n", q.Secret, place)
+	fmt.Fprintf(out, "\n%s\n5:00 · Waiting for scan...\n", q.Secret)
+	if loopbackOnly {
+		fmt.Fprintln(out, "Pair through the registered relay; LAN access is unavailable.")
+	} else {
+		fmt.Fprintf(out, "Same Wi-Fi: no account needed. Away from home: needs %s registered once (`wt login`).\n", place)
+	}
 	return nil
 }
 func devicesCmd() *cobra.Command {

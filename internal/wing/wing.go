@@ -723,6 +723,11 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	} else if orgFlag != "" && wingCfg.Org != "" && orgFlag != wingCfg.Org {
 		return fmt.Errorf("org conflict: --org %q vs wing.yaml %q", orgFlag, wingCfg.Org)
 	}
+	// Preserve the existing LAN default unless local-only was explicitly requested.
+	phoneListenAddress := options.ListenAddress
+	if phoneListenAddress == "" && options.LocalOnly {
+		phoneListenAddress = "127.0.0.1"
+	}
 	if options.LocalOnly && (sharedHost || orgFlag != "" || local || tokenOverride != nil) {
 		return errors.New("local-only mode requires a personal wing without --local or organization enrollment")
 	}
@@ -1142,8 +1147,6 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	}
 	if localControl != nil {
 		defer localControl.Close()
-		log.Printf("wing: local control ready (wing_id=%s)", cfg.WingID)
-		daemonctl.WriteWingStatusForRoost("local", "", roostURL)
 	}
 	browserAttachments := newBrowserFleetAttachments(ctx, sessions, ownerUserID)
 	defer browserAttachments.Close()
@@ -1155,13 +1158,18 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		}
 		phoneServer, err = phonepair.Listen(ctx, cfg.Dir, cfg.WingID, pairName, func() string {
 			return phoneRelayURL(roostURL, tok != nil)
-		}, privKey, &phoneSessions{service: sessions, owner: localOwner.ID, attachments: map[string]*phoneAttachment{}, seen: map[string]map[string]int64{}})
+		}, privKey, &phoneSessions{service: sessions, owner: localOwner.ID, attachments: map[string]*phoneAttachment{}, seen: map[string]map[string]int64{}}, phoneListenAddress)
 		if err != nil {
 			return fmt.Errorf("phone pairing: %w", err)
 		}
 		if phoneServer != nil {
 			defer phoneServer.Close()
+			fmt.Printf("phone pairing: listening on %s\n", phoneServer.Address())
 		}
+	}
+	if localControl != nil {
+		log.Printf("wing: local control ready (wing_id=%s)", cfg.WingID)
+		daemonctl.WriteWingStatusForRoost("local", "", roostURL)
 	}
 	if options.SetSessionService != nil {
 		options.SetSessionService(sessions)

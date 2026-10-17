@@ -20,12 +20,30 @@ import (
 )
 
 type Control struct {
-	Port   int    `json:"port"`
-	Token  string `json:"token"`
-	WingID string `json:"wing_id"`
-	Key    string `json:"key"`
-	Name   string `json:"name"`
+	Port    int    `json:"port"`
+	Address string `json:"address,omitempty"`
+	Token   string `json:"token"`
+	WingID  string `json:"wing_id"`
+	Key     string `json:"key"`
+	Name    string `json:"name"`
 }
+
+// AdminURL reaches the listener locally, including IPv6 and specific interfaces.
+// Older control files contain only a port.
+func (c Control) AdminURL() string {
+	host, _, err := net.SplitHostPort(c.Address)
+	if err != nil {
+		host = "127.0.0.1"
+	} else if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+		if ip.To4() != nil {
+			host = "127.0.0.1"
+		} else {
+			host = "::1"
+		}
+	}
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(c.Port)) + "/admin"
+}
+
 type Server struct {
 	Manager     *Manager
 	http        *http.Server
@@ -35,24 +53,39 @@ type Server struct {
 	closeOnce   sync.Once
 }
 
-func Listen(ctx context.Context, dir, wingID, name string, relay func() string, private *ecdh.PrivateKey, handler Handler) (*Server, error) {
+func Listen(ctx context.Context, dir, wingID, name string, relay func() string, private *ecdh.PrivateKey, handler Handler, host string) (*Server, error) {
 	if !pake.Available {
 		return nil, nil
 	}
-	ln, e := net.Listen("tcp4", "0.0.0.0:0")
+	if host == "" {
+		host = "0.0.0.0"
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil, errors.New("listen address must be an IP address")
+	}
+	network := "tcp"
+	if ip.To4() != nil {
+		network = "tcp4"
+	}
+	ln, e := net.Listen(network, net.JoinHostPort(host, "0"))
 	if e != nil {
 		return nil, e
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
-	local := "http://" + net.JoinHostPort(lanAddress(), strconv.Itoa(port))
+	local := "http://" + ln.Addr().String()
+	direct := []string{local}
+	if ip.IsUnspecified() {
+		local = "http://" + net.JoinHostPort(lanAddress(), strconv.Itoa(port))
+		direct = directEndpoints(port)
+	}
 	m, e := New(dir, wingID, name, local, relay, private, handler)
 	if e != nil {
 		ln.Close()
 		return nil, e
 	}
-	direct := directEndpoints(port)
 	m.endpoints = func() []string { return append([]string(nil), direct...) }
-	control := Control{port, randomID(), wingID, m.key, name}
+	control := Control{Port: port, Address: ln.Addr().String(), Token: randomID(), WingID: wingID, Key: m.key, Name: name}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /phone", func(w http.ResponseWriter, r *http.Request) {
 		var req Request
@@ -65,7 +98,11 @@ func Listen(ctx context.Context, dir, wingID, name string, relay func() string, 
 	mux.HandleFunc("POST /admin", func(w http.ResponseWriter, r *http.Request) {
 		host, _, _ := net.SplitHostPort(r.RemoteAddr)
 		ip := net.ParseIP(host)
-		if ip == nil || !ip.IsLoopback() || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+control.Token)) != 1 {
+		// A specific interface bind is also reachable through this machine's
+		// own interface address. Remote peers still need both a local source
+		// address and the private control token.
+		localPeer := ip != nil && (ip.IsLoopback() || ip.Equal(ln.Addr().(*net.TCPAddr).IP))
+		if !localPeer || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+control.Token)) != 1 {
 			http.Error(w, "denied", 403)
 			return
 		}
@@ -106,9 +143,11 @@ func Listen(ctx context.Context, dir, wingID, name string, relay func() string, 
 		ln.Close()
 		return nil, e
 	}
-	s.discovery, e = zeroconf.Register(DiscoveryName(wingID), "_wingthing-phone._tcp", "local.", port, []string{"v=1", "wing_id=" + wingID, "key=" + m.key}, nil)
-	if e != nil {
-		log.Printf("wing: Bonjour phone discovery unavailable; scanned IP endpoints still work: %v", e)
+	if !ip.IsLoopback() {
+		s.discovery, e = zeroconf.Register(DiscoveryName(wingID), "_wingthing-phone._tcp", "local.", port, []string{"v=1", "wing_id=" + wingID, "key=" + m.key}, nil)
+		if e != nil {
+			log.Printf("wing: Bonjour phone discovery unavailable; scanned IP endpoints still work: %v", e)
+		}
 	}
 	go func() { _ = s.http.Serve(ln) }()
 	go func() {
@@ -128,6 +167,10 @@ func Listen(ctx context.Context, dir, wingID, name string, relay func() string, 
 	}()
 	return s, nil
 }
+
+// Address reports the actual bound TCP address.
+func (s *Server) Address() string { return s.listener.Addr().String() }
+
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
 		if s.discovery != nil {

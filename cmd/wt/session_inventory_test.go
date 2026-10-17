@@ -100,7 +100,7 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 		if e = config.SaveWingConfig(state, &config.WingConfig{Label: label, PhoneFleet: true, AllowUnsandboxed: true, Roost: "http://127.0.0.1:1"}); e != nil {
 			t.Fatal(e)
 		}
-		process := exec.Command(executable, "wing", "start", "--local-only", "--foreground")
+		process := exec.Command(executable, "wing", "start", "--local-only", "--listen", "0.0.0.0", "--foreground")
 		process.Env = environment(state)
 		process.Dir = home
 		logs, e := process.StderrPipe()

@@ -27,7 +27,7 @@ locked: false
 allow_keys: []
 YAML
 chmod 600 "$WINGTHING_DIR/wing.yaml"
-"$WT_PHONE" wing start --roost https://wingthing.ai
+"$WT_PHONE" wing start --roost https://wingthing.ai --listen 0.0.0.0
 "$WT_PHONE" phone link # copy the single setup URL from stdout
 ```
 Keep `WINGTHING_DIR` exported for every command here, including later stop/status commands. Do not copy state from the existing local roost. Keep state and executable under the OS home, outside writable workspaces, TMPDIR and provider profile paths; the broker refuses exposed layouts instead of adding sandbox exceptions.
