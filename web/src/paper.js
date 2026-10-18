@@ -7,10 +7,10 @@ import { escapeMarkup as esc } from './security.js';
 import { wingDisplayName, sessionDisplayName } from './helpers.js';
 import { sendTunnelRequest } from './tunnel.js';
 import { applyConversationRead, restoredConversationState } from './conversation-state.js';
-import { switchToSession, showSessionChat, showHome } from './nav.js';
+import { switchToSession, showSessionChat, showHome, navigateToAccount } from './nav.js';
 import { showPalette } from './palette.js';
 import { loadHome, probeWing } from './data.js';
-import { browserUnavailable, installedAgents, directSetup, agentSetup } from './onboarding.js';
+import { browserUnavailable, installedAgents, needsPasskey, directSetup, agentSetup } from './onboarding.js';
 import { paperRoute as route, machineState, sessionState as stateOf, projectName, agentName, requestedCommand, awayLabel } from './paper-state.js';
 
 const reads = new Map();
@@ -111,7 +111,9 @@ function viewNew(route) {
     launchWingId = w.wing_id;
     return head('New session', 'Choose a machine') + '<section class="pp-setup"><label for="pp-launch-machine">Machine</label><select id="pp-launch-machine">' +
         S.wingsData.map(item => '<option value="' + esc(item.wing_id) + '"' + (item === w ? ' selected' : '') + '>' + esc(machineName(item)) + '</option>').join('') + '</select>' +
-        (machineState(w) !== 'connected' ? '<h2>Machine unavailable</h2><p>Reconnect ' + esc(machineName(w)) + ', then try again.</p><button type="button" class="pp-btn" data-retry>Retry</button>' :
+        (needsPasskey(w) ? '<h2>Machine locked</h2><p>Unlock ' + esc(machineName(w)) + ' with your passkey to check its agents.</p>' +
+            (w.tunnel_error === 'no_passkeys_configured' ? '<p>Add a passkey to your account first.</p><button type="button" class="pp-btn" data-add-passkey>Add passkey</button>' : '<button type="button" class="pp-btn pp-btn-ink" data-unlock-machine="' + esc(w.wing_id) + '">Unlock machine</button>') :
+        machineState(w) !== 'connected' ? '<h2>Machine unavailable</h2><p>Reconnect ' + esc(machineName(w)) + ', then try again.</p><button type="button" class="pp-btn" data-retry>Retry</button>' :
             installedAgents(w).length ? '<h2>Ready on ' + esc(machineName(w)) + '</h2><p>' + esc(installedAgents(w).map(agentName).join(', ')) + '</p><button type="button" class="pp-btn pp-btn-ink" data-choose-project="' + esc(w.wing_id) + '">Choose project</button>' : agentSetup(w, machineName(w))) + '</section>';
 }
 
@@ -252,6 +254,9 @@ function frame() {
         const copy = event.target.closest('[data-copy]');
         if (copy) { navigator.clipboard?.writeText(copy.dataset.copy).then(() => { copy.textContent = 'Copied'; }, () => { copy.textContent = 'Copy failed'; }); return; }
         if (browserUnavailable(S.currentUser)) return;
+        if (event.target.closest('[data-add-passkey]')) { show(false); navigateToAccount(true); return; }
+        const unlock = event.target.closest('[data-unlock-machine]');
+        if (unlock) { const w = wingOf(unlock.dataset.unlockMachine); if (w) { unlock.disabled = true; probeWing(w, { authenticate: true }).finally(() => { unlock.disabled = false; render(true); }); } return; }
         if (event.target.closest('[data-new-session]')) { location.hash = '#new'; return; }
         const choose = event.target.closest('[data-choose-project]');
         if (choose) { showPalette(choose.dataset.chooseProject); return; }

@@ -11,6 +11,30 @@ import (
 	"testing"
 )
 
+func TestMissingProviderWireReasonBounds(t *testing.T) {
+	for _, tc := range []struct {
+		reason, provider, want string
+	}{
+		{"provider_failed", "claude_missing", "claude_missing"},
+		{"provider_failed", "codex_missing", "codex_missing"},
+		{"provider_failed", "private provider output", "provider_failed"},
+		{"policy_refused", "claude_missing", "policy_refused"},
+		{"unknown reason", "codex_missing", "policy_refused"},
+	} {
+		payload, err := json.Marshal(map[string]string{"stage": "provider startup", "reason": tc.reason, "provider_reason": tc.provider})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var d LaunchDiagnostic
+		if err := json.Unmarshal(payload, &d); err != nil || d.Reason != tc.want {
+			t.Fatalf("decode %s: %+v %v", payload, d, err)
+		}
+		if strings.Contains(FormatLaunchDiagnostic(d), "private provider output") {
+			t.Fatal("untrusted provider reason escaped bounds")
+		}
+	}
+}
+
 func TestSandboxLaunchDiagnosticRetainsRepairGuidance(t *testing.T) {
 	cause := errors.New("private provider output and configuration")
 	diagnostic := LaunchDiagnostic{Stage: "provider startup", Reason: "sandbox_unavailable"}

@@ -231,6 +231,17 @@ func TestMissingProviderDiagnosticLocalAndSSHProjection(t *testing.T) {
 				t.Fatalf("local projection: %+v", d)
 			}
 			wire, _ := json.Marshal(d)
+			// A client predating provider_reason still sees a provider failure,
+			// rather than bounding an unknown reason to policy_refused.
+			var legacy struct {
+				Reason string `json:"reason"`
+			}
+			if err := json.Unmarshal(wire, &legacy); err != nil {
+				t.Fatal(err)
+			}
+			if reason != "executable_denied" && legacy.Reason != "provider_failed" {
+				t.Fatalf("legacy reason: %s", legacy.Reason)
+			}
 			capture := &launchDiagnosticCapture{}
 			capture.Write([]byte(control.LaunchDiagnosticFramePrefix + base64.StdEncoding.EncodeToString(wire) + "\x1b\\"))
 			remote, ok := capture.diagnostic()

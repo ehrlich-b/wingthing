@@ -15,9 +15,10 @@ const transport = path.join(root, '.scratch/first-run-transport.mjs');
 fs.mkdirSync(path.dirname(entry), { recursive: true });
 fs.writeFileSync(transport, `
 export * from '${root}/web/src/tunnel.js';
-export async function sendTunnelRequest(wingId, request) {
-    window.requests.push({wingId, ...request});
+export async function sendTunnelRequest(wingId, request, options) {
+    window.requests.push({wingId, ...request, options});
     if (request.type === 'wing.info') {
+        if (window.authError) throw Error(window.authError);
         if (window.discoveryError) throw Error('fixture unavailable');
         return {agents: window.installed ? ['codex'] : []};
     }
@@ -27,15 +28,19 @@ export async function sendTunnelRequest(wingId, request) {
 fs.writeFileSync(entry, `
 import { S, initDOM } from '${root}/web/src/state.js';
 import { initPaper, render } from '${root}/web/src/paper.js';
+import { renderHostedPlanGuidance } from '${root}/web/src/onboarding.js';
 import { showPalette, launchFromPalette, hidePalette } from '${root}/web/src/palette.js';
 initDOM(); window.requests = []; window.installed = false;
 window.fixture = (relay, count) => {
+    document.querySelector('.crypto-error-dismiss')?.click();
     hidePalette(); S.activeView = 'home';
-    S.currentUser = {id: 'owner', email: 'owner@example.test', relay_allowed: relay, self_service_plans: false};
+    S.currentUser = {id: 'owner', email: 'owner@example.test', relay_allowed: relay, self_service_plans: false, has_passkeys: true};
     S.wingsData = Array.from({length: count}, (_, i) => ({wing_id: 'machine-' + i, hostname: 'workspace-' + i + '.example.test', wing_label: 'Research workstation for extended migration projects ' + (i+1), online: true, agents: [], public_key: 'synthetic'}));
     S.sessionsData = relay === false && count ? [{id: 'cached', wing_id: 'machine-0', name: 'Cached private session', agent: 'claude'}] : [];
     if (document.getElementById('paper')) render(true);
 };
+window.hostedGuidance = () => renderHostedPlanGuidance(S.currentUser, document);
+window.redraw = () => render(true);
 window.picker = showPalette; window.launch = launchFromPalette; window.state = S;
 window.fixture(false, 0); initPaper();
 `);
@@ -139,6 +144,52 @@ try {
             await shot(`${mode}-9-machines`);
             checks.push(`${width}: ${mode} inline setup, no invented launch, refreshed Codex, existing path picker, +4 more`);
         }
+        // Both onboarding surfaces follow the deployment's actual plan options.
+        for (const plans of [false, true]) {
+            await page.evaluate(plans => {window.fixture(false, 1); window.state.currentUser.self_service_plans = plans; window.hostedGuidance(); window.redraw();}, plans);
+            const expected = plans ? /See Account for the available plan options/ : /no self-service purchase/;
+            assert.match(await page.locator('#paper').innerText(), expected);
+            assert.match(await page.locator('#direct-agent-setup').textContent(), expected);
+            if (plans) assert.doesNotMatch(await page.locator('#direct-agent-setup').textContent(), /no self-service purchase/);
+        }
+        for (const error of ['passkey_required', 'passkey_failed', 'no_passkeys_configured']) {
+            await page.evaluate(error => {
+                window.fixture(true, 9); window.requests = []; window.installed = true;
+                const wing = window.state.wingsData[8]; delete wing.agents; wing.locked = true; wing.tunnel_error = error;
+                window.picker(wing.wing_id);
+            }, error);
+            await page.getByRole('heading', {name: 'Machine locked'}).waitFor();
+            assert.equal(await page.locator('#pp-launch-machine').inputValue(), 'machine-8');
+            assert.equal(await page.locator('#command-palette').isVisible(), false);
+            assert.equal(await page.locator('#paper [data-retry], #paper [data-choose-project], #paper [data-refresh-agents]').count(), 0);
+            assert.deepEqual(await page.evaluate(() => window.requests), []);
+            await shot(error === 'no_passkeys_configured' ? 'passkey-setup' : 'passkey-locked-' + error);
+            if (error === 'no_passkeys_configured') {
+                await page.getByRole('button', {name: 'Add passkey', exact: true}).click();
+                assert.equal(await page.evaluate(() => location.hash), '#account');
+                assert.equal(await page.locator('#account-section').isVisible(), true);
+                continue;
+            }
+            // A cancelled or failed ceremony retains an actionable unlock step.
+            await page.evaluate(() => {window.authError = 'passkey_required';});
+            await page.getByRole('button', {name: 'Unlock machine', exact: true}).click();
+            await page.waitForFunction(() => document.querySelector('[data-unlock-machine]')?.disabled === false);
+            assert.equal(await page.locator('#paper [data-retry]').count(), 0);
+            await page.evaluate(() => {window.authError = '';});
+            await page.getByRole('button', {name: 'Unlock machine', exact: true}).click();
+            await page.getByRole('button', {name: 'Choose project', exact: true}).waitFor();
+            const probes = await page.evaluate(() => window.requests.filter(request => request.type === 'wing.info'));
+            assert.equal(probes.length, 2);
+            assert.ok(probes.every(request => request.options.skipPasskey === false));
+            assert.match(await page.locator('#paper').innerText(), /Codex/);
+            assert.equal(await page.evaluate(() => window.state.wingsData[8].tunnel_error), undefined);
+            assert.equal((await page.evaluate(() => window.requests)).filter(request => request.type.startsWith('pty.')).length, 0);
+            await shot('passkey-unlocked-' + error);
+            await page.getByRole('button', {name: 'Choose project', exact: true}).click();
+            assert.equal(await page.locator('#command-palette').isVisible(), true);
+            assert.match(await page.locator('#palette-status').innerText(), /codex/i);
+        }
+        checks.push(`${width}: locked alternate identity authenticates before discovery, cancelled unlock retries, absent passkeys open Account; both hosted guidance surfaces follow plan availability`);
         await context.close();
     }
     assert.deepEqual(errors, []);

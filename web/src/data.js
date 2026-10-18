@@ -152,13 +152,13 @@ function currentWingProbe(w, probe) {
         w.public_key === probe.publicKey && S.currentUser === probe.user;
 }
 
-export function probeWing(w) {
+export function probeWing(w, { authenticate = false } = {}) {
     if (w.online === false || S.wingsData.find(function(wing) { return wing.wing_id === w.wing_id; }) !== w) {
         return Promise.resolve();
     }
     var existing = _probeInflight.get(w.wing_id);
-    if (existing && currentWingProbe(w, existing)) return existing.promise;
-    var probe = { wing: w, publicKey: w.public_key, user: S.currentUser, promise: null };
+    if (existing && currentWingProbe(w, existing) && (!authenticate || existing.authenticate)) return existing.promise;
+    var probe = { wing: w, publicKey: w.public_key, user: S.currentUser, authenticate, promise: null };
     _probeInflight.set(w.wing_id, probe);
     probe.promise = _probeWingInner(w, probe).finally(function() {
         if (_probeInflight.get(w.wing_id) === probe) _probeInflight.delete(w.wing_id);
@@ -168,7 +168,7 @@ export function probeWing(w) {
 
 async function _probeWingInner(w, probe) {
     try {
-        var data = await sendTunnelRequest(w.wing_id, { type: 'wing.info' }, { skipPasskey: true });
+        var data = await sendTunnelRequest(w.wing_id, { type: 'wing.info' }, { skipPasskey: !probe.authenticate });
         if (!currentWingProbe(w, probe)) return;
         w.hostname = data.hostname || w.hostname;
         w.platform = data.platform || w.platform;
@@ -194,8 +194,8 @@ async function _probeWingInner(w, probe) {
             // Clear sessions from revoked wing
             S.sessionsData = S.sessionsData.filter(function(s) { return s.wing_id !== w.wing_id; });
             saveSessionCache();
-        } else if (msg.indexOf('passkey_required') !== -1) {
-            w.tunnel_error = (S.currentUser && !S.currentUser.has_passkeys) ? 'no_passkeys_configured' : 'passkey_required';
+        } else if (['passkey_required', 'passkey_failed', 'no_passkeys_configured'].includes(msg)) {
+            w.tunnel_error = msg === 'no_passkeys_configured' || (S.currentUser && !S.currentUser.has_passkeys) ? 'no_passkeys_configured' : msg;
             if (e.metadata) {
                 w.hostname = e.metadata.hostname || w.hostname;
                 w.platform = e.metadata.platform || w.platform;

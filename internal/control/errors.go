@@ -43,6 +43,37 @@ type LaunchDiagnostic struct {
 	Session      string `json:"session,omitempty"`
 }
 
+// Keep the reason understood by older clients; newer clients can recover the
+// specific missing provider without exposing arbitrary peer text.
+func (d LaunchDiagnostic) MarshalJSON() ([]byte, error) {
+	type diagnostic LaunchDiagnostic
+	wire := struct {
+		diagnostic
+		ProviderReason string `json:"provider_reason,omitempty"`
+	}{diagnostic: diagnostic(d.Bounded())}
+	if d.Reason == "claude_missing" || d.Reason == "codex_missing" {
+		wire.Reason = "provider_failed"
+		wire.ProviderReason = d.Reason
+	}
+	return json.Marshal(wire)
+}
+
+func (d *LaunchDiagnostic) UnmarshalJSON(data []byte) error {
+	type diagnostic LaunchDiagnostic
+	var wire struct {
+		diagnostic
+		ProviderReason string `json:"provider_reason"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	if wire.Reason == "provider_failed" && (wire.ProviderReason == "claude_missing" || wire.ProviderReason == "codex_missing") {
+		wire.Reason = wire.ProviderReason
+	}
+	*d = LaunchDiagnostic(wire.diagnostic).Bounded()
+	return nil
+}
+
 func (d LaunchDiagnostic) Bounded() LaunchDiagnostic {
 	switch d.Stage {
 	case "connect/startup", "admission/policy", "provider startup", "attach-after-admission":
