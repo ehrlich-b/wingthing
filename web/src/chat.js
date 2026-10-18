@@ -12,7 +12,7 @@ export function parseJSONL(text, agent) {
     for (var i = 0; i < lines.length; i++) {
         try {
             var raw = JSON.parse(lines[i]);
-            var parsed = agent === 'claude' ? parseClaude(raw) : parseGeneric(raw);
+            var parsed = agent === 'claude' ? parseClaude(raw) : agent === 'codex' ? parseCodex(raw) : parseGeneric(raw);
             if (parsed) messages.push(parsed);
         } catch (e) {
             // skip malformed lines
@@ -67,8 +67,36 @@ function parseClaude(raw) {
     return null;
 }
 
+// Native v2 item records are retained by internal/egg/codex_native.go.
+// Only complete items are transcript text; deltas and future shapes remain
+// inspectable. Lifecycle readiness always comes from session_read, never text.
+function parseCodex(raw) {
+    if (!raw || typeof raw !== 'object') return providerRecord(raw);
+    var item = raw.method === 'item/completed' && raw.params && raw.params.item;
+    if (item && item.type === 'userMessage' && Array.isArray(item.content) && item.content.every(b => b && b.type === 'text' && typeof b.text === 'string')) {
+        return { type: 'user', content: item.content.map(b => b.text).join('\n') };
+    }
+    if (item && item.type === 'agentMessage' && typeof item.text === 'string') {
+        return { type: 'assistant', content: item.text };
+    }
+    if (item && item.type === 'mcpToolCall' && typeof item.tool === 'string') {
+        return { type: 'assistant', content: '', toolCalls: [{ name: (item.server ? item.server + ' · ' : '') + item.tool, id: item.id, input: item.arguments },
+            ...(item.result !== undefined || item.error != null ? [{ name: item.tool, result: displayJSON(item.error ?? item.result), isError: item.error != null }] : [])] };
+    }
+    // Retain generic role records supported by earlier builds.
+    return (!raw.method && parseGeneric(raw)) || providerRecord(raw);
+}
+
+function displayJSON(value) {
+    return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+}
+
+function providerRecord(raw) {
+    return { type: 'provider_record', name: raw && (raw.method || raw.type) || 'provider record', content: displayJSON(raw) };
+}
+
 function parseGeneric(raw) {
-    // Basic fallback for codex/opencode
+    // Basic fallback for role-based records
     if (raw.role === 'user' || (raw.message && raw.message.role === 'user')) {
         var c = raw.content || (raw.message && raw.message.content) || '';
         return { type: 'user', content: typeof c === 'string' ? c : JSON.stringify(c) };

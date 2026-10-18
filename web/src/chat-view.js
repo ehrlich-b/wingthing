@@ -266,6 +266,8 @@ var markerText = {
     turn_failed: 'Native provider reported a failed turn',
     warning: 'Provider warning',
     exit: 'Provider session ended',
+    tool: 'Tool activity',
+    interrupted: 'Turn interrupted',
 };
 
 function renderMessages(thinking) {

@@ -65,6 +65,42 @@ function harness(storage, respond, extra) {
 
 const mac = { userId: 'owner', wingId: 'mac', sessionId: 'sess-1', conversationId: 'logical-child' };
 
+test('Codex hook completion uses one correlated prompt and preserves uncertain delivery across reload', async () => {
+    const storage = memoryStorage();
+    const respond = (_wing, payload) => payload.operation === 'session_read'
+        ? Promise.resolve({ lifecycle: live({ agent: 'codex', state_source: 'codex_hook', state: 'completed' }) })
+        : Promise.resolve({ receipt: { status: 'unconfirmed' } });
+    const first = harness(storage, respond);
+    first.reader.open(mac);
+    await first.tick();
+    assert.equal(first.latest.presentation.state, 'turn_completed');
+    assert.equal(await first.reader.send('Inspect the release'), true);
+    assert.equal(first.latest.inputReady, false);
+    const original = first.calls.find(call => call.payload.operation === 'session_prompt');
+    assert.equal(original.wingId, 'mac');
+    assert.equal(original.payload.arguments.session, 'sess-1');
+    first.reader.close();
+    const next = harness(storage, respond);
+    next.reader.open(mac);
+    await next.tick(3);
+    assert.deepEqual(next.operations(), ['session_read', 'session_read', 'session_read']);
+    assert.equal(next.latest.pending.providerSessionId, 'prov-1');
+    await next.reader.checkReceipt(next.latest.pending.request_id);
+    assert.deepEqual(next.calls.at(-1), original);
+    assert.equal(next.latest.inputReady, false);
+    next.reader.close();
+
+    const accepted = harness(storage, (_wing, payload) => payload.operation === 'session_read'
+        ? respond(_wing, payload)
+        : Promise.resolve({ receipt: { status: 'native_receipt_observed', native_receipt_observed: true } }));
+    accepted.reader.open(mac);
+    await accepted.tick();
+    await accepted.reader.checkReceipt(accepted.latest.pending.request_id);
+    assert.deepEqual(accepted.calls.at(-1), original);
+    assert.equal(accepted.latest.pending, null);
+    accepted.reader.close();
+});
+
 test('Send keeps the draft and reports failure when its reservation cannot be saved', async () => {
     for (const failure of ['storage disabled', 'storage full']) {
         const storage = memoryStorage();
