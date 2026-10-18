@@ -10,20 +10,22 @@ import (
 )
 
 type fallbackSandbox struct {
-	cfg    Config
-	tmpDir string
+	directory *sandboxDirectory
+	cfg       Config
+	tmpDir    string
 }
 
 func newFallback(cfg Config) (Sandbox, error) {
 	if err := refuseProtectedWriteTargets(cfg, "fallback"); err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", "wt-sandbox-*")
+	directory, err := newSandboxDirectory()
 	if err != nil {
 		return nil, fmt.Errorf("create sandbox tmpdir: %w", err)
 	}
+	dir := directory.path
 	log.Printf("warning: no platform sandbox available, using process-level isolation (tmpdir=%s)", dir)
-	return &fallbackSandbox{cfg: cfg, tmpDir: dir}, nil
+	return &fallbackSandbox{directory: directory, cfg: cfg, tmpDir: dir}, nil
 }
 
 func (s *fallbackSandbox) Exec(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
@@ -41,6 +43,9 @@ func (s *fallbackSandbox) DiagLog() string  { return "" }
 func (s *fallbackSandbox) TraceLog() string { return "" }
 
 func (s *fallbackSandbox) Destroy() error {
+	if s.directory != nil {
+		return s.directory.destroy()
+	}
 	return os.RemoveAll(s.tmpDir)
 }
 

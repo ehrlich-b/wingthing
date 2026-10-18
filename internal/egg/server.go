@@ -517,6 +517,7 @@ func NewServer(dir string) (*Server, error) {
 
 // RunSession is the core lifecycle: create sandbox, start agent in PTY, serve gRPC, exit when done.
 func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
+	sandbox.SweepStaleDirectories()
 	if rc.Agent == "codex" && rc.InitialRun != nil {
 		if err := ValidateInitialCodexPrompt(rc.InitialRun.Prompt); err != nil {
 			return err

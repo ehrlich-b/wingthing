@@ -13,9 +13,10 @@ import (
 )
 
 type seatbeltSandbox struct {
-	cfg     Config
-	profile string
-	tmpDir  string
+	directory *sandboxDirectory
+	cfg       Config
+	profile   string
+	tmpDir    string
 }
 
 // newPlatform creates a sandbox-exec (Seatbelt) sandbox.
@@ -30,14 +31,15 @@ func newPlatform(cfg Config) (Sandbox, error) {
 		return nil, err
 	}
 
-	dir, err := os.MkdirTemp("", "wt-sandbox-*")
+	directory, err := newSandboxDirectory()
 	if err != nil {
 		return nil, fmt.Errorf("create sandbox tmpdir: %w", err)
 	}
+	dir := directory.path
 
 	log.Printf("seatbelt sandbox: created tmpdir=%s network=%s", dir, cfg.NetworkNeed)
 	log.Printf("seatbelt profile:\n%s", profile)
-	return &seatbeltSandbox{cfg: cfg, profile: profile, tmpDir: dir}, nil
+	return &seatbeltSandbox{directory: directory, cfg: cfg, profile: profile, tmpDir: dir}, nil
 }
 
 func (s *seatbeltSandbox) Exec(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
@@ -59,6 +61,9 @@ func (s *seatbeltSandbox) DiagLog() string  { return "" }
 func (s *seatbeltSandbox) TraceLog() string { return "" }
 
 func (s *seatbeltSandbox) Destroy() error {
+	if s.directory != nil {
+		return s.directory.destroy()
+	}
 	return os.RemoveAll(s.tmpDir)
 }
 
