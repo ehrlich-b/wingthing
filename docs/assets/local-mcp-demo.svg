@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="260" viewBox="0 0 880 260" role="img" aria-labelledby="title desc">
+  <title id="title">Wingthing local MCP workflow</title>
+  <desc id="desc">Illustrated commands to start a local wing, connect Codex and inspect a durable agent run. This is an illustration, not a runtime receipt.</desc>
+  <rect width="880" height="260" rx="12" fill="#152128"/>
+  <g fill="#e4eee9" font-family="monospace" font-size="18">
+    <text x="28" y="42" fill="#a7c4b9">Local agents · durable runs</text>
+    <text x="28" y="84">$ wt wing start --local-only</text>
+    <text x="28" y="122">$ codex mcp add wingthing -- wt mcp stdio --client codex</text>
+    <text x="28" y="160">Ask: call wingthing_capabilities, then start an agent run.</text>
+    <text x="28" y="198">Inspect its result with agent_status and agent_result.</text>
+    <text x="28" y="236" fill="#a7c4b9" font-size="14">Illustrated workflow · see GitLab tag jobs for build evidence</text>
+  </g>
+</svg>

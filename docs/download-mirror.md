@@ -52,3 +52,8 @@ build argument off. Self-hosters use `fly launch --config fly.selfhost.toml
 leaves the mirror requirement off. Downloads remain ignored by Git.
 
 For manual downloads, see [GitLab releases](https://gitlab.com/ehrlich-b/wingthing/-/releases).
+
+GitLab tag verification prepares this exact tree as a job artifact, together with
+`receipt.json` binding the source, gates and all five asset hashes. Follow the
+[release checklist](release-verification.md); stage those tested bytes rather
+than rebuilding. CI does not publish a release or replace the hosted mirror.

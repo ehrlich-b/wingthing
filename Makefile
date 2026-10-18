@@ -354,7 +354,7 @@ else ifeq ($(CHANNEL),stable)
 	@scripts/check-release-contract.sh dist/wt-contract
 	@rm -f dist/wt-contract
 	@cd dist && set -e; assets="wt-linux-amd64 wt-linux-arm64 wt-darwin-amd64 wt-darwin-arm64"; if command -v sha256sum >/dev/null 2>&1; then sha256sum $$assets > SHA256SUMS.tmp; else shasum -a 256 $$assets > SHA256SUMS.tmp; fi; mv SHA256SUMS.tmp SHA256SUMS
-	@echo "Built $(VERSION) -> dist/ (publish via gh release create)"
+	@echo "Built $(VERSION) -> dist/ (verify with scripts/release-verify.py; see docs/release-verification.md)"
 else
 	$(error CHANNEL must be stable or preview)
 endif
@@ -619,3 +619,4 @@ check-downloads:
 
 test-deploy-guard:
 	$(GO) test -p 2 ./internal/downloads ./cmd/check-downloads -run "Staged|DeployGuard" -count=1
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p test_release_verify.py -v

@@ -1,96 +1,13 @@
-name: release
+name: release-moved-to-gitlab
 
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release-tag:
+  release-location:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Reject prerelease tags before building or publishing
-        env:
-          VERSION: ${{ github.ref_name }}
-        run: sh scripts/check-release-tag.sh "$VERSION"
-
-  deterministic:
-    needs: release-tag
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26.9'
-          cache-dependency-path: go.sum
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: make check
-      - run: npm install -g @anthropic-ai/claude-code@2.1.260
-      - run: make gate GATE=claude
-      - run: make gate GATE=static RACE_PACKAGES=./...
-      # Compatibility launches historical and candidate binaries from temporary
-      # paths, and integration starts sandboxed terminals on the runner host.
-      # Ubuntu's path-scoped AppArmor userns policy cannot grant either; the
-      # ci workflow's Linux sandbox jobs exercise that security boundary.
-      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - run: make gate GATE=integration
-      - run: make gate GATE=compat
-      - run: make e2e-linux LINUX_DISTROS=debian
-      - run: make e2e-linux LINUX_DISTROS=ubuntu
-      - run: make e2e-web
-      - run: git diff --check
-      - name: Build release artifacts after deterministic gates
-        env:
-          VERSION: ${{ github.ref_name }}
-        run: make release CHANNEL=stable VERSION="$VERSION"
-      - name: Preserve tested release artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: wingthing-release-${{ github.sha }}
-          path: dist/
-          if-no-files-found: error
-          retention-days: 1
-
-  macos-sandbox:
-    needs: release-tag
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26.9'
-          cache-dependency-path: go.sum
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: make e2e-mac
-
-  release:
-    needs: [deterministic, macos-sandbox]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Download artifacts from the deterministic gate
-        uses: actions/download-artifact@v4
-        with:
-          name: wingthing-release-${{ github.sha }}
-          path: dist/
-      - name: Publish GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "${{ github.ref_name }}"
-          dist/wt-linux-amd64 dist/wt-linux-arm64
-          dist/wt-darwin-amd64 dist/wt-darwin-arm64
-          dist/SHA256SUMS --generate-notes
+      - run: echo 'Release verification runs in GitLab CI; see docs/release-verification.md.'
