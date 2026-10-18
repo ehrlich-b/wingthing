@@ -73,6 +73,7 @@ try {
         await page.waitForSelector('#paper h2');
         const shot = async name => {
             assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), name + ' overflows');
+            assert.ok(await page.evaluate(() => [...document.querySelectorAll('.pp-side-squares .pp-sq')].every(row => row.getBoundingClientRect().right <= row.closest('.pp-side').getBoundingClientRect().right + 1)), name + ' machine label overlaps content');
             const file = `${name}-${width}.png`;
             await page.screenshot({path: path.join(out, file), fullPage: true}); captures.push(file);
         };
@@ -88,6 +89,12 @@ try {
             }
             assert.deepEqual(await page.evaluate(() => window.requests), []);
             await shot(`free-${count}-machines`);
+            if (count === 9) {
+                await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+                const file = `free-browser-options-${width}.png`;
+                await page.screenshot({path: path.join(out, file)}); captures.push(file);
+                await page.evaluate(() => window.scrollTo(0, 0));
+            }
         }
         checks.push(`${width}: free guidance on six routes with 0, 1, 5 and 9 cached machines; no runtime reads or controls`);
         for (const mode of ['pro', 'self-hosted']) {

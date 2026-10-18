@@ -264,6 +264,7 @@ body.paper-on #app { display: none; }
 .pp-setup select { width: 100%; min-width: 0; padding: 10px; color: var(--pp-ink); background: var(--pp-paper); border: 1px solid var(--pp-rule-2); border-radius: 6px; }
 .pp-setup .pp-setup { margin-top: 16px; }
 .pp-more { display: inline-block; padding: 6px 0; color: var(--pp-ink-2); }
-.pp-side-squares { min-width: 0; max-width: 100%; }
-.pp-side-squares .pp-sq { display: block; overflow: hidden; text-overflow: ellipsis; }
+.pp-side { min-width: 0; }
+.pp-side-squares { min-width: 0; max-width: 100%; width: 100%; }
+.pp-side-squares .pp-sq { display: block; max-width: 100%; width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .pp-side-squares .pp-sq i { display: inline-block; margin-right: 7px; }
