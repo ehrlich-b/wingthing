@@ -280,8 +280,12 @@ and delegates inspectable tasks. DotID is the logical conversation, ExecutorID
 names the executing wing/session/provider and HomeRoostID would name durable
 home ownership. Current typed context knows the local root/executor; home
 identity and owner epoch stay unimplemented. Cross-host adoption, effect claims,
-a general home inbox, QR pairing, per-phone revocation and generic push are
-proposals. They do not follow from the existing wake outbox or role prompt.
+a general home inbox and generic push are proposals. Native QR enrollment and
+per-device revocation now have a separate [phone setup contract](../IOS-INSTALL.md);
+[browser pairing](pairing/BROWSER.md) grants inventory only, while
+[signed tunn browser access](pwa.md#personal-tunn-sso) is an owner control route.
+None establishes physical-phone acceptance. See the [current gap audit](product-gap-audit.md).
+These capabilities do not follow from the existing wake outbox or role prompt.
 
 LAN discovery and a user-selected home/VPN/relay are a future default direction.
 Existing hosted coordination still exists. A new no-vendor-contact default needs
