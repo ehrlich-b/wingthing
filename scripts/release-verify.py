@@ -37,12 +37,21 @@ def run(args, **kwargs):
 
 
 def source(tag, dry_run):
-    subprocess.run(["sh", "scripts/check-release-tag.sh", tag], check=True)
+    guard = subprocess.run(["sh", "scripts/check-release-tag.sh", tag],
+                           capture_output=True, text=True)
+    if guard.returncode:
+        raise ValueError(guard.stderr.strip() or "release tag validation failed")
     head = run(["git", "rev-parse", "HEAD"])
     if run(["git", "status", "--porcelain", "--untracked-files=no"]):
         raise ValueError("release source has tracked changes")
-    if not dry_run and run(["git", "rev-parse", f"refs/tags/{tag}^{{commit}}"] ) != head:
-        raise ValueError("release tag does not resolve to HEAD")
+    if not dry_run:
+        try:
+            tagged_head = run(["git", "rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}"],
+                              stderr=subprocess.DEVNULL)
+        except subprocess.CalledProcessError as error:
+            raise ValueError(f"release tag is missing or invalid: {tag}") from error
+        if tagged_head != head:
+            raise ValueError("release tag does not resolve to HEAD")
     if os.environ.get("CI_COMMIT_SHA", head) != head:
         raise ValueError("CI source does not match HEAD")
     return head
@@ -94,9 +103,11 @@ def package(args):
     gates = []
     for filename in args.gate:
         value = json.loads(Path(filename).read_text())
-        profile = value["profile"]
+        profile = value.get("profile")
+        if profile not in GATES:
+            raise ValueError(f"missing or unsupported gate profile in receipt: {filename}")
         if (value["head"] != head or value["tag"] != args.tag
-                or profile not in GATES or value["dry_run"] != (profile == "local")
+                or value["dry_run"] != (profile == "local")
                 or [c["command"] for c in value["commands"]] != GATES[profile]
                 or any(c["exit_code"] != 0 for c in value["commands"])):
             raise ValueError(f"incompatible gate receipt: {filename}")
@@ -111,30 +122,36 @@ def package(args):
     hashes = {name: digest(Path(args.dist) / name) for name in ASSETS + ["SHA256SUMS"]}
     root = Path(args.output)
     root.mkdir()  # Never replace an earlier staged release.
-    for gate_record in gates:
-        profile = gate_record["receipt"]["profile"]
-        logs = root / "gate-logs" / profile
-        logs.mkdir(parents=True)
-        for number, command in enumerate(gate_record["receipt"]["commands"]):
-            shutil.copyfile(command["log"], logs / f"{number}.log")
-    downloads = root / "downloads"
-    target = downloads / args.tag
-    target.mkdir(parents=True)
-    for name in hashes:
-        shutil.copyfile(Path(args.dist) / name, target / name)
-    base = Path("internal/downloads/base.txt").read_text().strip()
-    write_json(downloads / "latest.json", {
-        "tag_name": args.tag, "prerelease": False, "draft": False,
-        "assets": [{"name": name, "browser_download_url": f"{base}/{args.tag}/{name}"}
-                   for name in hashes],
-    })
-    subprocess.run(["go", "run", "-p", "2", "./cmd/check-downloads", str(downloads)], check=True)
-    if source(args.tag, args.dry_run) != head or any(digest(target / n) != h for n, h in hashes.items()):
-        raise ValueError("source or staged assets changed during verification")
-    write_json(root / "receipt.json", {"tag": args.tag, "head": head,
-               "dry_run": args.dry_run, "assets": hashes, "gates": gates,
-               "download_validator": "passed", "published": False,
-               "hosted_homepage_after_promotion": "pending authorized promotion"})
+    try:
+        for gate_record in gates:
+            profile = gate_record["receipt"]["profile"]
+            logs = root / "gate-logs" / profile
+            logs.mkdir(parents=True)
+            for number, command in enumerate(gate_record["receipt"]["commands"]):
+                shutil.copyfile(command["log"], logs / f"{number}.log")
+        downloads = root / "downloads"
+        target = downloads / args.tag
+        target.mkdir(parents=True)
+        for name in hashes:
+            shutil.copyfile(Path(args.dist) / name, target / name)
+        base = Path("internal/downloads/base.txt").read_text().strip()
+        write_json(downloads / "latest.json", {
+            "tag_name": args.tag, "prerelease": False, "draft": False,
+            "assets": [{"name": name, "browser_download_url": f"{base}/{args.tag}/{name}"}
+                       for name in hashes],
+        })
+        subprocess.run(["go", "run", "-p", "2", "./cmd/check-downloads", str(downloads)], check=True)
+        if source(args.tag, args.dry_run) != head or any(digest(target / n) != h for n, h in hashes.items()):
+            raise ValueError("source or staged assets changed during verification")
+        write_json(root / "receipt.json", {"tag": args.tag, "head": head,
+                   "dry_run": args.dry_run, "assets": hashes, "gates": gates,
+                   "download_validator": "passed", "published": False,
+                   "hosted_homepage_after_promotion": "pending authorized promotion"})
+    except BaseException:
+        # Only remove the directory created by this invocation; an existing
+        # destination is refused by mkdir above and is never touched.
+        shutil.rmtree(root)
+        raise
     print(f"Verified {args.tag} at {head}: {root}/receipt.json; nothing published")
 
 
@@ -154,7 +171,9 @@ def main():
     args = parser.parse_args()
     try:
         (gate if args.action == "gate" else package)(args)
-    except (ValueError, OSError, KeyError, subprocess.CalledProcessError) as error:
+    except KeyError as error:
+        parser.exit(1, f"Release verification refused: missing required receipt field: {error.args[0]}\n")
+    except (ValueError, OSError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"Release verification refused: {error}\n")
 
 

@@ -57,7 +57,14 @@ class ReleaseVerificationTests(unittest.TestCase):
         (self.dist / release.ASSETS[0]).write_text("corrupt bytes\n")
         with self.assertRaises(subprocess.CalledProcessError):
             release.package(self.args)
-        self.assertFalse((Path(self.args.output) / "receipt.json").exists())
+        self.assertFalse(Path(self.args.output).exists())
+        # A failed destination is reusable after repairing the inputs.
+        (self.dist / release.ASSETS[0]).write_text(f"synthetic {release.ASSETS[0]}\n")
+        release.package(self.args)
+        receipt = (Path(self.args.output) / "receipt.json").read_bytes()
+        with self.assertRaises(FileExistsError):
+            release.package(self.args)
+        self.assertEqual((Path(self.args.output) / "receipt.json").read_bytes(), receipt)
 
     def test_foreign_head_failed_gate_and_changed_command_rejected(self):
         for field, value in (("head", "foreign-head"), ("tag", "v1.0.0")):
@@ -73,6 +80,33 @@ class ReleaseVerificationTests(unittest.TestCase):
             self.save()
             with self.assertRaises(ValueError):
                 release.package(self.args)
+
+    def test_missing_profile_names_receipt_and_does_not_stage(self):
+        del self.value["profile"]
+        self.save()
+        with self.assertRaisesRegex(ValueError, "missing or unsupported gate profile.*gate.json"):
+            release.package(self.args)
+        self.assertFalse(Path(self.args.output).exists())
+
+    def test_source_change_during_packaging_cleans_output(self):
+        with patch.object(release, "source", side_effect=["fixture-head", "changed-head"]):
+            with self.assertRaisesRegex(ValueError, "source or staged assets changed"):
+                release.package(self.args)
+        self.assertFalse(Path(self.args.output).exists())
+
+    def test_source_errors_explain_missing_and_prerelease_tags(self):
+        self.source.stop()
+        with self.assertRaisesRegex(ValueError, "release tag must be vMAJOR.MINOR.PATCH"):
+            release.source("v0.0.0-rc1", False)
+        def git_output(command, **kwargs):
+            if command[:3] == ["git", "status", "--porcelain"]:
+                return ""
+            if "--verify" in command:
+                raise subprocess.CalledProcessError(128, command)
+            return "fixture-head"
+        with patch.object(release, "run", side_effect=git_output):
+            with self.assertRaisesRegex(ValueError, "release tag is missing or invalid: v0.0.0"):
+                release.source("v0.0.0", False)
 
     def test_modified_log_rejected(self):
         Path(self.value["commands"][0]["log"]).write_text("tampered log\n")

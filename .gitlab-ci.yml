@@ -16,6 +16,7 @@ release-tag:
     - sh scripts/check-release-tag.sh "$CI_COMMIT_TAG"
 
 deterministic:
+  timeout: 3 hours
   stage: verify
   tags: [wingthing-release-linux]
   script:
@@ -27,6 +28,7 @@ deterministic:
     expire_in: 7 days
 
 macos-sandbox:
+  timeout: 1 hour
   stage: verify
   tags: [wingthing-release-macos]
   script:

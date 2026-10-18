@@ -16,6 +16,12 @@ host user-namespace/AppArmor policy that permits native sandbox tests and
 historical binaries at temporary paths. Configure that policy on the isolated
 runner before registration; the jobs do not change host security settings.
 The Linux job installs the same pinned Claude CLI as the previous workflow.
+Provision a writable global npm prefix for the runner user (for example, set
+`NPM_CONFIG_PREFIX` to a runner-owned directory) and put its `bin` directory on
+`PATH` so the installed `claude` command is available without elevated privileges.
+The Linux job declares a three-hour timeout and macOS declares one hour. Set the
+project timeout and each runner's maximum timeout to at least its job timeout;
+a lower runner maximum can terminate verification before it completes.
 macOS needs Xcode command-line tools and native Seatbelt support. Neither runner
 requires a GitHub account or a GitHub release token. Compatibility uses Git tags
 in the full GitLab checkout. Provider-gate prerequisites remain those of
@@ -50,7 +56,9 @@ A dry-run receipt says `dry_run: true` and binds the local `make check` log,
 source head, tag-shaped version and each staged asset hash. It cannot substitute
 for the Linux and macOS release profiles. Packaging refuses dirty tracked source,
 foreign-head receipts, missing/failed gates, changed gate logs, missing binaries
-and checksum mismatch. Output directories and receipts must be new for each run.
+and checksum mismatch. Existing output directories and receipts are never
+replaced. Failed packaging removes its partial output so the same destination
+can be retried.
 It invokes the existing download validator, including the `latest.json` contract.
 
 ## Promotion checklist (separate authorization required)
