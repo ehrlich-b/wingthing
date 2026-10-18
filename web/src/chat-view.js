@@ -324,7 +324,8 @@ function renderMessages(thinking) {
             el.innerHTML = '<details class="cv-tool"><summary>provider record · ' + escapeMarkup(msg.name) + '</summary><pre>' + escapeMarkup(msg.content) + '</pre></details>';
         } else if (msg.type === 'lifecycle') {
             el.className += ' cv-lifecycle-' + msg.kind;
-            el.innerHTML = '<p>' + escapeMarkup(markerText[msg.kind] || msg.kind) + (msg.reason ? ' · ' + escapeMarkup(msg.reason) : '') + '<span class="text-dim"> · ' + escapeMarkup(msg.source || 'native') + ' #' + escapeMarkup(String(msg.sequence)) + '</span></p>';
+            var label = msg.kind === 'turn' && msg.source === 'codex_app_server' ? 'Foreground turn finished · not proof the task succeeded' : markerText[msg.kind] || msg.kind;
+            el.innerHTML = '<p>' + escapeMarkup(label) + (msg.reason ? ' · ' + escapeMarkup(msg.reason) : '') + '<span class="text-dim"> · ' + escapeMarkup(msg.source || 'native') + ' #' + escapeMarkup(String(msg.sequence)) + '</span></p>';
         } else if (msg.type === 'activity') {
             if (!msg.report) continue;
             el.className = 'cv-msg cv-assistant';
