@@ -19,8 +19,8 @@ test('an attention signal reads as needs you', () => {
 });
 
 test('a machine that is away overrides the last reported run state', () => {
-    assert.deepEqual(sessionState(row('working'), { online: false }), { key: 'asleep', label: 'Asleep' });
-    assert.equal(sessionState(row('blocked'), { online: true, tunnel_error: 'unreachable' }).label, 'Unreachable');
+    assert.deepEqual(sessionState(row('working'), { online: false }), { key: 'offline', label: 'Offline' });
+    assert.equal(sessionState(row('blocked'), { online: true, tunnel_error: 'unreachable' }).label, 'Offline');
     assert.equal(machineState(undefined), 'unknown');
     assert.equal(machineState({}), 'checking');
 });
@@ -43,8 +43,18 @@ test('paper routes are separate from legacy routes', () => {
     assert.equal(paperRoute('#w/abc'), null);
 });
 
-test('a machine that stopped reporting has one word and a since time', () => {
-    assert.equal(awayLabel('asleep', '1:42 PM'), 'asleep since 1:42 PM');
-    assert.equal(awayLabel('asleep', ''), 'asleep');
-    assert.equal(awayLabel('unreachable', '1:42 PM'), 'unreachable since 1:42 PM');
+test('a machine that stopped reporting uses neutral wording and last contact time', () => {
+    assert.equal(awayLabel('offline', '1:42 PM'), 'offline · last seen 1:42 PM');
+    assert.equal(awayLabel('offline', ''), 'offline');
+    assert.equal(awayLabel('unreachable', '1:42 PM'), 'offline · last seen 1:42 PM');
+});
+
+test('sleep, lost transport and disconnected machines never infer a sleep cause', () => {
+    for (const wing of [{ online: false }, { online: false, presence: 'asleep' }, { online: true, tunnel_error: 'unreachable' }]) {
+        assert.equal(machineState(wing), 'offline');
+        for (const status of ['blocked', 'working', 'completed', 'idle', 'exited']) {
+            assert.deepEqual(sessionState(row(status), wing), { key: 'offline', label: 'Offline' });
+        }
+    }
+    assert.deepEqual(sessionState(row('working'), {}), { key: 'unknown', label: 'Unknown' });
 });

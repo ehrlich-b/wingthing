@@ -3,15 +3,15 @@
 
 export function machineState(wing) {
     if (!wing) return 'unknown';
-    if (wing.online === false) return 'asleep';
+    if (wing.online === false || wing.tunnel_error === 'unreachable') return 'offline';
     if (wing.tunnel_error) return 'unreachable';
     return wing.online === true ? 'connected' : 'checking';
 }
 
 export function sessionState(session, wing) {
     const machine = machineState(wing), status = session.lifecycle && session.lifecycle.status;
-    if (machine === 'asleep') return { key: 'asleep', label: 'Asleep' };
-    if (machine === 'unreachable') return { key: 'asleep', label: 'Unreachable' };
+    if (machine === 'offline' || machine === 'unreachable') return { key: 'offline', label: 'Offline' };
+    if (machine !== 'connected') return { key: 'unknown', label: 'Unknown' };
     if (status === 'blocked' || session.needs_attention) return { key: 'need', label: 'Needs you' };
     if (status === 'working') return { key: 'work', label: 'Working' };
     if (status === 'completed') return { key: 'done', label: 'Done' };
@@ -32,10 +32,9 @@ export function requestedCommand(reason) {
     return (String(reason || '').match(/(\.\/\S+(?:\s+[\w.-]+)*|\b(?:npm|go|make|git|kubectl|fly|terraform)\s[^\n]+)/) || [])[1] || '';
 }
 
-// One word for a machine that stopped reporting, plus when it was last seen.
+// Last contact is evidence of presence, not evidence of when or why it left.
 export function awayLabel(state, since) {
-    const word = state === 'unreachable' ? 'unreachable' : 'asleep';
-    return since ? word + ' since ' + since : word;
+    return since ? 'offline · last seen ' + since : 'offline';
 }
 
 export function paperRoute(hash) {

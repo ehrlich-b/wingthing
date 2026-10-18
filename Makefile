@@ -147,6 +147,7 @@ check: test-deploy-guard test-ios-installer web
 	$(NODE) --test test/web/pty-order.mjs
 	$(NODE) --test test/web/pty-corruption.mjs
 	$(NODE) --test test/web/canvas-output.mjs
+	$(NODE) web/test/presence-browser.mjs
 	# Build once outside the PTY interaction deadlines, including CGO pairing.
 	$(stable-build)
 	$(preview-build)
