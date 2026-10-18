@@ -48,9 +48,9 @@ def source(tag, dry_run):
     return head
 
 
-def digest(path):
+def digest(path, allow_empty=False):
     path = Path(path)
-    if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
+    if path.is_symlink() or not path.is_file() or (not allow_empty and path.stat().st_size == 0):
         raise ValueError(f"missing nonempty regular artifact: {path}")
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -77,7 +77,7 @@ def gate(args):
         with log.open("x") as output:
             result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT)
         records.append({"command": command, "exit_code": result.returncode,
-                        "log": str(log), "sha256": digest(log)})
+                        "log": str(log), "sha256": digest(log, allow_empty=True)})
         print(f"{command}: exit {result.returncode}; {log}", flush=True)
         if result.returncode:
             raise ValueError("release gate failed; no passing receipt written")
@@ -102,7 +102,7 @@ def package(args):
             raise ValueError(f"incompatible gate receipt: {filename}")
         # CI retains the complete logs alongside their receipt, including macOS.
         for command in value["commands"]:
-            if digest(command["log"]) != command["sha256"]:
+            if digest(command["log"], allow_empty=True) != command["sha256"]:
                 raise ValueError("gate log checksum mismatch")
         gates.append({"receipt": value, "sha256": digest(filename)})
     expected = {"local"} if args.dry_run else {"linux", "macos"}

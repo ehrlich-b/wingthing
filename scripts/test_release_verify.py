@@ -79,6 +79,19 @@ class ReleaseVerificationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "log checksum"):
             release.package(self.args)
 
+    def test_silent_success_log_is_valid_but_empty_binary_is_not(self):
+        log = Path(self.value["commands"][0]["log"])
+        log.write_bytes(b"")
+        self.assertEqual(release.digest(log, allow_empty=True), hashlib.sha256(b"").hexdigest())
+        self.value["commands"][0]["sha256"] = release.digest(log, allow_empty=True)
+        self.save()
+        with contextlib.redirect_stdout(io.StringIO()):
+            release.package(self.args)
+        binary = self.dist / release.ASSETS[0]
+        binary.write_bytes(b"")
+        with self.assertRaises(ValueError):
+            release.digest(binary)
+
     def test_dry_run_cannot_replace_release_profiles(self):
         self.args.dry_run = False
         with self.assertRaisesRegex(ValueError, "required gate profiles"):

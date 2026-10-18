@@ -595,7 +595,7 @@ test('exit drains frames queued behind the replay write before the crash marker'
     await check(page, 'replay\r\nqueued compressed\r\nqueued plain\r\n' +
         '\r\n\x1b[31;1m--- egg crashed ---\x1b[0m\r\n' +
         '\x1b[2mfailure\r\ndetail\x1b[0m\r\n\r\n' +
-        '\x1b[33mPlease report this bug: https://github.com/ehrlich-b/wingthing/issues\x1b[0m\r\n');
+        '\x1b[33mPlease report this bug: https://gitlab.com/ehrlich-b/wingthing/-/issues\x1b[0m\r\n');
 });
 
 for (const reattach of [false, true]) {
