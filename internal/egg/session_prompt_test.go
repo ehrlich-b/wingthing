@@ -430,3 +430,62 @@ func TestSessionPromptReservationDrainsOldNativeHistory(t *testing.T) {
 		t.Fatalf("old matching row beyond import page acknowledged new input: %+v", r)
 	}
 }
+
+func TestSessionPromptComposedTextBothProviders(t *testing.T) {
+	for _, agent := range []string{"claude", "codex"} {
+		t.Run(agent, func(t *testing.T) {
+			dir, path, options := promptFixtureOptions(t)
+			input := "  Ω exact message\nsecond line\twith tabs  \n"
+			options.Input = input
+			options.Timeout = time.Second
+			var sends int
+			var publish func()
+			if agent == "codex" {
+				dir = t.TempDir()
+				home := t.TempDir()
+				spool := filepath.Join(home, ".codex", "wingthing-events", filepath.Base(dir))
+				if err := os.MkdirAll(spool, 0700); err != nil {
+					t.Fatal(err)
+				}
+				lifecycleWrite(t, filepath.Join(spool, "seq.00000000000000000001.json"), `{"session_id":"ours","hook_event_name":"SessionStart"}`)
+				options.Read = func(ctx context.Context, after int64, limit int) (SessionView, error) {
+					return ReadSessionLifecycle(dir, "codex", "", home, "ours", true, after, limit)
+				}
+				publish = func() {
+					wire, _ := json.Marshal(map[string]string{"session_id": "ours", "hook_event_name": "UserPromptSubmit", "prompt": input})
+					lifecycleWrite(t, filepath.Join(spool, "seq.00000000000000000002.json"), string(wire))
+				}
+			} else {
+				publish = func() { writeNativeUserPrompt(t, path, input) }
+			}
+			options.Send = func(ctx context.Context, text string) (PromptDelivery, error) {
+				sends++
+				if text != input {
+					t.Fatalf("composer text changed: %q", text)
+				}
+				// Transport success alone must leave delivery unconfirmed.
+				return PromptDelivery{BytesEnqueued: len(text) + 1, Lost: make(chan error)}, nil
+			}
+			options.Timeout = 100 * time.Millisecond
+			first, err := SubmitSessionPrompt(t.Context(), dir, options)
+			if err != nil || first.NativeReceiptObserved || first.Status != "unconfirmed" || sends != 1 {
+				t.Fatalf("optimistic delivery: %+v sends=%d error=%v", first, sends, err)
+			}
+			publish()
+			receipt, err := SubmitSessionPrompt(t.Context(), dir, options)
+			if err != nil || !receipt.NativeReceiptObserved || !receipt.Retried || receipt.ReceiptCursor <= receipt.ReservedCursor || sends != 1 {
+				t.Fatalf("receipt/retry failed: %+v sends=%d error=%v", receipt, sends, err)
+			}
+			again, err := SubmitSessionPrompt(t.Context(), dir, options)
+			if err != nil || !again.NativeReceiptObserved || sends != 1 {
+				t.Fatalf("duplicate resent: %+v sends=%d error=%v", again, sends, err)
+			}
+			options.Input = " \n\t "
+			if _, err := SubmitSessionPrompt(t.Context(), dir, options); err == nil || sends != 1 {
+				t.Fatal("empty prompt was accepted")
+			}
+			wire, _ := json.Marshal(receipt)
+			t.Logf("provider=%s exact_text=%q sends=%d receipt=%s", agent, input, sends, wire)
+		})
+	}
+}

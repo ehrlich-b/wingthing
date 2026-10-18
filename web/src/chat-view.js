@@ -116,7 +116,7 @@ function submitInput() {
     var sent = reader.send(text);
     // The reserved request now owns this text (shown in the pending card); a
     // definite not-sent receipt is the only thing that hands it back.
-    if (snapshot && snapshot.pending && snapshot.pending.input === text.trim()) { inputEl.value = ''; autoGrow(); }
+    if (snapshot && snapshot.pending && snapshot.pending.input === text) { inputEl.value = ''; autoGrow(); }
     if (snapshot && snapshot.continuation && snapshot.continuation.input === text) { inputEl.value = ''; autoGrow(); }
     sent.then(restoreDraft);
 }

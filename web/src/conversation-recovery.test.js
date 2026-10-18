@@ -38,7 +38,12 @@ function harness(storage, respond, extra) {
     let latest = null;
     const reader = createConversationReader({
         storage: storage,
-        request: (wingId, payload) => { calls.push({ wingId, payload }); return respond(wingId, payload, calls.length); },
+        request: async (wingId, payload) => {
+            calls.push({ wingId, payload });
+            const result = await respond(wingId, payload, calls.length);
+            // Model the real session_prompt envelope, including correlation.
+            return result?.receipt ? { ...result, receipt: { request_id: payload.arguments.request_id, session_id: payload.arguments.session, ...result.receipt } } : result;
+        },
         now: () => clock,
         schedule: (fn, ms) => { const timer = { fn, ms, cancelled: false }; timers.push(timer); return timer; },
         cancel: timer => { timer.cancelled = true; },
@@ -106,7 +111,7 @@ test('reopening a reader with unresolved input only reads; Check receipt is expl
     assert.equal(first.latest.inputReady, true);
     await first.reader.send('  summarize the child  ');
     assert.equal(first.latest.pending.status, 'unconfirmed');
-    assert.equal(first.latest.pending.input, 'summarize the child');
+    assert.equal(first.latest.pending.input, '  summarize the child  ');
     assert.equal(first.latest.pending.providerSessionId, 'prov-1');
     first.reader.close();
 
@@ -134,7 +139,7 @@ test('reopening a reader with unresolved input only reads; Check receipt is expl
     third.reader.open(mac);
     await third.reader.checkReceipt();
     const prompt = third.calls.find(call => call.payload.operation === 'session_prompt');
-    assert.deepEqual({ wing: prompt.wingId, ...prompt.payload.arguments }, { wing: 'mac', session: 'sess-1', input: 'summarize the child', request_id: 'request-1', timeout_seconds: 3 });
+    assert.deepEqual({ wing: prompt.wingId, ...prompt.payload.arguments }, { wing: 'mac', session: 'sess-1', input: '  summarize the child  ', request_id: 'request-1', timeout_seconds: 3 });
     assert.equal(third.latest.pending, null);
     assert.equal(readExecution(storage, mac).record.pending, null);
 });
@@ -510,4 +515,59 @@ test('a delayed tree response never replaces a subtree read issued later', () =>
     const fresh = mergeWingListing(listed, [{ rootId: 'root', tasks: [node('root', 'root', 'newest')], delivery: { events: [] }, issuedAt: 400 }], 390);
     assert.deepEqual(sessions(fresh), ['newest']);
     assert.equal(fresh.tasks[0].observedAt, 400);
+});
+
+for (const agent of ['claude', 'codex']) {
+    test(`${agent} sends exact composed text once, waits for receipt and rejects duplicate/empty input`, async () => {
+        let release;
+        const gate = new Promise(resolve => { release = resolve; });
+        const h = harness(memoryStorage(), async (wing, payload) => {
+            if (payload.operation === 'session_read') return { lifecycle: live({ agent, state_source: agent + '_hook' }) };
+            await gate;
+            return { receipt: { status: 'native_receipt_observed', native_receipt_observed: true, receipt_cursor: 6 } };
+        });
+        h.reader.open(mac); await h.tick();
+        for (const empty of ['', ' \n\t ']) assert.equal(await h.reader.send(empty), false);
+        const text = '  Ω exact message\nsecond line\twith tabs  \n';
+        const sending = h.reader.send(text);
+        assert.equal(h.latest.pending.input, text);
+        assert.equal(h.latest.deliveryReceipt, null);
+        assert.equal(h.latest.inputReady, false);
+        assert.equal(await h.reader.send(text), false);
+        assert.equal(await h.reader.checkReceipt(), false);
+        assert.equal(h.calls.filter(c => c.payload.operation === 'session_prompt').length, 1);
+        assert.equal(h.calls.at(-1).payload.arguments.input, text);
+        release(); await sending;
+        assert.equal(h.latest.pending, null);
+        assert.equal(h.latest.deliveryReceipt.request_id, 'request-1');
+        assert.equal(h.latest.deliveryReceipt.session_id, 'sess-1');
+    });
+}
+
+test('transport enqueue and foreign receipts never report delivery or release the original request', async () => {
+    for (const receipt of [
+        { status: 'unconfirmed', transport_enqueued: true },
+        { status: 'native_receipt_observed', native_receipt_observed: false },
+        { status: 'native_receipt_observed', native_receipt_observed: true, request_id: 'foreign' },
+        { status: 'native_receipt_observed', native_receipt_observed: true, session_id: 'foreign' },
+    ]) {
+        const h = harness(memoryStorage(), async (wing, payload) => payload.operation === 'session_read' ? { lifecycle: live() } : { receipt });
+        h.reader.open(mac); await h.tick(); await h.reader.send('original');
+        assert.equal(h.latest.deliveryReceipt, null);
+        assert.equal(h.latest.pending.request_id, 'request-1');
+        assert.equal(h.latest.pending.input, 'original');
+        assert.equal(h.latest.inputReady, false);
+        h.reader.close();
+    }
+});
+
+test('invalid and oversized messages stay unsent without a reservation', async () => {
+    const h = harness(memoryStorage(), async () => ({ lifecycle: live() }));
+    h.reader.open(mac); await h.tick();
+    for (const text of ['Ω'.repeat(32769), 'bad\x1b[31m', 'bad\rreturn']) {
+        assert.equal(await h.reader.send(text), false);
+        assert.equal(h.latest.pending, null);
+        assert.match(h.latest.notice, /at most 64 KiB/);
+    }
+    assert.deepEqual(h.operations(), ['session_read']);
 });

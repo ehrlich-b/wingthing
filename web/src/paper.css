@@ -202,7 +202,14 @@ body.paper-on #app { display: none; }
 .pp-empty h2 { font-size: 18px; font-weight: 600; margin: 0 0 6px; }
 
 /* Composer */
-.pp-composer { position: sticky; bottom: 0; z-index: 2; display: flex; gap: 8px; align-items: flex-end; padding: 12px 0 16px; margin-top: 20px; border-top: 1px solid var(--pp-rule); background: var(--pp-paper); }
+.pp-composer { position: sticky; bottom: 0; z-index: 2; display: flex; flex-direction: column; gap: 8px; align-items: stretch; padding: 12px 0 16px; margin-top: 20px; border-top: 1px solid var(--pp-rule); background: var(--pp-paper); }
+.pp-compose-entry { display: flex; gap: 8px; align-items: flex-end; }
+.pp-compose-entry textarea { flex: 1; min-width: 0; }
+.pp-delivery { font-size: 13px; overflow-wrap: anywhere; }
+.pp-delivery:empty { display: none; }
+.pp-delivery small { display: block; color: var(--pp-ink-2); }
+.pp-pending-text { margin: 0; max-height: 80px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.pp-row-you .pp-say { white-space: pre-wrap; }
 .pp-composer textarea { resize: none; max-height: 160px; }
 
 .pp-tabs { display: none; }

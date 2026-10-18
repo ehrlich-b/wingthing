@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { emptyConversationState, applyConversationRead, conversationInputReady, orderConversationTree } from '../src/conversation-state.js';
 
 test('assistant transcript chunk leaves working state until native completion', function() {
-    var view = { agent: 'claude', state_source: 'claude_hook', state: 'working', ready: false, process_alive: true, cursor: 2, events: [{ sequence: 2, raw: { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Still using tools' }] } } }] };
+    var view = { agent: 'claude', provider_session_id: 'provider', state_source: 'claude_hook', state: 'working', ready: false, process_alive: true, cursor: 2, events: [{ sequence: 2, raw: { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Still using tools' }] } } }] };
     var state = applyConversationRead(emptyConversationState(), view);
     assert.equal(state.messages[0].content, 'Still using tools');
     assert.equal(conversationInputReady(state.lifecycle), false);
@@ -37,3 +37,21 @@ test('unsupported providers and stopped processes cannot receive chat input', fu
     assert.equal(conversationInputReady({ agent: 'claude', state_source: 'claude_transcript', state: 'idle', ready: true, process_alive: true }), false);
     assert.equal(conversationInputReady({ agent: 'claude', state: 'completed', ready: true, process_alive: false }), false);
 });
+
+test('Codex prompt hooks retain exact user text in the message reader', () => {
+    const text = '  Ω message\nsecond line\t  ';
+    const event = { type: 'prompt_submitted', source: 'codex_hook', sequence: 4, state: 'working', text, raw: { hook_event_name: 'UserPromptSubmit', prompt: text } };
+    const state = applyConversationRead(emptyConversationState(), { agent: 'codex', events: [event] });
+    assert.equal(state.messages.find(message => message.type === 'user').content, text);
+    assert.equal(applyConversationRead(state, { agent: 'codex', events: [event] }).messages.filter(message => message.type === 'user').length, 1);
+});
+
+for (const agent of ['claude', 'codex']) {
+    test(`${agent} native idle/completed readiness requires exact provider and matching hook`, () => {
+        const ready = { agent, provider_session_id: 'provider', state_source: agent + '_hook', state: 'idle', process_alive: true, ready: true };
+        for (const state of ['idle', 'completed']) assert.equal(conversationInputReady({ ...ready, state }), true);
+        for (const change of [{ provider_session_id: '' }, { state_source: 'unsupported' }, { state_source: agent === 'codex' ? 'claude_hook' : 'codex_hook' }, { process_alive: false }, { ready: false }, { state: 'working' }, { state: 'needs_input' }]) {
+            assert.equal(conversationInputReady({ ...ready, ...change }), false);
+        }
+    });
+}

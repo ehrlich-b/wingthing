@@ -5,9 +5,10 @@ import './paper.css';
 import { S } from './state.js';
 import { escapeMarkup as esc } from './security.js';
 import { wingDisplayName, sessionDisplayName } from './helpers.js';
-import { sendTunnelRequest } from './tunnel.js';
+import { sendTunnelRequest, randomUUID } from './tunnel.js';
 import { applyConversationRead, restoredConversationState } from './conversation-state.js';
-import { switchToSession, showSessionChat, showHome } from './nav.js';
+import { createConversationReader } from './conversation-recovery.js';
+import { switchToSession, showHome } from './nav.js';
 import { showPalette } from './palette.js';
 import { loadHome } from './data.js';
 import { paperRoute as route, machineState, sessionState as stateOf, projectName, agentName, requestedCommand, awayLabel } from './paper-state.js';
@@ -16,6 +17,35 @@ const reads = new Map();
 const terminals = new Map();
 const numberWords = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
 let root, main, side, lastSignature = '';
+let inputReader, inputKey = '', inputSnapshot = null;
+const drafts = new Map();
+
+function storage(kind) { try { return window[kind]; } catch { return null; } }
+function inputAllowed(s) {
+    return !!s && machineState(wingOf(s.wing_id)) === 'connected' && !S.spectating && S.currentUser?.relay_allowed !== false;
+}
+function selectComposer(s) {
+    const target = s && S.currentUser ? { userId: S.currentUser.id, wingId: s.wing_id, sessionId: s.id } : null;
+    const key = target ? JSON.stringify(target) : '';
+    if (key === inputKey) return;
+    if (inputReader) inputReader.close();
+    inputKey = key; inputSnapshot = null;
+    if (!target) return;
+    inputReader = createConversationReader({
+        storage: storage('localStorage'), legacyStorage: storage('sessionStorage'),
+        request: sendTunnelRequest, randomId: randomUUID,
+        onChange(next) {
+            inputSnapshot = next;
+            queueMicrotask(() => {
+                if (inputSnapshot !== next) return;
+                const draft = inputReader.takeDraft();
+                if (draft !== null && !drafts.get(inputKey)) drafts.set(inputKey, draft);
+                render(true);
+            });
+        },
+    });
+    inputReader.open(target);
+}
 
 export function paperRoute(hash = location.hash) { return route(hash); }
 export function isPaperRoute(hash) { return !!paperRoute(hash); }
@@ -41,6 +71,9 @@ function needing() { return workSessions().filter(s => sessionState(s).key === '
 
 // Read the session's own transcript evidence; cached briefly per session.
 function read(s) {
+    if (inputSnapshot?.target && inputSnapshot.target.userId === S.currentUser?.id && inputSnapshot.target.wingId === s.wing_id && inputSnapshot.target.sessionId === s.id) {
+        return { state: { messages: inputSnapshot.messages, cursor: inputSnapshot.cursor }, at: inputSnapshot.observedAt, error: inputSnapshot.readError };
+    }
     const k = s.wing_id + '/' + s.id, w = wingOf(s.wing_id);
     let entry = reads.get(k);
     if (!entry) { entry = { state: restoredConversationState(null), at: 0, busy: false, error: '' }; reads.set(k, entry); }
@@ -123,13 +156,19 @@ function viewWing() {
         '<div class="pp-thread-heading">' + kicker('<span data-thread-source>Today</span>', reporting + (reporting === 1 ? ' session' : ' sessions') + ' reporting') + '</div><div class="pp-conversation" tabindex="0" aria-label="Wing messages">' +
         (thread || '<p class="pp-quiet">Wing has not reported yet. Its updates and each session\'s latest line appear here.</p>') +
         need.map(s => needCard(s)).join('') + '</div>' + (coord ? composer('Message wing', coord) : '') + '</div>' +
-        '<aside class="pp-col-rail">' + kicker('Sessions', String(work.length)) + work.map(s => '<a class="pp-mini" href="' + sessionHref(s) + '">' + chip(sessionState(s)) + '<span>' + esc(sessionDisplayName(s)) + '</span><small>' + esc(machineName(wingOf(s.wing_id))) + '</small></a>').join('') +
+        '<aside class="pp-col-rail">' + kicker('Sessions', String(work.length)) + work.slice(0, 8).map(s => '<a class="pp-mini" href="' + sessionHref(s) + '">' + chip(sessionState(s)) + '<span>' + esc(sessionDisplayName(s)) + '</span><small>' + esc(machineName(wingOf(s.wing_id))) + '</small></a>').join('') + (work.length > 8 ? '<a class="pp-quiet" href="#sessions">+' + (work.length - 8) + ' more</a>' : '') +
         kicker('Machines', String(S.wingsData.length)) + '<div class="pp-squares">' + squares() + '</div></aside></div>';
 }
 
 function composer(label, s) {
+    const snap = inputSnapshot, pending = snap?.pending, receipt = snap?.deliveryReceipt;
+    const allowed = inputAllowed(s), ready = allowed && snap?.inputReady && !snap?.continuationReady;
+    const unavailable = snap?.presentation?.archived ? 'Session ended' : snap?.presentation?.state === 'unsupported' ? 'Use terminal' : snap?.lifecycle?.state === 'working' ? 'Agent is working' : 'Messaging unavailable';
+    const status = pending ? (snap.checking ? 'Checking delivery…' : 'Delivery unconfirmed') : receipt ? 'Delivered' : !allowed ? 'Read only' : snap?.notice || (ready ? '' : unavailable);
     return '<form class="pp-composer" data-composer="' + esc(s.wing_id + '/' + s.id) + '"><label class="pp-sr" for="pp-message">' + esc(label) + '</label>' +
-        '<textarea id="pp-message" rows="1" placeholder="' + esc(label) + '"></textarea><button type="submit" class="pp-btn pp-btn-ink">Send</button></form>';
+        '<div class="pp-compose-entry"><textarea id="pp-message" rows="1" placeholder="' + esc(label) + '"' + (ready ? '' : ' disabled') + '></textarea><button type="submit" class="pp-btn pp-btn-ink"' + (ready && drafts.get(inputKey)?.trim() ? '' : ' disabled') + '>Send</button></div>' +
+        '<div class="pp-delivery" role="status">' + esc(status) + (pending || receipt ? '<small>Request ' + esc(pending?.request_id || receipt.request_id) + '</small>' : '') + '</div>' +
+        (pending ? '<pre class="pp-pending-text">' + esc(pending.input) + '</pre><button type="button" class="pp-btn" data-check-receipt' + (allowed && !snap.checking ? '' : ' disabled') + '>Check receipt</button>' : '') + '</form>';
 }
 
 function sessionRow(s) {
@@ -194,7 +233,7 @@ function viewSession(route) {
     const meta = esc([agentName(s.agent), machineName(w), project(s)].filter(Boolean).join(' · ')) + chip(st);
     return head(esc(sessionDisplayName(s)), meta) + '<div class="pp-cols pp-split"><div class="pp-col-main"><div class="pp-conversation" tabindex="0" aria-label="Session messages">' + kicker('Messages', entry.error ? esc(entry.error) : '') +
         (msgs || '<p class="pp-quiet">' + (entry.at ? 'No messages in this session yet.' : 'Reading the session…') + '</p>') +
-        (st.key === 'need' ? needCard(s) : '') + '</div>' + (machineState(w) === 'connected' ? composer('Message ' + sessionDisplayName(s), s) : '') + '</div>' +
+        (st.key === 'need' ? needCard(s) : '') + '</div>' + composer('Message ' + sessionDisplayName(s), s) + '</div>' +
         '<aside class="pp-col-rail pp-term-rail">' + (phone ? '<details class="pp-terminal"><summary>Show terminal</summary>' : '<div class="pp-terminal">') + kicker('Terminal', live ? 'Agent has control' : 'Last seen') +
         '<pre class="pp-term" aria-label="Terminal preview">' + esc((term.text || '').split('\n').slice(-18).join('\n').trimEnd() || term.error || (live ? 'Waiting for terminal output…' : machineName(w) + ' is ' + awayText(w) + '. The last screen is not cached.')) + '</pre>' +
         (live ? '<button type="button" class="pp-btn" data-takeover="' + esc(s.wing_id + '/' + s.id) + '">Take over terminal</button><p class="pp-quiet">Your keys go to the session until you hand control back. Messages wait while you have control.</p>' : '') + (phone ? '</details>' : '</div>') + '</aside></div>';
@@ -231,6 +270,10 @@ function frame() {
     document.body.prepend(root);
     main = root.querySelector('.pp-main'); side = root.querySelector('.pp-side');
     root.addEventListener('click', event => {
+        if (event.target.closest('[data-check-receipt]')) {
+            if (inputReader && inputSnapshot?.pending && !event.target.disabled) inputReader.checkReceipt(inputSnapshot.pending.request_id);
+            return;
+        }
         const take = event.target.closest('[data-takeover]');
         if (take) { const [wingId, sessionId] = take.dataset.takeover.split('/'); show(false); switchToSession(sessionId, true, wingId); return; }
         if (event.target.closest('[data-new-session]')) { showPalette(); return; }
@@ -240,6 +283,11 @@ function frame() {
         if (retry) { retry.disabled = true; retry.textContent = 'Checking…'; loadHome().finally(() => render(true)); }
     });
     root.addEventListener('input', event => {
+        if (event.target.id === 'pp-message') {
+            drafts.set(inputKey, event.target.value);
+            event.target.form.querySelector('[type="submit"]').disabled = !inputSnapshot?.inputReady || !event.target.value.trim();
+            return;
+        }
         if (event.target.id !== 'pp-filter') return;
         const q = event.target.value.trim().toLowerCase();
         root.querySelectorAll('.pp-srow').forEach(row => { row.hidden = q && !row.textContent.toLowerCase().includes(q); });
@@ -247,10 +295,13 @@ function frame() {
     root.addEventListener('submit', event => {
         const form = event.target.closest('[data-composer]'); if (!form) return;
         event.preventDefault();
-        const [wingId, sessionId] = form.dataset.composer.split('/'), text = form.querySelector('textarea').value;
-        // Delivery and its confirmation stay in the conversation view.
-        show(false);
-        if (showSessionChat(sessionId, wingId)) { const input = document.getElementById('chat-input'); if (input) { input.value = text; input.focus(); } }
+        const s = sessions().find(s => s.wing_id + '/' + s.id === form.dataset.composer);
+        if (!inputReader || !inputAllowed(s) || !inputSnapshot?.inputReady || inputSnapshot.continuationReady) return;
+        const text = form.querySelector('textarea').value;
+        if (!text.trim()) return;
+        inputReader.send(text);
+        if (inputSnapshot?.pending?.input === text) drafts.set(inputKey, '');
+        render(true);
     });
 }
 
@@ -320,13 +371,15 @@ export function render(force) {
     const route = paperRoute();
     const on = !!route && S.activeView === 'home';
     show(on);
-    if (!on) return;
+    if (!on) { selectComposer(null); return; }
+    selectComposer(route.view === 'wing' ? coordinator() : route.view === 'session' ? findSession(route) : null);
     const views = { wing: viewWing, sessions: viewSessions, machines: viewMachines, pair: viewPair, session: viewSession, approve: viewApprove };
     const html = views[route.view](route);
     const sig = location.hash + html;
     if (sig === lastSignature) return;
     lastSignature = sig;
-    const draft = root.querySelector('#pp-message')?.value, filter = root.querySelector('#pp-filter')?.value, focused = document.activeElement && document.activeElement.id;
+    const filter = root.querySelector('#pp-filter')?.value, focused = document.activeElement && document.activeElement.id;
+    const selection = focused === 'pp-message' ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
     const fresh = main.dataset.hash !== location.hash;
     const conversation = main.querySelector('.pp-conversation');
     const position = conversation?.scrollTop || 0;
@@ -354,9 +407,11 @@ export function render(force) {
     side.querySelector('.pp-date').textContent = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
     side.querySelector('.pp-side-squares').innerHTML = squares();
     side.querySelector('.pp-foot').textContent = S.currentUser && S.currentUser.email || '';
-    if (draft) root.querySelector('#pp-message') && (root.querySelector('#pp-message').value = draft);
+    const input = root.querySelector('#pp-message');
+    if (input) input.value = drafts.get(inputKey) || '';
     if (filter) { const f = root.querySelector('#pp-filter'); if (f) { f.value = filter; f.dispatchEvent(new Event('input', { bubbles: true })); } }
     if (focused && (focused === 'pp-message' || focused === 'pp-filter')) root.querySelector('#' + focused)?.focus({ preventScroll: true });
+    if (input && selection) input.setSelectionRange(...selection);
 }
 
 export function initPaper() {
