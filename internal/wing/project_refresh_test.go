@@ -449,3 +449,26 @@ func TestProjectRefreshBoundedImmutableSnapshots(t *testing.T) {
 		t.Fatalf("root changes and invalidation made %d scans, want 5 total", scans.Load())
 	}
 }
+
+func TestAgentDiscoveryRefreshAfterInstall(t *testing.T) {
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	client := &ws.Client{Agents: []string{"stale"}}
+	if got := projectDiscoveryClient(client, nil).Agents; len(got) != 0 {
+		t.Fatalf("invented agents: %v", got)
+	}
+	// Discovery must never execute this fixture.
+	marker := filepath.Join(bin, "executed")
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\ntouch "+marker+"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if got := projectDiscoveryClient(client, nil).Agents; !slices.Equal(got, []string{"claude"}) {
+		t.Fatalf("installed agent absent: %v", got)
+	}
+	if !slices.Equal(client.Agents, []string{"stale"}) {
+		t.Fatal("live client mutated")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("discovery executed provider: %v", err)
+	}
+}

@@ -50,7 +50,7 @@ func (d LaunchDiagnostic) Bounded() LaunchDiagnostic {
 		d.Stage = "admission/policy"
 	}
 	switch d.Reason {
-	case "connection_unavailable", "startup_failed", "startup_exited", "canceled", "admission_unknown", "policy_refused", "invalid_workspace", "session_name_in_use", "executable_denied", "provider_home_denied", "workspace_denied", "provider_config_denied", "network_denied", "preparation_failed", "provider_failed", "attach_failed", "sandbox_unavailable", "authentication_required", "client_required", "client_not_configured":
+	case "claude_missing", "codex_missing", "connection_unavailable", "startup_failed", "startup_exited", "canceled", "admission_unknown", "policy_refused", "invalid_workspace", "session_name_in_use", "executable_denied", "provider_home_denied", "workspace_denied", "provider_config_denied", "network_denied", "preparation_failed", "provider_failed", "attach_failed", "sandbox_unavailable", "authentication_required", "client_required", "client_not_configured":
 	default:
 		d.Reason = "policy_refused"
 	}
@@ -205,6 +205,9 @@ func restoreLaunchDiagnostic(err error, result map[string]any) error {
 
 func FormatLaunchDiagnostic(d LaunchDiagnostic) string {
 	d = d.Bounded()
+	if d.Reason == "claude_missing" || d.Reason == "codex_missing" {
+		return launchReason(d.Reason) + ". Run wt setup on the selected machine for install commands, then sign in to the provider there and retry."
+	}
 	var out strings.Builder
 	fmt.Fprintf(&out, "Claude launch failed during %s: %s. ", d.Stage, launchReason(d.Reason))
 	switch d.Stage {
@@ -260,6 +263,10 @@ func FormatLaunchDiagnostic(d LaunchDiagnostic) string {
 
 func launchReason(reason string) string {
 	switch reason {
+	case "claude_missing":
+		return "Claude executable (claude) was not found on PATH"
+	case "codex_missing":
+		return "Codex executable (codex) was not found on PATH"
 	case "authentication_required":
 		return "passkey authentication is required"
 	case "client_required":

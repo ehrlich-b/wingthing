@@ -526,7 +526,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	stage, reason := "admission/policy", "preparation_failed"
 	var launch PreparedLaunch
 	defer func() {
-		if runErr != nil && rc.Agent == "claude" && rc.LaunchPolicy != nil {
+		if runErr != nil && ((rc.Agent == "claude" && rc.LaunchPolicy != nil) || reason == "claude_missing" || reason == "codex_missing") {
 			runErr = ProjectLaunchFailure(runErr, rc.LaunchPolicy, launch, stage, reason)
 		}
 	}()
@@ -574,6 +574,13 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	if err := ValidateProtectedWriteTargetBoundary(rc.ProtectedWriteTargets, hasSandbox); err != nil {
 		return err
 	}
+	binPath, err := exec.LookPath(name)
+	if err != nil {
+		if len(rc.Command) == 0 && (rc.Agent == "claude" || rc.Agent == "codex") {
+			stage, reason = "provider startup", rc.Agent+"_missing"
+		}
+		return fmt.Errorf("command %q not found: %v", name, err)
+	}
 	if hasSandbox {
 		if ok, help := sandbox.CheckCapability(); !ok {
 			stage, reason = "provider startup", "sandbox_unavailable"
@@ -581,10 +588,6 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		}
 	}
 
-	binPath, err := exec.LookPath(name)
-	if err != nil {
-		return fmt.Errorf("command %q not found: %v", name, err)
-	}
 	// Resolve symlinks so the real binary path works inside namespaces
 	// (e.g. ~/.local/bin/claude -> ~/.claude/bin/claude)
 	if resolved, err := filepath.EvalSymlinks(binPath); err == nil {

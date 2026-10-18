@@ -9,13 +9,15 @@ import { sendTunnelRequest } from './tunnel.js';
 import { applyConversationRead, restoredConversationState } from './conversation-state.js';
 import { switchToSession, showSessionChat, showHome } from './nav.js';
 import { showPalette } from './palette.js';
-import { loadHome } from './data.js';
+import { loadHome, probeWing } from './data.js';
+import { browserUnavailable, installedAgents, directSetup, agentSetup } from './onboarding.js';
 import { paperRoute as route, machineState, sessionState as stateOf, projectName, agentName, requestedCommand, awayLabel } from './paper-state.js';
 
 const reads = new Map();
 const terminals = new Map();
 const numberWords = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
-let root, main, side, lastSignature = '';
+let root, main, side, lastSignature = '', launchWingId = '';
+const machineLimit = 5;
 
 export function paperRoute(hash = location.hash) { return route(hash); }
 export function isPaperRoute(hash) { return !!paperRoute(hash); }
@@ -31,7 +33,7 @@ const ago = t => { const ms = Date.parse(t); if (!Number.isFinite(ms)) return ''
 // Inline code for commands and file names; everything else stays prose.
 const prose = text => esc(text || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/(^|\s)(\.\/[\w./-]+|[\w-]+\/[\w./-]+\.\w+)/g, '$1<code>$2</code>');
 const awayText = w => awayLabel(machineState(w), clock(w.last_seen));
-const squares = () => S.wingsData.filter(w => wingDisplayName(w)).map(w => { const m = machineState(w); return '<span class="pp-sq pp-sq-' + m + '" title="' + esc(machineName(w) + ' · ' + m) + '"><i aria-hidden="true"></i>' + esc(machineName(w)) + '<span class="pp-sr"> ' + m + '</span></span>'; }).join('');
+const squares = () => S.wingsData.filter(w => wingDisplayName(w)).slice(0, machineLimit).map(w => { const m = machineState(w); return '<span class="pp-sq pp-sq-' + m + '" title="' + esc(machineName(w) + ' · ' + m) + '"><i aria-hidden="true"></i>' + esc(machineName(w)) + '<span class="pp-sr"> ' + m + '</span></span>'; }).join('');
 
 function sessions() { return S.sessionsData.filter(s => (s.kind || 'terminal') !== 'chat' && wingOf(s.wing_id)); }
 function coordinator() { return sessions().find(isCoordinator); }
@@ -95,11 +97,22 @@ function viewEmpty() {
     if (!S.wingsData.length) return head('wing', '') + '<section class="pp-empty"><h2>No machines yet</h2><p>Install wt on a computer where your agents run, then sign in and start it. It shows up here when it connects.</p>' +
         '<pre class="pp-cmd"><span class="pp-prompt">$</span> curl -fsSL https://wingthing.ai/install.sh | sh\n<span class="pp-prompt">$</span> wt login\n<span class="pp-prompt">$</span> wt start</pre>' +
         '<div class="pp-actions"><button type="button" class="pp-btn" data-copy="curl -fsSL https://wingthing.ai/install.sh | sh">Copy install command</button><a class="pp-btn" href="#pair">Pair a machine</a></div></section>';
-    const names = S.wingsData.map(machineName).join(', ');
-    return head('wing', '') + '<div class="pp-cols"><section class="pp-empty"><h2>No sessions on ' + esc(names) + '</h2><p>Start an agent from here or run <code>wt claude</code> on the machine. Wing reports on it in this thread.</p>' +
+    return head('wing', '') + '<div class="pp-cols"><section class="pp-empty"><h2>No sessions yet</h2><p>Choose a machine and set up an agent to begin.</p>' +
         '<div class="pp-actions"><button type="button" class="pp-btn pp-btn-ink" data-new-session>New session</button></div></section>' +
-        '<aside class="pp-col-rail">' + kicker('Machines', String(S.wingsData.length)) + S.wingsData.map(w => machineRow(w)).join('') +
-        kicker('From a terminal') + '<pre class="pp-cmd"><span class="pp-prompt">$</span> wt claude\n<span class="pp-prompt">$</span> wt codex</pre><p class="pp-quiet pp-gap">Sessions started on a machine show up here on their own.</p></aside></div>';
+        '<aside class="pp-col-rail">' + kicker('Machines', String(S.wingsData.length)) + S.wingsData.slice(0, machineLimit).map(w => machineRow(w)).join('') + machineOverflow() +
+        kicker('From a terminal') + '<pre class="pp-cmd">wt setup</pre><p class="pp-quiet pp-gap">Install an agent and sign in to its provider on that machine.</p></aside></div>';
+}
+
+// Setup answers which machine can start an agent; project selection stays in
+// the existing picker once a detected provider is available.
+function viewNew(route) {
+    if (!S.wingsData.length) return viewEmpty();
+    const w = S.wingsData.find(w => w.wing_id === (route.wingId || launchWingId)) || S.wingsData.find(w => machineState(w) === 'connected') || S.wingsData[0];
+    launchWingId = w.wing_id;
+    return head('New session', 'Choose a machine') + '<section class="pp-setup"><label for="pp-launch-machine">Machine</label><select id="pp-launch-machine">' +
+        S.wingsData.map(item => '<option value="' + esc(item.wing_id) + '"' + (item === w ? ' selected' : '') + '>' + esc(machineName(item)) + '</option>').join('') + '</select>' +
+        (machineState(w) !== 'connected' ? '<h2>Machine unavailable</h2><p>Reconnect ' + esc(machineName(w)) + ', then try again.</p><button type="button" class="pp-btn" data-retry>Retry</button>' :
+            installedAgents(w).length ? '<h2>Ready on ' + esc(machineName(w)) + '</h2><p>' + esc(installedAgents(w).map(agentName).join(', ')) + '</p><button type="button" class="pp-btn pp-btn-ink" data-choose-project="' + esc(w.wing_id) + '">Choose project</button>' : agentSetup(w, machineName(w))) + '</section>';
 }
 
 function viewWing() {
@@ -159,8 +172,10 @@ function viewSessions() {
         group('Needs you', by('need')) + group('Working', by('work')) + group('Idle and done', [...by('idle'), ...by('done'), ...by('ended'), ...by('unknown')]) +
         asleepWings.map(w => group('Last seen on ' + esc(machineName(w)), away.filter(s => s.wing_id === w.wing_id), 'Cached')).join('') + '</div>' +
         '<aside class="pp-col-rail">' + (coord ? kicker('Pinned') + '<div class="pp-pin"><p><b class="pp-wing">wing</b> <small>' + esc(clock(coordLast && coordLast.at)) + '</small></p><p>' + prose(coordLast ? coordLast.text : 'No update yet.') + '</p><a class="pp-btn" href="#">Open wing</a></div>' : '') +
-        kicker('Machines', String(S.wingsData.length)) + S.wingsData.map(w => machineRow(w)).join('') + '</aside></div>';
+        kicker('Machines', String(S.wingsData.length)) + S.wingsData.slice(0, machineLimit).map(w => machineRow(w)).join('') + machineOverflow() + '</aside></div>';
 }
+
+function machineOverflow() { return S.wingsData.length > machineLimit ? '<a class="pp-more" href="#machines">+' + (S.wingsData.length - machineLimit) + ' more</a>' : ''; }
 
 function machineRow(w, detail = '') {
     const m = machineState(w), n = workSessions().filter(s => s.wing_id === w.wing_id).length;
@@ -173,6 +188,7 @@ function viewMachines() {
     const rows = S.wingsData.map(w => { const m = machineState(w), list = workSessions().filter(s => s.wing_id === w.wing_id);
         return '<section class="pp-machine">' + machineRow(w, [w.platform === 'darwin' ? 'macOS' : w.platform === 'linux' ? 'Linux' : w.platform, (w.agents || []).map(agentName).join(', ')].filter(Boolean).join(' · ')) +
         (list.length ? '<ul>' + list.map(s => '<li><a href="' + sessionHref(s) + '">' + esc(sessionDisplayName(s)) + '</a> ' + chip(sessionState(s)) + '</li>').join('') + '</ul>' : '<p class="pp-quiet">No sessions on ' + esc(machineName(w)) + '.</p>') +
+        (m === 'connected' && !installedAgents(w).length ? agentSetup(w, machineName(w)) : '') +
         (m === 'asleep' || m === 'unreachable' ? '<button type="button" class="pp-btn" data-retry>Retry ' + esc(machineName(w)) + '</button>' : '') + '</section>'; }).join('');
     return head('Machines', '<span class="pp-squares">' + squares() + '</span>') + '<div class="pp-cols"><div class="pp-col-main">' + kicker('Your machines', String(S.wingsData.length)) + rows + '</div>' +
         '<aside class="pp-col-rail">' + kicker('Add a device') + '<p>Run <code>wt start</code> on another computer to add it here.</p><p class="pp-quiet">To list a machine\'s sessions in another browser without signing in, run <code>wt pair --show-link</code> on it, then open Pair.</p><a class="pp-btn" href="#pair">Pair a machine</a></aside></div>';
@@ -233,11 +249,19 @@ function frame() {
     root.addEventListener('click', event => {
         const take = event.target.closest('[data-takeover]');
         if (take) { const [wingId, sessionId] = take.dataset.takeover.split('/'); show(false); switchToSession(sessionId, true, wingId); return; }
-        if (event.target.closest('[data-new-session]')) { showPalette(); return; }
         const copy = event.target.closest('[data-copy]');
         if (copy) { navigator.clipboard?.writeText(copy.dataset.copy).then(() => { copy.textContent = 'Copied'; }, () => { copy.textContent = 'Copy failed'; }); return; }
+        if (browserUnavailable(S.currentUser)) return;
+        if (event.target.closest('[data-new-session]')) { location.hash = '#new'; return; }
+        const choose = event.target.closest('[data-choose-project]');
+        if (choose) { showPalette(choose.dataset.chooseProject); return; }
+        const refresh = event.target.closest('[data-refresh-agents]');
+        if (refresh) { const w = wingOf(refresh.dataset.refreshAgents); if (w) { refresh.disabled = true; probeWing(w).finally(() => { refresh.disabled = false; render(true); }); } return; }
         const retry = event.target.closest('[data-retry]');
         if (retry) { retry.disabled = true; retry.textContent = 'Checking…'; loadHome().finally(() => render(true)); }
+    });
+    root.addEventListener('change', event => {
+        if (event.target.id === 'pp-launch-machine') { launchWingId = event.target.value; location.hash = '#new/' + encodeURIComponent(launchWingId); render(true); }
     });
     root.addEventListener('input', event => {
         if (event.target.id !== 'pp-filter') return;
@@ -321,8 +345,9 @@ export function render(force) {
     const on = !!route && S.activeView === 'home';
     show(on);
     if (!on) return;
-    const views = { wing: viewWing, sessions: viewSessions, machines: viewMachines, pair: viewPair, session: viewSession, approve: viewApprove };
-    const html = views[route.view](route);
+    const views = { wing: viewWing, sessions: viewSessions, machines: viewMachines, pair: viewPair, new: viewNew, session: viewSession, approve: viewApprove };
+    const denied = browserUnavailable(S.currentUser);
+    const html = denied ? head('Get started', 'Free native access') + directSetup(S.currentUser) : views[route.view](route);
     const sig = location.hash + html;
     if (sig === lastSignature) return;
     lastSignature = sig;
@@ -348,11 +373,11 @@ export function render(force) {
         nextConversation.addEventListener('scroll', updateThreadSource, { passive: true });
         updateThreadSource();
     }
-    const nv = nav(route);
+    const nv = denied ? '<a href="#" aria-current="page">Get started</a><a href="#account">Account</a>' : nav(route);
     side.querySelector('.pp-nav').innerHTML = nv;
     root.querySelector('.pp-tabs').innerHTML = nv;
     side.querySelector('.pp-date').textContent = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
-    side.querySelector('.pp-side-squares').innerHTML = squares();
+    side.querySelector('.pp-side-squares').innerHTML = denied ? '' : squares() + machineOverflow();
     side.querySelector('.pp-foot').textContent = S.currentUser && S.currentUser.email || '';
     if (draft) root.querySelector('#pp-message') && (root.querySelector('#pp-message').value = draft);
     if (filter) { const f = root.querySelector('#pp-filter'); if (f) { f.value = filter; f.dispatchEvent(new Event('input', { bubbles: true })); } }

@@ -3,10 +3,12 @@ package wing
 import (
 	"crypto/ecdh"
 	"encoding/json"
+	"os/exec"
 	"slices"
 	"sync"
 	"time"
 
+	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
@@ -53,7 +55,15 @@ func (p *projectInventory) invalidate() {
 // never mutates the live relay client or copies its connection locks. The
 // tunnel dispatcher still authenticates, decrypts and applies current ACLs.
 func projectDiscoveryClient(client *ws.Client, projects []ws.WingProject) *ws.Client {
-	return &ws.Client{Hostname: client.Hostname, Platform: client.Platform, Version: client.Version, Agents: client.Agents, Projects: projects}
+	// Refresh PATH discovery without executing providers or mutating the live
+	// client. A newly installed agent is available on the next wing.info read.
+	var agents []string
+	for _, definition := range agentpkg.Definitions() {
+		if _, err := exec.LookPath(definition.Command); err == nil {
+			agents = append(agents, definition.Name)
+		}
+	}
+	return &ws.Client{Hostname: client.Hostname, Platform: client.Platform, Version: client.Version, Agents: agents, Projects: projects}
 }
 
 func isProjectDiscovery(req ws.TunnelRequest, privKey *ecdh.PrivateKey) bool {

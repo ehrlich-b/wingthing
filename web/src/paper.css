@@ -255,3 +255,15 @@ body.paper-on #app { display: none; }
     .pp-tabs small:empty { display: none; }
     .pp-desk-only { display: none; }
 }
+
+.pp-setup { max-width: 720px; display: grid; gap: 14px; align-content: start; }
+.pp-setup h2 { font-size: 22px; margin: 0; line-height: 1.3; overflow-wrap: anywhere; }
+.pp-setup h3 { margin: 12px 0 0; font-size: 16px; }
+.pp-setup .pp-btn { justify-self: start; }
+.pp-setup .pp-cmd { white-space: pre-wrap; overflow-wrap: anywhere; }
+.pp-setup select { width: 100%; min-width: 0; padding: 10px; color: var(--pp-ink); background: var(--pp-paper); border: 1px solid var(--pp-rule-2); border-radius: 6px; }
+.pp-setup .pp-setup { margin-top: 16px; }
+.pp-more { display: inline-block; padding: 6px 0; color: var(--pp-ink-2); }
+.pp-side-squares { min-width: 0; max-width: 100%; }
+.pp-side-squares .pp-sq { display: block; overflow: hidden; text-overflow: ellipsis; }
+.pp-side-squares .pp-sq i { display: inline-block; margin-right: 7px; }
