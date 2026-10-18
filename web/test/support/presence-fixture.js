@@ -13,12 +13,15 @@ const names = ['Design workstation for the autumn release', 'Research laptop wit
 const wings = Array.from({ length: window.presenceCount ?? 8 }, (_, i) => ({ wing_id: 'machine-' + i, public_key: publicKey, user_id: 'fixture-owner', owner: 'You', name: names[i] || 'Development computer ' + i, online: i < 2 }));
 const calls = [], sockets = [], closedPeers = [];
 const unreachable = new Set();
+const failures = window.presenceErrors || {};
+if (window.presenceUnnamed) wings.push({ online: false });
 function lifecycle(id, after = 0) {
     return { session_id: id, agent: 'claude', status: 'working', state: 'working', state_source: 'claude_hook', process_alive: true, ready: false, cursor: 1, head_cursor: 1,
         events: after ? [] : [{ sequence: 1, type: 'message', role: 'assistant', text: 'Checking the release notes and preparing the next update.', timestamp: '2026-01-01T12:00:00Z' }] };
 }
 function answer(wingId, inner) {
     calls.push({ wingId, ...inner });
+    if (failures[wingId]) return { error: failures[wingId] };
     if (unreachable.has(wingId)) return { error: 'unreachable' };
     const wing = wings.find(w => w.wing_id === wingId);
     if (!wing?.online) return { error: 'wing offline' };

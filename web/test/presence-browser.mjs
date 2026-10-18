@@ -16,6 +16,19 @@ async function run() {
     const origin = 'http://presence-fixture.localhost';
     const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--disable-background-networking', '--renderer-process-limit=2'] });
     const results = [];
+    async function serve(context, page, hasPasskeys = true, discoveryWait = null) {
+        await context.route('**/*', async route => {
+            const url = new URL(route.request().url());
+            assert.equal(url.origin, origin, 'all browser resources are local fixtures');
+            const json = body => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+            if (url.pathname === '/api/app/me') return json({ id: 'fixture-owner', display_name: 'You', relay_allowed: true, has_passkeys: hasPasskeys });
+            if (url.pathname === '/api/app/wings') { if (discoveryWait) await discoveryWait; return json(await page.evaluate(() => presenceFixture.discovery())); }
+            const relative = url.pathname === '/app/' ? 'index.html' : url.pathname.replace(/^\/app\//, '');
+            const path = resolve(root, 'dist', relative);
+            if (path.startsWith(resolve(root, 'dist') + '/') && existsSync(path)) return route.fulfill({ body: readFileSync(path), contentType: relative.endsWith('.js') ? 'text/javascript' : relative.endsWith('.css') ? 'text/css' : relative.endsWith('.html') ? 'text/html' : 'image/svg+xml' });
+            throw Error('Unexpected fixture resource: ' + url.pathname);
+        });
+    }
     try {
         for (const width of [390, 1440]) {
             for (const count of [0, 1, 6, 8]) {
@@ -26,17 +39,7 @@ async function run() {
                 console.log('presence fixture', width, count);
                 page.on('console', msg => { if (msg.type() === 'error') console.log('browser error:', msg.text()); });
                 page.on('pageerror', error => errors.push(error.message));
-                await context.route('**/*', async route => {
-                    const url = new URL(route.request().url());
-                    assert.equal(url.origin, origin, 'all browser resources are local fixtures');
-                    const json = body => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
-                    if (url.pathname === '/api/app/me') return json({ id: 'fixture-owner', display_name: 'You', relay_allowed: true, has_passkeys: true });
-                    if (url.pathname === '/api/app/wings') return json(await page.evaluate(() => presenceFixture.discovery()));
-                    const relative = url.pathname === '/app/' ? 'index.html' : url.pathname.replace(/^\/app\//, '');
-                    const path = resolve(root, 'dist', relative);
-                    if (path.startsWith(resolve(root, 'dist') + '/') && existsSync(path)) return route.fulfill({ body: readFileSync(path), contentType: relative.endsWith('.js') ? 'text/javascript' : relative.endsWith('.css') ? 'text/css' : relative.endsWith('.html') ? 'text/html' : 'image/svg+xml' });
-                    throw Error('Unexpected fixture resource: ' + url.pathname);
-                });
+                await serve(context, page);
                 await page.goto(origin + '/app/#machines');
                 if (!count) await page.getByRole('heading', { name: 'No machines yet' }).waitFor();
                 else {
@@ -107,9 +110,73 @@ async function run() {
                 await context.close();
             }
         }
+        for (const width of [390, 1440]) {
+            for (const [error, label, guidance] of [
+                ['passkey_required', 'Locked', 'Unlock with your passkey.'],
+                ['no_passkeys_configured', 'Locked', 'Set up a passkey to unlock this machine.'],
+                ['not_allowed', 'No access', 'Ask the owner to grant access.'],
+                ['decrypt', 'Key changed', 'Retry to refresh this machine’s key.'],
+            ]) {
+                const context = await browser.newContext({ viewport: { width, height: 1000 } });
+                const wireError = error === 'no_passkeys_configured' ? 'passkey_required' : error;
+                await context.addInitScript({ content: 'window.presenceCount = 8; window.presenceErrors = ' + JSON.stringify({ 'machine-1': wireError }) + ';\n' + fixture.outputFiles[0].text });
+                const page = await context.newPage();
+                await serve(context, page, error !== 'no_passkeys_configured');
+                await page.goto(origin + '/app/#machines');
+                const row = page.locator('[data-machine="machine-1"]');
+                await row.locator('.pp-mname i').getByText(label, { exact: true }).waitFor();
+                assert.ok((await row.innerText()).includes(guidance));
+                assert.doesNotMatch(await row.innerText(), /Offline|Reconnect|Sessions kept/);
+                assert.match(await page.locator('.pp-hdr').innerText(), /1 connected · 6 offline/);
+                if (error === 'not_allowed') {
+                    assert.equal(await row.locator('li').count(), 0);
+                    assert.match(await row.innerText(), /Sessions unavailable/);
+                } else assert.equal(await row.locator('.pp-st').innerText(), label);
+                await page.screenshot({ path: resolve(output, `access-${error}-${width}.png`), fullPage: true });
+                if (error !== 'not_allowed') {
+                    await page.evaluate(() => { location.hash = '#sessions'; });
+                    await page.locator('.pp-group').filter({ hasText: 'Access needed' }).waitFor();
+                    await page.evaluate(() => { location.hash = '#session/machine-1/same-id'; });
+                    await page.locator('.pp-hdr .pp-st').getByText(label, { exact: true }).waitFor();
+                    assert.equal(await page.locator('#paper [data-composer], #paper [data-takeover]').count(), 0);
+                    assert.ok((await page.locator('.pp-away').innerText()).includes(guidance));
+                    assert.doesNotMatch(await page.locator('.pp-away').innerText(), /offline|Reconnect|Sessions.*kept/i);
+                    await page.evaluate(() => { location.hash = '#approve/machine-1/same-id'; });
+                    await page.locator('.pp-note').waitFor();
+                    assert.ok((await page.locator('.pp-note').innerText()).includes(guidance));
+                    assert.doesNotMatch(await page.locator('.pp-note').innerText(), /offline|reconnect/i);
+                    assert.equal(await page.locator('#paper [data-takeover]').count(), 0);
+                }
+                if (error !== 'decrypt') {
+                    await page.evaluate(() => { location.hash = '#machines'; });
+                    await page.locator('[data-machine="machine-1"] a').getByText('Machine access', { exact: true }).click();
+                    const banner = page.locator('.wd-lock-banner');
+                    await banner.waitFor();
+                    assert.match(await banner.innerText(), error === 'not_allowed' ? /Ask the owner/ : error === 'no_passkeys_configured' ? /Configure a passkey/ : /Authenticate/);
+                }
+                results.push({ width, error, label, guidance, accessDistinctFromOffline: true });
+                await context.close();
+            }
+            const context = await browser.newContext({ viewport: { width, height: 1000 } });
+            await context.addInitScript({ content: 'window.presenceCount = 8; window.presenceUnnamed = true;\n' + fixture.outputFiles[0].text });
+            const page = await context.newPage();
+            let release;
+            const discoveryWait = new Promise(resolve => { release = resolve; });
+            await serve(context, page, true, discoveryWait);
+            await page.goto(origin + '/app/#session/machine-0/same-id');
+            await page.locator('.pp-hdr .pp-st-work').waitFor();
+            assert.doesNotMatch(await page.locator('.pp-main').innerText(), /Unknown|stale/);
+            assert.equal(await page.locator('#paper [data-composer], #paper [data-takeover]').count(), 0, 'checking does not offer runtime controls');
+            assert.equal(await page.locator('.pp-side-squares .pp-more').innerText(), '+5 more', 'unnamed machines do not inflate the strip count');
+            await page.screenshot({ path: resolve(output, `checking-session-${width}.png`), fullPage: true });
+            release();
+            await page.locator('#paper [data-takeover]').waitFor({ state: 'attached' });
+            results.push({ width, checkingPreservesLifecycle: true, unnamedStripCount: '+5 more' });
+            await context.close();
+        }
     } finally { await browser.close(); }
     writeFileSync(resolve(output, 'receipt.json'), JSON.stringify({ sourceHead: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), fixture: 'production web/dist with local encrypted wing peers', displayLimit: 6, planLimit: 'No machine-count plan limit exists in this head; captured the six-row display boundary.', results }, null, 2) + '\n');
-    console.log('presence-browser PASS: offline socket, unreachable probe, stale state, controls, retry, identity and selection; 390/1440px, 0/1/6/8 machines');
+    console.log('presence-browser PASS: offline socket, access failures, checking, strip count, stale state, controls, retry, identity and selection; 390/1440px, 0/1/6/8 machines');
 }
 
 if (!process.env.NODE_TEST_CONTEXT) await run();

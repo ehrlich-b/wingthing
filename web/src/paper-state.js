@@ -4,14 +4,25 @@
 export function machineState(wing) {
     if (!wing) return 'unknown';
     if (wing.online === false || wing.tunnel_error === 'unreachable') return 'offline';
-    if (wing.tunnel_error) return 'unreachable';
+    if (['passkey_required', 'passkey_failed', 'no_passkeys_configured'].includes(wing.tunnel_error)) return 'locked';
+    if (wing.tunnel_error === 'not_allowed') return 'no-access';
+    if (wing.tunnel_error === 'key_mismatch') return 'key-mismatch';
+    if (wing.tunnel_error) return 'unavailable';
     return wing.online === true ? 'connected' : 'checking';
+}
+
+export function machineLabel(wing) {
+    return { connected: 'Connected', offline: 'Offline', checking: 'Checking', locked: 'Locked', 'no-access': 'No access', 'key-mismatch': 'Key changed', unavailable: 'Unavailable', unknown: 'Unknown' }[machineState(wing)];
+}
+
+export function machineGuidance(wing) {
+    if (wing?.tunnel_error === 'no_passkeys_configured' && machineState(wing) === 'locked') return 'Set up a passkey to unlock this machine.';
+    return { offline: 'Reconnect this machine, then retry.', locked: 'Unlock with your passkey.', 'no-access': 'Ask the owner to grant access.', 'key-mismatch': 'Retry to refresh this machine’s key.', unavailable: 'Retry to check access.', checking: 'Checking this machine…', unknown: 'Machine status unavailable.' }[machineState(wing)] || '';
 }
 
 export function sessionState(session, wing) {
     const machine = machineState(wing), status = session.lifecycle && session.lifecycle.status;
-    if (machine === 'offline' || machine === 'unreachable') return { key: 'offline', label: 'Offline' };
-    if (machine !== 'connected') return { key: 'unknown', label: 'Unknown' };
+    if (!['connected', 'checking'].includes(machine)) return { key: machine, label: machineLabel(wing) };
     if (status === 'blocked' || session.needs_attention) return { key: 'need', label: 'Needs you' };
     if (status === 'working') return { key: 'work', label: 'Working' };
     if (status === 'completed') return { key: 'done', label: 'Done' };
@@ -33,7 +44,7 @@ export function requestedCommand(reason) {
 }
 
 // Last contact is evidence of presence, not evidence of when or why it left.
-export function awayLabel(state, since) {
+export function offlineLabel(since) {
     return since ? 'offline · last seen ' + since : 'offline';
 }
 

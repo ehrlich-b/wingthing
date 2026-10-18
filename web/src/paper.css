@@ -57,7 +57,7 @@ body.paper-on #app { display: none; }
 .pp-sq { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--pp-ink-2); white-space: nowrap; }
 .pp-sq i { width: 8px; height: 8px; border: 1.5px solid var(--pp-green); background: var(--pp-green); border-radius: 2px; flex: none; }
 .pp-sq-offline i { background: transparent; border-color: var(--pp-amber); }
-.pp-sq-unreachable i { background: linear-gradient(45deg, transparent 40%, var(--pp-red) 40% 60%, transparent 60%); border-color: var(--pp-red); }
+.pp-sq-locked i, .pp-sq-no-access i, .pp-sq-key-mismatch i, .pp-sq-unavailable i { background: linear-gradient(45deg, transparent 40%, var(--pp-red) 40% 60%, transparent 60%); border-color: var(--pp-red); }
 .pp-sq-checking i, .pp-sq-unknown i { background: transparent; border-color: var(--pp-ink-3); border-style: dotted; }
 
 /* Main column */
@@ -279,3 +279,6 @@ body.paper-on #app { display: none; }
 .pp-sq-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .pp-machine-heading .pp-mrow small { display: none; }
+
+.pp-st-locked, .pp-st-no-access, .pp-st-key-mismatch, .pp-st-unavailable { color: var(--pp-red); }
+.pp-st-locked::before, .pp-st-no-access::before, .pp-st-key-mismatch::before, .pp-st-unavailable::before { content: "!"; }
