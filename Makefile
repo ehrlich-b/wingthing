@@ -619,3 +619,9 @@ check-downloads:
 
 test-deploy-guard:
 	$(GO) test -p 2 ./internal/downloads ./cmd/check-downloads -run "Staged|DeployGuard" -count=1
+
+# Synthetic, offline probes against the current native sandbox. A missing or
+# skipped canary leaves a nonzero gate and a retained report under .scratch.
+.PHONY: test-isolation
+test-isolation: | web/dist
+	PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-isolation.py --go '$(GO)'

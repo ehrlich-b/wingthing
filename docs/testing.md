@@ -610,3 +610,12 @@ installed; the native fixtures check relative paths and `/proc/self/cwd` as well
 as absolute paths. Docker batteries stage these fixtures on private tmpfs mounts, including
 temporary grants, so their backing trees satisfy the contract and the fixtures
 can construct overlays without using Docker's preexisting OverlayFS as an upper.
+
+## Native isolation baseline
+
+`make test-isolation` runs offline Linux canaries for filesystem writes, secret
+reads, denied egress, resource bounds and credential exposure. It retains a
+source-bound JSON report and fails on missing or skipped probes. See
+[the probe matrix and initial baseline](isolation-conformance.md) for known gaps,
+controls, prerequisites and the distinction between admission refusal and
+measured enforcement.
