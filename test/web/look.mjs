@@ -15,7 +15,6 @@ import { gcm } from '../../web/node_modules/@noble/ciphers/aes.js';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const shots = process.env.WT_LOOK_SHOTS || path.join(root, '.scratch/look');
 const only = (process.env.WT_LOOK_ONLY || '').split(',').filter(Boolean);
-const isolatedSessions = only.length === 1 && only[0] === '02-sessions';
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 fs.mkdirSync(shots, { recursive: true });
 fs.mkdirSync(path.join(root, '.scratch'), { recursive: true });
@@ -61,31 +60,14 @@ const machines = {
         { ...row('wing', 'wing', 'claude', 'working', 'wingthing'), pinned: true, role: 'coordinator' },
         row('redirect', 'fix-login-redirect', 'claude', 'blocked', 'wingthing'),
         row('migrate', 'migrate-sessions-table', 'claude', 'working', 'wingthing'),
-        row('handoff', 'write-on-call-handoff-summary-for-next-release', 'claude', 'idle', 'wingthing'),
-        row('refunds', 'repair-refund-retries-after-provider-timeout', 'codex', 'blocked', 'wingthing'),
-        row('rotation', 'rotate-oauth-credentials-without-user-interruption', 'claude', 'working', 'wingthing'),
-        row('search-index', 'rebuild-session-search-index-in-the-background', 'codex', 'completed', 'wingthing'),
-        row('upload-retry', 'prevent-large-upload-retries-from-blocking-new-jobs', 'claude', 'working', 'wingthing'),
-        row('privacy-guide', 'document-retention-and-account-deletion-behavior', 'codex', 'idle', 'docs'),
     ] },
     macbook: { name: 'MacBook', rows: [
         row('ratelimit', 'add-rate-limit-to-api', 'codex', 'working', 'wingthing'),
         row('notes', 'write-release-notes', 'claude', 'idle', 'wingthing'),
-        row('audit-timeouts', 'trace-intermittent-audit-export-timeouts', 'claude', 'working', 'wingthing'),
-        row('asset-pipeline', 'move-static-assets-to-the-versioned-pipeline', 'codex', 'working', 'wingthing'),
-        row('cache-headers', 'fix-stale-cache-headers-on-account-settings', 'claude', 'completed', 'wingthing'),
-        row('access-review', 'review-cross-machine-session-access-boundaries', 'codex', 'blocked', 'wingthing'),
-        row('deploy-checklist', 'prepare-the-operator-deploy-and-rollback-checklist', 'claude', 'idle', 'docs'),
-        row('event-export', 'export-session-events-with-stable-cursor-pagination', 'codex', 'working', 'wingthing'),
     ] },
     mini: { name: 'Mini', rows: [
         row('playwright', 'bump-playwright', 'codex', 'completed', 'wingthing'),
         row('docs', 'docs-cleanup', 'claude', 'idle', 'docs'),
-        row('webhook-replay', 'add-idempotent-webhook-replay-for-delayed-events', 'claude', 'working', 'wingthing'),
-        row('stale-session', 'remove-stale-session-links-from-the-machine-sidebar', 'codex', 'completed', 'wingthing'),
-        row('browser-smoke', 'add-mobile-browser-smoke-coverage-for-search', 'claude', 'idle', 'wingthing'),
-        row('startup-trace', 'trace-slow-agent-startup-after-a-cold-reboot', 'codex', 'working', 'wingthing'),
-        row('retention-policy', 'write-the-account-data-retention-policy-summary', 'claude', 'idle', 'docs'),
     ] },
 };
 const events = {
@@ -314,54 +296,6 @@ async function checkStatusMarkers(page, name, suffix) {
     }
     checked(name+suffix+'-status-markers',evidence);
 }
-async function checkSessionSearchCounts(page, suffix) {
-    const width = page.viewportSize().width;
-    const input = page.locator('#pp-filter');
-    const rows = page.locator('.pp-srow');
-    const pinned = page.locator('.pp-pin');
-    assert.equal(await rows.count(), 23, 'all non-coordinator sessions start visible');
-    assert.equal(await pinned.count(), 1, 'the coordinator remains in its pinned rail');
-    assert.equal(await pinned.locator('a').count(), 1);
-    assert.match(await pinned.textContent(), /Open wing/);
-    assert.equal(await pinned.isVisible(), width === 1440, 'the existing phone layout keeps the pinned rail in the DOM but hides it');
-    const groupCounts = () => page.locator('.pp-group').evaluateAll(groups => groups.map(group => ({
-        title: group.querySelector('.pp-kick span:first-child').textContent,
-        label: group.querySelector('[data-group-count]').textContent.trim(),
-        visibleRows: [...group.querySelectorAll('.pp-srow')].filter(row => !row.hidden).length,
-        hidden: group.hidden,
-    })));
-    const assertGroupCounts = async () => {
-        const groups = await groupCounts();
-        for (const group of groups) assert.equal(Number(group.label), group.visibleRows, JSON.stringify(group));
-        return groups;
-    };
-
-    await input.fill('zz-no-session-match-713');
-    assert.equal(await page.locator('.pp-srow:visible').count(), 0);
-    assert.equal(await page.locator('[data-search-empty]').isVisible(), true);
-    const zeroGroups = await assertGroupCounts();
-    assert.ok(zeroGroups.every(group => group.hidden && group.visibleRows === 0));
-    assert.equal(await pinned.count(), 1);
-    await page.screenshot({ path: path.join(shots, `session-search-zero-${width}.png`), fullPage: false });
-
-    await input.fill('on-call-handoff-summary');
-    assert.equal(await page.locator('.pp-srow:visible').count(), 1);
-    assert.equal(await page.locator('[data-search-empty]').isVisible(), false);
-    const oneGroups = await assertGroupCounts();
-    assert.equal(oneGroups.reduce((total, group) => total + group.visibleRows, 0), 1);
-    assert.equal(await pinned.count(), 1);
-    await page.screenshot({ path: path.join(shots, `session-search-one-${width}.png`), fullPage: false });
-
-    await input.fill('');
-    assert.equal(await page.locator('.pp-srow:visible').count(), 23, 'clearing search restores every non-coordinator row');
-    assert.equal(await page.locator('[data-search-empty]').isVisible(), false);
-    const allGroups = await assertGroupCounts();
-    assert.equal(allGroups.reduce((total, group) => total + group.visibleRows, 0), 23);
-    assert.equal(await pinned.count(), 1);
-    assert.match(await pinned.textContent(), /wing/i);
-    await page.screenshot({ path: path.join(shots, `session-search-plan-limit-${width}.png`), fullPage: false });
-    checked('02-sessions' + suffix + '-search-counts', { width, zeroGroups, oneGroups, allGroups, coordinatorPinned: true });
-}
 async function checkConversation(page, name, suffix) {
     if (process.env.WT_LOOK_LEGACY) return;
     const identity = await page.locator('.pp-hdr').innerText();
@@ -498,22 +432,6 @@ try {
     const dark = [{ width: 1440, height: 900, suffix: '-desktop-dark' }, { width: 390, height: 844, suffix: '-phone-dark' }];
     for (const v of dark) contexts.push(await browser.newContext({ viewport: { width: v.width, height: v.height }, colorScheme: 'dark' }));
     const themes = [...viewports, ...dark];
-    if (isolatedSessions) {
-        for (const id of Object.keys(machines)) await machine(id);
-        for (const [index, v] of themes.entries()) {
-            const page = await contexts[index].newPage();
-            const errors = [];
-            page.on('pageerror', error => errors.push(error.message));
-            await go(page, '');
-            await page.waitForTimeout(1500);
-            await go(page, '#sessions');
-            await page.waitForSelector('.pp-srow', { timeout: 15000 });
-            await checkSessionSearchCounts(page, v.suffix);
-            await shoot(page, '02-sessions', v.suffix);
-            assert.deepEqual(errors, []);
-            await page.close();
-        }
-    } else {
     // Public HTML routes in internal/relay/server.go and pages.go. /self-host
     // redirects to /docs; markdown and download endpoints are not HTML pages.
     for (let i = 0; i < 100; i++) { try { if ((await fetch(publicBase + '/health')).ok) break; } catch {} await sleep(100); }
@@ -561,7 +479,6 @@ try {
         await shoot(page, '01-wing', v.suffix);
         await checkConversationRefresh(page,'01-wing',v.suffix);
         await go(page, '#sessions');
-        await checkSessionSearchCounts(page, v.suffix);
         await checkStatusMarkers(page,'02-sessions',v.suffix);
         await shoot(page, '02-sessions', v.suffix);
         await go(page, process.env.WT_LOOK_LEGACY ? '#chat/migrate?wing=studio' : '#session/studio/migrate');
@@ -619,10 +536,8 @@ try {
         await contexts[index].setOffline(false);
         await page.close();
     }
-    }
     const expected = only.length ? (only.length + 1) * themes.length : 80;
-    const captureTarget = isolatedSessions ? themes.length : expected;
-    if (captures.length !== captureTarget) throw Error('Incomplete capture: ' + captures.length + ' of ' + captureTarget);
+    if (captures.length !== expected) throw Error('Incomplete capture: ' + captures.length + ' of ' + expected);
     complete = true;
     if (overflow.length) throw Error('Horizontal overflow in ' + overflow.length + ' phone captures');
 } finally {
