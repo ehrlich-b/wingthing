@@ -139,7 +139,10 @@ function sessionRow(s) {
         '<span class="pp-sname"><b>' + esc(sessionDisplayName(s)) + '</b><i>' + esc([agentName(s.agent), machineName(w), project(s)].filter(Boolean).join(' · ')) + '</i></span>' +
         '<span class="pp-sline">' + esc(line) + '</span><time>' + esc(ago(last && last.at)) + '</time></a>';
 }
-function group(title, list, right) { return list.length ? '<section class="pp-group">' + kicker(title, right || String(list.length)) + list.map(sessionRow).join('') + '</section>' : ''; }
+function group(title, list, right) {
+    const count = right || String(list.length);
+    return list.length ? '<section class="pp-group"><div class="pp-kick"><span>' + title + '</span><span data-group-count data-default-count="' + esc(count) + '">' + esc(count) + '</span></div>' + list.map(sessionRow).join('') + '</section>' : '';
+}
 
 function viewSessions() {
     const work = workSessions();
@@ -156,6 +159,7 @@ function viewSessions() {
     const coord = coordinator(), coordLast = coord && lines(coord).filter(l => l.who === 'agent').pop();
     return head('Sessions', meta) + '<div class="pp-cols"><div class="pp-col-main">' + banner +
         '<div class="pp-searchbar"><label class="pp-sr" for="pp-filter">Search sessions</label><input id="pp-filter" type="search" placeholder="Search work or machines" autocomplete="off"><button type="button" class="pp-btn" data-new-session>New session</button></div>' +
+        '<p class="pp-quiet" data-search-empty role="status" hidden>No sessions match this search.</p>' +
         group('Needs you', by('need')) + group('Working', by('work')) + group('Idle and done', [...by('idle'), ...by('done'), ...by('ended'), ...by('unknown')]) +
         asleepWings.map(w => group('Last seen on ' + esc(machineName(w)), away.filter(s => s.wing_id === w.wing_id), 'Cached')).join('') + '</div>' +
         '<aside class="pp-col-rail">' + (coord ? kicker('Pinned') + '<div class="pp-pin"><p><b class="pp-wing">wing</b> <small>' + esc(clock(coordLast && coordLast.at)) + '</small></p><p>' + prose(coordLast ? coordLast.text : 'No update yet.') + '</p><a class="pp-btn" href="#">Open wing</a></div>' : '') +
@@ -241,8 +245,7 @@ function frame() {
     });
     root.addEventListener('input', event => {
         if (event.target.id !== 'pp-filter') return;
-        const q = event.target.value.trim().toLowerCase();
-        root.querySelectorAll('.pp-srow').forEach(row => { row.hidden = q && !row.textContent.toLowerCase().includes(q); });
+        updateSessionSearch();
     });
     root.addEventListener('submit', event => {
         const form = event.target.closest('[data-composer]'); if (!form) return;
@@ -252,6 +255,27 @@ function frame() {
         show(false);
         if (showSessionChat(sessionId, wingId)) { const input = document.getElementById('chat-input'); if (input) { input.value = text; input.focus(); } }
     });
+}
+
+function updateSessionSearch() {
+    const input = root.querySelector('#pp-filter');
+    if (!input) return;
+    const query = input.value.trim().toLowerCase();
+    let visible = 0;
+    for (const group of root.querySelectorAll('.pp-group')) {
+        const rows = [...group.querySelectorAll('.pp-srow')];
+        const count = rows.reduce((total, row) => {
+            const matches = !query || row.textContent.toLowerCase().includes(query);
+            row.hidden = !matches;
+            return total + Number(matches);
+        }, 0);
+        visible += count;
+        const countLabel = group.querySelector('[data-group-count]');
+        if (countLabel) countLabel.textContent = query ? String(count) : countLabel.dataset.defaultCount;
+        group.hidden = !!query && count === 0;
+    }
+    const empty = root.querySelector('[data-search-empty]');
+    if (empty) empty.hidden = !query || visible > 0;
 }
 
 function show(on) {
@@ -356,6 +380,7 @@ export function render(force) {
     side.querySelector('.pp-foot').textContent = S.currentUser && S.currentUser.email || '';
     if (draft) root.querySelector('#pp-message') && (root.querySelector('#pp-message').value = draft);
     if (filter) { const f = root.querySelector('#pp-filter'); if (f) { f.value = filter; f.dispatchEvent(new Event('input', { bubbles: true })); } }
+    if (route.view === 'sessions') updateSessionSearch();
     if (focused && (focused === 'pp-message' || focused === 'pp-filter')) root.querySelector('#' + focused)?.focus({ preventScroll: true });
 }
 
