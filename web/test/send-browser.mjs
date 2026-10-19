@@ -64,7 +64,7 @@ async function run() {
                 assert.equal(url.origin, origin);
                 const json = body => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
                 if (url.pathname === '/api/app/me') return json({ id: 'fixture-owner', email: 'owner@example.com', relay_allowed: true, has_passkeys: true });
-                if (url.pathname === '/api/app/wings') return json([{ wing_id: 'machine-a', public_key: await page.evaluate(() => sendFixture.publicKey), user_id: 'fixture-owner', online: !offline }]);
+                if (url.pathname === '/api/app/wings') return json(offline ? [] : [{ wing_id: 'machine-a', public_key: await page.evaluate(() => sendFixture.publicKey), user_id: 'fixture-owner', online: !offline }]);
                 const file = url.pathname === '/app/' ? resolve(root, 'dist/index.html') : resolve(root, 'dist', url.pathname.replace(/^\/app\//, ''));
                 assert.ok(file.startsWith(resolve(root, 'dist')) && existsSync(file), 'fixture asset: ' + url.pathname);
                 return route.fulfill({ body: readFileSync(file), contentType: file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html' });

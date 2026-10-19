@@ -58,7 +58,7 @@ function announce(wingId, type) {
 // A returning owner's inventory includes remembered offline computers.
 localStorage.setItem('wt_cache_owner_v1', 'fixture-owner');
 localStorage.setItem('wt_wings', JSON.stringify(wings.map(w => ({ ...w, hostname: w.name, online: undefined, last_seen: '2026-01-01T12:00:00Z' }))));
-localStorage.setItem('wt_sessions', JSON.stringify(wings.flatMap(w => ['same-id', ...(w.wing_id === 'machine-0' ? ['coordinator'] : [])].map(id => ({ id, wing_id: w.wing_id, name: id === 'coordinator' ? 'wing' : 'Release notes and integration readiness checks', agent: 'claude', user_id: 'fixture-owner', pinned: id === 'coordinator', role: id === 'coordinator' ? 'coordinator' : '', lifecycle: lifecycle(id, 0, wingId) })))));
+localStorage.setItem('wt_sessions', JSON.stringify(wings.flatMap(w => ['same-id', ...(w.wing_id === 'machine-0' ? ['coordinator'] : [])].map(id => ({ id, wing_id: w.wing_id, name: id === 'coordinator' ? 'wing' : 'Release notes and integration readiness checks', agent: 'claude', user_id: 'fixture-owner', pinned: id === 'coordinator', role: id === 'coordinator' ? 'coordinator' : '', lifecycle: lifecycle(id, 0, w.wing_id) })))));
 window.WebSocket = FixtureSocket;
 window.presenceFixture = {
     calls, wings, closedPeers,
