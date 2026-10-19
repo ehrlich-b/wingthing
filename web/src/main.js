@@ -26,6 +26,7 @@ import { conversationViewport } from './mobile-viewport.js';
 import { createForegroundRefresh } from './phone-refresh.js';
 import { initReachShare } from './reach-share.js';
 import { initPaper, isPaperRoute } from './paper.js';
+import { renderHostedPlanGuidance } from './onboarding.js';
 
 function denyBrowserRelayView() {
     history.replaceState({ view: 'home' }, '', location.pathname);
@@ -76,6 +77,7 @@ async function init() {
     });
 
     if (S.currentUser.relay_allowed === false && DOM.directAgentSetup) {
+        renderHostedPlanGuidance(S.currentUser, DOM.directAgentSetup);
         DOM.directAgentSetup.style.display = '';
         DOM.newSessionBtn.style.display = 'none';
         var emptySessionsTitle = document.getElementById('empty-no-sessions-title');

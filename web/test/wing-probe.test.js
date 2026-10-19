@@ -27,6 +27,34 @@ test('simultaneous probes share one promise even with immediately fulfilled resp
     assert.equal(h.calls.length, 2, 'a settled probe permits an intentional fresh probe');
 });
 
+test('explicit unlock supersedes a passive probe and stale lock errors cannot relock the wing', async () => {
+    const passive = deferred(), authenticated = deferred();
+    const h = harness(() => h.calls.length === 1 ? passive.promise : authenticated.promise);
+    h.S.currentUser.has_passkeys = true;
+    const first = h.probe();
+    const unlock = h.context.probeWing(h.wing, { authenticate: true });
+    assert.notEqual(first, unlock);
+    assert.equal(h.context.probeWing(h.wing, { authenticate: true }), unlock);
+    assert.equal(h.probe(), unlock);
+    assert.equal(h.calls[0][2].skipPasskey, true);
+    assert.equal(h.calls[1][2].skipPasskey, false);
+    authenticated.resolve({ agents: ['codex'] }); await unlock;
+    passive.reject(Error('passkey_required')); await first;
+    assert.equal(h.wing.tunnel_error, undefined);
+    assert.equal(h.wing.agents[0], 'codex');
+    assert.deepEqual(h.notices, []);
+});
+
+test('unlock failures keep passkey recovery distinct from an unreachable machine', async () => {
+    for (const error of ['passkey_required', 'passkey_failed', 'no_passkeys_configured']) {
+        const h = harness(() => Promise.reject(Error(error)));
+        h.S.currentUser.has_passkeys = true;
+        await h.context.probeWing(h.wing, { authenticate: true });
+        assert.equal(h.wing.tunnel_error, error);
+        assert.deepEqual(h.notices, []);
+    }
+});
+
 test('immediate rejection and synchronous failure allow one deduplicated retry', async () => {
     for (const synchronous of [false, true]) {
         let attempts = 0;

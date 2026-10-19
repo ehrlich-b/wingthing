@@ -1,3 +1,4 @@
+import { installedAgents, agentSetup } from './onboarding.js';
 import { S, DOM } from './state.js';
 import { escapeHtml, wingDisplayName, shortenPath, nestedRepoCount, agentWithIcon, dirParent } from './helpers.js';
 import { sendTunnelRequest, randomUUID } from './tunnel.js';
@@ -28,8 +29,7 @@ function currentPaletteWing() {
 
 function currentPaletteAgents() {
     var wing = currentPaletteWing();
-    if (!wing || !wing.agents || wing.agents.length === 0) return ['claude'];
-    return wing.agents;
+    return installedAgents(wing);
 }
 
 function currentPaletteAgent() {
@@ -45,9 +45,19 @@ export function cyclePaletteAgent(dir) {
     renderPaletteStatus();
 }
 
-export function showPalette() {
+export function showPalette(wingId) {
     if (S.currentUser && S.currentUser.relay_allowed === false) {
         DOM.commandPalette.style.display = 'none';
+        return false;
+    }
+    if (wingId) {
+        const index = onlineWings().findIndex(w => w.wing_id === wingId);
+        if (index >= 0) paletteWingIndex = index;
+    }
+    var selectedWing = currentPaletteWing();
+    if (selectedWing && !currentPaletteAgents().length) {
+        hidePalette();
+        location.hash = '#new/' + encodeURIComponent(selectedWing.wing_id);
         return false;
     }
     DOM.commandPalette.style.display = '';
@@ -55,7 +65,7 @@ export function showPalette() {
     DOM.paletteSearch.focus();
     updatePaletteState();
     var wing = currentPaletteWing();
-    if (wing && homeDirCache.length === 0) {
+    if (wing && currentPaletteAgents().length && homeDirCache.length === 0) {
         sendTunnelRequest(wing.wing_id, { type: 'dir.list', path: '~/' }).then(function(data) {
             var entries = data.entries || [];
             if (Array.isArray(entries)) {
@@ -73,7 +83,7 @@ export function updatePaletteState(isOpen) {
     var alive = online.length > 0;
     var wasWaiting = DOM.paletteDialog.classList.contains('palette-waiting');
 
-    DOM.paletteSearch.disabled = !alive;
+    DOM.paletteSearch.disabled = !alive || !currentPaletteAgents().length;
     DOM.paletteDialog.classList.toggle('palette-waiting', !alive);
 
     if (alive) {
@@ -117,6 +127,7 @@ export function cyclePaletteWing() {
     if (online.length <= 1) return;
     paletteWingIndex = (paletteWingIndex + 1) % online.length;
     paletteAgentIndex = 0;
+    DOM.paletteSearch.disabled = !currentPaletteAgents().length;
     renderPaletteStatus();
     renderPaletteResults('');
     DOM.paletteSearch.value = '';
@@ -126,6 +137,7 @@ function renderPaletteStatus() {
     var wing = currentPaletteWing();
     var wingName = wing ? wingDisplayName(wing) : '?';
     var agent = currentPaletteAgent();
+    if (!agent) { DOM.paletteStatus.textContent = wingName; return; }
     DOM.paletteStatus.innerHTML = '<span class="accent">' + escapeHtml(wingName) + '</span> &middot; ' +
         'terminal &middot; <span class="accent">' + agentWithIcon(agent) + '</span>';
 }
@@ -179,6 +191,12 @@ function renderPaletteResults(filter) {
 }
 
 function renderPaletteItems(items) {
+    const wing = currentPaletteWing();
+    if (wing && !currentPaletteAgents().length) {
+        DOM.paletteResults.innerHTML = agentSetup(wing, wingDisplayName(wing)).replace('Refresh agents', 'Set up machine');
+        DOM.paletteResults.querySelector('[data-refresh-agents]').addEventListener('click', () => { hidePalette(); location.hash = '#new/' + encodeURIComponent(wing.wing_id); });
+        return;
+    }
     paletteSelectedIndex = 0;
 
     if (items.length === 0) {
@@ -324,10 +342,11 @@ export function setCanvasLaunchCallback(fn) {
 }
 
 export function launchFromPalette(cwd) {
-    if (onlineWings().length === 0) return;
+    if (S.currentUser?.relay_allowed === false || onlineWings().length === 0) return;
     var wing = currentPaletteWing();
     if (!wing) return;
     var agent = currentPaletteAgent();
+    if (!agent) return;
     var wingId = wing.wing_id;
     var validCwd = (cwd && cwd.charAt(0) === '/') ? cwd : '';
     hidePalette();

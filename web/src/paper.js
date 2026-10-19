@@ -8,15 +8,16 @@ import { wingDisplayName, sessionDisplayName } from './helpers.js';
 import { sendTunnelRequest, randomUUID } from './tunnel.js';
 import { applyConversationRead, restoredConversationState } from './conversation-state.js';
 import { createConversationReader } from './conversation-recovery.js';
-import { switchToSession, showHome } from './nav.js';
+import { switchToSession, showHome, navigateToAccount } from './nav.js';
 import { showPalette } from './palette.js';
-import { loadHome } from './data.js';
+import { loadHome, probeWing } from './data.js';
 import { paperRoute as route, machineState, sessionState as stateOf, projectName, agentName, requestedCommand, offlineLabel, machineLabel, machineGuidance } from './paper-state.js';
+import { browserUnavailable, installedAgents, needsPasskey, directSetup, agentSetup } from './onboarding.js';
 
 const reads = new Map();
 const terminals = new Map();
 const numberWords = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
-let root, main, side, lastSignature = '', allMachines = false, retrying = false;
+let root, main, side, lastSignature = '', allMachines = false, retrying = false, launchWingId = '';
 const machineLimit = 6;
 let inputReader, inputKey = '', inputSnapshot = null;
 const drafts = new Map();
@@ -149,11 +150,24 @@ function viewEmpty() {
     if (!S.wingsData.length) return head('wing', '') + '<section class="pp-empty"><h2>No machines yet</h2><p>Install wt on a computer where your agents run, then sign in and start it. It shows up here when it connects.</p>' +
         '<pre class="pp-cmd"><span class="pp-prompt">$</span> curl -fsSL https://wingthing.ai/install.sh | sh\n<span class="pp-prompt">$</span> wt login\n<span class="pp-prompt">$</span> wt start</pre>' +
         '<div class="pp-actions"><button type="button" class="pp-btn" data-copy="curl -fsSL https://wingthing.ai/install.sh | sh">Copy install command</button><a class="pp-btn" href="#pair">Pair a machine</a></div></section>';
-    const names = S.wingsData.map(machineName).join(', ');
-    return head('wing', '') + '<div class="pp-cols"><section class="pp-empty"><h2>No sessions on ' + esc(names) + '</h2><p>Start an agent from here or run <code>wt claude</code> on the machine. Wing reports on it in this thread.</p>' +
+    return head('wing', '') + '<div class="pp-cols"><section class="pp-empty"><h2>No sessions yet</h2><p>Choose a machine and set up an agent to begin.</p>' +
         '<div class="pp-actions"><button type="button" class="pp-btn pp-btn-ink" data-new-session>New session</button></div></section>' +
-        '<aside class="pp-col-rail">' + kicker('Machines', String(S.wingsData.length)) + S.wingsData.map(w => machineRow(w)).join('') +
-        kicker('From a terminal') + '<pre class="pp-cmd"><span class="pp-prompt">$</span> wt claude\n<span class="pp-prompt">$</span> wt codex</pre><p class="pp-quiet pp-gap">Sessions started on a machine show up here on their own.</p></aside></div>';
+        '<aside class="pp-col-rail">' + kicker('Machines', String(S.wingsData.length)) + S.wingsData.slice(0, machineLimit).map(w => machineRow(w)).join('') + machineOverflow() +
+        kicker('From a terminal') + '<pre class="pp-cmd">wt setup</pre><p class="pp-quiet pp-gap">Install an agent and sign in to its provider on that machine.</p></aside></div>';
+}
+
+// Setup answers which machine can start an agent; project selection stays in
+// the existing picker once a detected provider is available.
+function viewNew(route) {
+    if (!S.wingsData.length) return viewEmpty();
+    const w = S.wingsData.find(w => w.wing_id === (route.wingId || launchWingId)) || S.wingsData.find(w => machineState(w) === 'connected') || S.wingsData[0];
+    launchWingId = w.wing_id;
+    return head('New session', 'Choose a machine') + '<section class="pp-setup"><label for="pp-launch-machine">Machine</label><select id="pp-launch-machine">' +
+        S.wingsData.map(item => '<option value="' + esc(item.wing_id) + '"' + (item === w ? ' selected' : '') + '>' + esc(machineName(item)) + '</option>').join('') + '</select>' +
+        (needsPasskey(w) ? '<h2>Machine locked</h2><p>Unlock ' + esc(machineName(w)) + ' with your passkey to check its agents.</p>' +
+            (w.tunnel_error === 'no_passkeys_configured' ? '<p>Add a passkey to your account first.</p><button type="button" class="pp-btn" data-add-passkey>Add passkey</button>' : '<button type="button" class="pp-btn pp-btn-ink" data-unlock-machine="' + esc(w.wing_id) + '">Unlock machine</button>') :
+        machineState(w) !== 'connected' ? '<h2>Machine unavailable</h2><p>Reconnect ' + esc(machineName(w)) + ', then try again.</p><button type="button" class="pp-btn" data-retry>Retry</button>' :
+            installedAgents(w).length ? '<h2>Ready on ' + esc(machineName(w)) + '</h2><p>' + esc(installedAgents(w).map(agentName).join(', ')) + '</p><button type="button" class="pp-btn pp-btn-ink" data-choose-project="' + esc(w.wing_id) + '">Choose project</button>' : agentSetup(w, machineName(w))) + '</section>';
 }
 
 function viewWing() {
@@ -219,8 +233,10 @@ function viewSessions() {
         group('Access needed', [...by('locked'), ...by('no-access'), ...by('key-mismatch'), ...by('unavailable')]) +
         offlineWings.map(w => group('Last seen on ' + esc(machineName(w)), away.filter(s => s.wing_id === w.wing_id), 'Stale')).join('') + '</div>' +
         '<aside class="pp-col-rail">' + (coord ? kicker('Pinned') + '<div class="pp-pin"><p><b class="pp-wing">wing</b> <small>' + esc(clock(coordLast && coordLast.at)) + '</small></p><p>' + prose(coordLast ? coordLast.text : 'No update yet.') + '</p><a class="pp-btn" href="#">Open wing</a></div>' : '') +
-        kicker('Machines', String(S.wingsData.length)) + S.wingsData.map(w => machineRow(w)).join('') + '</aside></div>';
+        kicker('Machines', String(S.wingsData.length)) + S.wingsData.slice(0, machineLimit).map(w => machineRow(w)).join('') + machineOverflow() + '</aside></div>';
 }
+
+function machineOverflow() { return S.wingsData.length > machineLimit ? '<a class="pp-more" href="#machines">+' + (S.wingsData.length - machineLimit) + ' more</a>' : ''; }
 
 function machineRow(w, detail = '') {
     const m = machineState(w), n = workSessions().filter(s => s.wing_id === w.wing_id).length;
@@ -236,7 +252,7 @@ function viewMachines() {
         const item = s => '<li><a href="' + sessionHref(s) + '">' + esc(sessionDisplayName(s)) + '<small class="pp-stale">' + esc(staleState(s)) + '</small></a>' + chip(sessionState(s)) + '</li>';
         return '<section class="pp-machine" data-machine="' + esc(w.wing_id) + '"><div class="pp-machine-heading">' + machineRow(w) + (!['connected', 'checking'].includes(machineState(w)) ? machineActions(w) : '') + '</div>' +
             (machineGuidance(w) ? '<p class="pp-quiet">' + esc((isAway(w) ? 'Sessions kept. ' : '') + machineGuidance(w)) + '</p>' : '') +
-            (list.length ? '<ul>' + list.slice(0, 3).map(item).join('') + '</ul>' + (list.length > 3 ? '<details class="pp-more-sessions"><summary>+' + (list.length - 3) + ' more sessions</summary><ul>' + list.slice(3).map(item).join('') + '</ul></details>' : '') : '<p class="pp-quiet">' + (machineState(w) === 'connected' ? 'No sessions on this machine.' : 'Sessions unavailable.') + '</p>') + '</section>';
+            (list.length ? '<ul>' + list.slice(0, 3).map(item).join('') + '</ul>' + (list.length > 3 ? '<details class="pp-more-sessions"><summary>+' + (list.length - 3) + ' more sessions</summary><ul>' + list.slice(3).map(item).join('') + '</ul></details>' : '') : '<p class="pp-quiet">' + (machineState(w) === 'connected' ? 'No sessions on this machine.' : 'Sessions unavailable.') + '</p>') + (machineState(w) === 'connected' && !installedAgents(w).length ? agentSetup(w, machineName(w)) : '') + '</section>';
     }).join('');
     const connected = S.wingsData.filter(w => machineState(w) === 'connected').length;
     const otherStates = ['checking', 'locked', 'no-access', 'key-mismatch', 'unavailable', 'unknown'].map(state => { const wings = S.wingsData.filter(w => machineState(w) === state); return wings.length ? wings.length + ' ' + machineLabel(wings[0]).toLowerCase() : ''; }).filter(Boolean);
@@ -305,11 +321,22 @@ function frame() {
         if (event.target.closest('[data-more-machines]')) { allMachines = true; render(true); return; }
         const take = event.target.closest('[data-takeover]');
         if (take) { const [wingId, sessionId] = take.dataset.takeover.split('/'); if (machineState(wingOf(wingId)) !== 'connected') return; show(false); switchToSession(sessionId, true, wingId); return; }
-        if (event.target.closest('[data-new-session]')) { showPalette(); return; }
         const copy = event.target.closest('[data-copy]');
         if (copy) { navigator.clipboard?.writeText(copy.dataset.copy).then(() => { copy.textContent = 'Copied'; }, () => { copy.textContent = 'Copy failed'; }); return; }
+        if (browserUnavailable(S.currentUser)) return;
+        if (event.target.closest('[data-add-passkey]')) { show(false); navigateToAccount(true); return; }
+        const unlock = event.target.closest('[data-unlock-machine]');
+        if (unlock) { const w = wingOf(unlock.dataset.unlockMachine); if (w) { unlock.disabled = true; probeWing(w, { authenticate: true }).finally(() => { unlock.disabled = false; render(true); }); } return; }
+        if (event.target.closest('[data-new-session]')) { location.hash = '#new'; return; }
+        const choose = event.target.closest('[data-choose-project]');
+        if (choose) { showPalette(choose.dataset.chooseProject); return; }
+        const refresh = event.target.closest('[data-refresh-agents]');
+        if (refresh) { const w = wingOf(refresh.dataset.refreshAgents); if (w) { refresh.disabled = true; probeWing(w).finally(() => { refresh.disabled = false; render(true); }); } return; }
         const retry = event.target.closest('[data-retry]');
         if (retry && !retrying) { retrying = true; render(true); loadHome().finally(() => { retrying = false; render(true); }); }
+    });
+    root.addEventListener('change', event => {
+        if (event.target.id === 'pp-launch-machine') { launchWingId = event.target.value; location.hash = '#new/' + encodeURIComponent(launchWingId); render(true); }
     });
     root.addEventListener('input', event => {
         if (event.target.id === 'pp-message') {
@@ -401,9 +428,10 @@ export function render(force) {
     const on = !!route && S.activeView === 'home';
     show(on);
     if (!on) { selectComposer(null); return; }
-    selectComposer(route.view === 'wing' ? coordinator() : route.view === 'session' ? findSession(route) : null);
-    const views = { wing: viewWing, sessions: viewSessions, machines: viewMachines, pair: viewPair, session: viewSession, approve: viewApprove };
-    const html = views[route.view](route);
+    const denied = browserUnavailable(S.currentUser);
+    selectComposer(!denied ? (route.view === 'wing' ? coordinator() : route.view === 'session' ? findSession(route) : null) : null);
+    const views = { wing: viewWing, sessions: viewSessions, machines: viewMachines, pair: viewPair, new: viewNew, session: viewSession, approve: viewApprove };
+    const html = denied ? head('Get started', 'Free native access') + directSetup(S.currentUser) : views[route.view](route);
     const sig = location.hash + html;
     if (sig === lastSignature) return;
     lastSignature = sig;
@@ -430,11 +458,11 @@ export function render(force) {
         nextConversation.addEventListener('scroll', updateThreadSource, { passive: true });
         updateThreadSource();
     }
-    const nv = nav(route);
+    const nv = denied ? '<a href="#" aria-current="page">Get started</a><a href="#account">Account</a>' : nav(route);
     side.querySelector('.pp-nav').innerHTML = nv;
     root.querySelector('.pp-tabs').innerHTML = nv;
     side.querySelector('.pp-date').textContent = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
-    side.querySelector('.pp-side-squares').innerHTML = squares();
+    side.querySelector('.pp-side-squares').innerHTML = denied ? '' : squares() + machineOverflow();
     side.querySelector('.pp-foot').textContent = S.currentUser && S.currentUser.email || '';
     const input = root.querySelector('#pp-message');
     if (input) input.value = drafts.get(inputKey) || '';

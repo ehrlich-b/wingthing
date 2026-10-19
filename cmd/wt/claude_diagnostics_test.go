@@ -220,3 +220,45 @@ func TestClaudeLaunchAdmissionPolicyProvenance(t *testing.T) {
 		t.Fatal("refused authentication admitted an egg")
 	}
 }
+
+func TestMissingProviderDiagnosticLocalAndSSHProjection(t *testing.T) {
+	for _, reason := range []string{"claude_missing", "codex_missing", "executable_denied"} {
+		t.Run(reason, func(t *testing.T) {
+			original := control.WithLaunchDiagnostic(errors.New(launchSecret), control.LaunchDiagnostic{Stage: "provider startup", Reason: reason})
+			projected := control.ToolError(control.ErrorResult(original))
+			d, ok := control.LaunchDiagnosticOf(projected)
+			if !ok || d.Reason != reason {
+				t.Fatalf("local projection: %+v", d)
+			}
+			wire, _ := json.Marshal(d)
+			// A client predating provider_reason still sees a provider failure,
+			// rather than bounding an unknown reason to policy_refused.
+			var legacy struct {
+				Reason string `json:"reason"`
+			}
+			if err := json.Unmarshal(wire, &legacy); err != nil {
+				t.Fatal(err)
+			}
+			if reason != "executable_denied" && legacy.Reason != "provider_failed" {
+				t.Fatalf("legacy reason: %s", legacy.Reason)
+			}
+			capture := &launchDiagnosticCapture{}
+			capture.Write([]byte(control.LaunchDiagnosticFramePrefix + base64.StdEncoding.EncodeToString(wire) + "\x1b\\"))
+			remote, ok := capture.diagnostic()
+			if !ok || remote.Reason != reason {
+				t.Fatalf("SSH projection: %+v", remote)
+			}
+			message := diagnoseClaudeFailure(control.WithLaunchDiagnostic(errors.New(launchSecret), remote), "admission/policy", "policy_refused", "").Error()
+			if strings.Contains(message, launchSecret) {
+				t.Fatal(message)
+			}
+			if reason == "executable_denied" {
+				if !strings.Contains(message, "policy denies") || strings.Contains(message, "not found") {
+					t.Fatal(message)
+				}
+			} else if !strings.Contains(message, "wt setup") || !strings.Contains(message, "executable") {
+				t.Fatal(message)
+			}
+		})
+	}
+}
