@@ -1,6 +1,7 @@
 # Current product gap audit
 
-Implementation audited: `014b7e543be379428b61425ccd093d0c1f2260f4` (2026-10-18).
+Implementation audited: `64a4d58d` (2026-10-19 integration update); the original
+`014b7e5` source review is retained as a labeled historical snapshot.
 See [the current inventory](docs/product-gap-audit.md) for WT-001 through WT-017,
 source evidence, proposed owners and remaining live gates. In particular,
 initial Codex prompts now have a 130,048-byte JSON-escaped admission limit;

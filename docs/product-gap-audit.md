@@ -1,3 +1,39 @@
+# Product gap audit — integration update 2026-10-19
+
+Implementation examined: `64a4d58d` (the merged implementation before this documentation update).
+This source review supersedes the dated inventory below wherever the merged
+implementation changes its claims. Source coverage is distinct from runtime
+acceptance: synthetic fixtures do not prove live providers, physical devices,
+installed releases or hosted production. Proposed owners remain responsibility
+areas, not assignments. No implementation scope is added by this update.
+
+| Item | Current evidence and disposition | Remaining check / proposed owner |
+| --- | --- | --- |
+| WT-001 — Send | **Changed, source-closed handoff defect:** [paper.js](../web/src/paper.js) submits through [conversation-recovery.js](../web/src/conversation-recovery.js), retaining exact input/request identity and showing Delivered only after a matching native receipt. | Exact-once Claude/Codex fixtures cover retry/empty/duplicate cases; real providers remain unverified. **Browser messaging**. |
+| WT-002 — Codex reader | **Changed, implemented contract:** [chat.js](../web/src/chat.js), [conversation-state.js](../web/src/conversation-state.js) and [native fixtures](../web/test/fixtures/README.md) cover ordered text/tool/completion, replay, unknown variants and exact hook readiness for both providers. | Live provider-version compatibility remains unverified. **Browser messaging + provider adapters**. |
+| WT-003 — direct-free onboarding | **Changed, implemented guidance:** [onboarding.js](../web/src/onboarding.js) and [paper.js](../web/src/paper.js) explain native access and self-hosting; ineligible routes avoid runtime reads/controls. | Real account/provider installation remains unverified. **Browser onboarding**. |
+| WT-004 — phone route | **Changed:** [native enrollment](../IOS-INSTALL.md), [inventory-only pairing](pairing/BROWSER.md) and [signed tunn access](pwa.md) remain separate contracts. | Choose default and run full physical-phone control journey. **Phone experience + access documentation; owner selects default**. |
+| WT-005 — local MCP startup | **Open:** [README](../README.md) requires a running wing; [install page](../internal/relay/templates/install.html) and [installer template](../internal/downloads/installer.sh.tmpl) retain registration/startup guidance to reconcile. | Fresh-HOME install and stopped-wing diagnosis. **Install/onboarding**. |
+| WT-006 — missing provider | **Changed, implemented diagnostic:** [server.go](../internal/egg/server.go) checks missing executable before preparation; [errors.go](../internal/control/errors.go) retains typed setup guidance across wire responses. | Real local/SSH provider installation remains unverified. **CLI diagnostics + launch control**. |
+| WT-007 — empty agent list | **Changed, source-closed invented Claude:** [palette.js](../web/src/palette.js) and [paper.js](../web/src/paper.js) use detected agents, machine setup, refresh and passkey recovery. | Real installation/sign-in remains unverified. **Browser launch**. |
+| WT-008 — ended controls | **Changed, partial:** [conversation-state.js](../web/src/conversation-state.js) gates input by live readiness and [paper.js](../web/src/paper.js) disables ended Send; terminal takeover still follows connected-machine availability. | Full retained history and lifecycle control contract remain open. **Browser session lifecycle**. |
+| WT-009 — release verification | **Changed, implemented verification-only pipeline:** [.gitlab-ci.yml](../.gitlab-ci.yml), [release verification](release-verification.md) and [validator](../scripts/release-verify.py) bind tag/head/gate logs/checksums. | Actual GitLab Linux/macOS runner profiles and authorized release remain unverified. **Release engineering**. |
+| WT-010 — access explanation | **Changed, partial:** [render.js](../web/src/render.js) and [onboarding.js](../web/src/onboarding.js) follow available Account options and distinguish provisioning. | Full selected-wing/account policy explanation remains open. **Account UX + entitlement policy**. |
+| WT-011 — offline presence | **Changed, implemented contract:** [paper-state.js](../web/src/paper-state.js), [paper.js](../web/src/paper.js) and [data.js](../web/src/data.js) retain identities/last-seen and separate offline, checking and access failures. | Physical sleep/network recovery remains unverified. **Browser machine status**. |
+| WT-012 — entry links | **Changed, tracked entry cleanup:** [README](../README.md), [pty.js](../web/src/pty.js), [public templates](../internal/relay/templates/home.html) and [docs tests](../internal/docscheck/docs_test.go) use GitLab; module identities remain unchanged. | Post-promotion hosted page remains unverified. **Public documentation + release engineering**. |
+| WT-013 — human run results | **Open:** [run inventory](run-inventory.md) describes qualified agent recovery; [paper.js](../web/src/paper.js) still displays session inventory and transcript evidence. | Durable human run/result discovery and negative controls. **Browser supervision**. |
+| WT-014 — sharing | **Changed:** [reach sharing](reach-share.md) separates dormant development fixtures from runtime authority; [shared roost](../patterns/shared-web-roost/INSTRUCTIONS.md) is the broader existing route. | Default discoverability and two-user/outsider acceptance remain unverified. **Collaboration documentation + browser access**. |
+| WT-015 — human labels | **Open:** [agent_runs.go](../internal/localmcp/agent_runs.go) uses [ValidateSessionName](../internal/eggclient/local_sessions.go), retaining slug constraints. | Display/resource name separation remains future work. **Agent API contract**. |
+| WT-016 — worktree preparation | **Open:** [product brief](agent-manager-product-brief.md) still distinguishes terminal composition from proposed typed workspace preparation. | Bounded idempotent primitive remains future work. **Workspace control**. |
+| WT-017 — audit freshness | **Addressed as documentation:** this current source inventory supersedes the pinned snapshot below. [Prompt admission](../internal/egg/codex_prompt.go) remains separate from argv/privacy; [isolation baseline](isolation-conformance.md) and [remote mutation audit design](remote-mutation-audit.md) distinguish current gaps from proposed enforcement. | Live acceptance and implementation of decided durable auditing remain open. **Product audit maintenance + security**. |
+
+## Historical source snapshot — implementation 014b7e5
+
+The following 2026-10-18 report retains its original source links and dispositions
+for provenance. It is historical evidence; the integration inventory above takes
+precedence. Its implementation-tree statement applies only to that original
+source review, not to this merged implementation.
+
 # Product gap audit — 2026-10-18
 
 Implementation examined: `014b7e543be379428b61425ccd093d0c1f2260f4`.
