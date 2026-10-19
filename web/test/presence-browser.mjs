@@ -22,6 +22,7 @@ async function run() {
             assert.equal(url.origin, origin, 'all browser resources are local fixtures');
             const json = body => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
             if (url.pathname === '/api/app/me') return json({ id: 'fixture-owner', display_name: 'You', relay_allowed: true, has_passkeys: hasPasskeys });
+            if (url.pathname === '/api/app/passkey') return json(hasPasskeys ? [{ credential_id: 'Zml4dHVyZQ' }] : []);
             if (url.pathname === '/api/app/wings') { if (discoveryWait) await discoveryWait; return json(await page.evaluate(() => presenceFixture.discovery())); }
             const relative = url.pathname === '/app/' ? 'index.html' : url.pathname.replace(/^\/app\//, '');
             const path = resolve(root, 'dist', relative);
