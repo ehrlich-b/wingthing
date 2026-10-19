@@ -117,7 +117,7 @@ async function run() {
             for (const scenario of ['unsupported', 'ended', 'working', 'offline']) {
                 agent = scenario === 'unsupported' ? 'unsupported' : 'codex'; alive = scenario !== 'ended'; state = scenario === 'working' ? 'working' : 'idle'; offline = scenario === 'offline';
                 await page.evaluate(() => localStorage.clear()); await page.reload();
-                if (offline) await page.locator('.pp-away').waitFor(); else await input.waitFor();
+                if (offline) await page.locator('#paper').waitFor(); else await input.waitFor();
                 await page.waitForTimeout(1800);
                 if (offline) assert.equal(await send.count(), 0, 'offline wing has no composer');
                 else assert.equal(await send.isDisabled(), true, scenario + ' cannot offer active Send');
