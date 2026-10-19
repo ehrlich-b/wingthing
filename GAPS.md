@@ -1,3 +1,19 @@
+# Current product gap audit
+
+Implementation audited: `014b7e543be379428b61425ccd093d0c1f2260f4` (2026-10-18).
+See [the current inventory](docs/product-gap-audit.md) for WT-001 through WT-017,
+source evidence, proposed owners and remaining live gates. In particular,
+initial Codex prompts now have a 130,048-byte JSON-escaped admission limit;
+argv/privacy remains open. Native QR, browser inventory pairing and signed tunn
+browser control are separate contracts with separate acceptance limits.
+
+## Historical snapshot begins here
+
+Everything below is the unchanged 2026-10-10 report, including its old source
+references and PASS/FAIL claims. It is historical evidence, not current-head
+acceptance; unavailable scratch receipts remain unverified. The current inventory
+supersedes its status claims without erasing its observations.
+
 # What keeps Wingthing from perfect
 
 Snapshot: 2026-10-10, run-recovery stack based on `ac90fdc`.
