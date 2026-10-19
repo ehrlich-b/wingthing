@@ -227,7 +227,7 @@ func TestPublicDocumentationContractsStayAligned(t *testing.T) {
 	}
 }
 
-func TestPublicHomeKeepsPreviewWithoutVideo(t *testing.T) {
+func TestPublicHomeKeepsPreviewBeforeOptionalNeutralDemo(t *testing.T) {
 	root := repositoryRoot(t)
 	data, err := os.ReadFile(filepath.Join(root, "internal/relay/templates/home.html"))
 	if err != nil {
@@ -240,12 +240,18 @@ func TestPublicHomeKeepsPreviewWithoutVideo(t *testing.T) {
 		t.Fatalf("homepage contains %d benefit intros, want 1", got)
 	}
 	preview := strings.Index(home, `<section class="product-preview"`)
+	demo := strings.Index(home, `<details class="homepage-demo">`)
 	glossary := strings.Index(home, `<h3>portal</h3>`)
-	if preview < 0 || glossary <= preview {
-		t.Fatal("homepage must show its HTML preview before the glossary")
+	if preview < 0 || demo <= preview || glossary <= demo {
+		t.Fatal("homepage must show its HTML preview, optional demo, then glossary")
 	}
-	if strings.Contains(home, "<video") {
-		t.Fatal("homepage must not include the removed recording")
+	for _, required := range []string{`controls playsinline preload="none"`, `kind="captions"`, `id="demo-transcript"`, "Example sessions · Fictional data"} {
+		if !strings.Contains(home, required) {
+			t.Errorf("homepage demo is missing %q", required)
+		}
+	}
+	if strings.Contains(home, "hero.mp4") || strings.Contains(home, "autoplay") {
+		t.Fatal("homepage must not include the removed recording or automatic playback")
 	}
 	if strings.Contains(home, `data-route=`) {
 		t.Fatal("homepage must not contain the detailed data-route map")
