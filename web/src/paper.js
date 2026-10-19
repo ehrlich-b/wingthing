@@ -463,7 +463,7 @@ export function render(force) {
     side.querySelector('.pp-nav').innerHTML = nv;
     root.querySelector('.pp-tabs').innerHTML = nv;
     side.querySelector('.pp-date').textContent = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
-    side.querySelector('.pp-side-squares').innerHTML = denied ? '' : squares() + machineOverflow();
+    side.querySelector('.pp-side-squares').innerHTML = denied ? '' : squares();
     side.querySelector('.pp-foot').textContent = S.currentUser && S.currentUser.email || '';
     const input = root.querySelector('#pp-message');
     if (input) input.value = drafts.get(inputKey) || '';
