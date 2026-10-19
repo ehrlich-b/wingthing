@@ -80,7 +80,9 @@ export function applyConversationRead(previous, view, meta) {
         if (event.type === 'session_report' && event.report || event.state || ['session_ready', 'prompt_submitted', 'session_exit'].includes(event.type)) {
             next.messages.push({ type: 'activity', eventType: event.type, state: event.state || '', reason: event.reason || '', report: event.report, sequence: event.sequence, timestamp: event.timestamp || '' });
         }
-        if (event.raw) {
+        if (agent === 'codex' && event.source === 'codex_hook' && event.type === 'prompt_submitted' && typeof event.text === 'string') {
+            next.messages.push({ type: 'user', content: event.text, timestamp: event.timestamp || '', sequence: event.sequence });
+        } else if (event.raw) {
             var parsed = parseJSONL(JSON.stringify(event.raw), agent);
             parsed.forEach(function(message, index) {
                 message.timestamp = event.timestamp || message.timestamp || "";
@@ -108,7 +110,7 @@ export function applyConversationRead(previous, view, meta) {
 }
 
 export function conversationInputReady(view) {
-    return !!view && view.agent === 'claude' && view.state_source === 'claude_hook' && view.process_alive === true && view.ready === true &&
+    return !!view && ['claude', 'codex'].includes(view.agent) && view.state_source === view.agent + '_hook' && !!view.provider_session_id && view.process_alive === true && view.ready === true &&
         (view.state === 'idle' || view.state === 'completed');
 }
 
@@ -149,7 +151,7 @@ export function conversationExecutionPresentation(view, evidence) {
         var last = view.state ? 'Last observed: ' + view.state + (view.reason ? ' · ' + view.reason : '') + '. ' : '';
         return presentation('unknown', evidence.cached ? 'cached · unknown' : 'unknown', last + (evidence.readError ? 'Connection interrupted: ' + evidence.readError + '. ' : '') + (when || 'Current state is unknown.'));
     }
-    var hook = source === 'claude_hook';
+    var hook = ['claude', 'codex'].includes(view.agent) && source === view.agent + '_hook';
     var live = { live: true, inputReady: conversationInputReady(view) };
     switch (view.state) {
     case 'needs_input':

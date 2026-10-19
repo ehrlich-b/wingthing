@@ -56,6 +56,7 @@ export function createConversationReader(options) {
     var checking = '';
     var notice = '';
     var draft = null;
+    var deliveryReceipt = null;
     var stop = { pending: false, error: '', acknowledgedAt: 0 };
     var continuation = null;
     var availableContinuation = null;
@@ -75,6 +76,7 @@ export function createConversationReader(options) {
             presentation: shown, cached: cached, observedAt: observedAt, readError: readError, storageError: storageError,
             identityError: state.identityError || '', halted: halted,
             pending: pending, otherPending: otherPending.slice(), checking: !!checking, notice: notice,
+            deliveryReceipt: deliveryReceipt,
             stop: { ...stop },
             continuation: continuation, continuationAvailable: canContinue,
             continuationReady: canContinue && !pending && !continuation && !checking,
@@ -154,6 +156,7 @@ export function createConversationReader(options) {
         checking = '';
         notice = '';
         draft = null;
+        deliveryReceipt = null;
         halted = false;
         persisted = '';
         cached = false;
@@ -237,7 +240,14 @@ export function createConversationReader(options) {
         emit();
         return request(p.wingId, { type: 'session.control', operation: 'session_prompt', arguments: { session: p.sessionId, input: p.input, request_id: p.request_id, timeout_seconds: PROMPT_TIMEOUT_SECONDS } }).then(function(result) {
             var receipt = (result && (result.receipt || result.prompt)) || result || {};
+            if (receipt.request_id !== p.request_id || receipt.session_id !== p.sessionId || (result.session && result.session !== p.sessionId)) {
+                throw new Error('Delivery receipt did not match this request.');
+            }
+            if (gen === generation && sameExecution(target, p) && receipt.status === 'native_receipt_observed' && receipt.native_receipt_observed === true) {
+                deliveryReceipt = { ...receipt };
+            }
             settle(p, applyPromptReceipt(p, receipt), gen);
+            if (gen === generation && !pending) refresh();
             return true;
         }).catch(function(error) {
             settle(p, { pending: { ...p, status: 'unconfirmed', lastReason: message(error, 'Prompt delivery unconfirmed') }, draft: null, notice: '' }, gen);
@@ -247,12 +257,18 @@ export function createConversationReader(options) {
 
     function send(text) {
         if (snapshot().continuationReady) return sendContinuation(text);
-        text = typeof text === 'string' ? text.trim() : '';
-        if (!target || !text || !snapshot().inputReady) return Promise.resolve(false);
+        text = typeof text === 'string' ? text : '';
+        if (!target || !text.trim() || !snapshot().inputReady) return Promise.resolve(false);
+        if (new TextEncoder().encode(text).length > 65536 || /[\x00-\x08\x0b-\x1f\x7f]/.test(text)) {
+            notice = 'Enter a message of at most 64 KiB without terminal control characters.';
+            emit();
+            return Promise.resolve(false);
+        }
         var lifecycle = state.lifecycle || {};
         pending = createPendingInput({ request_id: randomId(), input: text, userId: target.userId, wingId: target.wingId, sessionId: target.sessionId, providerSessionId: target.providerSessionId || lifecycle.provider_session_id || '', conversationId: target.conversationId, createdAt: now() });
         if (!pending) return Promise.resolve(false);
         notice = '';
+        deliveryReceipt = null;
         // The reservation is durable before any transport so a reload can only
         // offer an explicit receipt check for this exact request.
         if (!persist()) {
