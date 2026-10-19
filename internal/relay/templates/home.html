@@ -25,6 +25,10 @@
 .preview-thread .preview-who{font-size:11px;color:var(--text-dim)}
 .preview-compose{font-size:12px;color:var(--text-dim);border:1px solid var(--accent);padding:8px 10px;border-radius:4px}
 .preview-access{font-size:12px;color:var(--text-dim);max-width:720px;margin:10px auto 0}
+.homepage-demo{max-width:820px;margin:16px auto 0;text-align:left}
+.homepage-demo summary{color:var(--action);cursor:pointer;font-size:14px;font-weight:600;padding:8px 0}
+.homepage-demo video{display:block;width:100%;height:auto;border:1px solid var(--accent);border-radius:8px;background:var(--bg-card)}
+.homepage-demo p{color:var(--text-dim);font-size:12px;line-height:1.6;margin-top:8px}
 @media(max-width:700px){
   .hero{padding-top:12px}
   .hero .tagline{font-size:14px;margin-bottom:16px}
@@ -131,6 +135,16 @@ document.addEventListener('keydown',function(e){
 </div>
 </section>
 <p class="preview-access">Browser control is available with a self-hosted setup, or hosted relay access on your account and machine. Pairing alone lists sessions.</p>
+<details class="homepage-demo">
+<summary>Watch the demo</summary>
+<video controls playsinline preload="none" poster="/app/demo/poster.png" aria-label="Find a session, read progress, and send an instruction" aria-describedby="demo-transcript">
+<source src="/app/demo/homepage.webm" type="video/webm">
+<track kind="captions" src="/app/demo/captions.vtt" srclang="en" label="English" default>
+<p><a href="/app/demo/homepage.webm">Download the demo</a></p>
+</video>
+<p>Example sessions · Fictional data</p>
+<p id="demo-transcript">Eight sessions run on Studio and Laptop. Open the sessions-table migration on Studio and read its progress: 18,204 rows verified, migration tests passing. Send “Switch reads to the new table, then run the migration tests.” The session replies that reads have switched, tests pass, and the rollback path is documented.</p>
+</details>
 </div>
 <div class="tab-bar">
 <button class="active" onclick="switchTab('how')">how it works</button>

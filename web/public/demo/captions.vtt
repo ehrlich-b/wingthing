@@ -1,0 +1,13 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:03.566
+Find a session across Studio and Laptop. Example sessions, fictional data.
+
+00:00:03.566 --> 00:00:08.179
+Read its progress: 18,204 rows verified and migration tests passing.
+
+00:00:08.179 --> 00:00:12.595
+Send the next instruction to this session.
+
+00:00:12.595 --> 00:00:17.674
+The session confirms: reads switched, tests passing, rollback documented.
