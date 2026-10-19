@@ -24,8 +24,9 @@ GitLab repository links are retained.
    `nice -n 10 make check-android`, and, in a fresh checkout with only PATH and
    HOME set, `nice -n 10 make test-browser-join`. Run
    `nice -n 10 go test -race -p 2 ./internal/relay/... ./internal/sandbox/... ./internal/egg/... ./internal/wing/...`.
-   Complete the release workflow's static, integration, compatibility, Linux,
-   real-provider and macOS gates on their supported hosts before publishing.
+   Follow [GitLab release verification](docs/release-verification.md) for the
+   runner contract and required static, integration, compatibility, Linux,
+   real-provider and native macOS gates before publishing.
 3. Verify v0.150.0 is still unused, then validate and build locally:
 
    ```sh
@@ -42,15 +43,16 @@ GitLab repository links are retained.
 
 ## Publish and deploy
 
-1. Tag the approved main commit `v0.150.0` only after all required gates pass.
-   Publishing is a separate operator action. Repository links point to GitLab,
-   while `.github/workflows/release.yml` still publishes through GitHub when
-   a tag is pushed there. Choose the intended release host explicitly; the
-   GitLab links alone do not configure a GitLab release pipeline. Do not assume
-   a GitLab tag invokes that GitHub workflow. If using the existing workflow,
-   verify both its deterministic and macOS jobs pass before its publish job.
-2. Publish the four platform binaries and SHA256SUMS at the chosen release
-   host. Stage the verified download mirror as described in
+1. Follow [GitLab release verification](docs/release-verification.md) for the
+   separately authorized tag and publication steps. Tag the approved main commit
+   `v0.150.0` on GitLab and require every `.gitlab-ci.yml` job to pass for that
+   exact tag and source head. Retain the `verify-release` artifact and check its
+   receipt, gate logs and asset hashes before publication. The GitHub release
+   workflow is informational only; GitLab CI verifies artifacts but does not
+   publish or deploy them.
+2. Publish the four platform binaries and SHA256SUMS at the matching GitLab
+   release, using the verified artifacts without rebuilding. Stage the verified
+   download mirror as described in
    [docs/download-mirror.md](docs/download-mirror.md), including the required
    retained stable versions. Replace `latest.json` last, selecting v0.150.0
    with `draft: false`, `prerelease: false`, and the five matching asset URLs.

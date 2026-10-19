@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 var markdownLink = regexp.MustCompile(`\[[^]]+\]\(([^)\s]+)`) // local links in current docs use no spaces
@@ -171,7 +173,7 @@ func TestPublicDocumentationContractsStayAligned(t *testing.T) {
 		"internal/relay/templates/privacy.html":        {"gateway database contains", "embedded wing separately keeps", "200,000 serialized terminal characters", "Clearing the site's browser data removes"},
 		"fly.toml":                                     {`WT_RELAY_POLICY = "direct-free"`, "WT_RELAY_MIGRATION_BEFORE"},
 		"docs/security.md":                             {"not a downgrade-compatible security policy", "stop the wing or isolate it"},
-		"docs/fly-ops.md":                              {"matching GitHub release", "it does not", "publish a GitHub release", "not a completed security boundary until every", "active `fly.toml` is deliberately login-only", "Two edits", `processes = ["login", "edge"]`, "does not exercise a mixed Fly login/edge fleet"},
+		"docs/fly-ops.md":                              {"GitLab release checklist", "it does not", "publish a GitLab release", "not a completed security boundary until every", "active `fly.toml` is deliberately login-only", "Two edits", `processes = ["login", "edge"]`, "does not exercise a mixed Fly login/edge fleet"},
 	}
 	for rel, phrases := range mustContain {
 		data, readErr := os.ReadFile(filepath.Join(root, rel))
@@ -617,25 +619,69 @@ func TestCurrentArchitectureDocumentsShippedAndDeferredBoundaries(t *testing.T) 
 	}, nil)
 }
 
-func TestReleasePublishesArtifactsFromTheDeterministicGate(t *testing.T) {
+func TestReleaseVerifiesArtifactsFromBothGitLabGates(t *testing.T) {
 	root := repositoryRoot(t)
-	data, err := os.ReadFile(filepath.Join(root, ".github/workflows/release.yml"))
+	data, err := os.ReadFile(filepath.Join(root, ".gitlab-ci.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	workflow := string(data)
-	for _, phrase := range []string{
-		"actions/upload-artifact@v4",
-		"actions/download-artifact@v4",
-		"wingthing-release-${{ github.sha }}",
-		"if-no-files-found: error",
-	} {
-		if !strings.Contains(workflow, phrase) {
-			t.Errorf("release workflow must contain %q", phrase)
+	type job struct {
+		Stage  string
+		Script []string
+		Needs  []struct {
+			Job       string
+			Artifacts bool
+		}
+		Artifacts struct{ Paths []string }
+	}
+	var pipeline struct {
+		Deterministic job `yaml:"deterministic"`
+		MacOS         job `yaml:"macos-sandbox"`
+		Package       job `yaml:"verify-release"`
+	}
+	if err := yaml.Unmarshal(data, &pipeline); err != nil {
+		t.Fatal(err)
+	}
+	linux := pipeline.Deterministic
+	if linux.Stage != "verify" || len(linux.Script) != 2 ||
+		!strings.Contains(linux.Script[0], "release-verify.py gate linux") ||
+		!strings.Contains(linux.Script[1], `make release CHANNEL=stable VERSION="$CI_COMMIT_TAG"`) {
+		t.Fatal("Linux must build once after the release gates, using the tag version")
+	}
+	if pipeline.MacOS.Stage != "verify" || len(pipeline.MacOS.Script) != 1 ||
+		!strings.Contains(pipeline.MacOS.Script[0], "release-verify.py gate macos") {
+		t.Fatal("native macOS gate must run in the verification stage")
+	}
+	needs := map[string]bool{}
+	for _, dependency := range pipeline.Package.Needs {
+		needs[dependency.Job] = dependency.Artifacts
+	}
+	if len(needs) != 2 || !needs["deterministic"] || !needs["macos-sandbox"] {
+		t.Fatal("packaging must download artifacts from both mandatory release gates")
+	}
+	for _, expected := range []struct {
+		job  job
+		path string
+	}{{linux, "dist/"}, {linux, "release-gates/"}, {pipeline.MacOS, "release-gates/"}, {pipeline.Package, "verified-release/"}} {
+		if !strings.Contains("\n"+strings.Join(expected.job.Artifacts.Paths, "\n")+"\n", "\n"+expected.path+"\n") {
+			t.Errorf("missing retained release artifact path %q", expected.path)
 		}
 	}
-	if count := strings.Count(workflow, "make release"); count != 1 {
+	if pipeline.Package.Stage != "package" || len(pipeline.Package.Script) != 1 ||
+		!strings.Contains(pipeline.Package.Script[0], "release-verify.py package") ||
+		strings.Contains(pipeline.Package.Script[0], "--dry-run") {
+		t.Fatal("release packaging must validate the gated artifacts with release profiles")
+	}
+	if count := strings.Count(string(data), "make release"); count != 1 {
 		t.Fatalf("release workflow builds artifacts %d times, want exactly once in the gated job", count)
+	}
+	if regexp.MustCompile(`(?m)^\s*release:`).Match(data) {
+		t.Error("verification workflow must not define a release publisher")
+	}
+	for _, banned := range []string{"gh release", "GH_TOKEN", "fly deploy"} {
+		if strings.Contains(string(data), banned) {
+			t.Errorf("verification workflow must not publish or deploy: %q", banned)
+		}
 	}
 }
 

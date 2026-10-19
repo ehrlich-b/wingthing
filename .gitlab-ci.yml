@@ -1,0 +1,53 @@
+# Verification only: publishing a release and promoting the mirror are operator steps.
+workflow:
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+    - when: never
+
+stages: [validate, verify, package]
+variables:
+  GIT_DEPTH: "0"
+  GOFLAGS: "-p=2"
+
+release-tag:
+  stage: validate
+  tags: [wingthing-release-linux]
+  script:
+    - sh scripts/check-release-tag.sh "$CI_COMMIT_TAG"
+
+deterministic:
+  timeout: 3 hours
+  stage: verify
+  tags: [wingthing-release-linux]
+  script:
+    - nice -n 10 python3 scripts/release-verify.py gate linux --tag "$CI_COMMIT_TAG" --output release-gates/linux.json
+    - nice -n 10 make release CHANNEL=stable VERSION="$CI_COMMIT_TAG"
+  artifacts:
+    name: "wingthing-tested-$CI_COMMIT_SHA"
+    paths: [dist/, release-gates/]
+    expire_in: 7 days
+
+macos-sandbox:
+  timeout: 1 hour
+  stage: verify
+  tags: [wingthing-release-macos]
+  script:
+    - nice -n 10 python3 scripts/release-verify.py gate macos --tag "$CI_COMMIT_TAG" --output release-gates/macos.json
+  artifacts:
+    paths: [release-gates/]
+    expire_in: 7 days
+
+verify-release:
+  stage: package
+  tags: [wingthing-release-linux]
+  needs:
+    - job: deterministic
+      artifacts: true
+    - job: macos-sandbox
+      artifacts: true
+  script:
+    - nice -n 10 python3 scripts/release-verify.py package --tag "$CI_COMMIT_TAG" --dist dist --output verified-release --gate release-gates/linux.json --gate release-gates/macos.json
+  artifacts:
+    name: "wingthing-verified-$CI_COMMIT_TAG-$CI_COMMIT_SHA"
+    paths: [verified-release/]
+    expire_in: 30 days

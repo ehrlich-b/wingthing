@@ -77,24 +77,23 @@ fly secrets set WT_JWT_KEY=$(wt keygen)
 
 ## Release and deploy the login-only configuration
 
-The public website and installer are one versioned contract. Publish and verify the
-matching GitHub release before deploying a site that documents it. From the exact
-commit being promoted:
+The public website and installer are one versioned contract. Use the
+[GitLab release checklist](release-verification.md) from the exact commit being
+promoted. Tag verification produces four tested binaries, checksums, a validated
+mirror tree and a source-bound receipt; it never publishes or deploys. Compare
+the Linux and macOS gate evidence before a separately authorized GitLab release
+and mirror promotion. Do not build replacement binaries after verification.
 
-```sh
-git tag vX.Y.Z
-git push origin vX.Y.Z
-# wait for the release workflow to publish all five assets
-gh release view vX.Y.Z
-curl -fsSL https://wingthing.ai/install.sh | sh
-make deploy
-```
+After authorized promotion, check the hosted homepage, source/issue/manual
+download links, installer and binary version, and append those results to the
+release receipt before declaring the release complete. Then use the existing
+deployment gates below for any separately authorized site deployment.
 
 `make deploy` runs `check` and the default `gate` profiles: web and Go unit
 tests/build, integration fixtures, vet, race on touched packages, vulnerability
 checks, release command-surface contract, and the configured historical-baseline
 compatibility gate before
-`fly deploy`; it does not publish a GitHub release. The compatibility script uses
+`fly deploy`; it does not publish a GitLab release. The compatibility script uses
 `WT_COMPAT_BASELINE_REF` as a single override baseline when set and otherwise runs
 both pinned defaults, `v0.144.1` and `v0.147.0`, declared in
 `scripts/test-backward-compat.sh`. It exercises each selected baseline and the candidate

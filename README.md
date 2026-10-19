@@ -13,7 +13,12 @@ The agents run where the code and hardware already live. Wingthing keeps their
 terminals alive, records semantic runs as durable tasks, applies sandbox policy,
 and gives each caller an owner, actor, grant set, bound, and audit trail.
 
-https://github.com/user-attachments/assets/f1f04caf-4b07-4298-ba76-db5b226c38f2
+![Illustrated local MCP workflow](docs/assets/local-mcp-demo.svg)
+
+[GitLab source](https://gitlab.com/ehrlich-b/wingthing) ·
+[GitLab issues](https://gitlab.com/ehrlich-b/wingthing/-/issues) ·
+[Build evidence](https://gitlab.com/ehrlich-b/wingthing/-/pipelines)
+(successful tag jobs retain verification receipts; see the [release checklist](docs/release-verification.md)).
 
 Choose the smallest route that fits:
 

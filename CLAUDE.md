@@ -339,7 +339,7 @@ Rules:
 
 ### CI
 
-CI runs via **GitHub Actions** (`.github/workflows/ci.yml` on push/PR; `release.yml` on `v*` tags). Use `gh run list`, `gh run watch`, or `gh run view --log-failed` to check builds.
+Push/PR CI runs via **GitHub Actions** (`.github/workflows/ci.yml`); use `gh run list`, `gh run watch`, or `gh run view --log-failed` for those builds. Release tags run **GitLab CI** (`.gitlab-ci.yml`); inspect the tag pipeline and retain its `verify-release` artifact as described in [GitLab release verification](docs/release-verification.md). `.github/workflows/release.yml` is a manual informational job only.
 
 ### Development is LOCAL
 

@@ -373,7 +373,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
             S.term.writeln('\r\n\x1b[31;1m--- egg crashed ---\x1b[0m');
             S.term.writeln('\x1b[2m' + msg.error.replace(/\n/g, '\r\n') + '\x1b[0m');
             S.term.writeln('');
-            S.term.writeln('\x1b[33mPlease report this bug: https://github.com/ehrlich-b/wingthing/issues\x1b[0m');
+            S.term.writeln('\x1b[33mPlease report this bug: https://gitlab.com/ehrlich-b/wingthing/-/issues\x1b[0m');
         } else {
             DOM.ptyStatus.textContent = 'exited';
             S.term.writeln('\r\n\x1b[2m--- session ended ---\x1b[0m');
