@@ -396,8 +396,11 @@ func TestLaunchPlanExportsLegacyDriverWithoutUpgradingSavedFacts(t *testing.T) {
 	if err := Render(&human, report); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(machine.String(), `"coverage"`) || !strings.Contains(human.String(), "Driver: legacy") || !strings.Contains(human.String(), "controller-only-auth [whole-harness]: unsupported") {
+	if !strings.Contains(machine.String(), `"coverage"`) || !strings.Contains(machine.String(), `"controller-only-auth"`) {
 		t.Fatal("driver report absent from export")
+	}
+	if strings.Contains(human.String(), "controller-only-auth") {
+		t.Fatal("machine capability inventory expanded the compact human report")
 	}
 }
 func TestLaunchPlanBoundedStrictSavedInput(t *testing.T) {
