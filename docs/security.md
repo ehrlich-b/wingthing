@@ -665,3 +665,9 @@ cannot toggle it per tool call. Host and hypervisor administrators remain truste
 A free account uses `wt mcp connect` for direct remote control; an account with
 hosted-relay access may separately choose the browser relay. Neither choice
 changes the VM boundary or creates automatic transport fallback.
+
+General MCP call audit is currently best effort: an audit failure does not block
+a mutation or change its result. Human permission responses have a separate
+durable-intent protocol. The [remote mutation audit decision](remote-mutation-audit.md)
+specifies fail-closed admission and reconciliation requirements for a future
+implementation; it does not describe an implemented general audit guarantee.
