@@ -15,6 +15,7 @@ test('paper Send stays disabled for read-only accounts, spectators and offline w
         S.spectating = scenario === 'spectator';
         S.currentUser.relay_allowed = scenario !== 'account';
         S.wingsData[0].online = scenario !== 'offline';
+        if (scenario === 'offline') { assert.equal(context.composer('Message', session), ''); continue; }
         assert.match(context.composer('Message', session), /type="submit"[^>]+disabled/);
         assert.match(context.composer('Message', session), /Read only/);
     }

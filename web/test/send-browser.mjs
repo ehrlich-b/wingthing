@@ -116,9 +116,11 @@ async function run() {
             mode = 'receipt'; await send.click(); await page.locator('#paper .pp-delivery').filter({ hasText: 'Delivered' }).waitFor();
             for (const scenario of ['unsupported', 'ended', 'working', 'offline']) {
                 agent = scenario === 'unsupported' ? 'unsupported' : 'codex'; alive = scenario !== 'ended'; state = scenario === 'working' ? 'working' : 'idle'; offline = scenario === 'offline';
-                await page.evaluate(() => localStorage.clear()); await page.reload(); await input.waitFor();
+                await page.evaluate(() => localStorage.clear()); await page.reload();
+                if (offline) await page.locator('.pp-away').waitFor(); else await input.waitFor();
                 await page.waitForTimeout(1800);
-                assert.equal(await send.isDisabled(), true, scenario + ' cannot offer active Send');
+                if (offline) assert.equal(await send.count(), 0, 'offline wing has no composer');
+                else assert.equal(await send.isDisabled(), true, scenario + ' cannot offer active Send');
                 await shot(scenario);
             }
             offline = false; agent = 'claude'; alive = true; state = 'idle';
@@ -126,7 +128,7 @@ async function run() {
             // eight-row inline display limit, plus the overflow case above.
             for (const amount of [0, 1, 9]) {
                 count = amount; await page.evaluate(() => localStorage.clear()); await page.goto(origin + '/app/#'); await page.reload();
-                if (amount) await ready(); else await page.getByText('No sessions on Release workstation', { exact: true }).waitFor();
+                if (amount) await ready(); else await page.getByRole('heading', { name: 'No sessions yet', exact: true }).waitFor();
                 await shot(amount === 9 ? 'inline-limit-8' : 'volume-' + amount);
             }
             assert.deepEqual(errors, []);

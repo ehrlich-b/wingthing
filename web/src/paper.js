@@ -18,7 +18,8 @@ const reads = new Map();
 const terminals = new Map();
 const numberWords = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
 let root, main, side, lastSignature = '', allMachines = false, retrying = false, launchWingId = '';
-const machineLimit = 6;
+const machineLimit = 5;
+const machineListLimit = 6;
 let inputReader, inputKey = '', inputSnapshot = null;
 const drafts = new Map();
 
@@ -246,7 +247,7 @@ function machineRow(w, detail = '') {
 
 function viewMachines() {
     if (!S.wingsData.length) return viewEmpty();
-    const visible = allMachines ? S.wingsData : S.wingsData.slice(0, machineLimit);
+    const visible = allMachines ? S.wingsData : S.wingsData.slice(0, machineListLimit);
     const rows = visible.map(w => {
         const list = workSessions().filter(s => s.wing_id === w.wing_id);
         const item = s => '<li><a href="' + sessionHref(s) + '">' + esc(sessionDisplayName(s)) + '<small class="pp-stale">' + esc(staleState(s)) + '</small></a>' + chip(sessionState(s)) + '</li>';
@@ -257,7 +258,7 @@ function viewMachines() {
     const connected = S.wingsData.filter(w => machineState(w) === 'connected').length;
     const otherStates = ['checking', 'locked', 'no-access', 'key-mismatch', 'unavailable', 'unknown'].map(state => { const wings = S.wingsData.filter(w => machineState(w) === state); return wings.length ? wings.length + ' ' + machineLabel(wings[0]).toLowerCase() : ''; }).filter(Boolean);
     return head('Machines', [connected + ' connected', S.wingsData.filter(isAway).length + ' offline', ...otherStates].join(' · ')) + '<div class="pp-cols"><div class="pp-col-main">' + kicker('Your machines', String(S.wingsData.length)) + rows +
-        (!allMachines && S.wingsData.length > machineLimit ? '<button type="button" class="pp-more" data-more-machines>+' + (S.wingsData.length - machineLimit) + ' more machines</button>' : '') + '</div>' +
+        (!allMachines && S.wingsData.length > machineListLimit ? '<button type="button" class="pp-more" data-more-machines>+' + (S.wingsData.length - machineListLimit) + ' more machines</button>' : '') + '</div>' +
         '<aside class="pp-col-rail">' + kicker('Add a device') + '<p>Run <code>wt start</code> on another computer to add it here.</p><p class="pp-quiet">To list a machine\'s sessions in another browser without signing in, run <code>wt pair --show-link</code> on it, then open Pair.</p><a class="pp-btn" href="#pair">Pair a machine</a></aside></div>';
 }
 

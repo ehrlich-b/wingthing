@@ -40,7 +40,7 @@ function answer(wingId, inner) {
             events.push({ sequence: 4, type: 'message', role: 'user', text: inner.arguments.input, timestamp: stamp() },
                 { sequence: 5, type: 'message', role: 'assistant', text: 'Reads now use the new table. All migration tests pass. The rollback path is documented.', timestamp: stamp() },
                 { sequence: 6, type: 'turn_completed', source: 'claude_hook', state: 'idle', timestamp: stamp() });
-            return { receipt: { status: 'native_receipt_observed', native_receipt_observed: true } };
+            return { receipt: { session_id: inner.arguments.session, request_id: inner.arguments.request_id, input: inner.arguments.input, status: 'native_receipt_observed', native_receipt_observed: true } };
         }
     }
     throw Error('Unexpected demo request: ' + inner.type + ' ' + (inner.operation || ''));

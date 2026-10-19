@@ -52,7 +52,7 @@ async function run() {
                 await page.goto(origin + '/app/');
                 await page.locator('a[href="#sessions"]:visible').click();
                 if (count) await page.locator('.pp-srow').nth(count - 1).waitFor();
-                else await page.locator('.pp-main').getByText('No sessions on Studio, Laptop', { exact: true }).waitFor();
+                else await page.getByRole('heading', { name: 'No sessions yet', exact: true }).waitFor();
                 await page.waitForTimeout(800);
                 assert.equal(await page.locator('.pp-srow').count(), count);
                 assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'no horizontal overflow');
@@ -74,8 +74,8 @@ async function run() {
                     cue('Send the next instruction to this session.');
                     if (recording) await page.waitForTimeout(2500);
                     await page.locator('.pp-composer button[type="submit"]').click();
-                    await page.locator('#chat-send').click();
-                    await page.locator('#chat-messages').getByText('Reads now use the new table.', { exact: false }).waitFor();
+                    await page.locator('.pp-delivery').filter({ hasText: 'Delivered' }).waitFor();
+                    await page.locator('.pp-conversation').getByText('Reads now use the new table.', { exact: false }).waitFor();
                     cue('The session confirms: reads switched, tests passing, rollback documented.');
                     const prompts = await page.evaluate(() => homepageDemo.calls.filter(call => call.operation === 'session_prompt'));
                     assert.equal(prompts.length, 1);
