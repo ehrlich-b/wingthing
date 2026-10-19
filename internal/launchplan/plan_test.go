@@ -371,6 +371,35 @@ func TestLaunchPlanStableAndNoAmbientFallback(t *testing.T) {
 		}
 	}
 }
+
+func TestLaunchPlanExportsLegacyDriverWithoutUpgradingSavedFacts(t *testing.T) {
+	req, _ := setup(t)
+	report, err := Inspect(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Driver.ID != "legacy" || report.Driver.Backend != "linux-namespaces-seccomp" || report.Driver.Protocol != "egg/v1" {
+		t.Fatalf("driver identity missing: %+v", report.Driver)
+	}
+	if len(report.Driver.Coverage) != 10 {
+		t.Fatalf("incomplete process coverage: %+v", report.Driver.Coverage)
+	}
+	for _, c := range report.Driver.Capabilities {
+		if c.Status == egg.CapabilitySupported {
+			t.Fatalf("saved facts certified driver capability: %+v", c)
+		}
+	}
+	var machine, human bytes.Buffer
+	if err := WriteJSON(&machine, report); err != nil {
+		t.Fatal(err)
+	}
+	if err := Render(&human, report); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(machine.String(), `"coverage"`) || !strings.Contains(human.String(), "Driver: legacy") || !strings.Contains(human.String(), "controller-only-auth [whole-harness]: unsupported") {
+		t.Fatal("driver report absent from export")
+	}
+}
 func TestLaunchPlanBoundedStrictSavedInput(t *testing.T) {
 	req, _ := setup(t)
 	for _, body := range []string{`{"os":"linux","prompt":"SENTINEL"}`, `{"os":"linux"} {}`, `{"os":"linux","network":"typo"}`, strings.Repeat("x", (64<<10)+1)} {

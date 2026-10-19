@@ -1,0 +1,137 @@
+{
+  "Args": [
+    "--yolo",
+    "--model",
+    "fixture-model"
+  ],
+  "Environment": {
+    "GIT_TERMINAL_PROMPT": "0",
+    "GOTRACEBACK": "all",
+    "HOME": "$HOME",
+    "LANG": "C.UTF-8",
+    "PATH": "/usr/bin:/bin",
+    "TERM": "xterm-256color"
+  },
+  "Sandbox": {
+    "Mounts": [
+      {
+        "Source": "$HOME/workspace",
+        "Target": "$HOME/workspace",
+        "ReadOnly": false,
+        "UseRegex": false
+      },
+      {
+        "Source": "$HOME/.gemini",
+        "Target": "$HOME/.gemini",
+        "ReadOnly": false,
+        "UseRegex": false
+      }
+    ],
+    "Deny": [
+      "$HOME/.ssh"
+    ],
+    "DenyRename": null,
+    "DenyWrite": [
+      "$HOME/workspace/egg.yaml"
+    ],
+    "NetworkNeed": 3,
+    "NetworkMode": "",
+    "Domains": [
+      "*"
+    ],
+    "ProxyPort": 0,
+    "LocalPorts": null,
+    "CPULimit": 30000000000,
+    "MemLimit": 2147483648,
+    "MaxFDs": 128,
+    "PidLimit": 64,
+    "SessionID": "session",
+    "UserHome": "$HOME",
+    "HostHome": "$HOME",
+    "Diagnostics": null,
+    "Trace": false,
+    "AllowSockets": null,
+    "ProtectedWriteTargets": null,
+    "ReadOnlyFiles": null,
+    "RoostPolicyPaths": null,
+    "RequiredWriteDirs": null
+  },
+  "Policy": {
+    "Agent": "gemini",
+    "Mounts": [
+      {
+        "Source": "$HOME/workspace",
+        "Target": "$HOME/workspace",
+        "ReadOnly": false,
+        "UseRegex": false
+      },
+      {
+        "Source": "$HOME/.gemini",
+        "Target": "$HOME/.gemini",
+        "ReadOnly": false,
+        "UseRegex": false
+      }
+    ],
+    "Deny": [
+      "$HOME/.ssh"
+    ],
+    "DenyWrite": [
+      "$HOME/workspace/egg.yaml"
+    ],
+    "NetworkNeed": 3,
+    "Domains": [
+      "*"
+    ],
+    "LocalPorts": null,
+    "Mode": "",
+    "Drilled": [
+      {
+        "Kind": "write_dir",
+        "Value": "$HOME/.gemini",
+        "Agent": "gemini",
+        "Reason": "agent \"gemini\" stores state in .gemini"
+      },
+      {
+        "Kind": "env",
+        "Value": "GEMINI_API_KEY",
+        "Agent": "gemini",
+        "Reason": "agent \"gemini\" reads GEMINI_API_KEY from the host environment"
+      },
+      {
+        "Kind": "env",
+        "Value": "GOOGLE_API_KEY",
+        "Agent": "gemini",
+        "Reason": "agent \"gemini\" reads GOOGLE_API_KEY from the host environment"
+      },
+      {
+        "Kind": "env",
+        "Value": "GOOGLE_GEMINI_BASE_URL",
+        "Agent": "gemini",
+        "Reason": "agent \"gemini\" reads GOOGLE_GEMINI_BASE_URL from the host environment"
+      },
+      {
+        "Kind": "env",
+        "Value": "GOOGLE_GENAI_API_VERSION",
+        "Agent": "gemini",
+        "Reason": "agent \"gemini\" reads GOOGLE_GENAI_API_VERSION from the host environment"
+      },
+      {
+        "Kind": "env",
+        "Value": "GEMINI_CLI_TRUST_WORKSPACE",
+        "Agent": "gemini",
+        "Reason": "agent \"gemini\" reads GEMINI_CLI_TRUST_WORKSPACE from the host environment"
+      },
+      {
+        "Kind": "env",
+        "Value": "WT_PROVIDER_BASE_URL",
+        "Agent": "gemini",
+        "Reason": "agent \"gemini\" reads WT_PROVIDER_BASE_URL from the host environment"
+      }
+    ],
+    "Derived": null,
+    "Suppressed": null
+  },
+  "NativeRun": false,
+  "CodexRun": false,
+  "Sandboxed": true
+}

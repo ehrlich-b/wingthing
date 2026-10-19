@@ -64,6 +64,7 @@ type PathEvidence struct {
 	Source    string `json:"source"`
 }
 type Report struct {
+	Driver             egg.DriverReport       `json:"driver"`
 	Acceptance         string                 `json:"acceptance"`
 	ProviderVersion    string                 `json:"provider_version,omitempty"`
 	SchemaVersion      int                    `json:"schema_version"`
@@ -288,6 +289,7 @@ func Inspect(req Request) (Report, error) {
 		},
 	}, state)
 	policy := prepared.Policy
+	report.Driver = prepared.Driver
 	if policy.Agent != req.Agent {
 		return report, errors.New("effective provider policy cannot be resolved")
 	}
@@ -478,6 +480,14 @@ func Render(w io.Writer, report Report) error {
 	}
 	if _, err := fmt.Fprintf(w, "Provider version: %s\nPlanned options: %s (full argv in --json)\n", version, strings.Join(flags, " ")); err != nil {
 		return err
+	}
+	if _, err := fmt.Fprintf(w, "Driver: %s (%s, %s)\n", report.Driver.ID, report.Driver.Backend, report.Driver.Platform); err != nil {
+		return err
+	}
+	for _, capability := range report.Driver.Capabilities {
+		if _, err := fmt.Fprintf(w, "  %s [%s]: %s; owner: %s\n", capability.Control, capability.Scope, capability.Status, capability.Owner); err != nil {
+			return err
+		}
 	}
 	if _, err := fmt.Fprintf(w, "Launch plan: %s (%s)\nPolicy: %s\nPolicy base: %s\nMerge HOME: %s\nCWD: %s\nExecutable: %s\nNetwork: %s\nArgv scope: %s\n", report.Readiness, report.Route, report.PolicySource, report.PolicyBase.Path, report.MergeHome.Path, report.CWD.Resolved, report.Executable.Resolved, report.Network, report.ArgvScope); err != nil {
 		return err

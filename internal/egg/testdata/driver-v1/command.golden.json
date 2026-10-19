@@ -1,0 +1,79 @@
+{
+  "Args": [
+    "-l"
+  ],
+  "Environment": {
+    "GOTRACEBACK": "all",
+    "HOME": "$HOME",
+    "LANG": "C.UTF-8",
+    "PATH": "/usr/bin:/bin",
+    "TERM": "xterm-256color"
+  },
+  "Sandbox": {
+    "Mounts": [
+      {
+        "Source": "$HOME/workspace",
+        "Target": "$HOME/workspace",
+        "ReadOnly": false,
+        "UseRegex": false
+      }
+    ],
+    "Deny": [
+      "$HOME/.ssh"
+    ],
+    "DenyRename": null,
+    "DenyWrite": [
+      "$HOME/workspace/egg.yaml"
+    ],
+    "NetworkNeed": 3,
+    "NetworkMode": "",
+    "Domains": [
+      "*"
+    ],
+    "ProxyPort": 0,
+    "LocalPorts": null,
+    "CPULimit": 30000000000,
+    "MemLimit": 2147483648,
+    "MaxFDs": 128,
+    "PidLimit": 64,
+    "SessionID": "session",
+    "UserHome": "$HOME",
+    "HostHome": "$HOME",
+    "Diagnostics": null,
+    "Trace": false,
+    "AllowSockets": null,
+    "ProtectedWriteTargets": null,
+    "ReadOnlyFiles": null,
+    "RoostPolicyPaths": null,
+    "RequiredWriteDirs": null
+  },
+  "Policy": {
+    "Agent": "",
+    "Mounts": [
+      {
+        "Source": "$HOME/workspace",
+        "Target": "$HOME/workspace",
+        "ReadOnly": false,
+        "UseRegex": false
+      }
+    ],
+    "Deny": [
+      "$HOME/.ssh"
+    ],
+    "DenyWrite": [
+      "$HOME/workspace/egg.yaml"
+    ],
+    "NetworkNeed": 3,
+    "Domains": [
+      "*"
+    ],
+    "LocalPorts": null,
+    "Mode": "",
+    "Drilled": null,
+    "Derived": null,
+    "Suppressed": null
+  },
+  "NativeRun": false,
+  "CodexRun": false,
+  "Sandboxed": true
+}

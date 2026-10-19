@@ -568,6 +568,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		return errors.New("outer-boundary mode cannot be combined with filesystem, network, environment, or resource restrictions")
 	}
 	hasSandbox := !rc.OuterBoundary
+	var driver Driver = LegacyDriver{}
 	if err := ValidatePreviewClaudeBoundary(rc.Agent, rc.Command, rc.OuterBoundary); err != nil {
 		return err
 	}
@@ -575,9 +576,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		return err
 	}
 	if hasSandbox {
-		if ok, help := sandbox.CheckCapability(); !ok {
+		if _, probeErr := driver.Probe(); probeErr != nil {
 			stage, reason = "provider startup", "sandbox_unavailable"
-			return fmt.Errorf("sandbox not available: %s\nrun: wt doctor --fix", help)
+			return fmt.Errorf("sandbox not available: %s\nrun: wt doctor --fix", probeErr)
 		}
 	}
 
@@ -630,7 +631,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	if rc.LaunchPolicy != nil {
 		requirements = &LaunchRequirements{PolicySource: rc.LaunchPolicy.Path, PolicyBase: rc.LaunchPolicy.Base, Rules: rc.LaunchPolicy.Rules}
 	}
-	prepared, err := PrepareLaunch(rc, LaunchPreparationOptions{
+	prepared, err := driver.Prepare(rc, LaunchPreparationOptions{
 		Binary: binPath, Home: home, HostHome: hostHome, EggDir: s.dir,
 		ProviderURL: envMap["WT_PROVIDER_BASE_URL"], BrowserRequestsPath: browserRequestsPath,
 		ToolBinary: toolBinary, PreviewClaudeOSHome: previewClaudeOSHome, Environment: envMap,
@@ -785,7 +786,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			}
 		}
 		configSnap = SnapshotAgentConfig(rc.Agent, rc.UserHome, &sbCfg)
-		sb, err = sandbox.New(sbCfg)
+		sb, err = driver.Open(sbCfg)
 		if err != nil {
 			return fmt.Errorf("sandbox: %w", err)
 		}

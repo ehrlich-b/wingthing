@@ -1,0 +1,167 @@
+{
+  "Args": [
+    "--dangerously-skip-permissions",
+    "--model",
+    "fixture-model"
+  ],
+  "Environment": {
+    "GIT_TERMINAL_PROMPT": "0",
+    "GOTRACEBACK": "all",
+    "HOME": "$HOME",
+    "LANG": "C.UTF-8",
+    "PATH": "/usr/bin:/bin",
+    "TERM": "xterm-256color"
+  },
+  "Sandbox": {
+    "Mounts": [
+      {
+        "Source": "$HOME/workspace",
+        "Target": "$HOME/workspace",
+        "ReadOnly": false,
+        "UseRegex": false
+      },
+      {
+        "Source": "$HOME/.claude",
+        "Target": "$HOME/.claude",
+        "ReadOnly": false,
+        "UseRegex": true
+      },
+      {
+        "Source": "$HOME/.cache/claude",
+        "Target": "$HOME/.cache/claude",
+        "ReadOnly": false,
+        "UseRegex": false
+      }
+    ],
+    "Deny": [
+      "$HOME/.ssh"
+    ],
+    "DenyRename": null,
+    "DenyWrite": [
+      "$HOME/workspace/egg.yaml"
+    ],
+    "NetworkNeed": 3,
+    "NetworkMode": "",
+    "Domains": [
+      "*"
+    ],
+    "ProxyPort": 0,
+    "LocalPorts": null,
+    "CPULimit": 30000000000,
+    "MemLimit": 2147483648,
+    "MaxFDs": 128,
+    "PidLimit": 64,
+    "SessionID": "session",
+    "UserHome": "$HOME",
+    "HostHome": "$HOME",
+    "Diagnostics": null,
+    "Trace": false,
+    "AllowSockets": null,
+    "ProtectedWriteTargets": null,
+    "ReadOnlyFiles": null,
+    "RoostPolicyPaths": null,
+    "RequiredWriteDirs": null
+  },
+  "Policy": {
+    "Agent": "claude",
+    "Mounts": [
+      {
+        "Source": "$HOME/workspace",
+        "Target": "$HOME/workspace",
+        "ReadOnly": false,
+        "UseRegex": false
+      },
+      {
+        "Source": "$HOME/.claude",
+        "Target": "$HOME/.claude",
+        "ReadOnly": false,
+        "UseRegex": true
+      },
+      {
+        "Source": "$HOME/.cache/claude",
+        "Target": "$HOME/.cache/claude",
+        "ReadOnly": false,
+        "UseRegex": false
+      }
+    ],
+    "Deny": [
+      "$HOME/.ssh"
+    ],
+    "DenyWrite": [
+      "$HOME/workspace/egg.yaml"
+    ],
+    "NetworkNeed": 3,
+    "Domains": [
+      "*"
+    ],
+    "LocalPorts": null,
+    "Mode": "",
+    "Drilled": [
+      {
+        "Kind": "write_dir",
+        "Value": "$HOME/.claude",
+        "Agent": "claude",
+        "Reason": "agent \"claude\" stores state in .claude"
+      },
+      {
+        "Kind": "write_dir",
+        "Value": "$HOME/.cache/claude",
+        "Agent": "claude",
+        "Reason": "agent \"claude\" stores state in .cache/claude"
+      },
+      {
+        "Kind": "env",
+        "Value": "ANTHROPIC_API_KEY",
+        "Agent": "claude",
+        "Reason": "agent \"claude\" reads ANTHROPIC_API_KEY from the host environment"
+      },
+      {
+        "Kind": "env",
+        "Value": "ANTHROPIC_AUTH_TOKEN",
+        "Agent": "claude",
+        "Reason": "agent \"claude\" reads ANTHROPIC_AUTH_TOKEN from the host environment"
+      },
+      {
+        "Kind": "env",
+        "Value": "ANTHROPIC_BASE_URL",
+        "Agent": "claude",
+        "Reason": "agent \"claude\" reads ANTHROPIC_BASE_URL from the host environment"
+      },
+      {
+        "Kind": "env",
+        "Value": "ANTHROPIC_MODEL",
+        "Agent": "claude",
+        "Reason": "agent \"claude\" reads ANTHROPIC_MODEL from the host environment"
+      },
+      {
+        "Kind": "env",
+        "Value": "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "Agent": "claude",
+        "Reason": "agent \"claude\" reads ANTHROPIC_DEFAULT_HAIKU_MODEL from the host environment"
+      },
+      {
+        "Kind": "env",
+        "Value": "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "Agent": "claude",
+        "Reason": "agent \"claude\" reads ANTHROPIC_DEFAULT_SONNET_MODEL from the host environment"
+      },
+      {
+        "Kind": "env",
+        "Value": "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "Agent": "claude",
+        "Reason": "agent \"claude\" reads ANTHROPIC_DEFAULT_OPUS_MODEL from the host environment"
+      },
+      {
+        "Kind": "env",
+        "Value": "WT_PROVIDER_BASE_URL",
+        "Agent": "claude",
+        "Reason": "agent \"claude\" reads WT_PROVIDER_BASE_URL from the host environment"
+      }
+    ],
+    "Derived": null,
+    "Suppressed": null
+  },
+  "NativeRun": true,
+  "CodexRun": false,
+  "Sandboxed": true
+}

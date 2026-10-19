@@ -37,9 +37,12 @@ type LaunchPreparationOptions struct {
 	EnvironmentConfig    *EggConfig
 	InheritedEnvironment []string
 	Requirements         *LaunchRequirements
+	DriverID             string
+	RequiredCapabilities []CapabilityRequirement
 }
 
 type PreparedLaunch struct {
+	Driver                DriverReport
 	Args                  []string
 	CodexRun, NativeRun   bool
 	Sandboxed             bool
@@ -61,6 +64,14 @@ type PreparedLaunch struct {
 // actual provider builders, and validates their spools. No proxy, native
 // sandbox, snapshot, control endpoint, PTY or provider process starts here.
 func PrepareLaunch(rc RunConfig, opts LaunchPreparationOptions, state LaunchState) (out PreparedLaunch, err error) {
+	driver, err := SelectDriver(opts.DriverID)
+	if err != nil {
+		return out, err
+	}
+	return driver.Prepare(rc, opts, state)
+}
+
+func prepareLegacyLaunch(rc RunConfig, opts LaunchPreparationOptions, state LaunchState) (out PreparedLaunch, err error) {
 	if rc.Agent == "codex" && rc.InitialRun != nil {
 		if err := ValidateInitialCodexPrompt(rc.InitialRun.Prompt); err != nil {
 			return out, err
