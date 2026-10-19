@@ -456,9 +456,8 @@ try {
             await checkPublic(page, name, v.suffix);
             await shoot(page, name, v.suffix);
             if (name === '09-landing') {
-                assert.equal(await page.locator('video').count(), 0);
-                assert.deepEqual(videoRequests, [], 'Homepage requested the removed recording');
-                checked('09-landing' + v.suffix + '-no-video-requests', 'Homepage rendered with no video or recording requests');
+                assert.deepEqual(videoRequests, [], 'Homepage requested video before interaction');
+                checked('09-landing' + v.suffix + '-no-video-requests', 'Homepage rendered with the demo closed and no video requests');
             }
         }
         await page.close();
