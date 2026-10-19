@@ -176,8 +176,11 @@ async function checkPublic(page, name, suffix) {
         });
         assert.ok(visible.top > 0 && visible.bottom <= visible.viewport);
         await page.getByRole('link', {name:'Install wingthing', exact:true}).last().isVisible().then(assert.ok);
-        assert.equal(await page.locator('video').count(),0);
-        checked(name + suffix + '-preview-without-video', visible);
+        assert.equal(await page.locator('.homepage-demo video').count(),1);
+        assert.equal(await page.locator('.homepage-demo').getAttribute('open'),null);
+        assert.equal(await page.locator('.homepage-demo video').getAttribute('preload'),'none');
+        assert.equal(await page.locator('.homepage-demo video').getAttribute('autoplay'),null);
+        checked(name + suffix + '-preview-before-optional-demo', visible);
     }
     if (name === '10-install') {
         await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', {configurable:true, value:{writeText:text=>{window.copiedCommand=text; return Promise.resolve();}}}));
@@ -440,7 +443,7 @@ try {
         const page = await contexts[index].newPage();
         const videoRequests = [];
         page.on('request', request => {
-            if (new URL(request.url()).pathname === '/hero.mp4') videoRequests.push(request.url());
+            if (['/hero.mp4', '/app/demo/homepage.webm'].includes(new URL(request.url()).pathname)) videoRequests.push(request.url());
         });
         // Block external resources and navigation, including any account links.
         await page.route('**/*', route => new URL(route.request().url()).origin === publicBase ? route.continue() : route.abort());
@@ -453,9 +456,8 @@ try {
             await checkPublic(page, name, v.suffix);
             await shoot(page, name, v.suffix);
             if (name === '09-landing') {
-                assert.equal(await page.locator('video').count(), 0);
-                assert.deepEqual(videoRequests, [], 'Homepage requested the removed recording');
-                checked('09-landing' + v.suffix + '-no-video-requests', 'Homepage rendered with no video or recording requests');
+                assert.deepEqual(videoRequests, [], 'Homepage requested video before interaction');
+                checked('09-landing' + v.suffix + '-no-video-requests', 'Homepage rendered with the demo closed and no video requests');
             }
         }
         await page.close();

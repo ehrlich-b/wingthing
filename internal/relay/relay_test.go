@@ -496,7 +496,7 @@ func TestSignedInHomeUsesConfiguredAppURLForLinkAndShortcut(t *testing.T) {
 	}
 }
 
-func TestPublicHomeLeadsWithBenefitAndPersistentProductPreviewWithoutVideo(t *testing.T) {
+func TestPublicHomeLeadsWithBenefitAndPreviewBeforeOptionalDemo(t *testing.T) {
 	_, ts := testServer(t)
 	resp, err := http.Get(ts.URL + "/")
 	if err != nil {
@@ -541,15 +541,45 @@ func TestPublicHomeLeadsWithBenefitAndPersistentProductPreviewWithoutVideo(t *te
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET / status = %d", resp.StatusCode)
 	}
-	for _, forbidden := range []string{"hero.mp4", "<video"} {
+	for _, required := range []string{`<details class="homepage-demo">`, `controls playsinline preload="none"`, `src="/app/demo/homepage.webm" type="video/webm"`, `kind="captions"`, `id="demo-transcript"`, "Example sessions · Fictional data"} {
+		if !strings.Contains(page, required) {
+			t.Errorf("home is missing demo accessibility contract %q", required)
+		}
+	}
+	for _, forbidden := range []string{"hero.mp4", "autoplay"} {
 		if strings.Contains(page, forbidden) {
-			t.Errorf("home includes removed video or request source %q", forbidden)
+			t.Errorf("home includes removed recording or automatic playback %q", forbidden)
 		}
 	}
 	for _, forbidden := range []string{">hosted app</a>", ">hosted login</a>"} {
 		if strings.Contains(page, forbidden) {
 			t.Errorf("home nav uses deployment-specific label %q", forbidden)
 		}
+	}
+}
+
+func TestPublicDemoAssetsSupportPlayback(t *testing.T) {
+	_, ts := testServer(t)
+	for _, asset := range []struct {
+		path, contentType, prefix string
+	}{
+		{"homepage.webm", "video/webm", "\x1a\x45\xdf\xa3"},
+		{"poster.png", "image/png", "\x89PNG"},
+		{"captions.vtt", "text/vtt", "WEBVTT"},
+	} {
+		t.Run(asset.path, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, ts.URL+"/app/demo/"+asset.path, nil)
+			mustTest(t, err)
+			req.Header.Set("Range", "bytes=0-31")
+			resp, err := http.DefaultClient.Do(req)
+			mustTest(t, err)
+			defer closeTestBody(t, resp.Body)
+			body, err := io.ReadAll(resp.Body)
+			mustTest(t, err)
+			if resp.StatusCode != http.StatusPartialContent || !strings.HasPrefix(resp.Header.Get("Content-Type"), asset.contentType) || !bytes.HasPrefix(body, []byte(asset.prefix)) {
+				t.Fatalf("asset %s: status=%d type=%q prefix=%x", asset.path, resp.StatusCode, resp.Header.Get("Content-Type"), body)
+			}
+		})
 	}
 }
 
