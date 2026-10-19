@@ -210,7 +210,7 @@ async function _probeWingInner(w, probe) {
         } else {
             console.error('[wt] wing probe failed for', w.wing_id, e);
             w.tunnel_error = 'unreachable';
-            showCryptoToast(msg || 'unknown tunnel error');
+            // Connection failures are shown with the machine's offline state.
         }
     }
 }

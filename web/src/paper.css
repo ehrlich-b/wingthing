@@ -52,12 +52,12 @@ body.paper-on #app { display: none; }
 .pp-side-squares { margin-top: 20px; padding: 0 10px; display: flex; flex-direction: column; gap: 6px; }
 .pp-foot { margin-top: auto !important; padding: 0 10px; font-size: 12px; color: var(--pp-ink-3); }
 
-/* Machine strip: one small square per machine. Filled is connected, hollow is asleep, crossed is unreachable. */
+/* Machine strip: one small square per machine. Filled is connected, hollow is offline, crossed is unreachable. */
 .pp-squares { display: inline-flex; flex-wrap: wrap; gap: 4px 14px; }
 .pp-sq { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--pp-ink-2); white-space: nowrap; }
 .pp-sq i { width: 8px; height: 8px; border: 1.5px solid var(--pp-green); background: var(--pp-green); border-radius: 2px; flex: none; }
-.pp-sq-asleep i { background: transparent; border-color: var(--pp-amber); }
-.pp-sq-unreachable i { background: linear-gradient(45deg, transparent 40%, var(--pp-red) 40% 60%, transparent 60%); border-color: var(--pp-red); }
+.pp-sq-offline i { background: transparent; border-color: var(--pp-amber); }
+.pp-sq-locked i, .pp-sq-no-access i, .pp-sq-key-mismatch i, .pp-sq-unavailable i { background: linear-gradient(45deg, transparent 40%, var(--pp-red) 40% 60%, transparent 60%); border-color: var(--pp-red); }
 .pp-sq-checking i, .pp-sq-unknown i { background: transparent; border-color: var(--pp-ink-3); border-style: dotted; }
 
 /* Main column */
@@ -104,7 +104,7 @@ body.paper-on #app { display: none; }
 .pp-st-done { color: var(--pp-green); } .pp-st-done::before { content: "\2713"; }
 .pp-st-ended::before { content: "\00D7"; }
 .pp-st-unknown::before { content: "?"; }
-.pp-st-asleep { color: var(--pp-amber); } .pp-st-asleep::before { content: "z"; }
+.pp-st-offline { color: var(--pp-amber); } .pp-st-offline::before { content: "\25CB"; }
 
 /* Thread rows */
 .pp-row { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 24px; padding: 12px 0; border-bottom: 1px solid var(--pp-rule); }
@@ -262,3 +262,30 @@ body.paper-on #app { display: none; }
     .pp-tabs small:empty { display: none; }
     .pp-desk-only { display: none; }
 }
+
+/* Presence and recovery stay beside the machine identity. */
+.pp-mname b, .pp-sq, .pp-need-top { overflow-wrap: anywhere; white-space: normal; }
+.pp-sq i { flex-shrink: 0; }
+.pp-mrow small { flex-shrink: 0; }
+.pp-machine-heading { display: flex; align-items: center; gap: 12px; }
+.pp-machine-heading .pp-mrow { flex: 1; min-width: 0; }
+#paper .pp-machine-heading .pp-btn { margin: 0; flex-shrink: 0; }
+.pp-machine li a { min-width: 0; overflow-wrap: anywhere; }
+.pp-stale { display: block; font-size: 12px; color: var(--pp-ink-2); }
+#paper .pp-more, .pp-more-sessions summary { display: inline-block; margin-top: 8px; padding: 4px 0; background: none; border: 0; color: var(--pp-accent); font: inherit; font-size: 13px; cursor: pointer; }
+.pp-more-sessions { margin-left: 22px; }
+.pp-more-sessions ul { margin-left: 0; }
+.pp-main[data-view="session"] > .pp-away, .pp-main[data-view="session"] > .pp-stale { flex: none; }
+@media (max-width: 760px) {
+    .pp-side-squares { width: 100%; margin-left: 0; }
+    .pp-side-squares .pp-sq { max-width: 105px; }
+    .pp-main[data-view="machines"] .pp-hdr .pp-meta { display: block; }
+}
+
+.pp-sq { min-width: 0; max-width: 100%; }
+.pp-sq-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.pp-machine-heading .pp-mrow small { display: none; }
+
+.pp-st-locked, .pp-st-no-access, .pp-st-key-mismatch, .pp-st-unavailable { color: var(--pp-red); }
+.pp-st-locked::before, .pp-st-no-access::before, .pp-st-key-mismatch::before, .pp-st-unavailable::before { content: "!"; }

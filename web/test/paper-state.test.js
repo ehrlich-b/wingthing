@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { machineState, sessionState, projectName, requestedCommand, paperRoute, awayLabel } from '../src/paper-state.js';
+import { machineState, sessionState, projectName, requestedCommand, paperRoute, offlineLabel, machineLabel, machineGuidance } from '../src/paper-state.js';
 
 const row = (status, extra = {}) => ({ lifecycle: { status }, ...extra });
 const online = { online: true };
@@ -19,8 +19,8 @@ test('an attention signal reads as needs you', () => {
 });
 
 test('a machine that is away overrides the last reported run state', () => {
-    assert.deepEqual(sessionState(row('working'), { online: false }), { key: 'asleep', label: 'Asleep' });
-    assert.equal(sessionState(row('blocked'), { online: true, tunnel_error: 'unreachable' }).label, 'Unreachable');
+    assert.deepEqual(sessionState(row('working'), { online: false }), { key: 'offline', label: 'Offline' });
+    assert.equal(sessionState(row('blocked'), { online: true, tunnel_error: 'unreachable' }).label, 'Offline');
     assert.equal(machineState(undefined), 'unknown');
     assert.equal(machineState({}), 'checking');
 });
@@ -43,8 +43,42 @@ test('paper routes are separate from legacy routes', () => {
     assert.equal(paperRoute('#w/abc'), null);
 });
 
-test('a machine that stopped reporting has one word and a since time', () => {
-    assert.equal(awayLabel('asleep', '1:42 PM'), 'asleep since 1:42 PM');
-    assert.equal(awayLabel('asleep', ''), 'asleep');
-    assert.equal(awayLabel('unreachable', '1:42 PM'), 'unreachable since 1:42 PM');
+test('a machine that stopped reporting uses neutral wording and last contact time', () => {
+    assert.equal(offlineLabel('1:42 PM'), 'offline · last seen 1:42 PM');
+    assert.equal(offlineLabel(''), 'offline');
+});
+
+test('sleep, lost transport and disconnected machines never infer a sleep cause', () => {
+    for (const wing of [{ online: false }, { online: false, presence: 'asleep' }, { online: true, tunnel_error: 'unreachable' }]) {
+        assert.equal(machineState(wing), 'offline');
+        for (const status of ['blocked', 'working', 'completed', 'idle', 'exited']) {
+            assert.deepEqual(sessionState(row(status), wing), { key: 'offline', label: 'Offline' });
+        }
+    }
+    assert.deepEqual(sessionState(row('working'), {}), { key: 'work', label: 'Working' });
+});
+
+test('online access failures have distinct labels and useful recovery guidance', () => {
+    for (const [error, key, label, guidance] of [
+        ['passkey_required', 'locked', 'Locked', /Unlock with your passkey/],
+        ['passkey_failed', 'locked', 'Locked', /Unlock with your passkey/],
+        ['no_passkeys_configured', 'locked', 'Locked', /Set up a passkey/],
+        ['not_allowed', 'no-access', 'No access', /Ask the owner/],
+        ['key_mismatch', 'key-mismatch', 'Key changed', /refresh this machine’s key/],
+        ['other', 'unavailable', 'Unavailable', /check access/],
+    ]) {
+        const wing = { online: true, tunnel_error: error };
+        assert.equal(machineState(wing), key);
+        assert.equal(machineLabel(wing), label);
+        assert.deepEqual(sessionState(row('working'), wing), { key, label });
+        assert.match(machineGuidance(wing), guidance);
+        assert.doesNotMatch(machineGuidance(wing), /Reconnect|Sessions kept/);
+        assert.equal(machineState({ ...wing, online: false }), 'offline');
+    }
+});
+
+test('checking presence preserves every last reported lifecycle label', () => {
+    for (const status of ['blocked', 'working', 'completed', 'idle', 'exited', 'unknown']) {
+        assert.deepEqual(sessionState(row(status), {}), sessionState(row(status), online));
+    }
 });
