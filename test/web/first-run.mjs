@@ -140,9 +140,10 @@ try {
             assert.match(await page.locator('#palette-status').innerText(), /codex/i);
             await page.evaluate(() => {window.installed = false; window.fixture(true, 9); location.hash = '#';});
             await page.waitForTimeout(50);
-            assert.match(await page.locator('#paper').innerText(), /\+4 more/);
+            assert.equal(await page.locator('.pp-side-squares .pp-sq').count(), 3);
+            assert.equal(await page.locator('.pp-side-squares .pp-more').innerText(), '+6 more');
             await shot(`${mode}-9-machines`);
-            checks.push(`${width}: ${mode} inline setup, no invented launch, refreshed Codex, existing path picker, +4 more`);
+            checks.push(`${width}: ${mode} inline setup, no invented launch, refreshed Codex, existing path picker, three-machine strip with +6 more`);
         }
         // Both onboarding surfaces follow the deployment's actual plan options.
         for (const plans of [false, true]) {
@@ -193,6 +194,6 @@ try {
         await context.close();
     }
     assert.deepEqual(errors, []);
-    fs.writeFileSync(path.join(out, 'receipt.json'), JSON.stringify({checks, captures, errors, volume: '0, 1, 5 row display limit, 9 long machine names; no numeric account machine limit exists'}, null, 2) + '\n');
+    fs.writeFileSync(path.join(out, 'receipt.json'), JSON.stringify({checks, captures, errors, volume: '0, 1, 5 row rail display limit, 9 long machine names; three-machine sidebar strip; no numeric account machine limit exists'}, null, 2) + '\n');
     console.log(JSON.stringify({checks, captures: captures.length, errors}));
 } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
