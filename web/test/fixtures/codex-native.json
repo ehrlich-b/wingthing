@@ -1,0 +1,142 @@
+{
+  "session_id": "codex-session",
+  "agent": "codex",
+  "provider_session_id": "browser-codex-thread",
+  "state": "unknown",
+  "state_source": "unsupported",
+  "ready": false,
+  "process_alive": true,
+  "cursor": 6,
+  "head_cursor": 6,
+  "events": [
+    {
+      "sequence": 1,
+      "type": "prompt_submitted",
+      "source": "codex_app_server",
+      "provider_session_id": "browser-codex-thread",
+      "raw": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "browser-codex-thread",
+          "turnId": "turn-1",
+          "item": {
+            "id": "input-1",
+            "type": "userMessage",
+            "content": [
+              {
+                "type": "text",
+                "text": "Inspect the release checklist and report the remaining tasks."
+              }
+            ]
+          }
+        }
+      },
+      "role": "user",
+      "text": "Inspect the release checklist and report the remaining tasks.",
+      "state": "working"
+    },
+    {
+      "sequence": 2,
+      "type": "message",
+      "source": "codex_app_server",
+      "provider_session_id": "browser-codex-thread",
+      "raw": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "browser-codex-thread",
+          "turnId": "turn-1",
+          "item": {
+            "id": "assistant-1",
+            "type": "agentMessage",
+            "text": "I will inspect the checklist before summarizing the remaining work."
+          }
+        }
+      },
+      "role": "assistant",
+      "text": "I will inspect the checklist before summarizing the remaining work."
+    },
+    {
+      "sequence": 3,
+      "type": "provider_item",
+      "source": "codex_app_server",
+      "provider_session_id": "browser-codex-thread",
+      "raw": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "browser-codex-thread",
+          "turnId": "turn-1",
+          "item": {
+            "id": "tool-1",
+            "type": "mcpToolCall",
+            "server": "wingthing",
+            "tool": "session_read",
+            "arguments": {
+              "session": "release-checklist-validation-with-a-long-name"
+            },
+            "status": "completed",
+            "result": {
+              "content": "The checklist contains eight remaining validation tasks."
+            }
+          }
+        }
+      }
+    },
+    {
+      "sequence": 4,
+      "type": "message",
+      "source": "codex_app_server",
+      "provider_session_id": "browser-codex-thread",
+      "raw": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "browser-codex-thread",
+          "turnId": "turn-1",
+          "item": {
+            "id": "assistant-2",
+            "type": "agentMessage",
+            "text": "Eight validation tasks remain. The checklist is ready for your decision."
+          }
+        }
+      },
+      "role": "assistant",
+      "text": "Eight validation tasks remain. The checklist is ready for your decision."
+    },
+    {
+      "sequence": 5,
+      "type": "turn_completed",
+      "source": "codex_app_server",
+      "provider_session_id": "browser-codex-thread",
+      "raw": {
+        "method": "turn/completed",
+        "params": {
+          "threadId": "browser-codex-thread",
+          "turn": {
+            "id": "turn-1",
+            "status": "completed"
+          }
+        }
+      },
+      "state": "completed"
+    },
+    {
+      "sequence": 6,
+      "type": "provider_item",
+      "source": "codex_app_server",
+      "provider_session_id": "browser-codex-thread",
+      "raw": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "browser-codex-thread",
+          "turnId": "turn-1",
+          "item": {
+            "id": "future-1",
+            "type": "futureEvidence",
+            "evidence": {
+              "detail": "Keep this unfamiliar evidence visible: <script>unsafe()</script>"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -50,8 +50,10 @@ function lifecycleIsOlder(previous, view, readSeq) {
 // activity is already visible through transcript tool calls.
 var LIFECYCLE_MARKERS = { input_requested: 'attention', turn_completed: 'turn', turn_failed: 'turn_failed', provider_warning: 'warning', provider_session_end: 'exit' };
 
-function markerFor(event) {
+function markerFor(event, agent) {
     var kind = LIFECYCLE_MARKERS[event.type];
+    if (agent === 'codex' && event.type === 'tool_activity') kind = 'tool';
+    if (agent === 'codex' && event.type === 'turn_interrupted') kind = 'interrupted';
     if (!kind && event.type === 'notification' && event.state === 'needs_input') kind = 'attention';
     if (!kind) return null;
     return { type: 'lifecycle', kind: kind, state: event.state || '', reason: event.reason || '', source: event.source || '', sequence: event.sequence, timestamp: event.timestamp || '' };
@@ -100,11 +102,16 @@ export function applyConversationRead(previous, view, meta) {
             }
         } else if (event.type === 'message' && (event.role === 'user' || event.role === 'assistant')) {
             next.messages.push({ type: event.role, content: event.text || '', timestamp: event.timestamp || '', sequence: event.sequence, truncated: event.truncated === true });
-        } else {
-            var marker = markerFor(event);
-            if (marker) next.messages.push(marker);
+        } else if (agent === 'codex' && event.type === 'prompt_submitted' && typeof event.text === 'string') {
+            next.messages.push({ type: 'user', content: event.text, timestamp: event.timestamp || '', sequence: event.sequence, truncated: event.truncated === true });
+        }
+        var marker = markerFor(event, agent);
+        if (marker && (!event.raw || agent === 'codex')) next.messages.push(marker);
+        else if (agent === 'codex' && !event.raw && event.type !== 'message' && event.type !== 'session_report' && !(event.type === 'prompt_submitted' && typeof event.text === 'string')) {
+            next.messages.push({ type: 'provider_record', name: event.type || 'provider record', content: JSON.stringify(event, null, 2), sequence: event.sequence });
         }
     });
+    next.messages.sort((a, b) => (a.sequence || 0) - (b.sequence || 0) || (a.itemIndex || 0) - (b.itemIndex || 0));
     if (Number.isSafeInteger(view.cursor) && view.cursor >= previous.cursor) next.cursor = view.cursor;
     return next;
 }
