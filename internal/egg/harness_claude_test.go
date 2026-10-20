@@ -142,14 +142,16 @@ func TestClaudeHarnessConformanceAdmission(t *testing.T) {
 	base := RunConfig{Harness: &h, Agent: "claude", CWD: "/workspace", ProviderSessionID: "exact"}
 	opts := LaunchPreparationOptions{ClaudeVersion: "2.1.285 (Claude Code)"}
 	tests := map[string]func(*RunConfig, *LaunchPreparationOptions){
-		"wrong-agent":   func(r *RunConfig, o *LaunchPreparationOptions) { r.Agent = "codex" },
-		"command":       func(r *RunConfig, o *LaunchPreparationOptions) { r.Command = []string{"sh"} },
-		"outer-only":    func(r *RunConfig, o *LaunchPreparationOptions) { r.OuterBoundary = true },
-		"skip":          func(r *RunConfig, o *LaunchPreparationOptions) { r.DangerouslySkipPermissions = true },
-		"no-identity":   func(r *RunConfig, o *LaunchPreparationOptions) { r.ProviderSessionID = "" },
-		"no-version":    func(r *RunConfig, o *LaunchPreparationOptions) { o.ClaudeVersion = "" },
-		"wrong-version": func(r *RunConfig, o *LaunchPreparationOptions) { o.ClaudeVersion = "2.1.286 (Claude Code)" },
-		"platform":      func(r *RunConfig, o *LaunchPreparationOptions) { o.Platform = "windows" },
+		"privileged-socket": func(r *RunConfig, o *LaunchPreparationOptions) { r.ToolSocketPath = "/host/tools.sock" },
+		"privileged-tool":   func(r *RunConfig, o *LaunchPreparationOptions) { r.ToolNames = []string{"host-command"} },
+		"wrong-agent":       func(r *RunConfig, o *LaunchPreparationOptions) { r.Agent = "codex" },
+		"command":           func(r *RunConfig, o *LaunchPreparationOptions) { r.Command = []string{"sh"} },
+		"outer-only":        func(r *RunConfig, o *LaunchPreparationOptions) { r.OuterBoundary = true },
+		"skip":              func(r *RunConfig, o *LaunchPreparationOptions) { r.DangerouslySkipPermissions = true },
+		"no-identity":       func(r *RunConfig, o *LaunchPreparationOptions) { r.ProviderSessionID = "" },
+		"no-version":        func(r *RunConfig, o *LaunchPreparationOptions) { o.ClaudeVersion = "" },
+		"wrong-version":     func(r *RunConfig, o *LaunchPreparationOptions) { o.ClaudeVersion = "2.1.286 (Claude Code)" },
+		"platform":          func(r *RunConfig, o *LaunchPreparationOptions) { o.Platform = "windows" },
 	}
 	for name, alter := range tests {
 		t.Run(name, func(t *testing.T) {

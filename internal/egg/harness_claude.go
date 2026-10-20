@@ -98,6 +98,9 @@ func validateClaudeHarness(rc RunConfig, opts LaunchPreparationOptions, state La
 	if rc.Agent != "claude" || len(rc.Command) != 0 {
 		return errors.New("claude-code harness requires a Claude agent session")
 	}
+	if rc.ToolSocketPath != "" || len(rc.ToolNames) > 0 {
+		return errors.New("claude-code harness does not cover privileged host tool callbacks")
+	}
 	if rc.OuterBoundary {
 		return errors.New("claude-code harness requires the Wingthing outer sandbox")
 	}
@@ -238,8 +241,27 @@ func RenderClaudeHarness(h HarnessConfig, policy EffectivePolicy, cwd string) (C
 	}
 	sum := sha256.Sum256(data)
 	out = ClaudeHarnessRender{Driver: h.Driver, Version: h.Version, PermissionMode: mode, Settings: data, SHA256: hex.EncodeToString(sum[:]),
-		Coverage:   map[string]string{"shell": "Claude native sandbox plus Wingthing outer sandbox; runtime unverified", "file_tools": "Claude permissions plus Wingthing outer sandbox", "startup": "Wingthing outer sandbox", "mcp": "Wingthing outer sandbox", "hooks": "Wingthing outer sandbox", "lsp": "Wingthing outer sandbox", "setup": "Wingthing outer sandbox", "git_helpers": "Wingthing outer sandbox", "subagents": "Wingthing outer sandbox", "resources": "Wingthing outer sandbox", "network": "Wingthing outer sandbox across controller and tools; native Bash allowlist supplements it"},
-		Exceptions: []string{"native nesting and installed enforcement require runtime conformance; failIfUnavailable forbids fallback", "managed settings can override native CLI settings; the outer sandbox remains authoritative", "native cwd/temp defaults and provider regex holes are not equivalent to the outer filesystem policy", "native network does not cover all controller, MCP or hook traffic; outer network enforcement remains required", "deny-rename, symlink traversal and executable roots remain owned by the outer sandbox"},
+		Coverage: map[string]string{
+			"shell":       "Claude native sandbox plus Wingthing outer sandbox; runtime unverified",
+			"file_tools":  "Claude permissions plus Wingthing outer sandbox",
+			"startup":     "Wingthing outer sandbox; trusted host performs credential-free version probe",
+			"mcp":         "local child processes: Wingthing outer sandbox; remote servers: external and unverified",
+			"hooks":       "local processes: Wingthing outer sandbox",
+			"lsp":         "local processes: Wingthing outer sandbox",
+			"setup":       "local processes: Wingthing outer sandbox",
+			"git_helpers": "local processes: Wingthing outer sandbox",
+			"subagents":   "local children: Wingthing outer sandbox; remote tasks: external and unverified",
+			"resources":   "local process tree: Wingthing outer sandbox",
+			"network":     "local controller and tools: Wingthing outer sandbox; native Bash allowlist supplements it",
+		},
+		Exceptions: []string{
+			"native nesting and installed enforcement require runtime conformance; failIfUnavailable forbids fallback",
+			"managed settings can override native CLI settings; the outer sandbox remains authoritative",
+			"native cwd/temp defaults and provider regex holes are not equivalent to the outer filesystem policy",
+			"native network does not cover all controller, MCP or hook traffic; outer network enforcement remains required",
+			"remote MCP servers and remote tasks are outside local policy; privileged host tool sockets are rejected",
+			"deny-rename, symlink traversal and executable roots remain owned by the outer sandbox",
+		},
 	}
 	return out, nil
 }

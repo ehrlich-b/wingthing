@@ -53,7 +53,9 @@ holes, read-only mount hierarchies, rename protection, executable roots and
 symlink behavior are not a translation-equivalence claim. Wingthing's outer
 backend continues to enforce the complete egg policy across startup, shell,
 file tools, MCP, LSP, hooks, setup, git helpers and subagents, plus resources and
-network traffic. There is no automatic outer-only or unrestricted fallback if
+network traffic for local processes. Remote MCP servers and remote tasks remain
+external and unverified. Privileged host tool sockets are refused by this driver
+because their callbacks execute outside the egg. There is no automatic outer-only or unrestricted fallback if
 the nested native sandbox fails.
 
 Run offline compiler/preparation conformance with:
