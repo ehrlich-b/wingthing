@@ -64,6 +64,7 @@ type PathEvidence struct {
 	Source    string `json:"source"`
 }
 type Report struct {
+	Driver             egg.DriverReport       `json:"driver"`
 	Acceptance         string                 `json:"acceptance"`
 	ProviderVersion    string                 `json:"provider_version,omitempty"`
 	SchemaVersion      int                    `json:"schema_version"`
@@ -288,6 +289,7 @@ func Inspect(req Request) (Report, error) {
 		},
 	}, state)
 	policy := prepared.Policy
+	report.Driver = prepared.Driver
 	if policy.Agent != req.Agent {
 		return report, errors.New("effective provider policy cannot be resolved")
 	}
