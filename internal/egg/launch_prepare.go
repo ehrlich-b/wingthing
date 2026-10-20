@@ -45,6 +45,7 @@ type LaunchPreparationOptions struct {
 type PreparedLaunch struct {
 	Driver                DriverReport
 	Harness               *ClaudeHarnessRender
+	CodexSandbox          *CodexSandboxRender
 	Args                  []string
 	CodexRun, NativeRun   bool
 	Sandboxed             bool
@@ -184,6 +185,23 @@ func prepareLegacyLaunch(rc RunConfig, opts LaunchPreparationOptions, state Laun
 		// directories, including profiles whose regex also covers adjacent files.
 		out.ProfileDirs = append([]string(nil), policy.profileDirs...)
 	}
+	if rc.Agent == "codex" && rc.CodexNativeSandbox && len(rc.Command) == 0 {
+		if rc.OuterBoundary {
+			return out, errors.New("Codex native sandbox opt-in requires the Wingthing outer sandbox for remaining policy controls")
+		}
+		if !opts.CodexCapability.Supported(opts.Binary) {
+			return out, errors.New("Codex native sandbox requires a supported Codex version; no bypass fallback")
+		}
+		if err := validateCodexSandboxOverrides(rc.AgentArgs); err != nil {
+			return out, err
+		}
+		render, err := RenderCodexSandbox(config, rc.CWD, fsHome, rc.DangerouslySkipPermissions)
+		if err != nil {
+			return out, err
+		}
+		out.CodexSandbox = &render
+		args = append(render.Args, args...)
+	}
 	recording := &recordingLaunchState{LaunchState: state}
 	defer func() { out.Sandbox.RequiredWriteDirs = append([]string(nil), recording.spools...) }()
 	if rc.Agent == "codex" && len(rc.Command) == 0 && opts.CodexCapability.Supported(opts.Binary) {
@@ -211,6 +229,14 @@ func prepareLegacyLaunch(rc RunConfig, opts LaunchPreparationOptions, state Laun
 		args = append(args, "--setting-sources", "", "--permission-mode", rendered.PermissionMode, "--settings", string(rendered.Settings))
 	}
 	out.Args = args
+	if out.CodexSandbox != nil {
+		// Rendering is inspectable, but does not establish that nesting works.
+		// Linux outer seccomp denies mount/unshare; macOS nesting is unverified.
+		// Reject here so both production and doctor retain the same boundary.
+		reason := "Codex native inner sandbox nesting under the Wingthing outer sandbox is unsupported; no compatible nested execution mode has been verified"
+		out.check("sandbox.nested", LaunchFail, reason, "Codex native sandbox opt-in + Wingthing outer boundary", "use a verified compatible execution mode before requesting native sandboxing; no automatic bypass fallback")
+		return out, errors.New(reason)
+	}
 	for _, dir := range out.ProfileDirs {
 		if err := state.MkdirAll(dir); err != nil {
 			out.FailureReason = "provider_home_denied"

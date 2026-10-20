@@ -129,7 +129,7 @@ command's ambient HOME or environment. The planner never repairs them.
 | Mac deny-write pins an existing directory | Contents remain writable under their grant |
 | Codex HOME/state/spool directory is a symlink | Native pinned reader preparation `FAIL` |
 | Final policy denies a required Codex callback spool or its output | Preparation `FAIL` |
-| Codex retains inner sandbox under an egg/declared parent sandbox | `sandbox.nested: FAIL` |
+| Codex retains inner sandbox under an egg/declared parent sandbox | `sandbox.nested: FAIL`, including `codex_native_sandbox`; opt-in preparation rejects startup until a compatible execution mode is verified |
 | Linux scoped parent | `parent.scoped: FAIL`, regardless of positive native facts |
 | No user bus, ordinary launch | No bus requirement is invented |
 | No user bus, explicitly bus-dependent mode | `user_bus: FAIL` |

@@ -947,6 +947,9 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if eggCfg.Shell != "" {
 		args = append(args, "--shell", eggCfg.Shell)
 	}
+	if eggCfg.CodexNativeSandbox {
+		args = append(args, "--codex-native-sandbox")
+	}
 	if eggCfg.DangerouslySkipPermissions {
 		args = append(args, "--dangerously-skip-permissions")
 	}

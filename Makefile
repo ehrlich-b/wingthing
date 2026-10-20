@@ -628,3 +628,8 @@ test-deploy-guard:
 .PHONY: test-isolation
 test-isolation: | web/dist
 	PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-isolation.py --go '$(GO)'
+
+# Offline Codex native policy rendering and launch compatibility.
+.PHONY: test-codex-sandbox
+test-codex-sandbox:
+	$(GO) test -p 2 ./internal/egg ./internal/launchplan -run 'CodexSandbox' -count=1 -v

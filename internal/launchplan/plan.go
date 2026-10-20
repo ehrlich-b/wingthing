@@ -92,6 +92,7 @@ type Report struct {
 	Credentials        []PathEvidence           `json:"credentials"`
 	Provenance         map[string]string        `json:"provenance"`
 	Gates              []Gate                   `json:"gates"`
+	CodexSandbox       *egg.CodexSandboxRender  `json:"codex_sandbox,omitempty"`
 }
 
 func (r *Report) gate(code, status, reason, source, correction string) {
@@ -268,6 +269,7 @@ func Inspect(req Request) (Report, error) {
 		OuterBoundary: !egg.RequiresSandbox(cfg, req.Agent),
 		FS:            resolved.FS, Network: resolved.Network.Domains, LocalPorts: resolved.Network.LocalPorts,
 		NetworkMode: resolved.Network.Mode, AgentDomains: resolved.Network.AgentDomains,
+		CodexNativeSandbox:         cfg.CodexNativeSandbox,
 		DangerouslySkipPermissions: req.Unattended || cfg.DangerouslySkipPermissions,
 		ProviderSessionID:          "launch-plan", OmitBrowserBridge: true,
 		CPULimit: cfg.Resources.CPUDuration(), MemLimit: cfg.Resources.MemBytes(),
@@ -293,6 +295,7 @@ func Inspect(req Request) (Report, error) {
 	if prepared.Harness != nil {
 		report.gate("harness.native", Unrun, "native sandbox runtime conformance has not been executed", "Claude harness driver", "verify the pinned artifact inside the selected outer sandbox")
 	}
+	report.CodexSandbox = prepared.CodexSandbox
 	policy := prepared.Policy
 	report.Driver = prepared.Driver
 	if policy.Agent != req.Agent {

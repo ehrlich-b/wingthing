@@ -248,6 +248,9 @@ func RebaseLaunchConfig(cfg *EggConfig, policyBase string) *EggConfig {
 
 func configRuleSources(cfg *EggConfig, source string) []PolicyRuleSource {
 	var result []PolicyRuleSource
+	if cfg.CodexNativeSandbox {
+		result = append(result, PolicyRuleSource{"driver", "codex_native_sandbox=true", source})
+	}
 	for _, entry := range cfg.FS {
 		result = append(result, PolicyRuleSource{"fs", entry, source})
 	}

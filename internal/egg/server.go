@@ -108,10 +108,11 @@ type Session struct {
 
 // RunConfig holds everything needed to start a single egg session.
 type RunConfig struct {
-	Harness      *HarnessConfig
-	LaunchPolicy *LaunchPolicySelection
-	Agent        string
-	Kind         string
+	Harness            *HarnessConfig
+	CodexNativeSandbox bool
+	LaunchPolicy       *LaunchPolicySelection
+	Agent              string
+	Kind               string
 	// Command replaces the agent entirely; AgentArgs extends the agent's own
 	// invocation and keeps the session an agent session. They are alternatives.
 	Command      []string
@@ -2032,7 +2033,7 @@ func sessionCommand(rc RunConfig) (string, []string) {
 	if len(rc.Command) > 0 {
 		return rc.Command[0], append([]string(nil), rc.Command[1:]...)
 	}
-	return agentCommand(rc.Agent, rc.DangerouslySkipPermissions, rc.ResumeSessionID, rc.AgentArgs...)
+	return agentCommand(rc.Agent, rc.DangerouslySkipPermissions && !(rc.Agent == "codex" && rc.CodexNativeSandbox), rc.ResumeSessionID, rc.AgentArgs...)
 }
 
 // Recovery interceptors

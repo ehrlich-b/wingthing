@@ -116,6 +116,7 @@ func eggRunCmd() *cobra.Command {
 		userHomeFlag               string
 		skipHostAgentEnvFlag       bool
 		idleTimeoutFlag            string
+		codexNativeSandbox         bool
 		dangerouslySkipPermissions bool
 		resumeSessionFlag          string
 		providerSessionFlag        string
@@ -188,6 +189,7 @@ func eggRunCmd() *cobra.Command {
 				Env:                        envMap,
 				Rows:                       rows,
 				Cols:                       cols,
+				CodexNativeSandbox:         codexNativeSandbox,
 				DangerouslySkipPermissions: dangerouslySkipPermissions,
 				CPULimit:                   cpuLimit,
 				MemLimit:                   memLimit,
@@ -286,6 +288,7 @@ func eggRunCmd() *cobra.Command {
 	if err := cmd.Flags().MarkHidden("env-file-required"); err != nil {
 		panic(err)
 	}
+	cmd.Flags().BoolVar(&codexNativeSandbox, "codex-native-sandbox", false, "render Codex tool sandbox policy from egg intent")
 	cmd.Flags().BoolVar(&dangerouslySkipPermissions, "dangerously-skip-permissions", false, "skip agent permission prompts")
 	cmd.Flags().StringVar(&cpuFlag, "cpu", "", "CPU time limit (e.g. 300s)")
 	cmd.Flags().StringVar(&memFlag, "memory", "", "memory limit (e.g. 2GB)")
