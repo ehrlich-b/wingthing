@@ -183,7 +183,6 @@ func PrepareLaunch(rc RunConfig, opts LaunchPreparationOptions, state LaunchStat
 		}
 		out.CodexSandbox = &render
 		args = append(render.Args, args...)
-		out.Deferred = append(out.Deferred, "Codex native tool sandbox availability inside the outer sandbox; launch failures never retry with bypass")
 	}
 	recording := &recordingLaunchState{LaunchState: state}
 	defer func() { out.Sandbox.RequiredWriteDirs = append([]string(nil), recording.spools...) }()
@@ -203,6 +202,14 @@ func PrepareLaunch(rc RunConfig, opts LaunchPreparationOptions, state LaunchStat
 		args = append(args, "--", rc.InitialRun.Prompt)
 	}
 	out.Args = args
+	if out.CodexSandbox != nil {
+		// Rendering is inspectable, but does not establish that nesting works.
+		// Linux outer seccomp denies mount/unshare; macOS nesting is unverified.
+		// Reject here so both production and doctor retain the same boundary.
+		reason := "Codex native inner sandbox nesting under the Wingthing outer sandbox is unsupported; no compatible nested execution mode has been verified"
+		out.check("sandbox.nested", LaunchFail, reason, "Codex native sandbox opt-in + Wingthing outer boundary", "use a verified compatible execution mode before requesting native sandboxing; no automatic bypass fallback")
+		return out, errors.New(reason)
+	}
 	for _, dir := range out.ProfileDirs {
 		if err := state.MkdirAll(dir); err != nil {
 			out.FailureReason = "provider_home_denied"

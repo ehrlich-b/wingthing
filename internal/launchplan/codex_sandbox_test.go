@@ -16,14 +16,12 @@ func TestCodexSandboxDoctorConformance(t *testing.T) {
 	if report.CodexSandbox == nil || report.CodexSandbox.ApprovalPolicy != "never" || report.CodexSandbox.NetworkAccess {
 		t.Fatalf("missing tool policy: %+v", report)
 	}
-	if !contains(report.ProviderArgv, "sandbox_mode=\"workspace-write\"") || contains(report.ProviderArgv, "--dangerously-bypass-approvals-and-sandbox") {
-		t.Fatalf("incorrect argv: %v", report.ProviderArgv)
+	if !contains(report.CodexSandbox.Args, "sandbox_mode=\"workspace-write\"") || len(report.ProviderArgv) != 0 {
+		t.Fatalf("missing render or launchable argv despite rejection: %+v", report)
 	}
-	hasGate(t, report, "provider.preparation.deferred", Unrun, "Codex native tool sandbox availability")
-	for _, gate := range report.Gates {
-		if gate.Code == "sandbox.nested" && gate.Status == Fail {
-			t.Fatal("explicit native opt-in treated as legacy nesting error")
-		}
+	hasGate(t, report, "sandbox.nested", Fail, "nesting")
+	if report.Readiness != "blocked" {
+		t.Fatalf("unverified nesting admitted: %s", report.Readiness)
 	}
 	found := false
 	for _, source := range report.PolicyRules {

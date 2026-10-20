@@ -2,6 +2,7 @@ package egg
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -107,8 +108,8 @@ func TestCodexSandboxLaunchConformance(t *testing.T) {
 			t.Fatal(err)
 		}
 		got, err := PrepareLaunch(rc, opts, state)
-		if err != nil {
-			t.Fatal(err)
+		if err == nil || !strings.Contains(err.Error(), "nesting") {
+			t.Fatalf("unverified nesting admitted: %v", err)
 		}
 		if got.CodexSandbox == nil || !got.Sandboxed || containsExact(got.Args, "--dangerously-bypass-approvals-and-sandbox") || len(got.Sandbox.Deny) == 0 {
 			t.Fatalf("lost enforcement: %+v", got)
@@ -134,6 +135,43 @@ func TestCodexSandboxLaunchConformance(t *testing.T) {
 			mutate(&r, &o)
 			if _, err := PrepareLaunch(r, o, state); err == nil {
 				t.Fatal("unsupported launch did not fail closed")
+			}
+		}
+	}
+}
+
+func TestCodexSandboxNestingAdmission(t *testing.T) {
+	for _, platform := range []string{"linux", "darwin"} {
+		for _, unattended := range []bool{false, true} {
+			for _, native := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/unattended=%t/native-state=%t", platform, unattended, native), func(t *testing.T) {
+					home := t.TempDir()
+					rc := RunConfig{Agent: "codex", CodexNativeSandbox: true, CWD: home, UserHome: home, DangerouslySkipPermissions: unattended}
+					opts := LaunchPreparationOptions{Binary: "/usr/bin/codex", Home: home, HostHome: home, EggDir: filepath.Join(home, "egg"), Platform: platform, CodexCapability: SavedCodexCapability("codex-cli 0.162.1")}
+					state, err := NewDryLaunchState(t.TempDir())
+					if err != nil {
+						t.Fatal(err)
+					}
+					var launchState LaunchState = state
+					if native {
+						launchState = NativeLaunchState()
+						// Positive outer capability facts cannot establish inner nesting.
+						opts.Requirements = &LaunchRequirements{Capabilities: &LaunchCapabilities{OS: platform, NativeSandbox: FactSupported, ParentSandbox: "none"}}
+					}
+					got, err := PrepareLaunch(rc, opts, launchState)
+					if err == nil || !strings.Contains(err.Error(), "nesting") {
+						t.Fatalf("unverified nesting admitted: %v", err)
+					}
+					found := false
+					for _, check := range got.Checks {
+						if check.Code == "sandbox.nested" && check.Status == LaunchFail {
+							found = true
+						}
+					}
+					if !found || got.CodexSandbox == nil || containsExact(got.Args, "--dangerously-bypass-approvals-and-sandbox") {
+						t.Fatalf("missing rejection or rendered policy: %+v", got)
+					}
+				})
 			}
 		}
 	}
