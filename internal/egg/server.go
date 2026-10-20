@@ -108,6 +108,7 @@ type Session struct {
 
 // RunConfig holds everything needed to start a single egg session.
 type RunConfig struct {
+	Harness      *HarnessConfig
 	LaunchPolicy *LaunchPolicySelection
 	Agent        string
 	Kind         string
@@ -652,7 +653,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	}
 	args = prepared.Args
 	envMap = prepared.Environment
-	if rc.Agent == "claude" && len(rc.Command) == 0 && lifecycleSettingsPath != "" {
+	if rc.Agent == "claude" && len(rc.Command) == 0 && lifecycleSettingsPath != "" && rc.Harness == nil {
 		cleanup, permissionErr := s.preparePermissions(ctx, home, lifecycleSettingsPath, rc.ProviderSessionID, envMap, hasSandbox)
 		if permissionErr != nil {
 			return permissionErr

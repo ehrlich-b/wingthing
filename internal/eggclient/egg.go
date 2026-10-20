@@ -879,6 +879,13 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		"--rows", strconv.Itoa(int(rows)),
 		"--cols", strconv.Itoa(int(cols)),
 	}
+	if eggCfg.Harness != nil {
+		encoded, err := json.Marshal(eggCfg.Harness)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, "--harness="+string(encoded))
+	}
 	if eggCfg.LaunchPolicy != nil {
 		selection, err := json.Marshal(eggCfg.LaunchPolicy)
 		if err != nil {

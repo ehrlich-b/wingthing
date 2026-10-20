@@ -64,32 +64,33 @@ type PathEvidence struct {
 	Source    string `json:"source"`
 }
 type Report struct {
-	Acceptance         string                 `json:"acceptance"`
-	ProviderVersion    string                 `json:"provider_version,omitempty"`
-	SchemaVersion      int                    `json:"schema_version"`
-	ReadOnly           bool                   `json:"read_only"`
-	SandboxRequired    bool                   `json:"sandbox_required"`
-	Readiness          string                 `json:"readiness"`
-	Route              string                 `json:"route"`
-	Agent              string                 `json:"agent,omitempty"`
-	CWD                PathEvidence           `json:"cwd"`
-	Home               PathEvidence           `json:"home"`
-	Executable         PathEvidence           `json:"executable"`
-	ExecutableSHA256   string                 `json:"executable_sha256,omitempty"`
-	EvidenceSHA256     string                 `json:"evidence_sha256,omitempty"`
-	CapabilitiesSHA256 string                 `json:"capabilities_sha256,omitempty"`
-	PolicyBase         PathEvidence           `json:"policy_base"`
-	MergeHome          PathEvidence           `json:"merge_home"`
-	PolicySource       string                 `json:"policy_source"`
-	PolicyRules        []egg.PolicyRuleSource `json:"policy_rules"`
-	Network            string                 `json:"network"`
-	Domains            []string               `json:"domains"`
-	LocalPorts         []int                  `json:"local_ports"`
-	ProviderArgv       []string               `json:"provider_argv"`
-	ArgvScope          string                 `json:"argv_scope"`
-	Credentials        []PathEvidence         `json:"credentials"`
-	Provenance         map[string]string      `json:"provenance"`
-	Gates              []Gate                 `json:"gates"`
+	Harness            *egg.ClaudeHarnessRender `json:"harness,omitempty"`
+	Acceptance         string                   `json:"acceptance"`
+	ProviderVersion    string                   `json:"provider_version,omitempty"`
+	SchemaVersion      int                      `json:"schema_version"`
+	ReadOnly           bool                     `json:"read_only"`
+	SandboxRequired    bool                     `json:"sandbox_required"`
+	Readiness          string                   `json:"readiness"`
+	Route              string                   `json:"route"`
+	Agent              string                   `json:"agent,omitempty"`
+	CWD                PathEvidence             `json:"cwd"`
+	Home               PathEvidence             `json:"home"`
+	Executable         PathEvidence             `json:"executable"`
+	ExecutableSHA256   string                   `json:"executable_sha256,omitempty"`
+	EvidenceSHA256     string                   `json:"evidence_sha256,omitempty"`
+	CapabilitiesSHA256 string                   `json:"capabilities_sha256,omitempty"`
+	PolicyBase         PathEvidence             `json:"policy_base"`
+	MergeHome          PathEvidence             `json:"merge_home"`
+	PolicySource       string                   `json:"policy_source"`
+	PolicyRules        []egg.PolicyRuleSource   `json:"policy_rules"`
+	Network            string                   `json:"network"`
+	Domains            []string                 `json:"domains"`
+	LocalPorts         []int                    `json:"local_ports"`
+	ProviderArgv       []string                 `json:"provider_argv"`
+	ArgvScope          string                   `json:"argv_scope"`
+	Credentials        []PathEvidence           `json:"credentials"`
+	Provenance         map[string]string        `json:"provenance"`
+	Gates              []Gate                   `json:"gates"`
 }
 
 func (r *Report) gate(code, status, reason, source, correction string) {
@@ -262,7 +263,7 @@ func Inspect(req Request) (Report, error) {
 		return report, err
 	}
 	rc := egg.RunConfig{
-		Agent: req.Agent, CWD: report.CWD.Resolved, UserHome: req.Home, SkipHostAgentEnv: true,
+		Harness: cfg.Harness, Agent: req.Agent, CWD: report.CWD.Resolved, UserHome: req.Home, SkipHostAgentEnv: true,
 		OuterBoundary: !egg.RequiresSandbox(cfg, req.Agent),
 		FS:            resolved.FS, Network: resolved.Network.Domains, LocalPorts: resolved.Network.LocalPorts,
 		NetworkMode: resolved.Network.Mode, AgentDomains: resolved.Network.AgentDomains,
@@ -277,7 +278,7 @@ func Inspect(req Request) (Report, error) {
 	prepared, preparationErr := egg.PrepareLaunch(rc, egg.LaunchPreparationOptions{
 		Binary: report.Executable.Resolved, Home: req.Home, HostHome: mergeHome,
 		EggDir: filepath.Join(root, "launch-plan"), ProviderURL: req.ProviderURL,
-		CodexCapability: egg.SavedCodexCapability(version), Platform: caps.OS,
+		CodexCapability: egg.SavedCodexCapability(version), Platform: caps.OS, ClaudeVersion: version,
 		EnvironmentConfig: cfg,
 		Requirements: &egg.LaunchRequirements{
 			Route: req.Route, AllowedHomeRoot: req.AllowedHomeRoot,
@@ -287,8 +288,16 @@ func Inspect(req Request) (Report, error) {
 			Evidence: &saved, EvidenceBound: evidenceBound, VersionKnown: version != "",
 		},
 	}, state)
+	report.Harness = prepared.Harness
+	if prepared.Harness != nil {
+		report.gate("harness.native", Unrun, "native sandbox runtime conformance has not been executed", "Claude harness driver", "verify the pinned artifact inside the selected outer sandbox")
+	}
 	policy := prepared.Policy
 	if policy.Agent != req.Agent {
+		if preparationErr != nil {
+			report.gate("provider.preparation", Fail, preparationErr.Error(), "egg.PrepareLaunch", "correct the requested native harness configuration and artifact evidence")
+			return report, nil
+		}
 		return report, errors.New("effective provider policy cannot be resolved")
 	}
 	if preparationErr != nil {
