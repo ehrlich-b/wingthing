@@ -178,6 +178,7 @@ func (b BaseField) HasMasks() bool {
 
 // EggConfig holds the sandbox and environment configuration for egg sessions.
 type EggConfig struct {
+	CodexNativeSandbox         bool                   `yaml:"codex_native_sandbox,omitempty"`
 	LaunchPolicy               *LaunchPolicySelection `yaml:"-"` // captured at resolution, never rediscovered for diagnostics
 	Base                       BaseField              `yaml:"base,omitempty"`
 	FS                         []string               `yaml:"fs"`
@@ -426,6 +427,9 @@ func mergeEggConfigForHome(parent, child *EggConfig, home string) *EggConfig {
 	if child.Shell != "" {
 		merged.Shell = child.Shell
 	}
+
+	// Native sandbox opt-in is inherited; a child cannot turn it off.
+	merged.CodexNativeSandbox = parent.CodexNativeSandbox || child.CodexNativeSandbox
 
 	// DangerouslySkipPermissions: OR
 	merged.DangerouslySkipPermissions = parent.DangerouslySkipPermissions || child.DangerouslySkipPermissions

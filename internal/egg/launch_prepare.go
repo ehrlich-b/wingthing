@@ -40,6 +40,7 @@ type LaunchPreparationOptions struct {
 }
 
 type PreparedLaunch struct {
+	CodexSandbox          *CodexSandboxRender
 	Args                  []string
 	CodexRun, NativeRun   bool
 	Sandboxed             bool
@@ -165,6 +166,24 @@ func PrepareLaunch(rc RunConfig, opts LaunchPreparationOptions, state LaunchStat
 		// ResolvePolicyWithProvider owns profile drilling. Prepare exactly those
 		// directories, including profiles whose regex also covers adjacent files.
 		out.ProfileDirs = append([]string(nil), policy.profileDirs...)
+	}
+	if rc.Agent == "codex" && rc.CodexNativeSandbox && len(rc.Command) == 0 {
+		if rc.OuterBoundary {
+			return out, errors.New("Codex native sandbox opt-in requires the Wingthing outer sandbox for remaining policy controls")
+		}
+		if !opts.CodexCapability.Supported(opts.Binary) {
+			return out, errors.New("Codex native sandbox requires a supported Codex version; no bypass fallback")
+		}
+		if err := validateCodexSandboxOverrides(rc.AgentArgs); err != nil {
+			return out, err
+		}
+		render, err := RenderCodexSandbox(config, rc.CWD, fsHome, rc.DangerouslySkipPermissions)
+		if err != nil {
+			return out, err
+		}
+		out.CodexSandbox = &render
+		args = append(render.Args, args...)
+		out.Deferred = append(out.Deferred, "Codex native tool sandbox availability inside the outer sandbox; launch failures never retry with bypass")
 	}
 	recording := &recordingLaunchState{LaunchState: state}
 	defer func() { out.Sandbox.RequiredWriteDirs = append([]string(nil), recording.spools...) }()

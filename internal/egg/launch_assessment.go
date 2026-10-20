@@ -248,7 +248,7 @@ func (p *PreparedLaunch) assess(rc RunConfig, opts LaunchPreparationOptions, sta
 	if !complete {
 		return
 	}
-	if rc.Agent == "codex" && len(rc.Command) == 0 && !containsExact(p.Args, "--dangerously-bypass-approvals-and-sandbox") && (p.Sandboxed || caps.ParentSandbox == "sandboxed" || caps.ParentSandbox == "scoped") {
+	if rc.Agent == "codex" && !rc.CodexNativeSandbox && len(rc.Command) == 0 && !containsExact(p.Args, "--dangerously-bypass-approvals-and-sandbox") && (p.Sandboxed || caps.ParentSandbox == "sandboxed" || caps.ParentSandbox == "scoped") {
 		p.check("sandbox.nested", LaunchFail, "planned Codex invocation retains an inner sandbox inside a declared outer sandbox", "runtime adapter argv + declared parent boundary", "review the supported unattended egg route under the existing boundary; planner does not change flags")
 	}
 	if req.Route == "agent_run" {

@@ -619,3 +619,8 @@ check-downloads:
 
 test-deploy-guard:
 	$(GO) test -p 2 ./internal/downloads ./cmd/check-downloads -run "Staged|DeployGuard" -count=1
+
+# Offline Codex native policy rendering and launch compatibility.
+.PHONY: test-codex-sandbox
+test-codex-sandbox:
+	$(GO) test -p 2 ./internal/egg ./internal/launchplan -run 'CodexSandbox' -count=1 -v
