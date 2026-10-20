@@ -31,7 +31,8 @@ type LaunchPreparationOptions struct {
 	CodexCapability                                                   CodexCapability
 	// A different saved platform can describe capabilities, but this process
 	// cannot execute that platform's final policy builder.
-	Platform string
+	Platform      string
+	ClaudeVersion string
 	// EnvironmentConfig selects from an explicit snapshot when the caller has
 	// not already selected Environment. Production can pass its selected map.
 	EnvironmentConfig    *EggConfig
@@ -43,6 +44,7 @@ type LaunchPreparationOptions struct {
 
 type PreparedLaunch struct {
 	Driver                DriverReport
+	Harness               *ClaudeHarnessRender
 	Args                  []string
 	CodexRun, NativeRun   bool
 	Sandboxed             bool
@@ -88,6 +90,11 @@ func prepareLegacyLaunch(rc RunConfig, opts LaunchPreparationOptions, state Laun
 		rc.Kind = "agent"
 		if len(rc.Command) > 0 {
 			rc.Kind = "command"
+		}
+	}
+	if rc.Harness != nil {
+		if err := validateClaudeHarness(rc, opts, state); err != nil {
+			return out, err
 		}
 	}
 	selected := opts.Environment
@@ -194,6 +201,15 @@ func prepareLegacyLaunch(rc RunConfig, opts LaunchPreparationOptions, state Laun
 		}
 		args = append(args, "--", rc.InitialRun.Prompt)
 	}
+	if rc.Harness != nil {
+		rendered, renderErr := RenderClaudeHarness(*rc.Harness, out.Policy, rc.CWD)
+		if renderErr != nil {
+			return out, renderErr
+		}
+		out.Harness = &rendered
+		out.Environment["DISABLE_AUTOUPDATER"] = "1"
+		args = append(args, "--setting-sources", "", "--permission-mode", rendered.PermissionMode, "--settings", string(rendered.Settings))
+	}
 	out.Args = args
 	for _, dir := range out.ProfileDirs {
 		if err := state.MkdirAll(dir); err != nil {
@@ -255,6 +271,13 @@ func prepareLegacyLaunch(rc RunConfig, opts LaunchPreparationOptions, state Laun
 	}
 	if out.NetworkFailure != "" {
 		return out, errors.New(out.NetworkFailure)
+	}
+	if out.Harness != nil {
+		if _, native := state.(nativeLaunchState); native {
+			if err := persistClaudeHarnessReport(opts.EggDir, out.Harness); err != nil {
+				return out, err
+			}
+		}
 	}
 	return out, nil
 }

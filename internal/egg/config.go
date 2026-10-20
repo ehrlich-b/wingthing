@@ -1,6 +1,7 @@
 package egg
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -178,6 +179,7 @@ func (b BaseField) HasMasks() bool {
 
 // EggConfig holds the sandbox and environment configuration for egg sessions.
 type EggConfig struct {
+	Harness                    *HarnessConfig         `yaml:"harness,omitempty"`
 	LaunchPolicy               *LaunchPolicySelection `yaml:"-"` // captured at resolution, never rediscovered for diagnostics
 	Base                       BaseField              `yaml:"base,omitempty"`
 	FS                         []string               `yaml:"fs"`
@@ -309,6 +311,10 @@ func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 				return cfg
 			}
 			log.Printf("egg: config discovery failed for %s: %v", path, err)
+			var harnessErr *harnessConfigError
+			if errors.As(err, &harnessErr) {
+				return &EggConfig{Harness: &HarnessConfig{Driver: "invalid"}}
+			}
 		}
 	}
 	if wingDefault != nil {
@@ -327,6 +333,10 @@ func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 				return cfg
 			}
 			log.Printf("egg: global config discovery failed for %s: %v", path, resolveErr)
+			var harnessErr *harnessConfigError
+			if errors.As(resolveErr, &harnessErr) {
+				return &EggConfig{Harness: &HarnessConfig{Driver: "invalid"}}
+			}
 		}
 	}
 	return DefaultEggConfig()
@@ -401,6 +411,10 @@ func MergeEggConfig(parent, child *EggConfig) *EggConfig {
 // differ; callers must not use it to normalize inherited deny overrides.
 func mergeEggConfigForHome(parent, child *EggConfig, home string) *EggConfig {
 	merged := &EggConfig{}
+	merged.Harness = parent.Harness
+	if child.Harness != nil {
+		merged.Harness = child.Harness
+	}
 
 	// FS: append child to parent, with deny override logic
 	merged.FS = mergeFSForHome(parent.FS, child.FS, home)

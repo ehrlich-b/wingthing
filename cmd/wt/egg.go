@@ -112,6 +112,7 @@ func eggRunCmd() *cobra.Command {
 		vteFlag                    bool
 		renderedConfigFlag         string
 		launchPolicyFlag           string
+		harnessFlag                string
 		userHomeFlag               string
 		skipHostAgentEnvFlag       bool
 		idleTimeoutFlag            string
@@ -208,6 +209,14 @@ func eggRunCmd() *cobra.Command {
 				ProtectedWriteTargets:      protectedWriteTargetFlag,
 				OmitBrowserBridge:          omitBrowserBridgeFlag,
 			}
+			if harnessFlag != "" {
+				rc.Harness = new(egg.HarnessConfig)
+				decoder := json.NewDecoder(strings.NewReader(harnessFlag))
+				decoder.DisallowUnknownFields()
+				if len(harnessFlag) > 4096 || decoder.Decode(rc.Harness) != nil {
+					return errors.New("invalid harness configuration")
+				}
+			}
 			if initialRunFlag != "" {
 				rc.InitialRun = new(egg.RunTurnRequest)
 				decoder := json.NewDecoder(strings.NewReader(initialRunFlag))
@@ -287,6 +296,7 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&traceFlag, "trace", false, "wrap sandbox with strace for syscall tracing (Linux only)")
 	cmd.Flags().BoolVar(&vteFlag, "vte", false, "use VTerm snapshot for reconnect (internal)")
 	cmd.Flags().StringVar(&renderedConfigFlag, "rendered-config", "", "rendered egg config YAML (internal)")
+	cmd.Flags().StringVar(&harnessFlag, "harness", "", "native harness configuration (internal)")
 	cmd.Flags().StringVar(&launchPolicyFlag, "launch-policy", "", "captured launch policy provenance (internal)")
 	if err := cmd.Flags().MarkHidden("launch-policy"); err != nil {
 		panic(err)
