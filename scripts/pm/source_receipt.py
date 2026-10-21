@@ -192,6 +192,38 @@ def negatives(receipt, directory, repo, base):
             cases.append({'case': 'dirty-checkout', 'rejected': True, 'reason': str(error)})
         else:
             raise Invalid('dirty checkout accepted')
+        git(clone, '-c', 'user.name=Bryan Ehrlich', '-c', 'user.email=ehrlich.bryan@gmail.com',
+            'commit', '-am', 'Exercise an unsupported source change.')
+        try:
+            verify(receipt, directory, clone, base)
+        except Invalid as error:
+            require('coverage' in str(error), 'changed source failed for unrelated reason')
+            cases.append({'case': 'unreviewed-application-change', 'rejected': True, 'reason': str(error)})
+        else:
+            raise Invalid('unreviewed application change accepted')
+        inputs = Path(tmp) / 'inputs'
+        inputs.mkdir()
+        # Hard links preserve the real immutable bytes without a synthetic report.
+        for item in [receipt['bundle'], *receipt['artifacts'].values()]:
+            target = inputs / item['path']
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if not target.exists():
+                os.link(relative(directory, item['path']), target)
+        value = copy.deepcopy(receipt)
+        stale = '1' * 40
+        original = value['artifacts']['integration-review']
+        text = relative(directory, original['path']).read_text()
+        text = text.replace(value['base'], stale)
+        (inputs / 'stale-assessment.md').write_text(text)
+        original.update(path='stale-assessment.md', sha256=digest(text.encode()))
+        value['reviews']['integration-review']['commit'] = stale
+        try:
+            verify(value, inputs, repo, base)
+        except Invalid as error:
+            require('base lacks' in str(error), 'rehashed stale report failed for unrelated reason')
+            cases.append({'case': 'rehashed-stale-original', 'rejected': True, 'reason': str(error)})
+        else:
+            raise Invalid('rehashed stale original accepted')
     return cases
 
 
