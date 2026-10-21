@@ -146,6 +146,9 @@ Terminal snapshots are ANSI state. Wingthing does not infer that an agent is
 done because a string appeared on screen. Use `agent_run`, `agent_wait`, and
 `agent_result` when the caller needs semantic task state.
 
+Try the [leave and return recording](examples/leave-laptop/README.md) for a local,
+credential-free job that keeps working after its viewer closes.
+
 ## 3. Different machines: direct remote MCP
 
 ### One known machine over SSH
