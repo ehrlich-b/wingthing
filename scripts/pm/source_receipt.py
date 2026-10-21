@@ -29,7 +29,8 @@ def require(condition, message):
 
 def git(repo, *args):
     result = subprocess.run(['git', '-C', str(repo), *args], capture_output=True)
-    require(result.returncode == 0, result.stderr.decode(errors='replace').strip())
+    require(result.returncode == 0, result.stderr.decode(errors='replace').strip()
+            or 'git ' + ' '.join(args) + ' failed (exit ' + str(result.returncode) + ')')
     return result.stdout
 
 
@@ -85,6 +86,26 @@ BUILD_INPUTS = {'go.mod', 'go.sum', 'Makefile', 'web/package.json', 'web/package
 TOOLS = {'scripts/pm/source_receipt.py', 'scripts/pm/test_source_receipt.py'}
 
 
+def check_coverage(repo, base):
+    result = subprocess.run(['git', '-C', str(repo), 'merge-base', '--is-ancestor', base, 'HEAD'],
+                            capture_output=True)
+    require(result.returncode == 0, 'required base is not an ancestor of HEAD')
+    # Renames/copies must retain the source deletion or modification. Do not let
+    # repository diff settings or external helpers hide an application change.
+    changed = set(git(repo, 'diff', '--no-renames', '--no-ext-diff', '--no-textconv',
+                      '--name-only', '-z', base, 'HEAD', '--').decode().split('\0')) - {''}
+    require(changed <= TOOLS, 'application changes lack current review coverage: ' + ', '.join(sorted(changed - TOOLS)))
+    return changed
+
+
+def review_headers(text, key):
+    lines = text.splitlines()
+    verdict = re.fullmatch(r'Verdict: (PASS|FAIL)', lines[0]) if lines else None
+    reviewed = re.fullmatch(r'Reviewed: ([0-9a-f]{40})', lines[1]) if len(lines) > 1 else None
+    require(reviewed is not None and verdict is not None, 'unrecognized original review: ' + key)
+    return reviewed.group(1), verdict.group(1)
+
+
 def verify(receipt, directory, repo, required_base):
     require(receipt.get('version') == 1, 'unsupported receipt version')
     base = receipt.get('base')
@@ -92,9 +113,7 @@ def verify(receipt, directory, repo, required_base):
     require(git(repo, 'rev-parse', required_base + '^{commit}').decode().strip() == base,
             'required base mismatch')
     require(git(repo, 'status', '--porcelain', '--untracked-files=all') == b'', 'checkout is dirty')
-    git(repo, 'merge-base', '--is-ancestor', base, 'HEAD')
-    changed = set(git(repo, 'diff', '--name-only', base, 'HEAD').decode().splitlines())
-    require(changed <= TOOLS, 'application changes lack current review coverage: ' + ', '.join(sorted(changed - TOOLS)))
+    changed = check_coverage(repo, base)
 
     bundle = relative(directory, receipt['bundle']['path'])
     require(bundle.is_file() and bundle.stat().st_mode & 0o222 == 0, 'bundle is missing or writable')
@@ -131,17 +150,15 @@ def verify(receipt, directory, repo, required_base):
     dispositions = {}
     for key, review in receipt['reviews'].items():
         text = texts[key]
-        reviewed = re.search(r'^Reviewed:\s*([0-9a-f]{40})\s*$', text, re.M)
-        verdict = re.search(r'^Verdict:\s*(PASS|FAIL)\s*$', text, re.M)
-        require(reviewed is not None and verdict is not None, 'unrecognized original review: ' + key)
-        require(reviewed.group(1) == review['commit'], 'stale review: ' + key)
-        require(verdict.group(1) == review['verdict'], 'review disposition mismatch: ' + key)
+        reviewed, verdict = review_headers(text, key)
+        require(reviewed == review['commit'], 'stale review: ' + key)
+        require(verdict == review['verdict'], 'review disposition mismatch: ' + key)
         if key == 'integration-review':
-            require(review['commit'] == base and verdict.group(1) == 'PASS', 'base lacks a passing original assessment')
+            require(review['commit'] == base and verdict == 'PASS', 'base lacks a passing original assessment')
         else:
             require(review.get('scope') == 'historical-open', 'historical review cannot approve current release')
-            require(verdict.group(1) == 'FAIL', 'open review unexpectedly changed; reassess receipt')
-        dispositions[key] = {'commit': review['commit'], 'verdict': verdict.group(1)}
+            require(verdict == 'FAIL', 'open review unexpectedly changed; reassess receipt')
+        dispositions[key] = {'commit': review['commit'], 'verdict': verdict}
     # Known absent suppliers must stay explicit and must not count as approval.
     missing = receipt['missing']
     require(isinstance(missing, dict) and {'download-product-review', 'root-state',
@@ -184,6 +201,7 @@ def negatives(receipt, directory, repo, base):
         clone = Path(tmp) / 'repo'
         result = subprocess.run(['git', 'clone', '--quiet', '--no-hardlinks', str(repo), str(clone)], capture_output=True)
         require(result.returncode == 0, 'negative clone failed')
+        candidate = git(clone, 'rev-parse', 'HEAD').decode().strip()
         (clone / 'go.mod').write_text('dirty fixture\n')
         try:
             verify(receipt, directory, clone, base)
@@ -201,6 +219,18 @@ def negatives(receipt, directory, repo, base):
             cases.append({'case': 'unreviewed-application-change', 'rejected': True, 'reason': str(error)})
         else:
             raise Invalid('unreviewed application change accepted')
+        git(clone, 'reset', '--hard', candidate)
+        git(clone, 'mv', '-f', 'internal/relay/access.go', 'scripts/pm/test_source_receipt.py')
+        git(clone, '-c', 'user.name=Bryan Ehrlich', '-c', 'user.email=ehrlich.bryan@gmail.com',
+            'commit', '-am', 'Exercise a source rename onto a verification tool.')
+        try:
+            verify(receipt, directory, clone, base)
+        except Invalid as error:
+            require('coverage' in str(error) and 'internal/relay/access.go' in str(error),
+                    'rename fixture failed for unrelated reason')
+            cases.append({'case': 'application-renamed-to-tool', 'rejected': True, 'reason': str(error)})
+        else:
+            raise Invalid('application renamed to tool accepted')
         inputs = Path(tmp) / 'inputs'
         inputs.mkdir()
         # Hard links preserve the real immutable bytes without a synthetic report.
