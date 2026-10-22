@@ -2,7 +2,7 @@
 // empty or offline states, rendered from the same inventory the legacy views use.
 // Terminal take-over hands off to the existing PTY view.
 import './paper.css';
-import { S } from './state.js';
+import { S, DOM } from './state.js';
 import { escapeMarkup as esc } from './security.js';
 import { wingDisplayName, sessionDisplayName } from './helpers.js';
 import { sendTunnelRequest, randomUUID } from './tunnel.js';
@@ -307,17 +307,18 @@ function viewApprove(route) {
 }
 
 function nav(route) {
-    const need = needing().length, here = route.view === 'wing' || route.view === 'approve' ? 'wing' : route.view === 'machines' || route.view === 'pair' ? 'machines' : 'sessions';
+    const need = needing().length, here = route.view === 'wing' || route.view === 'approve' ? 'wing' : route.view === 'machines' || route.view === 'pair' ? 'machines' : route.view === 'account' ? 'account' : 'sessions';
     const item = (key, label, href, count, hot) => '<a href="' + href + '" class="pp-nav-' + key + '"' + (here === key ? ' aria-current="page"' : '') + '><span>' + label + '</span><small' + (hot ? ' class="pp-hot"' : '') + '>' + count + '</small></a>';
-    return item('wing', 'wing', '#', need ? need + ' needs you' : '', !!need) + item('sessions', 'Sessions', '#sessions', workSessions().length || '', false) + item('machines', 'Machines', '#machines', S.wingsData.length || '', false);
+    return item('wing', 'wing', '#', need ? need + ' needs you' : '', !!need) + item('sessions', 'Sessions', '#sessions', workSessions().length || '', false) + item('machines', 'Machines', '#machines', S.wingsData.length || '', false) + item('account', 'Account', '#account', '', false);
 }
 
 function frame() {
     root = document.createElement('div');
     root.id = 'paper';
-    root.innerHTML = '<aside class="pp-side"><a class="pp-brand" href="#">wing<i>thing</i></a><p class="pp-date"></p><nav class="pp-nav" aria-label="Main"></nav><div class="pp-side-squares pp-squares" aria-label="Machines"></div><p class="pp-foot"></p></aside><main class="pp-main"></main><nav class="pp-tabs" aria-label="Main"></nav>';
+    root.innerHTML = '<aside class="pp-side"><a class="pp-brand" href="#">wing<i>thing</i></a><p class="pp-date"></p><nav class="pp-nav" aria-label="Main"></nav><div class="pp-side-squares pp-squares" aria-label="Machines"></div><p class="pp-foot"></p></aside><main class="pp-main"></main><main class="pp-account" hidden></main><nav class="pp-tabs" aria-label="Main"></nav>';
     document.body.prepend(root);
     main = root.querySelector('.pp-main'); side = root.querySelector('.pp-side');
+    root.querySelector('.pp-account').append(DOM.accountSection);
     root.addEventListener('click', event => {
         if (event.target.closest('[data-check-receipt]')) {
             if (inputReader && inputSnapshot?.pending && !event.target.disabled) inputReader.checkReceipt(inputSnapshot.pending.request_id);
@@ -449,10 +450,27 @@ function updateThreadSource() {
 }
 
 export function render(force) {
-    const route = paperRoute();
-    const on = !!route && S.activeView === 'home';
+    const account = S.activeView === 'account';
+    const route = account ? { view: 'account' } : paperRoute();
+    const on = account || !!route && S.activeView === 'home';
     show(on);
     if (!on) { selectComposer(null); return; }
+    main.hidden = account;
+    root.querySelector('.pp-account').hidden = !account;
+    root.classList.toggle('pp-account-on', account);
+    if (account) {
+        selectComposer(null);
+        const navigation = nav(route);
+        const signature = 'account' + navigation + S.currentUser.email;
+        if (lastSignature === signature) return;
+        lastSignature = signature;
+        side.querySelector('.pp-nav').innerHTML = navigation;
+        root.querySelector('.pp-tabs').innerHTML = navigation;
+        side.querySelector('.pp-date').textContent = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
+        side.querySelector('.pp-side-squares').innerHTML = '';
+        side.querySelector('.pp-foot').textContent = S.currentUser.email || '';
+        return;
+    }
     const denied = browserUnavailable(S.currentUser);
     selectComposer(!denied ? (route.view === 'wing' ? coordinator() : route.view === 'session' ? findSession(route) : null) : null);
     const views = { wing: viewWing, sessions: viewSessions, machines: viewMachines, pair: viewPair, new: viewNew, session: viewSession, approve: viewApprove };
@@ -500,6 +518,7 @@ export function render(force) {
 export function initPaper() {
     if (root) return;
     frame();
+    window.addEventListener('account-rendered', () => render(true));
     window.addEventListener('resize', () => { render(true); updateThreadSource(); });
     window.addEventListener('hashchange', () => { lastSignature = ''; allMachines = false; if (isPaperRoute() && S.activeView !== 'home') showHome(false); render(true); window.scrollTo(0, 0); });
     window.addEventListener('popstate', () => setTimeout(() => render(true), 0));

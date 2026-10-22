@@ -518,46 +518,44 @@ export function renderAccountPage() {
     var pubKeyShort = identityPubKey ? identityPubKey.substring(0, 16) + '...' : 'none';
 
     var html = '<div class="ac-page">' +
-        '<div class="wd-header"><a class="wd-back" id="ac-back">back</a></div>' +
-        '<div class="ac-hero">' + escapeHtml(S.currentUser.display_name || 'user') + '</div>' +
-        '<div class="wd-info">' +
-            (email ? '<div class="detail-row"><span class="detail-key">email</span><span class="detail-val">' + escapeHtml(email) + '</span></div>' : '') +
-            '<div class="detail-row"><span class="detail-key">login</span><span class="detail-val">' + escapeHtml(provider) + '</span></div>' +
-            '<div class="detail-row"><span class="detail-key">tier</span><span class="detail-val">' + escapeHtml(tier) + '</span></div>' +
-            (S.currentUser.id ? '<div class="detail-row"><span class="detail-key">user id</span><span class="detail-val copyable" data-copy="' + escapeHtml(S.currentUser.id) + '">' + escapeHtml(S.currentUser.id) + '</span></div>' : '') +
-            '<div class="detail-row"><span class="detail-key">browser key</span><span class="detail-val copyable" data-copy="' + escapeHtml(identityPubKey) + '">' + escapeHtml(pubKeyShort) + '</span></div>' +
-        '</div>' +
-        '<div class="ac-actions">';
+        '<header class="pp-hdr"><h1>Account</h1><button type="button" class="btn-sm" id="ac-back">Back to wing</button></header>' +
+        '<section class="ac-identity" aria-label="Identity">' +
+            '<h2>' + escapeHtml(S.currentUser.display_name || 'Your account') + '</h2>' +
+            (email ? '<p>' + escapeHtml(email) + '</p>' : '') +
+        '</section>' +
+        '<section class="ac-section ac-plan" aria-labelledby="ac-plan-heading">' +
+            '<div class="ac-section-header"><h2 id="ac-plan-heading">Current plan</h2><strong class="ac-plan-name">' + escapeHtml(tier) + '</strong></div>';
 
     if (!S.currentUser.roost_mode) {
         if (tier === 'free') {
             if (S.currentUser.self_service_plans) {
                 html += '<button class="btn-sm btn-accent" id="account-upgrade">give me pro</button>';
             } else {
-                html += '<span class="text-dim" id="account-plan-note" style="font-size:12px">free uses direct control. hosted relay is provisioned separately.</span>';
+                html += '<p class="text-dim" id="account-plan-note">free uses direct control. hosted relay is provisioned separately.</p>';
             }
-        } else if (S.currentUser.personal_pro) {
-            html += '<button class="btn-sm" id="account-downgrade" style="color:var(--text-dim)">cancel pro</button>';
-        } else {
-            html += '<span class="text-dim" style="font-size:12px">pro via org</span>';
+        } else if (!S.currentUser.personal_pro) {
+            html += '<p class="text-dim">pro via org</p>';
         }
     }
-    html += '<button class="btn-sm btn-danger" id="account-logout">log out</button>';
-    html += '</div>';
+    html += '</section>' +
+        '<section class="ac-section" aria-labelledby="ac-signin-heading"><h2 id="ac-signin-heading">Sign-in</h2>' +
+            (provider ? '<p class="text-dim ac-provider">Signed in with ' + escapeHtml(provider) + '</p>' : '');
 
     // Passkeys section
     html += '<div class="ac-section">' +
         '<div class="ac-section-header">' +
-            '<h3>passkeys</h3>' +
-            '<button class="ac-create-btn" id="ac-passkey-add" title="register passkey">+</button>' +
+            '<h3>Passkeys</h3>' +
+            '<button type="button" class="btn-sm" id="ac-passkey-add">Add passkey</button>' +
         '</div>' +
         '<div id="ac-passkey-list"><span class="text-dim">loading...</span></div>' +
     '</div>';
 
+    html += '</section>';
+
     // ntfy push notifications section
     html += '<div class="ac-section">' +
         '<div class="ac-section-header">' +
-            '<h3>push notifications</h3>' +
+            '<h2>Notifications</h2>' +
         '</div>' +
         '<div id="ac-ntfy-content"><span class="text-dim">loading...</span></div>' +
     '</div>';
@@ -566,11 +564,11 @@ export function renderAccountPage() {
     if (!S.currentUser.roost_mode) {
         html += '<div class="ac-section">' +
             '<div class="ac-section-header">' +
-                '<h3>organizations</h3>' +
-                '<button class="ac-create-btn" id="ac-create-toggle" title="create org">+</button>' +
+                '<h2>Organizations</h2>' +
+                '<button type="button" class="btn-sm" id="ac-create-toggle" aria-expanded="false" aria-controls="ac-create-form">Create organization</button>' +
             '</div>' +
             '<div id="ac-create-form" class="ac-create-form" style="display:none;">' +
-                '<input type="text" class="ac-input" id="ac-create-name" placeholder="team name">' +
+                '<input type="text" class="ac-input" id="ac-create-name" placeholder="team name" aria-label="Organization name">' +
                 '<button class="btn-sm btn-accent" id="ac-create-btn">create</button>' +
             '</div>' +
             '<div id="ac-create-error" class="ac-error" style="display:none;"></div>' +
@@ -578,6 +576,14 @@ export function renderAccountPage() {
         '</div>';
     }
 
+    html += '<details class="ac-technical"><summary>Technical details</summary><div class="wd-info">' +
+        (S.currentUser.id ? '<div class="detail-row"><span class="detail-key">User ID</span><span class="detail-val copyable" data-copy="' + escapeHtml(S.currentUser.id) + '">' + escapeHtml(S.currentUser.id) + '</span></div>' : '') +
+        '<div class="detail-row"><span class="detail-key">Browser key</span><span class="detail-val copyable" data-copy="' + escapeHtml(identityPubKey) + '">' + escapeHtml(pubKeyShort) + '</span></div></div></details>' +
+        '<footer class="ac-footer">';
+    if (!S.currentUser.roost_mode && tier !== 'free' && S.currentUser.personal_pro) {
+        html += '<button class="btn-sm" id="account-downgrade">cancel pro</button>';
+    }
+    html += '<button class="btn-sm" id="account-logout">log out</button></footer>';
     html += '</div>';
     DOM.accountContent.innerHTML = html;
 
@@ -623,6 +629,7 @@ export function renderAccountPage() {
         var createForm = document.getElementById('ac-create-form');
         createToggle.addEventListener('click', function() {
             createForm.style.display = createForm.style.display === 'none' ? '' : 'none';
+            createToggle.setAttribute('aria-expanded', createForm.style.display !== 'none');
             if (createForm.style.display !== 'none') {
                 document.getElementById('ac-create-name').focus();
             }
@@ -653,6 +660,7 @@ export function renderAccountPage() {
                 }
                 nameInput.value = '';
                 createForm.style.display = 'none';
+                createToggle.setAttribute('aria-expanded', 'false');
                 errEl.style.display = 'none';
                 btn.textContent = 'create';
                 btn.disabled = false;
@@ -674,7 +682,7 @@ export function renderAccountPage() {
     document.getElementById('ac-passkey-add').addEventListener('click', function() {
         var btn = this;
         btn.disabled = true;
-        btn.textContent = '...';
+        btn.textContent = 'Adding…';
         fetch('/api/app/passkey/register/begin', { method: 'POST' })
             .then(function(r) { return r.json(); })
             .then(function(options) {
@@ -711,17 +719,24 @@ export function renderAccountPage() {
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 if (data.error) throw new Error(data.error);
-                btn.textContent = '+';
+                btn.textContent = 'Add passkey';
                 btn.disabled = false;
                 if (S.currentUser) S.currentUser.has_passkeys = true;
                 loadAccountPasskeys();
             })
             .catch(function(e) {
                 console.error('passkey registration failed:', e);
-                btn.textContent = '+';
+                btn.textContent = 'Add passkey';
                 btn.disabled = false;
             });
     });
+    window.dispatchEvent(new Event('account-rendered'));
+}
+
+// Keep everyday settings visible even for accounts with many devices or teams.
+function accountPreview(rows) {
+    return rows.slice(0, 3).join('') + (rows.length > 3 ?
+        '<details class="ac-more"><summary>+' + (rows.length - 3) + ' more</summary>' + rows.slice(3).join('') + '</details>' : '');
 }
 
 function loadAccountPasskeys() {
@@ -735,15 +750,15 @@ function loadAccountPasskeys() {
                 listEl.innerHTML = '<span class="text-dim">no passkeys registered</span>';
                 return;
             }
-            listEl.innerHTML = creds.map(function(c) {
-                var keyShort = c.public_key ? c.public_key.substring(0, 16) + '...' : '';
+            var rows = creds.map(function(c) {
                 var created = c.created_at ? formatRelativeTime(new Date(c.created_at)) : '';
                 return '<div class="ac-passkey-row">' +
                     '<span class="ac-passkey-label">' + escapeHtml(c.label || 'passkey') + '</span>' +
-                    '<span class="ac-passkey-meta text-dim">' + escapeHtml(keyShort) + (created ? ' &middot; ' + created : '') + '</span>' +
+                    '<span class="ac-passkey-meta text-dim">' + (created ? 'Added ' + created : '') + '</span>' +
                     '<button class="btn-sm btn-danger ac-passkey-del" data-id="' + escapeHtml(c.id) + '">remove</button>' +
                 '</div>';
-            }).join('');
+            });
+            listEl.innerHTML = accountPreview(rows);
 
             listEl.querySelectorAll('.ac-passkey-del').forEach(function(btn) {
                 btn.addEventListener('click', function() {
@@ -983,11 +998,7 @@ function loadAccountOrgs() {
                 listEl.innerHTML = '<span class="text-dim">no organizations yet</span>';
                 return;
             }
-            var html = '';
-            for (var i = 0; i < orgs.length; i++) {
-                html += renderOrgCard(orgs[i]);
-            }
-            listEl.innerHTML = html;
+            listEl.innerHTML = accountPreview(orgs.map(renderOrgCard));
             wireOrgCards(orgs);
             if (S.accountExpandSlug) {
                 expandOrgCard(S.accountExpandSlug, orgs, false);
@@ -1003,11 +1014,11 @@ function renderOrgCard(org) {
     var roleLabel = org.is_owner ? 'owner' : 'member';
     var memberCount = org.member_count || 0;
     return '<div class="ac-org-card" data-oid="' + escapeHtml(org.id) + '">' +
-        '<div class="ac-org-header" data-oid="' + escapeHtml(org.id) + '">' +
-            '<span class="ac-org-name">' + escapeHtml(org.name) + '</span>' +
+        '<button type="button" class="ac-org-header" data-oid="' + escapeHtml(org.id) + '" aria-expanded="false" aria-controls="ac-org-detail-' + escapeHtml(org.id) + '">' +
+            '<span class="ac-org-name">' + escapeHtml(org.name) + '</span><span class="ac-org-manage">Manage</span>' +
             '<span class="ac-org-role">' + roleLabel + '</span>' +
             '<span class="ac-org-count">' + memberCount + (memberCount === 1 ? ' member' : ' members') + '</span>' +
-        '</div>' +
+        '</button>' +
         '<div class="ac-org-detail" id="ac-org-detail-' + escapeHtml(org.id) + '">' +
             renderOrgDetail(org) +
         '</div>' +
@@ -1075,8 +1086,10 @@ function expandOrgCard(oid, orgs, updateHash) {
     var detail = document.getElementById('ac-org-detail-' + oid);
     if (!detail) return;
     var wasOpen = detail.classList.contains('open');
+    document.querySelectorAll('.ac-org-header').forEach(function(header) { header.setAttribute('aria-expanded', !wasOpen && header.dataset.oid === oid ? 'true' : 'false'); });
     document.querySelectorAll('.ac-org-detail').forEach(function(d) { d.classList.remove('open'); });
     if (!wasOpen) {
+        detail.closest('.ac-more')?.setAttribute('open', '');
         detail.classList.add('open');
         var org = orgs.find(function(o) { return o.id === oid; });
         if (org && org.has_subscription && org.is_owner) {
