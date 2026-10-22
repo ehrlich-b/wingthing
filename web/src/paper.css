@@ -343,3 +343,5 @@ body.paper-on #app { display: none; }
 }
 
 #paper .wd-session-row .inventory-action-status { flex-basis: 100%; min-width: 0; overflow-wrap: anywhere; font-size: 13px; color: var(--pp-ink-2); }
+
+#paper .wd-more > summary { cursor: pointer; color: var(--pp-accent); padding: 12px 0; min-height: 44px; font-size: 14px; }

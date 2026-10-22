@@ -1480,7 +1480,7 @@ export function renderWingDetailPage(wingId) {
             (recovery ? '<p class="wd-recovery" role="status">' + escapeHtml(recovery) + '</p>' : '') +
             lockBanner + '<div class="pp-actions">' + summaryActions + '</div></header>' +
         (isLocked ? '' : activeHtml) +
-        '<details class="wd-details"><summary>Details</summary>' +
+        '<details class="wd-details" data-detail="technical"><summary>Details</summary>' +
         (updateAvailable ? '<button class="pp-btn" id="wd-update">Update to ' + escapeHtml(S.latestVersion) + '</button>' : '') +
         '<div class="wd-info">' +
             '<div class="detail-row"><span class="detail-key">scope</span><span class="detail-val">' + scopeHtml + '</span></div>' +
@@ -1505,12 +1505,12 @@ export function renderWingDetailPage(wingId) {
         (w.wing_label ? '<button class="pp-btn" id="wd-delete-label">Clear machine name</button>' : '') +
         (!isOnline ? '<p class="wd-local-remove">Remove this machine from this browser’s saved list. Sessions on the machine are kept.</p><button class="pp-btn" id="wd-dismiss">Remove saved machine</button>' : '') +
         '</details>' +
-        (isLocked ? '' : '<details class="wd-details"><summary>Session history</summary><div id="wd-past-sessions"><span class="text-dim">' + (isOnline ? 'Loading…' : 'Reconnect to view history.') + '</span></div></details>') +
+        (isLocked ? '' : '<details class="wd-details" data-detail="history"><summary>Session history</summary><div id="wd-past-sessions"><span class="text-dim">' + (isOnline ? 'Loading…' : 'Reconnect to view history.') + '</span></div></details>') +
         '</div>';
 
-    var detailsOpen = Array.from(DOM.wingDetailContent.querySelectorAll('details')).map(function(d) { return d.open; });
+    var detailsOpen = new Map(Array.from(DOM.wingDetailContent.querySelectorAll('details')).map(function(d) { return [d.dataset.detail, d.open]; }));
     DOM.wingDetailContent.innerHTML = html;
-    DOM.wingDetailContent.querySelectorAll('details').forEach(function(d, i) { d.open = !!detailsOpen[i]; });
+    DOM.wingDetailContent.querySelectorAll('details').forEach(function(d) { d.open = !!detailsOpen.get(d.dataset.detail); });
     setupCopyable(DOM.wingDetailContent);
 
 
@@ -1641,8 +1641,9 @@ export function renderWingDetailPage(wingId) {
     }
 }
 
-function renderActiveSessionRows(sessions) {
-    return sessions.map(function(s) {
+function renderActiveSessionRows(sessions, expanded) {
+    var visible = expanded ? sessions : sessions.slice(0, 8);
+    return visible.map(function(s) {
         var sName = sessionDisplayName(s);
         var presentation = sessionInventoryState(s, sessionWing(s), notificationForSession(S.sessionNotifications, s));
         var actions = sessionInventoryActions(s, sessionWing(s), S.currentUser);
@@ -1660,7 +1661,7 @@ function renderActiveSessionRows(sessions) {
             auditBtns +
             (actions.stop ? '<button class="wd-kill-btn" title="Stop ' + escapeHtml(sName) + '" aria-label="Stop ' + escapeHtml(sName) + '">Stop</button>' : '') +
         '</div>';
-    }).join('');
+    }).join('') + (!expanded && sessions.length > 8 ? '<details class="wd-more" data-detail="sessions"><summary>+' + (sessions.length - 8) + ' more sessions</summary>' + renderActiveSessionRows(sessions.slice(8), true) + '</details>' : '');
 }
 
 function wireActiveSessionRows() {
@@ -1673,7 +1674,7 @@ function wireActiveSessionRows() {
         });
         row.addEventListener('keydown', function(event) {
             if (event.target !== row) return;
-            if (navigateSessionRows(event, rows, row)) return;
+            if (navigateSessionRows(event, rows.filter(function(item) { return item.getClientRects().length > 0; }), row)) return;
             if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); location.hash = '#session/' + encodeURIComponent(row.dataset.wingId) + '/' + encodeURIComponent(row.dataset.sid); }
         });
     });
@@ -1710,7 +1711,10 @@ function updateWingDetailSessions(wingId) {
     var container = document.getElementById('wd-active-sessions');
     var activeSessions = S.sessionsData.filter(function(s) { return s.wing_id === w.wing_id; });
     if (container) {
+        var moreOpen = container.querySelector('.wd-more')?.open;
         container.innerHTML = renderActiveSessionRows(activeSessions);
+        var more = container.querySelector('.wd-more');
+        if (more) more.open = !!moreOpen;
         wireActiveSessionRows();
     }
 }

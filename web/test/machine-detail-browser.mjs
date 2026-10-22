@@ -17,8 +17,8 @@ async function run() {
     const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--disable-background-networking', '--renderer-process-limit=2'] });
     const results = [];
     try {
-        for (const width of [390, 1440]) for (const theme of ['light', 'dark']) for (const state of (process.env.WT_MACHINE_STATES || 'online,offline,empty,one,plan').split(',')) {
-            const count = state === 'empty' ? 0 : state === 'one' ? 1 : 8;
+        for (const width of [390, 1440]) for (const theme of ['light', 'dark']) for (const state of (process.env.WT_MACHINE_STATES || 'online,offline,empty,one,plan,overflow').split(',')) {
+            const count = state === 'empty' ? 0 : state === 'one' ? 1 : state === 'overflow' ? 10 : 8;
             const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 1000 }, colorScheme: theme, timezoneId: 'America/New_York' });
             await context.addInitScript({ content: 'window.machineSessionCount = ' + count + ';\n' + fixture.outputFiles[0].text });
             const page = await context.newPage(), errors = [];
@@ -58,6 +58,12 @@ async function run() {
                     assert.equal(await page.locator('.wd-kill-btn').count(), 0);
                     assert.match(text, /Reconnect this machine, then retry/);
                     assert.equal(await page.locator('[data-choose-project]').count(), 0);
+                }
+                if (state === 'overflow') {
+                    assert.equal(await page.locator('.wd-session-row:visible').count(), 8);
+                    await page.getByText('+2 more sessions', {exact:true}).click();
+                    assert.equal(await page.locator('.wd-session-row:visible').count(), 10);
+                    await page.getByText('+2 more sessions', {exact:true}).click();
                 }
                 assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'no horizontal overflow');
             }
@@ -107,6 +113,6 @@ async function run() {
         }
     } finally { await browser.close(); }
     writeFileSync(resolve(output,'receipt.json'),JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{cwd:before && process.env.WT_MACHINE_DIST ? resolve(process.env.WT_MACHINE_DIST,'../..') : root,encoding:'utf8'}).trim(), phase:before?'before':'after', transport:'Local encrypted peers; no fixture transport failure is evidence of a product connectivity defect.', plan:'Existing relay_allowed=false hosted access boundary; there is no machine session-count plan limit.',results},null,2)+'\n');
-    console.log('machine-detail-browser PASS: 0/1/8 sessions, offline, hosted entitlement, themes, details and responsive shell');
+    console.log('machine-detail-browser PASS: 0/1/8/10 sessions, inline overflow, offline, hosted entitlement, themes, details and responsive shell');
 }
 if (!process.env.NODE_TEST_CONTEXT) await run();
