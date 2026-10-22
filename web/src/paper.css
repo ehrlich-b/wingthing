@@ -301,3 +301,11 @@ body.paper-on #app { display: none; }
 .pp-side-squares { min-width: 0; max-width: 100%; width: 100%; }
 .pp-side-squares .pp-sq { display: block; max-width: 100%; width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .pp-side-squares .pp-sq i { display: inline-block; margin-right: 7px; }
+
+/* Search results lead; recovery stays a compact link to machine controls. */
+#paper .pp-machine-status { margin-top: 12px; color: var(--pp-ink-2); font-size: 13px; overflow-wrap: anywhere; }
+#paper .pp-machine-status a { color: var(--pp-accent); text-decoration: underline; text-underline-offset: 2px; }
+.pp-search-result { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 20px 0; }
+.pp-search-result[hidden] { display: none; }
+
+.pp-search-result > span { min-width: 0; overflow-wrap: anywhere; }
