@@ -35,7 +35,8 @@ class PacketContract(unittest.TestCase):
                                                            'SYNTHETIC build log')
         for key in ('operator', 'installer'):
             self.packet[key] = self.file(key + '.txt', 'SYNTHETIC ' + key)
-        self.original = self.file('assessment.txt', 'SYNTHETIC assessment fixture')
+        self.original = self.file('assessment.txt',
+                                  'Commit: ' + self.head + '\nDisposition: PASS\nSYNTHETIC fixture\n')
         self.packet['assessment'] = {'commit': self.head, 'disposition': 'PASS',
                                      'original': self.original['path'],
                                      'sha256': self.original['sha256']}
@@ -74,6 +75,12 @@ class PacketContract(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'assessment is for another commit'):
             self.check()
 
+    def test_relabelled_ancestor_original_fails(self):
+        original = self.file('assessment.txt', 'Commit: ' + 'b' * 40 + '\nDisposition: PASS\n')
+        self.packet['assessment']['sha256'] = original['sha256']
+        with self.assertRaisesRegex(ValueError, 'original assessment scope'):
+            self.check()
+
     def test_foreign_test_and_packet_fail(self):
         self.packet['tests'][0]['commit'] = 'b' * 40
         with self.assertRaisesRegex(ValueError, 'test receipt is for another commit'):
@@ -84,6 +91,8 @@ class PacketContract(unittest.TestCase):
     def test_failed_test_and_nonpass_disposition_block(self):
         self.packet['tests'][0]['exit_code'] = 1
         self.packet['assessment']['disposition'] = 'FAIL'
+        original = self.file('assessment.txt', 'Commit: ' + self.head + '\nDisposition: FAIL\n')
+        self.packet['assessment']['sha256'] = original['sha256']
         self.assertIn('failed test: make-check', self.check())
         self.assertIn('assessment disposition: FAIL', self.check())
 

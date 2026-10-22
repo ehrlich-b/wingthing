@@ -42,6 +42,9 @@ If supplied, `--assessment FILE` consumes JSON containing `commit`,
 A PASS asserted for an ancestor is insufficient. Human assessment of the
 document and signer is still required; hashing an assertion does not authenticate
 it. Without the original exact-commit disposition the packet remains held.
+The original bytes must themselves identify `commit` and `disposition` in JSON,
+or have exactly one `Commit: FULL_SHA` and `Disposition: PASS|FAIL|PENDING` line.
+Relabeling an ancestor's document in envelope metadata fails verification.
 
 The strict command below exits nonzero for any missing receipt or qualification.
 `--inspect` reports integrity and every blocker while exiting zero for a valid

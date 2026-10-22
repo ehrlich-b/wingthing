@@ -50,6 +50,22 @@ def write(path, data):
         out.write('\n')
 
 
+def assessment_identity(path):
+    """Read scope from the original bytes, never just their envelope metadata."""
+    text = Path(path).read_text()
+    try:
+        value = load(path)
+    except ValueError:
+        value = None
+    if isinstance(value, dict):
+        return value.get('commit'), value.get('disposition')
+    commits = re.findall(r'(?im)^(?:commit|head):\s*([0-9a-f]{40})\s*$', text)
+    dispositions = re.findall(r'(?im)^(?:disposition|verdict):\s*(PASS|FAIL|PENDING)\s*$', text)
+    if len(commits) != 1 or len(dispositions) != 1:
+        raise ValueError('original assessment needs one explicit full commit and disposition')
+    return commits[0], dispositions[0].upper()
+
+
 def relative(root, name):
     path = root / name
     if Path(name).is_absolute() or '..' in Path(name).parts:
@@ -217,6 +233,9 @@ def verify(packet, root, expected_head=None, binary_identity=True):
             raise ValueError('assessment is for another commit')
         if digest(relative(root, assessment['original'])) != assessment['sha256']:
             raise ValueError('original assessment checksum mismatch')
+        if assessment_identity(relative(root, assessment['original'])) != (
+                packet['commit'], assessment['disposition']):
+            raise ValueError('original assessment scope or disposition differs from its envelope')
         if assessment['disposition'] != 'PASS':
             blockers.append('assessment disposition: ' + assessment['disposition'])
     if not packet['supported_features'] or any(f not in FEATURES for f in packet['supported_features']):
