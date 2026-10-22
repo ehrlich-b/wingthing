@@ -52,8 +52,12 @@ async function run() {
                 assert.doesNotMatch(text, /NaN|polling|refresh interval|protocol|cache|state ID/i);
                 assert.ok(!text.includes('0.148.0') && !text.includes('/fixture/projects'));
                 assert.equal(await page.locator('.wd-session-name').evaluateAll(nodes => nodes.every(n => n.scrollWidth <= n.clientWidth)), true, 'names wrap fully');
-                const summary = await page.locator('.wd-hero').boundingBox();
-                assert.ok(summary.y + summary.height < (width === 390 ? 844 : 1000), 'state and action before scrolling');
+                await page.waitForFunction(() => {
+                    const hero = document.querySelector('.wd-hero');
+                    if (!hero) return false;
+                    const bounds = hero.getBoundingClientRect();
+                    return bounds.height > 0 && bounds.y + bounds.height < innerHeight;
+                });
                 if (state === 'offline') {
                     assert.equal(await page.locator('.wd-kill-btn').count(), 0);
                     assert.match(text, /Reconnect this machine, then retry/);
