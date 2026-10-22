@@ -1,11 +1,11 @@
 package egg
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/url"
 	"path/filepath"
-	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -145,8 +145,14 @@ func RecordSessionReport(dir string, report SessionReport) (SessionEvent, error)
 				previous = old
 			}
 		}
-		if previous.Report != nil && reflect.DeepEqual(*previous.Report, report) {
-			return previous, nil
+		if previous.Report != nil {
+			// Compare the durable representation: omitempty normalizes empty
+			// artifact/link slices to nil when the journal is reopened.
+			oldJSON, _ := json.Marshal(previous.Report)
+			newJSON, _ := json.Marshal(report)
+			if bytes.Equal(oldJSON, newJSON) {
+				return previous, nil
+			}
 		}
 		revision := int64(0)
 		state := ""

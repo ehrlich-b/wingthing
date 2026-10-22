@@ -52,6 +52,8 @@ func TestShellReportOrderingDuplicatesAcknowledgementAndExit(t *testing.T) {
 		t.Fatal(v)
 	}
 	waiting := report("waiting", 2, first.Sequence)
+	waiting.Artifacts = []ReportArtifact{}
+	waiting.Links = []ReportLink{}
 	wait := record(waiting)
 	if again := record(waiting); again.Sequence != wait.Sequence {
 		t.Fatal("duplicate appended")
