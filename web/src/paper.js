@@ -2,7 +2,7 @@
 // empty or offline states, rendered from the same inventory the legacy views use.
 // Terminal take-over hands off to the existing PTY view.
 import './paper.css';
-import { S } from './state.js';
+import { S, DOM } from './state.js';
 import { escapeMarkup as esc } from './security.js';
 import { wingDisplayName, sessionDisplayName } from './helpers.js';
 import { sendTunnelRequest, randomUUID } from './tunnel.js';
@@ -17,6 +17,7 @@ import { browserUnavailable, installedAgents, needsPasskey, directSetup, agentSe
 const reads = new Map();
 const terminals = new Map();
 const numberWords = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+let detailHome;
 let root, main, side, lastSignature = '', allMachines = false, retrying = false, launchWingId = '';
 const machineLimit = 5;
 const machineListLimit = 6;
@@ -449,10 +450,22 @@ function updateThreadSource() {
 }
 
 export function render(force) {
-    const route = paperRoute();
-    const on = !!route && S.activeView === 'home';
+    if (!root) return;
+    const machineDetail = S.activeView === 'wing-detail';
+    const route = machineDetail ? { view: 'machines' } : paperRoute();
+    const on = machineDetail || !!route && S.activeView === 'home';
     show(on);
+    if (!machineDetail && detailHome) detailHome.after(DOM.wingDetailSection);
     if (!on) { selectComposer(null); return; }
+    if (machineDetail) {
+        selectComposer(null);
+        if (!detailHome) { detailHome = document.createComment('Machine detail'); DOM.wingDetailSection.before(detailHome); }
+        if (DOM.wingDetailSection.parentNode !== main) main.replaceChildren(DOM.wingDetailSection);
+        main.dataset.view = 'machine';
+        lastSignature = '';
+        renderNavigation(route, false);
+        return;
+    }
     const denied = browserUnavailable(S.currentUser);
     selectComposer(!denied ? (route.view === 'wing' ? coordinator() : route.view === 'session' ? findSession(route) : null) : null);
     const views = { wing: viewWing, sessions: viewSessions, machines: viewMachines, pair: viewPair, new: viewNew, session: viewSession, approve: viewApprove };
@@ -483,18 +496,22 @@ export function render(force) {
         nextConversation.addEventListener('scroll', updateThreadSource, { passive: true });
         updateThreadSource();
     }
-    const nv = denied ? '<a href="#" aria-current="page">Get started</a><a href="#account">Account</a>' : nav(route);
-    side.querySelector('.pp-nav').innerHTML = nv;
-    root.querySelector('.pp-tabs').innerHTML = nv;
-    side.querySelector('.pp-date').textContent = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
-    side.querySelector('.pp-side-squares').innerHTML = denied ? '' : squares();
-    side.querySelector('.pp-foot').textContent = S.currentUser && S.currentUser.email || '';
+    renderNavigation(route, denied);
     const input = root.querySelector('#pp-message');
     if (input) input.value = drafts.get(inputKey) || '';
     if (filter) { const f = root.querySelector('#pp-filter'); if (f) { f.value = filter; f.dispatchEvent(new Event('input', { bubbles: true })); } }
     if (route.view === 'sessions') updateSessionSearch();
     if (focused && (focused === 'pp-message' || focused === 'pp-filter')) root.querySelector('#' + focused)?.focus({ preventScroll: true });
     if (input && selection) input.setSelectionRange(...selection);
+}
+
+function renderNavigation(route, denied) {
+    const nv = denied ? '<a href="#" aria-current="page">Get started</a><a href="#account">Account</a>' : nav(route);
+    side.querySelector('.pp-nav').innerHTML = nv;
+    root.querySelector('.pp-tabs').innerHTML = nv;
+    side.querySelector('.pp-date').textContent = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
+    side.querySelector('.pp-side-squares').innerHTML = denied ? '' : squares();
+    side.querySelector('.pp-foot').textContent = S.currentUser && S.currentUser.email || '';
 }
 
 export function initPaper() {

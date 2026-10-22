@@ -27,6 +27,9 @@ import { unreadSessionOutput, acknowledgeSessionOutput } from './session-unread.
 import { unreadOutputBadge } from './session-inventory.js';
 import { stopSessionVerified, stopConfirmationText, checkStoppedSession } from './session-stop.js';
 
+import { render as renderPaper } from './paper.js';
+import { machineState, machineLabel, machineGuidance, agentName } from './paper-state.js';
+
 var sessionStopPending = new Set();
 var sessionStopConfirm = new Map();
 var sessionStopUnverified = new Map();
@@ -1385,6 +1388,7 @@ export function hideDetailModal() {
 }
 
 export function renderWingDetailPage(wingId) {
+    renderPaper(true);
     var searchEl = document.getElementById('wd-search');
     if (searchEl && document.activeElement === searchEl) {
         updateWingDetailSessions(wingId);
@@ -1415,13 +1419,14 @@ export function renderWingDetailPage(wingId) {
     }
 
     var name = wingDisplayName(w,S.wingsData);
-    var isOnline = w.online !== false;
+    var connection = machineState(w);
+    var isOnline = connection === 'connected';
     var ver = w.version || '';
     var updateAvailable = !w.updating_at && S.latestVersion && ver && semverCompare(S.latestVersion, ver) > 0;
 
     var pubKeyHtml = '';
     if (w.public_key) {
-        var pubKeyShort = w.public_key.substring(0, 16) + '...';
+        var pubKeyShort = w.public_key;
         pubKeyHtml = '<span class="detail-val text-dim copyable" data-copy="' + escapeHtml(w.public_key) + '">' + escapeHtml(pubKeyShort) + '</span>';
     } else {
         pubKeyHtml = '<span class="detail-val text-dim">none</span>';
@@ -1432,7 +1437,7 @@ export function renderWingDetailPage(wingId) {
     var maxProjects = 8;
     var visibleProjects = projects.slice(0, maxProjects);
     var projList = visibleProjects.map(function(p) {
-        return '<div class="detail-subitem">' + escapeHtml(p.name) + ' <span class="text-dim">' + escapeHtml(shortenPath(p.path)) + '</span></div>';
+        return '<div class="detail-subitem">' + escapeHtml(p.name) + ' <span class="text-dim">' + escapeHtml(p.path) + '</span></div>';
     }).join('');
     if (projects.length > maxProjects) {
         projList += '<div class="detail-projects-more">+' + (projects.length - maxProjects) + ' more</div>';
@@ -1442,12 +1447,7 @@ export function renderWingDetailPage(wingId) {
     var scopeHtml = w.org_id ? escapeHtml(w.org_id) : 'personal';
 
     var activeSessions = S.sessionsData.filter(function(s) { return s.wing_id === w.wing_id; });
-    var activeHtml = '';
-    if (activeSessions.length > 0) {
-        activeHtml = '<div class="wd-section"><h3 class="section-label">active sessions</h3><div class="wd-sessions" id="wd-active-sessions">';
-        activeHtml += renderActiveSessionRows(activeSessions);
-        activeHtml += '</div></div>';
-    }
+    var activeHtml = '<section class="wd-section"><h2 class="section-label">' + (isOnline ? 'Sessions' : connection === 'offline' ? 'Last seen sessions' : 'Saved sessions') + ' <span>' + activeSessions.length + '</span></h2><div class="wd-sessions" id="wd-active-sessions">' + (activeSessions.length ? renderActiveSessionRows(activeSessions) : '<p class="text-dim">' + (isOnline ? 'No sessions yet. Start one on this machine.' : 'No saved sessions.') + '</p>') + '</div></section>';
 
     var isNotAllowed = w.tunnel_error === 'not_allowed';
     var isPasskeyNeeded = w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed';
@@ -1464,34 +1464,24 @@ export function renderWingDetailPage(wingId) {
         lockBanner = '<div class="wd-lock-banner"><span class="wd-lock-icon">&#x1f512;</span> Authenticate to access this wing<br><button class="btn-sm btn-accent" id="wd-auth-btn">authenticate</button></div>';
     }
 
+    var summaryActions = isOnline && !isLocked
+        ? ((w.agents || []).length ? '<a class="pp-btn pp-btn-ink" href="#new/' + encodeURIComponent(wingId) + '">New session</a>' : '<p>No agents installed. Run <code>wt setup</code> on this machine.</p>')
+        : connection === 'locked' || connection === 'no-access' ? '' : '<button type="button" class="pp-btn" data-retry>Retry connection</button>';
+    var recovery = connection === 'offline'
+        ? 'Last seen ' + (Number.isFinite(Date.parse(w.last_seen)) ? formatRelativeTime(Date.parse(w.last_seen)) : 'time unavailable') + '. Reconnect this machine, then retry.'
+        : machineGuidance(w);
     var html =
         '<div class="wd-page">' +
-        '<div class="wd-header">' +
-            '<a class="wd-back" id="wd-back">back</a>' +
-        '</div>' +
-        lockBanner +
-        (updateAvailable ? '<div class="wd-update-banner" id="wd-update">' +
-            escapeHtml(S.latestVersion) + ' available (you have ' + escapeHtml(ver) + ') <span class="wd-update-action">update now</span>' +
-        '</div>' : '') +
-        '<div class="wd-hero">' +
-            '<div class="wd-hero-top">' +
-                '<span class="session-dot ' + (isOnline ? 'live' : 'offline') + '"></span>' +
-                '<span class="wd-name" id="wd-name" title="click to rename">' + escapeHtml(name) + '</span>' +
-                (w.owner && !(S.currentUser && w.user_id === S.currentUser.id) ? '<span class="wd-owner">' + escapeHtml(w.owner) + '</span>' : '') +
-                (w.locked && !S.tunnelAuthTokens[wingId] ? '<span class="wd-pinned-badge" title="passkey required">&#x1f512; locked</span>' : '') +
-                (!w.locked && w.passkey_enrolled ? '<span class="wd-pinned-badge" title="passkey enrolled">&#x1f511; passkey</span>' : '') +
-                (w.wing_label ? '<a class="wd-clear-label" id="wd-delete-label" title="clear name">x</a>' : '') +
-                (!isOnline || w.tunnel_error === 'unreachable' ? '<a class="wd-dismiss-link" id="wd-dismiss">remove</a>' : '') +
-            '</div>' +
-        '</div>' +
-        (isOnline && !isLocked && (w.agents || []).length > 0 ? '<div class="wd-palette">' +
-            '<input id="wd-search" type="text" class="wd-search" placeholder="' + (w.locked && !S.tunnelAuthTokens[wingId] ? 'start a session (passkey auth on first browse)...' : 'start a session...') + '" autocomplete="off" spellcheck="false">' +
-            '<div id="wd-search-results" class="wd-search-results"></div>' +
-            '<div id="wd-search-status" class="wd-search-status"></div>' +
-        '</div>' : '') +
-        (isOnline && !isLocked && (w.agents || []).length === 0 ? '<div class="wd-no-agents"><span class="text-dim">no agents installed — run <code>wt doctor</code> on this machine to diagnose</span></div>' : '') +
+        '<div class="wd-header"><a class="wd-back" href="#machines">Machines</a></div>' +
+        '<header class="wd-hero"><h1 class="wd-name" id="wd-name">' + escapeHtml(name) + '</h1>' +
+            '<p class="wd-connection"><strong>' + escapeHtml(machineLabel(w)) + '</strong>' +
+            ((w.agents || []).length ? ' · ' + escapeHtml(w.agents.map(agentName).join(', ')) : isOnline ? ' · No agents installed' : '') + '</p>' +
+            (w.owner && !(S.currentUser && w.user_id === S.currentUser.id) ? '<p class="wd-owner">' + escapeHtml(w.owner) + '</p>' : '') +
+            (recovery ? '<p class="wd-recovery" role="status">' + escapeHtml(recovery) + '</p>' : '') +
+            lockBanner + '<div class="pp-actions">' + summaryActions + '</div></header>' +
         (isLocked ? '' : activeHtml) +
-        (isLocked ? '' : '<div class="wd-section"><h3 class="section-label">session history</h3><div id="wd-past-sessions"><span class="text-dim">' + (isOnline ? 'loading...' : 'wing offline') + '</span></div></div>') +
+        '<details class="wd-details"><summary>Details</summary>' +
+        (updateAvailable ? '<button class="pp-btn" id="wd-update">Update to ' + escapeHtml(S.latestVersion) + '</button>' : '') +
         '<div class="wd-info">' +
             '<div class="detail-row"><span class="detail-key">scope</span><span class="detail-val">' + scopeHtml + '</span></div>' +
             '<div class="detail-row"><span class="detail-key">platform</span><span class="detail-val">' + escapeHtml(w.platform || 'unknown') + '</span></div>' +
@@ -1511,12 +1501,19 @@ export function renderWingDetailPage(wingId) {
         (isOnline && !isLocked ? '<div class="wd-section"><h3 class="section-label">folder access</h3>' +
             '<div id="wd-paths"><span class="text-dim">loading...</span></div>' +
         '</div>' : '') +
+        '<button class="pp-btn" id="wd-rename">Rename machine</button>' +
+        (w.wing_label ? '<button class="pp-btn" id="wd-delete-label">Clear machine name</button>' : '') +
+        (!isOnline ? '<p class="wd-local-remove">Remove this machine from this browser’s saved list. Sessions on the machine are kept.</p><button class="pp-btn" id="wd-dismiss">Remove saved machine</button>' : '') +
+        '</details>' +
+        (isLocked ? '' : '<details class="wd-details"><summary>Session history</summary><div id="wd-past-sessions"><span class="text-dim">' + (isOnline ? 'Loading…' : 'Reconnect to view history.') + '</span></div></details>') +
         '</div>';
 
+    var detailsOpen = Array.from(DOM.wingDetailContent.querySelectorAll('details')).map(function(d) { return d.open; });
     DOM.wingDetailContent.innerHTML = html;
+    DOM.wingDetailContent.querySelectorAll('details').forEach(function(d, i) { d.open = !!detailsOpen[i]; });
     setupCopyable(DOM.wingDetailContent);
 
-    document.getElementById('wd-back').addEventListener('click', function() { showHome(); });
+
 
     var authBtn = document.getElementById('wd-auth-btn');
     if (authBtn) {
@@ -1559,7 +1556,7 @@ export function renderWingDetailPage(wingId) {
     }
 
     var nameEl = document.getElementById('wd-name');
-    nameEl.addEventListener('click', function() {
+    document.getElementById('wd-rename').addEventListener('click', function() {
         var current = w.wing_label || w.hostname || '';
         var input = document.createElement('input');
         input.type = 'text';
@@ -1658,10 +1655,10 @@ function renderActiveSessionRows(sessions) {
             : '';
         return '<div class="wd-session-row" role="group" tabindex="0" aria-label="' + escapeHtml(sName + ' · ' + presentation.agentLabel + ' · ' + presentation.connectionLabel) + '" data-sid="' + sid + '" data-wing-id="' + escapeHtml(s.wing_id || '') + '" data-kind="' + escapeHtml(kind) + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
             '<span class="session-dot ' + sessionConnectionDot(s) + '"></span>' +
-            '<span class="wd-session-name">' + escapeHtml(sName) + ' \u00b7 ' + agentWithIcon(s.agent || '?') + '</span>' +
+            '<span class="wd-session-identity"><span class="wd-session-name">' + escapeHtml(sName) + '</span><span class="wd-session-meta">' + escapeHtml(agentName(s.agent) + ' · ' + presentation.agentLabel) + '</span></span>' +
             auditBadge +
             auditBtns +
-            (actions.stop ? '<button class="wd-kill-btn" data-sid="' + sid + '" title="Stop ' + escapeHtml(sName) + '">stop</button>' : '') +
+            (actions.stop ? '<button class="wd-kill-btn" data-sid="' + sid + '" title="Stop ' + escapeHtml(sName) + '" aria-label="Stop ' + escapeHtml(sName) + '">Stop</button>' : '') +
         '</div>';
     }).join('');
 }
@@ -1672,12 +1669,12 @@ function wireActiveSessionRows() {
         row.addEventListener('click', function(e) {
             if (e.target.classList.contains('wd-kill-btn') || e.target.classList.contains('wd-replay-btn') || e.target.classList.contains('wd-keylog-btn')) return;
             var sid = row.dataset.sid;
-            switchToSession(sid, undefined, row.dataset.wingId);
+            location.hash = '#session/' + encodeURIComponent(row.dataset.wingId) + '/' + encodeURIComponent(sid);
         });
         row.addEventListener('keydown', function(event) {
             if (event.target !== row) return;
             if (navigateSessionRows(event, rows, row)) return;
-            if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); switchToSession(row.dataset.sid, undefined, row.dataset.wingId); }
+            if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); location.hash = '#session/' + encodeURIComponent(row.dataset.wingId) + '/' + encodeURIComponent(row.dataset.sid); }
         });
     });
     DOM.wingDetailContent.querySelectorAll('.wd-kill-btn').forEach(function(btn) {
