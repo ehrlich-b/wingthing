@@ -75,6 +75,7 @@ window.presenceFixture = {
         for (const socket of sockets.filter(s => new URL(s.url).searchParams.get('wing_id') === wingId && s.readyState === 1)) { closedPeers.push(wingId); socket.close(); }
         announce(wingId, 'wing.offline');
     },
+    reconnect(wingId) { wings.find(w => w.wing_id === wingId).online = true; unreachable.delete(wingId); },
     restore(wingId) { wings.find(w => w.wing_id === wingId).online = true; unreachable.delete(wingId); announce(wingId, 'wing.online'); },
     unreachable(wingId) { unreachable.add(wingId); announce(wingId, 'wing.config'); },
 };

@@ -101,10 +101,9 @@ async function run() {
             }
             if (!before && width === 390 && theme === 'light' && state === 'offline') {
                 const identity = await page.evaluate(() => presenceFixture.wings[1].public_key);
-                await page.getByRole('button', {name:'Retry connection',exact:true}).click();
-                await page.getByRole('button', {name:'Retry connection',exact:true}).waitFor();
+                await page.evaluate(() => presenceFixture.reconnect('machine-1'));
                 assert.match(await page.locator('.wd-connection').innerText(), /Offline/);
-                await page.evaluate(() => presenceFixture.restore('machine-1'));
+                await page.getByRole('button', {name:'Retry connection',exact:true}).click();
                 await page.locator('.wd-connection').filter({hasText:'Connected'}).waitFor();
                 assert.equal(await page.evaluate(() => presenceFixture.wings[1].public_key), identity);
                 assert.equal(await page.locator('.wd-session-row').count(), 8);
