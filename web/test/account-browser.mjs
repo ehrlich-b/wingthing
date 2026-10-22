@@ -20,7 +20,7 @@ async function run() {
  for(const width of [390,1440]) for(const theme of ['light','dark']) for(const state of (process.env.WT_ACCOUNT_STATES||'populated,empty,one,limit,free-purchase,org-pro,roost').split(',')) {
   const context=await browser.newContext({viewport:{width,height:width===390?844:1000},colorScheme:theme,serviceWorkers:'block'});
   await context.addInitScript({content:fixture.outputFiles[0].text});
-  const page=await context.newPage(), errors=[], mutations=[];
+  const page=await context.newPage(), errors=[], mutations=[], historyChecks=[];
   page.setDefaultTimeout(10000);
   console.log('case',width,theme,state);
   page.on('console',m=>{if(m.type()==='error') console.log(m.text());});
@@ -118,8 +118,39 @@ async function run() {
   // Navigation returns to the shell and account without losing either view.
   await page.locator('#ac-back').click();await page.locator('.pp-main').waitFor({state:'visible'});
   await page.goto('http://account.localhost/app/#account');await page.getByRole('heading',{name:'Account',exact:true}).waitFor();
+  if(state==='populated') {
+   // Enter through the main navigation, then traverse the actual browser history.
+   for(const denied of [false,true]) {
+    user.relay_allowed=!denied;
+    const homeHash=denied?'':'#sessions';
+    await page.goto('http://account.localhost/app/'+homeHash);
+    await page.locator('.pp-main').waitFor({state:'visible'});
+    const navigation=page.locator(width===390?'.pp-tabs':'.pp-side .pp-nav');
+    if(denied) assert.deepEqual(await navigation.locator('a').allTextContents(),['Get started','Account']);
+    const historyLength=await page.evaluate(()=>history.length);
+    await navigation.getByRole('link',{name:'Account',exact:true}).click();
+    await page.getByRole('heading',{name:'Account',exact:true}).waitFor();
+    assert.equal(await page.evaluate(()=>history.length),historyLength+1,'one entry per Account click');
+    if(denied) {
+     assert.deepEqual(await navigation.locator('a').allTextContents(),['Get started','Account']);
+     assert.equal(await navigation.getByRole('link',{name:'Account',exact:true}).getAttribute('aria-current'),'page');
+    }
+    await page.goBack();
+    await page.locator('.pp-main').waitFor({state:'visible'});
+    assert.equal(new URL(page.url()).hash,homeHash,'one Back restores the preceding page');
+    assert.equal(await page.locator('body').evaluate(el=>el.classList.contains('paper-on')),true);
+    assert.equal(await page.locator('#sidebar').isVisible(),false);
+    await page.screenshot({path:resolve(output,prefix+(denied?'-denied':'')+'-back.png')});
+    await page.goForward();
+    await page.getByRole('heading',{name:'Account',exact:true}).waitFor();
+    assert.equal(new URL(page.url()).hash,'#account');
+    assert.equal(await page.locator('#sidebar').isVisible(),false);
+    assert.equal(await page.locator('body').evaluate(el=>el.classList.contains('paper-on')),true);
+    historyChecks.push({denied,homeHash,accountHash:'#account',entriesAdded:1,back:'paper',forward:'account'});
+   }
+  }
   assert.deepEqual(errors,[]);
-  results.push({width,theme,state,sessions:24,color,mutations,errors});
+  results.push({width,theme,state,sessions:24,color,mutations,historyChecks,errors});
   await context.close();
  }
  } finally {await browser.close();}

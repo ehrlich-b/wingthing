@@ -307,6 +307,7 @@ function viewApprove(route) {
 }
 
 function nav(route) {
+    if (browserUnavailable(S.currentUser)) return '<a href="#"' + (route.view !== 'account' ? ' aria-current="page"' : '') + '>Get started</a><a href="#account"' + (route.view === 'account' ? ' aria-current="page"' : '') + '>Account</a>';
     const need = needing().length, here = route.view === 'wing' || route.view === 'approve' ? 'wing' : route.view === 'machines' || route.view === 'pair' ? 'machines' : route.view === 'account' ? 'account' : 'sessions';
     const item = (key, label, href, count, hot) => '<a href="' + href + '" class="pp-nav-' + key + '"' + (here === key ? ' aria-current="page"' : '') + '><span>' + label + '</span><small' + (hot ? ' class="pp-hot"' : '') + '>' + count + '</small></a>';
     return item('wing', 'wing', '#', need ? need + ' needs you' : '', !!need) + item('sessions', 'Sessions', '#sessions', workSessions().length || '', false) + item('machines', 'Machines', '#machines', S.wingsData.length || '', false) + item('account', 'Account', '#account', '', false);
@@ -501,7 +502,7 @@ export function render(force) {
         nextConversation.addEventListener('scroll', updateThreadSource, { passive: true });
         updateThreadSource();
     }
-    const nv = denied ? '<a href="#" aria-current="page">Get started</a><a href="#account">Account</a>' : nav(route);
+    const nv = nav(route);
     side.querySelector('.pp-nav').innerHTML = nv;
     root.querySelector('.pp-tabs').innerHTML = nv;
     side.querySelector('.pp-date').textContent = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
