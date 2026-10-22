@@ -220,7 +220,11 @@ func (p *previews) apply(s *state, result previewResult) {
 		return
 	}
 	read.cancel = nil
-	read.next = time.Now().Add(2 * time.Second)
+	delay := 10 * time.Second
+	if r.terminalPreview {
+		delay = 2 * time.Second
+	}
+	read.next = time.Now().Add(delay)
 	p.reads[r.identity] = read
 	if s.previews == nil {
 		s.previews = map[attentionIdentity]sessionPreview{}

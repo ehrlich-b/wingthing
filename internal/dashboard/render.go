@@ -929,6 +929,7 @@ func safeNotice(message string) string {
 		"Decline: unconfirmed. Answer in terminal; this decision will not be resent.",
 		"Decision not confirmed. Answer in terminal.", "Answer in terminal", "Sending decision…",
 		"Review every line of the current request, or Answer in terminal",
+		"Selected session unavailable. j/k choose another.", "Selected machine changed. j/k choose another.",
 		"Access denied. R refresh.", "Done", "Running...", "Running…", "Name cannot be empty", "Working directory cannot be empty",
 		"Bell on for this dashboard", "Bell off for this dashboard", "Waiting for your answer.",
 		"New reply. Background work may still run.", "Input control is not available for this session":

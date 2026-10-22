@@ -92,6 +92,7 @@ func TestNavigatorPreviewReadOnlyTransport(t *testing.T) {
 		if remote {
 			r = s.rows()[2]
 			r.OriginWingID = "exact-origin"
+			r.identity.profile = config.Remote{SSHTarget: "preview-host", WingthingDir: "/state/demo", WingID: r.OriginWingID}
 		}
 		calls := []string{}
 		value, err := loadTerminalPreview(t.Context(), r, func(_ context.Context, args []string, streams remotepkg.IO) error {
@@ -100,6 +101,11 @@ func TestNavigatorPreviewReadOnlyTransport(t *testing.T) {
 				t.Fatal("preview connected input")
 			}
 			if remote {
+				for _, want := range []string{"--remote preview-host", "--remote-state /state/demo", "--wing exact-origin", "--session " + r.ID} {
+					if !strings.Contains(calls[len(calls)-1], want) {
+						t.Fatal("preview changed its saved route", args)
+					}
+				}
 				if !strings.Contains(calls[len(calls)-1], "--operation terminal_read") {
 					t.Fatal(args)
 				}
@@ -201,5 +207,59 @@ func TestNavigatorPreviewSavedRouteReplacementRequiresSelection(t *testing.T) {
 	p.apply(s, previewResult{target: r, serial: 1, value: sessionPreview{output: []string{"OLD_HOST_TEXT"}}})
 	if strings.Contains(render(s, 160, 44, time.Now()), "OLD_HOST_TEXT") {
 		t.Fatal("retired host restored output")
+	}
+}
+
+func TestNavigatorPreviewLostSelectionRecoveryNotice(t *testing.T) {
+	for _, message := range []string{"Selected session unavailable. j/k choose another.", "Selected machine changed. j/k choose another."} {
+		s := navigatorFixture(8)
+		s.message = message
+		text := strings.Join(renderedLines(t, render(s, 160, 44, time.Now()), 160, 44), "\n")
+		if !strings.Contains(text, message) {
+			t.Fatal("selection recovery hint was hidden")
+		}
+	}
+}
+
+func TestNavigatorPreviewInitialSelectionCannotDisappearIntoAnotherTarget(t *testing.T) {
+	s := navigatorFixture(8)
+	r, _ := s.selection()
+	m := s.machines["local"]
+	newInventory(nil).apply(s, inventoryResult{name: "local", sessions: m.sessions[1:], updated: time.Now()})
+	if s.selected != r.key() || !s.selectionLost {
+		t.Fatal("initial selection fell through to another target")
+	}
+	if act, _ := s.handle("v"); act != nil {
+		t.Fatal("initial selection opened another target")
+	}
+}
+
+func TestNavigatorPreviewRemoteOutputIdentity(t *testing.T) {
+	s := fixture()
+	r := s.rows()[2]
+	r.OriginWingID = "expected-origin"
+	for _, field := range []string{"origin", "outer-session", "inner-session", "missing-snapshot", "invalid-snapshot"} {
+		t.Run(field, func(t *testing.T) {
+			_, err := loadTerminalPreview(t.Context(), r, func(_ context.Context, _ []string, streams remotepkg.IO) error {
+				inner := map[string]any{"session": r.ID, "base64": base64.StdEncoding.EncodeToString([]byte("PRIVATE_OUTPUT"))}
+				outer := map[string]any{"origin_wing_id": r.OriginWingID, "session_id": r.ID, "result": inner}
+				switch field {
+				case "origin":
+					outer["origin_wing_id"] = "replacement-origin"
+				case "outer-session":
+					outer["session_id"] = "replacement-session"
+				case "inner-session":
+					inner["session"] = "replacement-session"
+				case "missing-snapshot":
+					delete(inner, "base64")
+				case "invalid-snapshot":
+					inner["base64"] = "not valid base64!"
+				}
+				return json.NewEncoder(streams.Out).Encode(outer)
+			})
+			if err == nil {
+				t.Fatal("invalid or differently scoped output accepted")
+			}
+		})
 	}
 }

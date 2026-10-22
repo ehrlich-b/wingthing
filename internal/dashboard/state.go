@@ -279,7 +279,7 @@ func (s *state) reconcile() {
 	for _, r := range ordered {
 		s.rowOrder = append(s.rowOrder, r.key())
 	}
-	if rows := s.rows(); !s.selectionTouched && len(rows) > 0 && rows[0].Pinned {
+	if rows := s.rows(); !s.selectionTouched && !s.selectionLost && len(rows) > 0 && rows[0].Pinned {
 		s.selected = rows[0].key()
 	}
 	if r, ok := s.selection(); ok {
@@ -291,6 +291,7 @@ func (s *state) reconcile() {
 
 func (s *state) move(delta int) {
 	if s.selectionLost {
+		s.selectionTouched = true
 		s.selectionLost, s.selected, s.message = false, "", ""
 		s.reconcile()
 		return

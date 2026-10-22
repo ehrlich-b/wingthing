@@ -296,9 +296,13 @@ func (f *northstarEgg) Session(stream grpc.BidiStreamingServer[pb.SessionMsg, pb
 	} else {
 		f.previewMutations.Add(1)
 	}
-	select {
-	case f.attached <- first.SessionId:
-	default:
+	// Snapshot observations are distinct from an interactive viewer. Keep the
+	// interactive channel useful for assertions about explicit attachment.
+	if options == nil || options.Owner != "snapshot" {
+		select {
+		case f.attached <- first.SessionId:
+		default:
+		}
 	}
 	if err := stream.Send(&pb.SessionMsg{SessionId: first.SessionId, Payload: &pb.SessionMsg_Output{Output: []byte("\x1b[2J\x1b[H" + f.marker + "\r\n")}}); err != nil {
 		return err

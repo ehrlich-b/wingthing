@@ -165,7 +165,7 @@ func (i *inventory) apply(s *state, result inventoryResult) bool {
 		delete(i.nextQuery, result.name)
 	}
 	s.machines[result.name] = machine
-	if s.selectionTouched && strings.HasPrefix(s.selected, result.name+":") {
+	if s.selected != "" && strings.HasPrefix(s.selected, result.name+":") {
 		found := false
 		for _, session := range machine.sessions {
 			if result.name+":"+session.ID == s.selected {
@@ -211,7 +211,7 @@ func (i *inventory) reload(s *state, remotes map[string]config.Remote, err error
 		delete(i.failures, name)
 		delete(i.nextQuery, name)
 		delete(s.machines, name)
-		if s.selectionTouched && strings.HasPrefix(s.selected, name+":") {
+		if s.selected != "" && strings.HasPrefix(s.selected, name+":") {
 			s.selectionLost = true
 			s.message = "Selected machine changed. j/k choose another."
 		}
