@@ -17,9 +17,10 @@ REQUIRED_TESTS = ('make-check', 'android', 'browser-join', 'race', 'source-tests
 QUALIFICATIONS = ('native-mac', 'real-provider', 'hosted', 'owned-origin',
                   'installer-recovery', 'durable-journey', 'quickstart')
 FEATURES = ['encrypted terminal output', 'loopback local-only listener',
-            'explicit LAN pairing', 'legacy sandbox capability reports',
+            'legacy sandbox capability reports',
             'opt-in Claude native policy', 'opt-in Codex native policy',
             'visible session search counts']
+BUILD_LIMITS = {'cgo_enabled': False, 'phone_pairing': 'unavailable'}
 
 
 def git(*args):
@@ -168,6 +169,7 @@ def stage(args):
               'version_scope': 'local reservation; operator must check authoritative registry',
               'artifacts': artifacts, 'build_logs': build_logs, 'tests': tests,
               'assessment': assessment, 'supported_features': FEATURES,
+              'build_limits': BUILD_LIMITS,
               'qualifications': {key: {'status': 'pending', 'receipt': None}
                                  for key in QUALIFICATIONS},
               'operator': {'path': 'OPERATOR.md', 'sha256': digest(root / 'OPERATOR.md')},
@@ -193,6 +195,8 @@ def verify(packet, root, expected_head=None, binary_identity=True):
     unused(packet['version'])
     if packet['publication'] != 'not authorized' or packet['decision'] != 'HOLD':
         raise ValueError('this tool only prepares held operator packets')
+    if packet['build_limits'] != BUILD_LIMITS:
+        raise ValueError('unsupported artifact capability claim: native pairing requires CGO')
     if set(packet['artifacts']) != set(PLATFORMS) or set(packet['build_logs']) != set(PLATFORMS):
         raise ValueError('all four platform artifacts and build logs are required')
     for key in ('operator', 'installer'):
@@ -213,12 +217,13 @@ def verify(packet, root, expected_head=None, binary_identity=True):
             system, arch = platform.split('-')
             for setting in ('vcs.revision=' + packet['commit'], 'vcs.modified=false',
                             'GOOS=' + system, 'GOARCH=' + arch,
+                            'CGO_ENABLED=0',
                             '-X main.version=' + packet['version']):
                 if setting not in info:
                     raise ValueError('artifact build identity missing: ' + setting)
     if relative(root, 'SHA256SUMS').read_text() != ''.join(sums):
         raise ValueError('checksum manifest mismatch')
-    blockers = []
+    blockers = ['phone pairing unavailable in inventory artifacts (CGO disabled)']
     ids = set()
     for receipt in packet['tests']:
         if receipt['id'] in ids or receipt['id'] not in REQUIRED_TESTS:

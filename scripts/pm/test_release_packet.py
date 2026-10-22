@@ -26,6 +26,7 @@ class PacketContract(unittest.TestCase):
                        'artifacts': {}, 'build_logs': {}, 'tests': [],
                        'assessment': None, 'publication': 'not authorized', 'decision': 'HOLD',
                        'supported_features': packet_tool.FEATURES,
+                       'build_limits': packet_tool.BUILD_LIMITS.copy(),
                        'qualifications': {k: {'status': 'pending', 'receipt': None}
                                           for k in packet_tool.QUALIFICATIONS}}
         for platform in packet_tool.PLATFORMS:
@@ -132,6 +133,16 @@ class PacketContract(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'independently validated supplier evidence'):
             self.check()
 
+    def test_cgo_disabled_artifacts_cannot_claim_pairing(self):
+        self.assertIn('phone pairing unavailable in inventory artifacts (CGO disabled)', self.check())
+        self.packet['build_limits']['phone_pairing'] = 'supported'
+        with self.assertRaisesRegex(ValueError, 'unsupported artifact capability claim'):
+            self.check()
+        self.packet['build_limits'] = packet_tool.BUILD_LIMITS.copy()
+        self.packet['supported_features'] = packet_tool.FEATURES + ['explicit LAN pairing']
+        with self.assertRaisesRegex(ValueError, 'unsupported feature claim'):
+            self.check()
+
     def test_existing_version_is_rejected(self):
         with patch.object(packet_tool, 'git', return_value='v0.0.999999'):
             with self.assertRaisesRegex(ValueError, 'already exists'):
@@ -151,6 +162,7 @@ class PacketContract(unittest.TestCase):
         subprocess.run(command, check=True, env=dict(os.environ, CGO_ENABLED='0'))
         info = subprocess.check_output(['go', 'version', '-m', str(target)], text=True)
         self.assertIn('-X main.version=v0.0.999999', info)
+        self.assertIn('CGO_ENABLED=0', info)
         self.assertEqual(subprocess.check_output([str(target)], text=True).strip(), 'v0.0.999999')
 
     def test_duplicate_json_keys_fail(self):

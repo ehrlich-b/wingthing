@@ -69,6 +69,13 @@ operations are needed to inspect the packet. Collect independently validated
 supplier receipts for this source and these hashes before reconsidering HOLD.
 The current checker deliberately refuses promotion claims supplied as bare JSON.
 
+These inventory binaries use `CGO_ENABLED=0`. Phone/browser pairing is
+**unavailable** in these bytes; the manifest records that build limitation and
+excludes pairing from supported features. Native browser-join source tests use
+CGO and do not qualify pairing in the inventory binaries. A future native build
+profile needs a new unique version, matching artifacts and native receipts
+before pairing can be claimed. This limitation independently blocks promotion.
+
 The release operator owns version reservation and publication; a security
 approver owns trust/bootstrap and downgrade disposition; native Mac and provider
 executors own their runtime receipts; the service operator owns deployed identity,
