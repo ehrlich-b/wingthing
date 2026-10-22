@@ -1,6 +1,7 @@
 package eggclient
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -206,7 +207,7 @@ func AttachStreamIO(ctx context.Context, sessionID string, input io.Reader, outp
 		}
 		mode := ""
 		if options.ReadOnly {
-			mode = " (read-only; no input or resize)"
+			mode = " (read-only; q returns; no input or resize)"
 		}
 		fmt.Fprintf(diagnostic, "[attached to %s%s; Ctrl+B then q detaches; Ctrl+B twice sends Ctrl+B]\n", sessionID, mode)
 		oldState, rawErr := term.MakeRaw(fd)
@@ -366,6 +367,9 @@ func sendAttachedInputMode(stream SessionStream, sessionID string, input io.Read
 		n, err := input.Read(buffer)
 		if n > 0 {
 			output, detach := filter.Filter(buffer[:n])
+			if readOnly && bytes.IndexByte(buffer[:n], 'q') >= 0 {
+				detach = true
+			}
 			if len(output) > 0 && !readOnly {
 				if sendErr := stream.Send(&pb.SessionMsg{
 					SessionId: sessionID,

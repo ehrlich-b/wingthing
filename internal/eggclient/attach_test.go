@@ -392,3 +392,17 @@ func TestValidateSessionID(t *testing.T) {
 		}
 	}
 }
+
+func TestNavigatorPreviewViewerSingleKeyReturnHasZeroMutations(t *testing.T) {
+	stream := &attachTestStream{}
+	result := make(chan attachInputResult, 1)
+	sendAttachedInput(stream, "immutable-full-session-id", strings.NewReader("ignored keystrokes\nq"), result, true)
+	got := <-result
+	if got.err != nil || !got.detached {
+		t.Fatal(got)
+	}
+	if len(stream.sent) != 1 || !stream.sent[0].GetDetach() || stream.sent[0].SessionId != "immutable-full-session-id" {
+		t.Fatalf("viewer mutated transport: %v", stream.sent)
+	}
+	t.Log("mock transport: input=0 resize=0 claim=0 takeover=0 detach=1")
+}
