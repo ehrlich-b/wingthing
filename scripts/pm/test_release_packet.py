@@ -141,6 +141,18 @@ class PacketContract(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):
             packet_tool.verify(self.packet, self.root, self.head)
 
+    def test_actual_compiler_preserves_version_in_build_metadata(self):
+        source = self.root / 'main.go'
+        source.write_text('package main\nimport "fmt"\nvar version = "dev"\n'
+                          'func main() { fmt.Println(version) }\n')
+        target = self.root / 'metadata-probe'
+        command = packet_tool.build_command('v0.0.999999', target)
+        command[-1] = str(source)
+        subprocess.run(command, check=True, env=dict(os.environ, CGO_ENABLED='0'))
+        info = subprocess.check_output(['go', 'version', '-m', str(target)], text=True)
+        self.assertIn('-X main.version=v0.0.999999', info)
+        self.assertEqual(subprocess.check_output([str(target)], text=True).strip(), 'v0.0.999999')
+
     def test_duplicate_json_keys_fail(self):
         path = self.root / 'duplicate.json'
         path.write_text('{"commit":"a","commit":"b"}')

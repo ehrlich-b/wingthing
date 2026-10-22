@@ -88,6 +88,13 @@ def unused(version):
         raise ValueError('version already exists locally; never reuse release bytes')
 
 
+def build_command(version, target):
+    # Go omits linker flags from build metadata with -trimpath. Preserve them
+    # so a foreign-version binary cannot be relabeled using envelope metadata.
+    return ['go', 'build', '-p', '2', '-buildvcs=true',
+            '-ldflags=-s -w -X main.version=' + version, '-o', str(target), './cmd/wt']
+
+
 def record(args):
     head = clean_head()
     root = Path(args.output).resolve()
@@ -125,8 +132,7 @@ def stage(args):
     for platform in PLATFORMS:
         system, arch = platform.split('-')
         target = root / 'artifacts' / ('wt-' + platform)
-        command = ['go', 'build', '-p', '2', '-trimpath', '-buildvcs=true',
-                   '-ldflags=-s -w -X main.version=' + args.version, '-o', str(target), './cmd/wt']
+        command = build_command(args.version, target)
         log = root / ('build-' + platform + '.txt')
         with log.open('x') as out:
             out.write(json.dumps(command) + '\n')
