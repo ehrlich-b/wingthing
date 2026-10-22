@@ -37,13 +37,14 @@ export function sessionInventoryState(session, wing, attention) {
     if (wing && wing.online === false) connection = 'offline';
 
     var lifecycle = session.lifecycle || {};
-    var knownSource = ['claude_hook', 'codex_hook', 'egg_process'].includes(lifecycle.state_source);
+    var knownSource = ['claude_hook', 'codex_hook', 'egg_process', 'shell_report'].includes(lifecycle.state_source);
     // The egg owns the lifecycle-to-status mapping. Old wings without this
     // field remain unknown; attachment and terminal bells are separate facts.
     var status = knownSource && Object.hasOwn(agentLabels, lifecycle.status) ? lifecycle.status : 'unknown';
     var state = knownSource && lifecycle.state ? lifecycle.state : 'unknown';
     var needsAttention = status === 'blocked' || !!attention || !!session.needs_attention;
     var agentLabel = agentLabels[status];
+    if (lifecycle.state_source === 'shell_report') agentLabel += ' · reported';
     if (connection !== 'available' && status !== 'unknown') agentLabel = 'last reported: ' + agentLabel;
     if (needsAttention && status !== 'blocked') agentLabel += ' · attention signal';
     return {

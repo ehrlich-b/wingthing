@@ -171,7 +171,7 @@ func projectSessionLifecycle(session *LocalSession, view egg.SessionView) {
 	session.StateReason = "Native lifecycle evidence is missing or hooks are disabled; status is unknown."
 	session.CompletionCursor = 0
 	switch view.StateSource {
-	case "claude_hook", "codex_hook", "egg_process", "native_import":
+	case "claude_hook", "codex_hook", "egg_process", "native_import", "shell_report":
 		session.StateSource = view.StateSource
 	}
 	switch view.State {
@@ -181,6 +181,10 @@ func projectSessionLifecycle(session *LocalSession, view egg.SessionView) {
 	if session.StateSource == "unsupported" {
 		session.State = "unknown"
 		session.StateObservedAt = ""
+		return
+	}
+	if session.StateSource == "shell_report" {
+		session.StateReason = "Explicitly reported by shell task; not native provider evidence."
 		return
 	}
 	switch session.State {

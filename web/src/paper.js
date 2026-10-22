@@ -217,7 +217,7 @@ function sessionRow(s) {
 }
 function group(title, list, right) {
     const count = right || String(list.length);
-    return list.length ? '<section class="pp-group"><div class="pp-kick"><span>' + title + '</span><span data-group-count data-default-count="' + esc(count) + '">' + esc(count) + '</span></div>' + list.map(sessionRow).join('') + '</section>' : '';
+    return list.length ? '<section class="pp-group"><div class="pp-kick"><span>' + title + '</span><span data-group-count data-default-count="' + esc(count) + '">' + esc(count) + '</span></div>' + list.slice(0, 8).map(sessionRow).join('') + (list.length > 8 ? '<details class="pp-more-sessions"><summary>+' + (list.length - 8) + ' more</summary>' + list.slice(8).map(sessionRow).join('') + '</details>' : '') + '</section>' : '';
 }
 
 function viewSessions() {
@@ -377,6 +377,13 @@ function updateSessionSearch() {
             row.hidden = !matches;
             return total + Number(matches);
         }, 0);
+        const overflow = group.querySelector('.pp-more-sessions');
+        if (overflow) {
+            const more = [...overflow.querySelectorAll('.pp-srow')].filter(row => !row.hidden).length;
+            overflow.hidden = !!query && more === 0;
+            if (query) overflow.open = true;
+            overflow.querySelector('summary').textContent = '+' + more + ' more';
+        }
         visible += count;
         const countLabel = group.querySelector('[data-group-count]');
         if (countLabel) countLabel.textContent = query ? String(count) : countLabel.dataset.defaultCount;

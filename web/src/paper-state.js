@@ -21,11 +21,17 @@ export function machineGuidance(wing) {
 }
 
 export function sessionState(session, wing) {
+    const result = sessionStateFact(session, wing);
+    if (session.lifecycle?.state_source === 'shell_report' && ['need', 'work', 'done', 'ended'].includes(result.key)) result.label += ' · reported';
+    return result;
+}
+
+function sessionStateFact(session, wing) {
     const machine = machineState(wing), status = session.lifecycle && session.lifecycle.status;
     if (!['connected', 'checking'].includes(machine)) return { key: machine, label: machineLabel(wing) };
     if (status === 'blocked' || session.needs_attention) return { key: 'need', label: 'Needs you' };
     if (status === 'working') return { key: 'work', label: 'Working' };
-    if (status === 'completed') return { key: 'done', label: 'Done' };
+    if (status === 'completed' || status === 'done') return { key: 'done', label: 'Done' };
     if (status === 'exited') return { key: 'ended', label: 'Ended' };
     if (status === 'idle') return { key: 'idle', label: 'Idle' };
     return { key: 'unknown', label: 'Unknown' };

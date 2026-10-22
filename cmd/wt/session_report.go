@@ -34,6 +34,9 @@ func sessionReportCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		if report.Shell != nil && args[0] != session.ID {
+			return errors.New("shell reports require the full immutable session ID")
+		}
 		event, err := egg.RecordSessionReport(filepath.Join(cfg.Dir, "eggs", session.ID), report)
 		if err != nil {
 			return err

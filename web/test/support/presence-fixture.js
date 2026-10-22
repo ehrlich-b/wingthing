@@ -16,8 +16,16 @@ const unreachable = new Set();
 const failures = window.presenceErrors || {};
 if (window.presenceUnnamed) wings.push({ online: false });
 function lifecycle(id, after = 0, wingId = 'machine-0') {
+    if (window.shellRows) {
+        const row = window.shellRows.find(r => r.id === id);
+        return { session_id: id, agent: '', status: row?.status || 'unknown', state: row?.state || 'unknown', state_source: row?.state_source || 'unsupported', process_alive: true, ready: false, cursor: row?.state_cursor || 0, head_cursor: row?.state_cursor || 0, events: [] };
+    }
     return { session_id: id, provider_session_id: 'provider-' + wingId + '-' + id, agent: 'claude', status: wingId === 'machine-1' ? 'idle' : 'working', state: wingId === 'machine-1' ? 'idle' : 'working', state_source: 'claude_hook', process_alive: true, ready: wingId === 'machine-1', cursor: 1, head_cursor: 1,
         events: after ? [] : [{ sequence: 1, type: 'message', role: 'assistant', text: 'Checking the release notes and preparing the next update.', timestamp: '2026-01-01T12:00:00Z' }] };
+}
+function sessionRows(wingId) {
+    if (window.shellRows) return window.shellRows.map(row => ({ session_id: row.id, name: row.name, agent: '', cwd: '/projects/release', user_id: 'fixture-owner', lifecycle: lifecycle(row.id, 0, wingId) }));
+    return ['same-id', ...(wingId === 'machine-0' ? ['coordinator'] : [])].map(id => ({ session_id: id, name: id === 'coordinator' ? 'wing' : 'Release notes and integration readiness checks', agent: 'claude', cwd: '/fixture/release', user_id: 'fixture-owner', pinned: id === 'coordinator', role: id === 'coordinator' ? 'coordinator' : '', lifecycle: lifecycle(id, 0, wingId) }));
 }
 function answer(wingId, inner) {
     calls.push({ wingId, ...inner });
@@ -27,7 +35,7 @@ function answer(wingId, inner) {
     if (!wing?.online) return { error: 'wing offline' };
     if (inner.type === 'sessions.inventory') return { version: 'wingthing.session-inventory.v1', wing_id: wingId, complete: true, sessions: [], sources: [] };
     if (inner.type === 'wing.info') return { hostname: wing.name, platform: 'linux', agents: ['claude'], projects: [] };
-    if (inner.type === 'sessions.list') return { sessions: ['same-id', ...(wingId === 'machine-0' ? ['coordinator'] : [])].map(id => ({ session_id: id, name: id === 'coordinator' ? 'wing' : 'Release notes and integration readiness checks', agent: 'claude', cwd: '/fixture/release', user_id: 'fixture-owner', pinned: id === 'coordinator', role: id === 'coordinator' ? 'coordinator' : '', lifecycle: lifecycle(id, 0, wingId) })) };
+    if (inner.type === 'sessions.list') return { sessions: sessionRows(wingId) };
     if (inner.type === 'session.control' && inner.operation === 'session_read') return { session: inner.arguments.session, lifecycle: lifecycle(inner.arguments.session, inner.arguments.after_cursor, wingId) };
     if (inner.type === 'session.control' && inner.operation === 'terminal_read') return { ansi: 'Reviewing release notes…' };
     throw Error('Unexpected runtime operation: ' + JSON.stringify(inner));
@@ -58,10 +66,11 @@ function announce(wingId, type) {
 // A returning owner's inventory includes remembered offline computers.
 localStorage.setItem('wt_cache_owner_v1', 'fixture-owner');
 localStorage.setItem('wt_wings', JSON.stringify(wings.map(w => ({ ...w, hostname: w.name, online: undefined, last_seen: '2026-01-01T12:00:00Z' }))));
-localStorage.setItem('wt_sessions', JSON.stringify(wings.flatMap(w => ['same-id', ...(w.wing_id === 'machine-0' ? ['coordinator'] : [])].map(id => ({ id, wing_id: w.wing_id, name: id === 'coordinator' ? 'wing' : 'Release notes and integration readiness checks', agent: 'claude', user_id: 'fixture-owner', pinned: id === 'coordinator', role: id === 'coordinator' ? 'coordinator' : '', lifecycle: lifecycle(id, 0, w.wing_id) })))));
+localStorage.setItem('wt_sessions', JSON.stringify(wings.flatMap(w => sessionRows(w.wing_id).map(row => ({ ...row, id: row.session_id, wing_id: w.wing_id })))));
 window.WebSocket = FixtureSocket;
 window.presenceFixture = {
     calls, wings, closedPeers,
+    setShellRows(rows) { window.shellRows = rows; announce('machine-0', 'wing.config'); },
     discovery: () => wings.filter(w => w.online),
     disconnect(wingId) {
         wings.find(w => w.wing_id === wingId).online = false;
