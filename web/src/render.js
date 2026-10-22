@@ -1658,7 +1658,7 @@ function renderActiveSessionRows(sessions) {
             '<span class="wd-session-identity"><span class="wd-session-name">' + escapeHtml(sName) + '</span><span class="wd-session-meta">' + escapeHtml(agentName(s.agent) + ' · ' + presentation.agentLabel) + '</span></span>' +
             auditBadge +
             auditBtns +
-            (actions.stop ? '<button class="wd-kill-btn" data-sid="' + sid + '" title="Stop ' + escapeHtml(sName) + '" aria-label="Stop ' + escapeHtml(sName) + '">Stop</button>' : '') +
+            (actions.stop ? '<button class="wd-kill-btn" title="Stop ' + escapeHtml(sName) + '" aria-label="Stop ' + escapeHtml(sName) + '">Stop</button>' : '') +
         '</div>';
     }).join('');
 }

@@ -321,7 +321,7 @@ body.paper-on #app { display: none; }
 #paper .wd-hero .pp-actions { margin-top: 14px; }
 #paper .wd-section .section-label { display: flex; justify-content: space-between; font: 500 13px var(--pp-sans); text-transform: none; letter-spacing: 0; margin: 0 0 8px; color: var(--pp-ink-2); }
 #paper .wd-sessions { gap: 0; }
-#paper .wd-session-row { border-top: 1px solid var(--pp-rule); padding: 12px 0; border-radius: 0; background: transparent; flex-wrap: nowrap; gap: 12px; }
+#paper .wd-session-row { border-top: 1px solid var(--pp-rule); padding: 12px 0; border-radius: 0; background: transparent; flex-wrap: wrap; gap: 12px; }
 #paper .wd-session-row:hover { background: var(--pp-folio); }
 #paper .wd-session-identity { flex: 1; min-width: 0; }
 #paper .wd-session-name { display: block; white-space: normal; overflow: visible; overflow-wrap: anywhere; font-size: 15px; line-height: 1.45; font-weight: 500; }
@@ -338,6 +338,8 @@ body.paper-on #app { display: none; }
 @media (max-width: 760px) {
     #paper .wd-page { padding-top: 18px; }
     #paper .wd-name { font-size: 23px; }
-    #paper .wd-session-row { gap: 8px; padding: 12px 0; }
+    #paper .wd-session-row { gap: 8px; padding: 12px 0; flex-wrap: wrap; }
     #paper .wd-session-row > .session-dot { display: none; }
 }
+
+#paper .wd-session-row .inventory-action-status { flex-basis: 100%; min-width: 0; overflow-wrap: anywhere; font-size: 13px; color: var(--pp-ink-2); }

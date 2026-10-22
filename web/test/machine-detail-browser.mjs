@@ -70,6 +70,14 @@ async function run() {
                 await page.screenshot({path:resolve(output,stem+'-details.png'),fullPage:true});
             }
             if (!before && width === 390 && theme === 'light' && state === 'online') {
+                await page.locator('.wd-kill-btn').first().click();
+                const confirmation = page.locator('.wd-session-row').first().locator('.inventory-action-status');
+                await confirmation.waitFor();
+                assert.match(await confirmation.innerText(), /Prepare the customer reporting migration/);
+                assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'stop confirmation fits phone');
+                assert.ok((await page.evaluate(() => presenceFixture.calls)).every(c => c.type !== 'session.stop'), 'first click never stops');
+                await page.screenshot({path:resolve(output,'after-stop-confirmation-390-light.png'),fullPage:true});
+                await page.getByRole('button',{name:'Keep running',exact:true}).click();
                 await page.getByRole('link', {name:'New session',exact:true}).click();
                 await page.getByRole('heading', {name:'New session',exact:true}).waitFor();
                 assert.equal(await page.locator('#pp-launch-machine').inputValue(), 'machine-0');
