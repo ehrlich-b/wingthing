@@ -673,6 +673,10 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 			if shellState.State == "completed" && !processInterrupted {
 				view.Status = "done"
 			}
+			if !processEnded && view.Status != "done" {
+				view.State, view.StateSource, view.StateCursor, view.StateObservedAt = "unknown", "egg_process", 0, ""
+				view.Reason = "shell process unavailable without a recorded exit"
+			}
 			if processEnded && view.Status != "done" {
 				view.State, view.StateSource, view.StateCursor, view.StateObservedAt = processEnd.State, processEnd.Source, processEnd.Sequence, processEnd.Timestamp
 				if view.State == "" {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -66,6 +67,9 @@ func TestShellReportMCPRejectsMutableAndForeignSession(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "egg.pid"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}

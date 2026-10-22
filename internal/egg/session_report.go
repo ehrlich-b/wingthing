@@ -6,9 +6,12 @@ import (
 	"net/url"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/ehrlich-b/wingthing/internal/procinfo"
 )
 
 // ShellReport is an opt-in task signal scoped to an immutable shell session.
@@ -127,6 +130,11 @@ func RecordSessionReport(dir string, report SessionReport) (SessionEvent, error)
 		}
 		if agent != "" && agent != "shell" {
 			return SessionEvent{}, errors.New("shell reports require a plain shell session")
+		}
+		pidData, err := j.root.ReadFile("egg.pid")
+		pid, parseErr := strconv.Atoi(strings.TrimSpace(string(pidData)))
+		if err != nil || parseErr != nil || !procinfo.OwnedProcessIsAlive(pid) {
+			return SessionEvent{}, errors.New("shell process is unavailable")
 		}
 		var previous SessionEvent
 		for _, old := range j.events {

@@ -3,6 +3,7 @@ package egg
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -12,6 +13,9 @@ func TestShellReportOrderingDuplicatesAcknowledgementAndExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "egg.pid"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
 		t.Fatal(err)
 	}
 	report := func(state string, revision, after int64) SessionReport {
@@ -82,7 +86,12 @@ func TestShellReportOrderingDuplicatesAcknowledgementAndExit(t *testing.T) {
 func TestShellReportProcessExitClearsWaitAndUninstrumentedUnknown(t *testing.T) {
 	for _, exitCode := range []int{0, 1} {
 		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=shell\n"), 0600)
+		if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=shell\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "egg.pid"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+			t.Fatal(err)
+		}
 		for i, state := range []string{"working", "waiting"} {
 			_, err := RecordSessionReport(dir, SessionReport{Goal: "g", Update: "u", NextAction: "n", Shell: &ShellReport{SessionID: filepath.Base(dir), State: state, Revision: int64(i + 1), After: int64(i)}})
 			if err != nil {
@@ -103,5 +112,30 @@ func TestShellReportProcessExitClearsWaitAndUninstrumentedUnknown(t *testing.T) 
 		if err != nil || v.Status != "unknown" {
 			t.Fatalf("%+v %v", v, err)
 		}
+	}
+}
+
+func TestShellReportProcessDisappearanceRefusesLateReport(t *testing.T) {
+	dir := t.TempDir()
+	for file, content := range map[string]string{"egg.meta": "agent=\n", "egg.pid": strconv.Itoa(os.Getpid())} {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, state := range []string{"working", "waiting"} {
+		_, err := RecordSessionReport(dir, SessionReport{Goal: "g", Update: "u", NextAction: "n", Shell: &ShellReport{SessionID: filepath.Base(dir), State: state, Revision: int64(i + 1), After: int64(i)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	view, err := ReadSessionLifecycle(dir, "", "", "", "", false, 0, 200)
+	if err != nil || view.Status != "exited" || view.State == "needs_input" || view.Ready {
+		t.Fatalf("%+v %v", view, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "egg.pid"), []byte("0"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RecordSessionReport(dir, SessionReport{Goal: "g", Update: "u", NextAction: "n", Shell: &ShellReport{SessionID: filepath.Base(dir), State: "continue", Revision: 3, After: 2}}); err == nil {
+		t.Fatal("late report accepted after process disappeared")
 	}
 }

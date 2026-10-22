@@ -62,7 +62,7 @@ func TestShellReportThreeExecutableTasksOneRefresh(t *testing.T) {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
-		for file, value := range map[string]string{"egg.meta": "agent=\nkind=terminal\ncwd=/projects/release\nprovider_home=" + root + "\n", "session.name": fmt.Sprintf("release-compatibility-customer-migration-validation-task-%d", i)} {
+		for file, value := range map[string]string{"egg.pid": fmt.Sprint(os.Getpid()), "egg.meta": "agent=\nkind=terminal\ncwd=/projects/release\nprovider_home=" + root + "\n", "session.name": fmt.Sprintf("release-compatibility-customer-migration-validation-task-%d", i)} {
 			if err := os.WriteFile(filepath.Join(dir, file), []byte(value), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -88,9 +88,6 @@ func TestShellReportThreeExecutableTasksOneRefresh(t *testing.T) {
 				_ = cmd.Wait()
 			}
 		})
-		if err := os.WriteFile(filepath.Join(dir, "egg.pid"), []byte(fmt.Sprint(os.Getpid())), 0600); err != nil {
-			t.Fatal(err)
-		}
 		scanner := bufio.NewScanner(output)
 		for scanner.Scan() {
 			if strings.Contains(scanner.Text(), "Waiting for continue") {

@@ -25,7 +25,7 @@ journal. Its optional `shell` object contains `session_id`, `revision`, `after`
 revision once per transition and use the returned sequence for after. Retrying
 the identical latest report returns the original event without appending it.
 Names, ID prefixes, mismatched IDs, old revisions, stale acknowledgement cursors,
-non-shell sessions, and reports following a recorded process exit are refused.
+non-shell sessions, and reports following process exit or disappearance are refused.
 A waiting task resumes only with an exact continue acknowledgement, or finishes.
 Finished is terminal. A process exit removes a wait even if no finished report
 arrived. Quiet, uninstrumented shells have no inferred task state. Existing
