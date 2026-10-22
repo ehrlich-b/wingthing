@@ -90,7 +90,8 @@ function sessions() { return S.sessionsData.filter(s => (s.kind || 'terminal') !
 function coordinator() { return sessions().find(isCoordinator); }
 function workSessions() { return sessions().filter(s => !isCoordinator(s)); }
 function sessionState(s) { return stateOf(s, wingOf(s.wing_id)); }
-function needing() { return workSessions().filter(s => sessionState(s).key === 'need'); }
+// Keep remembered requests discoverable even when their machine is offline.
+function needing() { return workSessions().filter(s => stateOf(s, { online: true }).key === 'need'); }
 
 // Read the session's own transcript evidence; cached briefly per session.
 function read(s) {
@@ -144,6 +145,27 @@ function needCard(s, primary = 'Answer in terminal') {
         (r.command ? '<pre class="pp-cmd"><span class="pp-prompt">$</span> ' + esc(r.command) + '</pre>' : '') +
         '<div class="pp-actions"><a class="pp-btn pp-btn-ink" href="' + sessionHref(s, 'approve') + '">' + esc(primary) + '</a><a class="pp-btn" href="' + sessionHref(s) + '">Open session</a></div></article>';
 }
+function needRow(s) {
+    const r = request(s), w = wingOf(s.wing_id);
+    const line = r.reason || 'Request unavailable. Check the terminal.';
+    const where = machineName(w) + (machineState(w) === 'connected' ? '' : ' · ' + machineLabel(w));
+    return '<a class="pp-need-row" href="' + sessionHref(s, 'approve') + '">' +
+        '<span class="pp-need-identity"><b>' + esc(sessionDisplayName(s)) + '</b><small>' + esc(where) + '</small></span>' +
+        '<span class="pp-need-request" title="' + esc(line) + '">' + esc(line) + '</span><span class="pp-need-answer">Answer →</span></a>';
+}
+function needsSummary() {
+    const need = needing();
+    return '<section class="pp-needs" id="pp-needs" tabindex="-1" aria-labelledby="pp-needs-title">' +
+        '<div class="pp-needs-heading"><h2 id="pp-needs-title">Needs you <span>' + need.length + '</span></h2>' +
+        (need.length > 2 ? '<a class="pp-more" href="#decisions">+' + (need.length - 2) + ' more</a>' : '') + '</div>' +
+        (need.length ? need.slice(0, 2).map(needRow).join('') : '<p class="pp-quiet">Nothing waiting</p>') + '</section>';
+}
+function viewDecisions() {
+    const need = needing();
+    return head('Needs you', need.length + ' waiting') + '<section class="pp-decisions" aria-label="Waiting decisions">' +
+        (need.length ? need.map(needRow).join('') : '<p class="pp-quiet">Nothing waiting</p>') +
+        '</section><a class="pp-more" href="#needs">Back to messages</a>';
+}
 function head(title, meta) { return '<header class="pp-hdr"><h1>' + title + '</h1><div class="pp-meta">' + meta + '</div></header>'; }
 function kicker(left, right = '') { return '<div class="pp-kick"><span>' + left + '</span><span>' + right + '</span></div>'; }
 
@@ -181,7 +203,7 @@ function viewWing() {
         if (last) rows.push({ who: 'session', s, text: last.text, at: last.at, where: agentName(s.agent) + ' · ' + machineName(wingOf(s.wing_id)) });
     }
     rows.sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
-    const reporting = new Set(rows.filter(r => r.s).map(r => r.s.id)).size;
+    const reporting = new Set(rows.filter(r => r.s).map(r => JSON.stringify([r.s.wing_id, r.s.id]))).size;
     const need = needing();
     const thread = rows.slice(-14).map(r => '<div class="pp-row pp-row-' + r.who + '" data-source="' + esc((r.s ? sessionDisplayName(r.s) : r.who) + ' · ' + (r.s ? machineName(wingOf(r.s.wing_id)) : r.where)) + '">' +
         '<div class="pp-who">' + (r.s ? '<a href="' + sessionHref(r.s) + '">' + esc(sessionDisplayName(r.s)) + '</a>' + chip(sessionState(r.s)) : '<b>' + r.who + '</b>') +
@@ -189,9 +211,10 @@ function viewWing() {
         '<div class="pp-say">' + prose(r.text) + '</div></div>').join('');
     const meta = '<b>wing</b>' + (coord ? ' · ' + esc(machineName(wingOf(coord.wing_id))) : '') + (coord ? ' · ' + esc(agentName(coord.agent)) + chip(sessionState(coord)) : '') + (need.length ? ' · <em>' + need.length + ' needs you</em>' : '');
     return head('wing', meta) + '<div class="pp-cols"><div class="pp-col-main">' +
+        needsSummary() +
         '<div class="pp-thread-heading">' + kicker('<span data-thread-source>Today</span>', reporting + (reporting === 1 ? ' session' : ' sessions') + ' reporting') + '</div><div class="pp-conversation" tabindex="0" aria-label="Wing messages">' +
         (coord ? accessPanel(wingOf(coord.wing_id)) : '') + (thread || '<p class="pp-quiet">Wing has not reported yet. Its updates and each session\'s latest line appear here.</p>') +
-        need.map(s => needCard(s)).join('') + '</div>' + (coord ? composer('Message wing', coord) : '') + '</div>' +
+        '</div>' + (coord ? composer('Message wing', coord) : '') + '</div>' +
         '<aside class="pp-col-rail">' + kicker('Sessions', String(work.length)) + work.slice(0, 8).map(s => '<a class="pp-mini" href="' + sessionHref(s) + '">' + chip(sessionState(s)) + '<span>' + esc(sessionDisplayName(s)) + '</span><small>' + esc(machineName(wingOf(s.wing_id))) + '</small></a>').join('') + (work.length > 8 ? '<a class="pp-quiet" href="#sessions">+' + (work.length - 8) + ' more</a>' : '') +
         kicker('Machines', String(S.wingsData.length)) + '<div class="pp-squares">' + squares() + '</div></aside></div>';
 }
@@ -307,9 +330,9 @@ function viewApprove(route) {
 }
 
 function nav(route) {
-    const need = needing().length, here = route.view === 'wing' || route.view === 'approve' ? 'wing' : route.view === 'machines' || route.view === 'pair' ? 'machines' : 'sessions';
+    const need = needing().length, here = ['wing', 'approve', 'decisions'].includes(route.view) ? 'wing' : route.view === 'machines' || route.view === 'pair' ? 'machines' : 'sessions';
     const item = (key, label, href, count, hot) => '<a href="' + href + '" class="pp-nav-' + key + '"' + (here === key ? ' aria-current="page"' : '') + '><span>' + label + '</span><small' + (hot ? ' class="pp-hot"' : '') + '>' + count + '</small></a>';
-    return item('wing', 'wing', '#', need ? need + ' needs you' : '', !!need) + item('sessions', 'Sessions', '#sessions', workSessions().length || '', false) + item('machines', 'Machines', '#machines', S.wingsData.length || '', false);
+    return item('wing', 'wing', need ? '#needs' : '#', need ? need + ' needs you' : '', !!need) + item('sessions', 'Sessions', '#sessions', workSessions().length || '', false) + item('machines', 'Machines', '#machines', S.wingsData.length || '', false);
 }
 
 function frame() {
@@ -319,6 +342,7 @@ function frame() {
     document.body.prepend(root);
     main = root.querySelector('.pp-main'); side = root.querySelector('.pp-side');
     root.addEventListener('click', event => {
+        if (event.target.closest('a[href="#needs"]') && location.hash === '#needs') main.querySelector('#pp-needs')?.focus({ preventScroll: true });
         if (event.target.closest('[data-check-receipt]')) {
             if (inputReader && inputSnapshot?.pending && !event.target.disabled) inputReader.checkReceipt(inputSnapshot.pending.request_id);
             return;
@@ -455,7 +479,7 @@ export function render(force) {
     if (!on) { selectComposer(null); return; }
     const denied = browserUnavailable(S.currentUser);
     selectComposer(!denied ? (route.view === 'wing' ? coordinator() : route.view === 'session' ? findSession(route) : null) : null);
-    const views = { wing: viewWing, sessions: viewSessions, machines: viewMachines, pair: viewPair, new: viewNew, session: viewSession, approve: viewApprove };
+    const views = { wing: viewWing, decisions: viewDecisions, sessions: viewSessions, machines: viewMachines, pair: viewPair, new: viewNew, session: viewSession, approve: viewApprove };
     const html = denied ? head('Get started', 'Free native access') + directSetup(S.currentUser) : views[route.view](route);
     const sig = location.hash + html;
     if (sig === lastSignature) return;
@@ -494,6 +518,7 @@ export function render(force) {
     if (filter) { const f = root.querySelector('#pp-filter'); if (f) { f.value = filter; f.dispatchEvent(new Event('input', { bubbles: true })); } }
     if (route.view === 'sessions') updateSessionSearch();
     if (focused && (focused === 'pp-message' || focused === 'pp-filter')) root.querySelector('#' + focused)?.focus({ preventScroll: true });
+    if (focused === 'pp-needs' || fresh && route.focusNeeds) main.querySelector('#pp-needs')?.focus({ preventScroll: true });
     if (input && selection) input.setSelectionRange(...selection);
 }
 

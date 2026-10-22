@@ -50,6 +50,8 @@ export function offlineLabel(since) {
 
 export function paperRoute(hash) {
     if (!hash || hash === '#') return { view: 'wing' };
+    if (hash === '#needs') return { view: 'wing', focusNeeds: true };
+    if (hash === '#decisions') return { view: 'decisions' };
     if (hash === '#sessions' || hash === '#machines' || hash === '#pair' || hash === '#new') return { view: hash.slice(1) };
     if (hash.startsWith('#new/')) return { view: 'new', wingId: decodeURIComponent(hash.slice(5)) };
     const m = hash.match(/^#(session|approve)\/([^/]+)\/([^/?]+)$/);
