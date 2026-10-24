@@ -89,16 +89,16 @@ test('checking presence preserves every last reported lifecycle label', () => {
 const paperSource = readFileSync(new URL('../src/paper.js', import.meta.url), 'utf8')
     .replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
 
-function searchFixture(cached = false) {
-    const input = { value: '' }, empty = { hidden: true };
+function searchFixture() {
+    const input = { value: '' }, message = { textContent: '' }, summary = { textContent: '' };
+    const empty = { hidden: true, querySelector: () => message };
     const groups = [
         ['Fix redirect on Studio', 'Refund retries on Studio', 'Access review on MacBook'],
         Array.from({ length: 9 }, (_, i) => `Working task ${i} on ${i < 2 ? 'Mini' : 'Studio'}`),
         Array.from({ length: 11 }, (_, i) => `Finished task ${i} on ${i < 5 ? 'Mini' : 'MacBook'}`),
     ].map((names, i) => {
         const rows = names.map(textContent => ({ textContent, hidden: false }));
-        const label = { textContent: cached && i === 2 ? 'Cached' : String(rows.length) };
-        label.dataset = { defaultCount: label.textContent };
+        const label = { textContent: String(rows.length) };
         return { rows, label, hidden: false,
             querySelectorAll: selector => { assert.equal(selector, '.pp-srow'); return rows; },
             querySelector: selector => { assert.equal(selector, '[data-group-count]'); return label; },
@@ -106,8 +106,8 @@ function searchFixture(cached = false) {
     });
     const fixture = {
         querySelector: selector => {
-            assert.ok(['#pp-filter', '[data-search-empty]'].includes(selector));
-            return selector === '#pp-filter' ? input : empty;
+            assert.ok(['#pp-filter', '[data-search-empty]', '[data-session-summary]'].includes(selector));
+            return selector === '#pp-filter' ? input : selector === '[data-session-summary]' ? summary : empty;
         },
         querySelectorAll: selector => { assert.equal(selector, '.pp-group'); return groups; },
     };
@@ -116,7 +116,7 @@ function searchFixture(cached = false) {
         runInNewContext(paperSource + '\nroot = fixture; updateSessionSearch();', { fixture });
         return groups.map(group => [group.label.textContent, group.hidden, group.rows.filter(row => !row.hidden).length]);
     };
-    return { filter, empty };
+    return { filter, empty, message, summary };
 }
 
 test('paper search counts visible rows, hides empty groups and restores all 23 rows', () => {
@@ -134,11 +134,13 @@ test('paper search counts visible rows, hides empty groups and restores all 23 r
     assert.equal(empty.hidden, true);
 });
 
-test('paper search replaces Cached with matching counts and restores Cached on clear', () => {
-    const { filter, empty } = searchFixture(true);
-    assert.deepEqual(filter('mini'), [['0', true, 0], ['2', false, 2], ['5', false, 5]]);
-    assert.deepEqual(filter('no matching session'), [['0', true, 0], ['0', true, 0], ['0', true, 0]]);
-    assert.equal(empty.hidden, false);
-    assert.deepEqual(filter(''), [['3', false, 3], ['9', false, 9], ['Cached', false, 11]]);
-    assert.equal(empty.hidden, true);
+test('paper search names the query safely and reports results instead of inventory totals', () => {
+    const { filter, message, summary } = searchFixture();
+    filter('<img src=x>');
+    assert.equal(message.textContent, 'No sessions match “<img src=x>”.');
+    assert.equal(summary.textContent, '0 matches');
+    filter('refund retries');
+    assert.equal(summary.textContent, '1 match');
+    filter('');
+    assert.equal(summary.textContent, '23 sessions');
 });

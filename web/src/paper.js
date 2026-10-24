@@ -239,9 +239,9 @@ function sessionRow(s) {
         '<span class="pp-sname"><b>' + esc(sessionDisplayName(s)) + '</b><i>' + esc([agentName(s.agent), machineName(w), project(s)].filter(Boolean).join(' · ')) + '</i></span>' +
         '<span class="pp-sline">' + esc(staleState(s) || line) + '</span><time>' + esc(ago(last && last.at)) + '</time></a>';
 }
-function group(title, list, right) {
-    const count = right || String(list.length);
-    return list.length ? '<section class="pp-group"><div class="pp-kick"><span>' + title + '</span><span data-group-count data-default-count="' + esc(count) + '">' + esc(count) + '</span></div>' + list.map(sessionRow).join('') + '</section>' : '';
+function group(title, list) {
+    const count = String(list.length);
+    return list.length ? '<section class="pp-group"><div class="pp-kick"><span>' + title + '</span><span data-group-count>' + esc(count) + '</span></div>' + list.map(sessionRow).join('') + '</section>' : '';
 }
 
 function viewSessions() {
@@ -251,16 +251,16 @@ function viewSessions() {
     const offlineWings = S.wingsData.filter(w => isAway(w));
     const awake = S.wingsData.filter(w => machineState(w) === 'connected').map(machineName);
     const unavailable = S.wingsData.filter(w => !['connected', 'checking'].includes(machineState(w)));
-    const banner = unavailable.slice(0, machineLimit).map(accessPanel).join('') + (unavailable.length > machineLimit ? '<a class="pp-more" href="#machines">+' + (unavailable.length - machineLimit) + ' more machines</a>' : '');
+    const banner = unavailable.slice(0, machineLimit).map(w => '<p class="pp-machine-status">' + esc(machineName(w) + ' · ' + machineLabel(w)) + ' · <a href="#machines">Machine controls</a></p>').join('') + (unavailable.length > machineLimit ? '<a class="pp-more" href="#machines">+' + (unavailable.length - machineLimit) + ' more machines</a>' : '');
     const away = work.filter(s => sessionState(s).key === 'offline');
-    const meta = '<b>' + work.length + '</b> on ' + S.wingsData.length + (S.wingsData.length === 1 ? ' machine' : ' machines') + ' · ' + awake.length + ' connected' + (offlineWings.length ? ' · <span class="pp-away-word">' + offlineWings.map(w => esc(machineName(w) + ' ' + offlineLabel()) + (w.last_seen ? '<span class="pp-since"> · last seen ' + esc(lastSeen(w)) + '</span>' : '')).join(', ') + '</span>' : '');
+    const meta = '<span data-session-summary><b>' + work.length + '</b> sessions</span> · ' + S.wingsData.length + (S.wingsData.length === 1 ? ' machine' : ' machines') + ' · ' + awake.length + ' connected';
     const coord = coordinator(), coordLast = coord && lines(coord).filter(l => l.who === 'agent').pop();
-    return head('Sessions', meta) + '<div class="pp-cols"><div class="pp-col-main">' + banner +
+    return head('Sessions', meta) + '<div class="pp-cols"><div class="pp-col-main">' +
         '<div class="pp-searchbar"><label class="pp-sr" for="pp-filter">Search sessions</label><input id="pp-filter" type="search" placeholder="Search work or machines" autocomplete="off"><button type="button" class="pp-btn" data-new-session>New session</button></div>' +
-        '<p class="pp-quiet" data-search-empty role="status" hidden>No sessions match this search.</p>' +
-        group('Needs you', by('need')) + group('Working', by('work')) + group('Idle and done', [...by('idle'), ...by('done'), ...by('ended'), ...by('unknown')]) +
+        '<div class="pp-search-result" data-search-empty role="status" hidden><span data-search-message></span><button type="button" class="pp-btn" data-clear-search>Clear search</button></div>' +
+        group('Needs you', by('need')) + banner + group('Working', by('work')) + group('Idle and done', [...by('idle'), ...by('done'), ...by('ended'), ...by('unknown')]) +
         group('Access needed', [...by('locked'), ...by('no-access'), ...by('key-mismatch'), ...by('unavailable')]) +
-        offlineWings.map(w => group('Last seen on ' + esc(machineName(w)), away.filter(s => s.wing_id === w.wing_id), 'Stale')).join('') + '</div>' +
+        offlineWings.map(w => group('Last seen on ' + esc(machineName(w)), away.filter(s => s.wing_id === w.wing_id))).join('') + '</div>' +
         '<aside class="pp-col-rail">' + (coord ? kicker('Pinned') + '<div class="pp-pin"><p><b class="pp-wing">wing</b> <small>' + esc(clock(coordLast && coordLast.at)) + '</small></p><p>' + prose(coordLast ? coordLast.text : 'No update yet.') + '</p><a class="pp-btn" href="#">Open wing</a></div>' : '') +
         kicker('Machines', String(S.wingsData.length)) + S.wingsData.slice(0, machineLimit).map(w => machineRow(w)).join('') + machineOverflow() + '</aside></div>';
 }
@@ -346,6 +346,11 @@ function frame() {
     root.querySelector('.pp-account').append(DOM.accountSection);
     root.addEventListener('click', event => {
         if (event.target.closest('a[href="#needs"]') && location.hash === '#needs') main.querySelector('#pp-needs')?.focus({ preventScroll: true });
+        if (event.target.closest('[data-clear-search]')) {
+            const input = root.querySelector('#pp-filter');
+            if (input) { input.value = ''; updateSessionSearch(); input.focus({ preventScroll: true }); }
+            return;
+        }
         if (event.target.closest('[data-check-receipt]')) {
             if (inputReader && inputSnapshot?.pending && !event.target.disabled) inputReader.checkReceipt(inputSnapshot.pending.request_id);
             return;
@@ -406,11 +411,17 @@ function updateSessionSearch() {
         }, 0);
         visible += count;
         const countLabel = group.querySelector('[data-group-count]');
-        if (countLabel) countLabel.textContent = query ? String(count) : countLabel.dataset.defaultCount;
+        if (countLabel) countLabel.textContent = String(count);
         group.hidden = !!query && count === 0;
     }
     const empty = root.querySelector('[data-search-empty]');
-    if (empty) empty.hidden = !query || visible > 0;
+    if (empty) {
+        empty.hidden = !query || visible > 0;
+        const message = empty.querySelector('[data-search-message]');
+        if (message) message.textContent = 'No sessions match “' + input.value.trim() + '”.';
+    }
+    const summary = root.querySelector('[data-session-summary]');
+    if (summary) summary.textContent = query ? visible + (visible === 1 ? ' match' : ' matches') : visible + (visible === 1 ? ' session' : ' sessions');
 }
 
 function show(on) {
