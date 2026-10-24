@@ -39,7 +39,7 @@ async function run() {
             if (state === 'plan') await page.getByRole('heading', {name:'Want browser control?'}).waitFor();
             else {
                 await page.locator('#wd-name').waitFor();
-                await page.waitForFunction(() => presenceFixture.calls.some(c => c.type === 'sessions.list')); 
+                await page.waitForFunction(() => presenceFixture.calls.some(c => c.type === 'sessions.list'));
                 if (state !== 'offline') await page.locator('#wd-past-sessions').getByText('no audited sessions', {exact:true}).waitFor({state:'attached'});
                 assert.equal(await page.locator('.wd-session-row').count(), count);
             }
