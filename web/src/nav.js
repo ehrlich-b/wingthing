@@ -189,7 +189,9 @@ export function navigateToAccount(pushHistory, orgSlug) {
     renderAccountPage();
     if (pushHistory !== false) {
         var hash = orgSlug ? '#account/' + orgSlug : '#account';
-        history.pushState({ view: 'account', orgSlug: orgSlug || null }, '', hash);
+        // Hash navigation already created this entry; attach its state in place.
+        if (location.hash === hash) history.replaceState({ view: 'account', orgSlug: orgSlug || null }, '', hash);
+        else history.pushState({ view: 'account', orgSlug: orgSlug || null }, '', hash);
     }
 }
 
