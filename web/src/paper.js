@@ -17,6 +17,7 @@ import { browserUnavailable, installedAgents, needsPasskey, directSetup, agentSe
 const reads = new Map();
 const terminals = new Map();
 const numberWords = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+let detailHome;
 let root, main, side, lastSignature = '', allMachines = false, retrying = false, launchWingId = '';
 const machineLimit = 5;
 const machineListLimit = 6;
@@ -475,10 +476,13 @@ function updateThreadSource() {
 }
 
 export function render(force) {
+    if (!root) return;
     const account = S.activeView === 'account';
-    const route = account ? { view: 'account' } : paperRoute();
-    const on = account || !!route && S.activeView === 'home';
+    const machineDetail = S.activeView === 'wing-detail';
+    const route = account ? { view: 'account' } : machineDetail ? { view: 'machines' } : paperRoute();
+    const on = account || machineDetail || !!route && S.activeView === 'home';
     show(on);
+    if (!machineDetail && detailHome) detailHome.after(DOM.wingDetailSection);
     if (!on) { selectComposer(null); return; }
     main.hidden = account;
     root.querySelector('.pp-account').hidden = !account;
@@ -494,6 +498,15 @@ export function render(force) {
         side.querySelector('.pp-date').textContent = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
         side.querySelector('.pp-side-squares').innerHTML = '';
         side.querySelector('.pp-foot').textContent = S.currentUser.email || '';
+        return;
+    }
+    if (machineDetail) {
+        selectComposer(null);
+        if (!detailHome) { detailHome = document.createComment('Machine detail'); DOM.wingDetailSection.before(detailHome); }
+        if (DOM.wingDetailSection.parentNode !== main) main.replaceChildren(DOM.wingDetailSection);
+        main.dataset.view = 'machine';
+        lastSignature = '';
+        renderNavigation(route, false);
         return;
     }
     const denied = browserUnavailable(S.currentUser);
@@ -526,12 +539,7 @@ export function render(force) {
         nextConversation.addEventListener('scroll', updateThreadSource, { passive: true });
         updateThreadSource();
     }
-    const nv = nav(route);
-    side.querySelector('.pp-nav').innerHTML = nv;
-    root.querySelector('.pp-tabs').innerHTML = nv;
-    side.querySelector('.pp-date').textContent = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
-    side.querySelector('.pp-side-squares').innerHTML = denied ? '' : squares();
-    side.querySelector('.pp-foot').textContent = S.currentUser && S.currentUser.email || '';
+    renderNavigation(route, denied);
     const input = root.querySelector('#pp-message');
     if (input) input.value = drafts.get(inputKey) || '';
     if (filter) { const f = root.querySelector('#pp-filter'); if (f) { f.value = filter; f.dispatchEvent(new Event('input', { bubbles: true })); } }
@@ -539,6 +547,15 @@ export function render(force) {
     if (focused && (focused === 'pp-message' || focused === 'pp-filter')) root.querySelector('#' + focused)?.focus({ preventScroll: true });
     if (focused === 'pp-needs' || fresh && route.focusNeeds) main.querySelector('#pp-needs')?.focus({ preventScroll: true });
     if (input && selection) input.setSelectionRange(...selection);
+}
+
+function renderNavigation(route, denied) {
+    const nv = denied ? '<a href="#" aria-current="page">Get started</a><a href="#account">Account</a>' : nav(route);
+    side.querySelector('.pp-nav').innerHTML = nv;
+    root.querySelector('.pp-tabs').innerHTML = nv;
+    side.querySelector('.pp-date').textContent = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
+    side.querySelector('.pp-side-squares').innerHTML = denied ? '' : squares();
+    side.querySelector('.pp-foot').textContent = S.currentUser && S.currentUser.email || '';
 }
 
 export function initPaper() {
