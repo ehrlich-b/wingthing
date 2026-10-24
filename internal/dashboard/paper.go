@@ -330,7 +330,7 @@ func (s *state) visibleReports(width, height int) []row {
 	}
 	count := max(0, max(13, height-12)-8)
 	if width >= 120 && height >= 30 {
-		count = min(7, max(0, (height-13)/2))
+		count = min(12, max(0, (height-13)/2))
 	}
 	if len(work) > count && count > 2 {
 		count--
@@ -344,4 +344,38 @@ func (s *state) visibleReports(width, height int) []row {
 	}
 	start := max(0, min(index-count/2, len(work)-count))
 	return work[start:min(start+count, len(work))]
+}
+
+// The selected output and its identity share a fixed pane; output cannot take
+// rows from the navigator. Long names wrap here while table rows stay compact.
+func (s *state) terminalPane(r row, now time.Time, width, height int) []string {
+	lines := []string{"SELECTED"}
+	name := wrap(r.name(), width)
+	lines = append(lines, name[:min(2, len(name))]...)
+	lines = append(lines, agentLabel(r.Agent)+" · "+machineLabel(r.machine)+" · "+r.project())
+	lines = append(lines, "", "OUTPUT · read only")
+	value := s.preview(r)
+	if s.stale(r.machine) {
+		lines = append(lines, "Last seen · R reconnect")
+	}
+	action := "v full output   Enter open   i details"
+	if !s.stale(r.machine) {
+		if p, ok := s.livePermission(r); ok {
+			lines = append(lines, "WILL RUN", clip(fmt.Sprint(p.Arguments["command"]), width), clip(permissionWhere(p), width))
+			action = s.permissionKeys(r)
+		}
+	}
+	available := max(0, height-len(lines)-2)
+	output := value.output
+	if len(output) == 0 {
+		output = []string{"No output yet."}
+	}
+	if len(output) > available {
+		output = output[len(output)-available:]
+	}
+	for _, line := range output {
+		lines = append(lines, clip(line, width))
+	}
+	lines = append(lines, "", action)
+	return lines
 }

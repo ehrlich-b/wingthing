@@ -165,7 +165,7 @@ func sessionLine(s *state, r row, width int, now time.Time) viewLine {
 		label, role = "? Last seen", caution
 	}
 	elapsed := s.rowAge(r, now)
-	selected := r.key() == s.selected
+	selected := r.key() == s.selected && !s.selectionLost
 	lead := "  "
 	if selected {
 		lead = "> "
@@ -398,7 +398,7 @@ func keyHints(s *state) []string {
 			return []string{s.permissionKeys(r) + "   / search", "j/k move   A agents   D diagnostics   ? help   q quit   Ctrl+B then q detaches"}
 		}
 	}
-	return []string{"Enter open   / search   n new   ! needs you   . actions", "j/k move   m machines   h runs   " + s.refreshKey() + "   ? help   q quit   Ctrl+B then q detaches"}
+	return []string{"Enter open   v read only   / search   n new   ! needs you   . actions", "j/k move   m machines   h runs   " + s.refreshKey() + "   ? help   q quit   Ctrl+B then q detaches"}
 }
 
 // refreshKey names R for what it does now: reconnect when a machine is
@@ -559,7 +559,7 @@ func render(s *state, width, height int, now time.Time) string {
 		listEnd = max(13, listEnd)
 	}
 	if wide {
-		listEnd = listStart + min(7, max(0, (height-13)/2))
+		listEnd = listStart + min(12, max(0, (height-13)/2))
 	}
 	listStart, listEnd = listStart-shift, listEnd-shift
 	// A compact list gives up a row when wing's newest message wraps.
@@ -592,7 +592,7 @@ func render(s *state, width, height int, now time.Time) string {
 		lines[listStart+i] = sessionLine(s, work[start+i], listWidth-3*boolCell(wide), now)
 	}
 	if len(work) > count && count > 0 {
-		set(positionAt, fmt.Sprintf("  %d-%d of %d sessions", start+1, min(start+count, len(work)), len(work)), secondary)
+		set(positionAt, fmt.Sprintf("  %d-%d of %d sessions · +%d more", start+1, min(start+count, len(work)), len(work), len(work)-count), secondary)
 	}
 	if r, ok := s.selection(); ok {
 		detailWidth := width
@@ -605,6 +605,9 @@ func render(s *state, width, height int, now time.Time) string {
 				lines[y].split, lines[y].frame = listWidth, true
 			}
 			pane := s.paperPane(r, now, detailWidth-1, height-7)
+			if s.preview(r).output != nil {
+				pane = s.terminalPane(r, now, detailWidth-1, height-7)
+			}
 			for i, line := range pane {
 				if i+3 < height-4 {
 					lines[i+3].right = line
@@ -926,6 +929,7 @@ func safeNotice(message string) string {
 		"Decline: unconfirmed. Answer in terminal; this decision will not be resent.",
 		"Decision not confirmed. Answer in terminal.", "Answer in terminal", "Sending decision…",
 		"Review every line of the current request, or Answer in terminal",
+		"Selected session unavailable. j/k choose another.", "Selected machine changed. j/k choose another.",
 		"Access denied. R refresh.", "Done", "Running...", "Running…", "Name cannot be empty", "Working directory cannot be empty",
 		"Bell on for this dashboard", "Bell off for this dashboard", "Waiting for your answer.",
 		"New reply. Background work may still run.", "Input control is not available for this session":

@@ -23,6 +23,7 @@ type machine struct {
 }
 
 type row struct {
+	terminalPreview bool
 	eggclient.LocalSession
 	machine    string
 	generation string
@@ -117,6 +118,7 @@ type state struct {
 	registryError                      string
 	registrySequence                   uint64
 	selectionTouched                   bool
+	selectionLost                      bool
 	selected                           string
 	filter                             string
 	mode                               mode
@@ -248,6 +250,9 @@ func sessionRank(status string) int {
 }
 
 func (s *state) selection() (row, bool) {
+	if s.selectionLost {
+		return row{}, false
+	}
 	rows := s.rows()
 	for _, r := range rows {
 		if r.key() == s.selected {
@@ -274,17 +279,23 @@ func (s *state) reconcile() {
 	for _, r := range ordered {
 		s.rowOrder = append(s.rowOrder, r.key())
 	}
-	if rows := s.rows(); !s.selectionTouched && len(rows) > 0 && rows[0].Pinned {
+	if rows := s.rows(); !s.selectionTouched && !s.selectionLost && len(rows) > 0 && rows[0].Pinned {
 		s.selected = rows[0].key()
 	}
 	if r, ok := s.selection(); ok {
 		s.selected = r.key()
-	} else {
+	} else if !s.selectionLost {
 		s.selected = ""
 	}
 }
 
 func (s *state) move(delta int) {
+	if s.selectionLost {
+		s.selectionTouched = true
+		s.selectionLost, s.selected, s.message = false, "", ""
+		s.reconcile()
+		return
+	}
 	s.selectionTouched = true
 	rows := s.rows()
 	for i, r := range rows {
@@ -391,6 +402,9 @@ func (s *state) handle(key string) (act *action, quit bool) {
 				s.mode, s.overlayOffset = machineDetails, 0
 			}
 		case "enter":
+			if s.selectionLost {
+				s.selectionLost, s.selected = false, ""
+			}
 			s.selectionTouched = true
 			s.machineFilter = ""
 			if s.picker > 0 {
@@ -572,6 +586,9 @@ func (s *state) handle(key string) (act *action, quit bool) {
 	case "?":
 		s.mode, s.overlayOffset = help, 0
 	case "!":
+		if s.selectionLost {
+			s.selectionLost, s.selected = false, ""
+		}
 		s.selectionTouched = true
 		s.attentionOnly = !s.attentionOnly
 		s.reconcile()
@@ -584,6 +601,9 @@ func (s *state) handle(key string) (act *action, quit bool) {
 		s.reconcile()
 		s.refresh = true
 	case "/":
+		if s.selectionLost {
+			s.selectionLost, s.selected = false, ""
+		}
 		s.selectionTouched = true
 		s.mode, s.previous, s.input = filter, s.filter, s.filter
 		s.previousSelected = s.selected

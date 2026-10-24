@@ -145,7 +145,8 @@ func TestNorthstarPTYRemoteReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	northstarInventoryWait(t, "retired SSH joined", func() bool { return syscall.Kill(pid, 0) == syscall.ESRCH })
-	h.expect("capture pending stop before removal", h.send("x"), "replacement profile on devbox")
+	h.expect("replacement waits for explicit selection", h.send("x"), "Selected machine changed. j/k choose another.")
+	h.expect("capture pending stop before removal", h.send("jx"), "replacement profile on devbox")
 	cli("remote", "rm", "devbox")
 	h.expect("removed generation cancels confirmation", 0, "Saved machine changed")
 	h.expect("confirmation key cannot mutate removed target", h.send("y/\x15\rR"), "healthy local", "2 machines")

@@ -262,9 +262,11 @@ func northstarSocket(t *testing.T, path string) string {
 
 type northstarEgg struct {
 	pb.UnimplementedEggServer
-	dir, marker string
-	attached    chan string
-	killed      atomic.Int32
+	dir, marker      string
+	attached         chan string
+	killed           atomic.Int32
+	previewReads     atomic.Int32
+	previewMutations atomic.Int32
 }
 
 func (f *northstarEgg) Status(context.Context, *pb.StatusRequest) (*pb.StatusResponse, error) {
@@ -288,9 +290,19 @@ func (f *northstarEgg) Session(stream grpc.BidiStreamingServer[pb.SessionMsg, pb
 	if first.SessionId != filepath.Base(f.dir) {
 		return fmt.Errorf("wrong fixture attach: %s", first.SessionId)
 	}
-	select {
-	case f.attached <- first.SessionId:
-	default:
+	options := first.GetAttachOptions()
+	if options != nil && options.ReadOnly && !options.Claim && !options.Takeover && options.Rows == 0 && options.Cols == 0 {
+		f.previewReads.Add(1)
+	} else {
+		f.previewMutations.Add(1)
+	}
+	// Snapshot observations are distinct from an interactive viewer. Keep the
+	// interactive channel useful for assertions about explicit attachment.
+	if options == nil || options.Owner != "snapshot" {
+		select {
+		case f.attached <- first.SessionId:
+		default:
+		}
 	}
 	if err := stream.Send(&pb.SessionMsg{SessionId: first.SessionId, Payload: &pb.SessionMsg_Output{Output: []byte("\x1b[2J\x1b[H" + f.marker + "\r\n")}}); err != nil {
 		return err
@@ -302,6 +314,9 @@ func (f *northstarEgg) Session(stream grpc.BidiStreamingServer[pb.SessionMsg, pb
 		}
 		if msg.GetDetach() {
 			return nil
+		}
+		if msg.GetResize() != nil || len(msg.GetInput()) > 0 {
+			f.previewMutations.Add(1)
 		}
 		if input := msg.GetInput(); len(input) > 0 {
 			if err := stream.Send(&pb.SessionMsg{SessionId: first.SessionId, Payload: &pb.SessionMsg_Output{Output: append([]byte("INPUT:"), input...)}}); err != nil {

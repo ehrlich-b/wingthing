@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -19,6 +20,7 @@ import (
 type previewMessage struct{ speaker, text, timestamp string }
 type sessionPreview struct {
 	origin       string
+	output       []string
 	messages     []previewMessage
 	update, next string
 	observed     time.Time
@@ -33,11 +35,12 @@ type previewResult struct {
 	err    error
 }
 type previewRead struct {
-	origin string
-	cancel context.CancelFunc
-	next   time.Time
-	cursor int64
-	serial uint64
+	terminal bool
+	origin   string
+	cancel   context.CancelFunc
+	next     time.Time
+	cursor   int64
+	serial   uint64
 }
 type previews struct {
 	reads     map[attentionIdentity]previewRead
@@ -100,7 +103,8 @@ func (p *previews) request(ctx context.Context, s *state, wide bool, now time.Ti
 	wanted := map[attentionIdentity]row{}
 	ordered := []row{}
 	add := func(r row) {
-		if _, ok := wanted[r.identity]; !ok && nativeSource(r.StateSource) && r.StateCursor > 0 {
+		if _, ok := wanted[r.identity]; !ok && ((wide && r.key() == s.selected) || (nativeSource(r.StateSource) && r.StateCursor > 0)) {
+			r.terminalPreview = wide && r.key() == s.selected
 			wanted[r.identity] = r
 			ordered = append(ordered, r)
 		}
@@ -142,7 +146,7 @@ func (p *previews) request(ctx context.Context, s *state, wide bool, now time.Ti
 		if accessDenied(s.machines[key.machine].err) {
 			delete(s.previews, key)
 		}
-		if r, ok := wanted[key]; !ok || s.stale(r.machine) || read.origin != r.OriginWingID {
+		if r, ok := wanted[key]; !ok || s.stale(r.machine) || read.origin != r.OriginWingID || read.terminal != r.terminalPreview {
 			if read.cancel != nil {
 				read.cancel()
 			}
@@ -177,7 +181,7 @@ func (p *previews) request(ctx context.Context, s *state, wide bool, now time.Ti
 		reader := s.previewReader
 		gate := p.readGates.gate(r.machine)
 		readCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		p.reads[key] = previewRead{cancel: cancel, cursor: r.StateCursor, serial: serial, origin: r.OriginWingID}
+		p.reads[key] = previewRead{cancel: cancel, cursor: r.StateCursor, serial: serial, origin: r.OriginWingID, terminal: r.terminalPreview}
 		p.workers.Add(1)
 		go func(r row) {
 			defer p.workers.Done()
@@ -216,14 +220,22 @@ func (p *previews) apply(s *state, result previewResult) {
 		return
 	}
 	read.cancel = nil
-	read.next = time.Now().Add(10 * time.Second)
+	delay := 10 * time.Second
+	if r.terminalPreview {
+		delay = 2 * time.Second
+	}
+	read.next = time.Now().Add(delay)
 	p.reads[r.identity] = read
 	if s.previews == nil {
 		s.previews = map[attentionIdentity]sessionPreview{}
 	}
 	if result.err != nil {
 		// Do not retain protected text following a denied/failed transcript read.
-		s.previews[r.identity] = sessionPreview{origin: r.OriginWingID, failed: true}
+		value := sessionPreview{origin: r.OriginWingID, failed: true}
+		if r.terminalPreview {
+			value.output = []string{"Output unavailable. R refresh."}
+		}
+		s.previews[r.identity] = value
 		return
 	}
 	s.previews[r.identity] = result.value
@@ -249,7 +261,77 @@ func readSessionPreview(ctx context.Context, r row) (sessionPreview, error) {
 	} else if r.identity.localDir != "" && dir != r.identity.localDir {
 		return sessionPreview{}, errors.New("local state changed")
 	}
-	return loadSessionPreview(ctx, r, runCommand)
+	if !r.terminalPreview {
+		return loadSessionPreview(ctx, r, runCommand)
+	}
+	value, err := loadTerminalPreview(ctx, r, runCommand)
+	if err != nil {
+		return sessionPreview{}, err
+	}
+	if nativeSource(r.StateSource) && r.StateCursor > 0 {
+		if messages, err := loadSessionPreview(ctx, r, runCommand); err == nil {
+			value.messages, value.update, value.next, value.cursor = messages.messages, messages.update, messages.next, messages.cursor
+		}
+	}
+	return value, nil
+}
+
+// Reuse the snapshot read path and the existing terminal renderer. No live
+// attachment, input stream or terminal replies are connected to this pane.
+func loadTerminalPreview(ctx context.Context, r row, command commandRunner) (sessionPreview, error) {
+	args := []string{"session", "read", "--json", "--", r.ID}
+	if r.machine != "local" {
+		if r.OriginWingID == "" {
+			return sessionPreview{}, errors.New("remote origin not reported")
+		}
+		args = append(remotepkg.ProfileArgs(r.identity.profile), "session", "action", "--json", "--wing", r.OriginWingID, "--session", r.ID, "--operation", "terminal_read")
+	}
+	var output previewOutput
+	if err := command(ctx, args, remotepkg.IO{Out: &output, ErrOut: io.Discard}); err != nil {
+		return sessionPreview{}, err
+	}
+	data := output.data
+	if r.machine != "local" {
+		var action struct {
+			Origin  string          `json:"origin_wing_id"`
+			Session string          `json:"session_id"`
+			Result  json.RawMessage `json:"result"`
+		}
+		if err := json.Unmarshal(data, &action); err != nil {
+			return sessionPreview{}, err
+		}
+		if action.Origin != r.OriginWingID || action.Session != r.ID {
+			return sessionPreview{}, errors.New("remote session identity changed")
+		}
+		data = action.Result
+	}
+	var snapshot struct {
+		Session string  `json:"session"`
+		Base64  *string `json:"base64"`
+	}
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return sessionPreview{}, err
+	}
+	if snapshot.Session != r.ID || snapshot.Base64 == nil {
+		return sessionPreview{}, errors.New("session identity changed")
+	}
+	raw, err := base64.StdEncoding.DecodeString(*snapshot.Base64)
+	if err != nil {
+		return sessionPreview{}, err
+	}
+	terminal := egg.NewVTerm(120, 36)
+	defer terminal.Close()
+	if _, err := terminal.Write(raw); err != nil {
+		return sessionPreview{}, err
+	}
+	text := strings.TrimRight(terminal.ScreenText(), " \n")
+	lines := []string{}
+	if text != "" {
+		for _, line := range strings.Split(text, "\n") {
+			lines = append(lines, clean(sessionsearch.Redact(strings.TrimRight(line, " "))))
+		}
+	}
+	return sessionPreview{origin: r.OriginWingID, output: lines, observed: time.Now()}, nil
 }
 
 func loadSessionPreview(ctx context.Context, r row, command commandRunner) (sessionPreview, error) {

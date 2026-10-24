@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -164,6 +165,19 @@ func (i *inventory) apply(s *state, result inventoryResult) bool {
 		delete(i.nextQuery, result.name)
 	}
 	s.machines[result.name] = machine
+	if s.selected != "" && strings.HasPrefix(s.selected, result.name+":") {
+		found := false
+		for _, session := range machine.sessions {
+			if result.name+":"+session.ID == s.selected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			s.selectionLost = true
+			s.message = "Selected session unavailable. j/k choose another."
+		}
+	}
 	s.reconcile()
 	pending := i.pending[result.name]
 	delete(i.pending, result.name)
@@ -197,6 +211,10 @@ func (i *inventory) reload(s *state, remotes map[string]config.Remote, err error
 		delete(i.failures, name)
 		delete(i.nextQuery, name)
 		delete(s.machines, name)
+		if s.selected != "" && strings.HasPrefix(s.selected, name+":") {
+			s.selectionLost = true
+			s.message = "Selected machine changed. j/k choose another."
+		}
 		if s.target.machine == name && (s.mode == rename || s.mode == confirmStop || s.mode == confirmTakeover || s.mode == newAgent || s.mode == newCWD || s.mode == details || s.mode == actionMenu) {
 			s.mode, s.input = navigate, ""
 			s.message = "Cancelled: saved profile " + name + " changed or was removed; select the current machine before acting"

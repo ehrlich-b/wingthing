@@ -189,6 +189,11 @@ directory and is required to start a persistent shell when no matching session
 exists. Without it, an empty inventory returns an error. With noninteractive
 input, bare entry prints the matching sessions as JSON and never creates one.
 `--json` requests that same read-only inventory explicitly from any terminal.
+
+The session navigator shows the selected terminal’s output beside the list on wide
+screens. Press `v` for the full read-only viewer and `q` to return to the same
+session. Previewing output never takes input control or resizes the session.
+
 An explicit attachment detaches when its input closes; it leaves the remote
 process running. Use `session read`, `send`, and `wait` for scripted control.
 
