@@ -562,9 +562,13 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 			return view, err
 		}
 	}
+	var shellState SessionEvent
 	var hookState SessionEvent
 	hookEvidence, sessionEnded := false, false
 	for _, event := range j.events {
+		if (agent == "" || agent == "shell") && event.Source == "shell_report" && event.Report != nil && event.Report.Shell != nil && event.Report.Shell.SessionID == view.SessionID {
+			shellState = event
+		}
 		if event.Type == "session_report" && event.Report != nil {
 			view.Report, view.ReportedAt, view.ReportCursor = event.Report, event.Timestamp, event.Sequence
 		}
@@ -659,6 +663,29 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		view.Reason += "capture unavailable: provider session ID has not been recorded"
 	}
 	view.Status = lifecycleStatus(view.State, hookEvidence, view.ProcessAlive, sessionEnded)
+	if shellState.Sequence > 0 {
+		view.Ready = false // Reported waits never grant provider input or approval authority.
+		view.State, view.StateSource, view.StateCursor, view.StateObservedAt = shellState.State, "shell_report", shellState.Sequence, shellState.Timestamp
+		view.Reason = "explicitly reported by shell task"
+		view.Status = map[string]string{"working": "working", "needs_input": "blocked", "completed": "done"}[shellState.State]
+		if !view.ProcessAlive {
+			view.Status = "exited"
+			if shellState.State == "completed" && !processInterrupted {
+				view.Status = "done"
+			}
+			if !processEnded && view.Status != "done" {
+				view.State, view.StateSource, view.StateCursor, view.StateObservedAt = "unknown", "egg_process", 0, ""
+				view.Reason = "shell process unavailable without a recorded exit"
+			}
+			if processEnded && view.Status != "done" {
+				view.State, view.StateSource, view.StateCursor, view.StateObservedAt = processEnd.State, processEnd.Source, processEnd.Sequence, processEnd.Timestamp
+				if view.State == "" {
+					view.State = "stopped"
+				}
+				view.Reason = processEnd.Reason
+			}
+		}
+	}
 	encodedReason, _ := json.Marshal(view.Reason)
 	if len(encodedReason) > maxLifecycleEvent {
 		view.Reason = boundedLifecycleString(view.Reason)

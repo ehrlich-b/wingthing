@@ -1,16 +1,31 @@
 package egg
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/url"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/ehrlich-b/wingthing/internal/procinfo"
 )
 
-// SessionReport describes intent, not native task state or scheduling authority.
+// ShellReport is an opt-in task signal scoped to an immutable shell session.
+type ShellReport struct {
+	SessionID string `json:"session_id"`
+	Revision  int64  `json:"revision"`
+	After     int64  `json:"after"`
+	State     string `json:"state"`
+}
+
+// SessionReport describes intent and optional reported shell state, never native
+// provider evidence or scheduling authority.
 type SessionReport struct {
+	Shell      *ShellReport     `json:"shell,omitempty"`
 	Goal       string           `json:"goal"`
 	Update     string           `json:"update"`
 	NextAction string           `json:"next_action"`
@@ -36,6 +51,16 @@ func reportText(text string, max int) bool {
 }
 
 func ValidateSessionReport(r SessionReport) error {
+	if r.Shell != nil {
+		if !validLifecycleID(r.Shell.SessionID) || r.Shell.Revision < 1 || r.Shell.After < 0 {
+			return errors.New("shell report requires exact session_id, positive revision and nonnegative after")
+		}
+		switch r.Shell.State {
+		case "working", "waiting", "continue", "finished":
+		default:
+			return errors.New("shell state must be working, waiting, continue or finished")
+		}
+	}
 	if !reportText(r.Goal, 2048) || !reportText(r.Update, 4096) || !reportText(r.NextAction, 2048) {
 		return errors.New("goal, update and next_action must be nonempty UTF-8 text, at most 2048, 4096 and 2048 bytes respectively")
 	}
@@ -77,8 +102,8 @@ func ValidateSessionReport(r SessionReport) error {
 	return nil
 }
 
-// Reports share cursor replay and durability with native session activity, but
-// have no State and cannot change readiness, permissions or wake delivery.
+// Reports share cursor replay and durability with native session activity.
+// Optional shell signals are explicitly reported evidence, never native hooks.
 func RecordSessionReport(dir string, report SessionReport) (SessionEvent, error) {
 	if err := ValidateSessionReport(report); err != nil {
 		return SessionEvent{}, err
@@ -88,7 +113,69 @@ func RecordSessionReport(dir string, report SessionReport) (SessionEvent, error)
 		return SessionEvent{}, err
 	}
 	defer j.close()
-	if err := j.append(SessionEvent{Type: "session_report", Source: "wing_report", Report: &report}); err != nil {
+	event := SessionEvent{Type: "session_report", Source: "wing_report", Report: &report}
+	if shell := report.Shell; shell != nil {
+		if shell.SessionID != filepath.Base(dir) {
+			return SessionEvent{}, errors.New("shell report session does not match exact immutable session")
+		}
+		meta, err := j.root.ReadFile("egg.meta")
+		if err != nil {
+			return SessionEvent{}, err
+		}
+		agent := "missing"
+		for _, line := range strings.Split(string(meta), "\n") {
+			if strings.HasPrefix(line, "agent=") {
+				agent = strings.TrimPrefix(line, "agent=")
+			}
+		}
+		if agent != "" && agent != "shell" {
+			return SessionEvent{}, errors.New("shell reports require a plain shell session")
+		}
+		pidData, err := j.root.ReadFile("egg.pid")
+		pid, parseErr := strconv.Atoi(strings.TrimSpace(string(pidData)))
+		if err != nil || parseErr != nil || !procinfo.OwnedProcessIsAlive(pid) {
+			return SessionEvent{}, errors.New("shell process is unavailable")
+		}
+		var previous SessionEvent
+		for _, old := range j.events {
+			if old.Type == "session_exit" || old.Type == "session_failed" {
+				return SessionEvent{}, errors.New("shell process has exited")
+			}
+			if old.Report != nil && old.Report.Shell != nil {
+				previous = old
+			}
+		}
+		if previous.Report != nil {
+			// Compare the durable representation: omitempty normalizes empty
+			// artifact/link slices to nil when the journal is reopened.
+			oldJSON, _ := json.Marshal(previous.Report)
+			newJSON, _ := json.Marshal(report)
+			if bytes.Equal(oldJSON, newJSON) {
+				return previous, nil
+			}
+		}
+		revision := int64(0)
+		state := ""
+		if previous.Report != nil {
+			revision = previous.Report.Shell.Revision
+			state = previous.Report.Shell.State
+		}
+		if shell.Revision != revision+1 || shell.After != previous.Sequence {
+			return SessionEvent{}, errors.New("stale shell revision or acknowledgement cursor")
+		}
+		if state == "finished" {
+			return SessionEvent{}, errors.New("shell task already finished")
+		}
+		if (shell.State == "continue" && state != "waiting") || (state == "waiting" && shell.State != "continue" && shell.State != "finished") {
+			return SessionEvent{}, errors.New("waiting requires an exact continue acknowledgement or finish")
+		}
+		if previous.Sequence == 0 && shell.State != "working" {
+			return SessionEvent{}, errors.New("shell task must start working")
+		}
+		event.Source = "shell_report"
+		event.State = map[string]string{"working": "working", "waiting": "needs_input", "continue": "working", "finished": "completed"}[shell.State]
+	}
+	if err := j.append(event); err != nil {
 		return SessionEvent{}, err
 	}
 	return j.events[len(j.events)-1], nil

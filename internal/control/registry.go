@@ -552,9 +552,15 @@ func buildTools() []Tool {
 					"goal":        map[string]any{"type": "string", "minLength": 1, "maxLength": 2048},
 					"update":      map[string]any{"type": "string", "minLength": 1, "maxLength": 4096},
 					"next_action": map[string]any{"type": "string", "minLength": 1, "maxLength": 2048},
-					"presence":    map[string]any{"type": "string", "enum": []string{"awake", "asleep"}},
-					"last_wake":   map[string]any{"type": "string", "format": "date-time"},
-					"next_wake":   map[string]any{"type": "string", "format": "date-time"},
+					"shell": objectSchema(map[string]any{
+						"session_id": stringProperty("Full immutable plain shell session ID"),
+						"revision":   map[string]any{"type": "integer", "minimum": 1},
+						"after":      map[string]any{"type": "integer", "minimum": 0},
+						"state":      map[string]any{"type": "string", "enum": []string{"working", "waiting", "continue", "finished"}},
+					}, "session_id", "revision", "after", "state"),
+					"presence":  map[string]any{"type": "string", "enum": []string{"awake", "asleep"}},
+					"last_wake": map[string]any{"type": "string", "format": "date-time"},
+					"next_wake": map[string]any{"type": "string", "format": "date-time"},
 					"artifacts": map[string]any{"type": "array", "maxItems": 8, "items": objectSchema(map[string]any{
 						"label": map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
 						"path":  map[string]any{"type": "string", "minLength": 1, "maxLength": 1024},

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -55,5 +56,50 @@ func TestSessionReportStrictSchemaOwnershipAndPathBounds(t *testing.T) {
 	after, err := os.ReadFile(filepath.Join(dir, "lifecycle.jsonl"))
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("denied report changed journal")
+	}
+}
+
+func TestShellReportMCPRejectsMutableAndForeignSession(t *testing.T) {
+	cfg := &config.Config{Dir: t.TempDir()}
+	for _, id := range []string{"shell-ours", "shell-other"} {
+		dir := filepath.Join(cfg.Dir, "eggs", id)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "egg.pid"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := testWingServer(t, &Server{Version: "test", Cfg: cfg, Logs: &bytes.Buffer{}})
+	report := func(ref, id, state string, revision, after int64) error {
+		args, _ := json.Marshal(map[string]any{"session": ref, "report": map[string]any{"goal": "g", "update": "u", "next_action": "n", "shell": map[string]any{"session_id": id, "state": state, "revision": revision, "after": after}}})
+		_, err := s.ToolSessionReport(t.Context(), args)
+		return err
+	}
+	if err := report("shell-ours", "shell-ours", "working", 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := report("shell-ours", "shell-ours", "waiting", 2, 1); err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range []string{"shell-", "shell-other"} {
+		if err := report(ref, "shell-ours", "continue", 3, 2); err == nil {
+			t.Fatal("cross-session report accepted", ref)
+		}
+	}
+	if err := report("shell-ours", "shell-ours", "continue", 3, 1); err == nil {
+		t.Fatal("stale acknowledgement accepted")
+	}
+	if err := report("shell-ours", "shell-ours", "continue", 3, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := eggclient.WriteEggOwner(filepath.Join(cfg.Dir, "eggs", "shell-other"), "foreign", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := report("shell-other", "shell-other", "working", 1, 0); err == nil {
+		t.Fatal("foreign report accepted")
 	}
 }

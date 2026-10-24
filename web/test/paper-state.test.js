@@ -101,7 +101,13 @@ function searchFixture() {
         const label = { textContent: String(rows.length) };
         return { rows, label, hidden: false,
             querySelectorAll: selector => { assert.equal(selector, '.pp-srow'); return rows; },
-            querySelector: selector => { assert.equal(selector, '[data-group-count]'); return label; },
+            querySelector: selector => {
+                if (selector === '.pp-more-sessions') return rows.length > 8 ? {
+                    querySelectorAll: () => rows.slice(8),
+                    querySelector: () => ({ textContent: '' }),
+                } : null;
+                assert.equal(selector, '[data-group-count]'); return label;
+            },
         };
     });
     const fixture = {
