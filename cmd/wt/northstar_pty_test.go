@@ -531,8 +531,9 @@ func (h *northstarPTY) expect(label string, after uint64, contains ...string) st
 	h.t.Helper()
 	return h.waitScreen(label, after, func(screen string) bool {
 		flat := strings.NewReplacer("\r", "", "\n", "").Replace(screen)
+		wrapped := strings.Join(strings.Fields(screen), " ")
 		for _, text := range contains {
-			if !strings.Contains(flat, text) && !northstarContainsRow(screen, text) {
+			if !strings.Contains(flat, text) && !strings.Contains(wrapped, text) && !northstarContainsRow(screen, text) {
 				return false
 			}
 		}
