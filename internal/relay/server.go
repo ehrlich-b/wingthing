@@ -187,6 +187,8 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("GET /docs", s.handleDocs)
 	s.mux.HandleFunc("GET /patterns", s.handlePatterns)
 	s.mux.HandleFunc("GET /patterns/SKILL.md", s.handlePatternSkill)
+	s.mux.HandleFunc("GET /skill.md", s.handleSkill)
+	s.mux.HandleFunc("GET /SKILL.md", s.handleSkill)
 	s.mux.HandleFunc("GET /patterns/{slug}/INSTRUCTIONS.md", s.handlePatternInstructions)
 	s.mux.HandleFunc("GET /terms", s.handleTerms)
 	s.mux.HandleFunc("GET /privacy", s.handlePrivacy)

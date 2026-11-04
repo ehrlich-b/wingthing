@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 source ./toolchain.sh
+./preflight.py
 cd ../..
 mkdir -p mobile/android/app/libs
 gomobile bind -target=android/arm64,android/amd64 -androidapi 26 -o mobile/android/app/libs/wingthing.aar ./mobile/android/bridge

@@ -144,13 +144,13 @@ func (l *inputLease) mutate(ctx context.Context, authorize func() error, operati
 	return operation(ctx)
 }
 
-func (l *inputLease) resize(ctx context.Context, id string, epoch uint64, token string, operation func() error) error {
+func (l *inputLease) resize(ctx context.Context, id string, epoch uint64, token string, operation func(context.Context) error) error {
 	return l.mutate(ctx, func() error {
 		if l.writer == nil || l.writer.id != id || l.writer.epoch != epoch || l.writer.token != token || id == "" || epoch == 0 {
 			return status.Error(codes.FailedPrecondition, "resize requires the current writer attachment and input epoch; resize through its attached stream")
 		}
 		return nil
-	}, func(context.Context) error { return operation() })
+	}, operation)
 }
 
 func (l *inputLease) release(a *inputAttachment) {

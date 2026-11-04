@@ -8,11 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/sshcontrol"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 //go:embed ssh.py
@@ -44,22 +44,7 @@ type Harness struct {
 
 func New(t *testing.T) *Harness {
 	t.Helper()
-	_, file, _, _ := runtime.Caller(0)
-	repo := filepath.Clean(filepath.Join(filepath.Dir(file), "../.."))
-	if _, err := os.Stat(filepath.Join(repo, "go.mod")); err != nil {
-		repo, err = os.Getwd()
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	scratch := filepath.Join(repo, ".scratch")
-	if err := os.MkdirAll(scratch, 0700); err != nil {
-		t.Fatal(err)
-	}
-	root, err := os.MkdirTemp(scratch, "ssh-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	root := testsocket.Dir(t)
 	h := &Harness{Root: root, SSHPath: filepath.Join(root, "ssh"), Started: make(chan *Forward, 64)}
 	python, err := exec.LookPath("python3")
 	if err != nil {
@@ -103,7 +88,6 @@ func New(t *testing.T) *Harness {
 			_ = c.Close()
 		}
 		h.mu.Unlock()
-		_ = os.RemoveAll(root)
 	})
 	return h
 }

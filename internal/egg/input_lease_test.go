@@ -24,7 +24,7 @@ func TestInputLeaseArbitratesWritersObserversAndRevokedEpochs(t *testing.T) {
 	observer := lease.register(&pb.AttachOptions{ReadOnly: true})
 	writes := 0
 	write := func(context.Context) error { writes++; return nil }
-	resize := func() error { return write(context.Background()) }
+	resize := func(ctx context.Context) error { return write(ctx) }
 	if err := lease.mutation(context.Background(), first, write); err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestInputLeasePTYResizePreservesCancellableWritesAndOutput(t *testing.T) {
 	lifecycleWrite(t, filepath.Join(dir, "egg.meta"), "cols=80\nrows=24\n")
 	sess := &Session{ID: "fixture", ptmx: master, replay: newReplayBuffer("claude"), vtermCh: make(chan vtermMsg, 256)}
 	server := &Server{dir: dir, session: sess, exclusiveInput: true}
-	if err := server.resizeSession(sess, 30, 90); err != nil {
+	if err := server.resizeSession(context.Background(), sess, 30, 90); err != nil {
 		t.Fatal(err)
 	}
 	// Fd() would restore blocking mode on Linux; inspect via SyscallConn.

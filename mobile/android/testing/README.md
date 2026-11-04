@@ -4,7 +4,7 @@ Use JDK 21, Gradle 9.3.1, Android platform/build-tools 37.0 and NDK 29.
 Set `ANDROID_HOME` (or `ANDROID_SDK_ROOT`), `ANDROID_NDK_HOME` and `JAVA_HOME`
 to installed tools. Existing cache variables and `HOME` are preserved.
 `WT_ANDROID_WORKDIR` defaults to ignored `mobile/android/.local`; SDK and cache
-defaults are beneath it. The scripts do not install or download a toolchain.
+defaults are beneath it. See `../TOOLCHAIN.md` for the pinned local gomobile bootstrap and SDK setup.
 Go modules are pinned in the root `go.mod` and `go.sum`.
 `build-bridge.sh` does not run `go get` or change those pins.
 

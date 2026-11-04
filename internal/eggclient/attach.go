@@ -186,6 +186,11 @@ func AttachStreamIO(ctx context.Context, sessionID string, input io.Reader, outp
 			}
 		}()
 	}
+	// Subscribe before sampling the initial size or opening the stream, so a
+	// resize during the handshake is delivered after the initial attach.
+	winchCh := make(chan os.Signal, 1)
+	signal.Notify(winchCh, syscall.SIGWINCH)
+	defer signal.Stop(winchCh)
 	if !options.ReadOnly && fd >= 0 && term.IsTerminal(fd) {
 		if cols, rows, err := term.GetSize(fd); err == nil {
 			options.Rows, options.Cols = uint32(rows), uint32(cols)
@@ -240,9 +245,6 @@ func AttachStreamIO(ctx context.Context, sessionID string, input io.Reader, outp
 		}
 	}()
 
-	winchCh := make(chan os.Signal, 1)
-	signal.Notify(winchCh, syscall.SIGWINCH)
-	defer signal.Stop(winchCh)
 	resizeErrors := make(chan error, 1)
 	workers.Add(1)
 	go func() {

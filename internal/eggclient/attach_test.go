@@ -8,6 +8,9 @@ import (
 	"os"
 	"reflect"
 	"runtime"
+	"syscall"
+
+	"github.com/creack/pty"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -405,4 +408,60 @@ func TestNavigatorPreviewViewerSingleKeyReturnHasZeroMutations(t *testing.T) {
 		t.Fatalf("viewer mutated transport: %v", stream.sent)
 	}
 	t.Log("mock transport: input=0 resize=0 claim=0 takeover=0 detach=1")
+}
+
+// A window change while the transport is opening must survive the handshake.
+func TestAttachResizeDuringOpen(t *testing.T) {
+	master, slave, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+	defer slave.Close()
+	if err := pty.Setsize(master, &pty.Winsize{Cols: 80, Rows: 24}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	entered, resume := make(chan struct{}), make(chan struct{})
+	streams := make(chan *attachLiveStream, 1)
+	done := make(chan error, 1)
+	go func() {
+		_, err := AttachStreamIO(ctx, "fixture", slave, io.Discard, egg.AttachOptions{}, func(ctx context.Context, opts egg.AttachOptions) (SessionStream, error) {
+			if opts.Cols != 80 || opts.Rows != 24 {
+				return nil, errors.New("incorrect initial size")
+			}
+			close(entered)
+			<-resume
+			stream := &attachLiveStream{ctx: ctx, output: make(chan *pb.SessionMsg, 1), sent: make(chan *pb.SessionMsg, 8), receiveDone: make(chan struct{})}
+			streams <- stream
+			return stream, nil
+		})
+		done <- err
+	}()
+	<-entered
+	if err := pty.Setsize(master, &pty.Winsize{Cols: 110, Rows: 35}); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Kill(os.Getpid(), syscall.SIGWINCH); err != nil {
+		t.Fatal(err)
+	}
+	// Signal delivery is asynchronous; hold the transport open while Notify receives it.
+	time.Sleep(100 * time.Millisecond)
+	close(resume)
+	stream := <-streams
+	select {
+	case msg := <-stream.sent:
+		if size := msg.GetResize(); size == nil || size.Cols != 110 || size.Rows != 35 {
+			t.Fatalf("resize: %v", msg)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("resize during open was lost")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("attach did not stop")
+	}
 }

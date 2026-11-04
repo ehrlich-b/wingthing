@@ -238,10 +238,11 @@ func (v *VTerm) scrollbackLines() []string {
 
 // vtermMsg is sent to the VTerm goroutine for async processing.
 type vtermMsg struct {
-	data   []byte
-	offset int64
-	resize *vtermResize
-	fence  chan<- vtermFenceResult
+	data           []byte
+	offset         int64
+	resize         *vtermResize
+	resizeDecision <-chan bool // nil for an unconditional resize
+	fence          chan<- vtermFenceResult
 }
 
 type vtermResize struct{ cols, rows int }
@@ -276,7 +277,7 @@ func runVTermLoop(vt *VTerm, ch <-chan vtermMsg, done <-chan struct{}) {
 					fn(title)
 				}
 			}
-			if msg.resize != nil {
+			if msg.resize != nil && (msg.resizeDecision == nil || <-msg.resizeDecision) {
 				vt.Resize(msg.resize.cols, msg.resize.rows)
 			}
 			if msg.fence != nil {

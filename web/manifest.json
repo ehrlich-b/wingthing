@@ -5,8 +5,8 @@
     "start_url": "/app/",
     "scope": "/app/",
     "display": "standalone",
-    "background_color": "#FFFFFF",
-    "theme_color": "#FFFFFF",
+    "background_color": "#F4F8FA",
+    "theme_color": "#F4F8FA",
     "description": "Talk to your persistent coordinator",
     "icons": [
         { "src": "icons/wt.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },

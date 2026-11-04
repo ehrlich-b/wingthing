@@ -18,6 +18,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -114,26 +115,8 @@ func contextInputToolCall(t *testing.T, path string) egg.ToolResponse {
 
 func contextInputFixture(t *testing.T) (*config.Config, *contextInputEgg, string) {
 	t.Helper()
-	root := config.CanonicalProviderPath(t.TempDir())
-	// Keep Unix socket names short while all fixture state lives in t.TempDir.
-	scratch, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = os.MkdirAll(scratch, 0700); err != nil {
-		t.Fatal(err)
-	}
-	alias, err := os.MkdirTemp(scratch, "c")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.Symlink(root, alias); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(alias) })
+	root := testsocket.Dir(t)
+	alias := root
 	cfg := &config.Config{Dir: alias}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

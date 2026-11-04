@@ -14,6 +14,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // TestMain handles re-exec as the _deny_init wrapper. Without this, the test
@@ -873,7 +875,7 @@ func TestJail_RootDeny_SocketMount(t *testing.T) {
 		t.Skip("jail mode only on Linux")
 	}
 	// Create a Unix socket, mount it into jail, verify connectivity.
-	sockDir := t.TempDir()
+	sockDir := testsocket.Dir(t)
 	sockPath := filepath.Join(sockDir, "test.sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {

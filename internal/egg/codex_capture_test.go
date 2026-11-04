@@ -42,9 +42,8 @@ func TestCodexHooklessResumeCapturesRecordedThread(t *testing.T) {
 	for _, id := range []string{"resumed", "victim"} {
 		lifecycleWrite(t, filepath.Join(sessions, "rollout-2026-10-07-"+id+".jsonl"), id+"-message\n")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	if err := server.RunSession(ctx, RunConfig{Agent: "codex", ResumeSessionID: "resumed", CWD: home, UserHome: home, OuterBoundary: true, Network: []string{"*"}, Rows: 24, Cols: 80, OmitBrowserBridge: true}); err != nil {
+	// RunSession returns after the provider exits and final capture completes.
+	if err := server.RunSession(context.Background(), RunConfig{Agent: "codex", ResumeSessionID: "resumed", CWD: home, UserHome: home, OuterBoundary: true, Network: []string{"*"}, Rows: 24, Cols: 80, OmitBrowserBridge: true}); err != nil {
 		t.Fatal(err)
 	}
 	meta, err := os.ReadFile(filepath.Join(dir, "egg.meta"))

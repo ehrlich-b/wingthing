@@ -13,10 +13,10 @@
 .coordinator-status[data-status="exited"] .coordinator-dot { background: transparent; border: 1px solid var(--text-dim); }
 .coordinator-blocked { color: var(--yellow); border: 1px solid var(--yellow); border-radius: 0.4rem; padding: 0.1rem 0.4rem; font-size: 0.75rem; }
 .coordinator-blocked[hidden] { display: none; }
-.coordinator-preview { color: #aeb8cb; font-size: 0.8125rem; }
+.coordinator-preview { color: var(--text-dim); font-size: 0.8125rem; }
 .conversation-identity { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .conversation-identity strong { color: var(--text); font-size: 13px; }
-.cp-identity { font-size: 11px; color: #aeb8cb; overflow-wrap: anywhere; }
+.cp-identity { font-size: 11px; color: var(--text-dim); overflow-wrap: anywhere; }
 .conversation-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .conversation-toolbar button:disabled, #conversation-inventory button:disabled { opacity: 0.55; cursor: default; }
 .conversation-toolbar button:focus-visible, #conversation-inventory button:focus-visible, .chat-pending button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -29,7 +29,7 @@
 .conversation-deliveries li[data-state="failed"] { color: var(--red); }
 
 .conversation-task { flex-wrap: wrap; }
-.conversation-task > details { flex-basis: 100%; font-size: 11px; color: #aeb8cb; }
+.conversation-task > details { flex-basis: 100%; font-size: 11px; color: var(--text-dim); }
 .conversation-task > details summary { cursor: pointer; padding: 2px 0; }
 .conversation-task > details pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0; }
 .conversation-selected > .conversation-open { border-color: var(--accent) !important; }

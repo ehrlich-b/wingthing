@@ -3,6 +3,9 @@ package eggclient
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
 
 	"strings"
 	"testing"
@@ -213,4 +216,74 @@ func TestRenderPolicyAndJSONAgree(t *testing.T) {
 	if len(decoded.Drilled) != len(p.Drilled) {
 		t.Errorf("JSON reported %d holes, policy has %d", len(decoded.Drilled), len(p.Drilled))
 	}
+}
+
+func TestLoadEggConfigForExplainSource(t *testing.T) {
+	for _, tc := range []struct {
+		name, project, global, explicit, wantSource, wantNetwork string
+		invalidHarness                                           bool
+	}{
+		{name: "explicit overrides project and global", project: "base: none\nnetwork: [project.example]\n", global: "base: none\nnetwork: [global.example]\n", explicit: "base: none\nnetwork: ['*']\n", wantSource: "explicit", wantNetwork: "full"},
+		{name: "project overrides global", project: "base: none\nnetwork: ['*']\n", global: "base: none\nnetwork: [global.example]\n", wantSource: "project", wantNetwork: "full"},
+		{name: "global", global: "base: none\nnetwork: ['*']\n", wantSource: "global", wantNetwork: "full"},
+		{name: "defaults", wantSource: "built-in defaults"},
+		{name: "invalid project falls back to global", project: "[invalid yaml", global: "base: none\nnetwork: ['*']\n", wantSource: "global", wantNetwork: "full"},
+		{name: "failed project base falls back to defaults", project: "base: missing-base\n", wantSource: "built-in defaults"},
+		{name: "invalid global falls back to defaults", global: "[invalid yaml", wantSource: "built-in defaults"},
+		{name: "invalid harness fails closed", project: "harness: false\n", global: "base: none\nnetwork: ['*']\n", wantSource: "project", invalidHarness: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			home, state, project := filepath.Join(root, "home"), filepath.Join(root, "state"), filepath.Join(root, "project")
+			for _, dir := range []string{home, state, project} {
+				if err := os.MkdirAll(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("HOME", home)
+			t.Setenv("WINGTHING_DIR", state)
+			t.Setenv("WINGTHING_PREVIEW_DIR", "")
+			paths := map[string]string{"project": filepath.Join(project, "egg.yaml"), "global": filepath.Join(state, "egg.yaml"), "explicit": filepath.Join(root, "explicit.yaml")}
+			for name, content := range map[string]string{"project": tc.project, "global": tc.global, "explicit": tc.explicit} {
+				if content != "" {
+					if err := os.WriteFile(paths[name], []byte(content), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			explicit := ""
+			if tc.explicit != "" {
+				explicit = paths["explicit"]
+			}
+			cfg, source, err := LoadEggConfigForExplain(explicit, project)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := tc.wantSource
+			if path, ok := paths[want]; ok {
+				want = path
+			}
+			if source != want {
+				t.Errorf("source = %q, want %q", source, want)
+			}
+			launch, err := LoadSpawnEggConfig(explicit, project, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(cfg, launch) {
+				t.Errorf("explain config differs from launch: %#v vs %#v", cfg, launch)
+			}
+			if tc.wantNetwork != "" && ExplainPolicy(cfg, "codex", home, source).NetworkNeed != tc.wantNetwork {
+				t.Errorf("network need is not %s", tc.wantNetwork)
+			}
+			if tc.invalidHarness && (cfg.Harness == nil || cfg.Harness.Driver != "invalid") {
+				t.Errorf("invalid harness did not fail closed: %#v", cfg.Harness)
+			}
+		})
+	}
+	t.Run("missing explicit config errors", func(t *testing.T) {
+		if _, _, err := LoadEggConfigForExplain(filepath.Join(t.TempDir(), "missing"), ""); err == nil {
+			t.Fatal("missing explicit config succeeded")
+		}
+	})
 }

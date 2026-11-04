@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/creack/pty"
 	"golang.org/x/sys/unix"
@@ -80,7 +81,7 @@ func TestNativeRunPTYResizeKeepsInputCancellable(t *testing.T) {
 		t.Fatal(err)
 	}
 	sess := &Session{ptmx: master, nonblockInput: mode, vtermCh: make(chan vtermMsg, 1)}
-	if err := server.resizeSession(sess, 30, 90); err != nil {
+	if err := server.resizeSession(context.Background(), sess, 30, 90); err != nil {
 		t.Fatal(err)
 	}
 	if ptyInputFlags(t, master)&unix.O_NONBLOCK == 0 {
@@ -115,5 +116,44 @@ func TestNativeRunPTYResizeKeepsInputCancellable(t *testing.T) {
 	cancel()
 	if err := <-finished; !errors.Is(err, context.Canceled) {
 		t.Fatalf("run input ignored cancellation: %v", err)
+	}
+}
+
+func TestResizeWaitsForVTermQueue(t *testing.T) {
+	master, slave, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+	defer slave.Close()
+	dir := t.TempDir()
+	lifecycleWrite(t, filepath.Join(dir, "egg.meta"), "cols=80\nrows=24\n")
+	queue := make(chan vtermMsg, 1)
+	queue <- vtermMsg{data: []byte("pending")}
+	sess := &Session{ptmx: master, vtermCh: queue, done: make(chan struct{})}
+	server := &Server{dir: dir}
+	result := make(chan error, 1)
+	go func() { result <- server.resizeSession(context.Background(), sess, 30, 90) }()
+	select {
+	case err := <-result:
+		t.Fatalf("resize skipped full queue: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	<-queue
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("resize did not resume")
+	}
+	msg := <-queue
+	if msg.resize == nil || msg.resize.cols != 90 || msg.resize.rows != 30 {
+		t.Fatalf("resize missing: %+v", msg.resize)
+	}
+	size, err := pty.GetsizeFull(master)
+	if err != nil || size.Cols != 90 || size.Rows != 30 {
+		t.Fatalf("PTY size: %+v, %v", size, err)
 	}
 }

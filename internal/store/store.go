@@ -51,10 +51,12 @@ func Open(dsn string) (*Store, error) {
 	return s, nil
 }
 
-func execPragmaWithBusyRetry(db *sql.DB, statement string, timeout time.Duration) error {
+func execPragmaWithBusyRetry(db interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, statement string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
-		_, err := db.Exec(statement)
+		_, err := db.ExecContext(context.Background(), statement)
 		if err == nil {
 			return nil
 		}
@@ -75,13 +77,6 @@ func (s *Store) DB() *sql.DB {
 }
 
 func (s *Store) migrate() error {
-	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
-		version TEXT PRIMARY KEY,
-		applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	)`); err != nil {
-		return fmt.Errorf("create migrations table: %w", err)
-	}
-
 	entries, err := migrationsFS.ReadDir("migrations")
 	if err != nil {
 		return fmt.Errorf("read migrations dir: %w", err)
@@ -105,13 +100,20 @@ func (s *Store) migrate() error {
 		if err != nil {
 			return fmt.Errorf("reserve connection for %s: %w", f, err)
 		}
-		if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+		if err := execPragmaWithBusyRetry(conn, "BEGIN IMMEDIATE", 30*time.Second); err != nil {
 			_ = conn.Close()
 			return fmt.Errorf("begin tx for %s: %w", f, err)
 		}
 		rollback := func() {
 			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
 			_ = conn.Close()
+		}
+		if _, err := conn.ExecContext(context.Background(), `CREATE TABLE IF NOT EXISTS schema_migrations (
+			version TEXT PRIMARY KEY,
+			applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`); err != nil {
+			rollback()
+			return fmt.Errorf("create migrations table: %w", err)
 		}
 		var applied int
 		if err := conn.QueryRowContext(

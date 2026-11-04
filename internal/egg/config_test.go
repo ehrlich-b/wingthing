@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -1180,5 +1181,27 @@ func TestTaskYAMLKeepsRoostPolicyPathsThatEggYAMLCannotSet(t *testing.T) {
 	}
 	if len(plain.RoostPolicyPaths) != 0 {
 		t.Fatalf("egg.yaml set host-only roost policy paths: %v", plain.RoostPolicyPaths)
+	}
+}
+
+func TestDiscoverEggConfigWithSourceFallbacks(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
+	t.Setenv("WINGTHING_PREVIEW_DIR", "")
+	previous := wingconfig.ReleaseChannel
+	wingconfig.ReleaseChannel = "stable"
+	t.Cleanup(func() { wingconfig.ReleaseChannel = previous })
+	legacy := filepath.Join(home, ".wingthing", "egg.yaml")
+	makeEggConfigTestDir(t, filepath.Dir(legacy))
+	writeEggConfigTestFile(t, legacy, "base: none\nnetwork: ['*']\n")
+	cfg, source := DiscoverEggConfigWithSource(t.TempDir(), nil)
+	if source != legacy || !reflect.DeepEqual(cfg, DiscoverEggConfig(t.TempDir(), nil)) {
+		t.Fatalf("legacy source = %q, config = %#v", source, cfg)
+	}
+	wing := &EggConfig{FS: []string{"rw:./"}}
+	cfg, source = DiscoverEggConfigWithSource(t.TempDir(), wing)
+	if cfg != wing || source != "wing default" {
+		t.Fatalf("wing source = %q, config = %#v", source, cfg)
 	}
 }

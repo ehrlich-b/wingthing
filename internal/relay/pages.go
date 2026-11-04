@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	wingthing "github.com/ehrlich-b/wingthing"
 	"github.com/ehrlich-b/wingthing/internal/downloads"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	patternfiles "github.com/ehrlich-b/wingthing/patterns"
@@ -145,6 +146,12 @@ func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePatterns(w http.ResponseWriter, r *http.Request) {
 	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode, AppURL: s.appURL()}
 	s.executePageTemplate(w, s.template(patternsTmpl, "base.html", "patterns.html"), data)
+}
+
+func (s *Server) handleSkill(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	_, _ = w.Write([]byte(wingthing.Skill))
 }
 
 func (s *Server) handlePatternSkill(w http.ResponseWriter, _ *http.Request) {

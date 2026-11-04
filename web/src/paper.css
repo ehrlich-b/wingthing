@@ -1,25 +1,25 @@
 /* Paper layout in a calm, neutral style: system sans, gray text, one muted accent, 1px borders. */
 :root {
-    --pp-paper: #FFFFFF; --pp-folio: #F6F7F9; --pp-field: #FFFFFF; --pp-ink: #1F2328; --pp-ink-2: #59636E; --pp-ink-3: #6E7781;
-    --pp-rule: #E1E4E8; --pp-rule-2: #C9CFD6; --pp-accent: #3A6290; --pp-accent-2: #2F5279;
-    --pp-red: #B42318; --pp-green: #1A7F37; --pp-amber: #9A6700; --pp-blue: #3A6290;
-    --pp-desk: #1E2125; --pp-desk-ink: #E6E8EB;
-    --pp-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
-    --pp-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+    --pp-paper: #FFFFFF; --pp-folio: #F4F8FA; --pp-field: #FFFFFF; --pp-ink: #0B1B24; --pp-ink-2: #4E6571; --pp-ink-3: #4E6571;
+    --pp-rule: color-mix(in srgb, #4E6571 18%, #FFFFFF); --pp-rule-2: color-mix(in srgb, #4E6571 30%, #FFFFFF); --pp-accent: #0069B8; --pp-accent-2: #0069B8;
+    --pp-on-danger: #FFFFFF; --pp-red: #C42B3D; --pp-green: #0D7553; --pp-amber: #B4500C; --pp-blue: #0069B8;
+    --pp-on-accent: #FFFFFF; --pp-desk: #0B1B24; --pp-desk-ink: #E6F1F6;
+    --pp-sans: Inter, sans-serif;
+    --pp-mono: 'IBM Plex Mono', monospace;
 }
 @media (prefers-color-scheme: dark) {
     :root {
-        --pp-paper: #151618; --pp-folio: #1D1F22; --pp-field: #1B1D20; --pp-ink: #E6E8EB; --pp-ink-2: #A3A9B0; --pp-ink-3: #8B9198;
-        --pp-rule: #2C2F34; --pp-rule-2: #3D4148; --pp-accent: #7DA3CF; --pp-accent-2: #9BB8DA;
-        --pp-red: #EB7A72; --pp-green: #5CB87A; --pp-amber: #D6A548; --pp-blue: #8FB0D6;
-        --pp-desk: #0F1012; --pp-desk-ink: #E6E8EB;
+        --pp-paper: #07131A; --pp-folio: #0F1F28; --pp-field: #0F1F28; --pp-ink: #E6F1F6; --pp-ink-2: #8CA5B2; --pp-ink-3: #8CA5B2;
+        --pp-rule: color-mix(in srgb, #8CA5B2 20%, #07131A); --pp-rule-2: color-mix(in srgb, #8CA5B2 35%, #07131A); --pp-accent: #2AA8FF; --pp-accent-2: #2AA8FF;
+        --pp-on-danger: #07131A; --pp-red: #FF5D6C; --pp-green: #36D69A; --pp-amber: #FF8A3D; --pp-blue: #2AA8FF;
+        --pp-on-accent: #07131A; --pp-desk: #07131A; --pp-desk-ink: #E6F1F6;
     }
 }
 /* Legacy views (terminal take-over, account, machine detail) use the same neutral dark surface. */
 html:root {
-    --bg: #151618; --bg-card: #1D1F22; --bg-hover: #26292D; --text: #E6E8EB; --text-dim: #A3A9B0; --text-muted: #8B9198;
-    --border: #2C2F34; --accent: #7DA3CF; --accent-hover: #9BB8DA; --green: #5CB87A; --yellow: #D6A548; --blue: #8FB0D6;
-    --red: #EB7A72; --orange: #D6A548;
+    --bg: #07131A; --bg-card: #0F1F28; --bg-hover: #0F1F28; --text: #E6F1F6; --text-dim: #8CA5B2; --text-muted: #8CA5B2;
+    --border: color-mix(in srgb, #8CA5B2 20%, #07131A); --accent: #2AA8FF; --accent-hover: #2AA8FF; --green: #36D69A; --yellow: #FF8A3D; --blue: #2AA8FF;
+    --red: #FF5D6C; --orange: #FF8A3D;
 }
 body.paper-on { background: var(--pp-paper); color: var(--pp-ink); height: auto; min-height: 100dvh; overflow: visible; }
 body.paper-on #app { display: none; }
@@ -40,8 +40,8 @@ body.paper-on #app { display: none; }
 
 /* Sidebar */
 .pp-side { background: var(--pp-folio); border-right: 1px solid var(--pp-rule); padding: 20px 14px; position: sticky; top: 0; height: 100vh; height: 100dvh; display: flex; flex-direction: column; }
-.pp-brand { font-size: 16px; font-weight: 600; line-height: 1.2; padding: 0 10px; }
-.pp-brand i { font-style: normal; }
+.pp-brand { color: var(--pp-accent); font-family: "Space Grotesk", sans-serif; font-size: 16px; font-weight: 700; line-height: 1.2; padding: 0 10px; }
+.pp-brand i { color: var(--pp-ink); font-style: normal; }
 .pp-date { font-size: 13px; color: var(--pp-ink-3); padding: 0 10px; margin: 2px 0 18px !important; }
 .pp-nav { display: flex; flex-direction: column; gap: 2px; }
 .pp-nav a { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; font-size: 14px; min-height: 36px; color: var(--pp-ink-2); }
@@ -81,7 +81,7 @@ body.paper-on #app { display: none; }
     .pp-split .pp-term-rail { padding-top: 0; }
 }
 .pp-terminal summary { cursor: pointer; padding: 12px 0; color: var(--pp-accent); font-size: 14px; }
-.pp-hdr h1 { font-size: 22px; font-weight: 600; line-height: 1.25; margin: 0; overflow-wrap: anywhere; }
+.pp-hdr h1 { font-family: "Space Grotesk", sans-serif; font-size: 22px; font-weight: 600; line-height: 1.25; margin: 0; overflow-wrap: anywhere; }
 .pp-meta { font-size: 13px; color: var(--pp-ink-2); text-align: right; }
 .pp-meta b { color: var(--pp-ink); font-weight: 600; }
 .pp-meta em { color: var(--pp-ink); font-style: normal; font-weight: 600; }
@@ -158,13 +158,13 @@ body.paper-on #app { display: none; }
 .pp-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 #paper .pp-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 14px; border: 1px solid var(--pp-rule-2); border-radius: 6px; background: var(--pp-paper); color: var(--pp-ink); font: 500 14px/1 var(--pp-sans); cursor: pointer; white-space: nowrap; }
 #paper .pp-btn:hover { background: var(--pp-folio); }
-#paper .pp-btn-ink { background: var(--pp-accent); border-color: var(--pp-accent); color: #FFFFFF; }
+#paper .pp-btn-ink { background: var(--pp-accent); border-color: var(--pp-accent); color: var(--pp-on-accent); }
 #paper .pp-btn-ink:hover { background: var(--pp-accent-2); border-color: var(--pp-accent-2); }
 #paper .pp-btn-quiet { color: var(--pp-ink-2); }
 .pp-note { margin-top: 10px !important; font-size: 14px; }
 #paper .pp-btn:disabled { opacity: .6; cursor: default; }
 .pp-btn-block { width: 100%; margin-top: 8px; }
-@media (prefers-color-scheme: dark) { #paper .pp-btn-ink { color: #111316; } }
+@media (prefers-color-scheme: dark) { #paper .pp-btn-ink { color: #07131A; } }
 
 /* Sessions list */
 .pp-searchbar { display: flex; gap: 8px; margin: 20px 0 4px; }
@@ -236,7 +236,7 @@ body.paper-on #app { display: none; }
 @media (max-width: 760px) {
     #paper { grid-template-columns: minmax(0, 1fr); align-content: start; font-size: 15px; padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
     .pp-side { position: static; height: auto; padding: 12px 16px 10px; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 12px; border-right: 0; border-bottom: 1px solid var(--pp-rule); }
-    .pp-brand { font-size: 16px; padding: 0; }
+    .pp-brand { color: var(--pp-accent); font-family: "Space Grotesk", sans-serif; font-size: 16px; padding: 0; }
     .pp-date, .pp-side .pp-nav, .pp-foot { display: none; }
     .pp-side-squares { margin: 0 0 0 auto; padding: 0; flex-direction: row; gap: 4px 10px; }
     .pp-side-squares .pp-sq { font-size: 12px; }
@@ -249,7 +249,7 @@ body.paper-on #app { display: none; }
     .pp-terminal summary { position: sticky; top: 0; background: var(--pp-paper); }
     .pp-terminal .pp-kick { margin-top: 0; }
     .pp-hdr { flex-direction: column; align-items: flex-start; gap: 2px; padding-top: 14px; }
-    .pp-hdr h1 { font-size: 20px; }
+    .pp-hdr h1 { font-family: "Space Grotesk", sans-serif; font-size: 20px; }
     .pp-meta { text-align: left; }
     .pp-meta .pp-since { display: none; }
     .pp-main[data-view="machines"] .pp-hdr .pp-meta { display: none; }
@@ -326,7 +326,7 @@ body.paper-on #app { display: none; }
 #paper #account-section {
     --bg: var(--pp-paper); --bg-card: var(--pp-folio); --bg-hover: var(--pp-rule);
     --text: var(--pp-ink); --text-dim: var(--pp-ink-2); --text-muted: var(--pp-ink-3);
-    --border: var(--pp-rule); --accent: var(--pp-accent); --accent-hover: var(--pp-accent-2); --red: var(--pp-red); --font: var(--pp-sans);
+    --border: var(--pp-rule); --accent: var(--pp-accent); --accent-hover: var(--pp-accent-2); --red: var(--pp-red); --on-danger: var(--pp-on-danger); --font: var(--pp-sans);
     color-scheme: light dark; color: var(--text); padding: 0; overflow: visible; font: 15px/1.5 var(--pp-sans);
 }
 #paper #account-content { max-width: 760px; margin: 0; }
@@ -382,7 +382,7 @@ body.paper-on #app { display: none; }
 #paper .wd-page {
     --bg: var(--pp-paper); --bg-card: var(--pp-folio); --bg-hover: var(--pp-folio);
     --text: var(--pp-ink); --text-dim: var(--pp-ink-2); --text-muted: var(--pp-ink-3);
-    --border: var(--pp-rule); --accent: var(--pp-accent); --red: var(--pp-red); --green: var(--pp-green);
+    --border: var(--pp-rule); --accent: var(--pp-accent); --red: var(--pp-red); --on-danger: var(--pp-on-danger); --green: var(--pp-green);
     font-family: var(--pp-sans); padding-top: 22px;
 }
 #paper .wd-header { margin-bottom: 12px; }
@@ -427,3 +427,5 @@ body.paper-on #app { display: none; }
 .pp-search-result[hidden] { display: none; }
 
 .pp-search-result > span { min-width: 0; overflow-wrap: anywhere; }
+
+#paper :is(h1,h2,h3) { font-family: "Space Grotesk", sans-serif; }

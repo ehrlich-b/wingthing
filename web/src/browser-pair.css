@@ -1,17 +1,17 @@
 /* Accountless Pair page in the same neutral style as the app shell (paper.css). */
 body.browser-pair {
-    --bp-paper: #FFFFFF; --bp-folio: #F6F7F9; --bp-ink: #1F2328; --bp-ink-2: #59636E; --bp-rule: #E1E4E8; --bp-rule-2: #C9CFD6;
-    --bp-accent: #3A6290; --bp-accent-2: #2F5279; --bp-green: #1A7F37; --bp-red: #B42318;
+    --bp-paper: #FFFFFF; --bp-folio: #F4F8FA; --bp-ink: #0B1B24; --bp-ink-2: #4E6571; --bp-rule: color-mix(in srgb, #4E6571 18%, #FFFFFF); --bp-rule-2: color-mix(in srgb, #4E6571 30%, #FFFFFF);
+    --bp-accent: #0069B8; --bp-accent-2: #0069B8; --bp-green: #0D7553; --bp-red: #C42B3D;
     margin: 0; background: var(--bp-paper); color: var(--bp-ink);
     font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
 }
 @media (prefers-color-scheme: dark) {
     body.browser-pair {
-        --bp-paper: #151618; --bp-folio: #1D1F22; --bp-ink: #E6E8EB; --bp-ink-2: #A3A9B0; --bp-rule: #2C2F34; --bp-rule-2: #3D4148;
-        --bp-accent: #7DA3CF; --bp-accent-2: #9BB8DA; --bp-green: #5CB87A; --bp-red: #EB7A72;
+        --bp-paper: #07131A; --bp-folio: #0F1F28; --bp-ink: #E6F1F6; --bp-ink-2: #8CA5B2; --bp-rule: color-mix(in srgb, #8CA5B2 20%, #07131A); --bp-rule-2: color-mix(in srgb, #8CA5B2 35%, #07131A);
+        --bp-accent: #2AA8FF; --bp-accent-2: #2AA8FF; --bp-green: #36D69A; --bp-red: #FF5D6C;
     }
-    body.browser-pair .bp-layout button.bp-primary { color: #111316; }
+    body.browser-pair .bp-layout button.bp-primary { color: #07131A; }
 }
 body.browser-pair * { box-sizing: border-box; }
 .bp-header { height: 56px; padding: 0 32px; border-bottom: 1px solid var(--bp-rule); background: var(--bp-folio); display: flex; align-items: center; gap: 16px; }

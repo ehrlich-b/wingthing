@@ -304,22 +304,29 @@ func LoadEggConfigFromYAML(yamlStr string) (*EggConfig, error) {
 // wing default, then to built-in defaults. Project configs are resolved through
 // the base chain (additive inheritance) before being returned.
 func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
+	cfg, _ := DiscoverEggConfigWithSource(cwd, wingDefault)
+	return cfg
+}
+
+// DiscoverEggConfigWithSource returns the config and the source selected by the
+// same discovery and fallback rules used for launch.
+func DiscoverEggConfigWithSource(cwd string, wingDefault *EggConfig) (*EggConfig, string) {
 	if cwd != "" {
 		path := filepath.Join(cwd, "egg.yaml")
 		if _, statErr := os.Stat(path); statErr == nil {
 			cfg, err := ResolveEggConfig(path)
 			if err == nil {
-				return cfg
+				return cfg, path
 			}
 			log.Printf("egg: config discovery failed for %s: %v", path, err)
 			var harnessErr *harnessConfigError
 			if errors.As(err, &harnessErr) {
-				return &EggConfig{Harness: &HarnessConfig{Driver: "invalid"}}
+				return &EggConfig{Harness: &HarnessConfig{Driver: "invalid"}}, path
 			}
 		}
 	}
 	if wingDefault != nil {
-		return wingDefault
+		return wingDefault, "wing default"
 	}
 	if dir, err := wingconfig.StateDir(); err == nil {
 		path := filepath.Join(dir, "egg.yaml")
@@ -331,16 +338,16 @@ func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 		if _, statErr := os.Stat(path); statErr == nil {
 			cfg, resolveErr := ResolveEggConfig(path)
 			if resolveErr == nil {
-				return cfg
+				return cfg, path
 			}
 			log.Printf("egg: global config discovery failed for %s: %v", path, resolveErr)
 			var harnessErr *harnessConfigError
 			if errors.As(resolveErr, &harnessErr) {
-				return &EggConfig{Harness: &HarnessConfig{Driver: "invalid"}}
+				return &EggConfig{Harness: &HarnessConfig{Driver: "invalid"}}, path
 			}
 		}
 	}
-	return DefaultEggConfig()
+	return DefaultEggConfig(), "built-in defaults"
 }
 
 // RuntimeEggConfig copies the administrator's captured session policy without

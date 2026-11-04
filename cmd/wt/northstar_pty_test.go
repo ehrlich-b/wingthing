@@ -492,6 +492,9 @@ func (h *northstarPTY) send(input string) uint64 {
 	h.mu.Lock()
 	rev := h.revision
 	h.mu.Unlock()
+	if os.Getenv("WT_TEST_INVENTORY_TRACE") != "" {
+		h.t.Logf("PTY send %q at %s", input, time.Now().Format(time.RFC3339Nano))
+	}
 	if _, err := io.WriteString(h.master, input); err != nil {
 		h.t.Fatal(err)
 	}
@@ -509,6 +512,9 @@ func (h *northstarPTY) waitScreen(label string, after uint64, match func(string)
 	for {
 		screen, rev := h.screen()
 		if rev > after && match(screen) {
+			if os.Getenv("WT_TEST_INVENTORY_TRACE") != "" {
+				h.t.Logf("PTY screen %s at %s", label, time.Now().Format(time.RFC3339Nano))
+			}
 			h.mu.Lock()
 			fmt.Fprintf(&h.screens, "\n--- %s ---\n%s\n", label, screen)
 			h.mu.Unlock()

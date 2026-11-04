@@ -158,7 +158,7 @@ async function shoot(page, name, suffix) {
     console.log('SHOT ' + file);
 }
 async function checkPublic(page, name, suffix) {
-    assert.equal(await page.locator('a[href*="github.com/ehrlich-b"]').count(), 0);
+    assert.equal(await page.locator('a[href*="github.com"]').count(), 0);
     assert.ok(await page.getByRole('link', {name:'Source', exact:true}).count());
     if (page.viewportSize().width === 390) {
         const nav = await page.locator('.site-nav').evaluate(el => {

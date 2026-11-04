@@ -84,6 +84,8 @@ type Session struct {
 	replay         *replayBuffer
 	vterm          *VTerm        // server-side VTE — only accessed by runVTermLoop goroutine
 	vtermCh        chan vtermMsg // async vterm processing channel
+	resizeOnce     sync.Once
+	resizeGate     chan struct{} // orders PTY and emulator resizes
 	useVTE         bool          // when true, attach sends VTerm snapshot instead of replay buffer
 	sb             sandbox.Sandbox
 	cmd            *exec.Cmd
@@ -1685,18 +1687,59 @@ func (s *Server) Resize(ctx context.Context, req *pb.ResizeRequest) (*pb.ResizeR
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	if s.exclusiveInput {
-		if err := s.inputLease.resize(ctx, req.AttachmentId, req.InputEpoch, req.AttachmentToken, func() error { return s.resizeSession(sess, req.Rows, req.Cols) }); err != nil {
+		if err := s.inputLease.resize(ctx, req.AttachmentId, req.InputEpoch, req.AttachmentToken, func(ctx context.Context) error { return s.resizeSession(ctx, sess, req.Rows, req.Cols) }); err != nil {
 			return nil, err
 		}
 		return &pb.ResizeResponse{}, nil
 	}
-	if err := s.resizeSession(sess, req.Rows, req.Cols); err != nil {
+	if err := s.resizeSession(ctx, sess, req.Rows, req.Cols); err != nil {
 		return nil, err
 	}
 	return &pb.ResizeResponse{}, nil
 }
 
-func (s *Server) resizeSession(sess *Session, rows, cols uint32) error {
+func (s *Server) resizeSession(ctx context.Context, sess *Session, rows, cols uint32) error {
+	sess.resizeOnce.Do(func() { sess.resizeGate = make(chan struct{}, 1) })
+	select {
+	case sess.resizeGate <- struct{}{}:
+	case <-ctx.Done():
+		return status.FromContextError(ctx.Err()).Err()
+	case <-sess.done:
+		return status.Error(codes.Unavailable, "session has ended")
+	}
+	defer func() { <-sess.resizeGate }()
+	if err := ctx.Err(); err != nil {
+		return status.FromContextError(err).Err()
+	}
+	select {
+	case <-sess.done:
+		return status.Error(codes.Unavailable, "session has ended")
+	default:
+	}
+	// Queue the emulator resize before signalling the child through the PTY.
+	// A full queue must not silently discard a change and leave snapshots at
+	// the old size while the child redraws at the new one.
+	// The decision lets the consumer discard a cancelled or failed resize.
+	// Reserve queue space first, then commit only after the PTY accepts the
+	// dimensions, before releasing the gate for the next resize.
+	decision := make(chan bool, 1)
+	select {
+	case sess.vtermCh <- vtermMsg{resize: &vtermResize{int(cols), int(rows)}, resizeDecision: decision}:
+	case <-ctx.Done():
+		return status.FromContextError(ctx.Err()).Err()
+	case <-sess.done:
+		return status.Error(codes.Unavailable, "session has ended")
+	}
+	if err := ctx.Err(); err != nil {
+		decision <- false
+		return status.FromContextError(err).Err()
+	}
+	select {
+	case <-sess.done:
+		decision <- false
+		return status.Error(codes.Unavailable, "session has ended")
+	default:
+	}
 	size := &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}
 	var err error
 	if s.exclusiveInput || sess.nonblockInput {
@@ -1714,12 +1757,10 @@ func (s *Server) resizeSession(sess *Session, rows, cols uint32) error {
 		err = pty.Setsize(sess.ptmx, size)
 	}
 	if err != nil {
+		decision <- false
 		return status.Errorf(codes.Internal, "resize PTY: %v", err)
 	}
-	select {
-	case sess.vtermCh <- vtermMsg{resize: &vtermResize{int(cols), int(rows)}}:
-	default:
-	}
+	decision <- true
 	sess.writeAuditResize(cols, rows)
 	if err := s.updateMetaDimensions(cols, rows); err != nil {
 		log.Printf("egg: update terminal metadata: %v", err)
@@ -1780,6 +1821,7 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 			}
 		}
 	}
+	readOnly := msg.AttachOptions.GetReadOnly()
 	var attachment *inputAttachment
 	if s.exclusiveInput {
 		attachment = s.inputLease.register(msg.AttachOptions)
@@ -1791,12 +1833,12 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 		}
 	}
 	if options := msg.AttachOptions; options != nil && options.Rows != 0 {
-		resize := func() error { return s.resizeSession(sess, options.Rows, options.Cols) }
+		resize := func(ctx context.Context) error { return s.resizeSession(ctx, sess, options.Rows, options.Cols) }
 		if s.exclusiveInput {
-			if err := s.inputLease.mutation(stream.Context(), attachment, func(context.Context) error { return resize() }); err != nil {
+			if err := s.inputLease.mutation(stream.Context(), attachment, resize); err != nil {
 				return err
 			}
-		} else if err := resize(); err != nil {
+		} else if err := resize(stream.Context()); err != nil {
 			return err
 		}
 	}
@@ -1954,6 +1996,9 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 
 		switch p := msg.Payload.(type) {
 		case *pb.SessionMsg_Input:
+			if readOnly {
+				return status.Error(codes.PermissionDenied, "read-only attachment cannot write")
+			}
 			writeInput := func(ctx context.Context) error {
 				s.inputMu.Lock()
 				defer s.inputMu.Unlock()
@@ -1982,15 +2027,18 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 				return err
 			}
 		case *pb.SessionMsg_Resize:
+			if readOnly {
+				return status.Error(codes.PermissionDenied, "read-only attachment cannot resize")
+			}
 			if err := validatePTYSize(p.Resize.Cols, p.Resize.Rows); err != nil {
 				return status.Error(codes.InvalidArgument, err.Error())
 			}
-			resize := func() error { return s.resizeSession(sess, p.Resize.Rows, p.Resize.Cols) }
+			resize := func(ctx context.Context) error { return s.resizeSession(ctx, sess, p.Resize.Rows, p.Resize.Cols) }
 			if s.exclusiveInput {
-				if err := s.inputLease.mutation(stream.Context(), attachment, func(context.Context) error { return resize() }); err != nil {
+				if err := s.inputLease.mutation(stream.Context(), attachment, resize); err != nil {
 					return err
 				}
-			} else if err := resize(); err != nil {
+			} else if err := resize(stream.Context()); err != nil {
 				return err
 			}
 		case *pb.SessionMsg_Detach:

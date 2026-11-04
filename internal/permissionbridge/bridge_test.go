@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"io"
 	"net"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func fixtureInput(t *testing.T, command string) Input {
@@ -20,11 +21,7 @@ func fixtureInput(t *testing.T, command string) Input {
 
 func startFixtureBroker(t *testing.T, in Input, steps []Step) (string, *bytes.Buffer, func()) {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "pb-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	dir := testsocket.Dir(t)
 	socket := filepath.Join(dir, "broker.sock")
 	l, err := Listen(socket)
 	if err != nil {
@@ -157,11 +154,7 @@ func TestPermissionBridgeHookRejectsUnboundAnswers(t *testing.T) {
 	for _, field := range []string{"session", "provider", "id", "digest", "decision"} {
 		t.Run(field, func(t *testing.T) {
 			in := fixtureInput(t, "echo invalid")
-			dir, err := os.MkdirTemp("", "pb-")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer os.RemoveAll(dir)
+			dir := testsocket.Dir(t)
 			socket := filepath.Join(dir, "b.sock")
 			l, err := Listen(socket)
 			if err != nil {
@@ -286,7 +279,11 @@ func TestPermissionBridgeMissingCommandIsLoggedWithoutConsumingStep(t *testing.T
 		}()
 		req := Request{Binding: Binding{"egg-fixture", in.ProviderID, strings.Repeat("a", 32), Digest(in)},
 			Input: in, Deadline: time.Now().Add(time.Second)}
-		if err := json.NewEncoder(client).Encode(req); err != nil {
+		payload, err := json.Marshal(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := client.Write(payload); err != nil {
 			t.Fatal(err)
 		}
 		var answer Answer

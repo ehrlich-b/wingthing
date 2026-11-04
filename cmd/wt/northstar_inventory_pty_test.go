@@ -21,6 +21,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"google.golang.org/grpc"
 )
 
@@ -43,6 +44,18 @@ func northstarInventorySSH(args []string) int {
 	r := northstarInventorySSHRecord{northstarSSHRecord: northstarSSHRecord{Target: args[3], Mode: args[0], Batch: true, Command: args[4]}, PID: os.Getpid(), TMPDIR: os.Getenv("TMPDIR")}
 	if r.Target != "ns-healthy" && r.Target != "ns-offline" && r.Target != "ns-slow" {
 		return 92
+	}
+	if r.Target == "ns-slow" {
+		lock, err := os.OpenFile(filepath.Join(os.Getenv("NORTHSTAR_INVENTORY_MAILBOX"), "slow.lock"), os.O_CREATE|os.O_RDWR, 0600)
+		if err != nil {
+			return 96
+		}
+		defer lock.Close()
+		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			if err := os.WriteFile(filepath.Join(os.Getenv("NORTHSTAR_INVENTORY_MAILBOX"), fmt.Sprintf("overlap-%d", r.PID)), []byte(err.Error()), 0600); err != nil {
+				return 97
+			}
+		}
 	}
 	data, _ := json.Marshal(r)
 	if err := os.WriteFile(filepath.Join(os.Getenv("NORTHSTAR_INVENTORY_MAILBOX"), fmt.Sprintf("ssh-%d.json", r.PID)), data, 0600); err != nil {
@@ -86,6 +99,10 @@ type northstarInventoryEgg struct {
 }
 
 func (f northstarInventoryEgg) Status(ctx context.Context, _ *pb.StatusRequest) (*pb.StatusResponse, error) {
+	if os.Getenv("WT_TEST_INVENTORY_TRACE") != "" {
+		fmt.Fprintf(os.Stderr, "inventory status start %s\n", time.Now().Format(time.RFC3339Nano))
+		defer func() { fmt.Fprintf(os.Stderr, "inventory status end %s\n", time.Now().Format(time.RFC3339Nano)) }()
+	}
 	f.calls.Add(1)
 	n := f.active.Add(1)
 	defer f.active.Add(-1)
@@ -146,18 +163,15 @@ func TestNorthstarPTYInventoryBudget(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Use 06's short IDs, then assert the actual canonical bind addresses.
-		// The shared helper's full-runtime-ID reservation exceeds this clone's
-		// path budget, but these fixture endpoints fit without relocation.
-		home, local, remote := testprovider.ScopedHomeDirs(t, "../../.scratch")
-		home, _ = filepath.Abs(home)
-		local, _ = filepath.Abs(local)
-		remote, _ = filepath.Abs(remote)
-		root, err := os.MkdirTemp(filepath.Join(repo, ".scratch"), "inventory-")
+		// Socket addresses must fit independently of the checkout's length.
+		// Keep protected HOME beside the writable work/TMPDIR directories in a
+		// private temporary root, and budget against its canonical address.
+		root := testsocket.Dir(t)
+		root, err = filepath.EvalSymlinks(root)
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = os.RemoveAll(root) })
+		home, local, remote := testprovider.ScopedHomeDirs(t, root)
 		f := &northstarFixture{repo: repo, root: root, home: home, local: local, remote: remote, work: filepath.Join(root, "work"), tmp: filepath.Join(root, "tmp-alias"),
 			evidence: filepath.Join(repo, ".scratch", "northstar", "inventory-evidence")}
 		f.bin = filepath.Join(f.tmp, "bin")
@@ -238,16 +252,20 @@ func TestNorthstarPTYInventoryBudget(t *testing.T) {
 		northstarInventoryWait(t, "outstanding local probes", func() bool { return active.Load() > 0 })
 		reactionStart := time.Now()
 		rev := h.send("/")
-		h.expect("filter while inventory waits", rev, "Search sessions")
+		h.expect("filter while inventory waits", rev, "Search sessions", "Type to search")
 		keyReaction := time.Since(reactionStart)
 		rev = h.send("\x1b")
-		h.expect("leave filter", rev, "R re")
-		h.expect("healthy local metadata", h.send("/local-19\r"), "local 19", "? Unknown")
+		// A remote's "R reconnect" can remain visible in the filter screen.
+		// Wait for navigation and initial inventory to render before typing again.
+		h.waitScreen("leave filter", rev, func(screen string) bool {
+			return strings.Contains(screen, "q quit") && !strings.Contains(screen, "Search sessions") && !strings.Contains(screen, "Loading sessions...")
+		})
+		h.expect("healthy local metadata", h.send("/local-19\r"), "local 19", "? Unknown", "Search sessions /local-19", "q quit")
 		localReady := time.Since(start)
 		phaseMetrics := fmt.Sprintf("first_frame=%s local_metadata=%s key_response=%s\n", firstFrame, localReady, keyReaction)
 		northstarWrite(t, h.artifact+".phases", phaseMetrics, 0600)
 		t.Log(strings.TrimSpace(phaseMetrics))
-		h.expect("healthy remote independent of slow SSH", h.send("/\x15healthy-remote\r"), "healthy remote", "offline not searched")
+		h.expect("healthy remote independent of slow SSH", h.send("/\x15healthy-remote\r"), "healthy remote", "offline not searched", "Search sessions /healthy-remote", "q quit")
 		northstarInventoryWait(t, "one SSH per machine", func() bool { return len(northstarInventoryRecords(t, mailbox)) >= 3 })
 		records := northstarInventoryRecords(t, mailbox)
 		// Initial dispatch has one request per saved machine. Later refreshes may
@@ -265,7 +283,7 @@ func TestNorthstarPTYInventoryBudget(t *testing.T) {
 			}
 		}
 		rev = h.send("/\x15local-1\r")
-		h.expect("filter local metadata", rev, "> local 10")
+		h.expect("filter local metadata", rev, "> local 10", "Search sessions /local-1", "q quit")
 		// Start a second local query and coalesce repeated R while slow SSH
 		// remains in flight. Quit with RPC and SSH readers still outstanding.
 		rev = h.send("RRRR")
@@ -283,7 +301,11 @@ func TestNorthstarPTYInventoryBudget(t *testing.T) {
 				t.Fatalf("SSH query child not joined: pid=%d err=%v", record.PID, err)
 			}
 		}
-		if counts["ns-slow"] != 1 {
+		overlaps, err := filepath.Glob(filepath.Join(mailbox, "overlap-*"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if counts["ns-slow"] == 0 || len(overlaps) != 0 {
 			t.Fatalf("R overlapped slow machine: %v", counts)
 		}
 		if peak.Load() > 8 {

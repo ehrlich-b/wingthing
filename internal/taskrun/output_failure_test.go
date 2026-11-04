@@ -281,6 +281,28 @@ func outputFailurePID(t *testing.T, workDir, name string) int {
 	return pid
 }
 
+// A process can disappear after procfs opens its stat file but before it is read.
+func procStatMissing(err error) bool {
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH)
+}
+
+func TestProcStatMissingAfterProcessExit(t *testing.T) {
+	cmd := exec.Command("/bin/true")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	_, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", cmd.Process.Pid))
+	if !procStatMissing(err) {
+		t.Fatalf("exited process stat: %v", err)
+	}
+	if !procStatMissing(&os.PathError{Op: "read", Path: "stat", Err: syscall.ESRCH}) {
+		t.Fatal("ESRCH from a procfs read must mean the process exited")
+	}
+	if procStatMissing(syscall.EACCES) {
+		t.Fatal("permission errors do not prove a process exited")
+	}
+}
+
 func assertOutputFailureTreeStopped(t *testing.T, workDir string) {
 	t.Helper()
 	for _, name := range []string{"provider", "child", "grandchild"} {
@@ -291,7 +313,7 @@ func assertOutputFailureTreeStopped(t *testing.T, workDir string) {
 		deadline := time.Now().Add(2 * time.Second)
 		for {
 			stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-			if errors.Is(err, os.ErrNotExist) {
+			if procStatMissing(err) {
 				break
 			}
 			if err != nil {

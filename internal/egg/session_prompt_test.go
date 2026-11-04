@@ -134,358 +134,378 @@ func TestSessionPromptConcurrentRetrySendsAtMostOnceAndKeepsLease(t *testing.T) 
 }
 
 func TestSessionPromptTimeoutLostAckAndReconnectNativeReceipt(t *testing.T) {
-	dir, path, o := promptFixtureOptions(t)
-	var sends atomic.Int32
-	lost := make(chan error, 1)
-	lost <- errors.New("connection reset")
-	o.Send = func(context.Context, string) (PromptDelivery, error) {
-		sends.Add(1)
-		return PromptDelivery{BytesEnqueued: 99, Lost: lost}, nil
-	}
-	r, err := SubmitSessionPrompt(context.Background(), dir, o)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.NativeReceiptObserved || !r.TransportEnqueued || r.Status != "unconfirmed" || !strings.Contains(r.Reason, "connection") {
-		t.Fatalf("lost acknowledgement lied: %+v", r)
-	}
-	writeNativeUserPrompt(t, path, o.Input)
-	r, err = SubmitSessionPrompt(context.Background(), dir, o)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !r.NativeReceiptObserved || !r.Retried || sends.Load() != 1 {
-		t.Fatalf("retry duplicated or lost receipt: %+v sends=%d", r, sends.Load())
-	}
-	// An identical human prompt is observational evidence; never claim the
-	// provider causally acknowledged Wingthing's request ID.
-	if r.ProviderRequestAcknowledged || r.Causality != "unverified_without_provider_request_id" {
-		t.Fatalf("claimed request-ID linkage: %+v", r)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		dir, path, o := promptFixtureOptions(t)
+		var sends atomic.Int32
+		lost := make(chan error, 1)
+		lost <- errors.New("connection reset")
+		o.Send = func(context.Context, string) (PromptDelivery, error) {
+			sends.Add(1)
+			return PromptDelivery{BytesEnqueued: 99, Lost: lost}, nil
+		}
+		r, err := SubmitSessionPrompt(context.Background(), dir, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.NativeReceiptObserved || !r.TransportEnqueued || r.Status != "unconfirmed" || !strings.Contains(r.Reason, "connection") {
+			t.Fatalf("lost acknowledgement lied: %+v", r)
+		}
+		writeNativeUserPrompt(t, path, o.Input)
+		r, err = SubmitSessionPrompt(context.Background(), dir, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !r.NativeReceiptObserved || !r.Retried || sends.Load() != 1 {
+			t.Fatalf("retry duplicated or lost receipt: %+v sends=%d", r, sends.Load())
+		}
+		// An identical human prompt is observational evidence; never claim the
+		// provider causally acknowledged Wingthing's request ID.
+		if r.ProviderRequestAcknowledged || r.Causality != "unverified_without_provider_request_id" {
+			t.Fatalf("claimed request-ID linkage: %+v", r)
+		}
+	})
 }
 
 func TestSessionPromptCrashGapIsReservedAndNeverResent(t *testing.T) {
-	dir, path, o := promptFixtureOptions(t)
-	var sends atomic.Int32
-	o.Send = func(context.Context, string) (PromptDelivery, error) {
-		sends.Add(1)
-		panic("simulated supervising process crash after durable reservation")
-	}
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Error("fixture didn't crash")
-			}
+	synctest.Test(t, func(t *testing.T) {
+		dir, path, o := promptFixtureOptions(t)
+		var sends atomic.Int32
+		o.Send = func(context.Context, string) (PromptDelivery, error) {
+			sends.Add(1)
+			panic("simulated supervising process crash after durable reservation")
+		}
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Error("fixture didn't crash")
+				}
+			}()
+			_, _ = SubmitSessionPrompt(context.Background(), dir, o)
 		}()
-		_, _ = SubmitSessionPrompt(context.Background(), dir, o)
-	}()
-	o.Send = func(context.Context, string) (PromptDelivery, error) {
-		t.Error("crash-gap retry resent input")
-		return PromptDelivery{}, nil
-	}
-	r, err := SubmitSessionPrompt(context.Background(), dir, o)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.NativeReceiptObserved || r.TransportEnqueued || r.DefinitelyNotSent || !r.Retried || r.Status != "unconfirmed" {
-		t.Fatalf("crash gap claimed delivery: %+v", r)
-	}
-	writeNativeUserPrompt(t, path, o.Input)
-	r, err = SubmitSessionPrompt(context.Background(), dir, o)
-	if err != nil || !r.NativeReceiptObserved || sends.Load() != 1 {
-		t.Fatalf("crash-gap receipt lost: %+v %v", r, err)
-	}
+		o.Send = func(context.Context, string) (PromptDelivery, error) {
+			t.Error("crash-gap retry resent input")
+			return PromptDelivery{}, nil
+		}
+		r, err := SubmitSessionPrompt(context.Background(), dir, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.NativeReceiptObserved || r.TransportEnqueued || r.DefinitelyNotSent || !r.Retried || r.Status != "unconfirmed" {
+			t.Fatalf("crash gap claimed delivery: %+v", r)
+		}
+		writeNativeUserPrompt(t, path, o.Input)
+		r, err = SubmitSessionPrompt(context.Background(), dir, o)
+		if err != nil || !r.NativeReceiptObserved || sends.Load() != 1 {
+			t.Fatalf("crash-gap receipt lost: %+v %v", r, err)
+		}
+	})
 }
 
 func TestSessionPromptNotSentEvidenceIsTerminalAndNeverResent(t *testing.T) {
-	dir, path, o := promptFixtureOptions(t)
-	var sends atomic.Int32
-	o.Send = func(context.Context, string) (PromptDelivery, error) {
-		sends.Add(1)
-		return PromptDelivery{NoInputAttempted: true}, errors.New("another writer owns input")
-	}
-	r, err := SubmitSessionPrompt(context.Background(), dir, o)
-	if err != nil || r.Status != "not_sent" || !r.DefinitelyNotSent || r.TransportEnqueued || r.TransportBytesEnqueued != 0 || r.NativeReceiptObserved || !strings.Contains(r.Reason, "another writer") {
-		t.Fatalf("explicit preflight evidence lost: %+v %v", r, err)
-	}
-	// A later identical human message cannot change an unsent request into
-	// a receipt. Cached proof survives native-reader loss or replacement.
-	writeNativeUserPrompt(t, path, o.Input)
-	o.Read = func(context.Context, int64, int) (SessionView, error) {
-		t.Error("terminal not_sent replay read the replacement provider")
-		return SessionView{}, errors.New("provider disconnected")
-	}
-	o.Send = func(context.Context, string) (PromptDelivery, error) {
-		t.Error("terminal not_sent request was resent")
-		return PromptDelivery{}, nil
-	}
-	retry, err := SubmitSessionPrompt(context.Background(), dir, o)
-	if err != nil || retry.Status != "not_sent" || !retry.DefinitelyNotSent || !retry.Retried || retry.Reason != r.Reason || sends.Load() != 1 {
-		t.Fatalf("terminal proof was not replayed: %+v %v", retry, err)
-	}
-	o.Input = "changed prompt"
-	if _, err := SubmitSessionPrompt(context.Background(), dir, o); err == nil {
-		t.Fatal("terminal not_sent ID accepted changed caller arguments")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		dir, path, o := promptFixtureOptions(t)
+		var sends atomic.Int32
+		o.Send = func(context.Context, string) (PromptDelivery, error) {
+			sends.Add(1)
+			return PromptDelivery{NoInputAttempted: true}, errors.New("another writer owns input")
+		}
+		r, err := SubmitSessionPrompt(context.Background(), dir, o)
+		if err != nil || r.Status != "not_sent" || !r.DefinitelyNotSent || r.TransportEnqueued || r.TransportBytesEnqueued != 0 || r.NativeReceiptObserved || !strings.Contains(r.Reason, "another writer") {
+			t.Fatalf("explicit preflight evidence lost: %+v %v", r, err)
+		}
+		// A later identical human message cannot change an unsent request into
+		// a receipt. Cached proof survives native-reader loss or replacement.
+		writeNativeUserPrompt(t, path, o.Input)
+		o.Read = func(context.Context, int64, int) (SessionView, error) {
+			t.Error("terminal not_sent replay read the replacement provider")
+			return SessionView{}, errors.New("provider disconnected")
+		}
+		o.Send = func(context.Context, string) (PromptDelivery, error) {
+			t.Error("terminal not_sent request was resent")
+			return PromptDelivery{}, nil
+		}
+		retry, err := SubmitSessionPrompt(context.Background(), dir, o)
+		if err != nil || retry.Status != "not_sent" || !retry.DefinitelyNotSent || !retry.Retried || retry.Reason != r.Reason || sends.Load() != 1 {
+			t.Fatalf("terminal proof was not replayed: %+v %v", retry, err)
+		}
+		o.Input = "changed prompt"
+		if _, err := SubmitSessionPrompt(context.Background(), dir, o); err == nil {
+			t.Fatal("terminal not_sent ID accepted changed caller arguments")
+		}
+	})
 }
 
 func TestSessionPromptZeroBytesErrorDoesNotProveNotSent(t *testing.T) {
-	for _, delivery := range []PromptDelivery{{}, {NoInputAttempted: true, BytesEnqueued: 1}} {
-		dir, _, o := promptFixtureOptions(t)
-		sends := 0
-		o.Send = func(context.Context, string) (PromptDelivery, error) {
-			sends++
-			return delivery, errors.New("input Send failed; acknowledgement is unknown")
+	synctest.Test(t, func(t *testing.T) {
+		for _, delivery := range []PromptDelivery{{}, {NoInputAttempted: true, BytesEnqueued: 1}} {
+			dir, _, o := promptFixtureOptions(t)
+			sends := 0
+			o.Send = func(context.Context, string) (PromptDelivery, error) {
+				sends++
+				return delivery, errors.New("input Send failed; acknowledgement is unknown")
+			}
+			r, err := SubmitSessionPrompt(context.Background(), dir, o)
+			if err != nil || r.Status != "unconfirmed" || r.DefinitelyNotSent || r.NativeReceiptObserved {
+				t.Fatalf("ambiguous error inferred not_sent: %+v %v", r, err)
+			}
+			r, err = SubmitSessionPrompt(context.Background(), dir, o)
+			if err != nil || r.Status != "unconfirmed" || r.DefinitelyNotSent || !r.Retried || sends != 1 {
+				t.Fatalf("ambiguous retry resent or became proven unsent: %+v sends=%d %v", r, sends, err)
+			}
 		}
-		r, err := SubmitSessionPrompt(context.Background(), dir, o)
-		if err != nil || r.Status != "unconfirmed" || r.DefinitelyNotSent || r.NativeReceiptObserved {
-			t.Fatalf("ambiguous error inferred not_sent: %+v %v", r, err)
-		}
-		r, err = SubmitSessionPrompt(context.Background(), dir, o)
-		if err != nil || r.Status != "unconfirmed" || r.DefinitelyNotSent || !r.Retried || sends != 1 {
-			t.Fatalf("ambiguous retry resent or became proven unsent: %+v sends=%d %v", r, sends, err)
-		}
-	}
+	})
 }
 
 func TestSessionPromptNotSentReasonIsBoundedAndActionable(t *testing.T) {
-	dir, _, o := promptFixtureOptions(t)
-	o.Send = func(context.Context, string) (PromptDelivery, error) {
-		return PromptDelivery{NoInputAttempted: true}, errors.New("lease busy\n\x1b[31m " + strings.Repeat("界", 1000))
-	}
-	r, err := SubmitSessionPrompt(context.Background(), dir, o)
-	if err != nil || !r.DefinitelyNotSent || r.Status != "not_sent" || len(r.Reason) > 700 || strings.ContainsAny(r.Reason, "\n\x1b") || !strings.Contains(r.Reason, "lease busy") || !strings.Contains(r.Reason, "new request_id") {
-		t.Fatalf("unbounded or non-actionable preflight reason: %+v %v", r, err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		dir, _, o := promptFixtureOptions(t)
+		o.Send = func(context.Context, string) (PromptDelivery, error) {
+			return PromptDelivery{NoInputAttempted: true}, errors.New("lease busy\n\x1b[31m " + strings.Repeat("界", 1000))
+		}
+		r, err := SubmitSessionPrompt(context.Background(), dir, o)
+		if err != nil || !r.DefinitelyNotSent || r.Status != "not_sent" || len(r.Reason) > 700 || strings.ContainsAny(r.Reason, "\n\x1b") || !strings.Contains(r.Reason, "lease busy") || !strings.Contains(r.Reason, "new request_id") {
+			t.Fatalf("unbounded or non-actionable preflight reason: %+v %v", r, err)
+		}
+	})
 }
 
 func TestSessionPromptRejectsHooksSyntheticMetaToolAndOldReceipts(t *testing.T) {
-	base := SessionEvent{Source: "claude_transcript", Type: "message", ProviderSessionID: "ours"}
-	for _, record := range []string{
-		`{"type":"user","sessionId":"ours","isMeta":true,"message":{"role":"user","content":"x"}}`,
-		`{"type":"user","sessionId":"ours","isSynthetic":true,"message":{"role":"user","content":"x"}}`,
-		`{"type":"user","sessionId":"ours","isCompactSummary":true,"message":{"role":"user","content":"x"}}`,
-		`{"type":"user","sessionId":"ours","isSidechain":true,"message":{"role":"user","content":"x"}}`,
-		`{"type":"user","sessionId":"ours","isVisibleInTranscriptOnly":true,"message":{"role":"user","content":"x"}}`,
-		`{"type":"user","sessionId":"foreign","message":{"role":"user","content":"x"}}`,
-		`{"type":"user","sessionId":"ours","message":{"role":"user","content":[{"type":"tool_result","text":"x"}]}}`,
-		`{"type":"assistant","sessionId":"ours","message":{"role":"assistant","content":"x"}}`,
-	} {
-		event := base
-		event.Raw = json.RawMessage(record)
-		if nativeHumanPromptReceipt(event, "ours", "x") {
-			t.Fatalf("accepted non-human receipt: %s", record)
+	synctest.Test(t, func(t *testing.T) {
+		base := SessionEvent{Source: "claude_transcript", Type: "message", ProviderSessionID: "ours"}
+		for _, record := range []string{
+			`{"type":"user","sessionId":"ours","isMeta":true,"message":{"role":"user","content":"x"}}`,
+			`{"type":"user","sessionId":"ours","isSynthetic":true,"message":{"role":"user","content":"x"}}`,
+			`{"type":"user","sessionId":"ours","isCompactSummary":true,"message":{"role":"user","content":"x"}}`,
+			`{"type":"user","sessionId":"ours","isSidechain":true,"message":{"role":"user","content":"x"}}`,
+			`{"type":"user","sessionId":"ours","isVisibleInTranscriptOnly":true,"message":{"role":"user","content":"x"}}`,
+			`{"type":"user","sessionId":"foreign","message":{"role":"user","content":"x"}}`,
+			`{"type":"user","sessionId":"ours","message":{"role":"user","content":[{"type":"tool_result","text":"x"}]}}`,
+			`{"type":"assistant","sessionId":"ours","message":{"role":"assistant","content":"x"}}`,
+		} {
+			event := base
+			event.Raw = json.RawMessage(record)
+			if nativeHumanPromptReceipt(event, "ours", "x") {
+				t.Fatalf("accepted non-human receipt: %s", record)
+			}
 		}
-	}
-	dir, path, o := promptFixtureOptions(t)
-	writeNativeUserPrompt(t, path, o.Input)
-	reader := o.Read
-	initial, err := reader(context.Background(), 0, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	o.Read = func(ctx context.Context, after int64, limit int) (SessionView, error) {
-		v, err := reader(ctx, after, limit)
-		v.State = "idle"
-		v.StateSource = "claude_hook"
-		return v, err
-	}
-	o.Send = func(context.Context, string) (PromptDelivery, error) { return PromptDelivery{BytesEnqueued: 10}, nil }
-	r, err := SubmitSessionPrompt(context.Background(), dir, o)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.NativeReceiptObserved || r.ReservedCursor != initial.HeadCursor {
-		t.Fatalf("old matching text satisfied new prompt: %+v", r)
-	}
-	// Hook UserPromptSubmit by itself is not provider transcript acceptance.
-	o.RequestID = "hooks-only"
-	o.Read = func(ctx context.Context, after int64, limit int) (SessionView, error) {
-		v, err := reader(ctx, after, limit)
-		v.State = "idle"
-		v.StateSource = "claude_hook"
-		if after > 0 {
-			v.Events = []SessionEvent{{Sequence: after + 1, Type: "prompt_submitted", Source: "claude_hook", Text: o.Input}}
-			v.Cursor = after + 1
-			v.HeadCursor = v.Cursor
+		dir, path, o := promptFixtureOptions(t)
+		writeNativeUserPrompt(t, path, o.Input)
+		reader := o.Read
+		initial, err := reader(context.Background(), 0, 10)
+		if err != nil {
+			t.Fatal(err)
 		}
-		return v, err
-	}
-	r, err = SubmitSessionPrompt(context.Background(), dir, o)
-	if err != nil || r.NativeReceiptObserved {
-		t.Fatalf("hook became acceptance: %+v %v", r, err)
-	}
+		o.Read = func(ctx context.Context, after int64, limit int) (SessionView, error) {
+			v, err := reader(ctx, after, limit)
+			v.State = "idle"
+			v.StateSource = "claude_hook"
+			return v, err
+		}
+		o.Send = func(context.Context, string) (PromptDelivery, error) { return PromptDelivery{BytesEnqueued: 10}, nil }
+		r, err := SubmitSessionPrompt(context.Background(), dir, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.NativeReceiptObserved || r.ReservedCursor != initial.HeadCursor {
+			t.Fatalf("old matching text satisfied new prompt: %+v", r)
+		}
+		// Hook UserPromptSubmit by itself is not provider transcript acceptance.
+		o.RequestID = "hooks-only"
+		o.Read = func(ctx context.Context, after int64, limit int) (SessionView, error) {
+			v, err := reader(ctx, after, limit)
+			v.State = "idle"
+			v.StateSource = "claude_hook"
+			if after > 0 {
+				v.Events = []SessionEvent{{Sequence: after + 1, Type: "prompt_submitted", Source: "claude_hook", Text: o.Input}}
+				v.Cursor = after + 1
+				v.HeadCursor = v.Cursor
+			}
+			return v, err
+		}
+		r, err = SubmitSessionPrompt(context.Background(), dir, o)
+		if err != nil || r.NativeReceiptObserved {
+			t.Fatalf("hook became acceptance: %+v %v", r, err)
+		}
+	})
 }
 
 func TestSessionPromptValidationReadinessAndCancellation(t *testing.T) {
-	dir, _, o := promptFixtureOptions(t)
-	var sends atomic.Int32
-	o.Send = func(context.Context, string) (PromptDelivery, error) { sends.Add(1); return PromptDelivery{}, nil }
-	for _, state := range []string{"working", "needs_input", "unknown"} {
-		t.Run(state, func(t *testing.T) {
-			next := o
-			next.Read = func(context.Context, int64, int) (SessionView, error) {
-				return SessionView{Agent: "claude", ProviderSessionID: "ours", Ready: true, ProcessAlive: true, State: state, StateSource: "claude_hook"}, nil
-			}
-			if _, err := SubmitSessionPrompt(context.Background(), dir, next); err == nil {
-				t.Fatal("sent without foreground readiness")
-			}
-		})
-	}
-	for _, input := range []string{"", strings.Repeat("x", MaxSessionPromptBytes+1), "x\x1b[31m", "x\r\ny", "x\u0085y"} {
-		next := o
-		next.Input = input
-		if _, err := SubmitSessionPrompt(context.Background(), dir, next); err == nil {
-			t.Fatalf("accepted invalid input %q", input[:min(len(input), 20)])
+	synctest.Test(t, func(t *testing.T) {
+		dir, _, o := promptFixtureOptions(t)
+		var sends atomic.Int32
+		o.Send = func(context.Context, string) (PromptDelivery, error) { sends.Add(1); return PromptDelivery{}, nil }
+		for _, state := range []string{"working", "needs_input", "unknown"} {
+			func() {
+				next := o
+				next.Read = func(context.Context, int64, int) (SessionView, error) {
+					return SessionView{Agent: "claude", ProviderSessionID: "ours", Ready: true, ProcessAlive: true, State: state, StateSource: "claude_hook"}, nil
+				}
+				if _, err := SubmitSessionPrompt(context.Background(), dir, next); err == nil {
+					t.Fatalf("sent without foreground readiness: %s", state)
+				}
+			}()
 		}
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := SubmitSessionPrompt(ctx, dir, o); err != context.Canceled {
-		t.Fatalf("cancelled caller sent: %v", err)
-	}
-	if sends.Load() != 0 {
-		t.Fatalf("rejected sends=%d", sends.Load())
-	}
-	badRequest := o
-	badRequest.RequestID = "r\x1b[2J"
-	if _, err := SubmitSessionPrompt(context.Background(), dir, badRequest); err == nil {
-		t.Fatal("request ID accepted terminal control bytes")
-	}
-	// Retry bounds belong to the reserved spec, including the timeout.
-	r, err := SubmitSessionPrompt(context.Background(), dir, o)
-	if err != nil || r.Status != "unconfirmed" {
-		t.Fatalf("timeout receipt: %+v %v", r, err)
-	}
-	o.Timeout = time.Second
-	if _, err = SubmitSessionPrompt(context.Background(), dir, o); err == nil {
-		t.Fatal("changed wait bound accepted as same request")
-	}
+		for _, input := range []string{"", strings.Repeat("x", MaxSessionPromptBytes+1), "x\x1b[31m", "x\r\ny", "x\u0085y"} {
+			next := o
+			next.Input = input
+			if _, err := SubmitSessionPrompt(context.Background(), dir, next); err == nil {
+				t.Fatalf("accepted invalid input %q", input[:min(len(input), 20)])
+			}
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if _, err := SubmitSessionPrompt(ctx, dir, o); err != context.Canceled {
+			t.Fatalf("cancelled caller sent: %v", err)
+		}
+		if sends.Load() != 0 {
+			t.Fatalf("rejected sends=%d", sends.Load())
+		}
+		badRequest := o
+		badRequest.RequestID = "r\x1b[2J"
+		if _, err := SubmitSessionPrompt(context.Background(), dir, badRequest); err == nil {
+			t.Fatal("request ID accepted terminal control bytes")
+		}
+		// Retry bounds belong to the reserved spec, including the timeout.
+		r, err := SubmitSessionPrompt(context.Background(), dir, o)
+		if err != nil || r.Status != "unconfirmed" {
+			t.Fatalf("timeout receipt: %+v %v", r, err)
+		}
+		o.Timeout = time.Second
+		if _, err = SubmitSessionPrompt(context.Background(), dir, o); err == nil {
+			t.Fatal("changed wait bound accepted as same request")
+		}
+	})
 }
 
 func TestSessionPromptCompetingRequestsAreSerialized(t *testing.T) {
-	dir, path, o := promptFixtureOptions(t)
-	var active, maxActive atomic.Int32
-	o.Timeout = time.Second
-	o.Send = func(ctx context.Context, input string) (PromptDelivery, error) {
-		n := active.Add(1)
-		if n > maxActive.Load() {
-			maxActive.Store(n)
-		}
-		time.Sleep(30 * time.Millisecond)
-		writeNativeUserPrompt(t, path, input)
-		return PromptDelivery{Release: func() { active.Add(-1) }}, nil
-	}
-	var wg sync.WaitGroup
-	errs := make(chan error, 2)
-	for i := 0; i < 2; i++ {
-		next := o
-		next.RequestID = fmt.Sprintf("r-%d", i)
-		next.Input = fmt.Sprintf("prompt-%d", i)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			r, err := SubmitSessionPrompt(context.Background(), dir, next)
-			if err != nil {
-				errs <- err
-			} else if !r.NativeReceiptObserved {
-				errs <- errors.New("receipt not observed")
+	synctest.Test(t, func(t *testing.T) {
+		dir, path, o := promptFixtureOptions(t)
+		var active, maxActive atomic.Int32
+		o.Timeout = time.Second
+		o.Send = func(ctx context.Context, input string) (PromptDelivery, error) {
+			n := active.Add(1)
+			if n > maxActive.Load() {
+				maxActive.Store(n)
 			}
-		}()
-	}
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		t.Error(err)
-	}
-	if maxActive.Load() != 1 {
-		t.Fatalf("parallel prompt writers=%d", maxActive.Load())
-	}
+			time.Sleep(30 * time.Millisecond)
+			writeNativeUserPrompt(t, path, input)
+			return PromptDelivery{Release: func() { active.Add(-1) }}, nil
+		}
+		var wg sync.WaitGroup
+		errs := make(chan error, 2)
+		for i := 0; i < 2; i++ {
+			next := o
+			next.RequestID = fmt.Sprintf("r-%d", i)
+			next.Input = fmt.Sprintf("prompt-%d", i)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				r, err := SubmitSessionPrompt(context.Background(), dir, next)
+				if err != nil {
+					errs <- err
+				} else if !r.NativeReceiptObserved {
+					errs <- errors.New("receipt not observed")
+				}
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Error(err)
+		}
+		if maxActive.Load() != 1 {
+			t.Fatalf("parallel prompt writers=%d", maxActive.Load())
+		}
+	})
 }
 
 func TestSessionPromptReservationDrainsOldNativeHistory(t *testing.T) {
-	dir, path, o := promptFixtureOptions(t)
-	o.Timeout = 10 * time.Second
-	var rows strings.Builder
-	for i := 0; i < 505; i++ {
-		text := fmt.Sprintf("old-%d", i)
-		if i == 504 {
-			text = o.Input
+	synctest.Test(t, func(t *testing.T) {
+		dir, path, o := promptFixtureOptions(t)
+		o.Timeout = 10 * time.Second
+		var rows strings.Builder
+		for i := 0; i < 505; i++ {
+			text := fmt.Sprintf("old-%d", i)
+			if i == 504 {
+				text = o.Input
+			}
+			record, _ := json.Marshal(map[string]any{"type": "user", "sessionId": "ours", "message": map[string]any{"role": "user", "content": text}})
+			rows.Write(record)
+			rows.WriteByte('\n')
 		}
-		record, _ := json.Marshal(map[string]any{"type": "user", "sessionId": "ours", "message": map[string]any{"role": "user", "content": text}})
-		rows.Write(record)
-		rows.WriteByte('\n')
-	}
-	lifecycleWrite(t, path, rows.String())
-	lost := make(chan error, 1)
-	lost <- errors.New("fixture disconnect after input")
-	o.Send = func(context.Context, string) (PromptDelivery, error) {
-		return PromptDelivery{BytesEnqueued: 1, Lost: lost}, nil
-	}
-	r, err := SubmitSessionPrompt(context.Background(), dir, o)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.NativeReceiptObserved || r.ReservedCursor != 506 {
-		t.Fatalf("old matching row beyond import page acknowledged new input: %+v", r)
-	}
+		lifecycleWrite(t, path, rows.String())
+		lost := make(chan error, 1)
+		lost <- errors.New("fixture disconnect after input")
+		o.Send = func(context.Context, string) (PromptDelivery, error) {
+			return PromptDelivery{BytesEnqueued: 1, Lost: lost}, nil
+		}
+		r, err := SubmitSessionPrompt(context.Background(), dir, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.NativeReceiptObserved || r.ReservedCursor != 506 {
+			t.Fatalf("old matching row beyond import page acknowledged new input: %+v", r)
+		}
+	})
 }
 
 func TestSessionPromptComposedTextBothProviders(t *testing.T) {
 	for _, agent := range []string{"claude", "codex"} {
 		t.Run(agent, func(t *testing.T) {
-			dir, path, options := promptFixtureOptions(t)
-			input := "  Ω exact message\nsecond line\twith tabs  \n"
-			options.Input = input
-			options.Timeout = time.Second
-			var sends int
-			var publish func()
-			if agent == "codex" {
-				dir = t.TempDir()
-				home := t.TempDir()
-				spool := filepath.Join(home, ".codex", "wingthing-events", filepath.Base(dir))
-				if err := os.MkdirAll(spool, 0700); err != nil {
-					t.Fatal(err)
+			synctest.Test(t, func(t *testing.T) {
+				dir, path, options := promptFixtureOptions(t)
+				input := "  Ω exact message\nsecond line\twith tabs  \n"
+				options.Input = input
+				options.Timeout = time.Second
+				var sends int
+				var publish func()
+				if agent == "codex" {
+					dir = t.TempDir()
+					home := t.TempDir()
+					spool := filepath.Join(home, ".codex", "wingthing-events", filepath.Base(dir))
+					if err := os.MkdirAll(spool, 0700); err != nil {
+						t.Fatal(err)
+					}
+					lifecycleWrite(t, filepath.Join(spool, "seq.00000000000000000001.json"), `{"session_id":"ours","hook_event_name":"SessionStart"}`)
+					options.Read = func(ctx context.Context, after int64, limit int) (SessionView, error) {
+						return ReadSessionLifecycle(dir, "codex", "", home, "ours", true, after, limit)
+					}
+					publish = func() {
+						wire, _ := json.Marshal(map[string]string{"session_id": "ours", "hook_event_name": "UserPromptSubmit", "prompt": input})
+						lifecycleWrite(t, filepath.Join(spool, "seq.00000000000000000002.json"), string(wire))
+					}
+				} else {
+					publish = func() { writeNativeUserPrompt(t, path, input) }
 				}
-				lifecycleWrite(t, filepath.Join(spool, "seq.00000000000000000001.json"), `{"session_id":"ours","hook_event_name":"SessionStart"}`)
-				options.Read = func(ctx context.Context, after int64, limit int) (SessionView, error) {
-					return ReadSessionLifecycle(dir, "codex", "", home, "ours", true, after, limit)
+				options.Send = func(ctx context.Context, text string) (PromptDelivery, error) {
+					sends++
+					if text != input {
+						t.Fatalf("composer text changed: %q", text)
+					}
+					// Transport success alone must leave delivery unconfirmed.
+					return PromptDelivery{BytesEnqueued: len(text) + 1, Lost: make(chan error)}, nil
 				}
-				publish = func() {
-					wire, _ := json.Marshal(map[string]string{"session_id": "ours", "hook_event_name": "UserPromptSubmit", "prompt": input})
-					lifecycleWrite(t, filepath.Join(spool, "seq.00000000000000000002.json"), string(wire))
+				options.Timeout = 100 * time.Millisecond
+				first, err := SubmitSessionPrompt(t.Context(), dir, options)
+				if err != nil || first.NativeReceiptObserved || first.Status != "unconfirmed" || sends != 1 {
+					t.Fatalf("optimistic delivery: %+v sends=%d error=%v", first, sends, err)
 				}
-			} else {
-				publish = func() { writeNativeUserPrompt(t, path, input) }
-			}
-			options.Send = func(ctx context.Context, text string) (PromptDelivery, error) {
-				sends++
-				if text != input {
-					t.Fatalf("composer text changed: %q", text)
+				publish()
+				receipt, err := SubmitSessionPrompt(t.Context(), dir, options)
+				if err != nil || !receipt.NativeReceiptObserved || !receipt.Retried || receipt.ReceiptCursor <= receipt.ReservedCursor || sends != 1 {
+					t.Fatalf("receipt/retry failed: %+v sends=%d error=%v", receipt, sends, err)
 				}
-				// Transport success alone must leave delivery unconfirmed.
-				return PromptDelivery{BytesEnqueued: len(text) + 1, Lost: make(chan error)}, nil
-			}
-			options.Timeout = 100 * time.Millisecond
-			first, err := SubmitSessionPrompt(t.Context(), dir, options)
-			if err != nil || first.NativeReceiptObserved || first.Status != "unconfirmed" || sends != 1 {
-				t.Fatalf("optimistic delivery: %+v sends=%d error=%v", first, sends, err)
-			}
-			publish()
-			receipt, err := SubmitSessionPrompt(t.Context(), dir, options)
-			if err != nil || !receipt.NativeReceiptObserved || !receipt.Retried || receipt.ReceiptCursor <= receipt.ReservedCursor || sends != 1 {
-				t.Fatalf("receipt/retry failed: %+v sends=%d error=%v", receipt, sends, err)
-			}
-			again, err := SubmitSessionPrompt(t.Context(), dir, options)
-			if err != nil || !again.NativeReceiptObserved || sends != 1 {
-				t.Fatalf("duplicate resent: %+v sends=%d error=%v", again, sends, err)
-			}
-			options.Input = " \n\t "
-			if _, err := SubmitSessionPrompt(t.Context(), dir, options); err == nil || sends != 1 {
-				t.Fatal("empty prompt was accepted")
-			}
-			wire, _ := json.Marshal(receipt)
-			t.Logf("provider=%s exact_text=%q sends=%d receipt=%s", agent, input, sends, wire)
+				again, err := SubmitSessionPrompt(t.Context(), dir, options)
+				if err != nil || !again.NativeReceiptObserved || sends != 1 {
+					t.Fatalf("duplicate resent: %+v sends=%d error=%v", again, sends, err)
+				}
+				options.Input = " \n\t "
+				if _, err := SubmitSessionPrompt(t.Context(), dir, options); err == nil || sends != 1 {
+					t.Fatal("empty prompt was accepted")
+				}
+				wire, _ := json.Marshal(receipt)
+				t.Logf("provider=%s exact_text=%q sends=%d receipt=%s", agent, input, sends, wire)
+			})
 		})
 	}
 }

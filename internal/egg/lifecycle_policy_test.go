@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"io"
 	"log"
 	"os"
@@ -22,30 +23,15 @@ func TestClaudeLifecycleRefusesHostSettingsOutsideFinalPolicy(t *testing.T) {
 		// Race-instrumented capability probes are short-lived re-execs of this
 		// test binary. Their default one-second exit sleeps consume the launch
 		// deadline before the provider starts. Remove only that diagnostic sleep
-		// in descendants; keep race detection and the three-second deadline.
+		// in descendants while keeping race detection enabled.
 		t.Setenv("GORACE", strings.TrimSpace(os.Getenv("GORACE")+" atexit_sleep_ms=0"))
 	}
 	if ok, help := sandbox.CheckCapability(); !ok {
 		t.Skip(help)
 	}
-	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	scratch := filepath.Join(root, ".scratch")
-	if err := os.MkdirAll(scratch, 0700); err != nil {
-		t.Fatal(err)
-	}
 	for _, attack := range []string{"deny", "ancestor-alias", "unmounted", "hardlink", "controller", "directory-alias", "allowed"} {
 		t.Run(attack, func(t *testing.T) {
-			// Keep the canonical egg socket below Darwin's 103-byte limit even
-			// when the OS temporary directory expands through /private/var.
-			temp, err := os.MkdirTemp(scratch, "s")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer os.RemoveAll(temp)
-			temp = config.CanonicalProviderPath(temp)
+			temp := config.CanonicalProviderPath(testsocket.Dir(t))
 			home, cwd, state := filepath.Join(temp, "home"), filepath.Join(temp, "work"), filepath.Join(temp, "state")
 			dir := filepath.Join(state, "eggs", "ours")
 			for _, path := range []string{home, cwd, dir, filepath.Join(temp, "private")} {
@@ -105,10 +91,12 @@ func TestClaudeLifecycleRefusesHostSettingsOutsideFinalPolicy(t *testing.T) {
 			if attack == "allowed" {
 				fs = []string{"ro:/", "rw:" + cwd}
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			// Allow the sandbox and race-instrumented process to start under load;
+			// this deadline is a test guard, not part of the filesystem policy.
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			server := &Server{dir: dir}
-			err = server.RunSession(ctx, RunConfig{Agent: "claude", ProviderSessionID: "ours", AgentArgs: []string{"--settings", path}, CWD: cwd, UserHome: home, FS: fs, Rows: 24, Cols: 80, Network: []string{"*"}, OmitBrowserBridge: true})
+			err := server.RunSession(ctx, RunConfig{Agent: "claude", ProviderSessionID: "ours", AgentArgs: []string{"--settings", path}, CWD: cwd, UserHome: home, FS: fs, Rows: 24, Cols: 80, Network: []string{"*"}, OmitBrowserBridge: true})
 			if attack == "allowed" {
 				if err != nil {
 					t.Fatalf("allowed provider settings refused: %v", err)

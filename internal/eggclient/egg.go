@@ -157,18 +157,8 @@ func LoadEggConfigForExplain(configPath, cwd string) (*egg.EggConfig, string, er
 		}
 		return cfg, configPath, nil
 	}
-	source := "built-in defaults"
-	if cwd != "" {
-		if path := filepath.Join(cwd, "egg.yaml"); fileExists(path) {
-			source = path
-		}
-	}
-	return egg.DiscoverEggConfig(cwd, nil), source, nil
-}
-
-func fileExists(path string) bool {
-	st, err := os.Stat(path)
-	return err == nil && !st.IsDir()
+	cfg, source := egg.DiscoverEggConfigWithSource(cwd, nil)
+	return cfg, source, nil
 }
 
 // explainEnforcement reports how the network policy is actually held. macOS
