@@ -255,3 +255,52 @@ func mustMigrationExec(t *testing.T, db *sql.DB, statement string) {
 		t.Fatal(err)
 	}
 }
+
+// WAL setup must retry outside SQLite's busy handler: competing journal-mode
+// upgrades can otherwise exhaust the outer deadline in a single Exec.
+func TestRelayWALBusyRetryDeadline(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "busy.db")
+	reader, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	if _, err := reader.Exec("CREATE TABLE held (id INTEGER)"); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := reader.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	var count int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM held").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	started := time.Now()
+	if err := execRelayPragmaWithBusyRetry(db, "PRAGMA journal_mode=WAL", 50*time.Millisecond); err == nil {
+		t.Fatal("WAL upgrade succeeded while another connection held a read lock")
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Errorf("50ms retry took %s; SQLite busy handler consumed the deadline", elapsed)
+	}
+	var timeout int
+	if err := db.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil || timeout != 5000 {
+		t.Fatalf("busy timeout after failed WAL setup = %d, %v; want 5000", timeout, err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := execRelayPragmaWithBusyRetry(db, "PRAGMA journal_mode=WAL", time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil || timeout != 5000 {
+		t.Fatalf("busy timeout after successful WAL setup = %d, %v; want 5000", timeout, err)
+	}
+}

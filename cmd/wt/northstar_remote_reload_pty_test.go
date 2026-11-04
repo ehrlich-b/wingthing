@@ -158,14 +158,16 @@ func TestNorthstarPTYRemoteReload(t *testing.T) {
 	h.expect("route restored", h.send("R"), "replacement profile", "devbox")
 	northstarWrite(t, filepath.Join(f.local, "remotes.yaml"), "remotes: [malformed", 0600)
 	h.expect("malformed registry retains stale rows and local work", h.send("R"), "Saved machines could not be loaded", "replacement profile", "Last seen", "healthy local")
-	h.expect("local attach while registry malformed", h.send("/healthy-local\r\r"), "RELOAD_LOCAL_READY")
+	// The navigator preview already contains the ready text. Wait for the
+	// attachment too before sending input to its new terminal reader.
+	h.expect("local attach while registry malformed", h.send("/healthy-local\r\r"), "RELOAD_LOCAL_READY", "[attached to same;")
 	h.expect("local detach preserves healthy work", h.send("\x02q"), "healthy local", "devbox not searched")
 	h.expect("malformed remote mutation selection", h.send("/\x15replacement-profile\rr\x15forbidden-name\r"), "Saved machine changed", "R refresh")
 	save()
 	h.waitScreen("valid registry recovers without restart", h.send("/\x15\rR"), func(s string) bool {
 		return strings.Contains(s, "machines connected") && strings.Contains(s, "replacement profile") && !strings.Contains(s, "Saved machines could not be loaded") && !strings.Contains(s, "Last seen")
 	})
-	h.expect("attach exact replacement route", h.send("/replacement-profile\r\r"), "RELOAD_NEW_READY")
+	h.expect("attach exact replacement route", h.send("/replacement-profile\r\r"), "RELOAD_NEW_READY", "[attached to same;")
 	h.expect("replacement detach", h.send("\x02q"), "replacement profile", "Enter open")
 	h.exit("q")
 	for _, fixture := range []*northstarEgg{local, old, replacement} {

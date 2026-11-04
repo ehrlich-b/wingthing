@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"encoding/json"
@@ -183,10 +184,30 @@ func OpenRelay(dsn string) (*RelayStore, error) {
 	return s, nil
 }
 
-func execRelayPragmaWithBusyRetry(db *sql.DB, statement string, timeout time.Duration) error {
+func execRelayPragmaWithBusyRetry(db *sql.DB, statement string, timeout time.Duration) (err error) {
+	// A busy handler can hold a read lock while journal_mode tries to upgrade
+	// it. Concurrent first opens can then spend the entire retry window waiting
+	// on each other. Release each failed attempt promptly and retry outside
+	// SQLite, on one connection so the caller's busy timeout can be restored.
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	var busyTimeout int
+	if err := conn.QueryRowContext(context.Background(), "PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(context.Background(), "PRAGMA busy_timeout=0"); err != nil {
+		return err
+	}
+	defer func() {
+		_, restoreErr := conn.ExecContext(context.Background(), fmt.Sprintf("PRAGMA busy_timeout=%d", busyTimeout))
+		err = errors.Join(err, restoreErr)
+	}()
 	deadline := time.Now().Add(timeout)
 	for {
-		_, err := db.Exec(statement)
+		_, err := conn.ExecContext(context.Background(), statement)
 		if err == nil {
 			return nil
 		}
