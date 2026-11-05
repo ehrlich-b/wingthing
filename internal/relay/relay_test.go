@@ -7,12 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/ehrlich-b/wingthing/internal/egg"
 )
 
 func mustTest(t *testing.T, err error) {
@@ -496,64 +493,44 @@ func TestSignedInHomeUsesConfiguredAppURLForLinkAndShortcut(t *testing.T) {
 	}
 }
 
-func TestPublicHomeLeadsWithBenefitAndPreviewBeforeOptionalDemo(t *testing.T) {
+func TestHomepageStoryPublicRoute(t *testing.T) {
 	_, ts := testServer(t)
 	resp, err := http.Get(ts.URL + "/")
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
 	}
 	defer closeTestBody(t, resp.Body)
-	body := new(strings.Builder)
-	if _, err := io.Copy(body, resp.Body); err != nil {
-		t.Fatalf("read /: %v", err)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
 	}
-	page := body.String()
-	if strings.Contains(page, `data-route=`) {
-		t.Fatal("home includes detailed route-map links")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET / status = %d", resp.StatusCode)
 	}
+	page := string(body)
 	for _, contract := range []string{
-		`href="/patterns">choose a route</a>`,
 		`href="/install" class="nav-cta">Install wingthing`,
 		`href="/login">Log in`,
 		`href="/install" class="hero-install">Install wingthing</a>`,
-	} {
-		if !strings.Contains(page, contract) {
-			t.Errorf("home does not contain hierarchy contract %q", contract)
-		}
-	}
-	for _, contract := range []string{
-		"Your coding agents, across your machines.",
-		"Find a session, read its progress, and send the next instruction. Your agents keep running on your own computers.",
-		`aria-label="Example session list and wing conversation"`,
-		"Example · 2 machines",
-		"Claude · Studio · Working",
+		`href="/patterns">choose a route</a>`,
+		"Illustrative example",
+		"Headless run results stay in the CLI and MCP.",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Errorf("home is missing %q", contract)
 		}
 	}
-	install := strings.Index(page, `class="hero-install"`)
-	preview := strings.Index(page, `<section class="product-preview"`)
-	glossary := strings.Index(page, `<h3>portal</h3>`)
-	if install < 0 || preview <= install || glossary <= preview {
-		t.Fatalf("home order install=%d preview=%d glossary=%d", install, preview, glossary)
-	}
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET / status = %d", resp.StatusCode)
-	}
-	for _, required := range []string{`<details class="homepage-demo">`, `controls playsinline preload="none"`, `src="/app/demo/homepage.webm" type="video/webm"`, `kind="captions"`, `id="demo-transcript"`, "Example sessions · Fictional data"} {
-		if !strings.Contains(page, required) {
-			t.Errorf("home is missing demo accessibility contract %q", required)
+	previous := -1
+	for _, section := range []string{`class="hero"`, `class="product-preview"`, `class="how"`, `class="closing"`} {
+		index := strings.Index(page, section)
+		if index <= previous {
+			t.Errorf("home section %q is missing or out of order", section)
 		}
+		previous = index
 	}
-	for _, forbidden := range []string{"hero.mp4", "autoplay"} {
+	for _, forbidden := range []string{"autoplay", `class="tab-bar"`, `data-route=`, ">hosted app</a>", ">hosted login</a>"} {
 		if strings.Contains(page, forbidden) {
-			t.Errorf("home includes removed recording or automatic playback %q", forbidden)
-		}
-	}
-	for _, forbidden := range []string{">hosted app</a>", ">hosted login</a>"} {
-		if strings.Contains(page, forbidden) {
-			t.Errorf("home nav uses deployment-specific label %q", forbidden)
+			t.Errorf("home includes obsolete contract %q", forbidden)
 		}
 	}
 }
@@ -657,42 +634,18 @@ func TestPublicDocsAndInstallRenderLocalFirstHierarchy(t *testing.T) {
 	}
 }
 
-func TestHomeSandboxBuilderAgentProfilesMatchEggPolicy(t *testing.T) {
-	_, ts := testServer(t)
-	resp, err := http.Get(ts.URL + "/")
-	if err != nil {
-		t.Fatalf("GET /: %v", err)
+func TestHomepageStorySandboxBoundary(t *testing.T) {
+	var body bytes.Buffer
+	if err := homeTmpl.ExecuteTemplate(&body, "base", pageData{}); err != nil {
+		t.Fatal(err)
 	}
-	defer closeTestBody(t, resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET / status = %d, want %d", resp.StatusCode, http.StatusOK)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read home page: %v", err)
-	}
-
-	const prefix = "var profiles="
-	start := strings.Index(string(body), prefix)
-	if start == -1 {
-		t.Fatal("home page omitted sandbox builder agent profiles")
-	}
-	encoded := string(body[start+len(prefix):])
-	end := strings.Index(encoded, ";")
-	if end == -1 {
-		t.Fatal("sandbox builder agent profiles were not terminated")
-	}
-
-	var rendered map[string]egg.AgentProfile
-	if err := json.Unmarshal([]byte(encoded[:end]), &rendered); err != nil {
-		t.Fatalf("decode sandbox builder agent profiles: %v", err)
-	}
-	if len(rendered) != len(sandboxBuilderAgents) {
-		t.Fatalf("rendered profiles = %d, want %d", len(rendered), len(sandboxBuilderAgents))
-	}
-	for _, agent := range sandboxBuilderAgents {
-		if got, want := rendered[agent], egg.Profile(agent); !reflect.DeepEqual(got, want) {
-			t.Errorf("rendered %s profile = %+v, want %+v", agent, got, want)
+	for _, want := range []string{
+		"Set the boundaries",
+		"Inspect sandbox policy before launch. Control file, network, and environment access.",
+		"browser access uses a self-hosted roost or an entitled hosted account and an allowed wing",
+	} {
+		if !strings.Contains(body.String(), want) {
+			t.Errorf("home omitted execution boundary %q", want)
 		}
 	}
 }

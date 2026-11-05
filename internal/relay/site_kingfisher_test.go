@@ -22,7 +22,7 @@ func TestSiteKingfisherTemplates(t *testing.T) {
 			if err := page.render(&b); err != nil {
 				t.Fatal(err)
 			}
-			for _, want := range []string{"#07131A", "#F4F8FA", "#0F1F28", "#FFFFFF", "#E6F1F6", "#0B1B24", "#8CA5B2", "#4E6571", "#2AA8FF", "#0069B8", "#FF8A3D", "#B4500C", "#36D69A", "#0D7553", "#FF5D6C", "#C42B3D", `class="logo-mark"`, `class="logo-wing">wing</span>thing.ai`} {
+			for _, want := range []string{"#07131A", "#F4F8FA", "#0F1F28", "#FFFFFF", "#E6F1F6", "#0B1B24", "#8CA5B2", "#4E6571", "#2AA8FF", "#0069B8", "#FF8A3D", "#B4500C", "#36D69A", "#0D7553", "#FF5D6C", "#C42B3D", `class="logo-mark"`, `class="logo-wing">wing</span>thing`} {
 				if !strings.Contains(b.String(), want) {
 					t.Errorf("missing %q", want)
 				}
