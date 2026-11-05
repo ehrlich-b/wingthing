@@ -8,25 +8,32 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
-  --bg:#1a1a2e;--bg-card:#1f2a40;--text:#eee;--text-dim:#aaa;
-  --accent:#0f3460;--action:#e94560;--action-hover:#ff6b81;
-  --mono:'SF Mono','Fira Code','Cascadia Code',monospace;
-  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  color-scheme:light dark;
+  --bg:#F4F8FA;--bg-card:#FFFFFF;--text:#0B1B24;--text-dim:#4E6571;
+  --primary:#0069B8;--kingfisher-accent:#B4500C;--success:#0D7553;--danger:#C42B3D;
+  --accent:color-mix(in srgb,var(--text-dim) 35%,var(--bg-card));--action:var(--primary);--action-hover:var(--primary);--on-action:#FFFFFF;
+  --mono:ui-monospace,SFMono-Regular,Consolas,monospace;
+  --sans:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 }
+@media(prefers-color-scheme:dark){:root{
+  --bg:#07131A;--bg-card:#0F1F28;--text:#E6F1F6;--text-dim:#8CA5B2;
+  --primary:#2AA8FF;--kingfisher-accent:#FF8A3D;--success:#36D69A;--danger:#FF5D6C;--on-action:#07131A;
+}}
 body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14px;line-height:1.6;min-height:100vh}
 code,pre,.mono{font-family:var(--mono)}
 .container{max-width:1400px;margin:0 auto;padding:0 12px 12px}
 nav{display:flex;justify-content:space-between;align-items:center;padding:12px 8px;border-bottom:1px solid var(--accent);margin-bottom:24px;font-family:var(--mono);font-size:13px}
-nav .logo{font-size:18px;font-weight:700;color:var(--text);text-decoration:none}
-nav .logo:hover{color:var(--action)}
+nav .logo{display:inline-flex;align-items:center;gap:8px;font-size:18px;font-weight:700;color:var(--text);text-decoration:none}
+nav .logo-mark{width:30px;height:30px;flex:none;color:var(--primary)}
+nav .logo-wing{color:var(--primary)}
 .nav-links{display:flex;align-items:center;gap:16px}
 .nav-secondary{display:flex;align-items:center;gap:16px}
 .nav-links a{color:var(--text-dim);text-decoration:none}
 .nav-links a:hover{color:var(--text)}
 .nav-btn{background:none;border:none;color:var(--text-dim);font-family:var(--mono);font-size:13px;cursor:pointer;padding:0}
 .nav-btn:hover{color:var(--text)}
-.nav-cta{background:var(--action);color:#fff !important;padding:6px 14px;border-radius:4px;font-weight:600;text-decoration:none}
-.nav-cta:hover{background:var(--action-hover);color:#fff !important}
+.nav-cta{background:var(--action);color:var(--on-action) !important;padding:6px 14px;border-radius:4px;font-weight:600;text-decoration:none}
+.nav-cta:hover{background:var(--action-hover);color:var(--on-action) !important}
 .user-name{color:var(--text);font-size:13px}
 a{color:var(--action)}a:hover{color:var(--action-hover)}
 @media(max-width:600px){
@@ -44,7 +51,7 @@ a{color:var(--action)}a:hover{color:var(--action-hover)}
 <body>
 <div class="container">
 <nav class="site-nav">
-<a href="/" class="logo">wingthing.ai</a>
+<a href="/" class="logo"><svg class="logo-mark" viewBox="88 88 336 336" aria-hidden="true"><polygon fill="currentColor" points="120,190 147,190 165,280 190,214 211,214 236,280 254,190 281,190 252,321 228,321 201,253 174,321 149,321"/><polygon fill="currentColor" points="304,170 331,170 331,214 377,214 377,240 331,240 331,283 342,295 377,295 377,321 331,321 304,294"/></svg><span><span class="logo-wing">wing</span>thing.ai</span></a>
 <div class="nav-links">
 <div class="nav-secondary">
 <a href="/patterns">Patterns</a>
