@@ -1,4 +1,10 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="48dp" android:height="48dp" android:viewportWidth="48" android:viewportHeight="48">
- <path android:fillColor="#006D57" android:pathData="M0,0h48v48h-48z" />
- <path android:fillColor="#F4F4EE" android:pathData="M8,14L24,23L40,14L33,32L24,37L15,32z" />
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+ android:width="48dp" android:height="48dp"
+ android:viewportWidth="336" android:viewportHeight="336">
+ <path android:fillColor="#07131A" android:pathData="M0,0H336V336H0z" />
+ <!-- Match web/public/icons/wt.svg's viewBox="88 88 336 336". -->
+ <group android:translateX="-88" android:translateY="-88">
+  <path android:fillColor="#2AA8FF" android:pathData="M120,190L147,190L165,280L190,214L211,214L236,280L254,190L281,190L252,321L228,321L201,253L174,321L149,321z" />
+  <path android:fillColor="#2AA8FF" android:pathData="M304,170L331,170L331,214L377,214L377,240L331,240L331,283L342,295L377,295L377,321L331,321L304,294z" />
+ </group>
 </vector>
