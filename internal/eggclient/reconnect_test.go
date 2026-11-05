@@ -93,6 +93,11 @@ func (p *reconnectProvider) exchange(line string) (string, error) {
 }
 func reconnectFixture(t *testing.T) (*testssh.Harness, config.Remote, *reconnectProvider) {
 	t.Helper()
+	return reconnectFixtureWithHandshake(t, func(bool) {})
+}
+
+func reconnectFixtureWithHandshake(t *testing.T, handshake func(bool)) (*testssh.Harness, config.Remote, *reconnectProvider) {
+	t.Helper()
 	h := testssh.New(t)
 	dir := filepath.Join(h.Root, "wing")
 	if err := os.Mkdir(dir, 0700); err != nil {
@@ -113,10 +118,12 @@ func reconnectFixture(t *testing.T) (*testssh.Harness, config.Remote, *reconnect
 	p := &reconnectProvider{process: cmd, input: in, output: bufio.NewReader(out), markers: map[string]int{}, screen: "current screen\n"}
 	t.Cleanup(func() { in.Close(); cmd.Wait() })
 	server, err := controlsocket.Listen(t.Context(), dir, "fixture-wing", func(controlsocket.Hello) (controlsocket.Welcome, controlsocket.Handler, error) {
+		handshake(false)
 		return controlsocket.Welcome{}, func(_ context.Context, request control.DirectRequest) control.DirectResponse {
 			return control.DirectResponse{Version: control.ContractVersion, ID: request.ID}
 		}, nil
 	}, func(_ context.Context, hello controlsocket.Hello) (controlsocket.Welcome, controlsocket.AttachHandler, error) {
+		handshake(true)
 		a := hello.Attach
 		if a.Session != "full-session-id" && (a.Exact || a.Session != "friendly") {
 			return controlsocket.Welcome{}, nil, errors.New("exact session ID required")
@@ -193,6 +200,76 @@ func reconnectStart(t *testing.T, h *testssh.Harness, remote config.Remote, cloc
 		done <- attachResult{detached: detached, err: err}
 	}()
 	return writer, screen, diagnostic, done
+}
+
+func TestRemoteReconnectHandshakeDrop(t *testing.T) {
+	for _, phase := range []string{"control", "attachment"} {
+		t.Run(phase, func(t *testing.T) {
+			var interrupt atomic.Bool
+			started, release := make(chan struct{}), make(chan struct{})
+			h, remote, provider := reconnectFixtureWithHandshake(t, func(attachment bool) {
+				if attachment == (phase == "attachment") && interrupt.Swap(false) {
+					close(started)
+					select {
+					case <-release:
+					case <-t.Context().Done():
+					}
+				}
+			})
+			clock := reconnectClock{ticks: make(chan reconnectTick, 8)}
+			writer, screen, diagnostic, done := reconnectStart(t, h, remote, clock)
+			forward := <-h.Started
+			reconnectEvent(t, screen, "current screen")
+			forward.Drop()
+			tick := <-clock.ticks
+			reconnectEvent(t, diagnostic, "connection lost")
+			interrupt.Store(true)
+			close(tick.release)
+			broken := <-h.Started
+			<-started // The server has read Hello but has not sent Welcome.
+			broken.Drop()
+			select {
+			case tick = <-clock.ticks:
+			case result := <-done:
+				t.Fatalf("handshake loss ended attachment: %+v", result)
+			}
+			close(release)
+			if tick.delay != 500*time.Millisecond {
+				t.Fatalf("handshake retry backoff = %s", tick.delay)
+			}
+			close(tick.release)
+			<-h.Started
+			reconnectEvent(t, screen, "current screen")
+			if _, err := io.WriteString(writer, "after-handshake-drop\n"); err != nil {
+				t.Fatal(err)
+			}
+			reconnectEvent(t, screen, "after-handshake-drop")
+			if _, err := writer.Write([]byte{2, 'q'}); err != nil {
+				t.Fatal(err)
+			}
+			if result := <-done; result.err != nil || !result.detached {
+				t.Fatalf("detach after recovery: %+v", result)
+			}
+			provider.mu.Lock()
+			defer provider.mu.Unlock()
+			if provider.markers["after-handshake-drop"] != 1 {
+				t.Fatalf("provider markers = %v", provider.markers)
+			}
+			if len(provider.ids) < 2 || provider.ids[0] != "friendly" {
+				t.Fatalf("handshake retry changed identity: %v", provider.ids)
+			}
+			for _, id := range provider.ids[1:] {
+				if id != "full-session-id" {
+					t.Fatalf("handshake retry changed identity: %v", provider.ids)
+				}
+			}
+			select {
+			case event := <-diagnostic:
+				t.Fatalf("repeated outage status: %q", event)
+			default:
+			}
+		})
+	}
 }
 
 func TestRemoteReconnectTwentyTransportDrops(t *testing.T) {
@@ -397,6 +474,11 @@ func TestRemoteReconnectBackoffAndExitJournal(t *testing.T) {
 	// A terminal error never becomes a retryable transport failure.
 	for _, message := range []string{"Permission denied (publickey)", "Host key verification failed", "REMOTE HOST IDENTIFICATION HAS CHANGED!"} {
 		if retryAttachment(errors.New("SSH forward closed: " + message)) {
+			t.Fatal(message)
+		}
+	}
+	for _, message := range []string{"pinned wing identity mismatch (wing ID)", "incompatible local wing handshake", "incompatible wing attachment handshake"} {
+		if retryAttachment(fmt.Errorf("verify forwarded wing: %w", errors.New(message))) {
 			t.Fatal(message)
 		}
 	}

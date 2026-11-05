@@ -20,8 +20,14 @@ import (
 
 func writeFakeRemoteSSH(t *testing.T, script string) string {
 	t.Helper()
+	return writeRawFakeRemoteSSH(t, "if [ \"$2\" = -o ] && [ \"$3\" = BatchMode=yes ]; then mode=$1; shift 3; set -- \"$mode\" \"$@\"; fi\n"+script)
+}
+
+// Attachment route assertions must see the original SSH security options.
+func writeRawFakeRemoteSSH(t *testing.T, script string) string {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "ssh")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+"if [ \"$2\" = -o ] && [ \"$3\" = BatchMode=yes ]; then mode=$1; shift 3; set -- \"$mode\" \"$@\"; fi\n"+script), 0700); err != nil {
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -150,7 +156,7 @@ func TestConfiguredRemoteAttachUsesRunner(t *testing.T) {
 	if err := config.SaveRemotes(dir, map[string]config.Remote{"work": {SSHTarget: "me@host", WingthingDir: "/home/me/wt state/it's isolated"}}); err != nil {
 		t.Fatal(err)
 	}
-	sshPath := writeFakeRemoteSSH(t, fakeFramedAttachReply())
+	sshPath := writeRawFakeRemoteSSH(t, fakeFramedAttachReply())
 	for _, flag := range []string{"--read-only", "--takeover"} {
 		var out bytes.Buffer
 		err := executeCLI(context.Background(), []string{"attach", "work:review", flag}, remotepkg.IO{In: strings.NewReader(""), Out: &out, ErrOut: io.Discard, SSHPath: sshPath})
