@@ -113,17 +113,21 @@ func (w *terminalModeWriter) transform(seq []byte) []byte {
 			raw = "0"
 			params[i] = raw
 		}
-		if _, err := strconv.Atoi(raw); err != nil {
+		// Decimal parameters remain mode parameters even beyond int range.
+		// Only nonnumeric syntax makes this a different kind of CSI sequence.
+		if strings.Trim(raw, "0123456789") != "" {
 			return original
 		}
 	}
 	out := controls
 	changed := false
 	for _, raw := range params {
-		mode, _ := strconv.Atoi(raw)
+		mode, err := strconv.Atoi(raw)
 		current, protected := w.current[mode]
-		if !protected {
-			out = fmt.Appendf(out, "\x1b[?%d%c", mode, final)
+		if err != nil || !protected {
+			// Preserve unknown numeric modes independently so they cannot
+			// bypass protection of valid modes elsewhere in the same list.
+			out = fmt.Appendf(out, "\x1b[?%s%c", raw, final)
 			continue
 		}
 		switch final {

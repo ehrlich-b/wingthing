@@ -565,6 +565,15 @@ func TestTerminalFidelityIgnoredDEL(t *testing.T) {
 	fidelityCleanup(t, fidelityBuild(t), evidence, "--ignored-del")
 }
 
+// Oversized parameters must not expose protected modes in the same sequence.
+func TestTerminalFidelityOversizedParameters(t *testing.T) {
+	evidence := os.Getenv("WT_FIDELITY_EVIDENCE")
+	if evidence != "" {
+		evidence = filepath.Join(evidence, "oversized-parameters")
+	}
+	fidelityCleanup(t, fidelityBuild(t), evidence, "--oversized-params")
+}
+
 func fidelityCleanup(t *testing.T, binary, evidence string, providerArgs ...string) {
 	provider, err := filepath.Abs("testdata/terminal_cleanup.py")
 	if err != nil {

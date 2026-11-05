@@ -25,6 +25,11 @@ if '--ignored-del' in sys.argv:
     # Ignore DEL at CSI entry, inside numbers, around separators and before finals.
     modes = b'\x7f' + b'\x7f'.join(bytes([byte]) for byte in modes) + b'\x7f'
     enable = enable.replace(b'[?', b'[\x7f?\x7f').replace(b';', b'\x7f;\x7f').replace(b'h', b'\x7fh').replace(b'l', b'\x7fl')
+if '--oversized-params' in sys.argv:
+    # An unrelated numeric overflow must not bypass valid modes in the list.
+    oversized = b'999999999999999999999999999999;'
+    modes = oversized + modes
+    enable = enable.replace(b'[?', b'[?' + oversized)
 if '--exercise-saves' in sys.argv:
     # Save an unknown original, modify it, then restore that provider snapshot.
     os.write(1, b'\x1b[?' + modes + b'sORIGINAL_SAVED\r\n')
@@ -39,6 +44,8 @@ if '--exercise-saves' in sys.argv:
     if '--ignored-del' in sys.argv:
         # Even this otherwise ordinary save must leave the guardian slots intact.
         os.write(1, b'\x1b[?25;1000;1004;2004\x7fs')
+    if '--oversized-params' in sys.argv:
+        os.write(1, b'\x1b[?999999999999999999999999999999;25;1000;1004;2004s')
     os.write(1, b'MODES_CHANGED\r\n')
 else:
     os.write(1, enable + b'\x1b[?25;1000;1004;2004;1049sMODES_CHANGED\r\n')
