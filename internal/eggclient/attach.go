@@ -181,11 +181,12 @@ func AttachStreamIO(ctx context.Context, sessionID string, input io.Reader, outp
 	// callers retain the legacy stream; each transport negotiates support.
 	if file, ok := output.(*os.File); ok && fd >= 0 && term.IsTerminal(fd) && term.IsTerminal(int(file.Fd())) {
 		options.NativeTerminal = true
-		finish, pending, guardErr := guardTerminal(input.(*os.File), file)
+		finish, snapshot, guardErr := guardTerminal(input.(*os.File), file)
 		if guardErr != nil {
 			return false, fmt.Errorf("guard terminal: %w", guardErr)
 		}
-		pendingInput = pending
+		pendingInput = snapshot.Pending
+		output = newTerminalModeWriter(file, snapshot.Known)
 		defer func() {
 			if restoreErr := finish(); restoreErr != nil {
 				err = errors.Join(err, fmt.Errorf("restore terminal modes: %w", restoreErr))

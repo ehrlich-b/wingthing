@@ -19,8 +19,10 @@ import (
 	"testing"
 
 	"github.com/creack/pty"
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"golang.org/x/term"
 )
 
@@ -61,11 +63,12 @@ type fidelityTerminal struct {
 	readDone, processDone chan struct{}
 	err                   error
 	queries               map[string]string
+	reporting             int // 0: DECRQM replies, 1: unsupported reports, 2: no reports
 }
 
 var fidelityCSI = regexp.MustCompile("^\x1b\\[([?<>]?[0-9;]*)([ $]?)([@-~])")
 
-func startFidelityTerminal(t *testing.T, cmd *exec.Cmd, initial map[int]bool) *fidelityTerminal {
+func startFidelityTerminal(t *testing.T, cmd *exec.Cmd, initial map[int]bool, options ...func(*fidelityTerminal)) *fidelityTerminal {
 	t.Helper()
 	master, slave, err := pty.Open()
 	if err != nil {
@@ -85,6 +88,9 @@ func startFidelityTerminal(t *testing.T, cmd *exec.Cmd, initial map[int]bool) *f
 	}
 	// CPR's positioning prefix is parsed separately.
 	h.queries["\x1b[6n"] = "\x1b[7;13R"
+	for _, option := range options {
+		option(h)
+	}
 	h.before, err = term.GetState(int(slave.Fd()))
 	if err != nil {
 		t.Fatal(err)
@@ -193,9 +199,15 @@ func (h *fidelityTerminal) parse() (replies []string) {
 						}
 					case "p":
 						if mid == "$" {
+							if h.reporting == 2 {
+								continue
+							}
 							v := 2
 							if h.modes[mode] {
 								v = 1
+							}
+							if h.reporting == 1 {
+								v = 0
 							}
 							replies = append(replies, fmt.Sprintf("\x1b[?%d;%d$y", mode, v))
 						}
@@ -451,66 +463,178 @@ func TestTerminalFidelityPTY(t *testing.T) {
 	t.Run("cleanup", func(t *testing.T) { fidelityCleanup(t, binary, evidence) })
 }
 
+var fidelityCleanupStates = []map[int]bool{
+	{25: true},
+	{25: false, 1000: true, 1006: true, 1004: true, 2004: true, 1049: true},
+	{25: true, 1002: true, 1004: true, 47: true},
+}
+var fidelityTrackedModes = []int{1, 9, 25, 47, 1047, 1049, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1015, 1016, 2004, 2026}
+
+func (h *fidelityTerminal) assertModes(initial map[int]bool) {
+	h.t.Helper()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, mode := range fidelityTrackedModes {
+		want := initial[mode]
+		if mode == 25 {
+			if _, ok := initial[mode]; !ok {
+				want = true
+			}
+		}
+		if h.modes[mode] != want {
+			h.t.Errorf("mode %d got %t want %t", mode, h.modes[mode], want)
+		}
+	}
+}
+
+func (h *fidelityTerminal) assertCleanup(initial map[int]bool, killed bool) {
+	h.t.Helper()
+	<-h.processDone
+	// PTY EOF fences the independent guardian's output and termios restoration.
+	slaveName := h.slave.Name()
+	_ = h.slave.Close()
+	<-h.readDone
+	h.assertModes(initial)
+	reopened, err := os.OpenFile(slaveName, os.O_RDWR, 0600)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	after, err := term.GetState(int(reopened.Fd()))
+	reopened.Close()
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if !reflect.DeepEqual(h.before, after) {
+		h.t.Error("terminal termios changed after attachment")
+	}
+	if !killed && h.err != nil {
+		h.t.Fatal(h.err)
+	}
+}
+
+func (h *fidelityTerminal) exerciseSavedModes(initial map[int]bool, typeahead bool) {
+	h.t.Helper()
+	h.wait("FID_READY")
+	if !typeahead {
+		h.send("g")
+	}
+	h.wait("ORIGINAL_SAVED\r\n")
+	// Snapshot replay may set presentation modes before the provider starts.
+	// A provider save must restore that current state, independently of the
+	// outer state which assertCleanup checks after detachment.
+	h.mu.Lock()
+	saved := make(map[int]bool, len(h.modes))
+	for mode, value := range h.modes {
+		saved[mode] = value
+	}
+	h.mu.Unlock()
+	h.send("s")
+	h.wait("ORIGINAL_RESTORED\r\n")
+	h.assertModes(saved)
+	h.send("s")
+	h.wait("MODES_CHANGED\r\n")
+	changed := map[int]bool{25: false}
+	for _, mode := range fidelityTrackedModes {
+		if mode != 25 {
+			changed[mode] = true
+		}
+	}
+	h.assertModes(changed)
+}
+
 func fidelityCleanup(t *testing.T, binary, evidence string) {
 	provider, err := filepath.Abs("testdata/terminal_cleanup.py")
 	if err != nil {
 		t.Fatal(err)
 	}
-	tracked := []int{9, 25, 47, 1047, 1049, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1015, 1016, 2004}
-	for _, initial := range []map[int]bool{{25: true}, {25: false, 1000: true, 1006: true, 1004: true, 2004: true, 1049: true}, {25: true, 1002: true, 1004: true, 47: true}} {
-		for _, kill := range []bool{false, true} {
-			name := fmt.Sprintf("%d-kill-%t", len(initial), kill)
-			t.Run(name, func(t *testing.T) {
-				f := startFidelityEgg(t, binary, provider)
-				h := f.attach(t, binary, initial)
-				h.wait("FID_READY")
-
-				h.send("g")
-				h.wait("MODES_CHANGED\r\n")
-				if kill {
-					if err := h.cmd.Process.Kill(); err != nil {
-						t.Fatal(err)
-					}
-				} else {
-					h.send("\x02q")
-				}
-				<-h.processDone
-				// Closing our retained slave makes PTY EOF an event fence for the
-				// guardian's output, termios restoration and descriptor closure.
-				slaveName := h.slave.Name()
-				_ = h.slave.Close()
-				<-h.readDone
-				h.mu.Lock()
-				for _, mode := range tracked {
-					want := initial[mode]
-					if mode == 25 {
-						if _, ok := initial[mode]; !ok {
-							want = true
+	for reporting := range 3 {
+		for index, initial := range fidelityCleanupStates {
+			for _, kill := range []bool{false, true} {
+				name := fmt.Sprintf("state-%d-reporting-%d-kill-%t", index, reporting, kill)
+				t.Run(name, func(t *testing.T) {
+					f := startFidelityEgg(t, binary, provider, "--exercise-saves")
+					cmd := exec.CommandContext(t.Context(), binary, "attach", "fidelity")
+					cmd.Env = f.cmd.Env
+					h := startFidelityTerminal(t, cmd, initial, func(h *fidelityTerminal) { h.reporting = reporting })
+					h.exerciseSavedModes(initial, false)
+					if kill {
+						if err := h.cmd.Process.Kill(); err != nil {
+							t.Fatal(err)
 						}
+					} else {
+						h.send("\x02q")
 					}
-					if h.modes[mode] != want {
-						t.Errorf("mode %d got %t want %t", mode, h.modes[mode], want)
-					}
-				}
-				h.mu.Unlock()
-				reopened, err := os.OpenFile(slaveName, os.O_RDWR, 0600)
-				if err != nil {
-					t.Fatal(err)
-				}
-				after, err := term.GetState(int(reopened.Fd()))
-				reopened.Close()
-				if err != nil {
-					t.Fatal(err)
-				}
-				if !reflect.DeepEqual(h.before, after) {
-					t.Error("terminal termios changed after attachment")
-				}
-				if !kill && h.err != nil {
-					t.Fatal(h.err)
-				}
+					h.assertCleanup(initial, kill)
+					fidelityWrite(t, evidence, "cleanup-"+name+".ansi", h.snapshot())
+				})
+			}
+		}
+	}
+}
 
-				fidelityWrite(t, evidence, "cleanup-"+name+".ansi", h.snapshot())
-			})
+// Use the real CLI dispatch for both SSH routes; the SSH executable is a local
+// recording fixture, so these tests neither connect to a server nor need keys.
+func TestTerminalFidelityRemoteHelper(t *testing.T) {
+	route := os.Getenv("WT_FIDELITY_REMOTE_ROUTE")
+	if route == "" {
+		return
+	}
+	streams := remotepkg.ProcessIO()
+	provider, err := filepath.Abs("testdata/terminal_cleanup.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	streams.SSHPath = writeFakeRemoteSSH(t, "exec /usr/bin/python3 "+remotepkg.ShellQuote(provider)+" --ssh --exercise-saves\n")
+	args := []string{"--remote", "fixture-host", "attach", "--", "full-id"}
+	if route == "configured" {
+		dir := t.TempDir()
+		t.Setenv("WINGTHING_DIR", dir)
+		t.Setenv("WINGTHING_PREVIEW_DIR", "")
+		if err := config.SaveRemotes(dir, map[string]config.Remote{"work": {SSHTarget: "fixture-host"}}); err != nil {
+			t.Fatal(err)
+		}
+		args = []string{"attach", "work:full-id"}
+	}
+	if err := executeCLI(t.Context(), args, streams); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTerminalFidelityRemoteCleanup(t *testing.T) {
+	evidence := os.Getenv("WT_FIDELITY_EVIDENCE")
+	for _, route := range []string{"global", "configured"} {
+		for reporting := range 3 {
+			for index, initial := range fidelityCleanupStates {
+				for _, kill := range []bool{false, true} {
+					name := fmt.Sprintf("%s-state-%d-reporting-%d-kill-%t", route, index, reporting, kill)
+					t.Run(name, func(t *testing.T) {
+						cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestTerminalFidelityRemoteHelper$")
+						cmd.Env = append(os.Environ(), "WT_FIDELITY_REMOTE_ROUTE="+route)
+						// Include typeahead in the negotiation read; SSH must receive it once.
+						typeahead := index == 2
+						h := startFidelityTerminal(t, cmd, initial, func(h *fidelityTerminal) {
+							h.reporting = reporting
+							if typeahead {
+								h.queries["\x1b[6n"] = "\x1b[7;13Rg"
+							}
+						})
+						h.exerciseSavedModes(initial, typeahead)
+						if err := pty.Setsize(h.master, &pty.Winsize{Cols: 93, Rows: 31}); err != nil {
+							t.Fatal(err)
+						}
+						h.wait("SIZE:93x31\r\n")
+						if kill {
+							if err := h.cmd.Process.Kill(); err != nil {
+								t.Fatal(err)
+							}
+						} else {
+							h.send("\x02q")
+						}
+						h.assertCleanup(initial, kill)
+						fidelityWrite(t, evidence, "ssh-cleanup-"+name+".ansi", h.snapshot())
+					})
+				}
+			}
 		}
 	}
 }

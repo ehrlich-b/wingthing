@@ -82,19 +82,36 @@ and the original termios state; EOF from normal detach or client SIGKILL trigger
 restoration. It has its own process session so a client process-group signal
 does not remove the cleanup owner. It never holds the provider connection.
 
-The cleanup subtest passes normal detach and SIGKILL for three initial states:
+The cleanup subtest covers normal detach and SIGKILL for three initial states:
 defaults, enabled mouse/paste/focus/alternate screen with a hidden cursor, and a
-mixed mouse/focus/alternate-screen state with a visible cursor. It checks all
-tracked mouse modes, paste, alternate selectors, visibility, focus and termios.
-The provider even overwrites the terminal's saved-mode slots to ensure reported
-snapshots, rather than a provider-modified slot, determine restoration. PTY EOF
-fences the guardian's final output and termios restoration; tests use events,
-not sleeps or timing thresholds.
+mixed mouse/focus/alternate-screen state with a visible cursor. Each state runs
+with DECRQM reporting, unsupported-mode reports, and no DECRQM replies (18 local
+cases). It checks all tracked mouse modes, paste, alternate selectors, visibility,
+focus, application cursor keys, synchronized output and termios. The provider
+saves and restores both its initial and modified modes before cleanup, so the
+test verifies provider save semantics as well as protection of the outer state.
+PTY EOF fences the guardian's final output and termios restoration; tests use
+events, not sleeps or timing thresholds.
 
-Terminals without DECRQM use XTSAVE/XTRESTORE for unsupported modes. Negotiation
-has a bounded 250 ms compatibility fallback if the terminal does not answer CPR.
+Terminals without DECRQM use protected XTSAVE/XTRESTORE slots for unsupported
+modes. Provider saves are virtualized separately in the attachment's mode writer;
+provider restores become explicit mode changes or references to the protected
+original. This preserves mode semantics while reserving the terminal's slots
+for cleanup, including when the provider saves before its first mode change.
+Only mode save/restore encodings are translated; the 28 measured provider
+sequences remain byte exact. A provider cannot overwrite the fallback snapshot.
+Negotiation has a bounded 250 ms compatibility fallback if CPR is unavailable.
 An emulator supporting neither reporting nor saved modes cannot expose its
 prior private-mode state; exact restoration on such an emulator is unverified.
+
+Both SSH routes (`--remote HOST attach SESSION` and `attach NAME:SESSION`) use
+the same snapshot and save-slot isolation on the local outer terminal. A guardian
+supervises SSH on a private PTY, forwards negotiation typeahead and window changes,
+and stops SSH's process group before restoration when the local client dies.
+The SSH cleanup test uses a local fake SSH executable through the real CLI
+dispatch: both routes, all three initial states, all three reporting capabilities,
+and normal exit or client SIGKILL (36 cases). It checks saved-mode semantics,
+resize delivery, typeahead, final modes and termios without a remote connection.
 Likewise, destruction of the terminal itself or killing the guardian cannot be
 repaired by a surviving client. These limits do not change measured parity on
 the reporting endpoint.
@@ -110,6 +127,6 @@ WT_FIDELITY_EVIDENCE="$(mktemp -d)" nice -n 10 go test -p 2 -count=1 -run '^Test
 ```
 
 The evidence directory receives direct/attached JSON provider recordings,
-direct/attached/browser ANSI transcripts and six cleanup transcripts. Without
+direct/attached/browser ANSI transcripts and 54 local/SSH cleanup transcripts. Without
 that optional environment variable, records stay in the test's temporary
 directory. No real provider, browser download, root or external service is used.

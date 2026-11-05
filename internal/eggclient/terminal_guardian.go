@@ -23,17 +23,25 @@ import (
 // SIGKILL of the client; the guardian neither holds nor controls the egg stream.
 // Re-exec avoids forking a multithreaded Go runtime without exec.
 const terminalGuardianArg = "--wt-terminal-guardian"
+const terminalCommandArg = "--wt-terminal-command"
+
+type terminalSnapshot struct {
+	Pending []byte
+	Known   map[int]int
+}
 
 var outerModes = []int{1, 9, 25, 47, 1047, 1049, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1015, 1016, 2004, 2026}
 var modeReport = regexp.MustCompile("\x1b\\[\\?([0-9]+);([0-4])\\$y")
 var cursorReport = regexp.MustCompile("\x1b\\[[0-9]+;[0-9]+R")
 
 func init() {
-	if len(os.Args) == 2 && os.Args[1] == terminalGuardianArg {
-		if err := runTerminalGuardian(); err != nil {
+	if len(os.Args) == 2 && (os.Args[1] == terminalGuardianArg || os.Args[1] == terminalCommandArg) {
+		code, err := runTerminalGuardian()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		os.Exit(0)
+		os.Exit(code)
 	}
 }
 
@@ -45,7 +53,7 @@ func modeList() string {
 	return strings.Join(parts, ";")
 }
 
-func runTerminalGuardian() (err error) {
+func runTerminalGuardian() (code int, err error) {
 	life := os.NewFile(3, "client-lifetime")
 	input := os.NewFile(4, "terminal-input")
 	output := os.NewFile(5, "terminal-output")
@@ -57,19 +65,19 @@ func runTerminalGuardian() (err error) {
 	signal.Ignore(syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	state, err := term.MakeRaw(int(input.Fd()))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { err = errors.Join(err, term.Restore(int(input.Fd()), state)) }()
-	// XTSAVE is the fallback for terminals without DECRQM. Explicit reports are
-	// preferred: a provider's own XTSAVE must not overwrite our known snapshot.
+	// XTSAVE is the fallback for terminals without DECRQM. Provider saves are
+	// virtualized by terminalModeWriter so these private slots remain protected.
 	if _, err := fmt.Fprintf(output, "\x1b[?%ss", modeList()); err != nil {
-		return err
+		return 0, err
 	}
 	restore := []byte("\x18\x1b[?" + modeList() + "r")
 	defer func() { _, writeErr := output.Write(restore); err = errors.Join(err, writeErr) }()
 	reader, err := cancelreader.NewReader(input)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	// Old terminals may not implement queries. This bounds negotiation only;
 	// the client lifetime below is driven exclusively by pipe EOF.
@@ -82,7 +90,7 @@ func runTerminalGuardian() (err error) {
 	if _, err := output.Write(query.Bytes()); err != nil {
 		timer.Stop()
 		reader.Close()
-		return err
+		return 0, err
 	}
 	var replies []byte
 	buf := make([]byte, 4096)
@@ -95,7 +103,7 @@ func runTerminalGuardian() (err error) {
 	}
 	timer.Stop()
 	if err := reader.Close(); err != nil {
-		return err
+		return 0, err
 	}
 	known := map[int]int{}
 	for _, match := range modeReport.FindAllSubmatch(replies, -1) {
@@ -128,45 +136,48 @@ func runTerminalGuardian() (err error) {
 	}
 	// Preserve keys typed during negotiation; never send query replies to the egg.
 	pending := cursorReport.ReplaceAll(modeReport.ReplaceAll(replies, nil), nil)
-	if err := json.NewEncoder(ready).Encode(pending); err != nil {
-		return err
+	if err := json.NewEncoder(ready).Encode(terminalSnapshot{Pending: pending, Known: known}); err != nil {
+		return 0, err
 	}
 	ready.Close()
+	if os.Args[1] == terminalCommandArg {
+		return runGuardedTerminalCommand(life, input, output, pending, known)
+	}
 	_, err = io.Copy(io.Discard, life)
-	return err
+	return 0, err
 }
 
-func guardTerminal(input, output *os.File) (func() error, []byte, error) {
+func guardTerminal(input, output *os.File) (func() error, terminalSnapshot, error) {
 	lifeRead, lifeWrite, err := os.Pipe()
 	if err != nil {
-		return nil, nil, err
+		return nil, terminalSnapshot{}, err
 	}
 	defer lifeRead.Close()
 	readyRead, readyWrite, err := os.Pipe()
 	if err != nil {
 		lifeWrite.Close()
-		return nil, nil, err
+		return nil, terminalSnapshot{}, err
 	}
 	defer readyRead.Close()
 	defer readyWrite.Close()
 	exe, err := os.Executable()
 	if err != nil {
 		lifeWrite.Close()
-		return nil, nil, err
+		return nil, terminalSnapshot{}, err
 	}
 	cmd := exec.Command(exe, terminalGuardianArg)
 	cmd.ExtraFiles = []*os.File{lifeRead, input, output, readyWrite}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		lifeWrite.Close()
-		return nil, nil, err
+		return nil, terminalSnapshot{}, err
 	}
 	readyWrite.Close()
 	finish := func() error { lifeWrite.Close(); return cmd.Wait() }
-	var pending []byte
-	if err := json.NewDecoder(readyRead).Decode(&pending); err != nil {
+	var snapshot terminalSnapshot
+	if err := json.NewDecoder(readyRead).Decode(&snapshot); err != nil {
 		_ = finish()
-		return nil, nil, fmt.Errorf("snapshot terminal modes: %w", err)
+		return nil, terminalSnapshot{}, fmt.Errorf("snapshot terminal modes: %w", err)
 	}
-	return finish, pending, nil
+	return finish, snapshot, nil
 }
