@@ -21,6 +21,10 @@ if '--empty-params' in sys.argv:
     # Omitted CSI parameters default to zero, wherever they occur in the list.
     modes = b';' + modes.replace(b';', b';;') + b';'
     enable = enable.replace(b'h', b';h').replace(b'25l', b';25;;l')
+if '--ignored-del' in sys.argv:
+    # Ignore DEL at CSI entry, inside numbers, around separators and before finals.
+    modes = b'\x7f' + b'\x7f'.join(bytes([byte]) for byte in modes) + b'\x7f'
+    enable = enable.replace(b'[?', b'[\x7f?\x7f').replace(b';', b'\x7f;\x7f').replace(b'h', b'\x7fh').replace(b'l', b'\x7fl')
 if '--exercise-saves' in sys.argv:
     # Save an unknown original, modify it, then restore that provider snapshot.
     os.write(1, b'\x1b[?' + modes + b'sORIGINAL_SAVED\r\n')
@@ -32,6 +36,9 @@ if '--exercise-saves' in sys.argv:
     if '--empty-params' in sys.argv:
         # A trailing empty parameter must not expose the outer fallback slots.
         os.write(1, b'\x1b[?25;1000;1004;2004;s')
+    if '--ignored-del' in sys.argv:
+        # Even this otherwise ordinary save must leave the guardian slots intact.
+        os.write(1, b'\x1b[?25;1000;1004;2004\x7fs')
     os.write(1, b'MODES_CHANGED\r\n')
 else:
     os.write(1, enable + b'\x1b[?25;1000;1004;2004;1049sMODES_CHANGED\r\n')

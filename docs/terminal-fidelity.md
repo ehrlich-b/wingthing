@@ -102,6 +102,16 @@ the outer snapshot. Both detach and SIGKILL restore the original cursor, mouse,
 focus and paste states even without DECRQM replies. Provider saves and restores
 still reproduce the provider's current modes before cleanup.
 
+`TestTerminalFidelityIgnoredDEL` adds 18 local cleanup cases with DEL at CSI
+entry, inside mode numbers, around separators and before final bytes. The
+independent terminal endpoint ignores DEL while retaining the original wire
+transcript. Provider changes, saves and restores preserve their mode semantics;
+in particular, `CSI ?25;1000;1004;2004 DEL s` cannot overwrite the outer snapshot.
+Detach and SIGKILL restore all tracked modes and termios for all three initial
+states and reporting capabilities, including no DECRQM replies. The attachment
+writer removes ignored DEL before interpreting parameters, while ordinary
+pass-through sequences retain their original bytes.
+
 Terminals without DECRQM use protected XTSAVE/XTRESTORE slots for unsupported
 modes. Provider saves are virtualized separately in the attachment's mode writer;
 provider restores become explicit mode changes or references to the protected
@@ -136,7 +146,6 @@ WT_FIDELITY_EVIDENCE="$(mktemp -d)" nice -n 10 go test -p 2 -count=1 -run '^Test
 ```
 
 The evidence directory receives direct/attached JSON provider recordings,
-direct/attached/browser ANSI transcripts and 72 local/SSH cleanup transcripts
-(18 under `empty-parameters/`). Without that optional environment variable,
-records stay in the test's temporary
-directory. No real provider, browser download, root or external service is used.
+direct/attached/browser ANSI transcripts and 90 local/SSH cleanup transcripts
+(18 under `empty-parameters/` and 18 under `ignored-del/`). Without that optional
+environment variable, records stay in the test's temporary directory. No real provider, browser download, root or external service is used.

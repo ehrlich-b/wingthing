@@ -80,6 +80,11 @@ func (w *terminalModeWriter) transform(seq []byte) []byte {
 	original := seq
 	var clean, controls []byte
 	for _, b := range seq {
+		// DEL is ignored within CSI. It is neither a parameter byte nor an
+		// executable control to replay, and must not bypass save protection.
+		if b == 0x7f {
+			continue
+		}
 		if b < 0x20 && b != 0x1b {
 			controls = append(controls, b)
 		} else {

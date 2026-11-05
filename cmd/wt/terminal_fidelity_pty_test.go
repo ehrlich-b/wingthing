@@ -66,7 +66,7 @@ type fidelityTerminal struct {
 	reporting             int // 0: DECRQM replies, 1: unsupported reports, 2: no reports
 }
 
-var fidelityCSI = regexp.MustCompile("^\x1b\\[([?<>]?[0-9;]*)([ $]?)([@-~])")
+var fidelityCSI = regexp.MustCompile("^\x1b\\[([?<>0-9;\x7f]*)([ $\x7f]*)([@-~])")
 
 func startFidelityTerminal(t *testing.T, cmd *exec.Cmd, initial map[int]bool, options ...func(*fidelityTerminal)) *fidelityTerminal {
 	t.Helper()
@@ -178,7 +178,11 @@ func (h *fidelityTerminal) parse() (replies []string) {
 				break
 			}
 			seq = string(match[0])
-			params, mid, final := string(match[1]), string(match[2]), string(match[3])
+			// DEL is ignored inside CSI, including between parameter bytes.
+			// Keep seq raw so consumption and captured wire bytes remain exact.
+			params := strings.ReplaceAll(string(match[1]), "\x7f", "")
+			mid := strings.ReplaceAll(string(match[2]), "\x7f", "")
+			final := string(match[3])
 			if strings.HasPrefix(params, "?") {
 				modes := strings.Split(params[1:], ";")
 				for _, raw := range modes {
@@ -550,6 +554,15 @@ func TestTerminalFidelityEmptyParameters(t *testing.T) {
 		evidence = filepath.Join(evidence, "empty-parameters")
 	}
 	fidelityCleanup(t, fidelityBuild(t), evidence, "--empty-params")
+}
+
+// Ignored DEL must not let provider saves overwrite the outer fallback slots.
+func TestTerminalFidelityIgnoredDEL(t *testing.T) {
+	evidence := os.Getenv("WT_FIDELITY_EVIDENCE")
+	if evidence != "" {
+		evidence = filepath.Join(evidence, "ignored-del")
+	}
+	fidelityCleanup(t, fidelityBuild(t), evidence, "--ignored-del")
 }
 
 func fidelityCleanup(t *testing.T, binary, evidence string, providerArgs ...string) {
