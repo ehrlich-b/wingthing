@@ -14,8 +14,11 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
+	"github.com/ehrlich-b/wingthing/internal/sshcontrol"
+	"path/filepath"
 
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 
@@ -27,6 +30,7 @@ func attachCmd() *cobra.Command {
 	var selectFlag bool
 	var jsonFlag bool
 	var readOnlyFlag, takeoverFlag bool
+	var streamFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "attach [session]",
@@ -57,6 +61,45 @@ func attachCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if streamFlag {
+				if sessionID != "" || remoteName != "" || selectFlag || jsonFlag || readOnlyFlag || takeoverFlag {
+					return errors.New("attachment stream takes only a framed request")
+				}
+				return eggclient.ServeAttachmentIO(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), func(ctx context.Context, request eggclient.AttachmentRequest) (eggclient.SessionStream, error) {
+					a := request.Options
+					stream, _, err := controlsocket.DialAttachment(ctx, dir, controlsocket.Hello{Client: os.Getenv("WT_MCP_CLIENT"), Attach: &controlsocket.Attachment{Session: request.Session, Exact: request.Exact, NativeTerminal: a.NativeTerminal, ReadOnly: a.ReadOnly, Takeover: a.Takeover, Rows: a.Rows, Cols: a.Cols}})
+					if err == nil {
+						return stream, nil
+					}
+					if !standaloneAttachAvailable(err, os.Getenv("WT_MCP_CLIENT")) || controlsocket.ExpectedWingID(ctx) != "" {
+						return nil, err
+					}
+					resolved, err := eggclient.ResolveLifecycleSession(&config.Config{Dir: dir}, request.Session)
+					if err != nil {
+						return nil, err
+					}
+					if request.Exact && resolved.ID != request.Session {
+						return nil, errors.New("attachment requires the exact full session ID")
+					}
+					if _, alive := eggclient.ReadAliveEggPID(filepath.Join(dir, "eggs", resolved.ID)); request.Exact && !alive {
+						data, _ := os.ReadFile(filepath.Join(dir, "eggs", resolved.ID, "lifecycle.jsonl"))
+						if code, ok := eggclient.ConfirmedSessionExit(data); ok {
+							return &exitedAttachStream{id: resolved.ID, code: code}, nil
+						}
+					}
+					resolved, client, err := eggclient.OpenLocalEgg(ctx, &config.Config{Dir: dir}, resolved.ID)
+					if err != nil {
+						return nil, err
+					}
+					a.Claim, a.Owner = !a.ReadOnly, "cli"
+					attached, err := client.AttachSessionWithOptions(ctx, resolved.ID, a)
+					if err != nil {
+						client.Close()
+						return nil, err
+					}
+					return &ownedAttachStream{SessionStream: attached, client: client}, nil
+				})
+			}
 			if sessionID == "coordinator" && controlsocket.ExpectedWingID(cmd.Context()) == "" && remoteName == "" && os.Getenv("WT_MCP_CLIENT") == "" {
 				rows, err := eggclient.DiscoverMachineSessions(version, cmd.Context(), &config.Config{Dir: dir}, remotepkg.Streams(cmd.Context()))
 				if err != nil {
@@ -81,27 +124,10 @@ func attachCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				remoteArgs := []string{"attach"}
-				if readOnlyFlag {
-					remoteArgs = append(remoteArgs, "--read-only")
-				}
-				if takeoverFlag {
-					remoteArgs = append(remoteArgs, "--takeover")
-				}
-				remoteArgs = append(remoteArgs, "--", remoteSession)
 				streams := remotepkg.Streams(cmd.Context())
-				invocation := remotepkg.ProfileInvocation(remote, remoteArgs)
-				invocation.AllocateTTY = streams.StdinTTY && streams.StdoutTTY
-				err = runRemoteAttachment(cmd.Context(), invocation, streams)
-				var exitErr *cmdutil.CommandExitError
-				if err != nil && cmd.Context().Err() == nil && (!errors.As(err, &exitErr) || exitErr.Code == 255) {
-					reconnectArgs := append(remotepkg.ProfileArgs(remote), remoteArgs...)
-					profileArgs := []string{"attach"}
-					if readOnlyFlag {
-						profileArgs = append(profileArgs, "--read-only")
-					}
-					profileArgs = append(profileArgs, "--", remoteName+":"+remoteSession)
-					fmt.Fprintf(cmd.ErrOrStderr(), "Connection to %s (%s) ended; session outcome unknown. Reconnect: %s\nPinned route: %s\n", remoteName, remote.SSHTarget, attachReconnectCommand(dir, profileArgs), attachReconnectCommand(dir, reconnectArgs))
+				detached, err := eggclient.AttachRemoteIO(cmd.Context(), remote, remoteSession, streams.In, streams.Out, cmd.ErrOrStderr(), egg.AttachOptions{ReadOnly: readOnlyFlag, Takeover: takeoverFlag}, sshcontrol.Transport{SSHPath: streams.SSHPath})
+				if detached {
+					fmt.Fprintf(cmd.ErrOrStderr(), "\r\n[detached from %s:%s]\r\n", remoteName, remoteSession)
 				}
 				return err
 			}
@@ -152,6 +178,8 @@ func attachCmd() *cobra.Command {
 		},
 	}
 
+	cmd.Flags().BoolVar(&streamFlag, "attachment-stream", false, "internal framed attachment")
+	_ = cmd.Flags().MarkHidden("attachment-stream")
 	cmd.Flags().BoolVarP(&selectFlag, "select", "s", false, "choose a session interactively")
 	cmd.Flags().BoolVar(&jsonFlag, "json", false, "print active sessions as JSON")
 	cmd.Flags().BoolVar(&readOnlyFlag, "read-only", false, "observe output without writing or resizing")
@@ -231,4 +259,21 @@ func attachSessions(ctx context.Context, dir, clientName string) ([]eggclient.Lo
 	var sessions []eggclient.LocalSession
 	err = json.Unmarshal(data, &sessions)
 	return sessions, err
+}
+
+type ownedAttachStream struct {
+	eggclient.SessionStream
+	client *egg.Client
+}
+
+func (s *ownedAttachStream) Close() error { return s.client.Close() }
+
+type exitedAttachStream struct {
+	id   string
+	code int
+}
+
+func (s *exitedAttachStream) Send(*pb.SessionMsg) error { return errors.New("session already exited") }
+func (s *exitedAttachStream) Recv() (*pb.SessionMsg, error) {
+	return &pb.SessionMsg{SessionId: s.id, Payload: &pb.SessionMsg_ExitCode{ExitCode: int32(s.code)}}, nil
 }

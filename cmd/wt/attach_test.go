@@ -233,23 +233,14 @@ func TestAttachRemoteUnknownOutcomePrintsExactReconnectOnlyOnStderr(t *testing.T
 	if err := config.SaveRemotes(state, map[string]config.Remote{"devbox": {SSHTarget: "fixture-host", WTBinary: "/custom binary/wt", WingthingDir: "/saved state"}}); err != nil {
 		t.Fatal(err)
 	}
-	ssh := writeFakeRemoteSSH(t, "exit 255\n")
+	ssh := writeFakeRemoteSSH(t, "echo 'Permission denied (publickey).' >&2; exit 255\n")
 	var output, diagnostic bytes.Buffer
 	err := executeCLI(t.Context(), []string{"attach", "--takeover", "devbox:full-id"}, remotepkg.IO{In: strings.NewReader(""), Out: &output, ErrOut: &diagnostic, SSHPath: ssh})
-	var exit *cmdutil.CommandExitError
-	if !errors.As(err, &exit) || exit.Code != 255 || output.Len() != 0 {
+	if err == nil || !strings.Contains(err.Error(), "Permission denied") || output.Len() != 0 {
 		t.Fatal(output.String(), err)
 	}
-	for _, want := range []string{"devbox (fixture-host)", "session outcome unknown", "'--remote-binary' '/custom binary/wt'", "'--remote-state' '/saved state'", "'attach' '--' 'full-id'"} {
-		if !strings.Contains(diagnostic.String(), want) {
-			t.Fatalf("missing %q: %s", want, diagnostic.String())
-		}
-	}
-	if !strings.Contains(diagnostic.String(), "'attach' '--' 'devbox:full-id'") {
-		t.Fatal("reconnect did not qualify the saved profile")
-	}
-	if strings.Contains(diagnostic.String(), "'--takeover'") {
-		t.Fatal("failure advice repeats takeover")
+	if strings.Contains(diagnostic.String(), "Reconnect:") {
+		t.Fatal("saved attachment still requires manual reconnect", diagnostic.String())
 	}
 }
 

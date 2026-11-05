@@ -10,6 +10,8 @@ if os.path.exists(os.path.join(root, host+'.down')):
     print('fixture host is offline', file=sys.stderr); sys.exit(255)
 if os.path.exists(os.path.join(root, host+'.changed-key')):
     print('REMOTE HOST IDENTIFICATION HAS CHANGED!', file=sys.stderr); sys.exit(255)
+if os.path.exists(os.path.join(root, host+'.auth-failed')):
+    print('Permission denied (publickey).', file=sys.stderr); sys.exit(255)
 if '-N' not in args:
     command = shlex.split(args[i+2])
     assert command[1:3] == ['mcp','inspect'], command
