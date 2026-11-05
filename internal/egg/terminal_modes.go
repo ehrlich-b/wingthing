@@ -162,7 +162,7 @@ func privateModes(seq []byte) ([]string, byte, bool) {
 
 func mouseMode(mode int) bool {
 	switch mode {
-	case 9, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1015, 1016:
+	case 9, 1000, 1001, 1002, 1003, 1005, 1006, 1015, 1016:
 		return true
 	}
 	return false
@@ -213,7 +213,7 @@ func (p *browserPresentation) finish() []byte {
 }
 
 // Only presentation state is tracked: mouse encodings/reporting, alternate
-// screen/scroll, application cursor keys, cursor visibility and bracketed paste.
+// screen/scroll, application cursor keys, cursor visibility, focus reporting and bracketed paste.
 var presentationModes = [...]int{1, 9, 25, 47, 1047, 1049, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1015, 1016, 2004}
 
 type terminalModeState struct{ seen, enabled bool }

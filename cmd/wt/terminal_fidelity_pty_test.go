@@ -1,0 +1,516 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"testing"
+
+	"github.com/creack/pty"
+	"github.com/ehrlich-b/wingthing/internal/egg"
+	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	"golang.org/x/term"
+)
+
+type fidelityCase struct {
+	Name, Output, Input string
+	Query               bool
+}
+
+func fidelityCases(t *testing.T) []fidelityCase {
+	t.Helper()
+	data, err := os.ReadFile("testdata/terminal_fidelity_cases.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []fidelityCase
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	if len(cases) < 24 {
+		t.Fatal("missing behaviours")
+	}
+	return cases
+}
+
+// Protocol terminal oracle, deliberately independent of the egg's VT shadow.
+// It implements the measured query replies and DEC state, and records all wire
+// bytes. GUI policies (clipboard permission, link opening) are outside its scope.
+type fidelityTerminal struct {
+	before                *term.State
+	t                     *testing.T
+	master, slave         *os.File
+	cmd                   *exec.Cmd
+	mu                    sync.Mutex
+	wire                  []byte
+	pending               []byte
+	modes, saved          map[int]bool
+	changed               chan struct{}
+	readDone, processDone chan struct{}
+	err                   error
+	queries               map[string]string
+}
+
+var fidelityCSI = regexp.MustCompile("^\x1b\\[([?<>]?[0-9;]*)([ $]?)([@-~])")
+
+func startFidelityTerminal(t *testing.T, cmd *exec.Cmd, initial map[int]bool) *fidelityTerminal {
+	t.Helper()
+	master, slave, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pty.Setsize(master, &pty.Winsize{Cols: 80, Rows: 24}); err != nil {
+		t.Fatal(err)
+	}
+	h := &fidelityTerminal{t: t, master: master, slave: slave, cmd: cmd, modes: map[int]bool{25: true}, saved: map[int]bool{}, changed: make(chan struct{}, 1), readDone: make(chan struct{}), processDone: make(chan struct{}), queries: map[string]string{}}
+	for mode, value := range initial {
+		h.modes[mode] = value
+	}
+	for _, c := range fidelityCases(t) {
+		if c.Query {
+			h.queries[c.Output] = c.Input
+		}
+	}
+	// CPR's positioning prefix is parsed separately.
+	h.queries["\x1b[6n"] = "\x1b[7;13R"
+	h.before, err = term.GetState(int(slave.Fd()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	go func() { h.err = cmd.Wait(); close(h.processDone) }()
+	go h.read()
+	t.Cleanup(func() {
+		select {
+		case <-h.processDone:
+		default:
+			_ = cmd.Process.Kill()
+			<-h.processDone
+		}
+		_ = master.Close()
+		_ = slave.Close()
+		<-h.readDone
+	})
+	return h
+}
+func (h *fidelityTerminal) send(data string) {
+	h.t.Helper()
+	for len(data) > 0 {
+		n, err := io.WriteString(h.master, data)
+		if err != nil {
+			h.t.Error(err)
+			return
+		}
+		data = data[n:]
+	}
+}
+func (h *fidelityTerminal) read() {
+	defer close(h.readDone)
+	buf := make([]byte, 8192)
+	for {
+		n, err := h.master.Read(buf)
+		if n > 0 {
+			h.mu.Lock()
+			h.wire = append(h.wire, buf[:n]...)
+			h.pending = append(h.pending, buf[:n]...)
+			replies := h.parse()
+			h.mu.Unlock()
+			for _, reply := range replies {
+				h.send(reply)
+			}
+			select {
+			case h.changed <- struct{}{}:
+			default:
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+func (h *fidelityTerminal) parse() (replies []string) {
+	for len(h.pending) > 0 {
+		p := h.pending
+		if p[0] != 0x1b {
+			h.pending = p[1:]
+			continue
+		}
+		if len(p) < 2 {
+			break
+		}
+		var seq string
+		if p[1] == ']' {
+			end := bytes.IndexByte(p, 7)
+			width := 1
+			if st := bytes.Index(p, []byte("\x1b\\")); st >= 0 && (end < 0 || st < end) {
+				end = st
+				width = 2
+			}
+			if end < 0 {
+				break
+			}
+			seq = string(p[:end+width])
+		} else if p[1] == '[' {
+			match := fidelityCSI.FindSubmatch(p)
+			if match == nil {
+				break
+			}
+			seq = string(match[0])
+			params, mid, final := string(match[1]), string(match[2]), string(match[3])
+			if strings.HasPrefix(params, "?") {
+				modes := strings.Split(params[1:], ";")
+				for _, raw := range modes {
+					mode, e := strconv.Atoi(raw)
+					if e != nil {
+						continue
+					}
+					switch final {
+					case "h":
+						h.modes[mode] = true
+					case "l":
+						h.modes[mode] = false
+					case "s":
+						h.saved[mode] = h.modes[mode]
+					case "r":
+						if v, ok := h.saved[mode]; ok {
+							h.modes[mode] = v
+						}
+					case "p":
+						if mid == "$" {
+							v := 2
+							if h.modes[mode] {
+								v = 1
+							}
+							replies = append(replies, fmt.Sprintf("\x1b[?%d;%d$y", mode, v))
+						}
+					}
+				}
+			}
+		} else {
+			seq = string(p[:2])
+		}
+		if reply, ok := h.queries[seq]; ok {
+			replies = append(replies, reply)
+		}
+		h.pending = p[len(seq):]
+	}
+	return
+}
+func (h *fidelityTerminal) snapshot() []byte {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return bytes.Clone(h.wire)
+}
+func (h *fidelityTerminal) wait(needle string) {
+	h.t.Helper()
+	for {
+		if bytes.Contains(h.snapshot(), []byte(needle)) {
+			return
+		}
+		select {
+		case <-h.changed:
+		case <-h.processDone:
+			_ = h.slave.Close()
+			<-h.readDone
+			if bytes.Contains(h.snapshot(), []byte(needle)) {
+				return
+			}
+			h.t.Fatalf("process exited (%v) waiting for %q: %q", h.err, needle, h.snapshot())
+		case <-h.readDone:
+			h.t.Fatalf("terminal closed waiting for %q: %q", needle, h.snapshot())
+		case <-h.t.Context().Done():
+			h.t.Fatal(h.t.Context().Err())
+		}
+	}
+}
+func fidelityWrite(t *testing.T, dir, name string, data []byte) {
+	t.Helper()
+	if dir == "" {
+		return
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+func fidelityBuild(t *testing.T) string {
+	t.Helper()
+	binary := filepath.Join(t.TempDir(), "wt")
+	cmd := exec.CommandContext(t.Context(), "go", "build", "-p", "2", "-o", binary, ".")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build CLI: %v\n%s", err, out)
+	}
+	return binary
+}
+
+type fidelityEgg struct {
+	home, socket, token string
+	cmd                 *exec.Cmd
+	done                chan error
+	logs                *nativeMouseCapture
+}
+
+func startFidelityEgg(t *testing.T, binary, provider string, args ...string) *fidelityEgg {
+	t.Helper()
+	// A short, owned state directory keeps AF_UNIX paths valid on every platform.
+	home, err := os.MkdirTemp(".", "f-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, err = filepath.Abs(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	dir := filepath.Join(home, "eggs", "fidelity")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	argv := []string{"egg", "run", "--session-id", "fidelity", "--agent=", "--kind", "command", "--outer-boundary", "--network", "*", "--agent-domains", "none", "--omit-browser-bridge", "--vte", "--cwd", home, "--command-arg", "/usr/bin/python3", "--command-arg", provider}
+	for _, arg := range args {
+		argv = append(argv, "--command-arg", arg)
+	}
+	cmd := exec.CommandContext(t.Context(), binary, argv...)
+	cmd.Env = []string{"HOME=" + home, "WINGTHING_DIR=" + home, "PATH=/usr/bin:/bin", "TERM=xterm-256color", "LANG=C.UTF-8"}
+	logs := newNativeMouseCapture()
+	cmd.Stdout = logs
+	cmd.Stderr = logs
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	f := &fidelityEgg{home: home, socket: filepath.Join(dir, "egg.sock"), token: filepath.Join(dir, "egg.token"), cmd: cmd, done: make(chan error, 1), logs: logs}
+	go func() { f.done <- cmd.Wait(); close(f.done) }()
+	t.Cleanup(func() {
+		ec, err := egg.Dial(f.socket, f.token)
+		if err == nil {
+			_ = ec.Kill(context.Background(), "fidelity")
+			ec.Close()
+		} else {
+			_ = cmd.Process.Kill()
+		}
+		<-f.done
+	})
+	// An event capture rather than a socket polling interval.
+	for !bytes.Contains(logs.bytes(), []byte("serving on ")) {
+		select {
+		case <-logs.changed:
+		case err := <-f.done:
+			t.Fatalf("egg startup: %v: %s", err, logs.bytes())
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		}
+	}
+	return f
+}
+func (f *fidelityEgg) attach(t *testing.T, binary string, initial map[int]bool) *fidelityTerminal {
+	cmd := exec.CommandContext(t.Context(), binary, "attach", "fidelity")
+	cmd.Env = f.cmd.Env
+	return startFidelityTerminal(t, cmd, initial)
+}
+
+func TestTerminalFidelityPTY(t *testing.T) {
+	binary := fidelityBuild(t)
+	cases := fidelityCases(t)
+	provider, err := filepath.Abs("testdata/terminal_fidelity.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := filepath.Abs("testdata/terminal_fidelity_cases.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := os.Getenv("WT_FIDELITY_EVIDENCE")
+	var direct []byte
+	for _, attached := range []bool{false, true} {
+		name := "direct"
+		if attached {
+			name = "attached"
+		}
+		t.Run(name, func(t *testing.T) {
+			records := filepath.Join(t.TempDir(), "records.json")
+			var h *fidelityTerminal
+			var browser *nativeMouseCapture
+			if attached {
+				f := startFidelityEgg(t, binary, provider, records, fixture)
+				ec, err := egg.Dial(f.socket, f.token)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer ec.Close()
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				stream, err := ec.AttachSessionWithOptions(ctx, "fidelity", egg.AttachOptions{ReadOnly: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				browser = newNativeMouseCapture()
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					for {
+						msg, err := stream.Recv()
+						if err != nil {
+							return
+						}
+						_, _ = browser.Write(msg.GetOutput())
+						if _, ok := msg.Payload.(*pb.SessionMsg_ExitCode); ok {
+							return
+						}
+					}
+				}()
+				defer func() { cancel(); <-done }()
+				h = f.attach(t, binary, nil)
+			} else {
+				cmd := exec.CommandContext(t.Context(), "/usr/bin/python3", provider, records, fixture)
+				h = startFidelityTerminal(t, cmd, nil)
+			}
+			h.wait("FID_READY")
+			h.send("g")
+			for _, c := range cases {
+				h.wait("WIRE:" + c.Name + "\r\n")
+				if c.Name == "sigwinch" {
+					if err := pty.Setsize(h.master, &pty.Winsize{Cols: 93, Rows: 31}); err != nil {
+						t.Fatal(err)
+					}
+					h.wait("SIZE:93x31\r\n")
+				}
+				if !c.Query {
+					input := c.Input
+					if c.Name == "ctrl-b" && attached {
+						input = "\x02\x02"
+					}
+					if c.Name == "large-paste" {
+						payload := bytes.Repeat([]byte("wide-界\x02q"), 131072)[:1<<20]
+						input = "\x1b[200~" + string(payload) + "\x1b[201~"
+					}
+					h.send(input)
+				}
+				h.wait("PASS:" + c.Name + "\r\n")
+				wire := h.snapshot()
+				begin := []byte("BEGIN:" + c.Name + "\r\n")
+				end := []byte("WIRE:" + c.Name + "\r\n")
+				start := bytes.Index(wire, begin) + len(begin)
+				stop := bytes.Index(wire, end)
+				if start < len(begin) || stop < start || string(wire[start:stop]) != c.Output {
+					t.Fatalf("%s output changed: %q", c.Name, wire[start:stop])
+				}
+				t.Logf("%s %s output=%s input verified by provider", name, c.Name, hex.EncodeToString([]byte(c.Output)))
+			}
+			h.wait("FID_DONE\r\n")
+			result, err := os.ReadFile(records)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if attached {
+				if !bytes.Equal(direct, result) {
+					t.Fatalf("provider recordings differ:\ndirect %s\nattached %s", direct, result)
+				}
+				for !bytes.Contains(browser.bytes(), []byte("FID_DONE")) {
+					select {
+					case <-browser.changed:
+					case <-t.Context().Done():
+						t.Fatal(t.Context().Err())
+					}
+				}
+				got := browser.bytes()
+				if !bytes.Contains(got, []byte("\x1b[?1004h")) || bytes.Contains(got, []byte("\x1b[?1000h")) || !bytes.Contains(got, []byte("\x1b]7771;1\a")) {
+					t.Fatalf("browser focus/mouse projection: %q", got)
+				}
+				fidelityWrite(t, evidence, "browser.ansi", got)
+				h.send("\x02q")
+			} else {
+				direct = result
+				h.send("q")
+			}
+			<-h.processDone
+			if h.err != nil {
+				t.Fatal(h.err)
+			}
+			fidelityWrite(t, evidence, name+".json", result)
+			fidelityWrite(t, evidence, name+".ansi", h.snapshot())
+		})
+	}
+	t.Run("cleanup", func(t *testing.T) { fidelityCleanup(t, binary, evidence) })
+}
+
+func fidelityCleanup(t *testing.T, binary, evidence string) {
+	provider, err := filepath.Abs("testdata/terminal_cleanup.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracked := []int{9, 25, 47, 1047, 1049, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1015, 1016, 2004}
+	for _, initial := range []map[int]bool{{25: true}, {25: false, 1000: true, 1006: true, 1004: true, 2004: true, 1049: true}, {25: true, 1002: true, 1004: true, 47: true}} {
+		for _, kill := range []bool{false, true} {
+			name := fmt.Sprintf("%d-kill-%t", len(initial), kill)
+			t.Run(name, func(t *testing.T) {
+				f := startFidelityEgg(t, binary, provider)
+				h := f.attach(t, binary, initial)
+				h.wait("FID_READY")
+
+				h.send("g")
+				h.wait("MODES_CHANGED\r\n")
+				if kill {
+					if err := h.cmd.Process.Kill(); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					h.send("\x02q")
+				}
+				<-h.processDone
+				// Closing our retained slave makes PTY EOF an event fence for the
+				// guardian's output, termios restoration and descriptor closure.
+				slaveName := h.slave.Name()
+				_ = h.slave.Close()
+				<-h.readDone
+				h.mu.Lock()
+				for _, mode := range tracked {
+					want := initial[mode]
+					if mode == 25 {
+						if _, ok := initial[mode]; !ok {
+							want = true
+						}
+					}
+					if h.modes[mode] != want {
+						t.Errorf("mode %d got %t want %t", mode, h.modes[mode], want)
+					}
+				}
+				h.mu.Unlock()
+				reopened, err := os.OpenFile(slaveName, os.O_RDWR, 0600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				after, err := term.GetState(int(reopened.Fd()))
+				reopened.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(h.before, after) {
+					t.Error("terminal termios changed after attachment")
+				}
+				if !kill && h.err != nil {
+					t.Fatal(h.err)
+				}
+
+				fidelityWrite(t, evidence, "cleanup-"+name+".ansi", h.snapshot())
+			})
+		}
+	}
+}

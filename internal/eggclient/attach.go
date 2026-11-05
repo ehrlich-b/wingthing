@@ -176,13 +176,19 @@ func AttachStreamIO(ctx context.Context, sessionID string, input io.Reader, outp
 	if file, ok := input.(*os.File); ok {
 		fd = int(file.Fd())
 	}
+	var pendingInput []byte
 	// Only a native terminal asks for this presentation. Browser/MCP and piped
 	// callers retain the legacy stream; each transport negotiates support.
 	if file, ok := output.(*os.File); ok && fd >= 0 && term.IsTerminal(fd) && term.IsTerminal(int(file.Fd())) {
 		options.NativeTerminal = true
+		finish, pending, guardErr := guardTerminal(input.(*os.File), file)
+		if guardErr != nil {
+			return false, fmt.Errorf("guard terminal: %w", guardErr)
+		}
+		pendingInput = pending
 		defer func() {
-			if _, resetErr := output.Write(egg.NativeTerminalReset()); resetErr != nil {
-				err = errors.Join(err, fmt.Errorf("reset terminal modes: %w", resetErr))
+			if restoreErr := finish(); restoreErr != nil {
+				err = errors.Join(err, fmt.Errorf("restore terminal modes: %w", restoreErr))
 			}
 		}()
 	}
@@ -277,7 +283,7 @@ func AttachStreamIO(ctx context.Context, sessionID string, input io.Reader, outp
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
-		sendAttachedInputMode(stream, sessionID, reader, inputCh, options.ReadOnly, &detaching)
+		sendAttachedInputMode(stream, sessionID, io.MultiReader(bytes.NewReader(pendingInput), reader), inputCh, options.ReadOnly, &detaching)
 	}()
 
 	for {

@@ -1,19 +1,115 @@
-# Terminal fidelity: current evidence and gaps
+# Terminal fidelity
 
-The attachment's native terminal mode forwards provider output, but a full
-sequence-by-sequence comparison with a direct PTY has not yet been performed.
-No conclusion about parity is available for DA1, DA2, DSR/CPR, OSC 10/11,
-OSC 52, OSC 8, OSC 0/2, synchronized output, kitty keyboard, truecolor,
-cursor shape, alternate screen, resize, UTF-8 or input through a real attach.
+`TestTerminalFidelityPTY` runs the same recording Python provider on a plain
+kernel PTY, then on an egg PTY through the built `wt attach` CLI. Both runs use
+the same deterministic protocol terminal endpoint. The egg's VT shadow is
+active (`--vte`); its replies must never substitute for the outer terminal's
+replies. Each output segment is compared byte for byte, and the provider checks
+its input against the fixture before recording its length, SHA-256 and (for
+small inputs) hex. The two provider recordings must be identical.
 
-The paste filter fragment test sends a 1 MiB bracketed payload, including
-Ctrl+B q, in uneven chunks and checks byte equality. This is not an end-to-end
-PTY test. The existing native mouse PTY test covers SGR wheel delivery; mouse
-handling intentionally differs for browser projections.
+This is a protocol/pass-through measurement, not a claim about every emulator's
+rendering, clipboard permissions or hyperlink UI. The endpoint supplies fixed
+DA/colour/clipboard/keyboard replies and implements DEC mode reporting. It does
+not use the egg's VT implementation. The provider needs only Python and a PTY;
+the fixture uses the existing trusted outer-boundary option with a minimal
+local environment and no provider account or network requests. Sandbox policy
+is covered separately by the existing native mouse journey.
 
-Cleanup now disables focus reporting along with the other tracked modes. The
-reset still assumes default outer terminal modes rather than recording their
-previous values. An enabled mode before attach can therefore be disabled on
-return. An uncatchable kill cannot execute the client's deferred cleanup; a
-separate surviving owner would be needed for that case. Neither restoration
-case has been established by a terminal emulator state comparison.
+## Measured results
+
+The focused test passes all 28 rows below. “Exact” means the provider output
+arrives unchanged; input/reply sizes are the bytes recorded by the provider.
+The reproducible case definitions are in
+`cmd/wt/testdata/terminal_fidelity_cases.json`, with the recording program in
+`terminal_fidelity.py` alongside them.
+
+| Behaviour | Direct PTY result | Attached PTY result |
+| --- | --- | --- |
+| DA1 | Exact; 13-byte terminal reply | Same output and reply |
+| DA2 | Exact; 12-byte terminal reply | Same output and reply |
+| DSR status | Exact; `CSI 0 n` | Same output and reply |
+| CPR after positioning | Exact; `CSI 7;13 R` | Same output and reply |
+| OSC 10 foreground query | Exact; 25-byte RGB reply | Same output and reply |
+| OSC 11 background query | Exact; 25-byte RGB reply | Same output and reply |
+| OSC 52 clipboard set | Exact OSC bytes | Same bytes |
+| OSC 52 clipboard query | Exact; 21-byte reply | Same output and reply |
+| OSC 8 hyperlink | Exact open/text/close | Same bytes |
+| OSC 0 title | Exact, including wide title | Same bytes |
+| OSC 2 title | Exact | Same bytes |
+| Bracketed paste | Exact enable; 20-byte paste | Same output and input |
+| Focus in, mode 1004 | Exact enable; `CSI I` input | Same output and input; browser enable also preserved |
+| Focus out | `CSI O` input | Same input |
+| Synchronized output, 2026 | Exact begin/text/end | Same bytes |
+| SGR mouse | Exact enables; 18-byte press/release | Same output and input |
+| Wheel up | `CSI <64;5;3 M`, 10 bytes | Same input |
+| Wheel down | `CSI <65;5;3 M`, 10 bytes | Same input |
+| Kitty keyboard query | Exact; `CSI ?5 u` reply | Same output and reply |
+| Kitty keyboard push | Exact push; 7-byte encoded key | Same output and input |
+| Kitty keyboard pop | Exact pop | Same bytes |
+| Truecolor SGR | Exact foreground/background/reset | Same bytes |
+| Alternate screen | Exact enter/text/leave | Same bytes |
+| DECSCUSR | Exact `CSI 5 SP q` | Same bytes |
+| SIGWINCH | Provider reports 93 columns × 31 rows | Same dimensions via CLI resize forwarding |
+| Ctrl+B | Provider reads one `02` byte | Same byte after documented Ctrl+B twice escape |
+| UTF-8 wide characters | Exact `界🙂é` bytes | Same bytes |
+| 1 MiB bracketed paste | 1,048,588 bytes including markers | Same length and SHA-256; no loss or reorder |
+
+The large paste includes UTF-8 and literal Ctrl+B q sequences. Its complete
+marker-plus-payload SHA-256 in both recordings is
+`541f944788d1fae87af4dc68c1313b03d63c79d6edc09460aaa6277165972eeb`.
+The earlier uneven-chunk paste filter regression remains in the focused suite.
+
+## Differences and cleanup
+
+There are zero unexplained differences in the measured provider sequences.
+Browser presentation intentionally replaces mouse-enable requests with the
+existing tracking marker, leaving terminal selection available. Native attach
+preserves those requests. The read-only browser observer asserts that mouse
+requests are projected while focus mode 1004 is forwarded; both SGR wheel
+sequences above still reach the provider, matching the wheel contract in
+`northstar_native_mouse_pty_test.go`.
+
+Outside provider segments, attach adds its diagnostic, detach key handling and
+terminal-state negotiation. Ctrl+B twice sends one literal Ctrl+B; Ctrl+B q
+locally detaches. Bracketed paste bypasses that key handling. These are existing
+attachment controls, not provider byte loss.
+
+A separate terminal guardian snapshots modes before attachment using DECRQM,
+with a CPR reply as an ordered negotiation fence. Explicit reported values are
+restored rather than assuming default modes. The guardian owns a lifetime pipe
+and the original termios state; EOF from normal detach or client SIGKILL triggers
+restoration. It has its own process session so a client process-group signal
+does not remove the cleanup owner. It never holds the provider connection.
+
+The cleanup subtest passes normal detach and SIGKILL for three initial states:
+defaults, enabled mouse/paste/focus/alternate screen with a hidden cursor, and a
+mixed mouse/focus/alternate-screen state with a visible cursor. It checks all
+tracked mouse modes, paste, alternate selectors, visibility, focus and termios.
+The provider even overwrites the terminal's saved-mode slots to ensure reported
+snapshots, rather than a provider-modified slot, determine restoration. PTY EOF
+fences the guardian's final output and termios restoration; tests use events,
+not sleeps or timing thresholds.
+
+Terminals without DECRQM use XTSAVE/XTRESTORE for unsupported modes. Negotiation
+has a bounded 250 ms compatibility fallback if the terminal does not answer CPR.
+An emulator supporting neither reporting nor saved modes cannot expose its
+prior private-mode state; exact restoration on such an emulator is unverified.
+Likewise, destruction of the terminal itself or killing the guardian cannot be
+repaired by a surviving client. These limits do not change measured parity on
+the reporting endpoint.
+
+## Reproduce
+
+Use a short checkout so the real egg Unix socket fits, then run the registered
+web prerequisite and the focused package tests:
+
+```sh
+nice -n 10 make web
+WT_FIDELITY_EVIDENCE="$(mktemp -d)" nice -n 10 go test -p 2 -count=1 -run '^TestTerminalFidelity' ./cmd/wt -v
+```
+
+The evidence directory receives direct/attached JSON provider recordings,
+direct/attached/browser ANSI transcripts and six cleanup transcripts. Without
+that optional environment variable, records stay in the test's temporary
+directory. No real provider, browser download, root or external service is used.
