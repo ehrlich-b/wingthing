@@ -101,7 +101,13 @@ func (w *terminalModeWriter) transform(seq []byte) []byte {
 	}
 	params := strings.Split(string(seq[start:len(seq)-1]), ";")
 	// Leave non-mode CSI (including intermediates/subparameters) alone.
-	for _, raw := range params {
+	for i, raw := range params {
+		// An omitted CSI parameter is zero, including leading, interior and
+		// trailing omissions. It must not bypass protection of the save slots.
+		if raw == "" {
+			raw = "0"
+			params[i] = raw
+		}
 		if _, err := strconv.Atoi(raw); err != nil {
 			return original
 		}

@@ -93,6 +93,15 @@ test verifies provider save semantics as well as protection of the outer state.
 PTY EOF fences the guardian's final output and termios restoration; tests use
 events, not sleeps or timing thresholds.
 
+`TestTerminalFidelityEmptyParameters` repeats those 18 local cleanup cases with
+leading, interior and trailing omitted CSI parameters in provider mode changes,
+saves and restores. Omitted parameters mean mode zero; they must not bypass
+save-slot protection for other modes in the same sequence. In particular,
+`CSI ?25;1000;1004;2004;s` cannot overwrite
+the outer snapshot. Both detach and SIGKILL restore the original cursor, mouse,
+focus and paste states even without DECRQM replies. Provider saves and restores
+still reproduce the provider's current modes before cleanup.
+
 Terminals without DECRQM use protected XTSAVE/XTRESTORE slots for unsupported
 modes. Provider saves are virtualized separately in the attachment's mode writer;
 provider restores become explicit mode changes or references to the protected
@@ -127,6 +136,7 @@ WT_FIDELITY_EVIDENCE="$(mktemp -d)" nice -n 10 go test -p 2 -count=1 -run '^Test
 ```
 
 The evidence directory receives direct/attached JSON provider recordings,
-direct/attached/browser ANSI transcripts and 54 local/SSH cleanup transcripts. Without
-that optional environment variable, records stay in the test's temporary
+direct/attached/browser ANSI transcripts and 72 local/SSH cleanup transcripts
+(18 under `empty-parameters/`). Without that optional environment variable,
+records stay in the test's temporary
 directory. No real provider, browser download, root or external service is used.

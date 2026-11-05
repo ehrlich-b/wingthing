@@ -542,7 +542,17 @@ func (h *fidelityTerminal) exerciseSavedModes(initial map[int]bool, typeahead bo
 	h.assertModes(changed)
 }
 
-func fidelityCleanup(t *testing.T, binary, evidence string) {
+// Exercise empty parameters through the built CLI, including terminals which
+// cannot report modes and therefore rely entirely on protected save slots.
+func TestTerminalFidelityEmptyParameters(t *testing.T) {
+	evidence := os.Getenv("WT_FIDELITY_EVIDENCE")
+	if evidence != "" {
+		evidence = filepath.Join(evidence, "empty-parameters")
+	}
+	fidelityCleanup(t, fidelityBuild(t), evidence, "--empty-params")
+}
+
+func fidelityCleanup(t *testing.T, binary, evidence string, providerArgs ...string) {
 	provider, err := filepath.Abs("testdata/terminal_cleanup.py")
 	if err != nil {
 		t.Fatal(err)
@@ -552,7 +562,7 @@ func fidelityCleanup(t *testing.T, binary, evidence string) {
 			for _, kill := range []bool{false, true} {
 				name := fmt.Sprintf("state-%d-reporting-%d-kill-%t", index, reporting, kill)
 				t.Run(name, func(t *testing.T) {
-					f := startFidelityEgg(t, binary, provider, "--exercise-saves")
+					f := startFidelityEgg(t, binary, provider, append([]string{"--exercise-saves"}, providerArgs...)...)
 					cmd := exec.CommandContext(t.Context(), binary, "attach", "fidelity")
 					cmd.Env = f.cmd.Env
 					h := startFidelityTerminal(t, cmd, initial, func(h *fidelityTerminal) { h.reporting = reporting })
