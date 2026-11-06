@@ -40,6 +40,15 @@ type attachmentWire struct {
 func newAttachmentWire(input io.Reader, output io.Writer) *attachmentWire {
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 4096), 4<<20)
+	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
+		advance, token, err := bufio.ScanLines(data, atEOF)
+		// Frames are newline terminated. Preserve transport truncation instead
+		// of handing an incomplete final frame to the JSON decoder.
+		if atEOF && advance > 0 && data[advance-1] != '\n' {
+			return 0, nil, io.ErrUnexpectedEOF
+		}
+		return advance, token, err
+	})
 	return &attachmentWire{scanner: scanner, encoder: json.NewEncoder(output)}
 }
 func (s *attachmentWire) frame(frame attachmentFrame) error {
@@ -95,13 +104,13 @@ func (s *sshAttachment) Close() error {
 }
 func (s *sshAttachment) Recv() (*pb.SessionMsg, error) {
 	msg, err := s.attachmentWire.Recv()
-	if !errors.Is(err, io.EOF) {
+	if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return msg, err
 	}
 	<-s.done
 	result := s.result
 	if result == nil {
-		return nil, io.EOF
+		return nil, err
 	}
 	diagnostic := s.diagnostic.buffer.String()
 	var exit *cmdutil.CommandExitError

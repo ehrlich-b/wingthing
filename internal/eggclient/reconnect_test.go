@@ -577,3 +577,84 @@ func TestRemoteReconnectStdioSavedRoute(t *testing.T) {
 		t.Fatal(diagnostic.String())
 	}
 }
+
+func TestRemoteReconnectTruncatedSSHFrame(t *testing.T) {
+	root := t.TempDir()
+	ssh, requests, received := filepath.Join(root, "ssh"), filepath.Join(root, "requests"), filepath.Join(root, "received")
+	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
+	frame := func(msg *pb.SessionMsg) string {
+		var output strings.Builder
+		if err := newAttachmentWire(strings.NewReader(""), &output).Send(msg); err != nil {
+			t.Fatal(err)
+		}
+		return quote(output.String())
+	}
+	screenFrame := func(screen string) string {
+		return frame(&pb.SessionMsg{SessionId: "full-session-id", Payload: &pb.SessionMsg_Output{Output: []byte(screen)}})
+	}
+	// The first SSH process loses its transport in the middle of a frame.
+	// The second process waits for input, so recovery is ordered by events.
+	script := "#!/bin/sh\n" +
+		"IFS= read -r request || exit 1\n" +
+		"if [ ! -e " + quote(requests) + " ]; then\n" +
+		"  printf '%s\\n' \"$request\" > " + quote(requests) + "\n" +
+		"  printf '%s' " + screenFrame("initial screen") + "\n" +
+		"  printf '%s' '{\"message\":{\"sessionId\":\"full-session-id\",\"output\":\"'\n" +
+		"  exit 255\nfi\n" +
+		"printf '%s\\n' \"$request\" >> " + quote(requests) + "\n" +
+		"printf '%s' " + screenFrame("current screen") + "\n" +
+		"IFS= read -r input || exit 1\n" +
+		"printf '%s\\n' \"$input\" > " + quote(received) + "\n" +
+		"printf '%s' " + frame(&pb.SessionMsg{SessionId: "full-session-id", Payload: &pb.SessionMsg_ExitCode{ExitCode: 17}}) + "\n"
+	if err := os.WriteFile(ssh, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	clock := reconnectClock{ticks: make(chan reconnectTick, 8)}
+	writer, screen, diagnostic, done := reconnectStart(t, &testssh.Harness{SSHPath: ssh, Root: root}, config.Remote{SSHTarget: "saved-peer"}, clock)
+	reconnectEvent(t, screen, "initial screen")
+	select {
+	case tick := <-clock.ticks:
+		if tick.delay != 250*time.Millisecond {
+			t.Fatalf("initial backoff = %s", tick.delay)
+		}
+		reconnectEvent(t, diagnostic, "connection lost")
+		close(tick.release)
+	case result := <-done:
+		t.Fatalf("truncated SSH frame ended attachment: detached=%t error=%v", result.detached, result.err)
+	}
+	reconnectEvent(t, screen, "current screen")
+	if _, err := io.WriteString(writer, "after-truncation\n"); err != nil {
+		t.Fatal(err)
+	}
+	result := <-done
+	var exit *SessionExitError
+	if result.detached || !errors.As(result.err, &exit) || exit.Code != 17 {
+		t.Fatalf("recovered attachment result: %+v", result)
+	}
+	data, err := os.ReadFile(requests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("SSH attempts = %d: %s", len(lines), data)
+	}
+	for i, line := range lines {
+		var request AttachmentRequest
+		if err := json.Unmarshal([]byte(line), &request); err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 && (request.Session != "friendly" || request.Exact) || i == 1 && (request.Session != "full-session-id" || !request.Exact || request.Options.Takeover) {
+			t.Fatalf("request %d changed session identity: %+v", i, request)
+		}
+	}
+	data, err = os.ReadFile(received)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := newAttachmentWire(strings.NewReader(string(data)), io.Discard).Recv()
+	if err != nil || msg.SessionId != "full-session-id" || string(msg.GetInput()) != "after-truncation\n" {
+		t.Fatalf("input after recovery = %s: %v", data, err)
+	}
+	t.Log("truncated SSH transport recovered in two attempts with the same session ID, current screen, and post-recovery input")
+}
