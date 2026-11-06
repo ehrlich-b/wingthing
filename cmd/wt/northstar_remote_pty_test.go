@@ -44,26 +44,52 @@ type northstarSSHRecord struct {
 
 func northstarRemoteSSH(args []string) int {
 	record := northstarSSHRecord{}
+	var noCommand bool
+	var forward string
 	for len(args) > 0 {
 		switch args[0] {
 		case "-t", "-T":
 			record.Mode = args[0]
 			args = args[1:]
 		case "-o":
-			if len(args) < 2 || args[1] != "BatchMode=yes" {
+			if len(args) < 2 {
 				return 91
 			}
-			record.Batch = true
+			switch args[1] {
+			case "BatchMode=yes":
+				record.Batch = true
+			case "StrictHostKeyChecking=yes", "UpdateHostKeys=no", "ExitOnForwardFailure=yes", "ServerAliveInterval=15", "ServerAliveCountMax=2", "StreamLocalBindUnlink=no":
+			default:
+				if !strings.HasPrefix(args[1], "ConnectTimeout=") {
+					return 91
+				}
+			}
 			args = args[2:]
+		case "-N":
+			noCommand = true
+			args = args[1:]
+		case "-L":
+			if len(args) < 2 {
+				return 91
+			}
+			forward, args = args[1], args[2:]
+		case "--":
+			args = args[1:]
+			goto parsed
 		default:
 			goto parsed
 		}
 	}
 parsed:
-	if len(args) != 2 || record.Mode == "" {
+	if record.Mode == "" || (!noCommand && len(args) != 2) || (noCommand && (len(args) != 1 || forward == "" || !record.Batch || record.Mode != "-T")) {
 		return 92
 	}
-	record.Target, record.Command = args[0], args[1]
+	record.Target = args[0]
+	if noCommand {
+		record.Command = "-N -L " + forward
+	} else {
+		record.Command = args[1]
+	}
 	switch record.Target {
 	case "ns-devbox", "ns-mirror", "ns-offline":
 	default:
@@ -88,6 +114,41 @@ parsed:
 	if record.Target == "ns-offline" || (record.Target == "ns-devbox" && offline == nil) {
 		fmt.Fprintln(os.Stderr, "fixture offline")
 		return 255
+	}
+	if noCommand {
+		local, remote, ok := strings.Cut(forward, ":")
+		if !ok || remote != filepath.Join(os.Getenv("NORTHSTAR_REMOTE_STATE"), controlsocket.SocketName) {
+			return 96
+		}
+		listener, err := net.Listen("unix", local)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 97
+		}
+		defer listener.Close()
+		for {
+			incoming, err := listener.Accept()
+			if err != nil {
+				return 98
+			}
+			go func() {
+				defer incoming.Close()
+				outgoing, err := net.Dial("unix", remote)
+				if err != nil {
+					return
+				}
+				defer outgoing.Close()
+				done := make(chan struct{})
+				go func() {
+					_, _ = io.Copy(outgoing, incoming)
+					_ = outgoing.(*net.UnixConn).CloseWrite()
+					close(done)
+				}()
+				_, _ = io.Copy(incoming, outgoing)
+				_ = incoming.(*net.UnixConn).CloseWrite()
+				<-done
+			}()
+		}
 	}
 	command := exec.Command("/bin/sh", "-c", record.Command)
 	if record.Mode == "-T" {

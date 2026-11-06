@@ -133,6 +133,9 @@ func openSSHAttachment(ctx context.Context, profile config.Remote, path string, 
 		cancel()
 		return nil, err
 	}
+	// An SSH helper can retain stdout after SSH exits. Unblock Recv before
+	// terminal cleanup joins its output worker on cancellation.
+	context.AfterFunc(ctx, func() { _ = reader.Close() })
 	s := &sshAttachment{attachmentWire: newAttachmentWire(reader, writer), cancel: cancel, input: writer, output: reader, done: make(chan struct{}), diagnostic: &remoteSessionBuffer{limit: 64 << 10, stream: "SSH diagnostic", cancel: cancel}}
 	invocation := remote.ProfileInvocation(profile, []string{"attach", "--attachment-stream"})
 	invocation.NonInteractive = true

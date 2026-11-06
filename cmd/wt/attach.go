@@ -129,6 +129,21 @@ func attachCmd() *cobra.Command {
 				if detached {
 					fmt.Fprintf(cmd.ErrOrStderr(), "\r\n[detached from %s:%s]\r\n", remoteName, remoteSession)
 				}
+				var lost *eggclient.AttachConnectionError
+				if errors.As(err, &lost) && cmd.Context().Err() == nil {
+					if lost.SessionID != "" {
+						remoteSession = lost.SessionID
+					}
+					remoteArgs := []string{"attach"}
+					if readOnlyFlag {
+						remoteArgs = append(remoteArgs, "--read-only")
+					}
+					profileArgs := append(append([]string(nil), remoteArgs...), "--", remoteName+":"+remoteSession)
+					remoteArgs = append(remoteArgs, "--", remoteSession)
+					reconnectArgs := append(remotepkg.ProfileArgs(remote), remoteArgs...)
+					fmt.Fprintf(cmd.ErrOrStderr(), "Connection to %s (%s) ended; session outcome unknown. Reconnect: %s\nPinned route: %s\n", remoteName, remote.SSHTarget, attachReconnectCommand(dir, profileArgs), attachReconnectCommand(dir, reconnectArgs))
+					return &cmdutil.CommandExitError{Code: 255, Message: err.Error()}
+				}
 				return err
 			}
 			clientName := os.Getenv("WT_MCP_CLIENT")

@@ -28,6 +28,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
 	"golang.org/x/term"
 	"google.golang.org/grpc"
@@ -89,9 +90,17 @@ func northstarNewFixture(t *testing.T) *northstarFixture {
 	}
 	f.env = []string{"HOME=" + home, "WINGTHING_DIR=" + local, "PATH=" + f.bin + ":/usr/bin:/bin:/usr/sbin:/sbin", "TMPDIR=" + f.tmp,
 		"TERM=xterm-256color", "LANG=en_US.UTF-8", "PYTHONDONTWRITEBYTECODE=1", "NORTHSTAR_SSH_OFFLINE_FILE=" + filepath.Join(home, "devbox-offline")}
+	f.env = append(f.env, "NORTHSTAR_REMOTE_STATE="+remote, "NORTHSTAR_REMOTE_SSH_LOG="+filepath.Join(home, "ssh.jsonl"))
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Only these exact fixture aliases can reach the shell executor. The command
 	// still runs the built wt with the literal state/argv produced by real SSH code.
 	northstarWrite(t, filepath.Join(f.bin, "ssh"), `#!/bin/sh
+for arg in "$@"; do
+ if [ "$arg" = -N ]; then exec `+remotepkg.ShellQuote(exe)+` northstar-fake-ssh "$@"; fi
+done
 while [ "$#" -gt 0 ]; do
  case "$1" in -T|-t) shift ;; -o) shift 2 ;; *) break ;; esac
 done

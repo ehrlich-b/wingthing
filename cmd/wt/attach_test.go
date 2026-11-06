@@ -266,6 +266,38 @@ func TestGenericRemoteAttachUnknownOutcomePreservesPinnedRoute(t *testing.T) {
 	}
 }
 
+func TestAttachRemoteEndedStreamPrintsExactReconnect(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("WINGTHING_DIR", state)
+	t.Setenv("WINGTHING_PREVIEW_DIR", "")
+	if err := config.SaveRemotes(state, map[string]config.Remote{"devbox": {SSHTarget: "fixture-host", WTBinary: "/custom binary/wt", WingthingDir: "/saved state"}}); err != nil {
+		t.Fatal(err)
+	}
+	ssh := writeFakeRemoteSSH(t, `read request
+printf '%s\n' '{"message":{"sessionId":"canonical-id","output":"c2NyZWVu"}}' '{"error":"fixture attachment ended without provider exit"}'
+`)
+	input, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	defer writer.Close()
+	var output, diagnostic bytes.Buffer
+	err = executeCLI(t.Context(), []string{"attach", "--takeover", "devbox:alias"}, remotepkg.IO{In: input, Out: &output, ErrOut: &diagnostic, SSHPath: ssh})
+	var exit *cmdutil.CommandExitError
+	if !errors.As(err, &exit) || exit.Code != 255 || output.String() != "screen" {
+		t.Fatalf("output=%q error=%v", output.String(), err)
+	}
+	for _, want := range []string{"devbox (fixture-host)", "Reconnect:", "'attach' '--' 'devbox:canonical-id'", "Pinned route:", "'--remote-binary' '/custom binary/wt'", "'--remote-state' '/saved state'", "'attach' '--' 'canonical-id'"} {
+		if !strings.Contains(diagnostic.String(), want) {
+			t.Fatalf("missing %q: %s", want, diagnostic.String())
+		}
+	}
+	if strings.Contains(diagnostic.String(), "'--takeover'") {
+		t.Fatal("recovery advice repeats takeover", diagnostic.String())
+	}
+}
+
 func TestGenericRemoteAttachAfterDelimiterRequestsTTY(t *testing.T) {
 	ssh := writeFakeRemoteSSH(t, "printf '%s\\n' \"$@\"\n")
 	for _, test := range []struct {

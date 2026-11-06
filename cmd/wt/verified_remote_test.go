@@ -14,6 +14,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
+	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
@@ -62,6 +63,9 @@ func TestBuiltWTVerifiedSSHRefusesReplacedWingBeforeIO(t *testing.T) {
 				t.Errorf("unbound attachment: %+v", hello)
 			}
 			return controlsocket.Welcome{}, func(_ context.Context, stream *controlsocket.SessionStream) error {
+				if err := stream.Send(&pb.SessionMsg{SessionId: "same-id", Payload: &pb.SessionMsg_Output{Output: []byte("selected wing screen")}}); err != nil {
+					return err
+				}
 				for {
 					msg, err := stream.Recv()
 					if err != nil {
