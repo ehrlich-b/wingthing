@@ -19,6 +19,7 @@ type terminalModeWriter struct {
 	output         io.Writer
 	parser         *ansi.Parser
 	pending        []byte
+	forwarded      int          // pending prefix already delivered by an earlier Write
 	current, saved map[int]byte // 'h', 'l', or 'r' (the protected original)
 }
 
@@ -46,8 +47,9 @@ func (w *terminalModeWriter) Write(data []byte) (int, error) {
 		w.parser.Advance(b)
 		after := w.parser.State()
 		if b == 0x1b && len(w.pending) > 0 {
-			out = append(out, w.pending...)
+			out = append(out, w.pending[w.forwarded:]...)
 			w.pending = w.pending[:0]
+			w.forwarded = 0
 		}
 		if len(w.pending) == 0 && (after == parser.EscapeState || after == parser.CsiEntryState) && before != parser.Utf8State {
 			w.pending = append(w.pending, b)
@@ -61,9 +63,23 @@ func (w *terminalModeWriter) Write(data []byte) (int, error) {
 		case parser.EscapeState, parser.CsiEntryState, parser.CsiParamState, parser.CsiIntermediateState:
 			continue
 		}
-		out = append(out, w.transform(w.pending)...)
+		if transformed, changed := w.transform(w.pending, w.forwarded); changed {
+			if w.forwarded > 0 {
+				// The terminal has the partial CSI already. Cancel it before
+				// substituting the protected provider save/restore operation.
+				out = append(out, 0x18)
+			}
+			out = append(out, transformed...)
+		} else {
+			out = append(out, w.pending[w.forwarded:]...)
+		}
 		w.pending = w.pending[:0]
+		w.forwarded = 0
 	}
+	// Retain parser state for the mode snapshot, never provider output. Even a
+	// lone ESC must reach the terminal before the provider sends more output.
+	out = append(out, w.pending[w.forwarded:]...)
+	w.forwarded = len(w.pending)
 	if len(out) > 0 {
 		n, err := w.output.Write(out)
 		if err != nil {
@@ -76,17 +92,18 @@ func (w *terminalModeWriter) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-func (w *terminalModeWriter) transform(seq []byte) []byte {
-	original := seq
+func (w *terminalModeWriter) transform(seq []byte, forwarded int) ([]byte, bool) {
 	var clean, controls []byte
-	for _, b := range seq {
+	for i, b := range seq {
 		// DEL is ignored within CSI. It is neither a parameter byte nor an
 		// executable control to replay, and must not bypass save protection.
 		if b == 0x7f {
 			continue
 		}
 		if b < 0x20 && b != 0x1b {
-			controls = append(controls, b)
+			if i >= forwarded {
+				controls = append(controls, b)
+			}
 		} else {
 			clean = append(clean, b)
 		}
@@ -98,11 +115,11 @@ func (w *terminalModeWriter) transform(seq []byte) []byte {
 	} else if len(seq) >= 4 && seq[0] == 0x9b && seq[1] == '?' {
 		start = 2
 	} else {
-		return original
+		return nil, false
 	}
 	final := seq[len(seq)-1]
 	if !strings.ContainsRune("hlsr", rune(final)) {
-		return original
+		return nil, false
 	}
 	params := strings.Split(string(seq[start:len(seq)-1]), ";")
 	// Leave non-mode CSI (including intermediates/subparameters) alone.
@@ -116,7 +133,7 @@ func (w *terminalModeWriter) transform(seq []byte) []byte {
 		// Decimal parameters remain mode parameters even beyond int range.
 		// Only nonnumeric syntax makes this a different kind of CSI sequence.
 		if strings.Trim(raw, "0123456789") != "" {
-			return original
+			return nil, false
 		}
 	}
 	out := controls
@@ -145,9 +162,9 @@ func (w *terminalModeWriter) transform(seq []byte) []byte {
 		}
 	}
 	if changed {
-		return out
+		return out, true
 	}
-	return original
+	return nil, false
 }
 
 // The alternate selectors share a screen even when a provider mixes them.
