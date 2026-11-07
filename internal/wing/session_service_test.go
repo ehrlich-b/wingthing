@@ -216,9 +216,9 @@ func newSessionTransportFixture(t *testing.T) *sessionTransportFixture {
 	if err := os.Mkdir(work, 0700); err != nil {
 		t.Fatal(err)
 	}
-	// Reserve the full runtime ID width within Darwin's Unix socket limit.
+	// Keep state independent of checkout depth within Darwin's socket limit.
 	// State is physical so provider readers can pin directories with O_NOFOLLOW.
-	scratch, err := filepath.Abs("../../.scratch")
+	scratch, err := filepath.EvalSymlinks(os.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

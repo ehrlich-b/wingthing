@@ -28,11 +28,12 @@ import (
 func localOnlyState(t *testing.T) (state, home, work string) {
 	t.Helper()
 	home = t.TempDir()
-	scratch, err := filepath.Abs("../../.scratch")
+	scratch, err := filepath.EvalSymlinks(os.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Budget for the full egg endpoint, independently of the checkout length.
+	// Keep socket state independent of checkout length and use its physical
+	// path so the control socket and egg endpoint share the same byte budget.
 	state = testprovider.ShortStateDir(t, scratch)
 	work = config.CanonicalProviderPath(home)
 	t.Setenv("HOME", home)
