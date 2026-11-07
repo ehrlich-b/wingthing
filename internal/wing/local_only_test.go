@@ -21,6 +21,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/pake"
 	"github.com/ehrlich-b/wingthing/internal/phonepair"
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
@@ -31,21 +32,8 @@ func localOnlyState(t *testing.T) (state, home, work string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(scratch, 0700); err != nil {
-		t.Fatal(err)
-	}
-	alias, err := os.MkdirTemp(scratch, "l")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(home, alias); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(alias) })
-	state = filepath.Join(alias, "s")
+	// Budget for the full egg endpoint, independently of the checkout length.
+	state = testprovider.ShortStateDir(t, scratch)
 	work = config.CanonicalProviderPath(home)
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", state)

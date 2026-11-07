@@ -13,11 +13,8 @@ import (
 )
 
 func TestPublishedInstallerMatchesRepositoryCopyAndReleaseContract(t *testing.T) {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	repositoryCopy := filepath.Join(filepath.Dir(filename), "..", "..", "scripts", "install.sh")
+	// Go runs package tests in the package source directory, even with -trimpath.
+	repositoryCopy := filepath.Join("..", "..", "scripts", "install.sh")
 	data, err := os.ReadFile(repositoryCopy)
 	if err != nil {
 		t.Fatal(err)
@@ -56,8 +53,10 @@ func TestPublishedInstallerVerifiesBeforeAtomicReplacement(t *testing.T) {
 	if arch != "amd64" && arch != "arm64" {
 		t.Skip("published installer supports amd64 and arm64")
 	}
-	_, filename, _, _ := runtime.Caller(0)
-	script := filepath.Join(filepath.Dir(filename), "..", "..", "scripts", "install.sh")
+	script, err := filepath.Abs(filepath.Join("..", "..", "scripts", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	fixture := []byte(`#!/bin/sh
 if [ -n "$EXEC_MARKER" ]; then : > "$EXEC_MARKER"; fi

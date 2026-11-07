@@ -149,7 +149,9 @@ async function probe(page,wing) {
     },{base,wing});
 }
 try {
-    assert.ok(Buffer.byteLength(state) < 40);
+    // Reserve the full runtime ID and endpoint on both Linux and Darwin.
+    const eggSocket = path.join(state,'eggs','0'.repeat(16),'egg.sock');
+    assert.ok(Buffer.byteLength(eggSocket) <= 103,`fixture socket path exceeds Darwin's 103-byte limit: ${eggSocket}`);
     assert.ok(home.startsWith(root + path.sep));
     record('short-state','socket state uses a short temporary root; fixture HOME stays inside the checkout');
     await ready();
