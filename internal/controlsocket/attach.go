@@ -183,7 +183,11 @@ func DialAttachmentPath(ctx context.Context, path string, hello Hello) (*Session
 		return nil, Welcome{}, err
 	}
 	if !stream.scanner.Scan() {
-		return nil, Welcome{}, errors.New("wing attachment handshake closed")
+		err := stream.scanner.Err()
+		if err == nil {
+			err = io.EOF
+		}
+		return nil, Welcome{}, fmt.Errorf("wing attachment handshake closed: %w", err)
 	}
 	var welcome Welcome
 	if err := strictJSON(stream.scanner.Bytes(), &welcome); err != nil {

@@ -346,7 +346,11 @@ func DialPath(ctx context.Context, path string, hello Hello) (*Client, error) {
 	}
 	scanner := scan(conn)
 	if !scanner.Scan() {
-		return nil, errors.New("local wing handshake closed")
+		err := scanner.Err()
+		if err == nil {
+			err = io.EOF
+		}
+		return nil, fmt.Errorf("local wing handshake closed: %w", err)
 	}
 	var welcome Welcome
 	if err := json.Unmarshal(scanner.Bytes(), &welcome); err != nil {

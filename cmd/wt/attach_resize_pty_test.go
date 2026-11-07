@@ -171,8 +171,14 @@ func resizeSSH(t *testing.T, f *northstarFixture, binary string) {
 	go func() { done <- daemon.Wait() }()
 	t.Cleanup(func() { _ = daemon.Process.Kill(); <-done })
 	logs.wait(t, "Server listening on")
+	hostpub, err := os.ReadFile(hostkey + ".pub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	knownHosts := filepath.Join(f.root, "known_hosts")
+	northstarWrite(t, knownHosts, fmt.Sprintf("[127.0.0.1]:%d %s", port, hostpub), 0600)
 	clientcfg := filepath.Join(f.root, "ssh_config")
-	northstarWrite(t, clientcfg, fmt.Sprintf("Host ns-devbox\n HostName 127.0.0.1\n Port %d\n User %s\n IdentityFile %s\n IdentitiesOnly yes\n BatchMode yes\n StrictHostKeyChecking no\n UserKnownHostsFile /dev/null\n LogLevel ERROR\n", port, current.Username, clientkey), 0600)
+	northstarWrite(t, clientcfg, fmt.Sprintf("Host ns-devbox\n HostName 127.0.0.1\n Port %d\n User %s\n IdentityFile %s\n IdentitiesOnly yes\n BatchMode yes\n StrictHostKeyChecking yes\n UserKnownHostsFile %s\n LogLevel ERROR\n", port, current.Username, clientkey, knownHosts), 0600)
 	northstarWrite(t, filepath.Join(f.bin, "ssh"), "#!/bin/sh\nexec /usr/bin/ssh -F "+remotepkg.ShellQuote(clientcfg)+" \"$@\"\n", 0700)
 	if err := config.SaveRemotes(f.local, map[string]config.Remote{"devbox": {SSHTarget: "ns-devbox", WTBinary: binary, WingthingDir: f.remote}}); err != nil {
 		t.Fatal(err)

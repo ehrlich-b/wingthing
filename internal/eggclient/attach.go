@@ -123,6 +123,14 @@ type serializedSessionStream struct {
 	mu sync.Mutex
 }
 
+// InputGeneration prevents a partial key chord from crossing an outage.
+func (s *serializedSessionStream) InputGeneration() uint64 {
+	if source, ok := s.SessionStream.(interface{ InputGeneration() uint64 }); ok {
+		return source.InputGeneration()
+	}
+	return 0
+}
+
 func (s *serializedSessionStream) Send(msg *pb.SessionMsg) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -371,9 +379,21 @@ func sendAttachedInput(stream SessionStream, sessionID string, input io.Reader, 
 
 func sendAttachedInputMode(stream SessionStream, sessionID string, input io.Reader, resultCh chan<- attachInputResult, readOnly bool, detaching *atomic.Bool) {
 	filter := &AttachInputFilter{}
+	generation := uint64(0)
+	source, tracksGeneration := stream.(interface{ InputGeneration() uint64 })
+	if tracksGeneration {
+		generation = source.InputGeneration()
+	}
 	buffer := make([]byte, 4096)
 	for {
 		n, err := input.Read(buffer)
+		if tracksGeneration {
+			current := source.InputGeneration()
+			if current != generation {
+				filter = &AttachInputFilter{}
+				generation = current
+			}
+		}
 		if n > 0 {
 			output, detach := filter.Filter(buffer[:n])
 			if readOnly && bytes.IndexByte(buffer[:n], 'q') >= 0 {

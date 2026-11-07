@@ -3,7 +3,10 @@ package localmcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -38,7 +41,7 @@ func bindWingAttachment(version string, sessions *wingsession.Service, owner str
 			}
 			return s, ref, err
 		}
-		s, ref, err := check(!a.ReadOnly, false)
+		s, ref, err := check(!a.ReadOnly, a.Exact)
 		if err != nil {
 			return controlsocket.Welcome{}, nil, err
 		}
@@ -46,6 +49,22 @@ func bindWingAttachment(version string, sessions *wingsession.Service, owner str
 		handler := func(ctx context.Context, client *controlsocket.SessionStream) error {
 			ctx, cancel := context.WithCancel(ctx)
 			defer cancel()
+			// Reconnect may arrive after the egg has shut down. Read only its
+			// authorized, exact journal entry; never resolve a replacement.
+			if a.Exact {
+				dir := filepath.Join(sessions.Config.Dir, "eggs", ref.ID)
+				if _, alive := eggclient.ReadAliveEggPID(dir); !alive {
+					data, err := os.ReadFile(filepath.Join(dir, "lifecycle.jsonl"))
+					if err != nil {
+						return err
+					}
+					code, ok := eggclient.ConfirmedSessionExit(data)
+					if !ok {
+						return fmt.Errorf("session %s is no longer running; exit result unavailable", ref.ID)
+					}
+					return client.Send(&pb.SessionMsg{SessionId: ref.ID, Payload: &pb.SessionMsg_ExitCode{ExitCode: int32(code)}})
+				}
+			}
 			_, ec, err := eggclient.OpenLocalEgg(ctx, sessions.Config, ref.ID)
 			if err != nil {
 				return err

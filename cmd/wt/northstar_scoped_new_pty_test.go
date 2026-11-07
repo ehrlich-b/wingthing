@@ -150,7 +150,7 @@ func scopedNewMachine(t *testing.T, f *northstarFixture, built, machine string) 
 	northstarWrite(t, filepath.Join(f.bin, "ssh"), `#!/bin/sh
 mode=$1
 case "$mode" in -t|-T) shift ;; *) exit 90 ;; esac
-[ "$1" = -o ] && shift 2
+while [ "$1" = -o ]; do shift 2; done
 [ "$1" = ns-devbox ] || exit 91
 shift
 printf '%s\n%s\n' "$mode" "$1" > "$NORTHSTAR_SCOPED_SSH_LOG/$$"

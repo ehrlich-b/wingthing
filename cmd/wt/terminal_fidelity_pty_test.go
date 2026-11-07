@@ -622,10 +622,17 @@ func TestTerminalFidelityRemoteHelper(t *testing.T) {
 		dir := t.TempDir()
 		t.Setenv("WINGTHING_DIR", dir)
 		t.Setenv("WINGTHING_PREVIEW_DIR", "")
-		if err := config.SaveRemotes(dir, map[string]config.Remote{"work": {SSHTarget: "fixture-host"}}); err != nil {
+		binary, state := os.Getenv("WT_FIDELITY_REMOTE_BINARY"), os.Getenv("WT_FIDELITY_REMOTE_STATE")
+		if binary == "" || state == "" {
+			t.Fatal("configured route requires the built receiving CLI and persistent egg")
+		}
+		// The configured route uses framed stdio; execute its actual receiving
+		// CLI so the provider still has a PTY and resize/detach stay observable.
+		streams.SSHPath = writeFakeRemoteSSH(t, "for arg do command=$arg; done\nexec /bin/sh -c \"$command\"\n")
+		if err := config.SaveRemotes(dir, map[string]config.Remote{"work": {SSHTarget: "fixture-host", WTBinary: binary, WingthingDir: state}}); err != nil {
 			t.Fatal(err)
 		}
-		args = []string{"attach", "work:full-id"}
+		args = []string{"attach", "work:fidelity"}
 	}
 	if err := executeCLI(t.Context(), args, streams); err != nil {
 		t.Fatal(err)
@@ -634,6 +641,11 @@ func TestTerminalFidelityRemoteHelper(t *testing.T) {
 
 func TestTerminalFidelityRemoteCleanup(t *testing.T) {
 	evidence := os.Getenv("WT_FIDELITY_EVIDENCE")
+	binary := fidelityBuild(t)
+	provider, err := filepath.Abs("testdata/terminal_cleanup.py")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, route := range []string{"global", "configured"} {
 		for reporting := range 3 {
 			for index, initial := range fidelityCleanupStates {
@@ -642,6 +654,10 @@ func TestTerminalFidelityRemoteCleanup(t *testing.T) {
 					t.Run(name, func(t *testing.T) {
 						cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestTerminalFidelityRemoteHelper$")
 						cmd.Env = append(os.Environ(), "WT_FIDELITY_REMOTE_ROUTE="+route)
+						if route == "configured" {
+							f := startFidelityEgg(t, binary, provider, "--ssh", "--exercise-saves")
+							cmd.Env = append(cmd.Env, "WT_FIDELITY_REMOTE_BINARY="+binary, "WT_FIDELITY_REMOTE_STATE="+f.home)
+						}
 						// Include typeahead in the negotiation read; SSH must receive it once.
 						typeahead := index == 2
 						h := startFidelityTerminal(t, cmd, initial, func(h *fidelityTerminal) {
