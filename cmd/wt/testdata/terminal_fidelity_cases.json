@@ -1,0 +1,170 @@
+[
+  {
+    "name": "da1",
+    "output": "\u001b[c",
+    "input": "\u001b[?62;4;6;22c",
+    "query": true
+  },
+  {
+    "name": "da2",
+    "output": "\u001b[>c",
+    "input": "\u001b[>1;4000;0c",
+    "query": true
+  },
+  {
+    "name": "dsr",
+    "output": "\u001b[5n",
+    "input": "\u001b[0n",
+    "query": true
+  },
+  {
+    "name": "cpr",
+    "output": "\u001b[7;13H\u001b[6n",
+    "input": "\u001b[7;13R",
+    "query": true
+  },
+  {
+    "name": "osc10",
+    "output": "\u001b]10;?\u0007",
+    "input": "\u001b]10;rgb:dddd/dddd/dddd\u001b\\",
+    "query": true
+  },
+  {
+    "name": "osc11",
+    "output": "\u001b]11;?\u0007",
+    "input": "\u001b]11;rgb:1111/2222/3333\u001b\\",
+    "query": true
+  },
+  {
+    "name": "osc52-set",
+    "output": "\u001b]52;c;ZmlkZWxpdHk=\u0007",
+    "input": "a",
+    "query": false
+  },
+  {
+    "name": "osc52-query",
+    "output": "\u001b]52;c;?\u0007",
+    "input": "\u001b]52;c;ZmlkZWxpdHk=\u001b\\",
+    "query": true
+  },
+  {
+    "name": "osc8",
+    "output": "\u001b]8;;https://example.invalid/\u001b\\link\u001b]8;;\u001b\\",
+    "input": "a",
+    "query": false
+  },
+  {
+    "name": "osc0",
+    "output": "\u001b]0;fidelity 界\u0007",
+    "input": "a",
+    "query": false
+  },
+  {
+    "name": "osc2",
+    "output": "\u001b]2;provider title\u0007",
+    "input": "a",
+    "query": false
+  },
+  {
+    "name": "bracketed-paste",
+    "output": "\u001b[?2004h",
+    "input": "\u001b[200~text\n界\u001b[201~",
+    "query": false
+  },
+  {
+    "name": "focus-in",
+    "output": "\u001b[?1004h",
+    "input": "\u001b[I",
+    "query": false
+  },
+  {
+    "name": "focus-out",
+    "output": "",
+    "input": "\u001b[O",
+    "query": false
+  },
+  {
+    "name": "synchronized-output",
+    "output": "\u001b[?2026hbatch\u001b[?2026l",
+    "input": "a",
+    "query": false
+  },
+  {
+    "name": "sgr-mouse",
+    "output": "\u001b[?1000h\u001b[?1006h",
+    "input": "\u001b[<0;5;3M\u001b[<0;5;3m",
+    "query": false
+  },
+  {
+    "name": "wheel-up",
+    "output": "",
+    "input": "\u001b[<64;5;3M",
+    "query": false
+  },
+  {
+    "name": "wheel-down",
+    "output": "",
+    "input": "\u001b[<65;5;3M",
+    "query": false
+  },
+  {
+    "name": "kitty-query",
+    "output": "\u001b[?u",
+    "input": "\u001b[?5u",
+    "query": true
+  },
+  {
+    "name": "kitty-push",
+    "output": "\u001b[>5u",
+    "input": "\u001b[97;5u",
+    "query": false
+  },
+  {
+    "name": "kitty-pop",
+    "output": "\u001b[<u",
+    "input": "a",
+    "query": false
+  },
+  {
+    "name": "truecolor",
+    "output": "\u001b[38;2;12;34;56mRGB\u001b[48;2;65;43;21mBG\u001b[0m",
+    "input": "a",
+    "query": false
+  },
+  {
+    "name": "alternate-screen",
+    "output": "\u001b[?1049hALT\u001b[?1049l",
+    "input": "a",
+    "query": false
+  },
+  {
+    "name": "cursor-shape",
+    "output": "\u001b[5 q",
+    "input": "a",
+    "query": false
+  },
+  {
+    "name": "sigwinch",
+    "output": "",
+    "input": "a",
+    "query": false
+  },
+  {
+    "name": "ctrl-b",
+    "output": "",
+    "input": "\u0002",
+    "query": false
+  },
+  {
+    "name": "utf8-wide",
+    "output": "界🙂é",
+    "input": "a",
+    "query": false
+  },
+  {
+    "name": "large-paste",
+    "output": "\u001b[?2004h",
+    "input": "",
+    "query": false
+  }
+]

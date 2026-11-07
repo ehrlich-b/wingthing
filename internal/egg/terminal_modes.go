@@ -213,8 +213,8 @@ func (p *browserPresentation) finish() []byte {
 }
 
 // Only presentation state is tracked: mouse encodings/reporting, alternate
-// screen/scroll, application cursor keys, cursor visibility and bracketed paste.
-var presentationModes = [...]int{1, 9, 25, 47, 1047, 1049, 1000, 1001, 1002, 1003, 1005, 1006, 1007, 1015, 1016, 2004}
+// screen/scroll, application cursor keys, cursor visibility, focus reporting and bracketed paste.
+var presentationModes = [...]int{1, 9, 25, 47, 1047, 1049, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1015, 1016, 2004}
 
 type terminalModeState struct{ seen, enabled bool }
 type terminalModes struct {

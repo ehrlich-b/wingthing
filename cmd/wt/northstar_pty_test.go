@@ -74,6 +74,9 @@ func northstarNewFixture(t *testing.T) *northstarFixture {
 	f := &northstarFixture{repo: repo, root: root, home: home, local: local, remote: remote,
 		work: filepath.Join(root, "work"), tmp: filepath.Join(root, "tmp-alias"), bin: filepath.Join(root, "tmp-alias", "bin"),
 		evidence: filepath.Join(scratch, "northstar", "northstar-evidence")}
+	if evidence := os.Getenv("WT_NAVIGATOR_EVIDENCE"); evidence != "" {
+		f.evidence = evidence
+	}
 	// TMPDIR must actually traverse an alias created by this regression. State
 	// and mailbox stay in protected HOME, outside provider-writable work/TMPDIR.
 	if err := os.Mkdir(filepath.Join(root, "tmp-real"), 0700); err != nil {
@@ -397,6 +400,8 @@ type northstarPTY struct {
 	master, slave *os.File
 	before        *term.State
 	emu           *vt.Emulator
+	modes         *northstarTerminalModes
+	initialModes  map[int]bool
 	mu            sync.Mutex
 	revision      uint64
 	changed       chan struct{}
@@ -408,6 +413,11 @@ type northstarPTY struct {
 }
 
 func northstarStartPTY(t *testing.T, f *northstarFixture, binary string, cols, rows int, args ...string) *northstarPTY {
+	t.Helper()
+	return northstarStartPTYModes(t, f, binary, cols, rows, nil, args...)
+}
+
+func northstarStartPTYModes(t *testing.T, f *northstarFixture, binary string, cols, rows int, initial map[int]bool, args ...string) *northstarPTY {
 	t.Helper()
 	master, slave, err := pty.Open()
 	if err != nil {
@@ -428,6 +438,15 @@ func northstarStartPTY(t *testing.T, f *northstarFixture, binary string, cols, r
 		t.Fatal(err)
 	}
 	h := &northstarPTY{t: t, cmd: cmd, master: master, slave: slave, before: before, emu: vt.NewEmulator(cols, rows), changed: make(chan struct{}, 1), done: make(chan error, 1), readDone: make(chan struct{}), artifact: filepath.Join(f.evidence, strings.ReplaceAll(t.Name(), "/", "-")+"-"+strconv.Itoa(cols)+"-"+strconv.Itoa(cmd.Process.Pid))}
+	h.modes = newNorthstarTerminalModes(initial)
+	h.initialModes = h.modes.snapshot()
+	for mode, enabled := range h.initialModes {
+		final := 'l'
+		if enabled {
+			final = 'h'
+		}
+		fmt.Fprintf(h.emu, "\x1b[?%d%c", mode, final)
+	}
 	// VT query replies must be drained even if a child asks for capabilities.
 	queryDone := make(chan struct{})
 	go func() { defer close(queryDone); _, _ = io.Copy(io.Discard, h.emu) }()
@@ -440,7 +459,7 @@ func northstarStartPTY(t *testing.T, f *northstarFixture, binary string, cols, r
 			if n > 0 {
 				h.mu.Lock()
 				h.transcript.Write(buf[:n])
-				_, _ = h.emu.Write(buf[:n])
+				_, _ = h.emu.Write(h.modes.render(buf[:n]))
 				h.revision++
 				h.mu.Unlock()
 				select {

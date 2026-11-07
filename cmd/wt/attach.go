@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"syscall"
 
@@ -166,15 +167,9 @@ func runRemoteAttachment(ctx context.Context, invocation remotepkg.Invocation, s
 	input, inOK := streams.In.(*os.File)
 	output, outOK := streams.Out.(*os.File)
 	if invocation.AllocateTTY && inOK && outOK && term.IsTerminal(int(input.Fd())) && term.IsTerminal(int(output.Fd())) {
-		previous, stateErr := term.GetState(int(input.Fd()))
-		if stateErr != nil {
-			return stateErr
+		streams.RunCommand = func(command *exec.Cmd) error {
+			return eggclient.RunTerminalCommand(ctx, command)
 		}
-		defer func() {
-			_, resetErr := output.Write(egg.NativeTerminalReset())
-			restoreErr := term.Restore(int(input.Fd()), previous)
-			err = errors.Join(err, resetErr, restoreErr)
-		}()
 		if streams.ErrOut != nil {
 			_, _ = io.WriteString(streams.ErrOut, "[remote attachment; Ctrl+B then q detaches; Ctrl+B twice sends Ctrl+B]\n")
 		}

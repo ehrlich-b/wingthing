@@ -3,10 +3,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -53,13 +55,50 @@ func TestNavigatorPreviewPTY(t *testing.T) {
 	}
 	h.expect("rename preserves output", h.send("R"), "renamed session", "OUTPUT_FOR_07")
 	h.expect("compact navigator", h.resize(80, 44), "renamed session", "v read only")
-	h.expect("existing read-only viewer", h.send("v"), "OUTPUT_FOR_07")
+	h.mu.Lock()
+	beforeView := h.modes.snapshot()
+	h.mu.Unlock()
+	openViewer := func(label string) {
+		h.mu.Lock()
+		start := h.transcript.Len()
+		h.mu.Unlock()
+		h.expect(label, h.send("v"), "OUTPUT_FOR_07")
+		// A restored screen can still contain the previous provider output.
+		// Fence each open on fresh provider bytes before sending its return key.
+		for {
+			h.mu.Lock()
+			ready := bytes.Contains(h.transcript.Bytes()[start:], []byte("\x1b[2J\x1b[HOUTPUT_FOR_07\r\n"))
+			h.mu.Unlock()
+			if ready {
+				break
+			}
+			select {
+			case <-h.changed:
+			case <-h.done:
+				t.Fatal("navigator exited before fresh viewer output")
+			}
+		}
+	}
+	openViewer("existing read-only viewer")
 	screen := h.expect("single q returns to selected session", h.send("q"), "8 sessions", "renamed session", "Enter open")
 	northstarWrite(t, filepath.Join(f.evidence, "pty-80x44-return.txt"), screen, 0600)
+	h.mu.Lock()
+	afterView := h.modes.snapshot()
+	h.mu.Unlock()
+	if !reflect.DeepEqual(beforeView, afterView) {
+		t.Fatalf("preview return changed terminal modes: before=%v after=%v", beforeView, afterView)
+	}
 	// A second open proves the return retained the original full ID.
-	h.expect("reopen retains identity", h.send("v"), "OUTPUT_FOR_07")
+	openViewer("reopen retains identity")
 	h.expect("second single-key return", h.send("q"), "8 sessions", "renamed session")
 	h.exit("q")
+	t.Run("saved-viewer-modes", func(t *testing.T) {
+		northstarStandaloneEgg(t, f, f.local, "preview-modes", "preview-modes", "working", northstarReturnModes+"VIEWER_MODES_READY")
+		viewer := northstarStartPTYModes(t, f, binary, 80, 24, map[int]bool{25: false, 1002: true, 1004: true, 2004: true}, "attach", "--read-only", "preview-modes")
+		viewer.expect("viewer changes modes", 0, "VIEWER_MODES_READY")
+		viewer.send("q")
+		northstarReturnWait(t, viewer, false)
+	})
 	records := []map[string]any{}
 	for i, e := range eggs {
 		if e.previewReads.Load() == 0 || e.previewMutations.Load() != 0 || e.killed.Load() != 0 {

@@ -58,6 +58,8 @@ type IO struct {
 	StdinTTY  bool
 	StdoutTTY bool
 	SSHPath   string
+	// RunCommand optionally supervises an interactive command and its terminal.
+	RunCommand func(*exec.Cmd) error
 }
 
 func ProcessIO() IO {
@@ -467,7 +469,11 @@ func RunRemoteInvocation(ctx context.Context, invocation Invocation, streams IO)
 	child.Stdin = streams.In
 	child.Stdout = streams.Out
 	child.Stderr = streams.ErrOut
-	if err := child.Run(); err != nil {
+	run := child.Run
+	if streams.RunCommand != nil {
+		run = func() error { return streams.RunCommand(child) }
+	}
+	if err := run(); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

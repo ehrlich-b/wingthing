@@ -212,33 +212,18 @@ func northstarReturnWait(t *testing.T, h *northstarPTY, wantFailure bool) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("PTY child failed to return")
 	}
+	// Closing the fixture's spare slave lets kernel PTY EOF fence all final
+	// writes, including the guardian's output after a killed client.
+	_ = h.slave.Close()
+	<-h.readDone
 	state, err := term.GetState(int(h.master.Fd()))
 	if err != nil || !reflect.DeepEqual(state, h.before) {
 		t.Fatalf("original termios not restored: before=%+v after=%+v err=%v", h.before, state, err)
 	}
-	// Wait on an explicit cleanup sequence, not process exit alone: the PTY
-	// output reader may still be draining the child's final writes.
-	timer := time.NewTimer(5 * time.Second)
-	defer timer.Stop()
-	for {
-		h.mu.Lock()
-		data := bytes.Clone(h.transcript.Bytes())
-		h.mu.Unlock()
-		reset := bytes.LastIndex(data, egg.NativeTerminalReset())
-		clean := reset >= 0
-		for _, mode := range []string{"1", "1000", "1006", "2004", "1049"} {
-			// The startup reset also matches. Require the cleanup reset after
-			// every provider enable, while the reader drains the final writes.
-			clean = clean && reset > bytes.LastIndex(data, []byte("\x1b[?"+mode+"h"))
-		}
-		if clean {
-			return
-		}
-		select {
-		case <-h.changed:
-		case <-timer.C:
-			t.Fatalf("cleanup reset did not follow provider modes: %q", data)
-		}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if got := h.modes.snapshot(); !reflect.DeepEqual(got, h.initialModes) {
+		t.Fatalf("outer terminal modes not restored: before=%v after=%v", h.initialModes, got)
 	}
 }
 
@@ -256,7 +241,9 @@ func northstarReturnAttached(t *testing.T, f *northstarReturnEgg) *pb.AttachOpti
 func TestNorthstarPTYAttachReturn(t *testing.T) {
 	started := time.Now()
 	f := northstarNewFixture(t) // real TMPDIR parent and symlink created inside this test
-	f.evidence = filepath.Join(f.repo, ".scratch", "evidence", "pty")
+	if os.Getenv("WT_NAVIGATOR_EVIDENCE") == "" {
+		f.evidence = filepath.Join(f.repo, ".scratch", "evidence", "pty")
+	}
 	if err := os.MkdirAll(f.evidence, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -291,6 +278,28 @@ func TestNorthstarPTYAttachReturn(t *testing.T) {
 	})
 	local := northstarReturnSession(t, f, f.local, "same", "local-return", "LOCAL_RETURN_READY")
 	remote := northstarReturnSession(t, f, f.remote, "same", "remote-return", "REMOTE_RETURN_READY")
+
+	t.Run("nondefault-saved-modes", func(t *testing.T) {
+		for _, ending := range []string{"detach", "transport-drop", "killed-client"} {
+			t.Run(ending, func(t *testing.T) {
+				initial := map[int]bool{25: false, 1002: true, 1004: true, 2004: true}
+				h := northstarStartPTYModes(t, f, binary, 100, 24, initial, "attach", "same")
+				h.expect("nondefault attachment ready", 0, "LOCAL_RETURN_READY")
+				northstarReturnAttached(t, local)
+				switch ending {
+				case "detach":
+					h.send("\x02q")
+				case "transport-drop":
+					h.send("F")
+				case "killed-client":
+					if err := h.cmd.Process.Kill(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				northstarReturnWait(t, h, ending != "detach")
+			})
+		}
+	})
 
 	t.Run("split-prefix-and-paste", func(t *testing.T) {
 		h := northstarStartPTY(t, f, binary, 100, 24, "attach", "same")
