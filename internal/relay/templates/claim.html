@@ -6,14 +6,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Approve Device - wingthing</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #1a1a2e; color: #eee; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
-        .card { background: #16213e; border-radius: 8px; padding: 32px; max-width: 400px; width: 100%; text-align: center; }
+:root{
+  color-scheme:light dark;
+  --bg:#F4F8FA;--bg-card:#FFFFFF;--text:#0B1B24;--text-dim:#4E6571;
+  --primary:#0069B8;--kingfisher-accent:#B4500C;--success:#0D7553;--danger:#C42B3D;
+  --accent:color-mix(in srgb,var(--text-dim) 35%,var(--bg-card));--action:var(--primary);--action-hover:var(--primary);--on-action:#FFFFFF;
+  --mono:ui-monospace,SFMono-Regular,Consolas,monospace;
+  --sans:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#07131A;--bg-card:#0F1F28;--text:#E6F1F6;--text-dim:#8CA5B2;
+  --primary:#2AA8FF;--kingfisher-accent:#FF8A3D;--success:#36D69A;--danger:#FF5D6C;--on-action:#07131A;
+}}
+
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+        .card { background: var(--bg-card); border-radius: 8px; padding: 32px; max-width: 400px; width: 100%; text-align: center; }
         h1 { font-size: 18px; margin: 0 0 8px; }
-        .code { font-size: 32px; font-weight: 700; letter-spacing: 6px; color: #e94560; padding: 16px 0; font-family: monospace; }
-        p { color: #888; font-size: 14px; margin: 12px 0; }
-        button { background: #e94560; color: #fff; border: none; padding: 12px 32px; font-size: 16px; border-radius: 4px; cursor: pointer; margin-top: 16px; }
-        button:hover { background: #ff6b81; }
-        .error { color: #e74c3c; }
+        .code { font-size: 32px; font-weight: 700; letter-spacing: 6px; color: var(--primary); padding: 16px 0; font-family: monospace; }
+        p { color: var(--text-dim); font-size: 14px; margin: 12px 0; }
+        button { background: var(--primary); color: var(--on-action); border: none; padding: 12px 32px; font-size: 16px; border-radius: 4px; cursor: pointer; margin-top: 16px; }
+        button:hover { background: var(--action-hover); }
+        .error { color: var(--danger); }
     </style>
 </head>
 <body>

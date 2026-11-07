@@ -787,26 +787,39 @@ func escapeHTML(s string) string {
 }
 
 const invitePageStyle = `
-body{font-family:'SF Mono','Fira Code',monospace;background:#1a1a2e;color:#eee;margin:0;display:flex;justify-content:center;padding:40px 16px}
-.card{background:#16213e;border-radius:8px;padding:20px 28px;max-width:440px;width:100%}
+:root{
+  color-scheme:light dark;
+  --bg:#F4F8FA;--bg-card:#FFFFFF;--text:#0B1B24;--text-dim:#4E6571;
+  --primary:#0069B8;--kingfisher-accent:#B4500C;--success:#0D7553;--danger:#C42B3D;
+  --accent:color-mix(in srgb,var(--text-dim) 35%,var(--bg-card));--action:var(--primary);--action-hover:var(--primary);--on-action:#FFFFFF;
+  --mono:ui-monospace,SFMono-Regular,Consolas,monospace;
+  --sans:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#07131A;--bg-card:#0F1F28;--text:#E6F1F6;--text-dim:#8CA5B2;
+  --primary:#2AA8FF;--kingfisher-accent:#FF8A3D;--success:#36D69A;--danger:#FF5D6C;--on-action:#07131A;
+}}
+
+body{font-family:'SF Mono','Fira Code',monospace;background:var(--bg);color:var(--text);margin:0;display:flex;justify-content:center;padding:40px 16px}
+.card{background:var(--bg-card);border-radius:8px;padding:20px 28px;max-width:440px;width:100%}
 h2{font-size:18px;margin:0 0 16px}
-p{font-size:14px;color:#888;margin:8px 0}
+p{font-size:14px;color:var(--text-dim);margin:8px 0}
 .row{display:flex;gap:10px;padding:6px 0;font-size:14px}
-.key{color:#888;min-width:80px;flex-shrink:0}
+.key{color:var(--text-dim);min-width:80px;flex-shrink:0}
 .val{word-break:break-all}
-.status-pending{color:#f1c40f}
-.status-redeemed{color:#2ecc71}
-.actions{margin-top:16px;border-top:1px solid #0f3460;padding-top:12px;display:flex;gap:8px}
+.status-pending{color:var(--kingfisher-accent)}
+.status-redeemed{color:var(--success)}
+.actions{margin-top:16px;border-top:1px solid var(--accent);padding-top:12px;display:flex;gap:8px}
 .btn{font-family:inherit;font-size:13px;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;font-weight:600;text-decoration:none;display:inline-block}
-.btn-accept{background:#e94560;color:#fff}
-.btn-accept:hover{background:#ff6b81}
-.btn-login{background:#e94560;color:#fff}
-.btn-login:hover{background:#ff6b81}
-.btn-back{background:#0f3460;color:#eee}
-.btn-back:hover{background:#1e2a4a}
-.btn-revoke{background:transparent;color:#e74c3c;border:1px solid #e74c3c}
-.btn-revoke:hover{background:#e74c3c;color:#fff}
-.error{color:#e74c3c;font-size:14px;margin:8px 0}
+.btn-accept{background:var(--primary);color:var(--on-action)}
+.btn-accept:hover{background:var(--action-hover)}
+.btn-login{background:var(--primary);color:var(--on-action)}
+.btn-login:hover{background:var(--action-hover)}
+.btn-back{background:var(--accent);color:var(--text)}
+.btn-back:hover{background:var(--bg)}
+.btn-revoke{background:transparent;color:var(--danger);border:1px solid var(--danger)}
+.btn-revoke:hover{background:var(--danger);color:var(--on-action)}
+.error{color:var(--danger);font-size:14px;margin:8px 0}
 `
 
 func (s *Server) renderInviteAcceptPage(w http.ResponseWriter, inv *OrgInvite, org *Org) {
