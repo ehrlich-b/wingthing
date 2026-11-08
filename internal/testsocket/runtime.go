@@ -9,8 +9,9 @@ import (
 )
 
 // RuntimeDir creates disposable protected state outside the sandbox's writable
-// temporary trees. An explicit fixture mount takes precedence over the caller's
-// XDG_RUNTIME_DIR. Ordinary socket fixtures should continue to use Dir.
+// temporary trees. An explicit base or fixture mount takes precedence over the
+// caller's XDG_RUNTIME_DIR, with the user's home as the standalone fallback.
+// Ordinary socket fixtures should continue to use Dir.
 func RuntimeDir(t testing.TB, base string) string {
 	t.Helper()
 	base, err := runtimeBase(base)
@@ -27,7 +28,17 @@ func RuntimeDir(t testing.TB, base string) string {
 
 func runtimeBase(base string) (string, error) {
 	if base == "" {
+		base = os.Getenv("WT_PROVIDER_GUARD_FIXTURE_ROOT")
+	}
+	if base == "" {
 		base = os.Getenv("XDG_RUNTIME_DIR")
+	}
+	if base == "" {
+		var err error
+		base, err = os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
 	}
 	if !filepath.IsAbs(base) {
 		return "", fmt.Errorf("protected fixtures require an absolute runtime directory (set XDG_RUNTIME_DIR or the fixture root)")

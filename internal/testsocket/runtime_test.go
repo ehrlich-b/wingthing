@@ -8,6 +8,7 @@ import (
 
 func TestRuntimeDirUsesIsolatedPhysicalRuntimeRoot(t *testing.T) {
 	base := RuntimeDir(t, "")
+	t.Setenv("WT_PROVIDER_GUARD_FIXTURE_ROOT", "")
 	t.Setenv("XDG_RUNTIME_DIR", base)
 	var dir string
 	t.Run("owned", func(t *testing.T) {
@@ -30,5 +31,28 @@ func TestRuntimeDirUsesIsolatedPhysicalRuntimeRoot(t *testing.T) {
 		if _, err := runtimeBase(invalid); err == nil {
 			t.Fatalf("accepted unprotected fixture root %q", invalid)
 		}
+	}
+}
+
+func TestRuntimeDirWithoutXDG(t *testing.T) {
+	base := RuntimeDir(t, "")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	t.Setenv("WT_PROVIDER_GUARD_FIXTURE_ROOT", base)
+	if dir := RuntimeDir(t, ""); filepath.Dir(dir) != base {
+		t.Fatalf("container fixture root ignored without XDG_RUNTIME_DIR: %s", dir)
+	}
+
+	// Standalone callers need no runtime environment. Their private home is
+	// still validated against both temporary write grants before use.
+	t.Setenv("WT_PROVIDER_GUARD_FIXTURE_ROOT", "")
+	t.Setenv("HOME", base)
+	t.Setenv("USERPROFILE", base)
+	if dir := RuntimeDir(t, ""); filepath.Dir(dir) != base {
+		t.Fatalf("standalone home fallback ignored: %s", dir)
+	}
+	t.Setenv("HOME", "/tmp")
+	t.Setenv("USERPROFILE", "/tmp")
+	if _, err := runtimeBase(""); err == nil {
+		t.Fatal("accepted home fallback inside temporary write grant")
 	}
 }
