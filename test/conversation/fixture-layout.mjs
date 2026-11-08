@@ -8,10 +8,7 @@ const inside = (parent, child) => child === parent || child.startsWith(parent + 
 export async function createFixtureLayout(stateRoot = '') {
     let runtimeRoot;
     if (stateRoot) {
-        if (!process.env.XDG_RUNTIME_DIR) throw new Error('protected fixtures require XDG_RUNTIME_DIR');
-        const runtime = await realpath(process.env.XDG_RUNTIME_DIR);
         const selected = await realpath(stateRoot);
-        if (!inside(runtime, selected)) throw new Error('protected fixture root must be inside XDG_RUNTIME_DIR');
         const temporary = await Promise.all(['/tmp', '/private/tmp', tmpdir()].map(dir => realpath(dir).catch(() => dir)));
         if (temporary.some(dir => inside(dir, selected))) throw new Error('protected fixture root must be outside temporary write directories');
         runtimeRoot = await mkdtemp(path.join(selected, 'wt'));

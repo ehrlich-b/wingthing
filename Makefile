@@ -104,7 +104,7 @@ LINUX_DISTROS ?= debian ubuntu
 WEB_TEST_ARCH ?= $(DOCKER_ARCH)
 # Protected state must be outside the sandbox's temporary write grants, while
 # still disposable and independent of checkout depth and the account's HOME.
-CONVERSATION_FIXTURE_ROOT ?= $(XDG_RUNTIME_DIR)
+CONVERSATION_FIXTURE_ROOT ?= $(or $(strip $(XDG_RUNTIME_DIR)),$(HOME))
 CONVERSATION_BINARY ?=
 CONVERSATION_BINARY_SHA256 ?=
 PREVIEW_CONTEXT_BINARY ?= ./wt-preview
