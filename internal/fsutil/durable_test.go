@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestSyncDirectory(t *testing.T) {
-	directory := t.TempDir()
+	directory := testsocket.Dir(t)
 	if err := os.WriteFile(filepath.Join(directory, "entry"), []byte("durable"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -18,7 +20,7 @@ func TestSyncDirectory(t *testing.T) {
 }
 
 func TestSyncDirectoryReportsOpenFailure(t *testing.T) {
-	err := SyncDirectory(filepath.Join(t.TempDir(), "missing"))
+	err := SyncDirectory(filepath.Join(testsocket.Dir(t), "missing"))
 	if err == nil || !strings.Contains(err.Error(), "open directory for sync") {
 		t.Fatalf("SyncDirectory error = %v", err)
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -27,7 +28,7 @@ func TestAgentRuntimeCommandMatchesSupportedAgentCatalog(t *testing.T) {
 }
 
 func TestAuthenticatedBrowserLaunchUsesRoleRootPolicy(t *testing.T) {
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
 	root := filepath.Join(home, "eng")
@@ -80,7 +81,7 @@ func TestAuthenticatedBrowserLaunchUsesRoleRootPolicy(t *testing.T) {
 }
 
 func TestAuthenticatedBrowserRolePolicyDiscoveryBounds(t *testing.T) {
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	root := filepath.Join(home, "eng")
 	nested := filepath.Join(home, "other")
@@ -148,7 +149,7 @@ func TestAuthenticatedBrowserRolePolicyDiscoveryBounds(t *testing.T) {
 }
 
 func TestPersonalBrowserLaunchDiscoversWorkspacePolicy(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
 	sub := filepath.Join(home, "sub")
@@ -167,7 +168,7 @@ func TestPersonalBrowserLaunchDiscoversWorkspacePolicy(t *testing.T) {
 }
 
 func TestAuthenticatedBrowserRoleRootsUseCanonicalPaths(t *testing.T) {
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	root := filepath.Join(home, "eng")
 	nested := filepath.Join(home, "other")

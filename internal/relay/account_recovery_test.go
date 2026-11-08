@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 type recoveryTransport func(*http.Request) (*http.Response, error)
@@ -71,7 +73,7 @@ func recoverySession(t *testing.T, s *Server, w *httptest.ResponseRecorder) *Use
 }
 
 func TestGoogleRecoveryPreservesMachinesSessionsAndDurableIdentity(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "relay.db")
+	path := filepath.Join(testsocket.Dir(t), "relay.db")
 	store, err := OpenRelay(path)
 	mustTest(t, err)
 	t.Cleanup(func() { _ = store.Close() })
@@ -389,7 +391,7 @@ func TestMagicLinkRecovery(t *testing.T) {
 }
 
 func TestConcurrentGoogleRecoveryCannotReplaceIdentity(t *testing.T) {
-	store, err := OpenRelay(filepath.Join(t.TempDir(), "relay.db"))
+	store, err := OpenRelay(filepath.Join(testsocket.Dir(t), "relay.db"))
 	mustTest(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	recoveryUser(t, store, "github-owner", "github", "owner@example.com")
@@ -454,7 +456,7 @@ func TestRecoveryRefusesOutageIdentityCollisionsAfterUpgrade(t *testing.T) {
 	for _, provider := range []string{"google", "email"} {
 		for _, address := range []string{"owner@example.com", "OWNER@EXAMPLE.COM"} {
 			t.Run(provider+"/"+address, func(t *testing.T) {
-				path := filepath.Join(t.TempDir(), "relay.db")
+				path := filepath.Join(testsocket.Dir(t), "relay.db")
 				store, err := OpenRelay(path)
 				mustTest(t, err)
 				_, err = store.DB().Exec(`DROP TRIGGER users_register_identity;

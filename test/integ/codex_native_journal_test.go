@@ -10,11 +10,12 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // Protocol fixture, no Codex process/login/model or sandbox-enforcement claim.
 func TestCodexNativeJournalReconnectWithoutClaimingAdapterSupport(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	thread := "fixture-exact-native-thread"
 	// The protocol consumer owns an already-bound thread, as at egg launch.
 	if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=codex\nprovider_session_id="+thread+"\n"), 0600); err != nil {

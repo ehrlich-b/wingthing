@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestAwaitRoostReadyRequiresExactToken(t *testing.T) {
@@ -89,7 +90,7 @@ func TestSignalRoostReadyWritesOnlyToInheritedDescriptor(t *testing.T) {
 	// Exercise finalizers before later tests open security or database files.
 	// There must be no stale os.File left that can close a reused descriptor.
 	runtime.GC()
-	sentinel, err := os.CreateTemp(t.TempDir(), "fd-reuse-sentinel-")
+	sentinel, err := os.CreateTemp(testsocket.Dir(t), "fd-reuse-sentinel-")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestRunScannersReadEachHookOnce(t *testing.T) {
@@ -81,7 +83,7 @@ func TestRunScannersReadEachHookOnce(t *testing.T) {
 }
 
 func TestCodexRunScannerReadsEachNotificationOnce(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	const sessionID = "egg-exact"
 	reads := make(map[string]int)
 	readFile := func(root *os.File, path string) ([]byte, error) {

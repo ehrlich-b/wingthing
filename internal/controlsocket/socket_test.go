@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/ehrlich-b/wingthing/internal/control"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,7 +15,7 @@ import (
 )
 
 func TestSocketServesLongStateDirectory(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), strings.Repeat("state-", 30))
+	dir := filepath.Join(testsocket.Dir(t), strings.Repeat("state-", 30))
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +58,7 @@ func TestSocketServesLongStateDirectory(t *testing.T) {
 }
 
 func TestRuntimeSocketDirectoryRejectsUnsafeParent(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	for _, mode := range []os.FileMode{0755, 0777} {
 		if err := os.Chmod(root, mode); err != nil {
 			t.Fatal(err)
@@ -70,7 +71,7 @@ func TestRuntimeSocketDirectoryRejectsUnsafeParent(t *testing.T) {
 			t.Fatal("changed unsafe existing parent's permissions")
 		}
 	}
-	alias := filepath.Join(t.TempDir(), "alias")
+	alias := filepath.Join(testsocket.Dir(t), "alias")
 	if err := os.Symlink(root, alias); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +89,7 @@ func TestLocalSocketRejectsForeignPeer(t *testing.T) {
 	}
 }
 func TestSocketHandshakeAndConcurrentControl(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	t.Chdir(dir)
 	dir = "."
 	entered := make(chan struct{})
@@ -150,7 +151,7 @@ func TestSocketHandshakeAndConcurrentControl(t *testing.T) {
 	}
 }
 func TestSocketRejectsUnsafePathsAndLiveReplacement(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	t.Chdir(dir)
 	dir = "."
 	bind := func(Hello) (Welcome, Handler, error) { return Welcome{}, nil, nil }
@@ -162,7 +163,7 @@ func TestSocketRejectsUnsafePathsAndLiveReplacement(t *testing.T) {
 	if _, err := Listen(context.Background(), dir, "wing", bind); err == nil {
 		t.Fatal("replaced live socket")
 	}
-	alias := filepath.Join(t.TempDir(), "alias")
+	alias := filepath.Join(testsocket.Dir(t), "alias")
 	if err := os.Symlink(dir, alias); err != nil {
 		t.Fatal(err)
 	}

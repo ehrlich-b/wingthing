@@ -15,10 +15,11 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/runinventory"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestRunInventoryRegressionRecoverDoesNotReportCancelledMCPResultAsCompleted(t *testing.T) {
-	parent := t.TempDir()
+	parent := testsocket.Dir(t)
 	real := filepath.Join(parent, "real")
 	alias := filepath.Join(parent, "alias")
 	if err := os.Mkdir(real, 0700); err != nil {

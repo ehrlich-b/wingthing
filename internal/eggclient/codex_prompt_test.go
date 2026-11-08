@@ -9,11 +9,12 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestSpawnEggRejectsOversizedInitialCodexPrompt(t *testing.T) {
 	for _, prompt := range []string{strings.Repeat("x", 140*1024), strings.Repeat("Ω", egg.MaxInitialCodexPromptBytes/2+1), strings.Repeat("\x01", egg.MaxInitialCodexPromptBytes/6+1)} {
-		cfg := &config.Config{Dir: t.TempDir()}
+		cfg := &config.Config{Dir: testsocket.Dir(t)}
 		for range 2 {
 			client, err := SpawnEgg(cfg, "fixture", "codex", egg.UnsandboxedEggConfig(), 24, 80, cfg.Dir, false, false, false, EggIdentity{}, 0, SpawnEggOpts{InitialRun: &egg.RunTurnRequest{RunID: "fixture", Prompt: prompt}})
 			var sizeErr *egg.InitialCodexPromptTooLargeError

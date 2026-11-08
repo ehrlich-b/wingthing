@@ -7,10 +7,12 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestAgentListCLIUsesToolSeamAndHelp(t *testing.T) {
-	t.Setenv("WINGTHING_DIR", t.TempDir())
+	t.Setenv("WINGTHING_DIR", testsocket.Dir(t))
 	t.Setenv("WT_MCP_CLIENT", "read-client")
 	previous := callRunInventoryTool
 	t.Cleanup(func() { callRunInventoryTool = previous })
@@ -44,7 +46,7 @@ func TestAgentListCLIUsesToolSeamAndHelp(t *testing.T) {
 }
 
 func TestRunInventoryCLIRecoverIsFiniteAndOldPeerErrors(t *testing.T) {
-	t.Setenv("WINGTHING_DIR", t.TempDir())
+	t.Setenv("WINGTHING_DIR", testsocket.Dir(t))
 	previous := callRunInventoryTool
 	t.Cleanup(func() { callRunInventoryTool = previous })
 	calls := 0

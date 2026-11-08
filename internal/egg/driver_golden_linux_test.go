@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // Captured from the v1 production PrepareLaunch before introducing Driver.
@@ -13,7 +15,7 @@ import (
 func TestLegacyDriverV1LaunchGolden(t *testing.T) {
 	for _, agent := range []string{"claude", "codex", "gemini", "command"} {
 		t.Run(agent, func(t *testing.T) {
-			home := t.TempDir()
+			home := testsocket.Dir(t)
 			cfg, err := LoadEggConfigFromYAML(`fs: ["rw:~/workspace", "deny:~/.ssh", "deny-write:~/workspace/egg.yaml"]
 network: ["*"]
 env: ["LANG"]
@@ -33,7 +35,7 @@ dangerously_skip_permissions: true
 			if err := os.Mkdir(rc.CWD, 0700); err != nil {
 				t.Fatal(err)
 			}
-			state, err := NewDryLaunchState(t.TempDir())
+			state, err := NewDryLaunchState(testsocket.Dir(t))
 			if err != nil {
 				t.Fatal(err)
 			}

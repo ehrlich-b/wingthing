@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestConfigSnapshotTrustedSystemHomeAliases(t *testing.T) {
@@ -70,7 +71,7 @@ func TestConfigSnapshotTrustedSystemHomeAliases(t *testing.T) {
 }
 
 func TestIsolatedClaudeSettingsAreNotRolledBackWhenSessionExits(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 	path := filepath.Join(home, ".claude", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
@@ -98,7 +99,7 @@ func TestIsolatedClaudeSettingsAreNotRolledBackWhenSessionExits(t *testing.T) {
 }
 
 func TestPersonalClaudeRetainsHostConfigSnapshotBoundary(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 	snapshot := SnapshotAgentConfig("claude", "")
 	defer snapshot.Restore()
@@ -108,7 +109,7 @@ func TestPersonalClaudeRetainsHostConfigSnapshotBoundary(t *testing.T) {
 }
 
 func TestConfigSnapshotRestoreRefusesSymlinkWithoutFollowingIt(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 	path := filepath.Join(home, ".claude", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
@@ -118,7 +119,7 @@ func TestConfigSnapshotRestoreRefusesSymlinkWithoutFollowingIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot := SnapshotAgentConfig("claude", "")
-	target := filepath.Join(t.TempDir(), "must-not-change")
+	target := filepath.Join(testsocket.Dir(t), "must-not-change")
 	if err := os.WriteFile(target, []byte("unrelated"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +143,7 @@ func TestConfigSnapshotRestoreRefusesSymlinkWithoutFollowingIt(t *testing.T) {
 func TestConfigSnapshotRefusesSecretSymlink(t *testing.T) {
 	for _, parent := range []bool{false, true} {
 		t.Run(fmt.Sprint("parent=", parent), func(t *testing.T) {
-			home := t.TempDir()
+			home := testsocket.Dir(t)
 			t.Setenv("HOME", home)
 			secretDir := filepath.Join(home, ".wingthing")
 			if err := os.MkdirAll(secretDir, 0700); err != nil {
@@ -190,7 +191,7 @@ func TestConfigSnapshotRefusesSecretSymlink(t *testing.T) {
 }
 
 func TestConfigSnapshotRestoreRefusesParentSymlink(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 	provider := filepath.Join(home, ".claude")
 	if err := os.Mkdir(provider, 0700); err != nil {
@@ -204,7 +205,7 @@ func TestConfigSnapshotRestoreRefusesParentSymlink(t *testing.T) {
 	if err := os.Rename(provider, provider+"-old"); err != nil {
 		t.Fatal(err)
 	}
-	victim := t.TempDir()
+	victim := testsocket.Dir(t)
 	victimPath := filepath.Join(victim, "settings.json")
 	if err := os.WriteFile(victimPath, []byte("victim"), 0600); err != nil {
 		t.Fatal(err)
@@ -220,7 +221,7 @@ func TestConfigSnapshotRestoreRefusesParentSymlink(t *testing.T) {
 }
 
 func TestConfigSnapshotRestoresRegularFile(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 	provider := filepath.Join(home, ".claude")
 	path := filepath.Join(provider, "settings.json")

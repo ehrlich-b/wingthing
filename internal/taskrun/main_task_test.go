@@ -8,10 +8,11 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestRunTaskPersistsFailureFromEveryEarlyExit(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "claude", WingID: "test-wing"}
+	cfg := &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "claude", WingID: "test-wing"}
 	taskStore, err := store.Open(cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)
@@ -28,7 +29,7 @@ func TestRunTaskPersistsFailureFromEveryEarlyExit(t *testing.T) {
 		RunAt:     time.Now(),
 		Agent:     "claude",
 		Isolation: "privileged",
-		CWD:       t.TempDir(),
+		CWD:       testsocket.Dir(t),
 	}
 	if err := taskStore.CreateTask(task); err != nil {
 		t.Fatal(err)

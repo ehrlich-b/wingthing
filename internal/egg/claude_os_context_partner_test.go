@@ -7,6 +7,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func partnerLink(t *testing.T, target, link string) string {
@@ -18,7 +19,7 @@ func partnerLink(t *testing.T, target, link string) string {
 }
 
 func TestPreviewClaudeGuardRejectsSymlinkAliases(t *testing.T) {
-	root, err := filepath.EvalSymlinks(t.TempDir())
+	root, err := filepath.EvalSymlinks(testsocket.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +52,7 @@ func TestPreviewClaudeGuardRejectsSymlinkAliases(t *testing.T) {
 }
 
 func TestPreviewClaudeContextRejectsAliasedForeignSelector(t *testing.T) {
-	root, err := filepath.EvalSymlinks(t.TempDir())
+	root, err := filepath.EvalSymlinks(testsocket.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

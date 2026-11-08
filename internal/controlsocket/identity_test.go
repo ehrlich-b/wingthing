@@ -4,10 +4,12 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestExpectedWingIdentityBindsEveryHandshake(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	var bound atomic.Int32
 	s, err := Listen(t.Context(), dir, "wing-b", func(Hello) (Welcome, Handler, error) {
 		bound.Add(1)

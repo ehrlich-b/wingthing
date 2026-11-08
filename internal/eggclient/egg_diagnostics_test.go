@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestFailedEggDiagnosticBoundAndRetention(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	if err := os.WriteFile(filepath.Join(dir, "egg.log"), []byte(strings.Repeat("startup\n", 30000)+"actual last startup failure"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +46,7 @@ func TestFailedEggDiagnosticBoundAndRetention(t *testing.T) {
 func TestPromptReservationsSurviveWingReaping(t *testing.T) {
 	for _, name := range []string{"prompt.lock", "prompt.fixture.json"} {
 		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			for _, artifact := range []string{name, "egg.owner", "session.principal", "egg.meta"} {
 				if err := os.WriteFile(filepath.Join(dir, artifact), []byte("fixture"), 0600); err != nil {
 					t.Fatal(err)

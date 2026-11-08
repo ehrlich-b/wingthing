@@ -13,11 +13,12 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func inventoryManager(t *testing.T) *Runs {
 	t.Helper()
-	cfg := &config.Config{Dir: t.TempDir(), WingID: "inventory-wing"}
+	cfg := &config.Config{Dir: testsocket.Dir(t), WingID: "inventory-wing"}
 	if _, err := auth.EnsureKeyPair(cfg.Dir); err != nil {
 		t.Fatal(err)
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
@@ -29,8 +30,8 @@ import (
 
 func forkServerFixture(t *testing.T) *Server {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
-	cfg := &config.Config{Dir: t.TempDir()}
+	t.Setenv("HOME", testsocket.Dir(t))
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	dir := writeResumeSessionFixture(t, cfg, "source", "alice", "claude", cfg.Dir, "provider", "{}\n")
 	if err := eggclient.WriteSessionPrincipal(dir, "owner"); err != nil {
 		t.Fatal(err)
@@ -467,8 +468,8 @@ func TestBrowserForkInitializesCurrentToolsAndCleansUpFailedSpawn(t *testing.T) 
 	old := config.ReleaseChannel
 	config.ReleaseChannel = "stable"
 	t.Cleanup(func() { config.ReleaseChannel = old })
-	t.Setenv("HOME", t.TempDir())
-	root, err := os.MkdirTemp("/tmp", "wt-fork-tools-")
+	t.Setenv("HOME", testsocket.Dir(t))
+	root, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatal(err)
 	}

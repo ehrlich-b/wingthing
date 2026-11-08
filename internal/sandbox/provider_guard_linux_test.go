@@ -26,18 +26,7 @@ func guardNativeRoot(t *testing.T) string {
 	if err := namespaceCapabilityError(hasEffectiveCAPSYSADMIN()); err != nil {
 		t.Skip(err)
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	base := os.Getenv("WT_PROVIDER_GUARD_FIXTURE_ROOT")
-	if base == "" {
-		base = filepath.Join(cwd, "..", "..", ".scratch")
-	}
-	if err := os.MkdirAll(base, 0700); err != nil {
-		t.Fatal(err)
-	}
-	root, err := os.MkdirTemp(base, "provider-guard-")
+	root, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatal(err)
 	}

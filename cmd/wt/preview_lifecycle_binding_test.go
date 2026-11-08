@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/spf13/cobra"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -200,7 +201,7 @@ func TestPreviewLifecycleBindingStableDefaultUnchanged(t *testing.T) {
 	old := config.ReleaseChannel
 	config.ReleaseChannel = "stable"
 	t.Cleanup(func() { config.ReleaseChannel = old })
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", "")
 	t.Setenv("WINGTHING_PREVIEW_DIR", "")

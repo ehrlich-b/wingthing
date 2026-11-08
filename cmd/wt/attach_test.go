@@ -24,6 +24,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -224,7 +225,7 @@ func TestAttachReconnectPreservesExecutableStateAndProfileWithoutTakeover(t *tes
 }
 
 func TestAttachRemoteUnknownOutcomePrintsExactReconnectOnlyOnStderr(t *testing.T) {
-	state := t.TempDir()
+	state := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", state)
 	t.Setenv("WINGTHING_PREVIEW_DIR", "")
 	if err := config.SaveRemotes(state, map[string]config.Remote{"devbox": {SSHTarget: "fixture-host", WTBinary: "/custom binary/wt", WingthingDir: "/saved state"}}); err != nil {
@@ -251,7 +252,7 @@ func TestAttachRemoteUnknownOutcomePrintsExactReconnectOnlyOnStderr(t *testing.T
 }
 
 func TestGenericRemoteAttachUnknownOutcomePreservesPinnedRoute(t *testing.T) {
-	state := t.TempDir()
+	state := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", state)
 	t.Setenv("WINGTHING_PREVIEW_DIR", "")
 	ssh := writeFakeRemoteSSH(t, "exit 255\n")

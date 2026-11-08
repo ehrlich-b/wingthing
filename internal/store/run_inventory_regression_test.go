@@ -6,12 +6,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestRunInventoryRegressionPartialLegacyTimeMustNotDisappear(t *testing.T) {
 	for _, missing := range []string{"created_at", "finished_at"} {
 		t.Run(missing, func(t *testing.T) {
-			parent := t.TempDir()
+			parent := testsocket.Dir(t)
 			real := filepath.Join(parent, "real")
 			alias := filepath.Join(parent, "alias")
 			if e := os.Mkdir(real, 0700); e != nil {

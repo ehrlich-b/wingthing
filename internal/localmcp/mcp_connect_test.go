@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	pionwebrtc "github.com/pion/webrtc/v4"
@@ -115,7 +116,7 @@ func newDirectConnectorTestTunnel(t *testing.T) *directConnectorTestTunnel {
 		wing := &directConnectorTestWing{
 			info:      ws.WingInfo{WingID: wingID, PublicKey: wingID + "-public-key", PurposeBinding: true, DirectMCP: true, HostedRelay: ws.HostedRelayDeny},
 			manager:   webrtcpkg.NewPeerManager(nil),
-			cfg:       &config.Config{Dir: t.TempDir(), DefaultAgent: "claude", WingID: wingID},
+			cfg:       &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "claude", WingID: wingID},
 			wingCfg:   &config.WingConfig{WingID: wingID, HostedRelay: config.HostedRelayDeny},
 			admission: NewMCPAdmissionState(),
 		}

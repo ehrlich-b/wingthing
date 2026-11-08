@@ -13,6 +13,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
@@ -54,7 +55,7 @@ func fingerprints(t *testing.T, path string) map[string]fingerprint {
 }
 
 func TestRunInspectPinnedSerializersAndHashes(t *testing.T) {
-	workspace := t.TempDir()
+	workspace := testsocket.Dir(t)
 	path := filepath.Join(workspace, "snapshot")
 	if err := os.Mkdir(path, 0700); err != nil {
 		t.Fatal(err)

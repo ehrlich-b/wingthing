@@ -17,7 +17,7 @@ const shots = process.env.WT_REACH_SHOTS || path.join(out, 'shots');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 fs.mkdirSync(out, { recursive: true });
 fs.mkdirSync(shots, { recursive: true });
-const state = fs.mkdtempSync(path.join(root, '.scratch/reach-'));
+const state = fs.mkdtempSync('/tmp/wt');
 const port = Number(process.env.WT_REACH_PORT || 18181);
 const base = 'http://127.0.0.1:' + port;
 const processEnv = { PATH: process.env.PATH, HOME: path.join(state, 'home'), WINGTHING_DIR: state };

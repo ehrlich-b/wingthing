@@ -11,10 +11,11 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/sessionrole"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestSessionPinSchemaStrictOwnershipAndRolePreservation(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	dir := filepath.Join(cfg.Dir, "eggs", "ours")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -54,7 +55,7 @@ func TestSessionPinSchemaStrictOwnershipAndRolePreservation(t *testing.T) {
 }
 
 func TestRoleAgentStartRequiresScopedClaudeParent(t *testing.T) {
-	s := testWingServer(t, &Server{Version: "test", Cfg: &config.Config{Dir: t.TempDir()}, Logs: &bytes.Buffer{}})
+	s := testWingServer(t, &Server{Version: "test", Cfg: &config.Config{Dir: testsocket.Dir(t)}, Logs: &bytes.Buffer{}})
 	for _, raw := range []string{
 		`{"agent":"claude","role":"coordinator"}`,
 		`{"agent":"codex","role":"coordinator","scoped_mcp":true,"conversation_role":"parent"}`,

@@ -24,6 +24,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/sessionrole"
 	"github.com/ehrlich-b/wingthing/internal/sshcontrol"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/testssh"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
@@ -35,13 +36,13 @@ func TestBuiltMultiwingInventorySearchActionsAndOutage(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	binary := localOnlyFixtureBinary(t, repo, t.TempDir())
+	binary := localOnlyFixtureBinary(t, repo, testsocket.Dir(t))
 	if _, e := os.Stat(binary); e != nil {
 		t.Fatalf("fixture wt: %v", e)
 	}
 	peerBinary := os.Getenv("WT_TEST_PREVIEW_BINARY")
 	if peerBinary == "" {
-		peerBinary = filepath.Join(t.TempDir(), "wt-preview")
+		peerBinary = filepath.Join(testsocket.Dir(t), "wt-preview")
 		build := exec.CommandContext(t.Context(), "nice", "-n", "15", "go", "build", "-p", "2", "-buildvcs=false",
 			"-ldflags", "-X github.com/ehrlich-b/wingthing/internal/config.ReleaseChannel=preview", "-o", peerBinary, "./cmd/wt")
 		build.Dir = repo

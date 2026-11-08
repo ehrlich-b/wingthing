@@ -37,7 +37,7 @@ func TestToolCallOwnHelpAndMissingTool(t *testing.T) {
 }
 
 func TestExecuteCLIPrivilegedToolPreservesNativeArgsAndAuthority(t *testing.T) {
-	dir, err := os.MkdirTemp("/tmp", "wt-tool-call-*")
+	dir, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatal(err)
 	}

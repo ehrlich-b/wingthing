@@ -7,6 +7,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestLinuxSandboxRefusesMissingControls(t *testing.T) {
@@ -30,7 +32,7 @@ func TestLinuxSandboxRefusesMissingControls(t *testing.T) {
 }
 
 func TestLinuxSandboxCgroupAttachedBeforeExec(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	s := &linuxSandbox{cfg: Config{NetworkNeed: NetworkNone}, tmpDir: dir, cgroup: &cgroupManager{path: dir}}
 	t.Cleanup(func() {
 		if s.cgroupFile != nil {

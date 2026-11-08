@@ -13,6 +13,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"google.golang.org/grpc"
 )
 
@@ -40,7 +41,7 @@ func (f *browserToolsSessionFixture) Session(stream grpc.BidiStreamingServer[pb.
 }
 
 func TestBrowserForkToolsLiveUntilSessionExit(t *testing.T) {
-	root, err := os.MkdirTemp("/tmp", "wt-tool-life-")
+	root, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +100,7 @@ func TestBrowserForkToolsLiveUntilSessionExit(t *testing.T) {
 }
 
 func TestPrepareBrowserToolsWithoutTools(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	opts := SpawnEggOpts{}
 	listener, err := PrepareBrowserTools(cfg, "fork", nil, &opts)
 	if err != nil || listener != nil || opts.ToolSocketPath != "" || len(opts.ToolNames) != 0 {
@@ -128,7 +129,7 @@ func (f *controllerToolsFixture) Session(stream grpc.BidiStreamingServer[pb.Sess
 }
 
 func TestBrowserControllerClaimsTaintToolsOnlyForOtherUsers(t *testing.T) {
-	root, err := os.MkdirTemp("/tmp", "wt-control-")
+	root, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatal(err)
 	}

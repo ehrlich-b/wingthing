@@ -11,10 +11,12 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestDownloadHandlerAllowlistAndSymlinks(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	t.Setenv("WT_DOWNLOAD_DIR", root)
 	if err := os.Mkdir(filepath.Join(root, "v0.149.5"), 0755); err != nil {
 		t.Fatal(err)
@@ -24,7 +26,7 @@ func TestDownloadHandlerAllowlistAndSymlinks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	secret := filepath.Join(t.TempDir(), "unrelated")
+	secret := filepath.Join(testsocket.Dir(t), "unrelated")
 	_ = os.WriteFile(secret, []byte("private fixture"), 0600)
 	_ = os.Symlink(secret, filepath.Join(root, "v0.149.5/SHA256SUMS"))
 	for _, tc := range []struct {
@@ -65,7 +67,7 @@ func TestDownloadInstallerMirrorOnlyAndAtomicity(t *testing.T) {
 	good := []byte("#!/bin/sh\necho 'wt version connect --https status'\n")
 	for _, mode := range []string{"healthy", "metadata404", "binary404", "badChecksum", "both404"} {
 		t.Run(mode, func(t *testing.T) {
-			root := t.TempDir()
+			root := testsocket.Dir(t)
 			bin := filepath.Join(root, "bin")
 			install := filepath.Join(root, "install")
 			_ = os.Mkdir(bin, 0755)

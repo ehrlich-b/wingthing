@@ -17,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 )
 
@@ -25,9 +26,9 @@ func forkFixture(t *testing.T, live bool) (*config.Config, string, SessionForkSc
 	old := config.ReleaseChannel
 	config.ReleaseChannel = "stable"
 	t.Cleanup(func() { config.ReleaseChannel = old })
-	t.Setenv("HOME", t.TempDir())
-	cfg := &config.Config{Dir: t.TempDir()}
-	cwd := wingpolicy.CanonicalSessionPath(t.TempDir())
+	t.Setenv("HOME", testsocket.Dir(t))
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
+	cwd := wingpolicy.CanonicalSessionPath(testsocket.Dir(t))
 	dir := filepath.Join(cfg.Dir, "eggs", "source")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -92,7 +93,7 @@ func TestSessionForkFakeClaudeArgvAndSourcePreserved(t *testing.T) {
 				}
 				before[entry.Name()] = string(data)
 			}
-			fake := filepath.Join(t.TempDir(), "claude")
+			fake := filepath.Join(testsocket.Dir(t), "claude")
 			if err := os.WriteFile(fake, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -181,7 +182,7 @@ func TestSessionForkAfterClaudeResumeCarriesRecordedHistory(t *testing.T) {
 			} else {
 				switchSession()
 			}
-			fake := filepath.Join(t.TempDir(), "claude")
+			fake := filepath.Join(testsocket.Dir(t), "claude")
 			if err := os.WriteFile(fake, []byte("#!/bin/sh\n[ \"$1\" = --resume ] || exit 91\ncat \"$WT_FIXTURE_PROJECT/$2.jsonl\"\n"), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -237,7 +238,7 @@ func TestSessionForkRefusesProviderDirectorySymlink(t *testing.T) {
 	cfg, _, scope := forkFixture(t, true)
 	home := EffectiveSessionHome(cfg, scope.Identity)
 	projects := filepath.Join(home, ".claude", "projects")
-	outside := filepath.Join(t.TempDir(), "projects")
+	outside := filepath.Join(testsocket.Dir(t), "projects")
 	if err := os.Rename(projects, outside); err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +360,7 @@ func TestSessionForkRejectsOwnershipPathsUnsupportedAndNameCollision(t *testing.
 			case "browser owner":
 				scope.Identity.UserID = "bob"
 			case "revoked path":
-				scope.AllowedPaths = []string{t.TempDir()}
+				scope.AllowedPaths = []string{testsocket.Dir(t)}
 			case "empty member paths":
 				scope.AllowedPaths = nil
 			case "unsupported":

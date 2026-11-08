@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -28,7 +29,7 @@ func writeFixture(t *testing.T, dir, name string, value any) string {
 }
 func setup(t *testing.T) (Request, Capabilities) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	binary := filepath.Join(dir, "provider")
 	if err := os.WriteFile(binary, []byte("sentinel executable that must never run"), 0700); err != nil {
 		t.Fatal(err)
@@ -150,7 +151,7 @@ func TestLaunchPlanNetworkPolicyAndTransportAcrossHosts(t *testing.T) {
 func TestLaunchPlanCanonicalCWDHomeOverrideMissingBinaryAndElan(t *testing.T) {
 	req, caps := setup(t)
 	// Model macOS's /var -> /private/var even when TMPDIR has no symlinks.
-	parentAlias := filepath.Join(t.TempDir(), "parent-alias")
+	parentAlias := filepath.Join(testsocket.Dir(t), "parent-alias")
 	if err := os.Symlink(req.CWD, parentAlias); err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +191,7 @@ func TestLaunchPlanCanonicalCWDHomeOverrideMissingBinaryAndElan(t *testing.T) {
 		t.Fatal(err)
 	}
 	hasGate(t, report, "executable", Fail, "missing")
-	outside := t.TempDir()
+	outside := testsocket.Dir(t)
 	req.ProviderStateDir = filepath.Join(outside, "state")
 	report, err = Inspect(req)
 	if err != nil {
@@ -228,7 +229,7 @@ func TestLaunchPlanSymlinkedParentPreservesDisplayPathsAndDenialSources(t *testi
 	if err := os.Mkdir(workspace, 0700); err != nil {
 		t.Fatal(err)
 	}
-	alias := filepath.Join(t.TempDir(), "parent-alias")
+	alias := filepath.Join(testsocket.Dir(t), "parent-alias")
 	if err := os.Symlink(dir, alias); err != nil {
 		t.Fatal(err)
 	}

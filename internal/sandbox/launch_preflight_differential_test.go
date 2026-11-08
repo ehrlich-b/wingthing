@@ -19,6 +19,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/launchplan"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -41,7 +42,7 @@ func fixture(t *testing.T) (launchplan.Request, launchplan.Capabilities, string)
 	// Production canonicalizes launch paths. Resolve macOS's temporary-parent
 	// aliases before deriving the oracle's paths, while individual symlink
 	// cases still create their own deliberate aliases below this root.
-	dir, err := filepath.EvalSymlinks(t.TempDir())
+	dir, err := filepath.EvalSymlinks(testsocket.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

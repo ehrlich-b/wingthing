@@ -9,6 +9,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // Every path is a temporary fixture. The OS-account lookup is replaced so the
@@ -16,7 +18,7 @@ import (
 func providerBindingFixture(t *testing.T) (root, state, provider, account string) {
 	t.Helper()
 	previewTest(t)
-	root = canonicalConfiguredPath(t.TempDir(), "")
+	root = canonicalConfiguredPath(testsocket.Dir(t), "")
 	account = filepath.Join(root, "account")
 	state = filepath.Join(root, "state")
 	provider = filepath.Join(root, "provider-home")
@@ -248,7 +250,7 @@ func TestPreviewProviderBindingIsIgnoredByStable(t *testing.T) {
 	if _, _, err := ResolvePreviewProviderHome(state); err == nil {
 		t.Fatal("stable resolved a preview binding")
 	}
-	stableState := filepath.Join(t.TempDir(), "stable")
+	stableState := filepath.Join(testsocket.Dir(t), "stable")
 	mustMkdir(t, stableState, 0700)
 	// Even an invalid binding file is never read by the stable loader.
 	writeProviderBinding(t, stableState, provider, 0644)

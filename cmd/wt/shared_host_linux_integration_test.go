@@ -19,6 +19,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/taskrun"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestMain(m *testing.M) {
@@ -34,7 +35,7 @@ func TestMain(m *testing.M) {
 
 func TestSharedHostAgentRunPreservesExternalReadOnlyMount(t *testing.T) {
 	const providerKey = "shared-provider-key-canary"
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	hostHome := filepath.Join(root, "host-home")
 	t.Setenv("HOME", hostHome)
 	testutil.WritePolicyFixture(t, filepath.Join(hostHome, ".claude", "settings.json"), `{"model":"claude-sonnet-5","env":{"CLAUDE_CODE_EFFORT_LEVEL":"xhigh","HOST_SECRET":"must-not-cross"},"theme":"host-theme"}`)
@@ -161,8 +162,8 @@ func TestSharedHostAgentRunPreservesExternalReadOnlyMount(t *testing.T) {
 }
 
 func TestSharedAgentRuntimeRejectsSymlinkedPersistentState(t *testing.T) {
-	home := t.TempDir()
-	outside := t.TempDir()
+	home := testsocket.Dir(t)
+	outside := testsocket.Dir(t)
 	if err := os.Mkdir(filepath.Join(home, ".local"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +186,7 @@ func TestSharedAgentRuntimeRejectsSymlinkedPersistentState(t *testing.T) {
 }
 
 func TestPrepareSharedAgentHomeCreatesOwnerOnlyParentTree(t *testing.T) {
-	home := filepath.Join(t.TempDir(), "state", "user-homes", "new-user")
+	home := filepath.Join(testsocket.Dir(t), "state", "user-homes", "new-user")
 	if err := eggclient.PrepareSharedAgentHome(home, []string{filepath.Join(".local", "bin")}); err != nil {
 		t.Fatalf("prepare new shared agent home: %v", err)
 	}

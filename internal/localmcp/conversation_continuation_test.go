@@ -22,6 +22,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
@@ -33,7 +34,7 @@ func continuationFixture(t *testing.T) (*Server, *store.Store, *store.Conversati
 	old := config.ReleaseChannel
 	config.ReleaseChannel = "preview"
 	t.Cleanup(func() { config.ReleaseChannel = old })
-	cfg := &config.Config{Dir: wingpolicy.CanonicalSessionPath(t.TempDir())}
+	cfg := &config.Config{Dir: wingpolicy.CanonicalSessionPath(testsocket.Dir(t))}
 	db, err := store.Open(cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +118,7 @@ func TestHeadlessContinuationAdvertisementEligibility(t *testing.T) {
 				s.identity.SharedHost = true
 			case "path revoked":
 				s.enforcePathBounds = true
-				s.allowedPaths = []string{t.TempDir()}
+				s.allowedPaths = []string{testsocket.Dir(t)}
 			}
 			result, err := s.toolSessionRead(context.Background(), json.RawMessage(`{"session":"source"}`))
 			if err != nil && name != "foreign principal" && name != "foreign browser owner" && name != "path revoked" {

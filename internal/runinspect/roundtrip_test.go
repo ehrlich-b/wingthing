@@ -8,11 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/runinspect"
 	"github.com/ehrlich-b/wingthing/internal/runinspect/fixture"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func newRoundTrip(t *testing.T) *fixture.Builder {
@@ -21,8 +21,8 @@ func newRoundTrip(t *testing.T) *fixture.Builder {
 	if root == "" {
 		t.Fatal("WT_INSPECT_FIXTURE_ROOT required; run make test-run-inspect-roundtrip")
 	}
-	workspace, err := os.MkdirTemp(root, strings.ReplaceAll(t.Name(), "/", "_")+"-")
-	if err != nil {
+	workspace := filepath.Join(testsocket.Dir(t), ".scratch")
+	if err := os.Mkdir(workspace, 0700); err != nil {
 		t.Fatal(err)
 	}
 	return fixture.New(t, filepath.Join(workspace, "snapshot"))

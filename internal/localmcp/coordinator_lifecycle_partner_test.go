@@ -19,6 +19,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // opusExecutionEgg retains an execution directory for an ID that was reserved
@@ -203,7 +204,7 @@ func opusReservation(t *testing.T, dir, request string) (opusPromptRecord, bool)
 }
 
 func TestOpusCoordinatorLinkedChildJourneyAcrossReconnectRestartAndCheckpoint(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	var root *store.Conversation
 	opusReopen(t, cfg, func(db *store.Store) { root = fixtureConversation(t, db, cfg, "root", "", "owner", "idle") })
 
@@ -382,7 +383,7 @@ func TestOpusCoordinatorLinkedChildJourneyAcrossReconnectRestartAndCheckpoint(t 
 }
 
 func TestOpusCoordinatorWakeOutboxKeepsUnknownBindingAcrossParentResumeAndProofGatedRetry(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	var root, child *store.Conversation
 	opusReopen(t, cfg, func(db *store.Store) {
 		root = fixtureConversation(t, db, cfg, "root", "", "owner", "idle")
@@ -614,7 +615,7 @@ func TestOpusCoordinatorWakeOutboxKeepsUnknownBindingAcrossParentResumeAndProofG
 }
 
 func TestOpusCoordinatorMissingNativeHistoryIsReportedUnavailableNotCompleted(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	var root, reaped, vanished, crashed *store.Conversation
 	opusReopen(t, cfg, func(db *store.Store) {
 		root = fixtureConversation(t, db, cfg, "root", "", "owner", "idle")
@@ -712,7 +713,7 @@ func TestOpusCoordinatorMissingNativeHistoryIsReportedUnavailableNotCompleted(t 
 // so once the retired directory is gone its history must read as unavailable
 // rather than resolving to whichever surviving execution extends it.
 func TestOpusCoordinatorRetiredExecutionIsNotAliasedToPrefixSibling(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	const retired, resumed = "a1b2c3d4", "a1b2c3d4e5f60718"
 	var root, child *store.Conversation
 	opusReopen(t, cfg, func(db *store.Store) {

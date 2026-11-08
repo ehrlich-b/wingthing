@@ -12,6 +12,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestSessionPSLocalFormatGolden(t *testing.T) {
@@ -43,7 +44,7 @@ func TestSessionPSLocalFormatGolden(t *testing.T) {
 		for _, active := range []bool{false, true} {
 			for _, jsonOutput := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/active=%t/json=%t", registry, active, jsonOutput), func(t *testing.T) {
-					cfg := &config.Config{Dir: t.TempDir()}
+					cfg := &config.Config{Dir: testsocket.Dir(t)}
 					t.Setenv("WINGTHING_DIR", cfg.Dir)
 					if registry == "empty" {
 						if err := config.SaveRemotes(cfg.Dir, map[string]config.Remote{}); err != nil {

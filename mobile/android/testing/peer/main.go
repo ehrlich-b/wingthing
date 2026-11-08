@@ -38,7 +38,7 @@ func main() {
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
 		panic("fixture listener must be loopback")
 	}
-	dir, e := os.MkdirTemp("", "wingthing-pair-test-*")
+	dir, e := os.MkdirTemp("/tmp", "wt")
 	if e != nil {
 		panic(e)
 	}

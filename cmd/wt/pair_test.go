@@ -14,6 +14,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/pake"
 	"github.com/ehrlich-b/wingthing/internal/phonepair"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/skip2/go-qrcode"
 )
 
@@ -102,7 +103,7 @@ func TestPairGuidanceNamesLANListenFlag(t *testing.T) {
 	if !pake.Available {
 		t.Skip("PAKE unavailable on this build")
 	}
-	t.Setenv("WINGTHING_DIR", t.TempDir())
+	t.Setenv("WINGTHING_DIR", testsocket.Dir(t))
 	err := runPair(t.Context(), strings.NewReader(""), &out)
 	if err == nil || !strings.Contains(err.Error(), "wt wing start --local-only --listen 0.0.0.0") || !strings.Contains(err.Error(), "unavailable or ambiguous") || !strings.Contains(err.Error(), "wt wing start --listen 0.0.0.0") {
 		t.Fatalf("missing LAN guidance when wing is absent: %v", err)
@@ -110,7 +111,7 @@ func TestPairGuidanceNamesLANListenFlag(t *testing.T) {
 }
 
 func TestPairLoopbackOnlyWarning(t *testing.T) {
-	t.Setenv("WINGTHING_DIR", t.TempDir())
+	t.Setenv("WINGTHING_DIR", testsocket.Dir(t))
 	for _, endpoint := range []string{"http://127.0.0.1:6078", "http://127.0.0.2:6078", "http://[::1]:6078", "http://[::ffff:127.0.0.1]:6078", "http://localhost:6078"} {
 		t.Run(endpoint, func(t *testing.T) {
 			q := phonepair.Invitation{Local: endpoint, Endpoints: []string{endpoint}, Secret: "private test secret"}
@@ -168,7 +169,7 @@ func TestPairNoLANInterfaceDoesNotSuggestRebinding(t *testing.T) {
 func TestLANPairRestartGuidanceUsesLiveMode(t *testing.T) {
 	for _, mode := range []string{phonepair.ModeLocalOnly, phonepair.ModeRelay, "", "ambiguous"} {
 		t.Run("mode="+mode, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			t.Setenv("WINGTHING_DIR", dir)
 			// Deliberately stale, conflicting files and flag-looking string values.
 			for name, data := range map[string]string{

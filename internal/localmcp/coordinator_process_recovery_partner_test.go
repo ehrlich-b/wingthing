@@ -44,6 +44,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 const (
@@ -359,7 +360,7 @@ type opusPRWorld struct {
 
 func opusPRNewWorld(t *testing.T) *opusPRWorld {
 	t.Helper()
-	base, err := filepath.EvalSymlinks(t.TempDir())
+	base, err := filepath.EvalSymlinks(testsocket.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

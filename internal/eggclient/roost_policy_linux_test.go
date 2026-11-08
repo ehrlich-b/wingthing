@@ -14,6 +14,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -30,10 +31,10 @@ func TestRoostPolicyLinuxSiblingRolesStartWithPins(t *testing.T) {
 	if ok, help := sandbox.CheckCapability(); !ok {
 		t.Skip(help)
 	}
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
-	parent := config.CanonicalProviderPath(t.TempDir())
+	parent := config.CanonicalProviderPath(testsocket.Dir(t))
 	roles := []string{filepath.Join(parent, "a"), filepath.Join(parent, "b")}
 	// This configured sibling exists on the host, but its ancestor is masked
 	// in each role's jail. Its pin must be skipped after the masks are applied.
@@ -301,10 +302,10 @@ func TestRoostPolicyLinuxMissingPaths(t *testing.T) {
 	for _, boundary := range []string{"writable", "mode0500", "unsearchable", "readonly", "masked"} {
 		for _, missing := range []string{"root", "egg.yaml"} {
 			t.Run(boundary+"/"+missing, func(t *testing.T) {
-				home := config.CanonicalProviderPath(t.TempDir())
+				home := config.CanonicalProviderPath(testsocket.Dir(t))
 				t.Setenv("HOME", home)
 				t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
-				parent := config.CanonicalProviderPath(t.TempDir())
+				parent := config.CanonicalProviderPath(testsocket.Dir(t))
 				role := filepath.Join(parent, "a")
 				ancestor := filepath.Join(parent, "new")
 				for _, path := range []string{role, ancestor} {
@@ -405,8 +406,8 @@ func TestRoostPolicyLinuxPersonalDefaultWithoutEggYAMLStarts(t *testing.T) {
 	if ok, help := sandbox.CheckCapability(); !ok {
 		t.Skip(help)
 	}
-	home := config.CanonicalProviderPath(t.TempDir())
-	project := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
+	project := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
 	t.Chdir(project)

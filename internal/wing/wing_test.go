@@ -15,6 +15,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	pionwebrtc "github.com/pion/webrtc/v4"
 )
@@ -78,7 +79,7 @@ func TestConsumeBrowserRequestChunkBoundsAndReassemblesLines(t *testing.T) {
 }
 
 func TestWatchBrowserRequestsReclaimStartsAtCurrentEnd(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "browser-requests")
+	path := filepath.Join(testsocket.Dir(t), "browser-requests")
 	if err := os.WriteFile(path, []byte("https://old.example/\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +115,7 @@ func TestWatchBrowserRequestsReclaimStartsAtCurrentEnd(t *testing.T) {
 
 func TestLoadWingConfigForStartFailsClosedWithoutBreakingLegacyAbsence(t *testing.T) {
 	t.Run("missing file remains the compatible zero-value policy", func(t *testing.T) {
-		cfg, err := loadWingConfigForStart(t.TempDir())
+		cfg, err := loadWingConfigForStart(testsocket.Dir(t))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -128,7 +129,7 @@ func TestLoadWingConfigForStartFailsClosedWithoutBreakingLegacyAbsence(t *testin
 		"unknown direct grant":    "direct_mcp:\n  allow_grants: [host.root]\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte(body), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -140,7 +141,7 @@ func TestLoadWingConfigForStartFailsClosedWithoutBreakingLegacyAbsence(t *testin
 }
 
 func TestWingConnectionTokenOverrideDoesNotTouchPersistedLogin(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	store := auth.NewTokenStore(dir)
 	persisted := &auth.DeviceToken{Token: "hosted-login", DeviceID: "hosted-device"}
 	if err := store.Save(persisted); err != nil {
@@ -165,16 +166,16 @@ func TestWingConnectionTokenOverrideDoesNotTouchPersistedLogin(t *testing.T) {
 }
 
 func TestWingConnectionTokenRejectsMissingAndExpiredCredentials(t *testing.T) {
-	if _, err := wingConnectionToken(t.TempDir(), false, nil); err == nil {
+	if _, err := wingConnectionToken(testsocket.Dir(t), false, nil); err == nil {
 		t.Fatal("missing persisted token was accepted")
 	}
-	if _, err := wingConnectionToken(t.TempDir(), false, &auth.DeviceToken{Token: "expired", ExpiresAt: time.Now().Add(-time.Minute).Unix()}); err == nil {
+	if _, err := wingConnectionToken(testsocket.Dir(t), false, &auth.DeviceToken{Token: "expired", ExpiresAt: time.Now().Add(-time.Minute).Unix()}); err == nil {
 		t.Fatal("expired embedded token was accepted")
 	}
 }
 
 func TestWingConnectionTokenKeepsLocalAndPortalAuthoritiesSeparate(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	if err := auth.NewTokenStore(dir).Save(&auth.DeviceToken{Token: "hosted-login", DeviceID: "hosted"}); err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +197,7 @@ func TestWingConnectionTokenKeepsLocalAndPortalAuthoritiesSeparate(t *testing.T)
 }
 
 func TestWingConnectionTokenAcceptsLegacyLocalCredentialLocation(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	if err := auth.NewTokenStore(dir).Save(&auth.DeviceToken{Token: "legacy-local", DeviceID: "local"}); err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +211,7 @@ func TestWingConnectionTokenAcceptsLegacyLocalCredentialLocation(t *testing.T) {
 }
 
 func TestWingConnectionTokenDoesNotHideExpiredDedicatedLocalCredential(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	if err := auth.NewTokenStore(dir).Save(&auth.DeviceToken{Token: "hosted-login", DeviceID: "hosted"}); err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +224,7 @@ func TestWingConnectionTokenDoesNotHideExpiredDedicatedLocalCredential(t *testin
 }
 
 func TestHostedRelayPolicyAuditIsContentFreeAndPrivate(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	cfg := &config.Config{Dir: dir}
 	if err := appendHostedRelayPolicyAudit(cfg, ws.TypePTYStart); err != nil {
 		t.Fatal(err)
@@ -412,7 +413,7 @@ func TestParsePreviewFile(t *testing.T) {
 }
 
 func TestReadPreviewFileBoundedRejectsOversizedAndNonRegularInputs(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	regular := filepath.Join(dir, "preview")
 	if err := os.WriteFile(regular, bytes.Repeat([]byte("x"), maxPreviewFileBytes), 0o600); err != nil {
 		t.Fatal(err)

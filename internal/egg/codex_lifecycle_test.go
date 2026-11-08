@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestCodexLifecycleInstalledHookTrust(t *testing.T) {
@@ -156,7 +158,7 @@ func listInstalledCodexHooks(t *testing.T, binary, home string, args []string) [
 }
 
 func TestCodexLifecycleArgsTrustOnlyGeneratedHooks(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	config := filepath.Join(home, ".codex", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(config), 0700); err != nil {
 		t.Fatal(err)
@@ -202,7 +204,7 @@ func TestCodexLifecycleArgsInsertOverridesBeforeTerminator(t *testing.T) {
 		{"--", "--disable=hooks"},
 	} {
 		t.Run(strings.Join(supplied, " "), func(t *testing.T) {
-			args, err := CodexLifecycleArgs(supplied, t.TempDir(), "egg-exact")
+			args, err := CodexLifecycleArgs(supplied, testsocket.Dir(t), "egg-exact")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -267,7 +269,7 @@ func TestCodexLifecycleSupportedUsesBinaryVersion(t *testing.T) {
 		{"codex-cli 1.0.0", true},
 		{"codex-cli unknown", false},
 	} {
-		path := filepath.Join(t.TempDir(), "codex")
+		path := filepath.Join(testsocket.Dir(t), "codex")
 		// Older versions expose the same help flag despite using a different
 		// hook trust format, so help must not determine support.
 		script := "#!/bin/sh\ncase \"$1\" in\n--version) printf '%s\\n' " + shellQuoteLifecycle(tc.version) +
@@ -279,7 +281,7 @@ func TestCodexLifecycleSupportedUsesBinaryVersion(t *testing.T) {
 			t.Fatalf("capability for %q = %t, want %t", tc.version, got, tc.want)
 		}
 		if !tc.want {
-			view, err := ReadSessionLifecycle(t.TempDir(), "codex", "", t.TempDir(), "", true, 0, 10)
+			view, err := ReadSessionLifecycle(testsocket.Dir(t), "codex", "", testsocket.Dir(t), "", true, 0, 10)
 			if err != nil || view.Status != "unknown" || view.Ready {
 				t.Fatalf("unsupported version guessed status: %+v, %v", view, err)
 			}
@@ -290,7 +292,7 @@ func TestCodexLifecycleSupportedUsesBinaryVersion(t *testing.T) {
 func TestCodexLifecycleSupportedCachesByBinaryPathAndMtime(t *testing.T) {
 	for _, supported := range []bool{true, false} {
 		t.Run(strconv.FormatBool(supported), func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			binary, counter := filepath.Join(dir, "codex"), filepath.Join(dir, "probes")
 			writeBinary := func(supported bool, modTime time.Time) {
 				t.Helper()
@@ -341,7 +343,7 @@ func TestCodexLifecycleSupportedCachesByBinaryPathAndMtime(t *testing.T) {
 }
 
 func TestCodexLifecycleSkipsOversizedHooksBeforeThreadBinding(t *testing.T) {
-	home, dir := t.TempDir(), t.TempDir()
+	home, dir := testsocket.Dir(t), testsocket.Dir(t)
 	spool := filepath.Join(home, ".codex", "wingthing-events", filepath.Base(dir))
 	if err := os.MkdirAll(spool, 0700); err != nil {
 		t.Fatal(err)
@@ -369,7 +371,7 @@ func TestCodexLifecycleSkipsOversizedHooksBeforeThreadBinding(t *testing.T) {
 }
 
 func TestCodexLifecycleNativeHooksBindThreadAndReportStatus(t *testing.T) {
-	home, dir := t.TempDir(), t.TempDir()
+	home, dir := testsocket.Dir(t), testsocket.Dir(t)
 	args, err := CodexLifecycleArgs(nil, home, filepath.Base(dir))
 	if err != nil {
 		t.Fatal(err)

@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestLinuxProtectedRequiresLandlockABI3(t *testing.T) {
@@ -33,7 +35,7 @@ func TestLinuxProtectedRequiresLandlockABI3(t *testing.T) {
 }
 
 func TestLinuxProtectedDeclarationConflicts(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	target := filepath.Join(root, "state")
 	// Move temporary grants out of this synthetic path so overlap tests reach
 	// the specific declared mount rather than the system temporary grant.
@@ -78,7 +80,7 @@ func TestLinuxProtectedMountAliasIdentities(t *testing.T) {
 }
 
 func TestLinuxProtectedMinimalDirectoryMasks(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	ssh := filepath.Join(root, ".ssh")
 	if err := os.Mkdir(ssh, 0700); err != nil {
 		t.Fatal(err)
@@ -98,7 +100,7 @@ func TestLinuxProtectedMinimalDirectoryMasks(t *testing.T) {
 }
 
 func TestLinuxProtectedInternalSymlinkMetadata(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	file := filepath.Join(root, "record")
 	if err := os.WriteFile(file, []byte("synthetic"), 0600); err != nil {
 		t.Fatal(err)

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 const headlessSecret = "private-provider-secret-canary"
@@ -39,7 +41,7 @@ func runHeadlessFixture(t *testing.T, a Agent, events, stderr string, exit int) 
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
-	stdoutPath := filepath.Join(t.TempDir(), "events.jsonl")
+	stdoutPath := filepath.Join(testsocket.Dir(t), "events.jsonl")
 	if err := os.WriteFile(stdoutPath, []byte(events+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}

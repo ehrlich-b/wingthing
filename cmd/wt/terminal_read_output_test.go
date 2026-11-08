@@ -7,11 +7,12 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"testing"
 )
 
 func TestTerminalReadHumanOutput(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	server, err := controlsocket.Listen(context.Background(), cfg.Dir, "sample-wing", func(controlsocket.Hello) (controlsocket.Welcome, controlsocket.Handler, error) {
 		return controlsocket.Welcome{Principal: "sample-owner"}, func(_ context.Context, r control.DirectRequest) control.DirectResponse {
 			if r.Tool != "session_action" {

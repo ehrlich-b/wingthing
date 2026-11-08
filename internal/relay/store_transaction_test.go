@@ -10,10 +10,12 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestConsumeMagicLinkIsConcurrentAndOneShot(t *testing.T) {
-	store, err := OpenRelay(filepath.Join(t.TempDir(), "relay.db"))
+	store, err := OpenRelay(filepath.Join(testsocket.Dir(t), "relay.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +79,7 @@ func TestConsumeMagicLinkRejectsExpiredTokenWithoutMarkingItUsed(t *testing.T) {
 }
 
 func TestExchangeClaimedDeviceCodeIsConcurrentAndOneShot(t *testing.T) {
-	store, err := OpenRelay(filepath.Join(t.TempDir(), "relay.db"))
+	store, err := OpenRelay(filepath.Join(testsocket.Dir(t), "relay.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +147,7 @@ func TestExchangeClaimedDeviceCodeIsConcurrentAndOneShot(t *testing.T) {
 }
 
 func TestCreateDeviceCodeReservesActiveUserCodeConcurrently(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "relay.db")
+	dbPath := filepath.Join(testsocket.Dir(t), "relay.db")
 	first, err := OpenRelay(dbPath)
 	if err != nil {
 		t.Fatal(err)
@@ -245,7 +247,7 @@ func TestCreateBuiltinUsersIsConcurrentAndIdempotent(t *testing.T) {
 		{name: "service", userID: roostWingServiceUserID, deviceID: "roost-wing", create: (*RelayStore).CreateServiceUser},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dbPath := filepath.Join(t.TempDir(), "relay.db")
+			dbPath := filepath.Join(testsocket.Dir(t), "relay.db")
 			first, err := OpenRelay(dbPath)
 			if err != nil {
 				t.Fatal(err)
@@ -312,7 +314,7 @@ func TestCreateBuiltinUsersIsConcurrentAndIdempotent(t *testing.T) {
 }
 
 func TestOpenRelayEnforcesForeignKeysOnEveryConnection(t *testing.T) {
-	store, err := OpenRelay(filepath.Join(t.TempDir(), "relay.db"))
+	store, err := OpenRelay(filepath.Join(testsocket.Dir(t), "relay.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +343,7 @@ func TestOpenRelayEnforcesForeignKeysOnEveryConnection(t *testing.T) {
 }
 
 func TestEnsurePersonalSubscriptionIsConcurrentAndIdempotent(t *testing.T) {
-	store, err := OpenRelay(filepath.Join(t.TempDir(), "relay.db"))
+	store, err := OpenRelay(filepath.Join(testsocket.Dir(t), "relay.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1102,7 +1104,7 @@ func TestActivateOrgSubscriptionRejectsNonMemberGrant(t *testing.T) {
 }
 
 func TestDeleteOrgAndActivateSubscriptionCannotLeaveOrphan(t *testing.T) {
-	store, err := OpenRelay(filepath.Join(t.TempDir(), "relay.db"))
+	store, err := OpenRelay(filepath.Join(testsocket.Dir(t), "relay.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

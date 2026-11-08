@@ -11,10 +11,11 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/sessionrole"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestSessionCatalogCoordinatorNativeEvidenceRetainsItsAge(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	old := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano)
 	events := []egg.SessionEvent{
 		{Sequence: 1, Type: "session_ready", Source: "codex_hook", State: "working", Timestamp: old},

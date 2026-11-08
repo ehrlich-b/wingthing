@@ -18,7 +18,7 @@ type fixture struct{}
 func(fixture)Execute(_ context.Context,_ string,op,_ string,input string)(any,error){switch op{case "sessions":return []map[string]any{{"id":"fixture-shell","name":"Disposable shell","agent":"shell","status":"idle","blocked":true,"unread":true}},nil;case "read":return map[string]any{"output":"fixture output\r\n","ended":false},nil;case "input":return map[string]any{"ok":input=="hello\r"},nil;default:return map[string]bool{"ok":true},nil}}
 func(fixture)Close(string){}
 func main(){
- dir,e:=os.MkdirTemp("","wingthing-pair-test-*");if e!=nil{panic(e)};defer os.RemoveAll(dir)
+ dir,e:=os.MkdirTemp("/tmp","wt");if e!=nil{panic(e)};defer os.RemoveAll(dir)
  private,_:=ecdh.X25519().GenerateKey(rand.Reader);ln,e:=net.Listen("tcp4","127.0.0.1:0");if e!=nil{panic(e)}
  manager,e:=phonepair.New(dir,"fixture-main-wing","my-mac","http://"+ln.Addr().String(),nil,private,fixture{});if e!=nil{panic(e)};defer manager.Close()
  q,e:=manager.Create();if e!=nil{panic(e)}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/ehrlich-b/wingthing/internal/permissions"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,7 +125,7 @@ func TestPermissionSettingsPlatformGateAndUniqueBash(t *testing.T) {
 	}
 }
 func TestPermissionDisabledHooksDoNotInstallBroker(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	path := filepath.Join(dir, "settings.json")
 	os.WriteFile(path, []byte(`{"disableAllHooks":true}`), 0600)
 	s := &Server{dir: dir}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // TestExplainEnforcementReportsPlatformTruth pins the kernel-enforced network
@@ -233,7 +234,7 @@ func TestLoadEggConfigForExplainSource(t *testing.T) {
 		{name: "invalid harness fails closed", project: "harness: false\n", global: "base: none\nnetwork: ['*']\n", wantSource: "project", invalidHarness: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
+			root := testsocket.Dir(t)
 			home, state, project := filepath.Join(root, "home"), filepath.Join(root, "state"), filepath.Join(root, "project")
 			for _, dir := range []string{home, state, project} {
 				if err := os.MkdirAll(dir, 0700); err != nil {
@@ -282,7 +283,7 @@ func TestLoadEggConfigForExplainSource(t *testing.T) {
 		})
 	}
 	t.Run("missing explicit config errors", func(t *testing.T) {
-		if _, _, err := LoadEggConfigForExplain(filepath.Join(t.TempDir(), "missing"), ""); err == nil {
+		if _, _, err := LoadEggConfigForExplain(filepath.Join(testsocket.Dir(t), "missing"), ""); err == nil {
 			t.Fatal("missing explicit config succeeded")
 		}
 	})

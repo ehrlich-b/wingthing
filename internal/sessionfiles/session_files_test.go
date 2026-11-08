@@ -12,13 +12,14 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 func filePolicyFixture(t *testing.T) (ws.SessionInfo, sessionFilePolicy, []string, string) {
 	t.Helper()
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	repo := filepath.Join(root, "repo")
 	data := filepath.Join(root, "support-data")
 	if err := os.MkdirAll(repo, 0o700); err != nil {
@@ -77,7 +78,7 @@ func TestSessionFilePolicyUsesWritableDataAreaAndHonorsEffectiveDeny(t *testing.
 }
 
 func TestSessionFilePolicyBroadExplicitDenyOverridesNarrowWritableRoot(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	data := filepath.Join(root, "data")
 	policy := sessionFilePolicy{
 		writableRoots: []string{data},
@@ -89,7 +90,7 @@ func TestSessionFilePolicyBroadExplicitDenyOverridesNarrowWritableRoot(t *testin
 }
 
 func TestSessionFilePolicyRootDenyMatchesRuntimeAndDenyWriteAlwaysWins(t *testing.T) {
-	data := filepath.Join(t.TempDir(), "data")
+	data := filepath.Join(testsocket.Dir(t), "data")
 	path := filepath.Join(data, "report.txt")
 	policy := sessionFilePolicy{writableRoots: []string{data}, deny: []string{string(filepath.Separator)}}
 	_, allowed := policy.WritableRoot(path)
@@ -105,7 +106,7 @@ func TestSessionFilePolicyRootDenyMatchesRuntimeAndDenyWriteAlwaysWins(t *testin
 func TestResolveOwnedSessionFileTargetRequiresOwnerPathAndEffectiveConfig(t *testing.T) {
 	session, _, userPaths, _ := filePolicyFixture(t)
 	req := ws.TunnelRequest{SenderUserID: "alice"}
-	if _, _, err := ResolveOwnedSessionFileTarget(req, session.SessionID, []ws.SessionInfo{session}, userPaths, t.TempDir()); err != nil {
+	if _, _, err := ResolveOwnedSessionFileTarget(req, session.SessionID, []ws.SessionInfo{session}, userPaths, testsocket.Dir(t)); err != nil {
 		t.Fatal(err)
 	}
 	for name, test := range map[string]struct {
@@ -115,11 +116,11 @@ func TestResolveOwnedSessionFileTargetRequiresOwnerPathAndEffectiveConfig(t *tes
 	}{
 		"other owner":              {req: ws.TunnelRequest{SenderUserID: "bob"}, paths: userPaths, session: session},
 		"other administrator":      {req: ws.TunnelRequest{SenderUserID: "admin", SenderOrgRole: "admin"}, paths: userPaths, session: session},
-		"revoked path":             {req: req, paths: []string{t.TempDir()}, session: session},
+		"revoked path":             {req: req, paths: []string{testsocket.Dir(t)}, session: session},
 		"missing effective config": {req: req, paths: userPaths, session: func() ws.SessionInfo { copy := session; copy.EggConfig = ""; return copy }()},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, _, err := ResolveOwnedSessionFileTarget(test.req, test.session.SessionID, []ws.SessionInfo{test.session}, test.paths, t.TempDir()); err == nil {
+			if _, _, err := ResolveOwnedSessionFileTarget(test.req, test.session.SessionID, []ws.SessionInfo{test.session}, test.paths, testsocket.Dir(t)); err == nil {
 				t.Fatal("access unexpectedly allowed")
 			}
 		})
@@ -198,7 +199,7 @@ func TestSessionUploadIsBoundPrivateAndNoClobber(t *testing.T) {
 }
 
 func TestWriteSessionFileRootDoesNotCommitPastTransferLimit(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +216,7 @@ func TestWriteSessionFileRootDoesNotCommitPastTransferLimit(t *testing.T) {
 
 func TestOpenSessionFileRejectsTraversalSymlinkNonRegularAndOversize(t *testing.T) {
 	session, policy, userPaths, dataDir := filePolicyFixture(t)
-	outside := filepath.Join(t.TempDir(), "secret.txt")
+	outside := filepath.Join(testsocket.Dir(t), "secret.txt")
 	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +250,7 @@ func TestOpenSessionFileRejectsTraversalSymlinkNonRegularAndOversize(t *testing.
 }
 
 func TestOpenSessionFileNoFollowRejectsSymlinkComponent(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	target := filepath.Join(root, "target")
 	if err := os.Mkdir(target, 0o700); err != nil {
 		t.Fatal(err)
@@ -267,8 +268,8 @@ func TestOpenSessionFileNoFollowRejectsSymlinkComponent(t *testing.T) {
 }
 
 func TestExportSessionFileIsPerOwnerNoClobberAndRejectsSymlinkRoot(t *testing.T) {
-	root := t.TempDir()
-	sourcePath := filepath.Join(t.TempDir(), "report.txt")
+	root := testsocket.Dir(t)
+	sourcePath := filepath.Join(testsocket.Dir(t), "report.txt")
 	if err := os.WriteFile(sourcePath, []byte("answer"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +298,7 @@ func TestExportSessionFileIsPerOwnerNoClobberAndRejectsSymlinkRoot(t *testing.T)
 			t.Fatalf("owner %s export = %q err=%v", owner, got, err)
 		}
 	}
-	symlink := filepath.Join(t.TempDir(), "export-link")
+	symlink := filepath.Join(testsocket.Dir(t), "export-link")
 	if err := os.Symlink(root, symlink); err != nil {
 		t.Fatal(err)
 	}
@@ -307,8 +308,8 @@ func TestExportSessionFileIsPerOwnerNoClobberAndRejectsSymlinkRoot(t *testing.T)
 	if _, _, err := ExportSessionFile(source, info, config.ExportTarget{Name: "bad", Path: symlink, Members: []string{"support@example.com"}}, "carol"); err == nil {
 		t.Fatal("symlink export root accepted")
 	}
-	maliciousRoot := t.TempDir()
-	outside := t.TempDir()
+	maliciousRoot := testsocket.Dir(t)
+	outside := testsocket.Dir(t)
 	if err := os.Symlink(outside, filepath.Join(maliciousRoot, eggclient.UserHash("carol"))); err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +325,7 @@ func TestExportSessionFileIsPerOwnerNoClobberAndRejectsSymlinkRoot(t *testing.T)
 }
 
 func TestExportSessionFileRejectsOwnerDirectorySwap(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	ownerPath := filepath.Join(root, eggclient.UserHash("alice"))
 	otherPath := filepath.Join(root, eggclient.UserHash("bob"))
 	for _, path := range []string{ownerPath, otherPath} {
@@ -332,7 +333,7 @@ func TestExportSessionFileRejectsOwnerDirectorySwap(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	sourcePath := filepath.Join(t.TempDir(), "report.txt")
+	sourcePath := filepath.Join(testsocket.Dir(t), "report.txt")
 	if err := os.WriteFile(sourcePath, []byte("answer"), 0o600); err != nil {
 		t.Fatal(err)
 	}

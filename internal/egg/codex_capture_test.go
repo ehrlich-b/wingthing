@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func codexCaptureServer(t *testing.T) (*Server, string, string) {
@@ -57,7 +59,7 @@ func TestCodexHooklessResumeCapturesRecordedThread(t *testing.T) {
 }
 
 func TestCodexUnboundCaptureUnavailableWithoutGuessing(t *testing.T) {
-	dir, home, cwd := t.TempDir(), t.TempDir(), "/fixture"
+	dir, home, cwd := testsocket.Dir(t), testsocket.Dir(t), "/fixture"
 	sessions := filepath.Join(home, Profile("codex").SessionDir)
 	if err := os.MkdirAll(sessions, 0700); err != nil {
 		t.Fatal(err)

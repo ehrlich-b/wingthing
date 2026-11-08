@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func decodeText(data []byte) (string, bool) {
@@ -24,7 +26,7 @@ func record(text string) []byte {
 }
 func indexFixture(t *testing.T) (*Index, string, string) {
 	t.Helper()
-	state := t.TempDir()
+	state := testsocket.Dir(t)
 	dir := filepath.Join(state, "session")
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)

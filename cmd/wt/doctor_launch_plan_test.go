@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/launchplan"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 type inventoryEntry struct {
@@ -57,7 +58,7 @@ func launchInventory(t *testing.T, root string) map[string]inventoryEntry {
 }
 func doctorLaunchArgs(t *testing.T) ([]string, string) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	provider := filepath.Join(dir, "provider")
 	home := filepath.Join(dir, "provider-home")
 	if err := os.WriteFile(provider, []byte("DO NOT EXECUTE"), 0700); err != nil {

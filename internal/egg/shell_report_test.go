@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestShellReportOrderingDuplicatesAcknowledgementAndExit(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "immutable-shell")
+	dir := filepath.Join(testsocket.Dir(t), "immutable-shell")
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +89,7 @@ func TestShellReportOrderingDuplicatesAcknowledgementAndExit(t *testing.T) {
 
 func TestShellReportProcessExitClearsWaitAndUninstrumentedUnknown(t *testing.T) {
 	for _, exitCode := range []int{0, 1} {
-		dir := t.TempDir()
+		dir := testsocket.Dir(t)
 		if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=shell\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -108,7 +110,7 @@ func TestShellReportProcessExitClearsWaitAndUninstrumentedUnknown(t *testing.T) 
 			t.Fatalf("%+v %v", v, err)
 		}
 	}
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	for _, alive := range []bool{true, false} {
 		v, err := ReadSessionLifecycle(dir, "", "", "", "", alive, 0, 200)
 		if err != nil || v.Status != "unknown" {
@@ -118,7 +120,7 @@ func TestShellReportProcessExitClearsWaitAndUninstrumentedUnknown(t *testing.T) 
 }
 
 func TestShellReportProcessDisappearanceRefusesLateReport(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	for file, content := range map[string]string{"egg.meta": "agent=\n", "egg.pid": strconv.Itoa(os.Getpid())} {
 		if err := os.WriteFile(filepath.Join(dir, file), []byte(content), 0600); err != nil {
 			t.Fatal(err)

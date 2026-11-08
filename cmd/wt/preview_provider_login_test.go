@@ -13,13 +13,15 @@ import (
 	"time"
 
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func previewLoginFixtureStreams(t *testing.T) previewProviderLoginIO {
 	t.Helper()
 	files := make([]*os.File, 0, 3)
 	for i := 0; i < 3; i++ {
-		file, err := os.CreateTemp(t.TempDir(), "fake-terminal-")
+		file, err := os.CreateTemp(testsocket.Dir(t), "fake-terminal-")
 		if err != nil {
 			t.Fatal(err)
 		}

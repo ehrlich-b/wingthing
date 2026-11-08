@@ -4,12 +4,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // Ordinary sessions keep the browser bridge exactly as before; the broker-only
 // omission is a skip of this whole installation, never a partial one.
 func TestInstallBrowserBridgeKeepsOrdinaryLayout(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	requests, shims := filepath.Join(dir, "browser-requests"), filepath.Join(dir, "shims")
 	if err := os.WriteFile(requests, []byte("stale\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -35,7 +37,7 @@ func TestInstallBrowserBridgeKeepsOrdinaryLayout(t *testing.T) {
 	}
 
 	// Alias installation is not idempotent, as before; use a fresh session.
-	fresh := t.TempDir()
+	fresh := testsocket.Dir(t)
 	bareShims := filepath.Join(fresh, "shims")
 	bare := map[string]string{}
 	if err := installBrowserBridge(bare, fresh, filepath.Join(fresh, "browser-requests"), bareShims); err != nil {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -29,7 +30,7 @@ func TestProviderResumeReservationExcludesPendingLaunchAcrossProcesses(t *testin
 		}
 		return
 	}
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	registry := providerResumeRegistry{Active: make(map[string]string)}
 	release, err := registry.reserveWithAlive(cfg, cfg.Dir, "claude", "provider-id", "source", "parent", func(string) bool { return false })
 	if err != nil {
@@ -51,7 +52,7 @@ func TestProviderResumeReservationExcludesPendingLaunchAcrossProcesses(t *testin
 }
 
 func TestProviderResumeReservationSurvivesReclaimUntilProviderExit(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	home := filepath.Join(cfg.Dir, "user-homes", "alice")
 	key := ProviderResumeKey(home, "claude", "provider-id")
 	runningDir := filepath.Join(cfg.Dir, "eggs", "reclaimed-session")

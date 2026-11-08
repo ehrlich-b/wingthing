@@ -13,6 +13,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func assertSocketPathFailure(t *testing.T, err error) {
@@ -29,9 +30,9 @@ func assertSocketPathFailure(t *testing.T, err error) {
 }
 
 func TestSocketPathMCPReportsReadableFailureWithoutSessionCreation(t *testing.T) {
-	cwd := t.TempDir()
+	cwd := testsocket.Dir(t)
 	for _, tool := range []string{"terminal_start", "agent_start"} {
-		state := filepath.Join(t.TempDir(), strings.Repeat("x", 120))
+		state := filepath.Join(testsocket.Dir(t), strings.Repeat("x", 120))
 		t.Setenv("WINGTHING_DIR", state)
 		t.Setenv("WINGTHING_PREVIEW_DIR", "")
 		server := testWingServer(t, &Server{Version: "dev", Cfg: &config.Config{Dir: state}, Logs: &bytes.Buffer{}})

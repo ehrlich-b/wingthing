@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestRemotesValidation(t *testing.T) {
@@ -41,7 +43,7 @@ func TestRemotesRejectReservedLocalName(t *testing.T) {
 			if err := ValidateRemoteName(name); err == nil {
 				t.Fatal("accepted reserved local machine name")
 			}
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			if err := SaveRemotes(dir, map[string]Remote{name: {SSHTarget: "host"}}); err == nil {
 				t.Fatal("saved reserved remote name")
 			}
@@ -57,7 +59,7 @@ func TestRemotesRejectReservedLocalName(t *testing.T) {
 }
 
 func TestRemotesRoundTripAtomicOwnerOnly(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	missing, err := LoadRemotes(dir)
 	if err != nil || len(missing) != 0 {
 		t.Fatalf("missing registry: %v, %v", missing, err)
@@ -119,7 +121,7 @@ func TestWTBinaryValidation(t *testing.T) {
 		if binary == "" { // Omitted optional fields remain valid.
 			continue
 		}
-		dir := t.TempDir()
+		dir := testsocket.Dir(t)
 		if err := SaveRemotes(dir, map[string]Remote{"work": {SSHTarget: "host", WTBinary: binary}}); err == nil {
 			t.Errorf("saved invalid binary %q", binary)
 		}
@@ -137,7 +139,7 @@ func TestWTBinaryValidation(t *testing.T) {
 }
 
 func TestRemotesLoadWithoutWTBinary(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	path := filepath.Join(dir, "remotes.yaml")
 	data := "remotes:\n  legacy:\n    ssh_target: old-host\n  verified:\n    ssh_target: host\n    wingthing_dir: /state\n    wing_id: remote-wing\n    control_socket: /state/control.sock\n    control_version: v1\n"
 	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
@@ -171,7 +173,7 @@ func TestRemotesRejectInvalidYAML(t *testing.T) {
 		"remotes:\n  work:\n    ssh_target: host\n  work:\n    ssh_target: other\n",
 		"remotes: {}\n---\nremotes: {}\n",
 	} {
-		dir := t.TempDir()
+		dir := testsocket.Dir(t)
 		if err := os.WriteFile(filepath.Join(dir, "remotes.yaml"), []byte(data), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -182,7 +184,7 @@ func TestRemotesRejectInvalidYAML(t *testing.T) {
 }
 
 func TestRemotesConcurrentUpdates(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	var wg sync.WaitGroup
 	for i := range 8 {
 		wg.Add(1)

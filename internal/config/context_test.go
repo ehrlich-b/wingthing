@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestContextToolConfigValidation(t *testing.T) {
@@ -20,7 +22,7 @@ func TestContextToolConfigValidation(t *testing.T) {
 		{name: "legacy", yaml: "name: tickets\nrun: echo x\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			writeToolTestFile(t, dir, "tickets.yaml", tc.yaml)
 			tools, err := LoadWingTools(dir, tc.context)
 			if tc.want != "" {
@@ -37,7 +39,7 @@ func TestContextToolConfigValidation(t *testing.T) {
 }
 
 func TestWingContextRoundTripAndValidation(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	c := &ContextConfig{URL: "https://context.example.com", ClientID: "wingthing-stage", SecretFile: filepath.Join(dir, "secret"), Scopes: []string{"happyfox"}}
 	if err := SaveWingConfig(dir, &WingConfig{Context: c}); err != nil {
 		t.Fatal(err)
@@ -114,7 +116,7 @@ func TestContextConfigReloadRequiresRestart(t *testing.T) {
 func TestContextConfigFrozenAcrossSeparateLoads(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			var initial *ContextConfig
 			if enabled {
 				initial = &ContextConfig{URL: "https://context.example", ClientID: "wing", SecretFile: filepath.Join(dir, "old")}

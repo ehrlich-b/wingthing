@@ -18,7 +18,7 @@ const only = (process.env.WT_LOOK_ONLY || '').split(',').filter(Boolean);
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 fs.mkdirSync(shots, { recursive: true });
 fs.mkdirSync(path.join(root, '.scratch'), { recursive: true });
-const state = fs.mkdtempSync(path.join(root, '.scratch/look-'));
+const state = fs.mkdtempSync('/tmp/wt');
 const port = Number(process.env.WT_LOOK_PORT || 18191);
 const base = 'http://127.0.0.1:' + port;
 const env = { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, HOME: path.join(state, 'home'), WINGTHING_DIR: state };
@@ -394,7 +394,7 @@ async function go(page, hash) {
 // A real one-time invitation from a second, non-dev roost's own wing (the
 // same setup as browser-join.mjs), compared but never confirmed: the terminal
 // never gets Enter, so nothing is paired.
-const joinState = fs.mkdtempSync(path.join(process.env.WT_JOIN_STATE_ROOT || path.join(root, '.scratch'), 'lj-'));
+const joinState = fs.mkdtempSync('/tmp/wt');
 const joinBase = 'http://127.0.0.1:' + (port + 1);
 const joinEnv = { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, HOME: path.join(state, 'join-home'), WINGTHING_DIR: joinState, WT_BASE_URL: joinBase };
 fs.mkdirSync(joinEnv.HOME);

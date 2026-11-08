@@ -20,6 +20,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
@@ -66,7 +67,7 @@ func TestBoundStdioUnavailableSocketExplainsMailbox(t *testing.T) {
 
 func localSocketPolicyFixture(t *testing.T) (*wingsession.Service, *config.WingConfig) {
 	t.Helper()
-	t.Chdir(t.TempDir())
+	t.Chdir(testsocket.Dir(t))
 	t.Setenv("WINGTHING_DIR", "state")
 	if err := os.Mkdir("state", 0700); err != nil {
 		t.Fatal(err)

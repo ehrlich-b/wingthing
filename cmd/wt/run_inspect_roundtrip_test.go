@@ -10,12 +10,12 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/runinspect"
 	"github.com/ehrlich-b/wingthing/internal/runinspect/fixture"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func cliRoundTripFixture(t *testing.T) (string, *fixture.Builder) {
@@ -25,8 +25,8 @@ func cliRoundTripFixture(t *testing.T) (string, *fixture.Builder) {
 	if binary == "" || root == "" {
 		t.Fatal("built binary and scratch fixture root required; run make test-run-inspect-roundtrip")
 	}
-	workspace, err := os.MkdirTemp(root, strings.ReplaceAll(t.Name(), "/", "_")+"-")
-	if err != nil {
+	workspace := filepath.Join(testsocket.Dir(t), ".scratch")
+	if err := os.Mkdir(workspace, 0700); err != nil {
 		t.Fatal(err)
 	}
 	return binary, fixture.New(t, filepath.Join(workspace, "snapshot"))

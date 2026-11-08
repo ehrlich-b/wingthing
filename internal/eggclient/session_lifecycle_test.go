@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestLifecycleSessionPrefersActiveLabel(t *testing.T) {
@@ -17,7 +18,7 @@ func TestLifecycleSessionPrefersActiveLabel(t *testing.T) {
 	t.Cleanup(func() { config.ReleaseChannel = old })
 	for _, activeID := range []string{"a-active", "z-active"} {
 		t.Run(activeID, func(t *testing.T) {
-			cfg := &config.Config{Dir: t.TempDir()}
+			cfg := &config.Config{Dir: testsocket.Dir(t)}
 			for _, id := range []string{"m-archived", activeID, "work-prefix"} {
 				dir := filepath.Join(cfg.Dir, "eggs", id)
 				if err := os.MkdirAll(dir, 0700); err != nil {
@@ -78,7 +79,7 @@ func TestPreviewLifecycleHomeDoesNotFallBackToHost(t *testing.T) {
 	previous := config.ReleaseChannel
 	config.ReleaseChannel = "preview"
 	t.Cleanup(func() { config.ReleaseChannel = previous })
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	expected := config.PreviewProviderHome(cfg.Dir)
 	for _, recorded := range []string{"", expected} {
 		home, err := LifecycleProviderHome(cfg, recorded)
@@ -86,11 +87,11 @@ func TestPreviewLifecycleHomeDoesNotFallBackToHost(t *testing.T) {
 			t.Fatalf("preview provider home: %q, %v", home, err)
 		}
 	}
-	if _, err := LifecycleProviderHome(cfg, t.TempDir()); err == nil {
+	if _, err := LifecycleProviderHome(cfg, testsocket.Dir(t)); err == nil {
 		t.Fatal("preview accepted another provider home")
 	}
 	config.ReleaseChannel = "stable"
-	legacy := t.TempDir()
+	legacy := testsocket.Dir(t)
 	if home, err := LifecycleProviderHome(cfg, legacy); err != nil || home != legacy {
 		t.Fatalf("stable recorded home changed: %q, %v", home, err)
 	}

@@ -6,13 +6,14 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient/testutil"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestPreviewClaudeDoesNotImportHostModelPolicy(t *testing.T) {
 	previous := config.ReleaseChannel
 	config.ReleaseChannel = "preview"
 	t.Cleanup(func() { config.ReleaseChannel = previous })
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 	path := filepath.Join(home, ".claude", "settings.json")
 	testutil.WritePolicyFixture(t, path, "invalid host policy must not be opened")

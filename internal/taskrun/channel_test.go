@@ -8,13 +8,14 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestPreviewAgentHomeAndCredentialsDoNotReuseHost(t *testing.T) {
 	old := config.ReleaseChannel
 	config.ReleaseChannel = "preview"
 	t.Cleanup(func() { config.ReleaseChannel = old })
-	state := t.TempDir()
+	state := testsocket.Dir(t)
 	cfg := &config.Config{Dir: state}
 	home := eggclient.EffectiveSessionHome(cfg, eggclient.EggIdentity{})
 	if home != config.PreviewProviderHome(state) {
@@ -51,7 +52,7 @@ func TestPreviewDirectProviderNamespacesAndStableEnvironment(t *testing.T) {
 	for _, key := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY"} {
 		t.Setenv(key, "fixture-secret-never-inherit")
 	}
-	home := filepath.Join(t.TempDir(), "provider-home")
+	home := filepath.Join(testsocket.Dir(t), "provider-home")
 	toMap := func(env []string) map[string]string {
 		values := map[string]string{}
 		for _, entry := range env {

@@ -14,13 +14,14 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 func roostPolicyFixture(t *testing.T) (string, string, string, *config.WingConfig) {
 	t.Helper()
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
 	root := filepath.Join(home, "work")
@@ -458,7 +459,7 @@ func TestRoostPolicyPinsRegardlessOfWriteRules(t *testing.T) {
 			}
 		})
 	}
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	root := filepath.Join(home, "role")
 	cfg := protectRoostRootPolicies(&egg.EggConfig{FS: []string{"rw:~"}}, []string{root})

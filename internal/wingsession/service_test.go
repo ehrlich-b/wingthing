@@ -11,12 +11,13 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 func TestMCPLaunchCanonicalSubdirectoriesAndBounds(t *testing.T) {
-	home := wingpolicy.CanonicalSessionPath(t.TempDir())
+	home := wingpolicy.CanonicalSessionPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
 	root, child, outside := filepath.Join(home, "work"), filepath.Join(home, "work", "child"), filepath.Join(home, "outside")
@@ -71,7 +72,7 @@ func TestMCPLaunchCanonicalSubdirectoriesAndBounds(t *testing.T) {
 }
 
 func TestLaunchUsesOnePolicyForWebAndMCP(t *testing.T) {
-	root := config.CanonicalProviderPath(t.TempDir())
+	root := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", root)
 	t.Setenv("WINGTHING_DIR", filepath.Join(root, "state"))
 	work := filepath.Join(root, "work")
@@ -102,7 +103,7 @@ func TestLaunchUsesOnePolicyForWebAndMCP(t *testing.T) {
 }
 
 func TestSessionOwnershipBindsWebAndRemoteMCPWithoutCrossingLogicalOwners(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	cfg := &config.Config{Dir: root}
 	s := &Service{Config: cfg}
 	dir := filepath.Join(root, "eggs", "fixture")
@@ -138,7 +139,7 @@ func TestSessionOwnershipBindsWebAndRemoteMCPWithoutCrossingLogicalOwners(t *tes
 }
 
 func TestSealedMCPLaunchRetainsConfiguredRootPolicy(t *testing.T) {
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
 	root := filepath.Join(home, "work")
@@ -166,7 +167,7 @@ func TestSealedMCPLaunchRetainsConfiguredRootPolicy(t *testing.T) {
 }
 
 func TestWebResumeDeniesForeignSourceBeforeLaunch(t *testing.T) {
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
 	work := filepath.Join(home, "work")

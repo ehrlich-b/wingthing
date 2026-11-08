@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestPublishedInstallerMatchesRepositoryCopyAndReleaseContract(t *testing.T) {
@@ -73,7 +75,7 @@ esac
 
 	run := func(t *testing.T, binary []byte, checksum string) (string, []byte, bool, error) {
 		t.Helper()
-		root := t.TempDir()
+		root := testsocket.Dir(t)
 		installDir := filepath.Join(root, "install")
 		if err := os.MkdirAll(installDir, 0o755); err != nil {
 			t.Fatal(err)

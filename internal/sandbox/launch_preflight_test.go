@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestLaunchPlanDomainPolicyMatcher(t *testing.T) {
@@ -26,7 +28,7 @@ func TestLaunchPlanDomainPolicyMatcher(t *testing.T) {
 }
 
 func TestLaunchPlanCanonicalPathMissingProviderState(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	actual := filepath.Join(root, "actual")
 	alias := filepath.Join(root, "alias")
 	if err := os.Mkdir(actual, 0700); err != nil {

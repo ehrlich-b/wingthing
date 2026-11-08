@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestValidateAppArmorExecutablePathAcceptsSystemBinary(t *testing.T) {
@@ -20,7 +22,7 @@ func TestValidateAppArmorExecutablePathAcceptsSystemBinary(t *testing.T) {
 }
 
 func TestValidateAppArmorExecutablePathRejectsTemporaryTree(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "wt")
+	path := filepath.Join(testsocket.Dir(t), "wt")
 	if err := os.WriteFile(path, []byte("test"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +58,7 @@ func TestOverlayFSAvailableFromRegisteredFilesystem(t *testing.T) {
 }
 
 func TestOverlayFSAvailableFromLoadableModule(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	release := "6.8.0-fixture"
 	moduleDir := filepath.Join(root, release, "kernel", "fs", "overlayfs")
 	if err := os.MkdirAll(moduleDir, 0o755); err != nil {
@@ -71,7 +73,7 @@ func TestOverlayFSAvailableFromLoadableModule(t *testing.T) {
 }
 
 func TestOverlayFSAvailableFromMissingCapability(t *testing.T) {
-	if overlayFSAvailableFrom([]byte("nodev\ttmpfs\n"), "6.8.0-missing", []string{t.TempDir()}) {
+	if overlayFSAvailableFrom([]byte("nodev\ttmpfs\n"), "6.8.0-missing", []string{testsocket.Dir(t)}) {
 		t.Fatal("missing overlay capability was reported as available")
 	}
 }

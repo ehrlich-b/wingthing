@@ -8,10 +8,11 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/control"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestMissingProviderDiagnosticBeforeLaunch(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
+	t.Setenv("PATH", testsocket.Dir(t))
 	for _, agent := range []string{"claude", "codex"} {
 		t.Run(agent, func(t *testing.T) {
 			dir, err := os.MkdirTemp("/tmp", "wt")

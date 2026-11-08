@@ -7,11 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestInputAuditorReplacesSymlinkPrivately(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(t.TempDir(), "must-not-change")
+	dir := testsocket.Dir(t)
+	target := filepath.Join(testsocket.Dir(t), "must-not-change")
 	if err := os.WriteFile(target, []byte("original"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -36,8 +38,8 @@ func TestInputAuditorReplacesSymlinkPrivately(t *testing.T) {
 }
 
 func TestCreatePTYAuditReplacesSymlinkPrivately(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(t.TempDir(), "must-not-change")
+	dir := testsocket.Dir(t)
+	target := filepath.Join(testsocket.Dir(t), "must-not-change")
 	if err := os.WriteFile(target, []byte("original"), 0o600); err != nil {
 		t.Fatal(err)
 	}

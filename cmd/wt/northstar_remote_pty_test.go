@@ -22,6 +22,7 @@ import (
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 	"google.golang.org/grpc"
@@ -273,7 +274,7 @@ func northstarReadSSHLog(path string) ([]byte, error) {
 }
 
 func TestNorthstarSSHLogSnapshotJoinsInProgressAppend(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ssh.jsonl")
+	path := filepath.Join(testsocket.Dir(t), "ssh.jsonl")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		t.Fatal(err)

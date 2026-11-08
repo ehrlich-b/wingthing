@@ -8,10 +8,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestBrowserFleetLedgerConcurrentConsumeAndReopen(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	ledger, err := openBrowserAttachmentLedger(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -54,8 +56,8 @@ func TestBrowserFleetLedgerConcurrentConsumeAndReopen(t *testing.T) {
 	}
 }
 func TestBrowserFleetLedgerRefusesUnsafeDirectory(t *testing.T) {
-	dir := t.TempDir()
-	target := t.TempDir()
+	dir := testsocket.Dir(t)
+	target := testsocket.Dir(t)
 	if err := os.Symlink(target, filepath.Join(dir, "browser-attachment-receipts-v1")); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +68,7 @@ func TestBrowserFleetLedgerRefusesUnsafeDirectory(t *testing.T) {
 }
 
 func TestBrowserFleetLedgerShortWritePreservesConsumedFence(t *testing.T) {
-	ledger, err := openBrowserAttachmentLedger(t.TempDir())
+	ledger, err := openBrowserAttachmentLedger(testsocket.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

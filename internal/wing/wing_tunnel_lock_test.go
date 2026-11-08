@@ -15,6 +15,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/tunnel"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
@@ -50,14 +51,14 @@ func TestTunnelResponseBackpressureDoesNotBlockWingConfigReload(t *testing.T) {
 
 	go func() {
 		defer close(done)
-		tunnel.HandleTunnelRequest(tunnel.References{Version: "dev", WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowed, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs}, context.Background(), &config.Config{Dir: t.TempDir()}, ws.TunnelRequest{
+		tunnel.HandleTunnelRequest(tunnel.References{Version: "dev", WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowed, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs}, context.Background(), &config.Config{Dir: testsocket.Dir(t)}, ws.TunnelRequest{
 			RequestID: "request-1", SenderPub: senderPublic, SenderUserID: "owner-1",
 			SenderEmail: "owner@example.com", SenderOrgRole: "owner", Payload: payload,
 		}, func(any) error {
 			close(enteredWrite)
 			<-releaseWrite
 			return nil
-		}, auth.NewAuthCache(), auth.NewChallengeCache(), auth.PasskeyPolicy{}, serverKey, t.TempDir(), false, false, client, nil, &sync.Map{})
+		}, auth.NewAuthCache(), auth.NewChallengeCache(), auth.PasskeyPolicy{}, serverKey, testsocket.Dir(t), false, false, client, nil, &sync.Map{})
 	}()
 
 	select {
@@ -108,7 +109,7 @@ func TestTunnelRejectsPathShapedSessionIDBeforeFilesystemAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	cfg := &config.Config{Dir: filepath.Join(root, ".wingthing")}
 	victim := filepath.Join(root, "victim")
 	if err := os.MkdirAll(victim, 0o700); err != nil {
@@ -162,7 +163,7 @@ func TestTunnelRejectsMissingCoordinatorIdentity(t *testing.T) {
 	allowed := []config.AllowKey(nil)
 	wingEggCfg := &egg.EggConfig{}
 	var wingEggMu sync.Mutex
-	tunnel.HandleTunnelRequest(tunnel.References{Version: "dev", WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowed, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs}, context.Background(), &config.Config{Dir: t.TempDir()}, ws.TunnelRequest{
+	tunnel.HandleTunnelRequest(tunnel.References{Version: "dev", WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowed, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs}, context.Background(), &config.Config{Dir: testsocket.Dir(t)}, ws.TunnelRequest{
 		RequestID: "anonymous", SenderPub: senderPublic, Payload: payload,
 	}, func(message any) error {
 		var ok bool
@@ -171,7 +172,7 @@ func TestTunnelRejectsMissingCoordinatorIdentity(t *testing.T) {
 			t.Fatalf("response type = %T", message)
 		}
 		return nil
-	}, auth.NewAuthCache(), auth.NewChallengeCache(), auth.PasskeyPolicy{}, serverKey, t.TempDir(), false, false, &ws.Client{}, nil, &sync.Map{})
+	}, auth.NewAuthCache(), auth.NewChallengeCache(), auth.PasskeyPolicy{}, serverKey, testsocket.Dir(t), false, false, &ws.Client{}, nil, &sync.Map{})
 	plaintext, err := auth.Decrypt(senderGCM, response.Payload)
 	if err != nil {
 		t.Fatal(err)
@@ -200,11 +201,11 @@ func TestFileDownloadOwnerDenialUsesTerminalStreamError(t *testing.T) {
 		t.Fatal(err)
 	}
 	allowed := []config.AllowKey(nil)
-	wingCfg := &config.WingConfig{Paths: config.PathList{{Path: t.TempDir()}}}
+	wingCfg := &config.WingConfig{Paths: config.PathList{{Path: testsocket.Dir(t)}}}
 	wingEggCfg := &egg.EggConfig{}
 	var wingEggMu sync.Mutex
 	var response ws.TunnelStream
-	tunnel.HandleTunnelRequest(tunnel.References{Version: "dev", WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowed, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs}, context.Background(), &config.Config{Dir: t.TempDir()}, ws.TunnelRequest{
+	tunnel.HandleTunnelRequest(tunnel.References{Version: "dev", WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowed, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs}, context.Background(), &config.Config{Dir: testsocket.Dir(t)}, ws.TunnelRequest{
 		RequestID: "download-denied", SenderPub: senderPublic, SenderUserID: "alice", SenderEmail: "alice@example.com", SenderOrgRole: "member", Payload: payload,
 	}, func(message any) error {
 		var ok bool
@@ -213,7 +214,7 @@ func TestFileDownloadOwnerDenialUsesTerminalStreamError(t *testing.T) {
 			t.Fatalf("response type = %T, want ws.TunnelStream", message)
 		}
 		return nil
-	}, auth.NewAuthCache(), auth.NewChallengeCache(), auth.PasskeyPolicy{}, serverKey, t.TempDir(), false, false, &ws.Client{}, nil, &sync.Map{})
+	}, auth.NewAuthCache(), auth.NewChallengeCache(), auth.PasskeyPolicy{}, serverKey, testsocket.Dir(t), false, false, &ws.Client{}, nil, &sync.Map{})
 	if !response.Done || response.RequestID != "download-denied" {
 		t.Fatalf("stream response = %#v", response)
 	}

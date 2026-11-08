@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestRolePromptAndHookTreatFileAsData(t *testing.T) {
-	state := t.TempDir()
+	state := testsocket.Dir(t)
 	if err := os.Mkdir(filepath.Join(state, "roles"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +60,7 @@ func TestRolePromptAndHookTreatFileAsData(t *testing.T) {
 }
 
 func TestRoleValidationAndBounds(t *testing.T) {
-	state := t.TempDir()
+	state := testsocket.Dir(t)
 	for _, role := range []string{"../secret", "coordinator.md", "-option", "UPPER", "a/b"} {
 		if _, err := Prompt(state, role); err == nil {
 			t.Errorf("accepted %q", role)
@@ -112,22 +114,22 @@ func TestRoleSelectedEnvironmentRefusesSkippedHooksAndForeignConfig(t *testing.T
 			t.Fatal(err)
 		}
 	}
-	dir := filepath.Join(t.TempDir(), ".claude")
+	dir := filepath.Join(testsocket.Dir(t), ".claude")
 	if err := ValidateClaudeEnvironment(map[string]string{"CLAUDE_CONFIG_DIR": dir}, dir); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateClaudeEnvironment(map[string]string{"CLAUDE_CONFIG_DIR": t.TempDir()}, dir); err == nil {
+	if err := ValidateClaudeEnvironment(map[string]string{"CLAUDE_CONFIG_DIR": testsocket.Dir(t)}, dir); err == nil {
 		t.Fatal("unverified alternate role config accepted")
 	}
 }
 
 func TestRoleFilesRefuseAliasesAndNonRegularData(t *testing.T) {
-	state := t.TempDir()
+	state := testsocket.Dir(t)
 	if err := os.Mkdir(filepath.Join(state, "roles"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(state, "roles", "coordinator.md")
-	outside := filepath.Join(t.TempDir(), "fixture.md")
+	outside := filepath.Join(testsocket.Dir(t), "fixture.md")
 	if err := os.WriteFile(outside, []byte("unrelated fixture data"), 0600); err != nil {
 		t.Fatal(err)
 	}

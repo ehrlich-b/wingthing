@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/phonepair"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"strings"
 	"testing"
 	"time"
@@ -48,7 +49,7 @@ func (handler) Close(string) {}
 func fixture(t *testing.T) (*phonepair.Manager, phonepair.Invitation, testSigner, string) {
 	t.Helper()
 	private, _ := ecdh.X25519().GenerateKey(rand.Reader)
-	m, e := phonepair.New(t.TempDir(), "fixture-wing", "Mac", "http://127.0.0.1:1234", nil, private, handler{})
+	m, e := phonepair.New(testsocket.Dir(t), "fixture-wing", "Mac", "http://127.0.0.1:1234", nil, private, handler{})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -181,7 +182,7 @@ func (w *pinWire) Exchange(box string, initial bool) (string, error) {
 }
 func TestAuthenticatedPinMismatchStopsBeforeProof(t *testing.T) {
 	private, _ := ecdh.X25519().GenerateKey(rand.Reader)
-	m, e := phonepair.New(t.TempDir(), "fixture-wing", "Mac", "http://127.0.0.1:1234", nil, private, handler{})
+	m, e := phonepair.New(testsocket.Dir(t), "fixture-wing", "Mac", "http://127.0.0.1:1234", nil, private, handler{})
 	if e != nil {
 		t.Fatal(e)
 	}

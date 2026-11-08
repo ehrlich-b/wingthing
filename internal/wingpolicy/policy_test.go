@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -103,9 +104,9 @@ func TestSessionAttachOwnership(t *testing.T) {
 func TestMemberWorkspaceVisibilityFailsClosedWithoutPaths(t *testing.T) {
 	member := ws.TunnelRequest{SenderUserID: "alice", SenderOrgRole: "member"}
 	owner := ws.TunnelRequest{SenderUserID: "owner", SenderOrgRole: "owner"}
-	projects := []ws.WingProject{{Name: "host-project", Path: t.TempDir()}}
+	projects := []ws.WingProject{{Name: "host-project", Path: testsocket.Dir(t)}}
 
-	if entries := RequestDirEntries(member, t.TempDir(), nil); len(entries) != 0 {
+	if entries := RequestDirEntries(member, testsocket.Dir(t), nil); len(entries) != 0 {
 		t.Fatalf("member without paths could enumerate host directories: %#v", entries)
 	}
 	if visible := RequestProjects(member, projects, nil); len(visible) != 0 {
@@ -121,7 +122,7 @@ func TestMemberWorkspaceVisibilityFailsClosedWithoutPaths(t *testing.T) {
 
 func TestUnknownOrganizationRoleUsesMemberWorkspaceAndAllowlistBoundary(t *testing.T) {
 	request := ws.TunnelRequest{SenderUserID: "alice", SenderOrgRole: "outsider"}
-	project := ws.WingProject{Name: "host-project", Path: t.TempDir()}
+	project := ws.WingProject{Name: "host-project", Path: testsocket.Dir(t)}
 	if entries := RequestDirEntries(request, project.Path, nil); len(entries) != 0 {
 		t.Fatalf("unknown role enumerated host directories: %#v", entries)
 	}
@@ -140,7 +141,7 @@ func TestUnknownOrganizationRoleUsesMemberWorkspaceAndAllowlistBoundary(t *testi
 }
 
 func TestScanDir_GitRepos(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	mkProject(t, root, "alpha", true, false)
 	mkProject(t, root, "beta", true, false)
 	if err := os.MkdirAll(filepath.Join(root, "empty"), 0755); err != nil {
@@ -159,7 +160,7 @@ func TestScanDir_GitRepos(t *testing.T) {
 }
 
 func TestScanDir_EggYamlCountsAsProject(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	mkProject(t, root, "myapp", false, true) // egg.yaml, no .git
 
 	var projects []ws.WingProject
@@ -173,7 +174,7 @@ func TestScanDir_EggYamlCountsAsProject(t *testing.T) {
 func TestScanDir_EggYamlParentDoesNotSwallowGitChildren(t *testing.T) {
 	// repos/ has egg.yaml (shared config), repos/wingthing/ has .git.
 	// Both should appear.
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	repos := mkProject(t, root, "repos", false, true)
 	mkProject(t, repos, "wingthing", true, false)
 	mkProject(t, repos, "blog", true, false)
@@ -195,7 +196,7 @@ func TestScanDir_EggYamlParentDoesNotSwallowGitChildren(t *testing.T) {
 func TestScanDir_GitRepoWithEggYamlSubProjects(t *testing.T) {
 	// ai-playground/ has .git, ai-playground/dev/ has egg.yaml.
 	// Both should appear.
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	aip := mkProject(t, root, "ai-playground", true, false)
 	mkProject(t, aip, "dev", false, true)
 	mkProject(t, aip, "qa", false, true)
@@ -215,7 +216,7 @@ func TestScanDir_GitRepoWithEggYamlSubProjects(t *testing.T) {
 }
 
 func TestScanDir_HiddenDirsSkipped(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	mkProject(t, root, ".hidden", true, false)
 	mkProject(t, root, "visible", true, false)
 
@@ -231,7 +232,7 @@ func TestScanDir_HiddenDirsSkipped(t *testing.T) {
 }
 
 func TestScanDir_DepthLimit(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	// Create a project 4 levels deep — should not be found with maxDepth=2.
 	deep := filepath.Join(root, "a", "b", "c", "project")
 	if err := os.MkdirAll(filepath.Join(deep, ".git"), 0755); err != nil {
@@ -248,7 +249,7 @@ func TestScanDir_DepthLimit(t *testing.T) {
 
 func TestScanDir_RootIsGitProject(t *testing.T) {
 	// Configured path points directly at a git project.
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	if err := os.MkdirAll(filepath.Join(root, ".git"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +264,7 @@ func TestScanDir_RootIsGitProject(t *testing.T) {
 
 func TestScanDir_RootIsEggYamlWithChildren(t *testing.T) {
 	// Configured path has egg.yaml but also contains git children.
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "egg.yaml"), []byte("fs: []\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +347,7 @@ func TestIsUnderPathsRootCeilingStillRequiresAbsolutePath(t *testing.T) {
 }
 
 func TestDiscoverProjects_GroupsParentsWithMultipleRepos(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	container := filepath.Join(root, "repos")
 	if err := os.MkdirAll(container, 0755); err != nil {
 		t.Fatal(err)
@@ -367,7 +368,7 @@ func TestDiscoverProjects_GroupsParentsWithMultipleRepos(t *testing.T) {
 }
 
 func TestDiscoverWingProjectsExplicitPathsDoNotScanCWD(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	allowed := filepath.Join(root, "allowed")
 	outside := filepath.Join(root, "outside")
 	if err := os.MkdirAll(allowed, 0755); err != nil {
@@ -389,7 +390,7 @@ func TestDiscoverWingProjectsExplicitPathsDoNotScanCWD(t *testing.T) {
 }
 
 func TestDiscoverWingProjectsWithoutPathsPreservesCWDDiscovery(t *testing.T) {
-	cwd := t.TempDir()
+	cwd := testsocket.Dir(t)
 	mkProject(t, cwd, "legacy", true, false)
 	if projects := DiscoverWingProjects(nil, cwd); !hasName(projects, "legacy") {
 		t.Fatalf("legacy cwd project missing: %v", projectNames(projects))
@@ -412,7 +413,7 @@ func TestRoostBrowserURL(t *testing.T) {
 }
 
 func TestResolveWingRelayHTTPURLPrecedence(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	cfg := &config.Config{Dir: dir, RoostURL: "https://config.example/"}
 	if err := config.SaveWingConfig(dir, &config.WingConfig{Roost: "wss://wing.example/"}); err != nil {
 		t.Fatal(err)

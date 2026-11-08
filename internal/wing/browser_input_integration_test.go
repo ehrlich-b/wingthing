@@ -37,7 +37,7 @@ func TestPreviewBrowserLeaseOnRealEgg(t *testing.T) {
 	oldChannel := config.ReleaseChannel
 	config.ReleaseChannel = "preview"
 	defer func() { config.ReleaseChannel = oldChannel }()
-	root, err := os.MkdirTemp("/tmp", "wt-browser-real-")
+	root, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatal(err)
 	}

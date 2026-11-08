@@ -15,6 +15,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestRemoteSessionOutputLimits(t *testing.T) {
@@ -24,7 +25,7 @@ func TestRemoteSessionOutputLimits(t *testing.T) {
 			limit          int
 		}{{"stdout", "", 4 << 20}, {"stderr", " >&2", 64 << 10}} {
 			t.Run(phase+"/"+stream.name, func(t *testing.T) {
-				cfg := &config.Config{Dir: t.TempDir()}
+				cfg := &config.Config{Dir: testsocket.Dir(t)}
 				seedRemoteListSession(t, cfg, "local-session", "")
 				if err := config.SaveRemotes(cfg.Dir, map[string]config.Remote{"flood": {SSHTarget: "host"}}); err != nil {
 					t.Fatal(err)

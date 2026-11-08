@@ -14,11 +14,12 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func contextSecretFixture(t *testing.T) (root string, c *config.ContextConfig) {
 	t.Helper()
-	root, err := filepath.EvalSymlinks(t.TempDir())
+	root, err := filepath.EvalSymlinks(testsocket.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

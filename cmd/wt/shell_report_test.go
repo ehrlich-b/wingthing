@@ -15,6 +15,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestShellReportThreeExecutableTasksOneRefresh(t *testing.T) {
@@ -22,7 +23,7 @@ func TestShellReportThreeExecutableTasksOneRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	binary := localOnlyFixtureBinary(t, repo, root)
 	cfg := &config.Config{Dir: root}
 	type task struct {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/sessionsearch"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func catalogFixture(t *testing.T, cfg *config.Config, id, name, agent, content string) {
@@ -24,7 +25,7 @@ func catalogFixture(t *testing.T, cfg *config.Config, id, name, agent, content s
 	}
 }
 func TestSessionCatalogSearchLivePastAndUnauthorizedContent(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	catalogFixture(t, cfg, "archived-codex", "DNS repair", "codex", `{"sequence":1,"type":"message","source":"codex_transcript","text":"fixed the DNS helper"}`+"\n")
 	catalogFixture(t, cfg, "foreign", "private name", "codex", `{"sequence":1,"type":"message","source":"codex_transcript","text":"forbidden discovery"}`+"\n")
 	catalogFixture(t, cfg, "archived-claude", "other repair", "claude", "")
@@ -52,7 +53,7 @@ func TestSessionCatalogSearchLivePastAndUnauthorizedContent(t *testing.T) {
 	}
 }
 func TestSessionCatalogCancellationAndNonregularArchive(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	catalogFixture(t, cfg, "run", "test", "unsupported", "")
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -72,7 +73,7 @@ func TestSessionCatalogCancellationAndNonregularArchive(t *testing.T) {
 }
 
 func TestSessionCatalogMalformedRecordReportsIncomplete(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	catalogFixture(t, cfg, "run", "visible", "unsupported", "invalid json\n")
 	rows, complete, e := SessionCatalog(t.Context(), cfg, "origin", "machine", "visible", nil)
 	if e != nil || complete || len(rows) != 1 || !rows[0].SearchIncomplete {
@@ -81,7 +82,7 @@ func TestSessionCatalogMalformedRecordReportsIncomplete(t *testing.T) {
 }
 
 func TestSessionSearchCatalogNativePromptAndRemovedSessionPrivacy(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	catalogFixture(t, cfg, "prompt-session", "visible", "unsupported", `{"sequence":1,"type":"prompt_submitted","source":"codex_hook","text":"please repair native DNS helper"}`+"\n")
 	rows, full, err := SessionCatalog(t.Context(), cfg, "origin", "Laptop", "native DNS", nil)
 	if err != nil || !full || len(rows) != 1 {
@@ -106,7 +107,7 @@ func TestSessionSearchCatalogNativePromptAndRemovedSessionPrivacy(t *testing.T) 
 }
 
 func TestSessionSearchCatalogLongNamesPathsAndTranscriptRemainSearchable(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	path := "/home/example/projects/a-long-public-repository-path"
 	name := "a-long-human-session-name-for-the-project"
 	catalogFixture(t, cfg, "session", name, "unsupported", `{"sequence":1,"type":"message","source":"native_import","role":"assistant","text":"Changed /home/example/projects/a-long-public-repository-path. Commit aabbccddeeff0011223344556677889900112233445566778899."}`+"\n")

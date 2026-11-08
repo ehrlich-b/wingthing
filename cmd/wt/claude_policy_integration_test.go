@@ -18,6 +18,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/eggclient/testutil"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // This uses the installed vendor CLI against a loopback fake API, with no real
@@ -54,14 +55,14 @@ func TestRealClaudeModelPolicyPreservesPersonalSettings(t *testing.T) {
 		{"explicit session selection", `{"model":"claude-sonnet-5","env":{"CLAUDE_CODE_EFFORT_LEVEL":"xhigh"}}`, "claude-opus-5", "xhigh", []string{"--model", "claude-opus-5"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			host := t.TempDir()
+			host := testsocket.Dir(t)
 			t.Setenv("HOME", host)
 			testutil.WritePolicyFixture(t, filepath.Join(host, ".claude", "settings.json"), tc.policy)
 			policy, err := eggclient.IsolatedClaudePolicyArgs("claude", true)
 			if err != nil {
 				t.Fatal(err)
 			}
-			user := t.TempDir()
+			user := testsocket.Dir(t)
 			settings := filepath.Join(user, ".claude", "settings.json")
 			const personal = `{"model":"claude-opus-5","theme":"dark","env":{"ANTHROPIC_MODEL":"claude-opus-5","CLAUDE_CODE_EFFORT_LEVEL":"max"},"effortLevel":"low"}`
 			testutil.WritePolicyFixture(t, settings, personal)
@@ -105,7 +106,7 @@ func TestRealClaudeModelPolicyPreservesPersonalSettings(t *testing.T) {
 			args := append(policy, "-p", "Reply OK without tools.", "--output-format", "json", "--max-turns", "1", "--tools", "", "--no-session-persistence")
 			args = append(args, tc.extra...)
 			cmd := exec.CommandContext(ctx, binary, args...)
-			cmd.Dir = t.TempDir()
+			cmd.Dir = testsocket.Dir(t)
 			cmd.Env = []string{
 				"HOME=" + user, "CLAUDE_CONFIG_DIR=" + filepath.Join(user, ".claude"),
 				"PATH=" + os.Getenv("PATH"), "TERM=xterm-256color",

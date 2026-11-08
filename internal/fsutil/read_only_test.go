@@ -4,10 +4,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestOpenBoundedRegularRejectsMissingDirectoryAndOversized(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	path := filepath.Join(dir, "input")
 	if err := os.WriteFile(path, []byte("contents"), 0400); err != nil {
 		t.Fatal(err)

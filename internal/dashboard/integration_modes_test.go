@@ -4,10 +4,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestDiagnosticsCoexistsWithOnboardingAndMachineDetails(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
+	t.Setenv("PATH", testsocket.Dir(t))
 	s := setupFixture()
 	s.handle("D")
 	if s.mode != diagnostics {

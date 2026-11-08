@@ -16,7 +16,7 @@ import (
 
 func fixtureInput(t *testing.T, command string) Input {
 	t.Helper()
-	return Input{Event: "PermissionRequest", ProviderID: "provider-fixture", Tool: "Bash", Arguments: map[string]any{"command": command, "description": "fixture"}, Directory: t.TempDir()}
+	return Input{Event: "PermissionRequest", ProviderID: "provider-fixture", Tool: "Bash", Arguments: map[string]any{"command": command, "description": "fixture"}, Directory: testsocket.Dir(t)}
 }
 
 func startFixtureBroker(t *testing.T, in Input, steps []Step) (string, *bytes.Buffer, func()) {

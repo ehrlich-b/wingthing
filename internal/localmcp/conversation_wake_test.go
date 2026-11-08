@@ -18,11 +18,12 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"golang.org/x/sys/unix"
 )
 
 func TestConversationWakeQueuesApprovalAndReconcilesNativeReceiptAfterRestart(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	db, err := store.Open(cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +130,7 @@ func TestConversationWakeQueuesApprovalAndReconcilesNativeReceiptAfterRestart(t 
 func TestConversationWakeFreshAttemptsRequireExplicitNoInputProof(t *testing.T) {
 	for _, known := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unproved", true: "known_not_sent"}[known], func(t *testing.T) {
-			cfg := &config.Config{Dir: t.TempDir()}
+			cfg := &config.Config{Dir: testsocket.Dir(t)}
 			db, err := store.Open(cfg.DBPath())
 			if err != nil {
 				t.Fatal(err)
@@ -172,7 +173,7 @@ func TestConversationWakeFreshAttemptsRequireExplicitNoInputProof(t *testing.T) 
 }
 
 func TestConversationWakeNeverRedirectsUnknownToResumedParent(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	db, err := store.Open(cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)
@@ -232,7 +233,7 @@ func TestConversationWakeNeverRedirectsUnknownToResumedParent(t *testing.T) {
 func TestConversationWakeRebindsOnlyAfterLockedReservationAbsence(t *testing.T) {
 	for _, evidence := range []string{"absent", "writer_holds_lock", "reservation_exists", "invalid_reservation"} {
 		t.Run(evidence, func(t *testing.T) {
-			cfg := &config.Config{Dir: t.TempDir()}
+			cfg := &config.Config{Dir: testsocket.Dir(t)}
 			root := wakeExactTree(t, cfg, wakeExactLegacy)
 			db := wakeExactOpen(t, cfg)
 			defer func() { _ = db.Close() }()
@@ -328,7 +329,7 @@ func TestConversationWakeRebindsOnlyAfterLockedReservationAbsence(t *testing.T) 
 }
 
 func TestConversationWakeOptInOwnerAndPersonalScope(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	db, err := store.Open(cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)
@@ -358,7 +359,7 @@ func TestConversationWakeOptInOwnerAndPersonalScope(t *testing.T) {
 func TestConversationWakeRetainedRuntimeExitAndStartupFailure(t *testing.T) {
 	for _, eventType := range []string{"session_exit", "session_failed"} {
 		t.Run(eventType, func(t *testing.T) {
-			cfg := &config.Config{Dir: t.TempDir()}
+			cfg := &config.Config{Dir: testsocket.Dir(t)}
 			db, err := store.Open(cfg.DBPath())
 			if err != nil {
 				t.Fatal(err)
@@ -411,7 +412,7 @@ func TestConversationWakeRetainedRuntimeExitAndStartupFailure(t *testing.T) {
 }
 
 func TestConversationWakeConcurrentControllersHaveOneRootSender(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	db, err := store.Open(cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)
@@ -455,7 +456,7 @@ func TestConversationWakeConcurrentControllersHaveOneRootSender(t *testing.T) {
 }
 
 func TestConversationWakeExplicitRetryAfterWriterReleaseUsesFreshNativeRequest(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	db, err := store.Open(cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)

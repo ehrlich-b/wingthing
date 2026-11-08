@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // Rapid shutdown must join discovery startup instead of racing a WaitGroup
@@ -15,7 +17,7 @@ import (
 func TestPhoneListenerImmediateShutdown(t *testing.T) {
 	for _, cancelled := range []bool{false, true} {
 		t.Run(map[bool]string{false: "close", true: "cancel-before-listen"}[cancelled], func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			private, err := ecdh.X25519().GenerateKey(rand.Reader)
 			if err != nil {
 				t.Fatal(err)

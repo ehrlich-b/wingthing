@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestRemotePreviewRejectsStableExecutableBeforeStateAccess(t *testing.T) {
@@ -17,7 +19,7 @@ func TestRemotePreviewRejectsStableExecutableBeforeStateAccess(t *testing.T) {
 	if stable == "" || preview == "" {
 		t.Fatal("stable and preview test binaries are required; run make test-integ")
 	}
-	fixture := t.TempDir()
+	fixture := testsocket.Dir(t)
 	binDir, home := filepath.Join(fixture, "bin"), filepath.Join(fixture, "home")
 	for _, dir := range []string{binDir, home} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {

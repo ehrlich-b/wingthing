@@ -16,6 +16,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
@@ -23,7 +24,7 @@ import (
 
 func committedInventoryServer(t *testing.T, wingID string, seed func(*store.Store, *config.Config)) (*Server, *config.WingConfig) {
 	t.Helper()
-	cfg := &config.Config{Dir: t.TempDir(), WingID: wingID}
+	cfg := &config.Config{Dir: testsocket.Dir(t), WingID: wingID}
 	if _, err := auth.EnsureKeyPair(cfg.Dir); err != nil {
 		t.Fatal(err)
 	}

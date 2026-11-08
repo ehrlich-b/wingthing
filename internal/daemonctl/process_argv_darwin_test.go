@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 const daemonArgvHelperEnv = "WT_TEST_DAEMON_ARGV_HELPER"
@@ -22,7 +24,7 @@ func init() {
 }
 
 func TestInspectDaemonPidPreservesExecutablePathSpacesOnDarwin(t *testing.T) {
-	spacedDir := filepath.Join(t.TempDir(), "custom install path")
+	spacedDir := filepath.Join(testsocket.Dir(t), "custom install path")
 	if err := os.Mkdir(spacedDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +69,7 @@ func TestStopDaemonAndWaitHandlesUnreapedExitOnDarwin(t *testing.T) {
 	if matches, err := inspectDaemonPid(pid, WingDaemon); err != nil || !matches {
 		t.Fatalf("fixture daemon not recognized: matches=%v error=%v", matches, err)
 	}
-	pidPath := filepath.Join(t.TempDir(), "wing.pid")
+	pidPath := filepath.Join(testsocket.Dir(t), "wing.pid")
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(pid)), 0600); err != nil {
 		t.Fatal(err)
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient/testutil"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestIsolatedClaudePolicyProjectsOnlyModelAndEffort(t *testing.T) {
@@ -32,7 +33,7 @@ func TestIsolatedClaudePolicyProjectsOnlyModelAndEffort(t *testing.T) {
 		{"unsupported environment effort", `{"env":{"CLAUDE_CODE_EFFORT_LEVEL":"unknown"}}`, "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			home := t.TempDir()
+			home := testsocket.Dir(t)
 			t.Setenv("HOME", home)
 			path := filepath.Join(home, ".claude", "settings.json")
 			testutil.WritePolicyFixture(t, path, tc.source)
@@ -78,10 +79,10 @@ func TestIsolatedClaudePolicyProjectsOnlyModelAndEffort(t *testing.T) {
 }
 
 func TestIsolatedClaudePolicyReloadsWithoutTouchingUserProfiles(t *testing.T) {
-	host := t.TempDir()
+	host := testsocket.Dir(t)
 	t.Setenv("HOME", host)
 	policyPath := filepath.Join(host, ".claude", "settings.json")
-	users := []string{t.TempDir(), t.TempDir()}
+	users := []string{testsocket.Dir(t), testsocket.Dir(t)}
 	for _, user := range users {
 		testutil.WritePolicyFixture(t, filepath.Join(user, ".claude", "settings.json"), `{"model":"opus","theme":"dark","env":{"PERSONAL":"keep"}}`)
 		testutil.WritePolicyFixture(t, filepath.Join(user, ".claude", ".claude.json"), `{"hasCompletedOnboarding":true,"theme":"dark","projects":{"keep":true}}`)
@@ -108,12 +109,12 @@ func TestIsolatedClaudePolicyUsesConfiguredSettingsSource(t *testing.T) {
 	previous := config.ReleaseChannel
 	config.ReleaseChannel = "stable"
 	t.Cleanup(func() { config.ReleaseChannel = previous })
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 	hostPath := filepath.Join(home, ".claude", "settings.json")
 	host := `{"model":"opus","effortLevel":"low"}`
 	testutil.WritePolicyFixture(t, hostPath, host)
-	settingsPath := filepath.Join(t.TempDir(), "org-settings.json")
+	settingsPath := filepath.Join(testsocket.Dir(t), "org-settings.json")
 	for _, model := range []string{"sonnet", "claude-sonnet-5"} {
 		source := `{"model":"` + model + `","effortLevel":"high","env":{"CLAUDE_CODE_EFFORT_LEVEL":"max","ANTHROPIC_API_KEY":"source-secret"},"hooks":{"Stop":[]},"theme":"host-theme"}`
 		testutil.WritePolicyFixture(t, settingsPath, source)
@@ -139,7 +140,7 @@ func TestIsolatedClaudePolicyUsesConfiguredSettingsSource(t *testing.T) {
 }
 
 func TestIsolatedClaudePolicyKeepsExplicitSessionModel(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 	testutil.WritePolicyFixture(t, filepath.Join(home, ".claude", "settings.json"), `{"model":"claude-sonnet-5"}`)
 	policy, err := IsolatedClaudePolicyArgs("claude", true)
@@ -154,7 +155,7 @@ func TestIsolatedClaudePolicyKeepsExplicitSessionModel(t *testing.T) {
 }
 
 func TestIsolatedClaudePolicyDoesNotReadHostForPersonalOrOtherAgents(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 	testutil.WritePolicyFixture(t, filepath.Join(home, ".claude", "settings.json"), "invalid")
 	for _, tc := range []struct {
@@ -169,7 +170,7 @@ func TestIsolatedClaudePolicyDoesNotReadHostForPersonalOrOtherAgents(t *testing.
 }
 
 func TestIsolatedClaudePolicyMissingAndUnreadable(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 	args, err := IsolatedClaudePolicyArgs("claude", true)
 	if err != nil || len(args) != 0 {
@@ -184,7 +185,7 @@ func TestIsolatedClaudePolicyMissingAndUnreadable(t *testing.T) {
 }
 
 func TestExistingClaudeHelperDoesNotRewritePersonalSettings(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	path := filepath.Join(home, ".claude", "settings.json")
 	helper, err := json.Marshal("cat " + filepath.Join(home, ".anthropic_key"))
 	if err != nil {

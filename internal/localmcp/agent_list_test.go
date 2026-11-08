@@ -17,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingconnect"
 )
 
@@ -141,7 +142,7 @@ func TestAgentListSerializedAdaptersReturnSameDurableIdentities(t *testing.T) {
 	if got := inventoryIDs(t, data); !reflect.DeepEqual(got, expected) {
 		t.Fatalf("socket authority/stdio: %v", got)
 	}
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	if err = config.SaveRemotes(dir, map[string]config.Remote{"fixture": {SSHTarget: "fixture", WingID: "fixture-wing", ControlVersion: control.ContractVersion, ControlSocket: "/fixture-unused", WingthingDir: "/fixture-state"}}); err != nil {
 		t.Fatal(err)
 	}

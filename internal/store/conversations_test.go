@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func testConversation(id, parent, owner string) Conversation {
@@ -21,7 +23,7 @@ func reserveTestConversation(t *testing.T, s *Store, c Conversation) *Conversati
 }
 
 func TestConversationLineageReplayAndResumePersist(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.db")
+	path := filepath.Join(testsocket.Dir(t), "state.db")
 	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +66,7 @@ func TestConversationLineageReplayAndResumePersist(t *testing.T) {
 }
 
 func TestConversationDeliveryReplayAndCheckpointCAS(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.db")
+	path := filepath.Join(testsocket.Dir(t), "state.db")
 	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +122,7 @@ func TestConversationDeliveryReplayAndCheckpointCAS(t *testing.T) {
 }
 
 func TestConversationConcurrentLaunchReservationIsSingle(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.db")
+	path := filepath.Join(testsocket.Dir(t), "state.db")
 	a, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +168,7 @@ func TestConversationConcurrentLaunchReservationIsSingle(t *testing.T) {
 }
 
 func TestConversationInventoryBoundRejectsNewButAllowsRetry(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "state.db"))
+	s, err := Open(filepath.Join(testsocket.Dir(t), "state.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,10 +13,11 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestArchivedRunTurnMethodsKeepFullResultAndRejectTraversal(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	session := LocalSession{ID: "fixture", Agent: "claude"}
 	dir := filepath.Join(cfg.Dir, "eggs", session.ID)
 	if err := os.MkdirAll(dir, 0700); err != nil {

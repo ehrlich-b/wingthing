@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 var markdownLink = regexp.MustCompile(`\[[^]]+\]\(([^)\s]+)`) // local links in current docs use no spaces
@@ -81,7 +83,7 @@ func brokenLocalMarkdownLinks(root string) ([]string, error) {
 }
 
 func TestLocalMarkdownLinksIgnoreGeneratedDirectories(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	write := func(rel, content string) {
 		t.Helper()
 		path := filepath.Join(root, filepath.FromSlash(rel))

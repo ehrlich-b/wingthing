@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func launchPolicyFile(t *testing.T, dir, name, body string) string {
@@ -18,7 +20,7 @@ func launchPolicyFile(t *testing.T, dir, name, body string) string {
 	return path
 }
 func TestLaunchConfigProductionPrecedenceAndLegacy(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	t.Setenv("HOME", dir)
 	t.Setenv("WINGTHING_DIR", filepath.Join(dir, "ambient-wing"))
 	for _, tc := range []struct{ name, body string }{
@@ -44,7 +46,7 @@ func TestLaunchConfigProductionPrecedenceAndLegacy(t *testing.T) {
 	}
 }
 func TestLaunchConfigExplicitHomeAndNamedBase(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	home := filepath.Join(dir, "selected-home")
 	t.Setenv("HOME", filepath.Join(dir, "foreign-home"))
 	bases := filepath.Join(dir, "bases")
@@ -71,7 +73,7 @@ func TestLaunchConfigExplicitHomeAndNamedBase(t *testing.T) {
 	_ = parent
 }
 func TestLaunchConfigProvenanceMasksDuplicatesMissingAndCycles(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	parent := launchPolicyFile(t, dir, "parent.yaml", "base: none\nfs: [deny:./blocked]\nnetwork: {domains: [one.example], agent_domains: none}\n")
 	child := launchPolicyFile(t, dir, "child.yaml", "base: {name: ./parent.yaml, network: ./parent.yaml}\nfs: [deny:./blocked]\n")
 	if _, _, err := ResolveLaunchConfig(child, "", dir); err == nil || !strings.Contains(err.Error(), "repeated base") {
@@ -115,7 +117,7 @@ func TestLaunchConfigProvenanceMasksDuplicatesMissingAndCycles(t *testing.T) {
 	}
 }
 func TestLaunchCommandPreviewDoesNotPrepareState(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	home := filepath.Join(dir, "absent-home")
 	args, native, err := LaunchCommandPreview("codex", dir, home, "codex-cli 0.159.3", true)
 	if err != nil || !native {
@@ -139,7 +141,7 @@ func TestLaunchCommandPreviewDoesNotPrepareState(t *testing.T) {
 }
 
 func TestLaunchConfigSymlinkedParentPreservesDenialSourcePaths(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	policies := filepath.Join(dir, "policies")
 	if err := os.Mkdir(policies, 0700); err != nil {
 		t.Fatal(err)
@@ -180,7 +182,7 @@ func TestLaunchConfigSymlinkedParentPreservesDenialSourcePaths(t *testing.T) {
 }
 
 func TestLaunchConfigPolicyAliasUsesRuntimeRelativeBaseDirectory(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	elsewhere := filepath.Join(dir, "elsewhere")
 	if err := os.Mkdir(elsewhere, 0700); err != nil {
 		t.Fatal(err)
@@ -206,7 +208,7 @@ func TestLaunchConfigPolicyAliasUsesRuntimeRelativeBaseDirectory(t *testing.T) {
 }
 
 func TestLaunchConfigResolutionBudgetFailsBeforeUnboundedTraversal(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	for _, chain := range []string{"a", "b", "c", "d"} {
 		for level := 0; level < 8; level++ {
 			body := "base: none\nfs: [rw:./]\n"

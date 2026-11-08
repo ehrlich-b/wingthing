@@ -11,10 +11,12 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestOpenRelayMigratesConcurrentFirstUse(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "relay.db")
+	path := filepath.Join(testsocket.Dir(t), "relay.db")
 	const attempts = 8
 	start := make(chan struct{})
 	stores := make(chan *RelayStore, attempts)
@@ -88,7 +90,7 @@ func TestUpgradeEveryRelayMigrationBaselinePreservesRelationships(t *testing.T) 
 	for baseline := 1; baseline <= len(migrations); baseline++ {
 		baseline := baseline
 		t.Run(fmt.Sprintf("through_%s", migrations[baseline-1]), func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "relay.db")
+			path := filepath.Join(testsocket.Dir(t), "relay.db")
 			db, err := sql.Open("sqlite", path)
 			if err != nil {
 				t.Fatal(err)
@@ -259,7 +261,7 @@ func mustMigrationExec(t *testing.T, db *sql.DB, statement string) {
 // WAL setup must retry outside SQLite's busy handler: competing journal-mode
 // upgrades can otherwise exhaust the outer deadline in a single Exec.
 func TestRelayWALBusyRetryDeadline(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "busy.db")
+	path := filepath.Join(testsocket.Dir(t), "busy.db")
 	reader, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)

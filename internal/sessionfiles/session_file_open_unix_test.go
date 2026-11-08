@@ -9,13 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"golang.org/x/sys/unix"
 )
 
 func TestOpenSessionFileNoFollowRejectsHardlinks(t *testing.T) {
-	root := wingpolicy.CanonicalPolicyPath(t.TempDir())
-	secret := filepath.Join(t.TempDir(), "secret.txt")
+	root := wingpolicy.CanonicalPolicyPath(testsocket.Dir(t))
+	secret := filepath.Join(testsocket.Dir(t), "secret.txt")
 	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +41,7 @@ func TestOpenSessionFileNoFollowRejectsHardlinks(t *testing.T) {
 }
 
 func TestOpenSessionFileNoFollowRejectsRootAncestorSymlink(t *testing.T) {
-	base := wingpolicy.CanonicalPolicyPath(t.TempDir())
+	base := wingpolicy.CanonicalPolicyPath(testsocket.Dir(t))
 	realParent := filepath.Join(base, "real")
 	root := filepath.Join(realParent, "workspace")
 	if err := os.MkdirAll(root, 0o700); err != nil {
@@ -67,7 +68,7 @@ func TestOpenSessionFileNoFollowRejectsRootAncestorSymlink(t *testing.T) {
 }
 
 func TestOpenSessionFileNoFollowRejectsFIFOWithoutBlocking(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	name := "pipe"
 	if err := unix.Mkfifo(filepath.Join(root, name), 0o600); err != nil {
 		t.Fatal(err)

@@ -18,13 +18,14 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 func TestRoostMCPPathsDoNotReloadLegacyWritablePolicy(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 	cfg := &config.Config{Dir: filepath.Join(home, "state")}
 	workspace := filepath.Join(home, "workspace")
@@ -81,7 +82,7 @@ func TestRoostMCPPathsDoNotReloadLegacyWritablePolicy(t *testing.T) {
 }
 
 func TestRoostTransportsSelectedRootACL(t *testing.T) {
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
 	cfg := &config.Config{Dir: filepath.Join(home, "state"), DefaultAgent: "claude"}
@@ -193,7 +194,7 @@ func TestRoostTransportsSelectedRootACL(t *testing.T) {
 func TestRoostTransportsRejectUnsafeRoots(t *testing.T) {
 	for _, kind := range []string{"nested", "symlink", "symlink ancestor"} {
 		t.Run(kind, func(t *testing.T) {
-			home := config.CanonicalProviderPath(t.TempDir())
+			home := config.CanonicalProviderPath(testsocket.Dir(t))
 			t.Setenv("HOME", home)
 			t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
 			cfg := &config.Config{Dir: filepath.Join(home, "state"), DefaultAgent: "claude"}
@@ -286,7 +287,7 @@ func TestRoostTransportsRejectUnsafeRoots(t *testing.T) {
 }
 
 func TestRoostTransportsExplainRoleRootPolicy(t *testing.T) {
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
 	t.Setenv("WT_PROVIDER_BASE_URL", "")
@@ -359,7 +360,7 @@ func TestRoostTransportsExplainRoleRootPolicy(t *testing.T) {
 }
 
 func TestRoostLaunchesUseRoleRootPolicy(t *testing.T) {
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
 	cfg := &config.Config{Dir: filepath.Join(home, "state"), DefaultAgent: "claude"}
@@ -530,7 +531,7 @@ func TestRoostContinuationUsesRoleRootPolicy(t *testing.T) {
 }
 
 func TestPersonalMCPSubdirectoryUsesRootPathPolicy(t *testing.T) {
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
 	cfg := &config.Config{Dir: filepath.Join(home, "state")}
@@ -586,7 +587,7 @@ func assertRoostRolePolicy(t *testing.T, cfg *egg.EggConfig) {
 }
 
 func TestRoostMCPRolePolicyMissingAndAdminFallback(t *testing.T) {
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
 	cfg := &config.Config{Dir: filepath.Join(home, "state")}
@@ -661,7 +662,7 @@ func TestRoostBrowserForkUsesRoleRootPolicyInSubdirectory(t *testing.T) {
 }
 
 func TestRoostHeadlessSubmissionUsesRoleRootPolicy(t *testing.T) {
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
 	cfg := &config.Config{Dir: filepath.Join(home, "state"), DefaultAgent: "claude"}

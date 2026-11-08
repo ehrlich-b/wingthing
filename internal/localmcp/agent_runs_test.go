@@ -20,6 +20,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
@@ -42,7 +43,7 @@ type runWingFixture struct {
 func newRunWingFixture(t *testing.T, s *Server) *runWingFixture {
 	t.Helper()
 	if s == nil {
-		s = &Server{Version: "test", Cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, Principal: "owner", Logs: io.Discard}
+		s = &Server{Version: "test", Cfg: &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "claude"}, Principal: "owner", Logs: io.Discard}
 	}
 	s = testWingServer(t, s)
 	if s.Sessions.Register == nil {

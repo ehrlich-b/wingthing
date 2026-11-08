@@ -5,11 +5,12 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 )
 
 func TestHostMailboxChildLaunchCommandFlags(t *testing.T) {
-	cfg := &config.Config{Dir: wingpolicy.CanonicalPolicyPath(t.TempDir())}
+	cfg := &config.Config{Dir: wingpolicy.CanonicalPolicyPath(testsocket.Dir(t))}
 	args, err := eggclient.ProtectedWriteTargetArgs([]string{cfg.Dir, wingpolicy.CanonicalPolicyPath("/opt/wt/bin/wt")})
 	if err != nil {
 		t.Fatal(err)

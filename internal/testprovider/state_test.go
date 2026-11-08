@@ -11,6 +11,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestParentLifecycleFixtureSocketPaths(t *testing.T) {
@@ -62,7 +63,7 @@ func TestParentLifecycleFixtureSocketPaths(t *testing.T) {
 }
 
 func TestParentLifecycleFixtureRefusesUnusableCheckoutBeforeWriting(t *testing.T) {
-	scratch := filepath.Join(t.TempDir(), strings.Repeat("x", 104))
+	scratch := filepath.Join(testsocket.Dir(t), strings.Repeat("x", 104))
 	if _, err := shortStateDir(scratch); err == nil || !strings.Contains(err.Error(), "shorter checkout path") {
 		t.Fatalf("unusable checkout accepted: %v", err)
 	}
@@ -72,7 +73,7 @@ func TestParentLifecycleFixtureRefusesUnusableCheckoutBeforeWriting(t *testing.T
 }
 
 func TestShortFixtureRootIgnoresLongTMPDIR(t *testing.T) {
-	ambient := filepath.Join(t.TempDir(), strings.Repeat("x", 150))
+	ambient := filepath.Join(testsocket.Dir(t), strings.Repeat("x", 150))
 	if err := os.MkdirAll(ambient, 0700); err != nil {
 		t.Fatal(err)
 	}

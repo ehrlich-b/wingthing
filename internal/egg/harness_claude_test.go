@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func harnessFixture() HarnessConfig {
@@ -64,7 +65,7 @@ func TestClaudeHarnessConformancePolicy(t *testing.T) {
 }
 
 func TestClaudeHarnessConformancePreparation(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	work := filepath.Join(home, "workspace")
 	dir := filepath.Join(home, "session")
 	for _, p := range []string{work, dir} {
@@ -75,7 +76,7 @@ func TestClaudeHarnessConformancePreparation(t *testing.T) {
 	h := harnessFixture()
 	rc := RunConfig{Harness: &h, Agent: "claude", CWD: work, UserHome: home, FS: []string{"ro:/", "rw:" + work, "deny:" + filepath.Join(home, "keys"), "deny-write:" + filepath.Join(work, "egg.yaml")}, Network: []string{"*"}, ProviderSessionID: "provider-id", AgentArgs: []string{"--model", "fixture-model", "--settings", `{"effortLevel":"high","env":{"DISABLE_AUTOUPDATER":"1"}}`}}
 	opts := LaunchPreparationOptions{Home: home, HostHome: home, EggDir: dir, ClaudeVersion: "2.1.285 (Claude Code)", CodexCapability: SavedCodexCapability("")}
-	dryState, err := NewDryLaunchState(t.TempDir())
+	dryState, err := NewDryLaunchState(testsocket.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +158,7 @@ func TestClaudeHarnessConformanceAdmission(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r, o := base, opts
 			alter(&r, &o)
-			state, _ := NewDryLaunchState(t.TempDir())
+			state, _ := NewDryLaunchState(testsocket.Dir(t))
 			if err := validateClaudeHarness(r, o, state); err == nil {
 				t.Fatal("unsafe admission")
 			}
@@ -166,7 +167,7 @@ func TestClaudeHarnessConformanceAdmission(t *testing.T) {
 	for _, args := range [][]string{{"--permission-mode=bypassPermissions"}, {"--dangerously-skip-permissions"}, {"--setting-sources", "project"}, {"--add-dir", "/"}, {"--settings", `{"sandbox":{"enabled":false}}`}, {"--settings", `{"env":{"NODE_OPTIONS":"injection"}}`}, {"--settings", "/host/settings.json"}, {"--settings", `{"hooks":{}}`}, {"--model"}, {"--", "--settings=ignored"}, {"--plugin-dir=./plugin"}} {
 		r := base
 		r.AgentArgs = args
-		state, _ := NewDryLaunchState(t.TempDir())
+		state, _ := NewDryLaunchState(testsocket.Dir(t))
 		if err := validateClaudeHarness(r, opts, state); err == nil {
 			t.Errorf("accepted unsafe arguments %q", args)
 		}
@@ -186,7 +187,7 @@ func TestClaudeHarnessConformanceConfig(t *testing.T) {
 		if _, err := LoadEggConfigFromYAML(text); err == nil {
 			t.Errorf("accepted invalid config %s", text)
 		}
-		dir := t.TempDir()
+		dir := testsocket.Dir(t)
 		if err := os.WriteFile(filepath.Join(dir, "egg.yaml"), []byte(text), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -199,7 +200,7 @@ func TestClaudeHarnessConformanceConfig(t *testing.T) {
 func TestClaudeHarnessConformanceInstalledProbe(t *testing.T) {
 	h := harnessFixture()
 	rc := RunConfig{Harness: &h, Agent: "claude", CWD: "/workspace", ProviderSessionID: "exact"}
-	binary := filepath.Join(t.TempDir(), "claude")
+	binary := filepath.Join(testsocket.Dir(t), "claude")
 	t.Setenv("ANTHROPIC_API_KEY", "DO_NOT_INHERIT")
 	for _, version := range []string{"2.1.285", "2.1.284"} {
 		script := "#!/bin/sh\n[ \"$1\" = --version ] || exit 9\n[ -z \"$ANTHROPIC_API_KEY\" ] || exit 8\nprintf '%s (Claude Code)\\n' '" + version + "'\n"

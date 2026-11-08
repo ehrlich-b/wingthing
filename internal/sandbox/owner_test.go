@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestSandboxOwnerChild(t *testing.T) {
@@ -74,7 +76,7 @@ func sandboxOwnerChild(t *testing.T, root string) (*exec.Cmd, string) {
 }
 
 func TestSandboxCrashSweepOnNextStart(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	t.Setenv("TMPDIR", root)
 	child, path := sandboxOwnerChild(t, root)
 	if err := child.Process.Kill(); err != nil {
@@ -97,7 +99,7 @@ func TestSandboxCrashSweepOnNextStart(t *testing.T) {
 }
 
 func TestSandboxSweepLiveOwner(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	t.Setenv("TMPDIR", root)
 	_, path := sandboxOwnerChild(t, root)
 	SweepStaleDirectories()
@@ -150,7 +152,7 @@ func testSweepBudget() *sweepBudget {
 func TestSandboxSweepOwnership(t *testing.T) {
 	for _, scenario := range []string{"pid reuse", "different boot", "missing pid", "unlocked live pid", "held lock overrides dead identity"} {
 		t.Run(scenario, func(t *testing.T) {
-			root := t.TempDir()
+			root := testsocket.Dir(t)
 			owner := currentSandboxOwner(t)
 			keep := false
 			switch scenario {
@@ -197,7 +199,7 @@ func TestSandboxSweepOwnership(t *testing.T) {
 func TestSandboxSweepUnknownOwnerKeptAndLogged(t *testing.T) {
 	for _, scenario := range []string{"unreadable", "missing", "malformed", "invalid boot", "invalid start", "oversized pid", "oversized", "fifo"} {
 		t.Run(scenario, func(t *testing.T) {
-			root := t.TempDir()
+			root := testsocket.Dir(t)
 			owner := currentSandboxOwner(t)
 			owner.Boot = "00000000-0000-0000-0000-000000000000"
 			switch scenario {
@@ -247,7 +249,7 @@ func TestSandboxSweepUnknownOwnerKeptAndLogged(t *testing.T) {
 func TestSandboxSweepSymlinkEscape(t *testing.T) {
 	for _, scenario := range []string{"directory", "lock", "nested"} {
 		t.Run(scenario, func(t *testing.T) {
-			root, outside := t.TempDir(), t.TempDir()
+			root, outside := testsocket.Dir(t), testsocket.Dir(t)
 			owner := currentSandboxOwner(t)
 			owner.Boot = "00000000-0000-0000-0000-000000000000"
 			target := writeSandboxOwner(t, outside, owner)
@@ -289,7 +291,7 @@ func TestSandboxSweepSymlinkEscape(t *testing.T) {
 func TestSandboxSweepBoundsRetainOwnerForRetry(t *testing.T) {
 	for _, scenario := range []string{"count", "time", "contents"} {
 		t.Run(scenario, func(t *testing.T) {
-			root := t.TempDir()
+			root := testsocket.Dir(t)
 			owner := currentSandboxOwner(t)
 			owner.Boot = "00000000-0000-0000-0000-000000000000"
 			path := writeSandboxOwner(t, root, owner)

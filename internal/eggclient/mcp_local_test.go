@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 
 	"github.com/ehrlich-b/wingthing/internal/egg"
 )
@@ -38,11 +39,11 @@ func TestAgentStartArgsAreValidated(t *testing.T) {
 }
 
 func TestSharedHostFilesystemPolicyPreservesAdministratorConfig(t *testing.T) {
-	stateDir := t.TempDir()
-	workspace := t.TempDir()
-	readOnlySource := t.TempDir()
-	writableCache := t.TempDir()
-	deniedSecret := t.TempDir()
+	stateDir := testsocket.Dir(t)
+	workspace := testsocket.Dir(t)
+	readOnlySource := testsocket.Dir(t)
+	writableCache := testsocket.Dir(t)
+	deniedSecret := testsocket.Dir(t)
 	cfg := &config.Config{Dir: stateDir}
 	source := &egg.EggConfig{
 		FS: []string{

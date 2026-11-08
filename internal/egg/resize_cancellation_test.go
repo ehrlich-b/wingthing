@@ -10,6 +10,7 @@ import (
 
 	"github.com/creack/pty"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -24,7 +25,7 @@ func blockedResizeFixture(t *testing.T, exclusive bool) (*Server, *Session, chan
 	if err := pty.Setsize(master, &pty.Winsize{Cols: 80, Rows: 24}); err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	lifecycleWrite(t, filepath.Join(dir, "egg.meta"), "cols=80\nrows=24\n")
 	queue := make(chan vtermMsg, 1)
 	queue <- vtermMsg{data: []byte("pending")}

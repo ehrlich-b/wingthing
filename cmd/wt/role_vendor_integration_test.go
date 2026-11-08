@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/sessionrole"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // No provider account, credentials, billing or outbound API is used. This
@@ -41,8 +42,8 @@ func TestRealClaudeRoleContextAfterCompaction(t *testing.T) {
 		t.Skip("installed claude is a test stand-in, not the vendor CLI")
 	}
 	t.Logf("vendor runtime: %s", strings.TrimSpace(string(version)))
-	home := t.TempDir()
-	work := t.TempDir()
+	home := testsocket.Dir(t)
+	work := testsocket.Dir(t)
 	const role = "you are the coordinator node. ROLE_REPOKE_FIXTURE_7351"
 	settings := map[string]any{}
 	if err := sessionrole.AddHook(settings, role); err != nil {

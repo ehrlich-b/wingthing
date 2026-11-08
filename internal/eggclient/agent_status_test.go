@@ -11,10 +11,11 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestAgentStatusLegacyEggAndBrokenJournalRemainListable(t *testing.T) {
-	root, home := t.TempDir(), t.TempDir()
+	root, home := testsocket.Dir(t), testsocket.Dir(t)
 	cfg := &config.Config{Dir: root}
 	for _, id := range []string{"old-egg", "broken-journal"} {
 		dir := filepath.Join(root, "eggs", id)

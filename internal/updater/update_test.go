@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestDecodeGitHubReleaseIsBounded(t *testing.T) {
@@ -111,7 +112,7 @@ func TestValidateReleaseBinaryRequiresCurrentPublicCommandSurface(t *testing.T) 
 	if os.PathSeparator == '\\' {
 		t.Skip("shell fixture is Unix-only")
 	}
-	path := filepath.Join(t.TempDir(), "wt")
+	path := filepath.Join(testsocket.Dir(t), "wt")
 	fixture := `#!/bin/sh
 case "$*" in
   "--version") echo "wt version v-test" ;;
@@ -129,7 +130,7 @@ esac
 		t.Fatal(err)
 	}
 
-	broken := filepath.Join(t.TempDir(), "wt")
+	broken := filepath.Join(testsocket.Dir(t), "wt")
 	if err := os.WriteFile(broken, []byte("#!/bin/sh\necho old release\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +138,7 @@ esac
 		t.Fatal("binary without current public command surface was accepted")
 	}
 
-	hanging := filepath.Join(t.TempDir(), "wt")
+	hanging := filepath.Join(testsocket.Dir(t), "wt")
 	if err := os.WriteFile(hanging, []byte("#!/bin/sh\nexec sleep 5\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}

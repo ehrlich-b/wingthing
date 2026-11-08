@@ -15,11 +15,12 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/agent"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func codexRunFixture(t *testing.T) (rt *runTurnRuntime, home string, request RunTurnRequest, sent <-chan struct{}) {
 	t.Helper()
-	dir, home := t.TempDir(), t.TempDir()
+	dir, home := testsocket.Dir(t), testsocket.Dir(t)
 	sessionID := filepath.Base(dir)
 	lifecycleWrite(t, filepath.Join(dir, "egg.meta"), "agent=codex\n")
 	publishHook := func(name, payload string) {
@@ -200,7 +201,7 @@ func TestCodexRunDifferentSubmittedPromptFails(t *testing.T) {
 }
 
 func TestCodexRunArgsExactArgvAndNativePublisher(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	input := []string{"resume", "thread-exact", "-m", "fixture-model"}
 	args, enabled, err := CodexRunArgs(input, home, "egg-exact")
 	if err != nil || !enabled {
@@ -240,12 +241,12 @@ func TestCodexRunArgsExactArgvAndNativePublisher(t *testing.T) {
 
 func TestCodexRunArgsExplicitConfigurationDisablesAdmission(t *testing.T) {
 	for _, args := range [][]string{{"--disable", "hooks"}, {"-c", "hooks.Stop=[]"}, {"-c", "notify=[\"fixture-notifier\"]"}} {
-		actual, enabled, err := CodexRunArgs(args, t.TempDir(), "fixture")
+		actual, enabled, err := CodexRunArgs(args, testsocket.Dir(t), "fixture")
 		if err != nil || enabled || actual[0] != "--no-daemon" {
 			t.Fatalf("explicit config: %q %t %v", actual, enabled, err)
 		}
 	}
-	if _, _, err := CodexRunArgs([]string{"--remote", "unix:///another-runtime"}, t.TempDir(), "fixture"); err == nil {
+	if _, _, err := CodexRunArgs([]string{"--remote", "unix:///another-runtime"}, testsocket.Dir(t), "fixture"); err == nil {
 		t.Fatal("egg delegated execution to another runtime")
 	}
 }

@@ -10,12 +10,13 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
 func testLocalWing(t *testing.T) *config.Config {
 	t.Helper()
-	t.Chdir(t.TempDir())
+	t.Chdir(testsocket.Dir(t))
 	t.Setenv("WINGTHING_DIR", "state")
 	t.Setenv("WT_MCP_CLIENT", "")
 	cfg := &config.Config{Dir: "state", WingID: "test-wing", DefaultAgent: "claude"}
@@ -34,7 +35,7 @@ func testLocalWing(t *testing.T) *config.Config {
 }
 
 func TestNoWingFailsWithoutSpawning(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "absent-state")
+	dir := filepath.Join(testsocket.Dir(t), "absent-state")
 	t.Setenv("WINGTHING_DIR", dir)
 	cmd := mcpCmd()
 	cmd.SetArgs([]string{"stdio"})

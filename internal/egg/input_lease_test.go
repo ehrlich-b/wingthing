@@ -11,6 +11,7 @@ import (
 
 	"github.com/creack/pty"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 	"google.golang.org/grpc/codes"
@@ -236,7 +237,7 @@ func TestInputLeaseTakeoverAcknowledgesAfterCancelledOperationStops(t *testing.T
 
 func TestInputLeasePTYResizePreservesCancellableWritesAndOutput(t *testing.T) {
 	master, slave := blockedInputPTY(t)
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	lifecycleWrite(t, filepath.Join(dir, "egg.meta"), "cols=80\nrows=24\n")
 	sess := &Session{ID: "fixture", ptmx: master, replay: newReplayBuffer("claude"), vtermCh: make(chan vtermMsg, 256)}
 	server := &Server{dir: dir, session: sess, exclusiveInput: true}

@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func stageFixture(t *testing.T, root string) {
@@ -43,7 +45,7 @@ func buildChecker(t *testing.T) (string, string) {
 	t.Helper()
 	_, source, _, _ := runtime.Caller(0)
 	repo := filepath.Clean(filepath.Join(filepath.Dir(source), "../.."))
-	checker := filepath.Join(t.TempDir(), "checker")
+	checker := filepath.Join(testsocket.Dir(t), "checker")
 	build := exec.Command("nice", "-n", "10", "go", "build", "-p", "2", "-o", checker, "./cmd/check-downloads")
 	build.Dir = repo
 	if output, err := build.CombinedOutput(); err != nil {
@@ -60,7 +62,7 @@ func TestDeployGuardNormalEntryPoint(t *testing.T) {
 	for _, staged := range []bool{false, true} {
 		for _, parallel := range []string{"-j1", "-j2"} {
 			t.Run(fmt.Sprintf("staged=%v/%s", staged, parallel), func(t *testing.T) {
-				root := t.TempDir()
+				root := testsocket.Dir(t)
 				makefile, err := os.ReadFile(filepath.Join(repo, "Makefile"))
 				if err != nil {
 					t.Fatal(err)
@@ -142,7 +144,7 @@ func TestDeployGuardImageAndSelfHostConfig(t *testing.T) {
 					t.Fatal("Fly build argument disagrees with deployment mode")
 				}
 			}
-			root := t.TempDir()
+			root := testsocket.Dir(t)
 			if tc.staged {
 				stageFixture(t, root)
 			}

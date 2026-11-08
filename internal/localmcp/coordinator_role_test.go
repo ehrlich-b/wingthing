@@ -11,11 +11,12 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 func TestPublicCoordinatorRoleInjectedAndInspectableThroughBootstrap(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	db, err := store.Open(cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +51,7 @@ func TestPublicCoordinatorRoleInjectedAndInspectableThroughBootstrap(t *testing.
 }
 
 func TestCoordinatorContextDoesNotInventHomeOwnershipOrGlobalIdentity(t *testing.T) {
-	c := &store.Conversation{ID: "child", RootID: "dot", ParentID: "parent", WingID: "executor", SessionID: "execution", CWD: filepath.Join(t.TempDir(), "quotes\"\n{{RUNTIME_FACTS}}")}
+	c := &store.Conversation{ID: "child", RootID: "dot", ParentID: "parent", WingID: "executor", SessionID: "execution", CWD: filepath.Join(testsocket.Dir(t), "quotes\"\n{{RUNTIME_FACTS}}")}
 	facts := contextForConversation(c)
 	if facts.DotID != "dot" || facts.TaskID != "child" || facts.ParentTaskID != "parent" || facts.ExecutorID != "executor" || facts.SessionID != "execution" || facts.IdentityScope != "local_wing" {
 		t.Fatalf("lost qualified local facts %#v", facts)
@@ -76,7 +77,7 @@ func TestCoordinatorContextDoesNotInventHomeOwnershipOrGlobalIdentity(t *testing
 }
 
 func TestConversationReadReportsContextForActualLocalTasks(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	db, err := store.Open(cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +107,7 @@ func TestConversationReadReportsContextForActualLocalTasks(t *testing.T) {
 }
 
 func TestResumedCoordinatorRoleUsesNewInvocationWithSameLogicalRoot(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	db, err := store.Open(cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)

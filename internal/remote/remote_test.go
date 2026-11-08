@@ -14,6 +14,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestRemoteTTYPolicy(t *testing.T) {
@@ -85,7 +86,7 @@ func TestRemoteStopCommandsAreForwardedWithoutATTY(t *testing.T) {
 }
 
 func TestRunRemoteInvocationStreamsStdioAndPreservesExitStatus(t *testing.T) {
-	tempDir := t.TempDir()
+	tempDir := testsocket.Dir(t)
 	sshPath := filepath.Join(tempDir, "ssh")
 	remoteBinary := filepath.Join(tempDir, "remote wt")
 	sshScript := "#!/bin/sh\n" +
@@ -123,7 +124,7 @@ func TestRunRemoteInvocationStreamsStdioAndPreservesExitStatus(t *testing.T) {
 }
 
 func TestRunRemoteInvocationPreservesEmptyAndWhitespaceArgs(t *testing.T) {
-	tempDir := t.TempDir()
+	tempDir := testsocket.Dir(t)
 	sshPath := filepath.Join(tempDir, "ssh")
 	remoteBinary := filepath.Join(tempDir, "remote-wt")
 	sshScript := "#!/bin/sh\nexec /bin/sh -c \"$3\"\n"
@@ -182,7 +183,7 @@ func TestRemoteClaudeAllowlistAndLiteralProviderArgs(t *testing.T) {
 			t.Fatalf("unrelated remote command allowed: %s", command)
 		}
 	}
-	ssh := filepath.Join(t.TempDir(), "ssh")
+	ssh := filepath.Join(testsocket.Dir(t), "ssh")
 	if err := os.WriteFile(ssh, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +202,7 @@ func TestRemoteClaudeAllowlistAndLiteralProviderArgs(t *testing.T) {
 }
 
 func TestRunRemoteInvocationCancellationStopsSSHClient(t *testing.T) {
-	tempDir := t.TempDir()
+	tempDir := testsocket.Dir(t)
 	sshPath := filepath.Join(tempDir, "ssh")
 	if err := os.WriteFile(sshPath, []byte("#!/bin/sh\nexec sleep 30\n"), 0o700); err != nil {
 		t.Fatal(err)
@@ -221,7 +222,7 @@ func TestRunRemoteInvocationCancellationStopsSSHClient(t *testing.T) {
 }
 
 func TestRemoteStateSendsQuotedPOSIXAssignmentsOnlyWhenSelected(t *testing.T) {
-	sshPath := filepath.Join(t.TempDir(), "ssh")
+	sshPath := filepath.Join(testsocket.Dir(t), "ssh")
 	if err := os.WriteFile(sshPath, []byte("#!/bin/sh\nprintf '%s\\n' \"$3\"\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +280,7 @@ func TestRemoteStateSendsQuotedPOSIXAssignmentsOnlyWhenSelected(t *testing.T) {
 }
 
 func TestRemoteStateReachesReceiverEnvironmentLiterally(t *testing.T) {
-	tempDir := t.TempDir()
+	tempDir := testsocket.Dir(t)
 	sshPath := filepath.Join(tempDir, "ssh")
 	remoteBinary := filepath.Join(tempDir, "remote wt")
 	// The fake transport evaluates the command like OpenSSH's remote shell,
@@ -313,7 +314,7 @@ func TestRemoteStateReachesReceiverEnvironmentLiterally(t *testing.T) {
 }
 
 func TestRemoteStateDisconnectNamesTheSameStateForReconnect(t *testing.T) {
-	sshPath := filepath.Join(t.TempDir(), "ssh")
+	sshPath := filepath.Join(testsocket.Dir(t), "ssh")
 	if err := os.WriteFile(sshPath, []byte("#!/bin/sh\nexit 255\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +326,7 @@ func TestRemoteStateDisconnectNamesTheSameStateForReconnect(t *testing.T) {
 }
 
 func TestRemoteDisconnectPreserves255AndDoesNotSuggestRelaunch(t *testing.T) {
-	sshPath := filepath.Join(t.TempDir(), "ssh")
+	sshPath := filepath.Join(testsocket.Dir(t), "ssh")
 	if err := os.WriteFile(sshPath, []byte("#!/bin/sh\nprintf 'Connection closed\\n' >&2\nexit 255\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +342,7 @@ func TestRemoteDisconnectPreserves255AndDoesNotSuggestRelaunch(t *testing.T) {
 }
 
 func TestRemoteNonInteractiveOptionUsesOnlyBatchMode(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	real := filepath.Join(root, "tmp-real")
 	alias := filepath.Join(root, "tmp-alias")
 	if err := os.Mkdir(real, 0700); err != nil {

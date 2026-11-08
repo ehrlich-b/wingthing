@@ -18,6 +18,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // A temporary state bound to a temporary provider data home outside it. No
@@ -27,7 +28,7 @@ func previewProviderBindingFixture(t *testing.T, script string) (state, provider
 	old := config.ReleaseChannel
 	config.ReleaseChannel = "preview"
 	t.Cleanup(func() { config.ReleaseChannel = old })
-	root := config.CanonicalProviderPath(t.TempDir())
+	root := config.CanonicalProviderPath(testsocket.Dir(t))
 	state = filepath.Join(root, "control state")
 	provider = filepath.Join(root, "bound provider-home")
 	observed = filepath.Join(root, "observed")
@@ -149,7 +150,7 @@ func TestPreviewProviderBindingStatusRejectsChangedMacConfigDirectory(t *testing
 	}
 	_, provider, observed := previewProviderBindingFixture(t, "exit 99\n")
 	link := filepath.Join(provider, ".claude")
-	if err := os.Symlink(t.TempDir(), link); err != nil {
+	if err := os.Symlink(testsocket.Dir(t), link); err != nil {
 		t.Fatal(err)
 	}
 	profile, err := resolvePreviewProviderProfile()
@@ -160,7 +161,7 @@ func TestPreviewProviderBindingStatusRejectsChangedMacConfigDirectory(t *testing
 	if err := os.Remove(link); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(t.TempDir(), link); err != nil {
+	if err := os.Symlink(testsocket.Dir(t), link); err != nil {
 		t.Fatal(err)
 	}
 	inspectPreviewClaude(context.Background(), profile, time.Second)

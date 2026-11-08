@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestPrepareUpdateBindsAdvertisedVersion(t *testing.T) {
@@ -70,7 +71,7 @@ esac
 						}
 						return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
 					})
-					dir := t.TempDir()
+					dir := testsocket.Dir(t)
 					installed := filepath.Join(dir, config.BinaryName())
 					if err := os.WriteFile(installed, []byte("installed binary"), 0755); err != nil {
 						t.Fatal(err)

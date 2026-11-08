@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestRunSessionDestroysSandbox(t *testing.T) {
@@ -28,7 +29,7 @@ func TestRunSessionDestroysSandbox(t *testing.T) {
 			if err := os.MkdirAll(dir, 0700); err != nil {
 				t.Fatal(err)
 			}
-			home, tmp := t.TempDir(), t.TempDir()
+			home, tmp := testsocket.Dir(t), testsocket.Dir(t)
 			t.Setenv("HOME", home)
 			t.Setenv("TMPDIR", tmp)
 			t.Setenv("WINGTHING_DIR", filepath.Join(home, ".wingthing"))

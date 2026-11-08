@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"io"
 	"strings"
 	"testing"
@@ -35,8 +36,8 @@ func TestUnsandboxedWarningSurvivesLogFiltering(t *testing.T) {
 }
 
 func TestRunTaskRefusesImplicitPrivilegedIsolation(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-	cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "claude", WingID: "sample"}
+	t.Setenv("PATH", testsocket.Dir(t))
+	cfg := &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "claude", WingID: "sample"}
 	db, err := store.Open(cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +46,7 @@ func TestRunTaskRefusesImplicitPrivilegedIsolation(t *testing.T) {
 	if err := db.UpsertAgent(&store.Agent{Name: "claude", DefaultIsolation: "privileged"}); err != nil {
 		t.Fatal(err)
 	}
-	task := &store.Task{ID: "implicit-privileged", Type: "prompt", What: "Run tests", RunAt: time.Now(), Agent: "claude", CWD: t.TempDir()}
+	task := &store.Task{ID: "implicit-privileged", Type: "prompt", What: "Run tests", RunAt: time.Now(), Agent: "claude", CWD: testsocket.Dir(t)}
 	if err := db.CreateTask(task); err != nil {
 		t.Fatal(err)
 	}

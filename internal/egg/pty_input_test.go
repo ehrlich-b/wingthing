@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 )
@@ -73,7 +74,7 @@ func TestNativeRunPTYResizeKeepsInputCancellable(t *testing.T) {
 	if _, err := term.MakeRaw(int(slave.Fd())); err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	lifecycleWrite(t, filepath.Join(dir, "egg.meta"), "cols=80\nrows=24\n")
 	server := &Server{dir: dir}
 	mode, err := server.prepareSessionPTYInput(master, RunConfig{Kind: "agent", Agent: "claude"}, false)
@@ -126,7 +127,7 @@ func TestResizeWaitsForVTermQueue(t *testing.T) {
 	}
 	defer master.Close()
 	defer slave.Close()
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	lifecycleWrite(t, filepath.Join(dir, "egg.meta"), "cols=80\nrows=24\n")
 	queue := make(chan vtermMsg, 1)
 	queue <- vtermMsg{data: []byte("pending")}

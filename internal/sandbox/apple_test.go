@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func sandboxExecAvailable(t *testing.T) {
@@ -56,7 +58,7 @@ func TestBuildProfileDenyPaths(t *testing.T) {
 }
 
 func TestBuildProfileDenyPathCoversExactMissingPathAndDescendants(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), ".aws")
+	missing := filepath.Join(testsocket.Dir(t), ".aws")
 	canonical, err := canonicalSandboxPath(missing)
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +77,7 @@ func TestBuildProfileDenyPathCoversExactMissingPathAndDescendants(t *testing.T) 
 }
 
 func TestBuildProfileDenyPathOverridesAllowedSocket(t *testing.T) {
-	socket := filepath.Join(t.TempDir(), "agent.sock")
+	socket := filepath.Join(testsocket.Dir(t), "agent.sock")
 	canonical, err := canonicalSandboxPath(socket)
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +97,7 @@ func TestBuildProfileDenyPathOverridesAllowedSocket(t *testing.T) {
 }
 
 func TestBuildProfileDenyPathOverridesWritableMount(t *testing.T) {
-	denied := t.TempDir()
+	denied := testsocket.Dir(t)
 	canonical, err := canonicalSandboxPath(denied)
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +116,7 @@ func TestBuildProfileDenyPathOverridesWritableMount(t *testing.T) {
 }
 
 func TestCanonicalSandboxPathResolvesMissingPathThroughSymlinkedAncestor(t *testing.T) {
-	parent := t.TempDir()
+	parent := testsocket.Dir(t)
 	realParent, err := filepath.EvalSymlinks(parent)
 	if err != nil {
 		t.Fatal(err)
@@ -262,7 +264,7 @@ func TestSeatbeltNetworkAllowed(t *testing.T) {
 func TestSeatbeltDenyPathBlocked(t *testing.T) {
 	sandboxExecAvailable(t)
 	// Create a temp file, deny access to its directory
-	tmpDir := t.TempDir()
+	tmpDir := testsocket.Dir(t)
 	testFile := tmpDir + "/secret.txt"
 	if err := os.WriteFile(testFile, []byte("secret"), 0o644); err != nil {
 		t.Fatal(err)
@@ -335,7 +337,7 @@ func TestSeatbeltWriteRestriction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	jail := t.TempDir()
+	jail := testsocket.Dir(t)
 
 	sb, err := newPlatform(Config{
 		NetworkNeed: NetworkFull,
@@ -381,7 +383,7 @@ func TestSeatbeltDenyWriteBlocksWrite(t *testing.T) {
 	// Include a writable mount for the parent dir — this is the real scenario:
 	// the project dir is rw-mounted AND egg.yaml inside it is deny-write.
 	// Without the mount, deny-write trivially works (no competing allow rule).
-	tmpDir := t.TempDir()
+	tmpDir := testsocket.Dir(t)
 	protectedFile := tmpDir + "/egg.yaml"
 	if err := os.WriteFile(protectedFile, []byte("original content"), 0o644); err != nil {
 		t.Fatal(err)

@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestRequestDeviceCode(t *testing.T) {
@@ -221,7 +223,7 @@ func TestRefreshToken(t *testing.T) {
 }
 
 func TestTokenStoreRoundTrip(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	store := NewTokenStore(dir)
 
 	original := &DeviceToken{
@@ -263,7 +265,7 @@ func TestTokenStoreRoundTrip(t *testing.T) {
 }
 
 func TestLocalTokenStoreDoesNotReplaceOrdinaryPortalLogin(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	ordinary := NewTokenStore(dir)
 	local := NewLocalTokenStore(dir)
 	if err := ordinary.Save(&DeviceToken{Token: "hosted-login", DeviceID: "hosted"}); err != nil {
@@ -296,7 +298,7 @@ func TestLocalTokenStoreDoesNotReplaceOrdinaryPortalLogin(t *testing.T) {
 }
 
 func TestTokenStoreSaveReplacesPermissiveFilePrivately(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	path := filepath.Join(dir, "device_token.yaml")
 	if err := os.WriteFile(path, []byte("token: old\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -315,8 +317,8 @@ func TestTokenStoreSaveReplacesPermissiveFilePrivately(t *testing.T) {
 }
 
 func TestTokenStoreSaveReplacesSymlinkWithoutFollowingIt(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(t.TempDir(), "unrelated")
+	dir := testsocket.Dir(t)
+	target := filepath.Join(testsocket.Dir(t), "unrelated")
 	if err := os.WriteFile(target, []byte("unchanged"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +339,7 @@ func TestTokenStoreSaveReplacesSymlinkWithoutFollowingIt(t *testing.T) {
 }
 
 func TestTokenStoreDelete(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	store := NewTokenStore(dir)
 
 	if err := store.Save(&DeviceToken{Token: "tok_delete"}); err != nil {
@@ -513,7 +515,7 @@ func TestErrAuthFailed_ErrorsIs(t *testing.T) {
 }
 
 func TestIsValid(t *testing.T) {
-	store := NewTokenStore(t.TempDir())
+	store := NewTokenStore(testsocket.Dir(t))
 
 	// nil token
 	if store.IsValid(nil) {

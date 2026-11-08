@@ -18,6 +18,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // The test executable doubles as a fake agent binary. It receives the actual
@@ -75,9 +76,9 @@ func TestAgentStatusSessionPSAndMCPFromFakeAgentHooks(t *testing.T) {
 	t.Cleanup(func() { config.ReleaseChannel = previous })
 	for _, agent := range []string{"claude", "codex"} {
 		t.Run(agent, func(t *testing.T) {
-			cfg := &config.Config{Dir: t.TempDir()}
+			cfg := &config.Config{Dir: testsocket.Dir(t)}
 			t.Setenv("WINGTHING_DIR", cfg.Dir)
-			home := t.TempDir()
+			home := testsocket.Dir(t)
 			id := "fake-agent"
 			dir := filepath.Join(cfg.Dir, "eggs", id)
 			if err := os.MkdirAll(dir, 0700); err != nil {

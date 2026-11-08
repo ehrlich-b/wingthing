@@ -6,13 +6,14 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestPreviewBrowserShimsRemainInspectableRegularState(t *testing.T) {
 	old := config.ReleaseChannel
 	config.ReleaseChannel = "preview"
 	t.Cleanup(func() { config.ReleaseChannel = old })
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	if err := os.WriteFile(filepath.Join(dir, ".release-channel"), []byte("preview\n"), 0600); err != nil {
 		t.Fatal(err)
 	}

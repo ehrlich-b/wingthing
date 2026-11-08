@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"reflect"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestNewOpenCodeDefaults(t *testing.T) {
@@ -33,7 +35,7 @@ func TestOpenCodeRunCommandContract(t *testing.T) {
 	var gotName string
 	var gotArgs []string
 	var command *exec.Cmd
-	workDir := t.TempDir()
+	workDir := testsocket.Dir(t)
 
 	stream, err := o.Run(context.Background(), "hello opencode", RunOpts{
 		WorkDir: workDir,
