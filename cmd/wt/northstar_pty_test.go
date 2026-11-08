@@ -61,7 +61,7 @@ func northstarNewFixture(t *testing.T) *northstarFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scratch := testprovider.TempDir(t)
+	scratch := testprovider.ProtectedTempDir(t)
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}

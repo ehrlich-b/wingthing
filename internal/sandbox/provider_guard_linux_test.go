@@ -20,17 +20,13 @@ import (
 // make accept-linux-provider-guard target treats every skip as a failure.
 func guardNativeRoot(t *testing.T) string {
 	t.Helper()
+	root := protectedFixtureRoot(t)
 	if err := CheckProviderWriteProtection(); err != nil {
 		t.Skip(err)
 	}
 	if err := namespaceCapabilityError(hasEffectiveCAPSYSADMIN()); err != nil {
 		t.Skip(err)
 	}
-	root, err := os.MkdirTemp("/tmp", "wt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(root) })
 	return root
 }
 

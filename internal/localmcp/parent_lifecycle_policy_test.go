@@ -24,7 +24,7 @@ func TestParentLifecycleScopedFixtureProtection(t *testing.T) {
 	previous := config.ReleaseChannel
 	config.ReleaseChannel = "stable"
 	t.Cleanup(func() { config.ReleaseChannel = previous })
-	scratch := testprovider.TempDir(t)
+	scratch := testprovider.ProtectedTempDir(t)
 	home, localState, remoteState := testprovider.ScopedHomeDirs(t, scratch)
 	tmp, binary := filepath.Join(home, "t"), filepath.Join(home, "wt")
 	if err := os.Mkdir(tmp, 0700); err != nil {

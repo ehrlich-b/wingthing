@@ -163,7 +163,7 @@ func TestDashboardCLIIsolatesBackgroundButKeepsAttachForeground(t *testing.T) {
 }
 
 func TestDashboardRemoteMutationValidatesSameCurrentProfile(t *testing.T) {
-	scratch := testprovider.TempDir(t)
+	scratch := testprovider.ProtectedTempDir(t)
 	home, state, remoteState := testprovider.ScopedHomeDirs(t, scratch)
 	root := testsocket.Dir(t)
 	real, alias := filepath.Join(root, "tmp-real"), filepath.Join(root, "tmp-alias")

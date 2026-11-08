@@ -17,7 +17,7 @@ import (
 // canonical home and temp paths as Seatbelt sees them.
 func protectedProfileEnv(t *testing.T) (home, tmp string) {
 	t.Helper()
-	root := testsocket.Dir(t)
+	root := testsocket.RuntimeDir(t, "")
 	home = filepath.Join(root, "home")
 	tmp = filepath.Join(root, "tmp")
 	for _, dir := range []string{home, tmp} {

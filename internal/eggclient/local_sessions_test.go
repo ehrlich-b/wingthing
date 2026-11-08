@@ -59,7 +59,7 @@ func inventorySessionsFixtureWithTeardown(t *testing.T, slowFrom int, teardownDe
 	t.Helper()
 	// These fixtures use short explicit IDs; validate the canonical socket
 	// below rather than reserving the unrelated full runtime ID width.
-	home, state, _ := testprovider.ScopedHomeDirs(t, testprovider.TempDir(t))
+	home, state, _ := testprovider.ScopedHomeDirs(t, testprovider.ProtectedTempDir(t))
 	home, _ = filepath.Abs(home)
 	state, _ = filepath.Abs(state)
 	real, alias := filepath.Join(home, "t"), filepath.Join(home, "a")

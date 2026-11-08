@@ -20,6 +20,13 @@ func TempDir(t *testing.T) string {
 	return testsocket.Dir(t)
 }
 
+// ProtectedTempDir creates disposable state outside sandbox temporary write
+// grants. Use it for a HOME containing protected state.
+func ProtectedTempDir(t *testing.T) string {
+	t.Helper()
+	return testsocket.RuntimeDir(t, "")
+}
+
 // ShortStateDir creates disposable state below scratch that fits Darwin's Unix
 // socket limit with a full runtime ID. Use TempDir for the scratch root to keep
 // sockets independent of checkout depth. The physical directory also keeps the

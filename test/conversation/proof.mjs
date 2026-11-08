@@ -6,9 +6,9 @@
 //   the parent gets ordinary stdio. The sandbox denies its wing control socket
 //   before child reservation. The protected host-mailbox layout proves child
 //   launches through the wing instead of attempting a nested proxy.
-// --state-root <dir>: Wingthing state in a fresh directory under <dir>, outside
-//   /tmp and the workspace, with the OS-account HOME as the sandbox write-deny
-//   root. The parent's injected client then reaches the host mailbox broker,
+// --state-root <runtime-dir>: Wingthing state inside a disposable HOME under
+//   XDG_RUNTIME_DIR, outside /tmp and the workspace. The parent's injected
+//   client then reaches the host mailbox broker,
 //   which launches both children outside the parent sandbox.
 //
 // The receiver binary is an explicit path (a fresh build or a frozen
@@ -17,11 +17,11 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, diffieHellman, createPublicKey, hkdfSync, randomBytes, createCipheriv, createDecipheriv, createHash } from 'node:crypto';
 import { spawn, execFile, execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, copyFile, chmod, readFile, writeFile, realpath, lstat, readdir, rm, open } from 'node:fs/promises';
+import { mkdir, copyFile, chmod, readFile, writeFile, realpath, lstat, readdir, rm, open } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { createServer } from 'node:net';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { createFixtureLayout } from './fixture-layout.mjs';
 
 const supplied = process.argv[2] || '';
 if (!supplied.includes('/')) throw new Error(`receiver binary must be an explicit path, not a PATH lookup: ${JSON.stringify(supplied)}`);
@@ -38,26 +38,10 @@ const stateRootIndex = process.argv.indexOf('--state-root');
 const stateRoot = stateRootIndex > 0 ? process.argv[stateRootIndex + 1] : '';
 if (stateRootIndex > 0 && !stateRoot) throw new Error('--state-root requires a directory');
 if (stateRoot && expectSocketBlock) throw new Error('--state-root and --expect-bound-socket-block select different layouts');
-const scratch = await mkdtemp('/tmp/wtc-');
-const workspace = path.join(scratch, 'workspace');
-const bin = path.join(scratch, 'bin');
-let state = path.join(workspace, 'preview-state');
-let home = path.join(scratch, 'provider-home');
+const { scratch, workspace, bin, state, home, runtimeRoot } = await createFixtureLayout(stateRoot);
 if (stateRoot) {
-    // Protected host state: inside the OS-account HOME deny root, never under a
-    // temporary directory or the workspace the parent provider can write.
-    home = await realpath(process.env.HOME || '');
-    const root = await realpath(path.resolve(stateRoot));
-    state = await mkdtemp(path.join(root, 'wtc-state-'));
-    const temporary = await Promise.all(['/tmp', '/private/tmp', tmpdir()].map(dir => realpath(dir).catch(() => dir)));
-    const inside = (parent, child) => child === parent || child.startsWith(parent + path.sep);
-    if (temporary.some(dir => inside(dir, state)) || inside(await realpath(scratch), state)) throw new Error(`state ${state} must be outside temporary directories and the workspace`);
-    if (!inside(home, state)) throw new Error(`state ${state} must be inside the OS-account HOME ${home}`);
-}
-for (const directory of [workspace, state, home, bin]) await mkdir(directory, { recursive: true, mode: 0o700 });
-if (stateRoot) {
-    // An isolated HOME may sit under user-writable checkout directories.
-    // Pin its entries so the provider cannot rename the protected state tree.
+    // Pin the disposable runtime HOME and its ancestors so the provider cannot
+    // rename the protected state tree.
     // An omitted base retains every built-in sandbox restriction.
     const pins = [];
     for (let dir = home; dir !== path.dirname(dir); dir = path.dirname(dir)) pins.push('deny-write:' + dir);
@@ -354,8 +338,8 @@ try {
     roost.kill('SIGTERM');
     await writeFile(path.join(scratch, 'roost.log'), logs, { mode: 0o600 });
     await Promise.race([new Promise(resolve => roost.once('exit', resolve)), delay(3000)]);
-    // The state directory this run created inside HOME is removed after a
-    // passing run; a failing run keeps it (and the /tmp scratch) for diagnosis.
-    if (stateRoot && process.exitCode !== 1 && path.basename(state).startsWith('wtc-state-')) await rm(state, { recursive: true, force: true });
-    else if (stateRoot) console.error('Fixture state kept:', state);
+    // Remove only this run's disposable runtime HOME after success; preserve
+    // failed fixtures and the /tmp proof artifacts for diagnosis.
+    if (runtimeRoot && process.exitCode !== 1) await rm(runtimeRoot, { recursive: true, force: true });
+    else if (runtimeRoot) console.error('Fixture state kept:', state);
 }

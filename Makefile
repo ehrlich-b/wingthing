@@ -102,7 +102,9 @@ DOCKER_ARCH = $(shell arch=$$(docker info --format '{{.Architecture}}' 2>/dev/nu
 LINUX_TEST_ARCH ?= $(DOCKER_ARCH)
 LINUX_DISTROS ?= debian ubuntu
 WEB_TEST_ARCH ?= $(DOCKER_ARCH)
-CONVERSATION_FIXTURE_ROOT ?= $(abspath ..)
+# Protected state must be outside the sandbox's temporary write grants, while
+# still disposable and independent of checkout depth and the account's HOME.
+CONVERSATION_FIXTURE_ROOT ?= $(XDG_RUNTIME_DIR)
 CONVERSATION_BINARY ?=
 CONVERSATION_BINARY_SHA256 ?=
 PREVIEW_CONTEXT_BINARY ?= ./wt-preview

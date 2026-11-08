@@ -102,7 +102,7 @@ func TestRemoteSessionFreshIdentityUsesExactBatchRoute(t *testing.T) {
 		{"empty ID", "", []LocalSession{{ID: "", PID: 42}}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			home, _, state := testprovider.ScopedHomeDirs(t, testprovider.TempDir(t))
+			home, _, state := testprovider.ScopedHomeDirs(t, testprovider.ProtectedTempDir(t))
 			home, _ = filepath.Abs(home)
 			state, _ = filepath.Abs(state)
 			root := testsocket.Dir(t)
