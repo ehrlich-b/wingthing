@@ -70,7 +70,7 @@ func northstarNewFixture(t *testing.T) *northstarFixture {
 	// Keep workspace and executable paths bounded too: policy reports must fit
 	// the same terminal viewport regardless of the checkout's path length.
 	root := testsocket.Dir(t)
-	home, local, remote := testprovider.ScopedHomeDirs(t, testsocket.Dir(t))
+	home, local, remote := testprovider.ScopedHomeDirs(t, scratch)
 	f := &northstarFixture{repo: repo, root: root, home: home, local: local, remote: remote,
 		work: filepath.Join(root, "work"), tmp: filepath.Join(root, "tmp-alias"), bin: filepath.Join(root, "tmp-alias", "bin"),
 		evidence: filepath.Join(scratch, "northstar", "northstar-evidence")}

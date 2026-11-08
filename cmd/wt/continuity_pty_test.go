@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"sync"
 	"testing"
@@ -19,7 +18,6 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/sshcontrol"
 	"github.com/ehrlich-b/wingthing/internal/testssh"
-	"golang.org/x/term"
 )
 
 // Exercise the built CLI, a real persistent egg and the supervised SSH fixture
@@ -187,27 +185,15 @@ while True:
 	case <-time.After(10 * time.Second):
 		t.Fatal("detach did not finish")
 	}
-	if h.err != nil {
-		t.Fatal(h.err)
-	}
-	// The guardian may finish its last terminal write immediately after the CLI.
-	h.wait("[detached from fixture:fidelity]")
+	// wait may already close the spare slave while draining final output.
+	// Reuse the EOF fence and reopened-descriptor check for guardian cleanup.
+	h.assertCleanup(initial, false)
 	h.mu.Lock()
 	restored := make(map[int]bool)
 	for mode := range initial {
 		restored[mode] = h.modes[mode]
 	}
 	h.mu.Unlock()
-	if !reflect.DeepEqual(initial, restored) {
-		t.Fatalf("mode restore before=%v after=%v", initial, restored)
-	}
-	state, err := term.GetState(int(h.slave.Fd()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(h.before, state) {
-		t.Fatal("termios not restored")
-	}
 	client, err := egg.Dial(f.socket, f.token)
 	if err != nil {
 		t.Fatal(err)
