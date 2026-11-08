@@ -51,7 +51,7 @@ func TestBuiltSessionTakeoverDashboard(t *testing.T) {
 	}
 	ssh := testssh.New(t)
 	homes := []string{filepath.Join(ssh.Root, "local-home"), filepath.Join(ssh.Root, "remote-home")}
-	states := []string{testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch")), testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))}
+	states := []string{testprovider.ShortStateDir(t, testprovider.TempDir(t)), testprovider.ShortStateDir(t, testprovider.TempDir(t))}
 	for i := range states {
 		if err := os.Mkdir(homes[i], 0700); err != nil {
 			t.Fatal(err)

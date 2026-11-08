@@ -2,6 +2,7 @@ package egg
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -31,7 +32,7 @@ func TestCodexLifecycleInstalledHookTrust(t *testing.T) {
 		t.Skipf("installed Codex hook trust requires codex-cli >= 0.159.3: %s", strings.TrimSpace(string(version)))
 	}
 	// Codex canonicalizes source paths (including macOS's /var symlink).
-	home, err := filepath.EvalSymlinks(t.TempDir())
+	home, err := filepath.EvalSymlinks(shortEndpointTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,8 +88,11 @@ func listInstalledCodexHooks(t *testing.T, binary, home string, args []string) [
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Dir = home
+	// hooks/list explicitly selects the fixture cwd; keep process startup in
+	// the source package, independently of the disposable provider HOME.
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "CODEX_HOME=" + filepath.Join(home, ".codex")}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	input, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -100,18 +104,20 @@ func listInstalledCodexHooks(t *testing.T, binary, home string, args []string) [
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = input.Close(); cancel(); _ = cmd.Wait() }()
-	for _, request := range []string{
-		`{"id":1,"method":"initialize","params":{"clientInfo":{"name":"wt-hook-test","version":"1"},"capabilities":{"experimentalApi":true}}}`,
-		`{"method":"initialized"}`,
-		fmt.Sprintf(`{"id":2,"method":"hooks/list","params":{"cwd":%q}}`, home),
-	} {
+	var stopOnce sync.Once
+	stop := func() { stopOnce.Do(func() { _ = input.Close(); cancel(); _ = cmd.Wait() }) }
+	defer stop()
+	send := func(request string) {
+		t.Helper()
 		if _, err := fmt.Fprintln(input, request); err != nil {
-			t.Fatal(err)
+			stop()
+			t.Fatalf("Codex request: %v; stderr: %s", err, stderr.String())
 		}
 	}
+	send(`{"id":1,"method":"initialize","params":{"clientInfo":{"name":"wt-hook-test","version":"1"},"capabilities":{"experimentalApi":true}}}`)
 	scanner := bufio.NewScanner(output)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
+	initialized := false
 	for scanner.Scan() {
 		var response struct {
 			ID     int
@@ -120,7 +126,19 @@ func listInstalledCodexHooks(t *testing.T, binary, home string, args []string) [
 			}
 			Error json.RawMessage
 		}
-		if err := json.Unmarshal(scanner.Bytes(), &response); err != nil || response.ID != 2 {
+		if err := json.Unmarshal(scanner.Bytes(), &response); err != nil {
+			t.Fatalf("invalid Codex response: %v", err)
+		}
+		if response.ID == 1 {
+			if len(response.Error) > 0 {
+				t.Fatalf("Codex initialize failed: %s", response.Error)
+			}
+			initialized = true
+			send(`{"method":"initialized"}`)
+			send(fmt.Sprintf(`{"id":2,"method":"hooks/list","params":{"cwd":%q}}`, home))
+			continue
+		}
+		if response.ID != 2 {
 			continue
 		}
 		if len(response.Error) > 0 {
@@ -132,7 +150,8 @@ func listInstalledCodexHooks(t *testing.T, binary, home string, args []string) [
 		}
 		return hooks
 	}
-	t.Fatalf("Codex did not list hooks: %v, %v", scanner.Err(), ctx.Err())
+	stop()
+	t.Fatalf("Codex did not list hooks (initialized=%v): %v, %v; stderr: %s", initialized, scanner.Err(), ctx.Err(), stderr.String())
 	return nil
 }
 

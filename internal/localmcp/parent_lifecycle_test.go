@@ -27,10 +27,7 @@ import (
 // the parent-disconnect boundary; actual parent PID polling is a built gate.
 func parentLifecycleWing(t *testing.T) *runWingFixture {
 	t.Helper()
-	scratch, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	scratch := testprovider.TempDir(t)
 	// Match production's physical workspace grants even when the host TMPDIR
 	// is a symlink (for example, /var -> /private/var on macOS).
 	home := wingpolicy.CanonicalPolicyPath(t.TempDir())

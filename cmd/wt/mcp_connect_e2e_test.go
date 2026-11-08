@@ -44,8 +44,8 @@ func testBuiltWTConnectRememberedSSHRun(t *testing.T, nativeTask bool) {
 	home, bin := filepath.Join(h.Root, "home"), filepath.Join(h.Root, "bin")
 	// Inspection returns canonical addresses: a short alias of a long physical
 	// state directory cannot make the remote egg's socket fit on Darwin.
-	localState := testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))
-	remoteState := testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))
+	localState := testprovider.ShortStateDir(t, testprovider.TempDir(t))
+	remoteState := testprovider.ShortStateDir(t, testprovider.TempDir(t))
 	for _, dir := range []string{home, bin} {
 		if err := os.Mkdir(dir, 0700); err != nil {
 			t.Fatal(err)

@@ -17,6 +17,8 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
 )
 
 // This subprocess only acknowledges input. Its argv lets the real PID verifier
@@ -94,14 +96,11 @@ func (p *orphanStopProcess) assertAlive(t *testing.T) {
 
 func unreachableStopSession(t *testing.T, pid int, token bool) (*Service, string, Authority, Authority) {
 	t.Helper()
-	root := config.CanonicalProviderPath(t.TempDir())
+	root := config.CanonicalProviderPath(testprovider.TempDir(t))
 	t.Setenv("HOME", root)
-	// All state stays in t.TempDir; this checkout alias keeps the socket path
-	// below Darwin's sockaddr_un limit, so the failure is the absent socket.
-	scratch, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Keep both state and its alias below short physical roots so the failure
+	// is the absent socket, independently of the checkout and TMPDIR.
+	scratch := testprovider.TempDir(t)
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}

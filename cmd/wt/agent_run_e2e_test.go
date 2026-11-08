@@ -135,7 +135,7 @@ func testBuiltWTStdioWingEggFakeCodexTimeout(t *testing.T, modal, nativeTask boo
 	}
 	fixture := t.TempDir()
 	if nativeTask {
-		scratch := filepath.Join(repo, ".scratch")
+		scratch := testprovider.TempDir(t)
 		if err := os.MkdirAll(scratch, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -175,7 +175,7 @@ func testBuiltWTStdioWingEggFakeCodexTimeout(t *testing.T, modal, nativeTask boo
 	if err := os.WriteFile(provider, []byte("#!"+python+"\n"+fakeRunCodex), 0700); err != nil {
 		t.Fatal(err)
 	}
-	scratch := filepath.Join(repo, ".scratch")
+	scratch := testprovider.TempDir(t)
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}

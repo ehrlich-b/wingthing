@@ -87,10 +87,7 @@ func TestSessionRenameCLIAndMCPShareStoreLock(t *testing.T) {
 }
 
 func TestEggLaunchLabelChecksAvailabilityUnderStoreLock(t *testing.T) {
-	scratch, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	scratch := testprovider.TempDir(t)
 	state := testprovider.ShortStateDir(t, scratch)
 	cfg := &config.Config{Dir: state}
 	workspace := t.TempDir()

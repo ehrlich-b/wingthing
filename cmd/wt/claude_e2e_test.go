@@ -129,7 +129,7 @@ func testBuiltWTClaudeScopedMailbox(t *testing.T, exitParent bool, roles ...stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	home, localState, remoteState := testprovider.ScopedHomeDirs(t, filepath.Join(repo, ".scratch"))
+	home, localState, remoteState := testprovider.ScopedHomeDirs(t, testprovider.TempDir(t))
 	bin := filepath.Join(home, "bin")
 	work := filepath.Join(home, "work")
 	remoteWork := filepath.Join(home, "remote-work")

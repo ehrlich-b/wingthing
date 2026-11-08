@@ -78,10 +78,7 @@ func TestAttachStandaloneEggRetainsDaemonlessContract(t *testing.T) {
 			old := config.ReleaseChannel
 			config.ReleaseChannel = channel
 			t.Cleanup(func() { config.ReleaseChannel = old })
-			scratch, err := filepath.Abs("../../.scratch")
-			if err != nil {
-				t.Fatal(err)
-			}
+			scratch := testprovider.TempDir(t)
 			if err := os.MkdirAll(scratch, 0700); err != nil {
 				t.Fatal(err)
 			}

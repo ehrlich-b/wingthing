@@ -13,16 +13,15 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
+
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
 )
 
 // CLI parity fixtures address the wing adapter instead of inventing a runtime
 // in the stdio process. The alias keeps Darwin Unix addresses within the limit.
 func testWingTool(t *testing.T, cfg *config.Config, owner string) func(context.Context, string, json.RawMessage) (map[string]any, error) {
 	t.Helper()
-	scratch, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	scratch := testprovider.TempDir(t)
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}

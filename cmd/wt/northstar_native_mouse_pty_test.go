@@ -38,7 +38,7 @@ func northstarNativeMouseFixture(t *testing.T) *northstarFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scratch := filepath.Join(repo, ".scratch")
+	scratch := testprovider.TempDir(t)
 	home := testprovider.ShortStateDir(t, scratch)
 	root, err := os.MkdirTemp(scratch, "native-")
 	if err != nil {

@@ -64,7 +64,7 @@ func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
 	}
 	// State and provider homes remain disposable; reserve the full runtime ID
 	// width in Darwin's egg socket address, even in a long checkout path.
-	scratch := filepath.Join(repo, ".scratch")
+	scratch := testprovider.TempDir(t)
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func TestBuiltWTDefaultDaemonBootsWithoutAccountOrRelay(t *testing.T) {
 		t.Fatal(err)
 	}
 	binary := localOnlyFixtureBinary(t, repo, t.TempDir())
-	scratch := filepath.Join(repo, ".scratch")
+	scratch := testprovider.TempDir(t)
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}

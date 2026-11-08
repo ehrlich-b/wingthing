@@ -134,10 +134,7 @@ func testBrowserFork(t *testing.T, s *Server, wc *config.WingConfig, req ws.Tunn
 
 func shortWingTestState(t *testing.T) string {
 	t.Helper()
-	scratch, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	scratch := testprovider.TempDir(t)
 	return testprovider.ShortStateDir(t, scratch)
 }
 

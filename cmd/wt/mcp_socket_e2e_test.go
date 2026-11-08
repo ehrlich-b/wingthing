@@ -61,10 +61,7 @@ func (f *localSocketEggFixture) Session(stream grpc.BidiStreamingServer[pb.Sessi
 }
 
 func TestStdioStartedSessionSurvivesClientExitAndIsWebVisible(t *testing.T) {
-	scratch, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	scratch := testprovider.TempDir(t)
 	root := t.TempDir()
 	state := testprovider.ShortStateDir(t, scratch)
 	t.Chdir(root)

@@ -53,10 +53,7 @@ func TestPinCLIAndWingToolPersistWithoutChangingRole(t *testing.T) {
 }
 
 func TestRoleStandaloneResumeRefusesBeforeHistoryRestore(t *testing.T) {
-	scratch, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	scratch := testprovider.TempDir(t)
 	cfg := &config.Config{Dir: testprovider.ShortStateDir(t, scratch)}
 	home, work := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
@@ -68,7 +65,7 @@ func TestRoleStandaloneResumeRefusesBeforeHistoryRestore(t *testing.T) {
 	if err := sessionrole.Write(dir, sessionrole.Metadata{Role: "coordinator", Pinned: true}); err != nil {
 		t.Fatal(err)
 	}
-	err = eggSpawn(t.Context(), "claude", "", false, "source", "", work, true, true, false, false, nil)
+	err := eggSpawn(t.Context(), "claude", "", false, "source", "", work, true, true, false, false, nil)
 	if err == nil || !strings.Contains(err.Error(), "standalone --resume cannot preserve") {
 		t.Fatalf("role resumed without protected MCP: %v", err)
 	}

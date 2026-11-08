@@ -15,6 +15,8 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/pake"
 	"github.com/ehrlich-b/wingthing/internal/phonepair"
+
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
 )
 
 func TestWingListenHelpAndValidation(t *testing.T) {
@@ -89,7 +91,7 @@ func TestBuiltWTLocalOnlyListen(t *testing.T) {
 				}
 				probe.Close()
 			}
-			scratch := filepath.Join(repo, ".scratch")
+			scratch := testprovider.TempDir(t)
 			if err := os.MkdirAll(scratch, 0700); err != nil {
 				t.Fatal(err)
 			}

@@ -61,7 +61,7 @@ func northstarNewFixture(t *testing.T) *northstarFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scratch := filepath.Join(repo, ".scratch")
+	scratch := testprovider.TempDir(t)
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}
