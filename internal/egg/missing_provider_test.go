@@ -14,7 +14,7 @@ func TestMissingProviderDiagnosticBeforeLaunch(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	for _, agent := range []string{"claude", "codex"} {
 		t.Run(agent, func(t *testing.T) {
-			dir, err := os.MkdirTemp("", "mp-")
+			dir, err := os.MkdirTemp("/tmp", "wt")
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -15,7 +15,7 @@ func TestPermissionSettingsPreserveObserversAndOtherHooks(t *testing.T) {
 	if !permissions.NativeHookSupported() {
 		t.Skip("native hook authentication unavailable")
 	}
-	home, err := os.MkdirTemp("", "wp-home-")
+	home, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestPermissionSettingsPlatformGateAndUniqueBash(t *testing.T) {
 	for _, supported := range []bool{false, true} {
 		for _, ask := range []string{`["Write"]`, `["Bash","Write","Bash"]`} {
 			t.Run(fmt.Sprintf("supported=%v/ask=%s", supported, ask), func(t *testing.T) {
-				home, err := os.MkdirTemp("", "wp-gate-")
+				home, err := os.MkdirTemp("/tmp", "wt")
 				if err != nil {
 					t.Fatal(err)
 				}
