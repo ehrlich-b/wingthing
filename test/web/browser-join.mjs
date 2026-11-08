@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import net from 'node:net';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
@@ -20,7 +21,16 @@ const { chromium } = process.env.PLAYWRIGHT_MODULE
 fs.mkdirSync(out, {recursive:true}); fs.mkdirSync(shots, {recursive:true});
 const state = fs.realpathSync(fs.mkdtempSync('/tmp/wt'));
 const home = fs.realpathSync(fs.mkdtempSync('/tmp/wt'));
-const port = Number(process.env.WT_JOIN_PORT || 18241), base = 'http://127.0.0.1:' + port;
+// Each fixture owns its loopback listener even when other checkouts run too.
+const unusedPort = () => new Promise((resolve,reject) => {
+    const listener = net.createServer();
+    listener.once('error',reject);
+    listener.listen(0,'127.0.0.1',() => {
+        const port = listener.address().port;
+        listener.close(error => error ? reject(error) : resolve(port));
+    });
+});
+const port = Number(process.env.WT_JOIN_PORT || await unusedPort()), base = 'http://127.0.0.1:' + port;
 const env = { PATH:process.env.PATH,TMPDIR:process.env.TMPDIR,HOME:home,WINGTHING_DIR:state,WT_BASE_URL:base };
 fs.writeFileSync(path.join(state,'wing.yaml'),'label: Studio\n',{mode:0o600});
 const log = fs.openSync(path.join(out,'roost.log'),'w');
@@ -37,7 +47,7 @@ const devices = () => cli('devices');
 const decode = link => JSON.parse(inflateRawSync(Buffer.from(link.split('#v1z.')[1],'base64url')));
 const encode = a => 'wingthing://pair#v1z.'+deflateRawSync(Buffer.from(JSON.stringify(a))).toString('base64url');
 async function ready() {
-    for(let i=0;i<150;i++){try{if((await fetch(base+'/health')).ok)return;}catch{}if(roost.exitCode!==null)throw Error('roost exited');await sleep(100);}
+    for(let i=0;i<150;i++){if(roost.exitCode!==null)throw Error('roost exited');try{if((await fetch(base+'/health')).ok)return;}catch{}await sleep(100);}
     throw Error('roost not ready');
 }
 async function resetRoost() {
