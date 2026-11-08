@@ -5,8 +5,16 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { createFixtureLayout } from './fixture-layout.mjs';
 
+function mailboxRoot(env = process.env, args = []) {
+    const output = execFileSync('make', ['-n', 'e2e-mac', ...args], { env, encoding: 'utf8' });
+    const caller = output.trim().split('\n').at(-1);
+    const selected = caller.match(/--state-root "([^"]+)"$/);
+    assert.ok(selected, caller);
+    return selected[1];
+}
+
 test('stdio and protected mailbox layouts preserve their actual policy boundary', async () => {
-    const runtime = await realpath(process.env.XDG_RUNTIME_DIR || '/var/tmp');
+    const runtime = await realpath(mailboxRoot());
     const ordinary = await createFixtureLayout();
     const protectedLayout = await createFixtureLayout(runtime);
     try {
@@ -42,13 +50,12 @@ test('stdio and protected mailbox layouts preserve their actual policy boundary'
 
 test('macOS mailbox caller works without runtime environment variables', async () => {
     // Model a standalone account using a private, non-temporary fixture root.
-    const root = await realpath(process.env.XDG_RUNTIME_DIR || '/var/tmp');
+    const root = await realpath(mailboxRoot());
     const env = { ...process.env, HOME: root };
     delete env.XDG_RUNTIME_DIR;
     delete env.CONVERSATION_FIXTURE_ROOT;
-    const output = execFileSync('make', ['-n', 'e2e-mac'], { env, encoding: 'utf8' });
-    const caller = output.trim().split('\n').at(-1);
-    assert.ok(caller.includes('--state-root "/var/tmp"'), caller);
+    const selected = mailboxRoot(env);
+    assert.equal(selected, process.platform === 'darwin' ? '/Users/Shared' : `/run/user/${process.getuid()}`);
     // Follow the actual caller's selected root in a fresh process, so ambient
     // XDG_RUNTIME_DIR cannot accidentally make this standalone check pass.
     execFileSync(process.execPath, ['--input-type=module', '-e', `
@@ -56,7 +63,7 @@ test('macOS mailbox caller works without runtime environment variables', async (
         import { realpath, rm, stat } from 'node:fs/promises';
         import path from 'node:path';
         import { createFixtureLayout } from './test/conversation/fixture-layout.mjs';
-        const root = await realpath('/var/tmp');
+        const root = await realpath(process.argv[1]);
         const layout = await createFixtureLayout(root);
         try {
             assert.equal(path.dirname(layout.runtimeRoot), root);
@@ -70,11 +77,11 @@ test('macOS mailbox caller works without runtime environment variables', async (
             await rm(layout.scratch, { recursive: true, force: true });
             await rm(layout.runtimeRoot, { recursive: true, force: true });
         }
-    `], { env, stdio: 'pipe' });
+    `, selected], { env, stdio: 'pipe' });
 });
 
 test('macOS mailbox caller supports a long HOME without runtime environment variables', async () => {
-    const parent = await mkdtemp(path.join(await realpath(process.env.XDG_RUNTIME_DIR || '/var/tmp'), 'wt'));
+    const parent = await mkdtemp(path.join(await realpath(mailboxRoot()), 'wt'));
     try {
         const home = path.join(parent, 'long-account-home-'.repeat(7));
         await mkdir(home, { mode: 0o700 });
@@ -110,4 +117,33 @@ test('macOS mailbox caller supports a long HOME without runtime environment vari
     } finally {
         await rm(parent, { recursive: true, force: true });
     }
+});
+
+test('macOS mailbox caller keeps protected state outside TMPDIR=/var/tmp without XDG', async () => {
+    const env = { ...process.env, TMPDIR: '/var/tmp' };
+    delete env.XDG_RUNTIME_DIR;
+    delete env.CONVERSATION_FIXTURE_ROOT;
+    assert.equal(mailboxRoot(env, ['HOST_OS=darwin']), '/Users/Shared');
+    assert.equal(mailboxRoot(env, ['HOST_OS=linux']), `/run/user/${process.getuid()}`);
+    const selected = mailboxRoot(env);
+    execFileSync(process.execPath, ['--input-type=module', '-e', `
+        import assert from 'node:assert/strict';
+        import { realpath, rm, stat } from 'node:fs/promises';
+        import path from 'node:path';
+        import { createFixtureLayout } from './test/conversation/fixture-layout.mjs';
+        const root = await realpath(process.argv[1]);
+        const layout = await createFixtureLayout(root);
+        try {
+            assert.equal(path.dirname(layout.runtimeRoot), root);
+            assert.equal(layout.home, layout.runtimeRoot);
+            assert.equal(path.dirname(layout.state), layout.home);
+            assert.equal((await stat(layout.home)).mode & 0o777, 0o700);
+            assert.ok(Buffer.byteLength(path.join(layout.state, 'eggs', '0'.repeat(16), 'egg.sock')) <= 103);
+            await assert.rejects(createFixtureLayout('/var/tmp'), /temporary write/);
+            await assert.rejects(createFixtureLayout('/tmp'), /temporary write/);
+        } finally {
+            await rm(layout.scratch, { recursive: true, force: true });
+            await rm(layout.runtimeRoot, { recursive: true, force: true });
+        }
+    `, selected], { env, stdio: 'pipe' });
 });
