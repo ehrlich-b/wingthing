@@ -23,6 +23,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"golang.org/x/term"
 )
 
@@ -269,6 +270,9 @@ func fidelityWrite(t *testing.T, dir, name string, data []byte) {
 }
 func fidelityBuild(t *testing.T) string {
 	t.Helper()
+	if binary := os.Getenv("WT_TEST_BINARY"); binary != "" {
+		return binary
+	}
 	binary := filepath.Join(t.TempDir(), "wt")
 	cmd := exec.CommandContext(t.Context(), "go", "build", "-p", "2", "-o", binary, ".")
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -287,15 +291,7 @@ type fidelityEgg struct {
 func startFidelityEgg(t *testing.T, binary, provider string, args ...string) *fidelityEgg {
 	t.Helper()
 	// A short, owned state directory keeps AF_UNIX paths valid on every platform.
-	home, err := os.MkdirTemp(".", "f-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	home, err = filepath.Abs(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	home := testsocket.Dir(t)
 	dir := filepath.Join(home, "eggs", "fidelity")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)

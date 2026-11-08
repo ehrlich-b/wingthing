@@ -30,6 +30,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"golang.org/x/term"
 	"google.golang.org/grpc"
 )
@@ -71,7 +72,7 @@ func northstarNewFixture(t *testing.T) *northstarFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
-	home, local, remote := testprovider.ScopedHomeDirs(t, scratch)
+	home, local, remote := testprovider.ScopedHomeDirs(t, testsocket.Dir(t))
 	f := &northstarFixture{repo: repo, root: root, home: home, local: local, remote: remote,
 		work: filepath.Join(root, "work"), tmp: filepath.Join(root, "tmp-alias"), bin: filepath.Join(root, "tmp-alias", "bin"),
 		evidence: filepath.Join(scratch, "northstar", "northstar-evidence")}
