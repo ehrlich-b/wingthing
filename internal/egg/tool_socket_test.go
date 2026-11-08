@@ -37,7 +37,7 @@ func closeToolListenerForTest(t *testing.T, listener *ToolListener) {
 }
 
 func TestToolControllerRoutingUsesCanonicalSessionSocket(t *testing.T) {
-	root, err := os.MkdirTemp("../..", ".ctx-")
+	root, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,6 +12,22 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 )
 
+// TempDir creates a private physical fixture root independent of the checkout
+// and TMPDIR. Keep socket state below this short root on every platform.
+func TempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "wt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir, err = filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 // ShortStateDir creates disposable clone-local state that fits Darwin's Unix
 // socket limit with a full runtime ID. MkdirTemp's decimal suffix is too long
 // in some checkout paths. A physical directory also keeps the control socket's

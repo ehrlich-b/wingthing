@@ -18,9 +18,8 @@ const { chromium } = process.env.PLAYWRIGHT_MODULE
     ? await import(process.env.PLAYWRIGHT_MODULE)
     : createRequire(new URL('../../web/package.json', import.meta.url))('playwright');
 fs.mkdirSync(out, {recursive:true}); fs.mkdirSync(shots, {recursive:true});
-fs.mkdirSync(path.join(root,'.scratch'), {recursive:true});
-const state = fs.mkdtempSync(path.join(process.env.WT_JOIN_STATE_ROOT || '/tmp', 'j-'));
-const home = fs.mkdtempSync(path.join(root,'.scratch/join-home-'));
+const state = fs.realpathSync(fs.mkdtempSync('/tmp/wt'));
+const home = fs.realpathSync(fs.mkdtempSync('/tmp/wt'));
 const port = Number(process.env.WT_JOIN_PORT || 18241), base = 'http://127.0.0.1:' + port;
 const env = { PATH:process.env.PATH,TMPDIR:process.env.TMPDIR,HOME:home,WINGTHING_DIR:state,WT_BASE_URL:base };
 fs.writeFileSync(path.join(state,'wing.yaml'),'label: Studio\n',{mode:0o600});
@@ -152,8 +151,8 @@ try {
     // Reserve the full runtime ID and endpoint on both Linux and Darwin.
     const eggSocket = path.join(state,'eggs','0'.repeat(16),'egg.sock');
     assert.ok(Buffer.byteLength(eggSocket) <= 103,`fixture socket path exceeds Darwin's 103-byte limit: ${eggSocket}`);
-    assert.ok(home.startsWith(root + path.sep));
-    record('short-state','socket state uses a short temporary root; fixture HOME stays inside the checkout');
+    assert.equal(path.dirname(home),path.dirname(state));
+    record('short-state','socket state uses a short temporary root; fixture HOME uses a separate short temporary root');
     await ready();
     cli('terminal','--unsandboxed','--detach','--name','join-proof-session','--cwd',home,'--','/bin/sleep','1800');
     sessionStarted=true;
@@ -489,7 +488,9 @@ finally {
     finally { fs.closeSync(log); }
     // Eggs started by the wing outlive the roost; wait for them before deleting.
     try { await removeState(state); } catch(error) { console.error('State cleanup: '+error.message);process.exitCode=1; }
+    await removeState(home);
     assert.equal(fs.existsSync(state),false);
+    assert.equal(fs.existsSync(home),false);
     record('state-cleanup','temporary wing state removed after fixture processes exit');
     const finish=revision();
     if(finish.head!==source.head||finish.dirty!==source.dirty){console.error('Source revision changed during verification');process.exitCode=1;}
