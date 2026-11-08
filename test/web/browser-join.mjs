@@ -15,6 +15,11 @@ const revision=()=>({head:spawnSync('git',['rev-parse','HEAD'],{cwd:root,encodin
 const source=revision(), screenshots=[];
 const out = process.env.WT_JOIN_OUT || path.join(root, '.scratch/browser-join');
 const shots = process.env.WT_JOIN_SHOTS || path.join(out, 'shots');
+// Playwright and Chromium also create Unix sockets beneath their temp root.
+// Set it before loading Playwright so neither inherits a deep caller TMPDIR.
+const tmp = fs.realpathSync(fs.mkdtempSync('/tmp/wt'));
+const originalTMPDIR = process.env.TMPDIR;
+process.env.TMPDIR = tmp;
 const { chromium } = process.env.PLAYWRIGHT_MODULE
     ? await import(process.env.PLAYWRIGHT_MODULE)
     : createRequire(new URL('../../web/package.json', import.meta.url))('playwright');
@@ -31,7 +36,7 @@ const unusedPort = () => new Promise((resolve,reject) => {
     });
 });
 const port = Number(process.env.WT_JOIN_PORT || await unusedPort()), base = 'http://127.0.0.1:' + port;
-const env = { PATH:process.env.PATH,TMPDIR:process.env.TMPDIR,HOME:home,WINGTHING_DIR:state,WT_BASE_URL:base };
+const env = { PATH:process.env.PATH,TMPDIR:tmp,HOME:home,WINGTHING_DIR:state,WT_BASE_URL:base };
 fs.writeFileSync(path.join(state,'wing.yaml'),'label: Studio\n',{mode:0o600});
 const log = fs.openSync(path.join(out,'roost.log'),'w');
 const startRoost = () => spawn('nice',['-n','10',path.join(root,'wt'),'roost','start','--foreground','--addr','127.0.0.1:'+port],{cwd:root,env,stdio:['ignore',log,log]});
@@ -499,8 +504,12 @@ finally {
     // Eggs started by the wing outlive the roost; wait for them before deleting.
     try { await removeState(state); } catch(error) { console.error('State cleanup: '+error.message);process.exitCode=1; }
     await removeState(home);
+    await removeState(tmp);
+    if (originalTMPDIR === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = originalTMPDIR;
     assert.equal(fs.existsSync(state),false);
     assert.equal(fs.existsSync(home),false);
+    assert.equal(fs.existsSync(tmp),false);
     record('state-cleanup','temporary wing state removed after fixture processes exit');
     const finish=revision();
     if(finish.head!==source.head||finish.dirty!==source.dirty){console.error('Source revision changed during verification');process.exitCode=1;}
