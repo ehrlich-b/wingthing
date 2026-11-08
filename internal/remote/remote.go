@@ -29,6 +29,7 @@ type Invocation struct {
 	AllocateTTY bool
 	// NonInteractive prevents SSH from prompting via /dev/tty in background work.
 	NonInteractive bool
+	StrictHostKeys bool
 }
 
 // ProfileInvocation preserves the saved host, executable and remote state. The
@@ -58,6 +59,8 @@ type IO struct {
 	StdinTTY  bool
 	StdoutTTY bool
 	SSHPath   string
+	// RunCommand optionally supervises an interactive command and its terminal.
+	RunCommand func(*exec.Cmd) error
 }
 
 func ProcessIO() IO {
@@ -455,6 +458,9 @@ func RunRemoteInvocation(ctx context.Context, invocation Invocation, streams IO)
 	if invocation.NonInteractive {
 		sshArgs = append(sshArgs, "-o", "BatchMode=yes")
 	}
+	if invocation.StrictHostKeys {
+		sshArgs = append(sshArgs, "-o", "StrictHostKeyChecking=yes", "-o", "UpdateHostKeys=no", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "-o", "ConnectTimeout=10")
+	}
 	sshArgs = append(sshArgs, invocation.Target, command)
 	sshPath := streams.SSHPath
 	if sshPath == "" {
@@ -467,7 +473,11 @@ func RunRemoteInvocation(ctx context.Context, invocation Invocation, streams IO)
 	child.Stdin = streams.In
 	child.Stdout = streams.Out
 	child.Stderr = streams.ErrOut
-	if err := child.Run(); err != nil {
+	run := child.Run
+	if streams.RunCommand != nil {
+		run = func() error { return streams.RunCommand(child) }
+	}
+	if err := run(); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

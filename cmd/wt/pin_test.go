@@ -159,14 +159,27 @@ func TestAttachCoordinatorDispatchesQualifiedRemoteID(t *testing.T) {
 	if err := config.SaveRemotes(cfg.Dir, map[string]config.Remote{"work": {SSHTarget: "fixture-peer"}}); err != nil {
 		t.Fatal(err)
 	}
-	script := `case "$3" in
+	script := `host= batch= strict=
+for arg do
+ case "$arg" in fixture-peer) host=yes ;; BatchMode=yes) batch=yes ;; StrictHostKeyChecking=yes) strict=yes ;; esac
+ command=$arg
+done
+[ "$host" = yes ] || exit 90
+case "$command" in
 *"'session' 'ps' '--json' '--remote-inventory'"*) printf '%s\n' '{"version":"fixture","contract_version":"v1","sessions":[{"id":"remote-parent","name":"renamed","pid":42,"pinned":true,"role":"coordinator"}]}' ;;
-*"'attach' '--read-only' '--' 'remote-parent'"*) printf 'attached remote-parent\n' ;;
+*"'attach' '--attachment-stream'"*)
+ [ "$1" = -T ] && [ "$batch" = yes ] && [ "$strict" = yes ] || exit 92
+ exec /usr/bin/python3 -c 'import base64,json,sys
+request=json.loads(sys.stdin.readline())
+assert request["session"]=="remote-parent" and request["options"]["ReadOnly"] and not request["options"]["Takeover"]
+print(json.dumps({"message":{"sessionId":"remote-parent","output":base64.b64encode(b"attached remote-parent\n").decode()}}),flush=True)
+print(json.dumps({"message":{"sessionId":"remote-parent","exitCode":0}}),flush=True)'
+ ;;
 *) printf 'wrong route\n' >&2; exit 91 ;;
 esac
 `
 	var out bytes.Buffer
-	if err := executeCLI(t.Context(), []string{"attach", "coordinator", "--read-only"}, remotepkg.IO{In: strings.NewReader(""), Out: &out, ErrOut: io.Discard, SSHPath: writeFakeRemoteSSH(t, script)}); err != nil {
+	if err := executeCLI(t.Context(), []string{"attach", "coordinator", "--read-only"}, remotepkg.IO{In: strings.NewReader(""), Out: &out, ErrOut: io.Discard, SSHPath: writeRawFakeRemoteSSH(t, script)}); err != nil {
 		t.Fatal(err)
 	}
 	if out.String() != "attached remote-parent\n" {

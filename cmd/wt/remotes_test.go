@@ -21,8 +21,14 @@ import (
 
 func writeFakeRemoteSSH(t *testing.T, script string) string {
 	t.Helper()
+	return writeRawFakeRemoteSSH(t, "if [ \"$2\" = -o ] && [ \"$3\" = BatchMode=yes ]; then mode=$1; shift 3; set -- \"$mode\" \"$@\"; fi\n"+script)
+}
+
+// Attachment route assertions must see the original SSH security options.
+func writeRawFakeRemoteSSH(t *testing.T, script string) string {
+	t.Helper()
 	path := filepath.Join(testsocket.Dir(t), "ssh")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+"if [ \"$2\" = -o ] && [ \"$3\" = BatchMode=yes ]; then mode=$1; shift 3; set -- \"$mode\" \"$@\"; fi\n"+script), 0700); err != nil {
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -151,30 +157,38 @@ func TestConfiguredRemoteAttachUsesRunner(t *testing.T) {
 	if err := config.SaveRemotes(dir, map[string]config.Remote{"work": {SSHTarget: "me@host", WingthingDir: "/home/me/wt state/it's isolated"}}); err != nil {
 		t.Fatal(err)
 	}
-	sshPath := writeFakeRemoteSSH(t, "printf '%s\\n' \"$1\" \"$2\" \"$3\"\ncat\n")
+	sshPath := writeRawFakeRemoteSSH(t, fakeFramedAttachReply())
 	for _, flag := range []string{"--read-only", "--takeover"} {
 		var out bytes.Buffer
-		err := executeCLI(context.Background(), []string{"attach", "work:review", flag}, remotepkg.IO{
-			In: strings.NewReader("attach input"), Out: &out, ErrOut: io.Discard,
-			StdinTTY: true, StdoutTTY: true, SSHPath: sshPath,
-		})
+		err := executeCLI(context.Background(), []string{"attach", "work:review", flag}, remotepkg.IO{In: strings.NewReader(""), Out: &out, ErrOut: io.Discard, SSHPath: sshPath})
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "-t\nme@host\nWINGTHING_DIR=" + remotepkg.ShellQuote("/home/me/wt state/it's isolated") +
-			" WINGTHING_PREVIEW_DIR=" + remotepkg.ShellQuote("/home/me/wt state/it's isolated") +
-			" 'wt' '--expected-channel' 'stable' 'attach' " + remotepkg.ShellQuote(flag) + " '--' 'review'\nattach input"
-		if out.String() != want {
-			t.Fatalf("attach transport = %q, want %q", out.String(), want)
+		var route struct {
+			Args    []string                    `json:"args"`
+			Request eggclient.AttachmentRequest `json:"request"`
+		}
+		if err := json.Unmarshal(out.Bytes(), &route); err != nil {
+			t.Fatal(out.String(), err)
+		}
+		if route.Request.Session != "review" || route.Request.Options.ReadOnly != (flag == "--read-only") || route.Request.Options.Takeover != (flag == "--takeover") {
+			t.Fatalf("attachment options: %+v", route)
+		}
+		args := strings.Join(route.Args, "\n")
+		for _, want := range []string{"-T\n-o\nBatchMode=yes", "StrictHostKeyChecking=yes", "me@host", remotepkg.ShellQuote("/home/me/wt state/it's isolated"), "'attach' '--attachment-stream'"} {
+			if !strings.Contains(args, want) {
+				t.Fatalf("missing %s in %s", want, args)
+			}
 		}
 	}
 	var out bytes.Buffer
-	if err := executeCLI(context.Background(), []string{"attach", "work:--takeover"}, remotepkg.IO{Out: &out, ErrOut: io.Discard, SSHPath: sshPath}); err != nil {
+	if err := executeCLI(context.Background(), []string{"attach", "work:--takeover"}, remotepkg.IO{In: strings.NewReader(""), Out: &out, ErrOut: io.Discard, SSHPath: sshPath}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(out.String(), "-T\nme@host\n") || !strings.Contains(out.String(), "'attach' '--' '--takeover'") {
-		t.Fatalf("session reference became an option or noninteractive attach allocated a TTY: %q", out.String())
+	if !strings.Contains(out.String(), `"session": "--takeover"`) {
+		t.Fatalf("session reference became an option: %s", out.String())
 	}
+
 	if err := executeCLI(context.Background(), []string{"attach", "missing:review"}, remotepkg.IO{SSHPath: sshPath}); err == nil || !strings.Contains(err.Error(), `unknown remote "missing"`) {
 		t.Fatalf("unknown remote: %v", err)
 	}
@@ -196,11 +210,11 @@ func TestConfiguredRemoteCommandsUseRememberedWTBinary(t *testing.T) {
 	}
 	// Both the version probe and inventory must select the saved binary. The
 	// attach branch reports its command so the same check covers that route.
-	ssh := writeFakeRemoteSSH(t, "case \"$3\" in\n"+
+	ssh := writeFakeRemoteSSH(t, "for saved_command do :; done\ncase \"$saved_command\" in\n"+
 		remotepkg.ShellQuote(remotepkg.ShellQuote(binary))+"*) ;;\n*) echo 'wrong executable' >&2; exit 9 ;;\nesac\n"+
-		"case \"$3\" in\n*\"'--version'\"*) echo 'wt version remote-test' ;;\n"+
+		"case \"$saved_command\" in\n*\"'--version'\"*) echo 'wt version remote-test' ;;\n"+
 		"*\"'session' 'ps' '--json' '--remote-inventory'\"*) printf '%s\\n' "+remotepkg.ShellQuote(string(data))+" ;;\n"+
-		"*\"'attach'\"*) printf '%s\\n' \"$3\" ;;\n*) exit 9 ;;\nesac\n")
+		"*\"'attach'\"*) "+fakeFramedAttachReply()+" ;;\n*) exit 9 ;;\nesac\n")
 	var out bytes.Buffer
 	if err := executeCLI(context.Background(), []string{"session", "ps", "--json"}, remotepkg.IO{Out: &out, ErrOut: io.Discard, SSHPath: ssh}); err != nil {
 		t.Fatal(err)
@@ -213,7 +227,7 @@ func TestConfiguredRemoteCommandsUseRememberedWTBinary(t *testing.T) {
 	if err := executeCLI(context.Background(), []string{"attach", "work:review"}, remotepkg.IO{Out: &out, ErrOut: io.Discard, SSHPath: ssh}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(out.String(), remotepkg.ShellQuote(binary)+" 'attach'") {
+	if !strings.Contains(out.String(), remotepkg.ShellQuote(binary)+" 'attach' '--attachment-stream'") {
 		t.Fatalf("saved binary attach: %s", &out)
 	}
 }
@@ -347,4 +361,16 @@ func TestSessionPSRemoteVersionMismatchNamesBothVersions(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The fixture speaks the framed attachment protocol and returns its route and
+// options as terminal output, followed by a confirmed provider result.
+func fakeFramedAttachReply() string {
+	program := `import base64,json,sys
+request=json.loads(sys.stdin.readline())
+data=json.dumps({"args":sys.argv[1:],"request":request}).encode()
+print(json.dumps({"message":{"sessionId":"full-id","output":base64.b64encode(data).decode()}}),flush=True)
+print(json.dumps({"message":{"sessionId":"full-id","exitCode":0}}),flush=True)
+`
+	return "python3 -c " + remotepkg.ShellQuote(program) + " \"$@\"\n"
 }

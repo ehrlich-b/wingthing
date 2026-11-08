@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -41,30 +42,68 @@ type northstarSSHRecord struct {
 	Mode    string `json:"tty_mode"`
 	Batch   bool   `json:"batch_mode"`
 	Command string `json:"command"`
+	Session string `json:"session,omitempty"`
 }
 
 func northstarRemoteSSH(args []string) int {
 	record := northstarSSHRecord{}
+	var noCommand bool
+	var forward string
 	for len(args) > 0 {
 		switch args[0] {
 		case "-t", "-T":
 			record.Mode = args[0]
 			args = args[1:]
 		case "-o":
-			if len(args) < 2 || args[1] != "BatchMode=yes" {
+			if len(args) < 2 {
 				return 91
 			}
-			record.Batch = true
+			switch args[1] {
+			case "BatchMode=yes":
+				record.Batch = true
+			case "StrictHostKeyChecking=yes", "UpdateHostKeys=no", "ExitOnForwardFailure=yes", "ServerAliveInterval=15", "ServerAliveCountMax=2", "StreamLocalBindUnlink=no":
+			default:
+				if !strings.HasPrefix(args[1], "ConnectTimeout=") {
+					return 91
+				}
+			}
 			args = args[2:]
+		case "-N":
+			noCommand = true
+			args = args[1:]
+		case "-L":
+			if len(args) < 2 {
+				return 91
+			}
+			forward, args = args[1], args[2:]
+		case "--":
+			args = args[1:]
+			goto parsed
 		default:
 			goto parsed
 		}
 	}
 parsed:
-	if len(args) != 2 || record.Mode == "" {
+	if record.Mode == "" || (!noCommand && len(args) != 2) || (noCommand && (len(args) != 1 || forward == "" || !record.Batch || record.Mode != "-T")) {
 		return 92
 	}
-	record.Target, record.Command = args[0], args[1]
+	record.Target = args[0]
+	if noCommand {
+		record.Command = "-N -L " + forward
+	} else {
+		record.Command = args[1]
+	}
+	var commandInput io.Reader = os.Stdin
+	if strings.HasSuffix(record.Command, "'attach' '--attachment-stream'") {
+		reader := bufio.NewReader(os.Stdin)
+		line, err := reader.ReadBytes('\n')
+		var request eggclient.AttachmentRequest
+		if err != nil || json.Unmarshal(line, &request) != nil {
+			return 92
+		}
+		record.Session = request.Session
+		commandInput = io.MultiReader(bytes.NewReader(line), reader)
+	}
 	switch record.Target {
 	case "ns-devbox", "ns-mirror", "ns-offline":
 	default:
@@ -90,9 +129,57 @@ parsed:
 		fmt.Fprintln(os.Stderr, "fixture offline")
 		return 255
 	}
+	if noCommand {
+		local, remote, ok := strings.Cut(forward, ":")
+		if !ok || remote != filepath.Join(os.Getenv("NORTHSTAR_REMOTE_STATE"), controlsocket.SocketName) {
+			return 96
+		}
+		listener, err := net.Listen("unix", local)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 97
+		}
+		defer listener.Close()
+		for {
+			incoming, err := listener.Accept()
+			if err != nil {
+				return 98
+			}
+			go func() {
+				defer incoming.Close()
+				outgoing, err := net.Dial("unix", remote)
+				if err != nil {
+					return
+				}
+				defer outgoing.Close()
+				done := make(chan struct{})
+				go func() {
+					_, _ = io.Copy(outgoing, incoming)
+					_ = outgoing.(*net.UnixConn).CloseWrite()
+					close(done)
+				}()
+				_, _ = io.Copy(incoming, outgoing)
+				_ = incoming.(*net.UnixConn).CloseWrite()
+				<-done
+			}()
+		}
+	}
 	command := exec.Command("/bin/sh", "-c", record.Command)
 	if record.Mode == "-T" {
-		command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+		input := os.Stdin
+		if commandInput != os.Stdin {
+			reader, writer, err := os.Pipe()
+			if err != nil {
+				return 97
+			}
+			defer reader.Close()
+			defer writer.Close()
+			input = reader
+			// The remote peer may finish before the caller closes stdin.
+			// An owned pipe avoids exec.Wait joining that idle input reader.
+			go func() { _, _ = io.Copy(writer, commandInput); _ = writer.Close() }()
+		}
+		command.Stdin, command.Stdout, command.Stderr = input, os.Stdout, os.Stderr
 		err = command.Run()
 	} else {
 		if record.Batch {
@@ -474,12 +561,18 @@ func TestNorthstarPTYRemoteAttach(t *testing.T) {
 	assertSurvives(peer)
 	records := northstarSSHRecords(t, log)
 	attaches, renames, stops := 0, 0, 0
+	framedAttaches := 0
 	prefix := "WINGTHING_DIR=" + remotepkg.ShellQuote(f.remote) + " WINGTHING_PREVIEW_DIR=" + remotepkg.ShellQuote(f.remote) + " " + remotepkg.ShellQuote(custom) + " '--expected-channel' 'stable' "
 	for _, record := range records {
 		attach := strings.Contains(record.Command, "'attach'")
 		if attach {
 			attaches++
-			if record.Target != "ns-devbox" || record.Mode != "-t" || record.Batch || !strings.Contains(record.Command, "'--' '"+id+"'") {
+			if strings.HasSuffix(record.Command, "'attach' '--attachment-stream'") {
+				framedAttaches++
+				if record.Target != "ns-devbox" || record.Mode != "-T" || !record.Batch || record.Session != id {
+					t.Fatalf("framed exact/auth route: %+v", record)
+				}
+			} else if record.Target != "ns-devbox" || record.Mode != "-t" || record.Batch || !strings.Contains(record.Command, "'--' '"+id+"'") {
 				t.Fatalf("foreground exact/auth route: %+v", record)
 			}
 		} else if record.Mode != "-T" || !record.Batch {
@@ -495,8 +588,8 @@ func TestNorthstarPTYRemoteAttach(t *testing.T) {
 			stops++
 		}
 	}
-	if attaches != 3 || renames != 1 || stops != 1 {
-		t.Fatalf("dispatch counts attach/rename/stop=%d/%d/%d; stale mutation or retry dispatched", attaches, renames, stops)
+	if attaches != 3 || framedAttaches != 1 || renames != 1 || stops != 1 {
+		t.Fatalf("dispatch counts attach/framed/rename/stop=%d/%d/%d/%d; stale mutation or retry dispatched", attaches, framedAttaches, renames, stops)
 	}
 	canonical, err := filepath.EvalSymlinks(f.tmp)
 	if err != nil || canonical != filepath.Join(f.root, "tmp-real") || !strings.HasPrefix(binary, f.tmp+string(filepath.Separator)) {

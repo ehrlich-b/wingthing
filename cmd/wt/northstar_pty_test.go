@@ -28,7 +28,9 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"golang.org/x/term"
 	"google.golang.org/grpc"
 )
@@ -65,15 +67,16 @@ func northstarNewFixture(t *testing.T) *northstarFixture {
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}
-	root, err := os.MkdirTemp(scratch, "northstar-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
-	home, local, remote := testprovider.ScopedHomeDirs(t, scratch)
+	// Keep workspace and executable paths bounded too: policy reports must fit
+	// the same terminal viewport regardless of the checkout's path length.
+	root := testsocket.Dir(t)
+	home, local, remote := testprovider.ScopedHomeDirs(t, testsocket.Dir(t))
 	f := &northstarFixture{repo: repo, root: root, home: home, local: local, remote: remote,
 		work: filepath.Join(root, "work"), tmp: filepath.Join(root, "tmp-alias"), bin: filepath.Join(root, "tmp-alias", "bin"),
 		evidence: filepath.Join(scratch, "northstar", "northstar-evidence")}
+	if evidence := os.Getenv("WT_NAVIGATOR_EVIDENCE"); evidence != "" {
+		f.evidence = evidence
+	}
 	// TMPDIR must actually traverse an alias created by this regression. State
 	// and mailbox stay in protected HOME, outside provider-writable work/TMPDIR.
 	if err := os.Mkdir(filepath.Join(root, "tmp-real"), 0700); err != nil {
@@ -89,9 +92,17 @@ func northstarNewFixture(t *testing.T) *northstarFixture {
 	}
 	f.env = []string{"HOME=" + home, "WINGTHING_DIR=" + local, "PATH=" + f.bin + ":/usr/bin:/bin:/usr/sbin:/sbin", "TMPDIR=" + f.tmp,
 		"TERM=xterm-256color", "LANG=en_US.UTF-8", "PYTHONDONTWRITEBYTECODE=1", "NORTHSTAR_SSH_OFFLINE_FILE=" + filepath.Join(home, "devbox-offline")}
+	f.env = append(f.env, "NORTHSTAR_REMOTE_STATE="+remote, "NORTHSTAR_REMOTE_SSH_LOG="+filepath.Join(home, "ssh.jsonl"))
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Only these exact fixture aliases can reach the shell executor. The command
 	// still runs the built wt with the literal state/argv produced by real SSH code.
 	northstarWrite(t, filepath.Join(f.bin, "ssh"), `#!/bin/sh
+for arg in "$@"; do
+ if [ "$arg" = -N ]; then exec `+remotepkg.ShellQuote(exe)+` northstar-fake-ssh "$@"; fi
+done
 while [ "$#" -gt 0 ]; do
  case "$1" in -T|-t) shift ;; -o) shift 2 ;; *) break ;; esac
 done
@@ -397,6 +408,8 @@ type northstarPTY struct {
 	master, slave *os.File
 	before        *term.State
 	emu           *vt.Emulator
+	modes         *northstarTerminalModes
+	initialModes  map[int]bool
 	mu            sync.Mutex
 	revision      uint64
 	changed       chan struct{}
@@ -408,6 +421,11 @@ type northstarPTY struct {
 }
 
 func northstarStartPTY(t *testing.T, f *northstarFixture, binary string, cols, rows int, args ...string) *northstarPTY {
+	t.Helper()
+	return northstarStartPTYModes(t, f, binary, cols, rows, nil, args...)
+}
+
+func northstarStartPTYModes(t *testing.T, f *northstarFixture, binary string, cols, rows int, initial map[int]bool, args ...string) *northstarPTY {
 	t.Helper()
 	master, slave, err := pty.Open()
 	if err != nil {
@@ -428,6 +446,15 @@ func northstarStartPTY(t *testing.T, f *northstarFixture, binary string, cols, r
 		t.Fatal(err)
 	}
 	h := &northstarPTY{t: t, cmd: cmd, master: master, slave: slave, before: before, emu: vt.NewEmulator(cols, rows), changed: make(chan struct{}, 1), done: make(chan error, 1), readDone: make(chan struct{}), artifact: filepath.Join(f.evidence, strings.ReplaceAll(t.Name(), "/", "-")+"-"+strconv.Itoa(cols)+"-"+strconv.Itoa(cmd.Process.Pid))}
+	h.modes = newNorthstarTerminalModes(initial)
+	h.initialModes = h.modes.snapshot()
+	for mode, enabled := range h.initialModes {
+		final := 'l'
+		if enabled {
+			final = 'h'
+		}
+		fmt.Fprintf(h.emu, "\x1b[?%d%c", mode, final)
+	}
 	// VT query replies must be drained even if a child asks for capabilities.
 	queryDone := make(chan struct{})
 	go func() { defer close(queryDone); _, _ = io.Copy(io.Discard, h.emu) }()
@@ -440,7 +467,7 @@ func northstarStartPTY(t *testing.T, f *northstarFixture, binary string, cols, r
 			if n > 0 {
 				h.mu.Lock()
 				h.transcript.Write(buf[:n])
-				_, _ = h.emu.Write(buf[:n])
+				_, _ = h.emu.Write(h.modes.render(buf[:n]))
 				h.revision++
 				h.mu.Unlock()
 				select {
