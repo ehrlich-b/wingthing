@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { tmpdir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { removeState } from './fixture-state.mjs';
@@ -18,7 +19,7 @@ const only = (process.env.WT_LOOK_ONLY || '').split(',').filter(Boolean);
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 fs.mkdirSync(shots, { recursive: true });
 fs.mkdirSync(path.join(root, '.scratch'), { recursive: true });
-const state = fs.mkdtempSync('/tmp/wt');
+const state = fs.mkdtempSync(path.join(tmpdir(), 'wt'));
 const port = Number(process.env.WT_LOOK_PORT || 18191);
 const base = 'http://127.0.0.1:' + port;
 const env = { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, HOME: path.join(state, 'home'), WINGTHING_DIR: state };
@@ -159,7 +160,7 @@ async function shoot(page, name, suffix) {
 }
 async function checkPublic(page, name, suffix) {
     assert.equal(await page.locator('a[href*="github.com"]').count(), 0);
-    assert.ok(await page.getByRole('link', {name:'Source', exact:true}).count());
+    assert.ok(await page.getByRole('link', {name:'GitLab source', exact:true}).count());
     if (page.viewportSize().width === 390) {
         const nav = await page.locator('.site-nav').evaluate(el => {
             const box = selector => el.querySelector(selector).getBoundingClientRect().toJSON();
@@ -172,15 +173,13 @@ async function checkPublic(page, name, suffix) {
     }
     if (name === '09-landing') {
         const visible = await page.locator('.product-preview').evaluate(el => {
-            const r = el.getBoundingClientRect(); return {top:r.top, bottom:r.bottom, viewport:innerHeight};
+            const r = el.getBoundingClientRect();
+            return {top:r.top, bottom:r.bottom, capabilitiesTop:document.querySelector('.how').getBoundingClientRect().top};
         });
-        assert.ok(visible.top > 0 && visible.bottom <= visible.viewport);
+        assert.ok(visible.top > 0 && visible.bottom > visible.top && visible.bottom < visible.capabilitiesTop);
         await page.getByRole('link', {name:'Install wingthing', exact:true}).last().isVisible().then(assert.ok);
-        assert.equal(await page.locator('.homepage-demo video').count(),1);
-        assert.equal(await page.locator('.homepage-demo').getAttribute('open'),null);
-        assert.equal(await page.locator('.homepage-demo video').getAttribute('preload'),'none');
-        assert.equal(await page.locator('.homepage-demo video').getAttribute('autoplay'),null);
-        checked(name + suffix + '-preview-before-optional-demo', visible);
+        assert.equal(await page.locator('video').count(), 0);
+        checked(name + suffix + '-illustrative-preview', visible);
     }
     if (name === '10-install') {
         await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', {configurable:true, value:{writeText:text=>{window.copiedCommand=text; return Promise.resolve();}}}));
@@ -394,7 +393,7 @@ async function go(page, hash) {
 // A real one-time invitation from a second, non-dev roost's own wing (the
 // same setup as browser-join.mjs), compared but never confirmed: the terminal
 // never gets Enter, so nothing is paired.
-const joinState = fs.mkdtempSync('/tmp/wt');
+const joinState = fs.mkdtempSync(path.join(tmpdir(), 'wt'));
 const joinBase = 'http://127.0.0.1:' + (port + 1);
 const joinEnv = { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, HOME: path.join(state, 'join-home'), WINGTHING_DIR: joinState, WT_BASE_URL: joinBase };
 fs.mkdirSync(joinEnv.HOME);
@@ -439,6 +438,7 @@ try {
     // redirects to /docs; markdown and download endpoints are not HTML pages.
     for (let i = 0; i < 100; i++) { try { if ((await fetch(publicBase + '/health')).ok) break; } catch {} await sleep(100); }
     const publicPages = [['09-landing', '/'], ['10-install', '/install'], ['11-docs', '/docs'], ['12-patterns', '/patterns'], ['13-login', '/login'], ['14-terms', '/terms'], ['15-privacy', '/privacy'], ['16-abuse', '/abuse']];
+    const publicOnly = only.length > 0 && only.every(name => publicPages.some(([page]) => page === name));
     for (const [index, v] of themes.entries()) {
         const page = await contexts[index].newPage();
         const videoRequests = [];
@@ -457,20 +457,21 @@ try {
             await shoot(page, name, v.suffix);
             if (name === '09-landing') {
                 assert.deepEqual(videoRequests, [], 'Homepage requested video before interaction');
-                checked('09-landing' + v.suffix + '-no-video-requests', 'Homepage rendered with the demo closed and no video requests');
+                checked('09-landing' + v.suffix + '-no-video-requests', 'Homepage rendered with no video requests');
             }
         }
         await page.close();
     }
+    const appThemes = publicOnly ? [] : themes;
     // Empty state: signed in, no machine has connected yet.
-    for (const [index, v] of themes.entries()) {
+    for (const [index, v] of appThemes.entries()) {
         const page = await contexts[index].newPage();
         await go(page, '');
         await shoot(page, '08-empty', v.suffix);
         await page.close();
     }
-    for (const id of Object.keys(machines)) await machine(id);
-    for (const [index, v] of themes.entries()) {
+    for (const id of publicOnly ? [] : Object.keys(machines)) await machine(id);
+    for (const [index, v] of appThemes.entries()) {
         const page = await contexts[index].newPage();
         page.on('pageerror', error => console.log('PAGEERROR ' + error));
         await go(page, '');
@@ -518,9 +519,9 @@ try {
         await page.close();
     }
     // Mini goes to sleep: its socket closes and the app keeps its last-seen rows.
-    sockets.get('mini').close();
-    await sleep(1500);
-    for (const [index, v] of themes.entries()) {
+    sockets.get('mini')?.close();
+    if (!publicOnly) await sleep(1500);
+    for (const [index, v] of appThemes.entries()) {
         const page = await contexts[index].newPage();
         await go(page, '#sessions');
         await page.waitForTimeout(1500);
@@ -528,7 +529,7 @@ try {
         await page.close();
     }
     // Phone app with no network: the worker's constant disconnected page.
-    for (const [index, v] of themes.entries()) {
+    for (const [index, v] of appThemes.entries()) {
         const page = await contexts[index].newPage();
         await go(page, '');
         await page.evaluate(() => navigator.serviceWorker && navigator.serviceWorker.ready).catch(() => {});
@@ -538,7 +539,7 @@ try {
         await contexts[index].setOffline(false);
         await page.close();
     }
-    const expected = only.length ? (only.length + 1) * themes.length : 80;
+    const expected = only.length ? (only.length + (publicOnly ? 0 : 1)) * themes.length : 80;
     if (captures.length !== expected) throw Error('Incomplete capture: ' + captures.length + ' of ' + expected);
     complete = true;
     if (overflow.length) throw Error('Horizontal overflow in ' + overflow.length + ' phone captures');

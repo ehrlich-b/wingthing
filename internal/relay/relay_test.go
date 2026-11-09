@@ -535,6 +535,22 @@ func TestHomepageStoryPublicRoute(t *testing.T) {
 	}
 }
 
+func TestLegacyHeroRedirectsToHomepage(t *testing.T) {
+	srv := NewServer(testStore(t), ServerConfig{})
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		t.Run(method, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			srv.ServeHTTP(response, httptest.NewRequest(method, "/hero.mp4", nil))
+			if response.Code != http.StatusMovedPermanently {
+				t.Fatalf("%s /hero.mp4 status = %d, want 301", method, response.Code)
+			}
+			if location := response.Header().Get("Location"); location != "/" {
+				t.Fatalf("%s /hero.mp4 Location = %q, want /", method, location)
+			}
+		})
+	}
+}
+
 func TestPublicDemoAssetsSupportPlayback(t *testing.T) {
 	_, ts := testServer(t)
 	for _, asset := range []struct {

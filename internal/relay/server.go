@@ -182,6 +182,10 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 
 	// Web pages
 	s.mux.HandleFunc("GET /{$}", s.handleHome)
+	// Preserve old links to the retired homepage video.
+	s.mux.HandleFunc("GET /hero.mp4", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/", http.StatusMovedPermanently)
+	})
 	s.mux.HandleFunc("GET /login", s.handleLogin)
 	s.mux.HandleFunc("GET /install", s.handleInstallPage)
 	s.mux.HandleFunc("GET /docs", s.handleDocs)
