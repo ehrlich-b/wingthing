@@ -910,7 +910,10 @@ func TestStableConversationHostMailboxOptIn(t *testing.T) {
 		config.ReleaseChannel = oldChannel
 		conversationBrokerProtection, startConversationBroker = oldProtection, oldStart
 	})
-	cfg := &config.Config{Dir: testsocket.Dir(t)}
+	cfg := &config.Config{Dir: filepath.Join(testsocket.Dir(t), "state")}
+	if err := os.Mkdir(cfg.Dir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(cfg.Dir, "wing.yaml"), []byte("conversations: enabled\nroost: https://wingthing.ai\nhosted_relay: allow\n"), 0600); err != nil {
 		t.Fatal(err)
 	}

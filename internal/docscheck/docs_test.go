@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -18,11 +17,11 @@ var markdownLink = regexp.MustCompile(`\[[^]]+\]\(([^)\s]+)`) // local links in 
 
 func repositoryRoot(t *testing.T) string {
 	t.Helper()
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(filename), "..", ".."))
+	return root
 }
 
 func TestLocalMarkdownLinksResolve(t *testing.T) {
