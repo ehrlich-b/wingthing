@@ -54,6 +54,10 @@ func RunTerminalCommand(ctx context.Context, command *exec.Cmd) error {
 	if err != nil {
 		return err
 	}
+	// Catch resizes before the guardian can start its child and produce output.
+	winch := make(chan os.Signal, 1)
+	signal.Notify(winch, syscall.SIGWINCH)
+	defer signal.Stop(winch)
 	guardian := exec.Command(exe, terminalCommandArg)
 	guardian.ExtraFiles = []*os.File{lifeRead, input, output, readyWrite}
 	guardian.Stderr = command.Stderr
@@ -73,9 +77,6 @@ func RunTerminalCommand(ctx context.Context, command *exec.Cmd) error {
 		_ = guardian.Wait()
 		return fmt.Errorf("snapshot remote terminal: %w", err)
 	}
-	winch := make(chan os.Signal, 1)
-	signal.Notify(winch, syscall.SIGWINCH)
-	defer signal.Stop(winch)
 	done := make(chan error, 1)
 	go func() { done <- guardian.Wait() }()
 	for {
@@ -108,6 +109,10 @@ func runGuardedTerminalCommand(life, input, output *os.File, pending []byte, kno
 	if _, err := term.MakeRaw(int(slave.Fd())); err != nil {
 		return 0, err
 	}
+	// Subscribe before sampling the size so a concurrent change is replayed.
+	winch := make(chan os.Signal, 1)
+	signal.Notify(winch, syscall.SIGWINCH)
+	defer signal.Stop(winch)
 	resize := func() {
 		if size, err := pty.GetsizeFull(input); err == nil {
 			_ = pty.Setsize(master, size)
@@ -128,9 +133,6 @@ func runGuardedTerminalCommand(life, input, output *os.File, pending []byte, kno
 		return 0, err
 	}
 	defer reader.Close()
-	winch := make(chan os.Signal, 1)
-	signal.Notify(winch, syscall.SIGWINCH)
-	defer signal.Stop(winch)
 	if err := child.Start(); err != nil {
 		return 0, err
 	}
