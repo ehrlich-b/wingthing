@@ -43,8 +43,10 @@ func stageFixture(t *testing.T, root string) {
 
 func buildChecker(t *testing.T) (string, string) {
 	t.Helper()
-	_, source, _, _ := runtime.Caller(0)
-	repo := filepath.Clean(filepath.Join(filepath.Dir(source), "../.."))
+	repo, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
 	checker := filepath.Join(testsocket.Dir(t), "checker")
 	build := exec.Command("nice", "-n", "10", "go", "build", "-p", "2", "-o", checker, "./cmd/check-downloads")
 	build.Dir = repo
