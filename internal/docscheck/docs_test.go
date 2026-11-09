@@ -230,27 +230,25 @@ func TestPublicDocumentationContractsStayAligned(t *testing.T) {
 	}
 }
 
-func TestPublicHomeKeepsPreviewBeforeOptionalNeutralDemo(t *testing.T) {
+func TestPublicHomeKeepsIllustrativePreviewBeforeCapabilities(t *testing.T) {
 	root := repositoryRoot(t)
 	data, err := os.ReadFile(filepath.Join(root, "internal/relay/templates/home.html"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	home := string(data)
-
-	const intro = `<p class="tagline">Find a session, read its progress, and send the next instruction. Your agents keep running on your own computers.</p>`
+	const intro = `<p class="tagline">Launch agents on your machines, follow their progress, and step in when the work needs you.</p>`
 	if got := strings.Count(home, intro); got != 1 {
 		t.Fatalf("homepage contains %d benefit intros, want 1", got)
 	}
 	preview := strings.Index(home, `<section class="product-preview"`)
-	demo := strings.Index(home, `<details class="homepage-demo">`)
-	glossary := strings.Index(home, `<h3>portal</h3>`)
-	if preview < 0 || demo <= preview || glossary <= demo {
-		t.Fatal("homepage must show its HTML preview, optional demo, then glossary")
+	capabilities := strings.Index(home, `<section class="how"`)
+	if preview < 0 || capabilities <= preview {
+		t.Fatal("homepage must show the illustrative preview before capabilities")
 	}
-	for _, required := range []string{`controls playsinline preload="none"`, `kind="captions"`, `id="demo-transcript"`, "Example sessions · Fictional data"} {
+	for _, required := range []string{`Illustrative example`, `aria-label="Illustrative work"`, `browser access uses a self-hosted roost or an entitled hosted account`, `Headless run results stay in the CLI and MCP`} {
 		if !strings.Contains(home, required) {
-			t.Errorf("homepage demo is missing %q", required)
+			t.Errorf("homepage preview is missing %q", required)
 		}
 	}
 	if strings.Contains(home, "hero.mp4") || strings.Contains(home, "autoplay") {
