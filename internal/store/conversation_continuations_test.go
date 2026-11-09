@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestConversationContinuationConcurrentReservationPersists(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "continuations.db")
+	path := filepath.Join(testsocket.Dir(t), "continuations.db")
 	a, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +95,7 @@ func TestConversationContinuationConcurrentReservationPersists(t *testing.T) {
 func TestConversationContinuationFinalizationPreservesNewerExecution(t *testing.T) {
 	for _, state := range []string{"started", "failed"} {
 		t.Run(state, func(t *testing.T) {
-			db, err := Open(filepath.Join(t.TempDir(), "continuations.db"))
+			db, err := Open(filepath.Join(testsocket.Dir(t), "continuations.db"))
 			if err != nil {
 				t.Fatal(err)
 			}

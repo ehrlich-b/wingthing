@@ -7,11 +7,12 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 func TestBrowserConversationLaunchEchoesSavedRequestID(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	canonical, err := filepath.EvalSymlinks(cfg.Dir)
 	if err != nil {
 		t.Fatal(err)

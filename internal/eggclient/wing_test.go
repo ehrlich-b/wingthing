@@ -9,6 +9,7 @@ import (
 
 	"testing"
 
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -20,9 +21,9 @@ func infoMode(info os.FileInfo) os.FileMode {
 }
 
 func TestMemberSessionArtifactsRequireCurrentOwnerAndPathAccess(t *testing.T) {
-	workspace := t.TempDir()
-	otherWorkspace := t.TempDir()
-	sessionDir := t.TempDir()
+	workspace := testsocket.Dir(t)
+	otherWorkspace := testsocket.Dir(t)
+	sessionDir := testsocket.Dir(t)
 	if err := os.WriteFile(filepath.Join(sessionDir, "egg.owner"), []byte("alice\nalice@example.com\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +48,7 @@ func TestMemberSessionArtifactsRequireCurrentOwnerAndPathAccess(t *testing.T) {
 		t.Fatal("admin lost historical session oversight access")
 	}
 
-	missingMetadata := t.TempDir()
+	missingMetadata := testsocket.Dir(t)
 	if CanAccessSessionArtifact(member, missingMetadata, []string{workspace}) {
 		t.Fatal("member audit access did not fail closed without owner/path metadata")
 	}
@@ -61,7 +62,7 @@ func requireSetupAPIKeyHelper(t *testing.T, agent string, envMap map[string]stri
 }
 
 func TestSetupAPIKeyHelper_RemovesKeyFromEnv(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	envMap := map[string]string{"ANTHROPIC_API_KEY": "sk-ant-test123", "OTHER": "keep"}
 	requireSetupAPIKeyHelper(t, "claude", envMap, home)
 	if _, ok := envMap["ANTHROPIC_API_KEY"]; ok {
@@ -73,7 +74,7 @@ func TestSetupAPIKeyHelper_RemovesKeyFromEnv(t *testing.T) {
 }
 
 func TestSetupAPIKeyHelper_NullSettingsDoNotPanic(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	settingsPath := filepath.Join(home, ".claude", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
 		t.Fatal(err)
@@ -89,7 +90,7 @@ func TestSetupAPIKeyHelper_NullSettingsDoNotPanic(t *testing.T) {
 }
 
 func TestSetupAPIKeyHelper_WritesKeyFile(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	envMap := map[string]string{"ANTHROPIC_API_KEY": "sk-ant-secret"}
 	requireSetupAPIKeyHelper(t, "claude", envMap, home)
 	keyFile := filepath.Join(home, ".anthropic_key")
@@ -107,7 +108,7 @@ func TestSetupAPIKeyHelper_WritesKeyFile(t *testing.T) {
 }
 
 func TestSetupAPIKeyHelper_SetsApiKeyHelperInSettings(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	envMap := map[string]string{"ANTHROPIC_API_KEY": "sk-ant-test"}
 	requireSetupAPIKeyHelper(t, "claude", envMap, home)
 	settingsPath := filepath.Join(home, ".claude", "settings.json")
@@ -126,7 +127,7 @@ func TestSetupAPIKeyHelper_SetsApiKeyHelperInSettings(t *testing.T) {
 }
 
 func TestSetupAPIKeyHelper_PreservesExistingSettings(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	settingsDir := filepath.Join(home, ".claude")
 	if err := os.MkdirAll(settingsDir, 0700); err != nil {
 		t.Fatal(err)
@@ -160,7 +161,7 @@ func TestSetupAPIKeyHelper_PreservesExistingSettings(t *testing.T) {
 func TestSetupAPIKeyHelper_StablePath_NoSessionRace(t *testing.T) {
 	// Two "sessions" calling setupAPIKeyHelper should write to the same file,
 	// not per-session paths. This is the v0.128.0 bug fix.
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	env1 := map[string]string{"ANTHROPIC_API_KEY": "key-session-1"}
 	env2 := map[string]string{"ANTHROPIC_API_KEY": "key-session-2"}
 	requireSetupAPIKeyHelper(t, "claude", env1, home)
@@ -192,7 +193,7 @@ func TestSetupAPIKeyHelper_StablePath_NoSessionRace(t *testing.T) {
 }
 
 func TestSetupAPIKeyHelper_OverwritesOldReadOnlyKeyFile(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	keyFile := filepath.Join(home, ".anthropic_key")
 	if err := os.WriteFile(keyFile, []byte("old-key"), 0400); err != nil {
 		t.Fatal(err)
@@ -209,7 +210,7 @@ func TestSetupAPIKeyHelper_OverwritesOldReadOnlyKeyFile(t *testing.T) {
 }
 
 func TestSetupAPIKeyHelper_NonClaudeAgent_Noop(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	envMap := map[string]string{"ANTHROPIC_API_KEY": "sk-ant-test"}
 	requireSetupAPIKeyHelper(t, "codex", envMap, home)
 	if _, ok := envMap["ANTHROPIC_API_KEY"]; !ok {
@@ -222,7 +223,7 @@ func TestSetupAPIKeyHelper_NonClaudeAgent_Noop(t *testing.T) {
 }
 
 func TestSetupAPIKeyHelper_NoKey_Noop(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	envMap := map[string]string{"OTHER": "val"}
 	requireSetupAPIKeyHelper(t, "claude", envMap, home)
 	settingsPath := filepath.Join(home, ".claude", "settings.json")

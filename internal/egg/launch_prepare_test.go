@@ -6,12 +6,14 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestLaunchPreparationDryAndNativeSpecification(t *testing.T) {
 	for _, agent := range []string{"codex", "gemini", ""} {
 		t.Run(agent, func(t *testing.T) {
-			home := t.TempDir()
+			home := testsocket.Dir(t)
 			work := filepath.Join(home, "work")
 			if err := os.Mkdir(work, 0700); err != nil {
 				t.Fatal(err)
@@ -21,7 +23,7 @@ func TestLaunchPreparationDryAndNativeSpecification(t *testing.T) {
 				rc.Command = []string{"/bin/sh", "-l"}
 			}
 			opts := LaunchPreparationOptions{Binary: filepath.Join(home, "bin", "provider"), Home: home, HostHome: home, EggDir: filepath.Join(home, "ours"), BrowserRequestsPath: filepath.Join(home, "browser-requests"), ToolBinary: filepath.Join(home, "wt-bin", "wt"), CodexCapability: SavedCodexCapability("codex-cli 0.159.3")}
-			state, err := NewDryLaunchState(t.TempDir())
+			state, err := NewDryLaunchState(testsocket.Dir(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -62,7 +64,7 @@ func TestLaunchPreparationDryAndNativeSpecification(t *testing.T) {
 func TestLaunchStateMirrorContainsSymlinkTargets(t *testing.T) {
 	for _, relative := range []bool{false, true} {
 		t.Run(map[bool]string{false: "absolute", true: "relative"}[relative], func(t *testing.T) {
-			root := t.TempDir()
+			root := testsocket.Dir(t)
 			home, target := filepath.Join(root, "home"), filepath.Join(root, "foreign")
 			for _, path := range []string{home, target} {
 				if err := os.Mkdir(path, 0700); err != nil {
@@ -80,7 +82,7 @@ func TestLaunchStateMirrorContainsSymlinkTargets(t *testing.T) {
 			if err := os.Symlink(link, filepath.Join(home, ".codex")); err != nil {
 				t.Fatal(err)
 			}
-			mirror := t.TempDir()
+			mirror := testsocket.Dir(t)
 			state, err := NewDryLaunchState(mirror)
 			if err != nil {
 				t.Fatal(err)
@@ -117,8 +119,8 @@ func TestLaunchStateMirrorContainsSymlinkTargets(t *testing.T) {
 }
 
 func TestLaunchPreparationDefersClaudeSettingsOnly(t *testing.T) {
-	home := t.TempDir()
-	state, err := NewDryLaunchState(t.TempDir())
+	home := testsocket.Dir(t)
+	state, err := NewDryLaunchState(testsocket.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +152,7 @@ func TestLaunchPreparationEnvironmentSelectionParity(t *testing.T) {
 		{"empty caller value wins", false, map[string]string{"CODEX_HOME": ""}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			home := t.TempDir()
+			home := testsocket.Dir(t)
 			rc := RunConfig{Agent: "codex", Kind: "agent", UserHome: home, SkipHostAgentEnv: tc.skip}
 			inherited := []string{"OPENAI_API_KEY=HOST_KEY", "CODEX_HOME=" + filepath.Join(home, "alternate"), "ELAN_HOME=" + filepath.Join(home, ".elan"), "HOME=/host/home", "PATH=/host/bin", "TERM="}
 			env := LaunchEnvironment(rc, tc.selected, inherited)
@@ -172,7 +174,7 @@ func TestLaunchPreparationEnvironmentSelectionParity(t *testing.T) {
 				t.Fatal("profile reinjection changed")
 			}
 			rc.CWD, rc.OuterBoundary = home, true
-			state, err := NewDryLaunchState(t.TempDir())
+			state, err := NewDryLaunchState(testsocket.Dir(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -185,7 +187,7 @@ func TestLaunchPreparationEnvironmentSelectionParity(t *testing.T) {
 }
 
 func TestLaunchPreparationSupplementalLayoutDoesNotCreateState(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	override := filepath.Join(home, "override")
 	elan := filepath.Join(home, ".elan")
 	rc := RunConfig{Agent: "codex", CWD: home, UserHome: home, OuterBoundary: true}

@@ -28,6 +28,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
@@ -216,7 +217,7 @@ func projectRefreshTestBinary(t *testing.T) string {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
-	binary := filepath.Join(t.TempDir(), "wt")
+	binary := filepath.Join(testsocket.Dir(t), "wt")
 	started := time.Now()
 	if output, err := projectRefreshBuild(ctx, binary); err != nil {
 		t.Fatalf("build test CLI after %s: %v\n%s", time.Since(started), err, output)
@@ -251,7 +252,7 @@ func projectRefreshBuild(ctx context.Context, binary string) ([]byte, error) {
 func TestProjectRefreshBuildOutputBound(t *testing.T) {
 	for _, exitWrapper := range []bool{false, true} {
 		t.Run(fmt.Sprintf("wrapperExits=%t", exitWrapper), func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			pidFile := filepath.Join(dir, "child.pid")
 			// The child inherits both output pipes. In the second case the
 			// wrapper exits successfully without waiting for that child.
@@ -385,7 +386,7 @@ func projectRefreshLiveSession(t *testing.T, ctx context.Context, binary, state,
 }
 
 func TestProjectRefreshBoundedImmutableSnapshots(t *testing.T) {
-	root, cwd := t.TempDir(), t.TempDir()
+	root, cwd := testsocket.Dir(t), testsocket.Dir(t)
 	oldProject, newProject := filepath.Join(root, "old"), filepath.Join(root, "new")
 	for _, path := range []string{oldProject, filepath.Join(cwd, "outside")} {
 		if err := os.MkdirAll(filepath.Join(path, ".git"), 0700); err != nil {
@@ -451,7 +452,7 @@ func TestProjectRefreshBoundedImmutableSnapshots(t *testing.T) {
 }
 
 func TestAgentDiscoveryRefreshAfterInstall(t *testing.T) {
-	bin := t.TempDir()
+	bin := testsocket.Dir(t)
 	t.Setenv("PATH", bin)
 	client := &ws.Client{Agents: []string{"stale"}}
 	if got := projectDiscoveryClient(client, nil).Agents; len(got) != 0 {

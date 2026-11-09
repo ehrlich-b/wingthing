@@ -43,8 +43,8 @@ func TestBuiltSessionSearchDashboard(t *testing.T) {
 	if err := os.Mkdir(home, 0700); err != nil {
 		t.Fatal(err)
 	}
-	localState := testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))
-	remoteState := testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))
+	localState := testprovider.ShortStateDir(t, testprovider.TempDir(t))
+	remoteState := testprovider.ShortStateDir(t, testprovider.TempDir(t))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

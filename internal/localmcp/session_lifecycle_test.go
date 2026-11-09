@@ -13,12 +13,13 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func lifecycleMCPFixture(t *testing.T) (*Server, string) {
 	t.Helper()
-	cfg := &config.Config{Dir: t.TempDir()}
-	home := t.TempDir()
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
+	home := testsocket.Dir(t)
 	dir := filepath.Join(cfg.Dir, "eggs", "archived")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)

@@ -17,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -55,7 +56,7 @@ func fixtureConversation(t *testing.T, db *store.Store, cfg *config.Config, id, 
 }
 
 func TestConversationReadKeepsIntermediateNativeStatesAcrossReconnectAndResume(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	db, err := store.Open(cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +106,7 @@ func TestConversationReadKeepsIntermediateNativeStatesAcrossReconnectAndResume(t
 }
 
 func TestBoundConversationBootstrapPreservesBrowserOwnerAndRejectsOtherTrees(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	db, err := store.Open(cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +168,7 @@ func TestBoundConversationBootstrapPreservesBrowserOwnerAndRejectsOtherTrees(t *
 }
 
 func TestAutomaticParentMCPUsesExistingSandboxAndRejectsConfigCollision(t *testing.T) {
-	workspace := t.TempDir()
+	workspace := testsocket.Dir(t)
 	cfg := &config.Config{Dir: filepath.Join(workspace, "preview-state")}
 	c := &store.Conversation{ID: "parent", CWD: workspace, OwnerID: "owner"}
 	server := testWingServer(t, &Server{Version: "dev", Cfg: cfg, Principal: "owner"})
@@ -198,14 +199,14 @@ func TestAutomaticParentMCPUsesExistingSandboxAndRejectsConfigCollision(t *testi
 	if _, err := server.prepareBoundParentMCP(c, egg.DefaultEggConfig(), []string{"--mcp-config", "existing.json"}); err == nil {
 		t.Fatal("config collision accepted")
 	}
-	server.Cfg = &config.Config{Dir: t.TempDir()}
+	server.Cfg = &config.Config{Dir: testsocket.Dir(t)}
 	if _, err := server.prepareBoundParentMCP(&store.Conversation{ID: "outside", CWD: workspace}, egg.DefaultEggConfig(), nil); err == nil {
 		t.Fatal("inaccessible state silently mounted")
 	}
 }
 
 func TestConversationDirectMCPPreservesConfiguredClientAndOwner(t *testing.T) {
-	workspace := t.TempDir()
+	workspace := testsocket.Dir(t)
 	cfg := &config.Config{Dir: filepath.Join(workspace, "state")}
 	if err := os.MkdirAll(cfg.Dir, 0700); err != nil {
 		t.Fatal(err)

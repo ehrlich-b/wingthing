@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestDeriveKeyConsistent(t *testing.T) {
@@ -105,7 +106,7 @@ func TestGenerateSaltUnique(t *testing.T) {
 }
 
 func TestKeyStoreInitUnlock(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	ks := NewKeyStore(dir)
 
 	if ks.IsInitialized() {
@@ -139,7 +140,7 @@ func TestKeyStoreInitUnlock(t *testing.T) {
 }
 
 func TestKeyStoreUnlockWrongPassphrase(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	ks := NewKeyStore(dir)
 
 	if err := ks.Init("correct-passphrase"); err != nil {

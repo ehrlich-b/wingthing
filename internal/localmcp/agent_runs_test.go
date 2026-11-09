@@ -19,6 +19,8 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
@@ -41,7 +43,7 @@ type runWingFixture struct {
 func newRunWingFixture(t *testing.T, s *Server) *runWingFixture {
 	t.Helper()
 	if s == nil {
-		s = &Server{Version: "test", Cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, Principal: "owner", Logs: io.Discard}
+		s = &Server{Version: "test", Cfg: &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "claude"}, Principal: "owner", Logs: io.Discard}
 	}
 	s = testWingServer(t, s)
 	if s.Sessions.Register == nil {
@@ -499,10 +501,7 @@ func exerciseMCPRunClientExit(t *testing.T) {
 	t.Helper()
 	f := newRunWingFixture(t, nil)
 	// Keep socket paths short without changing TMPDIR or touching any live state.
-	root, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	root := testprovider.TempDir(t)
 	if err := os.MkdirAll(root, 0700); err != nil {
 		t.Fatal(err)
 	}

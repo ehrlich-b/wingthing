@@ -5,10 +5,12 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestAgentRunAdmissionSurvivesReopenAndLostAcknowledgement(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.db")
+	path := filepath.Join(testsocket.Dir(t), "state.db")
 	db, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +64,7 @@ func TestAgentRunAdmissionSurvivesReopenAndLostAcknowledgement(t *testing.T) {
 }
 
 func TestConcurrentAgentRunAdmissionReservesOneRetryKey(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.db")
+	path := filepath.Join(testsocket.Dir(t), "state.db")
 	var wg sync.WaitGroup
 	results := make(chan *AgentRun, 2)
 	failures := make(chan error, 2)

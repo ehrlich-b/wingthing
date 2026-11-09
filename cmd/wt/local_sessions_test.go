@@ -15,13 +15,14 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"golang.org/x/sys/unix"
 )
 
 func TestSessionListingsDoNotWaitForLifecycleLock(t *testing.T) {
 	for _, entrypoint := range []string{"discovery", "session ps", "attach selection", "MCP terminal_list"} {
 		t.Run(entrypoint, func(t *testing.T) {
-			cfg := &config.Config{Dir: t.TempDir()}
+			cfg := &config.Config{Dir: testsocket.Dir(t)}
 			t.Setenv("WINGTHING_DIR", cfg.Dir)
 			seedRemoteListSession(t, cfg, "locked-session", "")
 			lock, err := os.OpenFile(filepath.Join(cfg.Dir, "eggs", "locked-session", "lifecycle.lock"), os.O_CREATE|os.O_RDWR, 0600)
@@ -101,7 +102,7 @@ func TestEggRunFlagParserPreservesEmptyAndWhitespaceAgentArgs(t *testing.T) {
 }
 
 func TestEggRunRejectsTraversalSessionIDBeforeEnvironmentRead(t *testing.T) {
-	state := t.TempDir()
+	state := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", state)
 	payload := filepath.Join(state, "escape", ".egg.env")
 	if err := os.MkdirAll(filepath.Dir(payload), 0700); err != nil {

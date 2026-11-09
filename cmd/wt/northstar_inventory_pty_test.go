@@ -166,7 +166,7 @@ func TestNorthstarPTYInventoryBudget(t *testing.T) {
 		// Socket addresses must fit independently of the checkout's length.
 		// Keep protected HOME beside the writable work/TMPDIR directories in a
 		// private temporary root, and budget against its canonical address.
-		root := testsocket.Dir(t)
+		root := testsocket.RuntimeDir(t, "")
 		root, err = filepath.EvalSymlinks(root)
 		if err != nil {
 			t.Fatal(err)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -38,7 +39,7 @@ func TestPermissionTunnelRespondRefused(t *testing.T) {
 			t.Fatal(err)
 		}
 		var response ws.TunnelResponse
-		HandleTunnelRequest(refs, context.Background(), &config.Config{Dir: t.TempDir()}, ws.TunnelRequest{SenderPub: sender, SenderUserID: "owner", SenderOrgRole: "owner", RequestID: "permission", Payload: payload}, func(v any) error { response = v.(ws.TunnelResponse); return nil }, nil, nil, auth.PasskeyPolicy{}, wing, t.TempDir(), false, false, nil, nil, nil)
+		HandleTunnelRequest(refs, context.Background(), &config.Config{Dir: testsocket.Dir(t)}, ws.TunnelRequest{SenderPub: sender, SenderUserID: "owner", SenderOrgRole: "owner", RequestID: "permission", Payload: payload}, func(v any) error { response = v.(ws.TunnelResponse); return nil }, nil, nil, auth.PasskeyPolicy{}, wing, testsocket.Dir(t), false, false, nil, nil, nil)
 		data, err := auth.Decrypt(gcm, response.Payload)
 		if err != nil || !strings.Contains(string(data), "permission operations are local only") {
 			t.Fatalf("tunnel permission admitted: %s %v", data, err)

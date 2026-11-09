@@ -17,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestDashboardActionRoutes(t *testing.T) {
@@ -162,12 +163,9 @@ func TestDashboardCLIIsolatesBackgroundButKeepsAttachForeground(t *testing.T) {
 }
 
 func TestDashboardRemoteMutationValidatesSameCurrentProfile(t *testing.T) {
-	scratch, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	scratch := testprovider.ProtectedTempDir(t)
 	home, state, remoteState := testprovider.ScopedHomeDirs(t, scratch)
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	real, alias := filepath.Join(root, "tmp-real"), filepath.Join(root, "tmp-alias")
 	if err := os.Mkdir(real, 0700); err != nil {
 		t.Fatal(err)

@@ -4,11 +4,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func setupTestDir(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 
 	writeFile(t, dir, "index.md", `---
 topic: index
@@ -170,7 +172,7 @@ func TestIndex(t *testing.T) {
 }
 
 func TestIndexMissing(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	s := New(dir)
 
 	idx := s.Index()

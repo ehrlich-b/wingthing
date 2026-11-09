@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestLoopbackPhoneListenerDoesNotAdvertiseLAN(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	private, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)

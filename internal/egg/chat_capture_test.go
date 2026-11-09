@@ -8,11 +8,13 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestCaptureSessionHistory_Claude(t *testing.T) {
-	home := t.TempDir()
-	eggDir := t.TempDir()
+	home := testsocket.Dir(t)
+	eggDir := testsocket.Dir(t)
 	cwd := "/Users/test/project"
 
 	// Create Claude project dir with encoded CWD
@@ -91,8 +93,8 @@ func TestCaptureSessionHistory_Claude(t *testing.T) {
 }
 
 func TestCaptureSessionHistory_ReplacesMetadataSymlink(t *testing.T) {
-	home := t.TempDir()
-	eggDir := t.TempDir()
+	home := testsocket.Dir(t)
+	eggDir := testsocket.Dir(t)
 	cwd := "/Users/test/project"
 	projectDir := filepath.Join(home, ".claude", "projects", encodeCWDForClaude(cwd))
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
@@ -101,7 +103,7 @@ func TestCaptureSessionHistory_ReplacesMetadataSymlink(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(projectDir, "abc123.jsonl"), []byte("chat\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	target := filepath.Join(t.TempDir(), "must-not-change")
+	target := filepath.Join(testsocket.Dir(t), "must-not-change")
 	if err := os.WriteFile(target, []byte("original"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -131,8 +133,8 @@ func TestCaptureSessionHistory_ReplacesMetadataSymlink(t *testing.T) {
 }
 
 func TestCaptureSessionHistory_Claude_NoMatch(t *testing.T) {
-	home := t.TempDir()
-	eggDir := t.TempDir()
+	home := testsocket.Dir(t)
+	eggDir := testsocket.Dir(t)
 	cwd := "/Users/test/project"
 
 	encoded := encodeCWDForClaude(cwd)
@@ -167,8 +169,8 @@ func TestCaptureSessionHistory_Claude_NoMatch(t *testing.T) {
 }
 
 func TestCaptureSessionHistory_Claude_MultipleFiles(t *testing.T) {
-	home := t.TempDir()
-	eggDir := t.TempDir()
+	home := testsocket.Dir(t)
+	eggDir := testsocket.Dir(t)
 	cwd := "/Users/test/project"
 
 	encoded := encodeCWDForClaude(cwd)
@@ -215,8 +217,8 @@ func TestCaptureSessionHistory_Claude_MultipleFiles(t *testing.T) {
 }
 
 func TestCaptureSessionHistory_Claude_ExactIDDoesNotSelectNewerConversation(t *testing.T) {
-	home := t.TempDir()
-	eggDir := t.TempDir()
+	home := testsocket.Dir(t)
+	eggDir := testsocket.Dir(t)
 	cwd := "/Users/test/shared-project"
 	projectDir := filepath.Join(home, ".claude", "projects", encodeCWDForClaude(cwd))
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
@@ -249,8 +251,8 @@ func TestCaptureSessionHistory_Claude_ExactIDDoesNotSelectNewerConversation(t *t
 }
 
 func TestCaptureSessionHistory_Claude_ExplicitUnverifiedIDDoesNotGuess(t *testing.T) {
-	home := t.TempDir()
-	eggDir := t.TempDir()
+	home := testsocket.Dir(t)
+	eggDir := testsocket.Dir(t)
 	cwd := "/workspace/project"
 	projectDir := filepath.Join(home, ".claude", "projects", encodeCWDForClaude(cwd))
 	if err := os.MkdirAll(projectDir, 0o700); err != nil {
@@ -268,7 +270,7 @@ func TestCaptureSessionHistory_Claude_ExplicitUnverifiedIDDoesNotGuess(t *testin
 }
 
 func TestCaptureSessionHistory_UnknownAgent(t *testing.T) {
-	eggDir := t.TempDir()
+	eggDir := testsocket.Dir(t)
 	err := CaptureSessionHistory("ollama", "/tmp", eggDir, "/home/test", time.Now())
 	if err != nil {
 		t.Fatalf("expected nil error for unknown agent, got: %v", err)
@@ -279,7 +281,7 @@ func TestCaptureSessionHistory_UnknownAgent(t *testing.T) {
 }
 
 func TestCaptureSessionHistory_MissingDir(t *testing.T) {
-	eggDir := t.TempDir()
+	eggDir := testsocket.Dir(t)
 	lifecycleWrite(t, filepath.Join(eggDir, "egg.meta"), "agent=claude\nprovider_session_id=missing\n")
 	err := CaptureSessionHistory("claude", "/nonexistent/path", eggDir, "/nonexistent/home", time.Now())
 	if err != nil {
@@ -288,8 +290,8 @@ func TestCaptureSessionHistory_MissingDir(t *testing.T) {
 }
 
 func TestCaptureSessionHistory_AtomicWrite(t *testing.T) {
-	home := t.TempDir()
-	eggDir := t.TempDir()
+	home := testsocket.Dir(t)
+	eggDir := testsocket.Dir(t)
 	cwd := "/Users/test/project"
 
 	encoded := encodeCWDForClaude(cwd)

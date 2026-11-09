@@ -5,12 +5,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 const protectedTestTarget = "/Users/u/.wingthing/ctl"
 
 func TestValidateProtectedWriteTargetsRejectsUncleanPaths(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.RuntimeDir(t, "")
 	for _, target := range []string{root + "/child/../controller", root + "/./controller", root + "//controller", root + "/"} {
 		if err := ValidateProtectedWriteTargets([]string{target}); err == nil {
 			t.Errorf("accepted unclean protected path %q", target)

@@ -11,11 +11,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func openTestMailbox(t *testing.T) (string, *os.Root) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -261,7 +263,7 @@ func TestHostMailboxEnvelopesRejectAuthorityFieldsAndBounds(t *testing.T) {
 	if err := mailboxWrite(root, "big.json", strings.Repeat("x", 64), 16); err == nil {
 		t.Fatal("oversized artifact published")
 	}
-	target := filepath.Join(t.TempDir(), "secret")
+	target := filepath.Join(testsocket.Dir(t), "secret")
 	if err := os.WriteFile(target, []byte(`{"version":1}`), 0o600); err != nil {
 		t.Fatal(err)
 	}

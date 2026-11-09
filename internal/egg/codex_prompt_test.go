@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestInitialCodexPromptLimit(t *testing.T) {
@@ -29,7 +31,7 @@ func TestInitialCodexPromptLimit(t *testing.T) {
 		{"multibyte over", strings.Repeat("Ω", MaxInitialCodexPromptBytes/2+1), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			home := t.TempDir()
+			home := testsocket.Dir(t)
 			rc := RunConfig{Agent: "codex", CWD: home, OuterBoundary: true, InitialRun: &RunTurnRequest{RunID: "fixture", Prompt: tc.prompt}}
 			opts := LaunchPreparationOptions{Home: home, HostHome: home, EggDir: filepath.Join(home, "egg"), CodexCapability: SavedCodexCapability("codex-cli 0.159.3")}
 			prepared, err := PrepareLaunch(rc, opts, NativeLaunchState())

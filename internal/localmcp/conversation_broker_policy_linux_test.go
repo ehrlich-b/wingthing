@@ -11,13 +11,14 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestLinuxProviderWriteModel(t *testing.T) {
 	if err := sandbox.CheckProviderWriteProtection(); err != nil {
 		t.Skip(err)
 	}
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	home, work, tmp := filepath.Join(root, "home"), filepath.Join(root, "work"), filepath.Join(root, "tmp")
 	t.Setenv("HOME", home)
 	t.Setenv("TMPDIR", tmp)
@@ -46,7 +47,7 @@ func TestLinuxProviderWriteModel(t *testing.T) {
 }
 
 func TestLinuxProviderWriteMailboxPinsPreserveHomeDescendants(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 	cfg := &config.Config{Dir: filepath.Join(home, "state")}
 	if err := os.Mkdir(cfg.Dir, 0700); err != nil {

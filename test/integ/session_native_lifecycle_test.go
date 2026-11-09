@@ -13,14 +13,15 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // Drives the installed observational hook command with native protocol
 // fixtures. This proves argv -> hook stdin -> atomic spool -> durable events,
 // rather than claiming a mocked CLI proves vendor authentication or UI readiness.
 func TestSessionNativeLifecycleProtocolReconnect(t *testing.T) {
-	home := t.TempDir()
-	dir := t.TempDir()
+	home := testsocket.Dir(t)
+	dir := testsocket.Dir(t)
 	id := filepath.Base(dir)
 	if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=claude\nprovider_session_id=ours\nprovider_home="+home+"\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -103,8 +104,8 @@ func TestSessionNativeLifecycleProtocolReconnect(t *testing.T) {
 }
 
 func TestSessionPromptNativeTranscriptReceiptAfterLostConnection(t *testing.T) {
-	home := t.TempDir()
-	dir := t.TempDir()
+	home := testsocket.Dir(t)
+	dir := testsocket.Dir(t)
 	id := filepath.Base(dir)
 	if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=claude\nprovider_session_id=ours\nprovider_home="+home+"\n"), 0600); err != nil {
 		t.Fatal(err)

@@ -8,13 +8,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 var fixtureTags = []string{"v0.147.0", "v0.149.5"}
 
 func stagedFixture(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	for _, tag := range fixtureTags {
 		dir := filepath.Join(root, tag)
 		if err := os.Mkdir(dir, 0755); err != nil {
@@ -129,7 +131,7 @@ func TestStagedRefusesSymlinks(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			root := stagedFixture(t)
 			path := filepath.Join(root, name)
-			saved := filepath.Join(t.TempDir(), "saved")
+			saved := filepath.Join(testsocket.Dir(t), "saved")
 			if err := os.Rename(path, saved); err != nil {
 				t.Fatal(err)
 			}

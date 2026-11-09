@@ -14,11 +14,12 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestWingInitialCodexPromptAdmission(t *testing.T) {
 	var spawned atomic.Int32
-	s := &Service{Config: &config.Config{Dir: t.TempDir()}, Register: func(string) error { return nil }}
+	s := &Service{Config: &config.Config{Dir: testsocket.Dir(t)}, Register: func(string) error { return nil }}
 	s.Spawn = func(_ *Launch, o StartOptions) (*egg.Client, error) {
 		spawned.Add(1)
 		if o.Egg.InitialRun == nil || len(o.Egg.InitialRun.Prompt) != egg.MaxInitialCodexPromptBytes {
@@ -104,7 +105,7 @@ func TestQueuedCodexSteerPromptRecovery(t *testing.T) {
 		{name: "pre-upgrade oversized direction", direction: strings.Repeat("d", egg.MaxInitialCodexPromptBytes), reject: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.Config{Dir: t.TempDir()}
+			cfg := &config.Config{Dir: testsocket.Dir(t)}
 			parent := recoveryRun(t, "parent", "terminal")
 			parent.Agent = "codex"
 			parent.Result.Status = "done"

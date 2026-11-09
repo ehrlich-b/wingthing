@@ -8,11 +8,12 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/relay"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestLoadServeRuntimeDetectsFlyRoleBeforeConfigCreatesDataDirectory(t *testing.T) {
 	t.Run("unmounted edge", func(t *testing.T) {
-		dataDir := filepath.Join(t.TempDir(), "data")
+		dataDir := filepath.Join(testsocket.Dir(t), "data")
 		t.Setenv("WINGTHING_DIR", dataDir)
 		t.Setenv("FLY_MACHINE_ID", "edge-machine")
 		t.Setenv("FLY_REGION", "lhr")
@@ -36,7 +37,7 @@ func TestLoadServeRuntimeDetectsFlyRoleBeforeConfigCreatesDataDirectory(t *testi
 	})
 
 	t.Run("mounted login", func(t *testing.T) {
-		dataDir := filepath.Join(t.TempDir(), "data")
+		dataDir := filepath.Join(testsocket.Dir(t), "data")
 		if err := os.Mkdir(dataDir, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +61,7 @@ func TestLoadServeRuntimeDetectsFlyRoleBeforeConfigCreatesDataDirectory(t *testi
 }
 
 func TestLoadServeRuntimePreservesExplicitNodeRoleAndLoginAddress(t *testing.T) {
-	dataDir := filepath.Join(t.TempDir(), "data")
+	dataDir := filepath.Join(testsocket.Dir(t), "data")
 	if err := os.Mkdir(dataDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +84,7 @@ func TestLoadServeRuntimePreservesExplicitNodeRoleAndLoginAddress(t *testing.T) 
 }
 
 func TestSaveLocalServeTokenPreservesOrdinaryPortalLogin(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	ordinary := auth.NewTokenStore(dir)
 	if err := ordinary.Save(&auth.DeviceToken{Token: "hosted-login", DeviceID: "hosted"}); err != nil {
 		t.Fatal(err)

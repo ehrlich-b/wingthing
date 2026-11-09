@@ -46,7 +46,7 @@ func sandboxBatteryPrerequisites() []string {
 }
 
 func TestSandboxBatteryPrerequisitesReportAllMissing(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
+	t.Setenv("PATH", testsocket.Dir(t))
 	missing := sandboxBatteryPrerequisites()
 	if strings.Join(missing, ",") != "curl,python3" {
 		t.Fatalf("missing prerequisites = %q", missing)
@@ -104,7 +104,7 @@ func TestJail_NetworkHTTPS_PortFilter(t *testing.T) {
 }
 
 func TestJail_WriteInsideMount(t *testing.T) {
-	mount := t.TempDir()
+	mount := testsocket.Dir(t)
 	out, err := runJail(t, Config{
 		NetworkNeed: NetworkNone,
 		Mounts:      []Mount{{Source: mount, Target: mount}},
@@ -119,7 +119,7 @@ func TestJail_WriteInsideMount(t *testing.T) {
 
 func TestJail_WriteOutsideMount(t *testing.T) {
 	home, _ := os.UserHomeDir()
-	mount := t.TempDir()
+	mount := testsocket.Dir(t)
 	target := filepath.Join(home, "wt-jail-test-delete-me")
 
 	_, err := runJail(t, Config{
@@ -133,7 +133,7 @@ func TestJail_WriteOutsideMount(t *testing.T) {
 }
 
 func TestJail_DenyPathBlocked(t *testing.T) {
-	denied := t.TempDir()
+	denied := testsocket.Dir(t)
 	testFile := filepath.Join(denied, "secret.txt")
 	os.WriteFile(testFile, []byte("secret"), 0644)
 
@@ -153,7 +153,7 @@ func TestJail_DenySocketBlocksDirectConnection(t *testing.T) {
 	// Darwin's sockaddr_un path is limited to 104 bytes. testing.T.TempDir uses
 	// a long per-user path there, so put only this disposable socket fixture
 	// under the short, system-owned temporary root.
-	socketDir, err := os.MkdirTemp("/tmp", "wt-deny-socket-")
+	socketDir, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestJail_MacOSAllowedSocketSurvivesProxyNetworkDeny(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 is required to exercise Unix socket connectivity")
 	}
-	socketDir, err := os.MkdirTemp("/tmp", "wt-allow-socket-")
+	socketDir, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestJail_MacOSDenyPathOverridesWritableMount(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS Seatbelt enforcement")
 	}
-	denied := t.TempDir()
+	denied := testsocket.Dir(t)
 	testFile := filepath.Join(denied, "secret.txt")
 	if err := os.WriteFile(testFile, []byte("secret"), 0o600); err != nil {
 		t.Fatal(err)
@@ -242,7 +242,7 @@ func TestJail_MacOSDenyPathOverridesWritableMount(t *testing.T) {
 }
 
 func TestJail_DeniedFileMaskPreservesMountFlags(t *testing.T) {
-	secret := filepath.Join(t.TempDir(), "history")
+	secret := filepath.Join(testsocket.Dir(t), "history")
 	if err := os.WriteFile(secret, []byte("secret"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestJail_MissingDenyPathPreparedBeforeReadonlyHome(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("absent deny mountpoint preparation is a Linux mount-namespace operation")
 	}
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	writable := filepath.Join(home, ".cache")
 	if err := os.MkdirAll(writable, 0o755); err != nil {
 		t.Fatal(err)
@@ -288,7 +288,7 @@ func TestJail_MacOSMissingDenyPathCannotBeCreated(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS Seatbelt enforcement")
 	}
-	parent := t.TempDir()
+	parent := testsocket.Dir(t)
 	missing := filepath.Join(parent, ".aws")
 	_, err := runJail(t, Config{
 		NetworkNeed: NetworkFull,
@@ -303,8 +303,8 @@ func TestJail_MacOSMissingDenyPathCannotBeCreated(t *testing.T) {
 }
 
 func TestJail_DenyPathMultiple(t *testing.T) {
-	dir1 := t.TempDir()
-	dir2 := t.TempDir()
+	dir1 := testsocket.Dir(t)
+	dir2 := testsocket.Dir(t)
 	os.WriteFile(filepath.Join(dir1, "a.txt"), []byte("a"), 0644)
 	os.WriteFile(filepath.Join(dir2, "b.txt"), []byte("b"), 0644)
 
@@ -325,7 +325,7 @@ func TestJail_DenyPathMultiple(t *testing.T) {
 }
 
 func TestJail_EnvFiltered(t *testing.T) {
-	mount := t.TempDir()
+	mount := testsocket.Dir(t)
 	os.Setenv("TEST_HIDDEN", "should_not_see")
 	defer os.Unsetenv("TEST_HIDDEN")
 
@@ -357,7 +357,7 @@ func TestJail_EnvFiltered(t *testing.T) {
 }
 
 func TestJail_EnvAllowed(t *testing.T) {
-	mount := t.TempDir()
+	mount := testsocket.Dir(t)
 	sb, err := newPlatform(Config{
 		NetworkNeed: NetworkNone,
 		Mounts:      []Mount{{Source: mount, Target: mount}},
@@ -385,7 +385,7 @@ func TestJail_Seccomp_MountBlocked(t *testing.T) {
 		t.Skip("seccomp only on Linux")
 	}
 
-	mount := t.TempDir()
+	mount := testsocket.Dir(t)
 	_, err := runJail(t, Config{
 		NetworkNeed: NetworkNone,
 		Deny:        []string{"/nonexistent"},
@@ -405,7 +405,7 @@ func TestJail_ResourceLimits_FDs(t *testing.T) {
 
 	for name, deny := range map[string][]string{"namespace": nil, "sealed jail": {"/"}} {
 		t.Run(name, func(t *testing.T) {
-			mount := t.TempDir()
+			mount := testsocket.Dir(t)
 			mounts := []Mount{{Source: mount, Target: mount}}
 			if len(deny) > 0 {
 				// The sealed jail needs the shell and its shared libraries on
@@ -445,7 +445,7 @@ func TestJail_ResourceLimits_FDs(t *testing.T) {
 
 func TestJail_CWD_Writable_Home_RO(t *testing.T) {
 	home, _ := os.UserHomeDir()
-	cwd := t.TempDir()
+	cwd := testsocket.Dir(t)
 
 	// Only CWD is writable, home is read-only
 	cfg := Config{
@@ -472,7 +472,7 @@ func TestJail_CWD_Writable_Home_RO(t *testing.T) {
 func TestJail_DefaultDenyList(t *testing.T) {
 	// Create temp dirs mimicking default deny paths, verify they're blocked
 	home, _ := os.UserHomeDir()
-	mount := t.TempDir()
+	mount := testsocket.Dir(t)
 
 	// We test with real deny paths that exist on the system
 	denyPaths := []string{}
@@ -611,9 +611,9 @@ func TestJail_RootDeny_OnlyAllowedPaths(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("jail mode only on Linux")
 	}
-	allowed := t.TempDir()
+	allowed := testsocket.Dir(t)
 	os.WriteFile(filepath.Join(allowed, "visible.txt"), []byte("visible"), 0644)
-	secret := t.TempDir()
+	secret := testsocket.Dir(t)
 	os.WriteFile(filepath.Join(secret, "secret.txt"), []byte("hidden"), 0644)
 
 	cfg := Config{
@@ -719,7 +719,7 @@ func TestJail_RootDeny_DoesNotFollowHomeSymlinkMounts(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("jail mode only on Linux")
 	}
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	home := filepath.Join(root, "agent-home")
 	hostSecrets := filepath.Join(root, "host-secrets")
 	if err := os.MkdirAll(home, 0700); err != nil {
@@ -757,7 +757,7 @@ func TestJail_RootDeny_WritablePaths(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("jail mode only on Linux")
 	}
-	writable := t.TempDir()
+	writable := testsocket.Dir(t)
 	cfg := Config{
 		NetworkNeed: NetworkFull,
 		Deny:        []string{"/"},
@@ -785,7 +785,7 @@ func TestJail_RootDeny_DenyWithinJail(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("jail mode only on Linux")
 	}
-	roDir := t.TempDir()
+	roDir := testsocket.Dir(t)
 	secretFile := filepath.Join(roDir, "secret.txt")
 	os.WriteFile(secretFile, []byte("secret"), 0644)
 	normalFile := filepath.Join(roDir, "normal.txt")
@@ -819,7 +819,7 @@ func TestJail_RootDeny_FileMountRO(t *testing.T) {
 		t.Skip("jail mode only on Linux")
 	}
 	// Create a file (not directory) to mount read-only into the jail.
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	src := filepath.Join(dir, "config.txt")
 	os.WriteFile(src, []byte("file-content"), 0644)
 
@@ -849,7 +849,7 @@ func TestJail_RootDeny_FileMountRW(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("jail mode only on Linux")
 	}
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	src := filepath.Join(dir, "data.txt")
 	os.WriteFile(src, []byte("original"), 0644)
 
@@ -926,7 +926,7 @@ func TestJail_RootDeny_CwdPreserved(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("jail mode only on Linux")
 	}
-	writable := t.TempDir()
+	writable := testsocket.Dir(t)
 	cfg := Config{
 		NetworkNeed: NetworkFull,
 		Deny:        []string{"/"},

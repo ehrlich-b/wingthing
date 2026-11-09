@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 type processRequest struct {
@@ -29,7 +31,7 @@ type processResult struct {
 // Each child has its own Store and address space. The pipe barrier starts all
 // writers together; a substantial template keeps the old check/write race open.
 func TestCompetingProcessWriters(t *testing.T) {
-	store := New(t.TempDir())
+	store := New(testsocket.Dir(t))
 	initial, err := store.Save(Asset{Name: "review", Template: "original"}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +77,7 @@ func TestCompetingProcessWriters(t *testing.T) {
 }
 
 func TestForceProcessWritersPreserveHistory(t *testing.T) {
-	store := New(t.TempDir())
+	store := New(testsocket.Dir(t))
 	initial, err := store.Save(Asset{Name: "review", Template: "original"}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +119,7 @@ func TestForceProcessWritersPreserveHistory(t *testing.T) {
 }
 
 func TestProcessLockCancellationAndCrashRecovery(t *testing.T) {
-	store := New(t.TempDir())
+	store := New(testsocket.Dir(t))
 	initial, err := store.Save(Asset{Name: "review", Template: "original"}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +186,7 @@ func TestProcessLockCancellationAndCrashRecovery(t *testing.T) {
 }
 
 func TestCancelledSaveDoesNotWrite(t *testing.T) {
-	store := New(filepath.Join(t.TempDir(), "prompts"))
+	store := New(filepath.Join(testsocket.Dir(t), "prompts"))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := store.SaveContext(ctx, Asset{Name: "review", Template: "cancelled"}, ""); !errors.Is(err, context.Canceled) {

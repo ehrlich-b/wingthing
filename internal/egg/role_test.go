@@ -8,12 +8,13 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/sessionrole"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestRoleScopedLifecycleSettingsComposeAndRepoke(t *testing.T) {
 	for _, role := range []string{"", "coordinator"} {
 		t.Run("role="+role, func(t *testing.T) {
-			state, home := t.TempDir(), t.TempDir()
+			state, home := testsocket.Dir(t), testsocket.Dir(t)
 			dir := filepath.Join(state, "eggs", "ours")
 			if err := os.MkdirAll(dir, 0700); err != nil {
 				t.Fatal(err)
@@ -70,7 +71,7 @@ func TestRoleScopedLifecycleSettingsComposeAndRepoke(t *testing.T) {
 func TestRoleAmbientDisabledHooksRefuseOnlyRoleSessions(t *testing.T) {
 	for _, source := range []string{"user", "project", "local"} {
 		t.Run(source, func(t *testing.T) {
-			home, work, state := t.TempDir(), t.TempDir(), t.TempDir()
+			home, work, state := testsocket.Dir(t), testsocket.Dir(t), testsocket.Dir(t)
 			path := filepath.Join(work, ".claude", "settings.json")
 			if source == "user" {
 				path = filepath.Join(home, ".claude", "settings.json")

@@ -19,6 +19,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // opusWakeParent is a synthetic exact-provider parent: an in-memory native
@@ -119,7 +120,7 @@ type opusWakeSnapshot struct {
 }
 
 func newOpusWakeHarness(t *testing.T) *opusWakeHarness {
-	return &opusWakeHarness{cfg: &config.Config{Dir: t.TempDir()}, parents: map[string]*opusWakeParent{}, timeout: 300 * time.Millisecond}
+	return &opusWakeHarness{cfg: &config.Config{Dir: testsocket.Dir(t)}, parents: map[string]*opusWakeParent{}, timeout: 300 * time.Millisecond}
 }
 
 func (h *opusWakeHarness) open(t *testing.T) *store.Store {

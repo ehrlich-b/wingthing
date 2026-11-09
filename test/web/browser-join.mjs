@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import net from 'node:net';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
@@ -14,15 +15,28 @@ const revision=()=>({head:spawnSync('git',['rev-parse','HEAD'],{cwd:root,encodin
 const source=revision(), screenshots=[];
 const out = process.env.WT_JOIN_OUT || path.join(root, '.scratch/browser-join');
 const shots = process.env.WT_JOIN_SHOTS || path.join(out, 'shots');
+// Playwright and Chromium also create Unix sockets beneath their temp root.
+// Set it before loading Playwright so neither inherits a deep caller TMPDIR.
+const tmp = fs.realpathSync(fs.mkdtempSync('/tmp/wt'));
+const originalTMPDIR = process.env.TMPDIR;
+process.env.TMPDIR = tmp;
 const { chromium } = process.env.PLAYWRIGHT_MODULE
     ? await import(process.env.PLAYWRIGHT_MODULE)
     : createRequire(new URL('../../web/package.json', import.meta.url))('playwright');
 fs.mkdirSync(out, {recursive:true}); fs.mkdirSync(shots, {recursive:true});
-fs.mkdirSync(path.join(root,'.scratch'), {recursive:true});
-const state = fs.mkdtempSync(path.join(process.env.WT_JOIN_STATE_ROOT || '/tmp', 'j-'));
-const home = fs.mkdtempSync(path.join(root,'.scratch/join-home-'));
-const port = Number(process.env.WT_JOIN_PORT || 18241), base = 'http://127.0.0.1:' + port;
-const env = { PATH:process.env.PATH,TMPDIR:process.env.TMPDIR,HOME:home,WINGTHING_DIR:state,WT_BASE_URL:base };
+const state = fs.realpathSync(fs.mkdtempSync('/tmp/wt'));
+const home = fs.realpathSync(fs.mkdtempSync('/tmp/wt'));
+// Each fixture owns its loopback listener even when other checkouts run too.
+const unusedPort = () => new Promise((resolve,reject) => {
+    const listener = net.createServer();
+    listener.once('error',reject);
+    listener.listen(0,'127.0.0.1',() => {
+        const port = listener.address().port;
+        listener.close(error => error ? reject(error) : resolve(port));
+    });
+});
+const port = Number(process.env.WT_JOIN_PORT || await unusedPort()), base = 'http://127.0.0.1:' + port;
+const env = { PATH:process.env.PATH,TMPDIR:tmp,HOME:home,WINGTHING_DIR:state,WT_BASE_URL:base };
 fs.writeFileSync(path.join(state,'wing.yaml'),'label: Studio\n',{mode:0o600});
 const log = fs.openSync(path.join(out,'roost.log'),'w');
 const startRoost = () => spawn('nice',['-n','10',path.join(root,'wt'),'roost','start','--foreground','--addr','127.0.0.1:'+port],{cwd:root,env,stdio:['ignore',log,log]});
@@ -38,7 +52,7 @@ const devices = () => cli('devices');
 const decode = link => JSON.parse(inflateRawSync(Buffer.from(link.split('#v1z.')[1],'base64url')));
 const encode = a => 'wingthing://pair#v1z.'+deflateRawSync(Buffer.from(JSON.stringify(a))).toString('base64url');
 async function ready() {
-    for(let i=0;i<150;i++){try{if((await fetch(base+'/health')).ok)return;}catch{}if(roost.exitCode!==null)throw Error('roost exited');await sleep(100);}
+    for(let i=0;i<150;i++){if(roost.exitCode!==null)throw Error('roost exited');try{if((await fetch(base+'/health')).ok)return;}catch{}await sleep(100);}
     throw Error('roost not ready');
 }
 async function resetRoost() {
@@ -149,9 +163,11 @@ async function probe(page,wing) {
     },{base,wing});
 }
 try {
-    assert.ok(Buffer.byteLength(state) < 40);
-    assert.ok(home.startsWith(root + path.sep));
-    record('short-state','socket state uses a short temporary root; fixture HOME stays inside the checkout');
+    // Reserve the full runtime ID and endpoint on both Linux and Darwin.
+    const eggSocket = path.join(state,'eggs','0'.repeat(16),'egg.sock');
+    assert.ok(Buffer.byteLength(eggSocket) <= 103,`fixture socket path exceeds Darwin's 103-byte limit: ${eggSocket}`);
+    assert.equal(path.dirname(home),path.dirname(state));
+    record('short-state','socket state uses a short temporary root; fixture HOME uses a separate short temporary root');
     await ready();
     cli('terminal','--unsandboxed','--detach','--name','join-proof-session','--cwd',home,'--','/bin/sleep','1800');
     sessionStarted=true;
@@ -487,7 +503,13 @@ finally {
     finally { fs.closeSync(log); }
     // Eggs started by the wing outlive the roost; wait for them before deleting.
     try { await removeState(state); } catch(error) { console.error('State cleanup: '+error.message);process.exitCode=1; }
+    await removeState(home);
+    await removeState(tmp);
+    if (originalTMPDIR === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = originalTMPDIR;
     assert.equal(fs.existsSync(state),false);
+    assert.equal(fs.existsSync(home),false);
+    assert.equal(fs.existsSync(tmp),false);
     record('state-cleanup','temporary wing state removed after fixture processes exit');
     const finish=revision();
     if(finish.head!==source.head||finish.dirty!==source.dirty){console.error('Source revision changed during verification');process.exitCode=1;}

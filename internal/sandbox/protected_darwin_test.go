@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // protectedProfileEnv points HOME and TMPDIR at sibling directories so the
@@ -15,7 +17,7 @@ import (
 // canonical home and temp paths as Seatbelt sees them.
 func protectedProfileEnv(t *testing.T) (home, tmp string) {
 	t.Helper()
-	root := t.TempDir()
+	root := testsocket.RuntimeDir(t, "")
 	home = filepath.Join(root, "home")
 	tmp = filepath.Join(root, "tmp")
 	for _, dir := range []string{home, tmp} {

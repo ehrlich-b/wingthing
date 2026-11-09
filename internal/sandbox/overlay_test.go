@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestCopyFileDoesNotFollowDestinationSymlink(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	outside := filepath.Join(dir, "outside.txt")
 	if err := os.WriteFile(outside, []byte("old"), 0644); err != nil {
 		t.Fatal(err)
@@ -46,7 +48,7 @@ func TestPersistFunctionRemovesSymlinks(t *testing.T) {
 	// Simulate: realHome has a symlink .claude.json -> outsideFile
 	// Overlay upper has a new .claude.json
 	// After persist: realHome should have a real file, outsideFile unchanged
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	outsideFile := filepath.Join(dir, "shared-claude.json")
 	os.WriteFile(outsideFile, []byte("shared-config"), 0644)
 
@@ -105,7 +107,7 @@ func TestPersistFunctionRemovesSymlinks(t *testing.T) {
 // TestPersistDirRemovesSymlinks verifies that persistDir also removes
 // symlinks before copying files within subdirectories.
 func TestPersistDirRemovesSymlinks(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	outsideFile := filepath.Join(dir, "outside-settings.json")
 	os.WriteFile(outsideFile, []byte("shared"), 0644)
 
@@ -139,7 +141,7 @@ func TestPersistDirRemovesSymlinks(t *testing.T) {
 }
 
 func TestPersistDirDoesNotFollowDestinationDirectorySymlink(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	src := filepath.Join(dir, "src-dir")
 	if err := os.MkdirAll(src, 0755); err != nil {
 		t.Fatal(err)
@@ -171,7 +173,7 @@ func TestPersistDirDoesNotFollowDestinationDirectorySymlink(t *testing.T) {
 }
 
 func TestCopyFileRejectsSourceSymlink(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	outside := filepath.Join(dir, "outside")
 	if err := os.WriteFile(outside, []byte("secret"), 0600); err != nil {
 		t.Fatal(err)
@@ -192,7 +194,7 @@ func TestCopyFileRejectsSourceSymlink(t *testing.T) {
 // TestPersistPrefixMatching verifies that only files matching the overlay
 // prefix are persisted, and non-matching files are ignored.
 func TestPersistPrefixMatching(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	realHome := filepath.Join(dir, "real-home")
 	os.MkdirAll(realHome, 0755)
 	upperDir := filepath.Join(dir, "upper")
@@ -244,7 +246,7 @@ func TestPersistPrefixMatching(t *testing.T) {
 // TestPersistBrokenSymlink verifies that broken symlinks at the destination
 // are removed and replaced with real files.
 func TestPersistBrokenSymlink(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	realHome := filepath.Join(dir, "real-home")
 	os.MkdirAll(realHome, 0755)
 	// Create a broken symlink (target doesn't exist)
@@ -276,7 +278,7 @@ func TestPersistBrokenSymlink(t *testing.T) {
 }
 
 func TestCopyFile(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	src := filepath.Join(dir, "src.txt")
 	dst := filepath.Join(dir, "dst.txt")
 
@@ -303,7 +305,7 @@ func TestCopyFile(t *testing.T) {
 }
 
 func TestCopyFilePreservesMode(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	src := filepath.Join(dir, "script.sh")
 	dst := filepath.Join(dir, "copy.sh")
 
@@ -322,7 +324,7 @@ func TestCopyFilePreservesMode(t *testing.T) {
 }
 
 func TestPrepareWritableMountpointPreservesExistingFile(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	source := filepath.Join(dir, "browser-requests")
 	if err := os.WriteFile(source, []byte("request\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -345,7 +347,7 @@ func TestPrepareWritableMountpointPreservesExistingFile(t *testing.T) {
 }
 
 func TestPrepareWritableMountpointCreatesMissingDirectory(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "cache", "agent")
+	path := filepath.Join(testsocket.Dir(t), "cache", "agent")
 	if err := prepareWritableMountpoint(path, path); err != nil {
 		t.Fatalf("prepareWritableMountpoint: %v", err)
 	}
@@ -359,8 +361,8 @@ func TestPrepareWritableMountpointCreatesMissingDirectory(t *testing.T) {
 }
 
 func TestPersistDir(t *testing.T) {
-	src := t.TempDir()
-	dst := t.TempDir()
+	src := testsocket.Dir(t)
+	dst := testsocket.Dir(t)
 
 	// Create nested structure in src.
 	os.MkdirAll(filepath.Join(src, "sub"), 0755)
@@ -417,7 +419,7 @@ func TestOverlayPrefixArgs(t *testing.T) {
 			Deny:        []string{"/tmp/test-deny"}, // triggers wrapper path
 			NetworkNeed: NetworkFull,
 		},
-		tmpDir: t.TempDir(),
+		tmpDir: testsocket.Dir(t),
 	}
 
 	ctx := context.Background()
@@ -451,7 +453,7 @@ func TestOverlayPrefixSkipsOutsideHome(t *testing.T) {
 			Deny:        []string{"/tmp/test-deny"},
 			NetworkNeed: NetworkFull,
 		},
-		tmpDir: t.TempDir(),
+		tmpDir: testsocket.Dir(t),
 	}
 
 	ctx := context.Background()
@@ -480,7 +482,7 @@ func TestExecJailModeArgs(t *testing.T) {
 			Deny:        []string{"/", "/opt/secret"},
 			NetworkNeed: NetworkFull,
 		},
-		tmpDir: t.TempDir(),
+		tmpDir: testsocket.Dir(t),
 	}
 	ctx := context.Background()
 	cmd, err := s.Exec(ctx, "/bin/echo", []string{"test"})
@@ -516,7 +518,7 @@ func TestExecNoMountRoWithoutJail(t *testing.T) {
 			Deny:        []string{"/tmp/test-deny"},
 			NetworkNeed: NetworkFull,
 		},
-		tmpDir: t.TempDir(),
+		tmpDir: testsocket.Dir(t),
 	}
 	ctx := context.Background()
 	cmd, err := s.Exec(ctx, "/bin/echo", []string{"test"})
@@ -545,7 +547,7 @@ func TestNoOverlayPrefixWithoutUseRegex(t *testing.T) {
 			Deny:        []string{"/tmp/test-deny"},
 			NetworkNeed: NetworkFull,
 		},
-		tmpDir: t.TempDir(),
+		tmpDir: testsocket.Dir(t),
 	}
 
 	ctx := context.Background()

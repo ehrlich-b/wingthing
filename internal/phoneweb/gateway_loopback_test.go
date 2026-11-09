@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // Coordinator gate: a real HTTPS browser session and full-duplex WebSocket,
@@ -39,7 +40,7 @@ func TestPhoneGatewayLoopbackWebSocket(t *testing.T) {
 	var gateway *Gateway
 	front := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { gateway.ServeHTTP(w, r) }))
 	defer front.Close()
-	path := filepath.Join(t.TempDir(), "phone.key")
+	path := filepath.Join(testsocket.Dir(t), "phone.key")
 	if err := os.WriteFile(path, []byte(testKey), 0600); err != nil {
 		t.Fatal(err)
 	}

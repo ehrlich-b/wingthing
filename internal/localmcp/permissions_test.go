@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"os"
 	"path/filepath"
@@ -68,7 +69,7 @@ func TestPermissionHumanBindingRefusesScopedAndBoundConnections(t *testing.T) {
 
 func TestPermissionBrowserRouteRefused(t *testing.T) {
 	for _, operation := range []string{"permission_list", "permission_respond"} {
-		_, err := BrowserSessionControl("test", t.Context(), nil, nil, ws.TunnelRequest{SenderUserID: "owner", SenderOrgRole: "owner"}, operation, json.RawMessage(`{}`), t.TempDir(), false)
+		_, err := BrowserSessionControl("test", t.Context(), nil, nil, ws.TunnelRequest{SenderUserID: "owner", SenderOrgRole: "owner"}, operation, json.RawMessage(`{}`), testsocket.Dir(t), false)
 		if err == nil || !strings.Contains(err.Error(), "unsupported browser session operation") {
 			t.Fatalf("browser permission route survived: %v", err)
 		}

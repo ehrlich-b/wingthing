@@ -3,10 +3,12 @@ package egg
 import (
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestSessionReportDurableReplayDoesNotChangeNativeLifecycle(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	report := SessionReport{Goal: "Finish the change", Update: "Tests passed", NextAction: "Review results", Presence: "asleep", LastWake: "2026-10-12T22:00:00Z", NextWake: "2026-10-12T23:00:00Z", Artifacts: []ReportArtifact{{Label: "Results", Path: "results.md"}}, Links: []ReportLink{{Label: "Docs", URL: "https://example.com/docs"}}}
 	first, err := RecordSessionReport(dir, report)
 	if err != nil {
@@ -48,7 +50,7 @@ func TestSessionReportValidation(t *testing.T) {
 	} {
 		r := valid
 		mutate(&r)
-		if _, err := RecordSessionReport(t.TempDir(), r); err == nil {
+		if _, err := RecordSessionReport(testsocket.Dir(t), r); err == nil {
 			t.Fatalf("accepted %+v", r)
 		}
 	}

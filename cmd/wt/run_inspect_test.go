@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/runinspect"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func inspectTree(t *testing.T, path string) map[string]string {
@@ -34,7 +35,7 @@ func inspectTree(t *testing.T, path string) map[string]string {
 
 func inspectSnapshotFixture(t *testing.T) (string, string) {
 	t.Helper()
-	workspace := t.TempDir()
+	workspace := testsocket.Dir(t)
 	snapshot := filepath.Join(workspace, "snapshot")
 	source := filepath.Join("..", "..", "internal", "runinspect", "testdata", "orphan")
 	if err := os.CopyFS(snapshot, os.DirFS(source)); err != nil {
@@ -51,7 +52,7 @@ func inspectBinaryFixture(t *testing.T) (string, string, string) {
 	}
 	// Make targets may supply a binary; ordinary go test builds the current
 	// source in separate disposable state, outside the inspected workspace.
-	binary := localOnlyFixtureBinary(t, repo, t.TempDir())
+	binary := localOnlyFixtureBinary(t, repo, testsocket.Dir(t))
 	workspace, snapshot := inspectSnapshotFixture(t)
 	return binary, workspace, snapshot
 }

@@ -17,11 +17,12 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/fleet"
 	"github.com/ehrlich-b/wingthing/internal/sessionrole"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func inventoryFixture(t *testing.T, id, label string) *Server {
 	t.Helper()
-	cfg := &config.Config{Dir: t.TempDir(), WingID: id}
+	cfg := &config.Config{Dir: testsocket.Dir(t), WingID: id}
 	dir := filepath.Join(cfg.Dir, "eggs", "same-short-id")
 	if e := os.MkdirAll(dir, 0700); e != nil {
 		t.Fatal(e)

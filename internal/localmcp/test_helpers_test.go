@@ -7,6 +7,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"io"
 	"os"
 	"path/filepath"
@@ -99,7 +100,7 @@ func seedRemoteListSession(t *testing.T, cfg *config.Config, id, principal strin
 
 func writeFakeRemoteSSH(t *testing.T, script string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "ssh")
+	path := filepath.Join(testsocket.Dir(t), "ssh")
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0700); err != nil {
 		t.Fatal(err)
 	}

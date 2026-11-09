@@ -15,6 +15,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 const (
@@ -328,7 +329,7 @@ func wakeExactUntouched(t *testing.T, cfg *config.Config, spy *wakeExactSpy, sib
 func TestWakeExactUnconfirmedLegacyTargetNeverAliasesSibling(t *testing.T) {
 	for _, kind := range []string{"prefix_sibling", "resumed_prefix_sibling", "name_alias", "symlinked_execution"} {
 		t.Run(kind, func(t *testing.T) {
-			cfg := &config.Config{Dir: t.TempDir()}
+			cfg := &config.Config{Dir: testsocket.Dir(t)}
 			wakeExactTree(t, cfg, wakeExactLegacy)
 			spy := newWakeExactSpy(cfg)
 			before := wakeExactUnconfirmed(t, cfg, spy, wakeExactLegacy)
@@ -359,7 +360,7 @@ func TestWakeExactUnconfirmedLegacyTargetNeverAliasesSibling(t *testing.T) {
 func TestWakeExactQueuedWakeNeverBindsAliasOfMissingCurrentExecution(t *testing.T) {
 	for _, kind := range []string{"prefix_sibling", "name_alias", "symlinked_execution"} {
 		t.Run(kind, func(t *testing.T) {
-			cfg := &config.Config{Dir: t.TempDir()}
+			cfg := &config.Config{Dir: testsocket.Dir(t)}
 			wakeExactTree(t, cfg, wakeExactLegacy)
 			sibling := wakeExactAlias(t, cfg, kind)
 			spy := newWakeExactSpy(cfg)
@@ -383,7 +384,7 @@ func TestWakeExactQueuedWakeNeverBindsAliasOfMissingCurrentExecution(t *testing.
 func TestWakeExactForeignOrUnrecordedExecutionFailsClosed(t *testing.T) {
 	for _, kind := range []string{"foreign_principal", "foreign_roost_owner", "unrecorded_execution"} {
 		t.Run(kind, func(t *testing.T) {
-			cfg := &config.Config{Dir: t.TempDir()}
+			cfg := &config.Config{Dir: testsocket.Dir(t)}
 			wakeExactTree(t, cfg, wakeExactLegacy)
 			spy := newWakeExactSpy(cfg)
 			before := wakeExactUnconfirmed(t, cfg, spy, wakeExactLegacy)
@@ -436,7 +437,7 @@ func TestWakeExactForeignOrUnrecordedExecutionFailsClosed(t *testing.T) {
 func TestWakeExactProviderIdentityBranchesStayUnconfirmed(t *testing.T) {
 	for _, kind := range []string{"meta_provider_replaced", "meta_provider_missing", "meta_file_missing", "reader_provider_changed", "reader_provider_missing"} {
 		t.Run(kind, func(t *testing.T) {
-			cfg := &config.Config{Dir: t.TempDir()}
+			cfg := &config.Config{Dir: testsocket.Dir(t)}
 			wakeExactTree(t, cfg, wakeExactLegacy)
 			spy := newWakeExactSpy(cfg)
 			before := wakeExactUnconfirmed(t, cfg, spy, wakeExactLegacy)
@@ -501,7 +502,7 @@ func TestWakeExactProviderIdentityBranchesStayUnconfirmed(t *testing.T) {
 func TestWakeExactQueuedProviderIdentityBranchesNeverBind(t *testing.T) {
 	for _, kind := range []string{"meta_provider_missing", "reader_provider_changed", "reader_provider_missing"} {
 		t.Run(kind, func(t *testing.T) {
-			cfg := &config.Config{Dir: t.TempDir()}
+			cfg := &config.Config{Dir: testsocket.Dir(t)}
 			wakeExactTree(t, cfg, wakeExactLegacy)
 			spy := newWakeExactSpy(cfg)
 			view := map[string]string{}
@@ -533,7 +534,7 @@ func TestWakeExactQueuedProviderIdentityBranchesNeverBind(t *testing.T) {
 // execution retires. The row stays pending and wedges this root; it is not
 // rebound to an alias, not resent, and not retryable as proven not_sent.
 func TestWakeExactBindingWithoutReservationOnRetiredTargetStaysPending(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	wakeExactTree(t, cfg, wakeExactLegacy)
 	spy := newWakeExactSpy(cfg)
 	spy.configure(true, map[string]string{})
@@ -574,7 +575,7 @@ func TestWakeExactBindingWithoutReservationOnRetiredTargetStaysPending(t *testin
 // The resolver accepts only a recorded execution ID; human selectors that the
 // public lifecycle resolver accepts for the same egg are refused here.
 func TestWakeExactResolverRejectsHumanSelectorsAndUnsafeIDs(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	root := wakeExactTree(t, cfg, wakeExactLegacy)
 	if err := eggclient.WriteSessionName(filepath.Join(cfg.Dir, "eggs", wakeExactLegacy), "parent"); err != nil {
 		t.Fatal(err)
@@ -607,7 +608,7 @@ func TestWakeExactResolverRejectsHumanSelectorsAndUnsafeIDs(t *testing.T) {
 func TestWakeExactValidLegacyAndNativeExecutionsStillDeliver(t *testing.T) {
 	for _, tc := range []struct{ target, other string }{{wakeExactLegacy, wakeExactNative}, {wakeExactNative, wakeExactLegacy}} {
 		t.Run(tc.target, func(t *testing.T) {
-			cfg := &config.Config{Dir: t.TempDir()}
+			cfg := &config.Config{Dir: testsocket.Dir(t)}
 			wakeExactTree(t, cfg, tc.target)
 			wakeExactEgg(t, cfg, tc.other, "owner", wakeExactProvider)
 			spy := newWakeExactSpy(cfg)
@@ -633,7 +634,7 @@ func TestWakeExactValidLegacyAndNativeExecutionsStillDeliver(t *testing.T) {
 		})
 	}
 	t.Run("unconfirmed_legacy_reconciles_with_sibling_present", func(t *testing.T) {
-		cfg := &config.Config{Dir: t.TempDir()}
+		cfg := &config.Config{Dir: testsocket.Dir(t)}
 		wakeExactTree(t, cfg, wakeExactLegacy)
 		spy := newWakeExactSpy(cfg)
 		before := wakeExactUnconfirmed(t, cfg, spy, wakeExactLegacy)

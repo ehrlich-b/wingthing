@@ -21,6 +21,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
@@ -34,7 +35,7 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 	}, "\n") + "\n"
 	var output bytes.Buffer
 	server := testWingServer(t, &Server{Version: "dev",
-		Cfg:  &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"},
+		Cfg:  &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "claude"},
 		In:   strings.NewReader(input),
 		Out:  &output,
 		Logs: &bytes.Buffer{},
@@ -132,7 +133,7 @@ func TestLocalMCPStdioEOFCancelsOutstandingWait(t *testing.T) {
 	inputReader, inputWriter := io.Pipe()
 	var output bytes.Buffer
 	server := testWingServer(t, &Server{Version: "dev",
-		Cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"},
+		Cfg: &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "claude"},
 		In:  inputReader, Out: &output, Logs: &bytes.Buffer{}, Principal: "owner", Actor: "test",
 	})
 	done := make(chan error, 1)
@@ -193,7 +194,7 @@ func TestUnknownMCPToolIsNotMisreportedAsMissingGrant(t *testing.T) {
 func TestRoostNativeMCPAuthorityIsExplicitBoundedAndShared(t *testing.T) {
 	admission := NewMCPAdmissionState()
 	paths := []string{"/srv/alice"}
-	server := testNativeServer(t, "dev", &config.Config{Dir: t.TempDir()}, true, admission, mcppkg.Principal{
+	server := testNativeServer(t, "dev", &config.Config{Dir: testsocket.Dir(t)}, true, admission, mcppkg.Principal{
 		UserID: "alice", Email: "alice@example.com", ClientID: "codex",
 	}, paths)
 	paths[0] = "/srv/mutated"
@@ -214,8 +215,8 @@ func TestRoostNativeMCPAuthorityIsExplicitBoundedAndShared(t *testing.T) {
 }
 
 func TestRoostCapabilitiesReportHTTPContract(t *testing.T) {
-	dir := t.TempDir()
-	workspace := t.TempDir()
+	dir := testsocket.Dir(t)
+	workspace := testsocket.Dir(t)
 	cfg := &config.Config{Dir: dir, DefaultAgent: "claude"}
 	if err := config.SaveWingConfig(dir, &config.WingConfig{
 		Paths: config.PathList{{Path: workspace}},
@@ -251,7 +252,7 @@ func TestRoostCapabilitiesReportHTTPContract(t *testing.T) {
 }
 
 func TestLocalMCPUnsandboxedModeIsExplicitAndAudited(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	server := testWingServer(t, &Server{Version: "dev",
 		Cfg: &config.Config{Dir: dir, DefaultAgent: "claude"}, Logs: &bytes.Buffer{},
 		Principal: "claude-code", Unsandboxed: true,
@@ -293,7 +294,7 @@ func TestLocalMCPUnsandboxedModeIsExplicitAndAudited(t *testing.T) {
 }
 
 func TestLocalMCPRejectsUnknownToolAndArguments(t *testing.T) {
-	server := testWingServer(t, &Server{Version: "dev", Cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, Logs: &bytes.Buffer{}})
+	server := testWingServer(t, &Server{Version: "dev", Cfg: &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "claude"}, Logs: &bytes.Buffer{}})
 
 	unknown := localMCPRequest{
 		JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "tools/call",
@@ -330,7 +331,7 @@ func TestLocalMCPRejectsUnknownToolAndArguments(t *testing.T) {
 }
 
 func TestResolveWorkingDirectory(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	got, err := ResolveWorkingDirectory(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -348,12 +349,12 @@ func TestResolveWorkingDirectory(t *testing.T) {
 // drive is unfinished (CLAUDE.md), and "is this sandbox safe?" is exactly the
 // question an orchestrating model has to be able to ask.
 func TestLocalMCPSandboxExplain(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	configPath := filepath.Join(dir, "egg.yaml")
 	if err := os.WriteFile(configPath, []byte("base: none\nfs: [\"rw:./\"]\nnetwork: [corp.example]\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	server := testWingServer(t, &Server{Version: "dev", Cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, Logs: &bytes.Buffer{}})
+	server := testWingServer(t, &Server{Version: "dev", Cfg: &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "claude"}, Logs: &bytes.Buffer{}})
 
 	args := json.RawMessage(`{"agent":"claude","config":` + strconv.Quote(configPath) + `}`)
 	got, isError, protocolErr := server.callTool(context.Background(), "sandbox_explain", args)
@@ -412,12 +413,12 @@ func TestLocalMCPSandboxExplain(t *testing.T) {
 }
 
 func TestRoostMCPSandboxExplainBoundsExplicitConfig(t *testing.T) {
-	workspace := t.TempDir()
+	workspace := testsocket.Dir(t)
 	inside := filepath.Join(workspace, "egg.yaml")
 	if err := os.WriteFile(inside, []byte("base: none\nfs: [\"rw:./\"]\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	outsideDir := t.TempDir()
+	outsideDir := testsocket.Dir(t)
 	outside := filepath.Join(outsideDir, "egg.yaml")
 	if err := os.WriteFile(outside, []byte("base: none\nfs: [\"rw:/\"]\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -428,7 +429,7 @@ func TestRoostMCPSandboxExplainBoundsExplicitConfig(t *testing.T) {
 	}
 
 	server := testWingServer(t, &Server{Version: "dev",
-		Cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, Logs: &bytes.Buffer{},
+		Cfg: &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "claude"}, Logs: &bytes.Buffer{},
 		allowedPaths: []string{wingpolicy.CanonicalSessionPath(workspace)}, enforcePathBounds: true,
 	})
 	for name, configPath := range map[string]string{
@@ -450,7 +451,7 @@ func TestRoostMCPSandboxExplainBoundsExplicitConfig(t *testing.T) {
 }
 
 func TestLocalMCPPrincipalOwnershipAndAudit(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	createSession := func(id, principal string) {
 		sessionDir := filepath.Join(dir, "eggs", id)
 		if err := os.MkdirAll(sessionDir, 0700); err != nil {
@@ -507,7 +508,7 @@ func TestLocalMCPPrincipalOwnershipAndAudit(t *testing.T) {
 }
 
 func TestLocalMCPClientConfigGrantsAndBounds(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	contents := []byte(`require_client: true
 clients:
   observer:
@@ -589,7 +590,7 @@ func TestAgentStopWinsCompletionRace(t *testing.T) {
 
 func TestUnsandboxedAgentRunPersistsPrivilegedIsolation(t *testing.T) {
 
-	f := newRunWingFixture(t, &Server{Version: "test", Cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, Principal: "alpha", Unsandboxed: true, Logs: io.Discard})
+	f := newRunWingFixture(t, &Server{Version: "test", Cfg: &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "claude"}, Principal: "alpha", Unsandboxed: true, Logs: io.Discard})
 	id := f.admit(t, "trusted task")
 	<-f.submitted
 	status, err := f.server.toolAgentStatus(runArgs(id))
@@ -607,7 +608,7 @@ func TestUnsandboxedAgentRunPersistsPrivilegedIsolation(t *testing.T) {
 
 func TestAgentStatusMarksOrphanedRunnerFailed(t *testing.T) {
 
-	cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}
+	cfg := &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "claude"}
 	db, err := store.Open(cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)
@@ -772,8 +773,8 @@ func TestStdioWaitDoesNotBlockStop(t *testing.T) {
 }
 
 func TestSharedRoostPathBoundsFailClosed(t *testing.T) {
-	dir := t.TempDir()
-	workspace := t.TempDir()
+	dir := testsocket.Dir(t)
+	workspace := testsocket.Dir(t)
 	server := testWingServer(t, &Server{Version: "dev",
 		Cfg: &config.Config{Dir: dir, DefaultAgent: "claude"}, Logs: &bytes.Buffer{},
 		Principal: "member", enforcePathBounds: true,
@@ -788,8 +789,8 @@ func TestSharedRoostPathBoundsFailClosed(t *testing.T) {
 }
 
 func TestRoostControlToolsKeepTwoUsersSessionsSeparate(t *testing.T) {
-	dir := t.TempDir()
-	workspace := t.TempDir()
+	dir := testsocket.Dir(t)
+	workspace := testsocket.Dir(t)
 	cfg := &config.Config{Dir: dir, DefaultAgent: "claude"}
 	if err := config.SaveWingConfig(dir, &config.WingConfig{
 		Paths: config.PathList{{Path: workspace}},

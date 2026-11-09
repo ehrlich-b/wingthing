@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 const sampleSkill = `---
@@ -83,7 +85,7 @@ func TestParseSkill(t *testing.T) {
 }
 
 func TestLoadSkillFile(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	path := filepath.Join(dir, "test.md")
 	if err := os.WriteFile(path, []byte(sampleSkill), 0644); err != nil {
 		t.Fatal(err)

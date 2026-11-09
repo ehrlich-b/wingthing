@@ -13,12 +13,13 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/control"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/ehrlich-b/wingthing/internal/sshcontrol"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/testssh"
 )
 
 func TestMCPConnectRegistryAddListRemove(t *testing.T) {
 	h := testssh.New(t)
-	state := t.TempDir()
+	state := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", state)
 	h.Host(t, "host", sshcontrol.Metadata{WingID: "pinned-wing", Version: control.ContractVersion, WingthingDir: "/remote/canonical", ControlSocket: "/remote/control.sock"})
 	var out bytes.Buffer
@@ -56,7 +57,7 @@ func TestMCPConnectRegistryAddListRemove(t *testing.T) {
 func TestMCPConnectAddRejectsInvalidBinaryBeforeSSHOrWrites(t *testing.T) {
 	for _, binary := range []string{"", "~/bin/wt", "bin/wt", "./wt", "wt --client", "-wt", "/bin/wt;true", "/bin/$(wt)", "/bin/wt\n", "/bin/wt\x00"} {
 		t.Run(binary, func(t *testing.T) {
-			state := t.TempDir()
+			state := testsocket.Dir(t)
 			t.Setenv("WINGTHING_DIR", state)
 			err := executeCLI(context.Background(), []string{"mcp", "connect", "add", "devbox", "--ssh", "host", "--wt-binary=" + binary}, remotepkg.IO{Out: io.Discard, ErrOut: io.Discard, SSHPath: filepath.Join(state, "must-not-run-ssh")})
 			if err == nil || !strings.Contains(err.Error(), "wt-binary") {
@@ -71,7 +72,7 @@ func TestMCPConnectAddRejectsInvalidBinaryBeforeSSHOrWrites(t *testing.T) {
 
 func TestMCPConnectVerifiesPreparedCLIProfileWithoutReplacingPins(t *testing.T) {
 	h := testssh.New(t)
-	state := t.TempDir()
+	state := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", state)
 	h.Host(t, "host", sshcontrol.Metadata{WingID: "pinned-wing", Version: control.ContractVersion, WingthingDir: "/remote/canonical", ControlSocket: "/remote/control.sock"})
 	old := config.Remote{SSHTarget: "host", WTBinary: "/selected/wt", WingthingDir: "/selected/state"}
@@ -115,7 +116,7 @@ func TestMCPConnectVerifiesPreparedCLIProfileWithoutReplacingPins(t *testing.T) 
 }
 
 func TestMCPConnectUpgradeRejectsConcurrentRegistryChange(t *testing.T) {
-	state := t.TempDir()
+	state := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", state)
 	original := config.Remote{SSHTarget: "host"}
 	if err := config.SaveRemotes(state, map[string]config.Remote{"fixture": original}); err != nil {
@@ -123,7 +124,7 @@ func TestMCPConnectUpgradeRejectsConcurrentRegistryChange(t *testing.T) {
 	}
 	// Only this fixture transport changes the disposable registry during the
 	// handshake. The production compare/update must preserve that new route.
-	transport := filepath.Join(t.TempDir(), "ssh")
+	transport := filepath.Join(testsocket.Dir(t), "ssh")
 	script := "#!/bin/sh\nprintf '%s\\n' 'remotes:' '  fixture:' '    ssh_target: concurrent-host' > " + remotepkg.ShellQuote(filepath.Join(state, "remotes.yaml")) + "\nprintf '%s\\n' '{\"wing_id\":\"verified-host\",\"version\":\"" + control.ContractVersion + "\",\"wingthing_dir\":\"/remote/state\",\"control_socket\":\"/remote/control.sock\"}'\n"
 	if err := os.WriteFile(transport, []byte(script), 0700); err != nil {
 		t.Fatal(err)

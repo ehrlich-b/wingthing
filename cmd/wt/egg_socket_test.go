@@ -13,13 +13,14 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestSocketPathCLIFailsBeforeStateOrProcessCreation(t *testing.T) {
 	old := config.ReleaseChannel
 	t.Cleanup(func() { config.ReleaseChannel = old })
 	t.Setenv("WINGTHING_PREVIEW_DIR", "")
-	t.Setenv("HOME", filepath.Join(t.TempDir(), "home"))
+	t.Setenv("HOME", filepath.Join(testsocket.Dir(t), "home"))
 	for _, channel := range []string{"stable", "preview"} {
 		config.ReleaseChannel = channel
 		for _, args := range [][]string{
@@ -27,7 +28,7 @@ func TestSocketPathCLIFailsBeforeStateOrProcessCreation(t *testing.T) {
 			{"egg", "codex", "--detach", "--json"},
 			{"egg", "run", "--session-id", "socket-fixture", "--agent", "codex"},
 		} {
-			state := filepath.Join(t.TempDir(), strings.Repeat("x", 120))
+			state := filepath.Join(testsocket.Dir(t), strings.Repeat("x", 120))
 			t.Setenv("WINGTHING_DIR", state)
 			err := executeCLI(context.Background(), args, remotepkg.IO{})
 			assertSocketPathFailure(t, err)
@@ -39,7 +40,7 @@ func TestSocketPathCLIFailsBeforeStateOrProcessCreation(t *testing.T) {
 }
 
 func TestSocketPathSpawnRejectsBeforeEggOrProcessCreation(t *testing.T) {
-	state := filepath.Join(t.TempDir(), strings.Repeat("x", 120))
+	state := filepath.Join(testsocket.Dir(t), strings.Repeat("x", 120))
 	// A nil policy would fail later; address rejection must precede all setup.
 	_, err := eggclient.SpawnEgg(&config.Config{Dir: state}, "socket-fixture", "", nil, 24, 80, "", false, false, false, eggclient.EggIdentity{}, 0)
 	assertSocketPathFailure(t, err)

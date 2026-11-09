@@ -2,6 +2,7 @@ package localrelay
 
 import (
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -29,7 +30,7 @@ func TestRoostAllowedEmailsFromEnv(t *testing.T) {
 }
 
 func TestLoadRoostMCPConfigUsesWingYAMLAndConfiguredToolsDir(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	toolsDir := filepath.Join(dir, "custom-tools")
 	if err := os.Mkdir(toolsDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -84,7 +85,7 @@ func TestJWTKeyFromEnvironmentUsesExistingSecretAndPrefersExplicitKey(t *testing
 }
 
 func TestRoostMCPReloadRetainsStartupContext(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	toolsDir := filepath.Join(dir, "tools")
 	if err := os.Mkdir(toolsDir, 0700); err != nil {
 		t.Fatal(err)
@@ -116,7 +117,7 @@ func TestRoostMCPReloadRetainsStartupContext(t *testing.T) {
 		t.Fatalf("runner lost startup Context: %+v", response)
 	}
 	// Enabling Context on disk cannot enroll a previously unenrolled process.
-	otherDir := t.TempDir()
+	otherDir := testsocket.Dir(t)
 	if err := os.Mkdir(filepath.Join(otherDir, "tools"), 0700); err != nil {
 		t.Fatal(err)
 	}

@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestLocalOwnerPersistsAcrossBoots(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	start := make(chan struct{})
 	owners := make(chan *LocalOwner, 8)
 	errors := make(chan error, 8)
@@ -52,7 +54,7 @@ func TestLocalOwnerPersistsAcrossBoots(t *testing.T) {
 }
 
 func TestRelayEnrollmentPreservesLocalOwnership(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	before, err := EnsureLocalOwner(dir, "")
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +82,7 @@ func TestRelayEnrollmentPreservesLocalOwnership(t *testing.T) {
 
 func TestLocalOwnerRejectsCorruptOrPublicIdentity(t *testing.T) {
 	for _, data := range []string{"id: ''\n", "id: one\nunexpected: field\n"} {
-		dir := t.TempDir()
+		dir := testsocket.Dir(t)
 		if err := os.WriteFile(filepath.Join(dir, "local-owner.yaml"), []byte(data), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -88,7 +90,7 @@ func TestLocalOwnerRejectsCorruptOrPublicIdentity(t *testing.T) {
 			t.Fatal("replaced invalid identity")
 		}
 	}
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	path := filepath.Join(dir, "local-owner.yaml")
 	if err := os.WriteFile(path, []byte("id: public\n"), 0644); err != nil {
 		t.Fatal(err)

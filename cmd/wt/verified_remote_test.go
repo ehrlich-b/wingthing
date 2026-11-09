@@ -17,6 +17,7 @@ import (
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestVerifiedProfileLiteralTransportPin(t *testing.T) {
@@ -143,7 +144,7 @@ func TestBuiltWTVerifiedSSHRefusesReplacedWingBeforeIO(t *testing.T) {
 }
 
 func TestVerifiedCLIUsesReceivingAuthorityForMutationsAndLaunch(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", dir)
 	t.Setenv("WT_MCP_CLIENT", "")
 	type call struct {

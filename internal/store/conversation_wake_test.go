@@ -3,10 +3,12 @@ package store
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestConversationWakeOutboxRestartAndSeparateAcknowledgement(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "wake.db")
+	path := filepath.Join(testsocket.Dir(t), "wake.db")
 	db, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +69,7 @@ func TestConversationWakeOutboxRestartAndSeparateAcknowledgement(t *testing.T) {
 }
 
 func TestConversationWakeKnownNotSentRetriesAreBounded(t *testing.T) {
-	db, err := Open(filepath.Join(t.TempDir(), "wake.db"))
+	db, err := Open(filepath.Join(testsocket.Dir(t), "wake.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +113,7 @@ func TestConversationWakeKnownNotSentRetriesAreBounded(t *testing.T) {
 }
 
 func TestConversationWakeRuntimeSourceAndTypeAreExact(t *testing.T) {
-	db, err := Open(filepath.Join(t.TempDir(), "wake.db"))
+	db, err := Open(filepath.Join(testsocket.Dir(t), "wake.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +139,7 @@ func TestConversationWakeRuntimeSourceAndTypeAreExact(t *testing.T) {
 }
 
 func TestConversationWakeExplicitRetryPreservesMonotonicIDsAndTotalCap(t *testing.T) {
-	db, err := Open(filepath.Join(t.TempDir(), "wake.db"))
+	db, err := Open(filepath.Join(testsocket.Dir(t), "wake.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +204,7 @@ func TestConversationWakeExplicitRetryPreservesMonotonicIDsAndTotalCap(t *testin
 }
 
 func TestConversationWakeExplicitRetryRejectsUnknown(t *testing.T) {
-	db, err := Open(filepath.Join(t.TempDir(), "wake.db"))
+	db, err := Open(filepath.Join(testsocket.Dir(t), "wake.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

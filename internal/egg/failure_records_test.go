@@ -12,12 +12,13 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/agent"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestProviderFailureContentAbsentFromLifecycleAndArchive(t *testing.T) {
 	const canary = "private-provider-diagnostic-canary"
 	t.Run("codex_app_server", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := testsocket.Dir(t)
 		wire := codexFixture(t, "turn/completed", map[string]any{"threadId": codexFixtureThread, "turn": map[string]any{"id": "failed-turn", "status": "failed", "error": map[string]string{"code": "authentication_error", "message": "Invalid API key " + canary}}}, nil)
 		event, accepted, err := RecordCodexNativeEvent(dir, codexFixtureThread, wire)
 		if err != nil || !accepted || event.Event.Reason != string(agent.AuthFailed) || len(event.Event.Raw) != 0 {

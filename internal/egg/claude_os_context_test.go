@@ -11,12 +11,13 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestPreviewClaudeLifecycleSettingsAndHooksKeepDataHome(t *testing.T) {
-	dir := t.TempDir()
-	dataHome := config.CanonicalProviderPath(t.TempDir())
-	cwd := t.TempDir()
+	dir := testsocket.Dir(t)
+	dataHome := config.CanonicalProviderPath(testsocket.Dir(t))
+	cwd := testsocket.Dir(t)
 	lifecycleWrite(t, filepath.Join(dir, "egg.meta"), "agent=claude\nprovider_session_id=ours\n")
 	args, err := prepareClaudeLifecycleArgs(nil, dataHome, dir, "ours", cwd)
 	if err != nil {
@@ -85,7 +86,7 @@ func TestPreviewClaudeMacTmpAliasSelectsOneCredentialService(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS /tmp lexical alias")
 	}
-	root, err := os.MkdirTemp("/tmp", "wt-profile-alias-")
+	root, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +109,7 @@ func TestPreviewClaudeMacTmpAliasSelectsOneCredentialService(t *testing.T) {
 }
 
 func TestPreviewClaudeContextCanonicalAliasAndMissingHome(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	actual := filepath.Join(root, "state")
 	if err := os.Mkdir(actual, 0700); err != nil {
 		t.Fatal(err)
@@ -139,7 +140,7 @@ func TestPreviewClaudeContextCanonicalAliasAndMissingHome(t *testing.T) {
 }
 
 func TestPreviewClaudeContextKeepsNativeDataAndRejectsOverrides(t *testing.T) {
-	dataHome := config.PreviewProviderHome(filepath.Join(t.TempDir(), "state"))
+	dataHome := config.PreviewProviderHome(filepath.Join(testsocket.Dir(t), "state"))
 	env := map[string]string{"HOME": dataHome, "CLAUDE_CONFIG_DIR": filepath.Join(dataHome, ".claude"), "CFFIXED_USER_HOME": "/foreign", "UNRELATED": "preserved", "USER": "fixture-ambient-account"}
 	osHome, err := ApplyPreviewClaudeOSContext(env, dataHome)
 	if err != nil {
@@ -172,7 +173,7 @@ func TestPreviewClaudeContextKeepsNativeDataAndRejectsOverrides(t *testing.T) {
 }
 
 func TestPreviewClaudeGuardRejectsMoreSpecificHostConfigMounts(t *testing.T) {
-	osHome := filepath.Join(t.TempDir(), "OS-user")
+	osHome := filepath.Join(testsocket.Dir(t), "OS-user")
 	protected, err := GuardPreviewClaudeMounts([]sandbox.Mount{{Source: osHome, Target: osHome}}, osHome)
 	if err != nil || len(protected) != 2 {
 		t.Fatalf("broader mount guard: %v %v", protected, err)

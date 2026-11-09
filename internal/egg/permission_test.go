@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/ehrlich-b/wingthing/internal/permissions"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +16,7 @@ func TestPermissionSettingsPreserveObserversAndOtherHooks(t *testing.T) {
 	if !permissions.NativeHookSupported() {
 		t.Skip("native hook authentication unavailable")
 	}
-	home, err := os.MkdirTemp("", "wp-home-")
+	home, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +70,7 @@ func TestPermissionSettingsPlatformGateAndUniqueBash(t *testing.T) {
 	for _, supported := range []bool{false, true} {
 		for _, ask := range []string{`["Write"]`, `["Bash","Write","Bash"]`} {
 			t.Run(fmt.Sprintf("supported=%v/ask=%s", supported, ask), func(t *testing.T) {
-				home, err := os.MkdirTemp("", "wp-gate-")
+				home, err := os.MkdirTemp("/tmp", "wt")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -124,7 +125,7 @@ func TestPermissionSettingsPlatformGateAndUniqueBash(t *testing.T) {
 	}
 }
 func TestPermissionDisabledHooksDoNotInstallBroker(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	path := filepath.Join(dir, "settings.json")
 	os.WriteFile(path, []byte(`{"disableAllHooks":true}`), 0600)
 	s := &Server{dir: dir}

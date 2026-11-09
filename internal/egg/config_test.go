@@ -10,6 +10,7 @@ import (
 
 	wingconfig "github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"gopkg.in/yaml.v3"
 )
 
@@ -42,7 +43,7 @@ func TestResolveEggConfigNamedBaseLookup(t *testing.T) {
 			previous := wingconfig.ReleaseChannel
 			wingconfig.ReleaseChannel = tc.channel
 			t.Cleanup(func() { wingconfig.ReleaseChannel = previous })
-			home := t.TempDir()
+			home := testsocket.Dir(t)
 			t.Setenv("HOME", home)
 			state := filepath.Join(home, "alternate-state")
 			t.Setenv("WINGTHING_DIR", state)
@@ -141,7 +142,7 @@ func TestMergeEggConfig_NoBase(t *testing.T) {
 
 func TestMergeEggConfig_BaseNone(t *testing.T) {
 	// base: none means empty slate
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	path := filepath.Join(dir, "egg.yaml")
 	writeEggConfigTestFile(t, path, `base: none
 fs:
@@ -166,7 +167,7 @@ fs:
 
 func TestMergeEggConfig_NamedBase(t *testing.T) {
 	// Create a named base in a temp dir
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 
 	basesDir := filepath.Join(home, ".wingthing", "bases")
@@ -180,7 +181,7 @@ network: none
 `)
 
 	// Project config references the named base
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	path := filepath.Join(dir, "egg.yaml")
 	writeEggConfigTestFile(t, path, `base: strict
 fs:
@@ -217,7 +218,7 @@ network:
 }
 
 func TestMergeEggConfig_RelativePath(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 
 	// Create a base config in a subdirectory
 	basesDir := filepath.Join(dir, "bases")
@@ -244,7 +245,7 @@ fs:
 }
 
 func TestResolveEggConfig_CircularReference(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 
 	// a.yaml -> b.yaml -> a.yaml (circular)
 	writeEggConfigTestFile(t, filepath.Join(dir, "a.yaml"), "base: ./b.yaml\n")
@@ -260,7 +261,7 @@ func TestResolveEggConfig_CircularReference(t *testing.T) {
 }
 
 func TestResolveEggConfig_MaxDepth(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 
 	// Create a chain deeper than maxBaseDepth
 	for i := 0; i <= maxBaseDepth+1; i++ {
@@ -374,7 +375,7 @@ func TestParseFSRules_DenyWrite(t *testing.T) {
 }
 
 func TestResolveEggConfig_NoBase_MergesDefault(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	path := filepath.Join(dir, "egg.yaml")
 	writeEggConfigTestFile(t, path, `fs:
   - ro:~/.ssh
@@ -404,7 +405,7 @@ func TestResolveEggConfig_FileNotFound(t *testing.T) {
 }
 
 func TestDiscoverEggConfig_FallsBackToDefault(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	t.Setenv("HOME", testsocket.Dir(t))
 	cfg := DiscoverEggConfig("/nonexistent", nil)
 	if len(cfg.FS) == 0 {
 		t.Error("should fall back to default config")
@@ -412,7 +413,7 @@ func TestDiscoverEggConfig_FallsBackToDefault(t *testing.T) {
 }
 
 func TestDiscoverEggConfig_GlobalDefault(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 	globalDir := filepath.Join(home, ".wingthing")
 	if err := os.MkdirAll(globalDir, 0700); err != nil {
@@ -442,7 +443,7 @@ func TestDiscoverEggConfigCustomStateLegacyFallback(t *testing.T) {
 			previous := wingconfig.ReleaseChannel
 			wingconfig.ReleaseChannel = tc.channel
 			t.Cleanup(func() { wingconfig.ReleaseChannel = previous })
-			home := t.TempDir()
+			home := testsocket.Dir(t)
 			t.Setenv("HOME", home)
 			state := filepath.Join(home, "alternate-state")
 			t.Setenv("WINGTHING_DIR", state)
@@ -454,7 +455,7 @@ func TestDiscoverEggConfigCustomStateLegacyFallback(t *testing.T) {
 				makeEggConfigTestDir(t, state)
 				writeEggConfigTestFile(t, filepath.Join(state, "egg.yaml"), tc.current)
 			}
-			cfg := DiscoverEggConfig(t.TempDir(), nil)
+			cfg := DiscoverEggConfig(testsocket.Dir(t), nil)
 			resolved := cfg.ToSandboxConfig(home)
 			found := false
 			for _, path := range resolved.Deny {
@@ -473,7 +474,7 @@ func TestDiscoverEggConfigCustomStateLegacyFallback(t *testing.T) {
 }
 
 func TestDiscoverEggConfig_ProjectConfig(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	writeEggConfigTestFile(t, filepath.Join(dir, "egg.yaml"), `base: none
 fs:
   - rw:./
@@ -601,7 +602,7 @@ func TestBaseField_MarshalRoundTrip(t *testing.T) {
 }
 
 func TestSectionMask_None(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	path := filepath.Join(dir, "egg.yaml")
 	writeEggConfigTestFile(t, path, "base:\n  fs: none\n")
 
@@ -626,7 +627,7 @@ func TestSectionMask_None(t *testing.T) {
 }
 
 func TestSectionMask_FileRef(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	// Create a base config with specific env
 	writeEggConfigTestFile(t, filepath.Join(dir, "prod-env.yaml"), "base: none\nenv:\n  - PROD_KEY\n  - DB_URL\n")
 	// Project references it for env only
@@ -664,7 +665,7 @@ func TestSectionMask_FileRef(t *testing.T) {
 }
 
 func TestSectionMask_FallThrough(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 
 	basesDir := filepath.Join(home, ".wingthing", "bases")
@@ -672,7 +673,7 @@ func TestSectionMask_FallThrough(t *testing.T) {
 	// team-env has no fs of its own, just env. Its base resolves defaults, so fs comes from defaults.
 	writeEggConfigTestFile(t, filepath.Join(basesDir, "team-env.yaml"), "env:\n  - TEAM_KEY\n")
 
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	path := filepath.Join(dir, "egg.yaml")
 	writeEggConfigTestFile(t, path, "base:\n  env: team-env\n")
 
@@ -700,14 +701,14 @@ func TestSectionMask_FallThrough(t *testing.T) {
 }
 
 func TestSectionMask_Combo(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 
 	basesDir := filepath.Join(home, ".wingthing", "bases")
 	makeEggConfigTestDir(t, basesDir)
 	writeEggConfigTestFile(t, filepath.Join(basesDir, "strict.yaml"), "base: none\nfs:\n  - rw:./\nnetwork:\n  - api.internal.corp\n")
 
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	writeEggConfigTestFile(t, filepath.Join(dir, "prod-env.yaml"), "base: none\nenv:\n  - PROD_KEY\n")
 	path := filepath.Join(dir, "egg.yaml")
 	writeEggConfigTestFile(t, path, "base:\n  name: strict\n  fs: none\n  env: ./prod-env.yaml\n")
@@ -731,7 +732,7 @@ func TestSectionMask_Combo(t *testing.T) {
 }
 
 func TestSectionMask_CycleDetection(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	// a.yaml references b.yaml for env, b.yaml references a.yaml
 	writeEggConfigTestFile(t, filepath.Join(dir, "a.yaml"), "base:\n  env: ./b.yaml\n")
 	writeEggConfigTestFile(t, filepath.Join(dir, "b.yaml"), "base: ./a.yaml\n")
@@ -746,7 +747,7 @@ func TestSectionMask_CycleDetection(t *testing.T) {
 }
 
 func TestSectionMask_WithBaseNone_Error(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	path := filepath.Join(dir, "egg.yaml")
 	writeEggConfigTestFile(t, path, "base:\n  name: none\n  fs: none\n")
 
@@ -760,7 +761,7 @@ func TestSectionMask_WithBaseNone_Error(t *testing.T) {
 }
 
 func TestBaseField_BackwardCompat(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 
 	// String "none" should work exactly as before
 	pathNone := filepath.Join(dir, "none.yaml")
@@ -774,7 +775,7 @@ func TestBaseField_BackwardCompat(t *testing.T) {
 	}
 
 	// String base with named ref should work
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 	basesDir := filepath.Join(home, ".wingthing", "bases")
 	makeEggConfigTestDir(t, basesDir)
@@ -880,7 +881,7 @@ func TestBuildEnv_ExplicitSSHAuthSockOptsIntoAgentOnlyAccess(t *testing.T) {
 }
 
 func TestSSHAgentSocketDenyPathsMasksDiscoverableSocket(t *testing.T) {
-	socketDir, err := os.MkdirTemp("/tmp", "wt-ssh-sock-")
+	socketDir, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -923,7 +924,7 @@ func TestSSHAgentSocketDenyPathsMasksDiscoverableSocket(t *testing.T) {
 }
 
 func TestSandboxAllowedSocketsIncludesOnlyFilteredLiveSSHAgent(t *testing.T) {
-	socketDir, err := os.MkdirTemp("/tmp", "wt-allowed-ssh-sock-")
+	socketDir, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -939,7 +940,7 @@ func TestSandboxAllowedSocketsIncludesOnlyFilteredLiveSSHAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	toolSocket := filepath.Join(t.TempDir(), "tool.sock")
+	toolSocket := filepath.Join(testsocket.Dir(t), "tool.sock")
 	got := sandboxAllowedSockets(toolSocket, map[string]string{"SSH_AUTH_SOCK": socketPath})
 	if len(got) != 2 || got[0] != toolSocket || got[1] != resolved {
 		t.Fatalf("allowed sockets = %v, want [%s %s]", got, toolSocket, resolved)
@@ -964,7 +965,7 @@ func TestSSHAgentSocketDenyPathsIgnoresNonSocketAndRelativeValues(t *testing.T) 
 	for name, value := range map[string]string{
 		"relative": "agent.sock",
 		"regular file": func() string {
-			path := filepath.Join(t.TempDir(), "not-a-socket")
+			path := filepath.Join(testsocket.Dir(t), "not-a-socket")
 			if err := os.WriteFile(path, []byte("not a socket"), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -1134,7 +1135,7 @@ func TestBuildEnv_RespectsCustomHome(t *testing.T) {
 }
 
 func TestSectionMask_EnvNone_RemovesEssentials(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	path := filepath.Join(dir, "egg.yaml")
 	writeEggConfigTestFile(t, path, "base:\n  env: none\nenv:\n  - CUSTOM_ONLY\n")
 
@@ -1185,7 +1186,7 @@ func TestTaskYAMLKeepsRoostPolicyPathsThatEggYAMLCannotSet(t *testing.T) {
 }
 
 func TestDiscoverEggConfigWithSourceFallbacks(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
 	t.Setenv("WINGTHING_PREVIEW_DIR", "")
@@ -1195,12 +1196,12 @@ func TestDiscoverEggConfigWithSourceFallbacks(t *testing.T) {
 	legacy := filepath.Join(home, ".wingthing", "egg.yaml")
 	makeEggConfigTestDir(t, filepath.Dir(legacy))
 	writeEggConfigTestFile(t, legacy, "base: none\nnetwork: ['*']\n")
-	cfg, source := DiscoverEggConfigWithSource(t.TempDir(), nil)
-	if source != legacy || !reflect.DeepEqual(cfg, DiscoverEggConfig(t.TempDir(), nil)) {
+	cfg, source := DiscoverEggConfigWithSource(testsocket.Dir(t), nil)
+	if source != legacy || !reflect.DeepEqual(cfg, DiscoverEggConfig(testsocket.Dir(t), nil)) {
 		t.Fatalf("legacy source = %q, config = %#v", source, cfg)
 	}
 	wing := &EggConfig{FS: []string{"rw:./"}}
-	cfg, source = DiscoverEggConfigWithSource(t.TempDir(), wing)
+	cfg, source = DiscoverEggConfigWithSource(testsocket.Dir(t), wing)
 	if cfg != wing || source != "wing default" {
 		t.Fatalf("wing source = %q, config = %#v", source, cfg)
 	}

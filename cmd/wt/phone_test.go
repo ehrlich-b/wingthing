@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestPhoneLinkConstructionAndEncoding(t *testing.T) {
@@ -51,7 +52,7 @@ func TestPhoneLinkConstructionAndEncoding(t *testing.T) {
 
 func phoneLinkState(t *testing.T, account string) (*auth.TokenStore, *auth.DeviceToken) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", dir)
 	// The running wing uses config's machine ID, not the token's device ID.
 	for name, contents := range map[string]string{"wing-id": "0123456789abcdef01234567\n", "wing.yaml": "roost: https://home.example:8443\n", "config.yaml": "roost_url: https://unused.example\n"} {

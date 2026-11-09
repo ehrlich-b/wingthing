@@ -7,13 +7,15 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestStableLoadRequiresHomeUnlessStateIsExplicit(t *testing.T) {
 	old := ReleaseChannel
 	ReleaseChannel = "stable"
 	t.Cleanup(func() { ReleaseChannel = old })
-	t.Chdir(t.TempDir())
+	t.Chdir(testsocket.Dir(t))
 	for _, name := range []string{"HOME", "WINGTHING_DIR", "WINGTHING_PREVIEW_DIR"} {
 		t.Setenv(name, "")
 		if err := os.Unsetenv(name); err != nil {
@@ -29,7 +31,7 @@ func TestStableLoadRequiresHomeUnlessStateIsExplicit(t *testing.T) {
 	if _, err := os.Stat(".wingthing"); !os.IsNotExist(err) {
 		t.Fatalf("Load created state in the working directory: %v", err)
 	}
-	t.Setenv("WINGTHING_DIR", filepath.Join(t.TempDir(), "explicit-state"))
+	t.Setenv("WINGTHING_DIR", filepath.Join(testsocket.Dir(t), "explicit-state"))
 	if _, err := Load(); err != nil {
 		t.Fatalf("explicit state must not require HOME: %v", err)
 	}
@@ -66,7 +68,7 @@ func TestPreviewStateRejectsCaseAliasedMissingChild(t *testing.T) {
 func TestPreviewStateRejectsPhysicalAliasedMissingChild(t *testing.T) {
 	home := previewTest(t)
 	stable := canonicalConfiguredPath(filepath.Join(home, ".wingthing"), "")
-	alias := canonicalConfiguredPath(filepath.Join(t.TempDir(), "alias"), "")
+	alias := canonicalConfiguredPath(filepath.Join(testsocket.Dir(t), "alias"), "")
 	for _, path := range []string{stable, alias} {
 		if err := os.Mkdir(path, 0700); err != nil {
 			t.Fatal(err)
@@ -92,7 +94,7 @@ func previewTest(t *testing.T) string {
 	old := ReleaseChannel
 	ReleaseChannel = "preview"
 	t.Cleanup(func() { ReleaseChannel = old })
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", "")
 	t.Setenv("WINGTHING_PREVIEW_DIR", "")
@@ -158,7 +160,7 @@ func TestPreviewProviderHomeReentryRejectsMarkersAndEscapingArtifacts(t *testing
 	previewTest(t)
 	for _, mode := range []string{"unmarked", "stable-marker", "linked-marker", "dangling-marker", "foreign-artifact", "provider-home-link"} {
 		t.Run(mode, func(t *testing.T) {
-			root := t.TempDir()
+			root := testsocket.Dir(t)
 			providerHome := filepath.Join(root, "provider-home")
 			if err := os.MkdirAll(providerHome, 0700); err != nil {
 				t.Fatal(err)
@@ -187,7 +189,7 @@ func TestPreviewProviderHomeReentryRejectsMarkersAndEscapingArtifacts(t *testing
 					t.Fatal(err)
 				}
 			case "foreign-artifact":
-				if err := os.Symlink(t.TempDir(), filepath.Join(root, "eggs")); err != nil {
+				if err := os.Symlink(testsocket.Dir(t), filepath.Join(root, "eggs")); err != nil {
 					t.Fatal(err)
 				}
 			case "provider-home-link":
@@ -253,7 +255,7 @@ func TestPreviewStateNeverAdoptsStableOrImportedDirectory(t *testing.T) {
 	if _, err := Load(); err == nil {
 		t.Fatal("adopted stable symlink")
 	}
-	imported := t.TempDir()
+	imported := testsocket.Dir(t)
 	if err := os.WriteFile(filepath.Join(imported, "token.json"), []byte("imported"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +357,7 @@ func TestPreviewProviderLinksStayInsideExactStateTree(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	outside := filepath.Join(t.TempDir(), "fixture.log")
+	outside := filepath.Join(testsocket.Dir(t), "fixture.log")
 	if err := os.WriteFile(outside, []byte("outside-fixture"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +402,7 @@ func TestPreviewExternalBinaryLinksRequireExistingExecutable(t *testing.T) {
 	if err := os.MkdirAll(bin, 0755); err != nil {
 		t.Fatal(err)
 	}
-	external := filepath.Join(t.TempDir(), "provider")
+	external := filepath.Join(testsocket.Dir(t), "provider")
 	if err := os.WriteFile(external, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +449,7 @@ func TestPreviewRootAliasStillChecksNestedArtifacts(t *testing.T) {
 	if err := ValidateStateDirectory(alias); err != nil {
 		t.Fatal("same-channel root alias rejected", err)
 	}
-	outside := filepath.Join(t.TempDir(), "fixture")
+	outside := filepath.Join(testsocket.Dir(t), "fixture")
 	if err := os.WriteFile(outside, []byte("outside"), 0600); err != nil {
 		t.Fatal(err)
 	}

@@ -18,11 +18,12 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/sshcontrol"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/testssh"
 )
 
 func TestRegistryWatchRecoversVanishedChildOnly(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	missingChild := fmt.Errorf("metadata scan: %w", &os.PathError{Op: "lstat", Path: filepath.Join(dir, ".wt-daemon-test.tmp"), Err: os.ErrNotExist})
 	missingDir := &os.PathError{Op: "lstat", Path: dir, Err: os.ErrNotExist}
 	missingElsewhere := &os.PathError{Op: "lstat", Path: filepath.Join(filepath.Dir(dir), "elsewhere.tmp"), Err: os.ErrNotExist}
@@ -66,7 +67,7 @@ func TestRegistryWatchRecoversVanishedChildOnly(t *testing.T) {
 func TestRegistryWatchStopsWhenDirectoryOrContextDisappears(t *testing.T) {
 	for _, cancelContext := range []bool{false, true} {
 		t.Run(fmt.Sprintf("cancel=%t", cancelContext), func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			missing := &os.PathError{Op: "lstat", Path: filepath.Join(dir, "temporary"), Err: os.ErrNotExist}
@@ -401,7 +402,7 @@ func (c *fixtureConnection) Close() error {
 }
 
 func TestRememberedPoolRetryDoesNotReuseClosingConnection(t *testing.T) {
-	state := t.TempDir()
+	state := testsocket.Dir(t)
 	remote := config.Remote{SSHTarget: "one", WingID: "wing-one", WingthingDir: "/state", ControlSocket: "/control.sock", ControlVersion: control.ContractVersion}
 	if err := config.SaveRemotes(state, map[string]config.Remote{"one": remote}); err != nil {
 		t.Fatal(err)

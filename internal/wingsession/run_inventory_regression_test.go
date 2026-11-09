@@ -14,13 +14,14 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // The alias is an enclosing directory, not a final-component cwd alias. This
 // models /var -> /private/var while keeping all fixture files in private scratch.
 func regressionInventoryManager(t *testing.T) (*Runs, string) {
 	t.Helper()
-	parent := t.TempDir()
+	parent := testsocket.Dir(t)
 	real := filepath.Join(parent, "real")
 	alias := filepath.Join(parent, "alias")
 	if err := os.Mkdir(real, 0700); err != nil {
@@ -134,7 +135,7 @@ func TestRunInventoryRegressionRestartCursorAcceptsSameStoreThroughParentAlias(t
 	if err = reopened.Close(); err != nil {
 		t.Fatal(err)
 	}
-	copyDir := filepath.Join(t.TempDir(), "copied-state")
+	copyDir := filepath.Join(testsocket.Dir(t), "copied-state")
 	if err = os.CopyFS(copyDir, os.DirFS(real)); err != nil {
 		t.Fatal(err)
 	}

@@ -8,10 +8,11 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/taskrun"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestUnconfinedEgressAuditIsDurable(t *testing.T) {
-	taskStore, err := store.Open(filepath.Join(t.TempDir(), "wingthing.db"))
+	taskStore, err := store.Open(filepath.Join(testsocket.Dir(t), "wingthing.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,18 +7,18 @@ import (
 	"testing"
 )
 
-// Dir reserves room for fixture socket names and removes the directory at cleanup.
+// Dir creates a private physical fixture root independent of checkout depth and
+// ambient temporary directory settings, and removes it at cleanup.
 func Dir(t testing.TB) string {
 	t.Helper()
-	base := os.TempDir()
-	// Leave room for nested fixture paths on both Darwin and Linux.
-	if len(filepath.Join(base, "wt-1234567890")) > 50 {
-		base = "/tmp"
-	}
-	dir, err := os.MkdirTemp(base, "wt-")
+	dir, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir, err = filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return dir
 }

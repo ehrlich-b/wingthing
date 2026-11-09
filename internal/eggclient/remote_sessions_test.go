@@ -11,6 +11,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 
 	"io"
 
@@ -46,7 +47,7 @@ func TestRemoteSessionInventoryFirstCompatibilityAndCancellation(t *testing.T) {
 		{"canceled", "exec /bin/sleep 30", "deadline exceeded", 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
+			root := testsocket.Dir(t)
 			real, alias := filepath.Join(root, "tmp-real"), filepath.Join(root, "tmp-alias")
 			if err := os.Mkdir(real, 0700); err != nil {
 				t.Fatal(err)
@@ -101,10 +102,10 @@ func TestRemoteSessionFreshIdentityUsesExactBatchRoute(t *testing.T) {
 		{"empty ID", "", []LocalSession{{ID: "", PID: 42}}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			home, _, state := testprovider.ScopedHomeDirs(t, "../../.scratch")
+			home, _, state := testprovider.ScopedHomeDirs(t, testprovider.ProtectedTempDir(t))
 			home, _ = filepath.Abs(home)
 			state, _ = filepath.Abs(state)
-			root := t.TempDir()
+			root := testsocket.Dir(t)
 			real, alias := filepath.Join(root, "tmp-real"), filepath.Join(root, "tmp-alias")
 			if err := os.Mkdir(real, 0700); err != nil {
 				t.Fatal(err)
@@ -157,7 +158,7 @@ func TestRemoteInventoryOriginIdentityAndLegacyUnknown(t *testing.T) {
 		fail      bool
 		// Pinned routes must prove identity; only unpinned legacy rows stay unknown.
 	}{{"origin", "origin", false}, {"changed", "origin", true}, {"", "origin", true}, {"", "", false}} {
-		root := t.TempDir()
+		root := testsocket.Dir(t)
 		ssh := filepath.Join(root, "ssh")
 		payload, _ := json.Marshal(RemoteSessionInventory{WingID: tc.wing, MachineLabel: "devbox", Version: "fixture", ContractVersion: RemoteSessionContractVersion, Sessions: []LocalSession{{ID: "same-short-id", OriginWingID: "forged-row-origin"}}})
 		if e := os.WriteFile(ssh, []byte("#!/bin/sh\nprintf '%s' "+remotepkg.ShellQuote(string(payload))+"\n"), 0700); e != nil {

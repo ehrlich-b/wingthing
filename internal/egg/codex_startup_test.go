@@ -12,11 +12,12 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/agent"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func initialCodexFixture(t *testing.T) (*runTurnRuntime, string, RunTurnRequest, chan struct{}) {
 	t.Helper()
-	dir, home := t.TempDir(), t.TempDir()
+	dir, home := testsocket.Dir(t), testsocket.Dir(t)
 	lifecycleWrite(t, filepath.Join(dir, "egg.meta"), "agent=codex\n")
 	read := func(ctx context.Context, after int64, limit int) (SessionView, error) {
 		return ReadSessionLifecycle(dir, "codex", "/fixture", home, "", true, after, limit)

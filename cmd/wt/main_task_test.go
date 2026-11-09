@@ -7,10 +7,11 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestReusableLoginForExplicitRoostVerifiesItsAuthority(t *testing.T) {
-	store := auth.NewTokenStore(t.TempDir())
+	store := auth.NewTokenStore(testsocket.Dir(t))
 	existing := &auth.DeviceToken{Token: "current-token"}
 
 	called := false
@@ -41,7 +42,7 @@ func TestReusableLoginForExplicitRoostVerifiesItsAuthority(t *testing.T) {
 }
 
 func TestReusableLoginKeepsCompatibleImplicitAndExpiredBehavior(t *testing.T) {
-	store := auth.NewTokenStore(t.TempDir())
+	store := auth.NewTokenStore(testsocket.Dir(t))
 	called := false
 	validate := func(string, string) error {
 		called = true

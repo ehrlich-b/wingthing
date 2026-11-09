@@ -18,6 +18,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
@@ -27,13 +28,10 @@ import (
 // the parent-disconnect boundary; actual parent PID polling is a built gate.
 func parentLifecycleWing(t *testing.T) *runWingFixture {
 	t.Helper()
-	scratch, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	scratch := testprovider.TempDir(t)
 	// Match production's physical workspace grants even when the host TMPDIR
 	// is a symlink (for example, /var -> /private/var on macOS).
-	home := wingpolicy.CanonicalPolicyPath(t.TempDir())
+	home := wingpolicy.CanonicalPolicyPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	cfg := &config.Config{Dir: testprovider.ShortStateDir(t, scratch), WingID: "offline-wing", DefaultAgent: "claude"}
 	wc := &config.WingConfig{WingID: cfg.WingID, Paths: config.PathList{{Path: home}}}

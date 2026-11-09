@@ -20,6 +20,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/contextclient"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/mcp"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -924,7 +925,7 @@ func TestRoostMCPContextUsesAuthenticatedEmail(t *testing.T) {
 		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"alice tickets"}]}}`)
 	}))
 	defer contextServer.Close()
-	secretPath := filepath.Join(t.TempDir(), "context.secret")
+	secretPath := filepath.Join(testsocket.Dir(t), "context.secret")
 	if err := os.WriteFile(secretPath, []byte("roost-only-secret"), 0600); err != nil {
 		t.Fatal(err)
 	}

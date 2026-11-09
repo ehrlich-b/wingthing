@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/vt"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // The provider draws a deterministic full-screen image and reports its actual
@@ -38,7 +39,7 @@ func TestAttachResizeRealEggPTY(t *testing.T) {
 	f := northstarNewFixture(t)
 	f.evidence = os.Getenv("WT_RESIZE_EVIDENCE")
 	if f.evidence == "" {
-		f.evidence = t.TempDir()
+		f.evidence = testsocket.Dir(t)
 	}
 	if err := os.MkdirAll(f.evidence, 0700); err != nil {
 		t.Fatal(err)

@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestCursorModelSelectionIsNotIgnored(t *testing.T) {
@@ -46,7 +48,7 @@ func TestCursorRejectsModelBeforeCommandCreation(t *testing.T) {
 		t.Run(model, func(t *testing.T) {
 			cursor := NewCursor(0)
 			// Direct execution must reject the model before attempting this command.
-			cursor.command = filepath.Join(t.TempDir(), "missing-agent")
+			cursor.command = filepath.Join(testsocket.Dir(t), "missing-agent")
 			for _, useFactory := range []bool{false, true} {
 				called := false
 				opts := RunOpts{Model: model}
@@ -69,7 +71,7 @@ func TestCursorRejectsModelBeforeCommandCreation(t *testing.T) {
 }
 
 func TestCursorDefaultModelExecutesProvider(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	command := filepath.Join(dir, "agent")
 	const script = `#!/bin/sh
 printf '%s\n' "$@" > argv

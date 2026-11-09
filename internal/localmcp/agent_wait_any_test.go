@@ -18,6 +18,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
@@ -346,7 +347,7 @@ func TestAgentWaitAnyLimitsConcurrentCallsPerPrincipal(t *testing.T) {
 
 func TestAgentWaitAnyPreservesDefaultOwnershipAndOrphanCleanup(t *testing.T) {
 
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	db, err := store.Open(cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)

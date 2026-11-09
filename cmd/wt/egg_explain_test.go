@@ -10,6 +10,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // TestExplainPolicyAttributesEveryAgentHole is the point of the command: a hole
@@ -81,7 +82,7 @@ func TestExplainPolicyAttributesEveryAgentHole(t *testing.T) {
 // TestEggExplainCommand drives the actual cobra command end to end, so the
 // command is proven wired up and not just its helpers.
 func TestEggExplainCommand(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	path := filepath.Join(dir, "egg.yaml")
 	if err := os.WriteFile(path, []byte("base: none\nfs: [\"rw:./\"]\nnetwork: [corp.example]\n"), 0600); err != nil {
 		t.Fatalf("write config: %v", err)

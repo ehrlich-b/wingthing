@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/phonepair"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // Exercise the Android bridge against the current manager through opaque HTTP
@@ -199,7 +200,7 @@ func statefulFixture(t *testing.T, h *sessionFixture) (*phonepair.Manager, phone
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := phonepair.New(t.TempDir(), "fixture-wing", "Mac", "http://127.0.0.1:1234", nil, private, h)
+	m, err := phonepair.New(testsocket.Dir(t), "fixture-wing", "Mac", "http://127.0.0.1:1234", nil, private, h)
 	if err != nil {
 		t.Fatal(err)
 	}

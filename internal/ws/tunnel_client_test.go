@@ -18,10 +18,11 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/ehrlich-b/wingthing/internal/auth"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestTunnelClientPinsWingIdentity(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "known_wings.json")
+	path := filepath.Join(testsocket.Dir(t), "known_wings.json")
 	tc := &TunnelClient{KnownWingsPath: path}
 	keyA := base64.StdEncoding.EncodeToString(make([]byte, 32))
 	keyBBytes := make([]byte, 32)
@@ -50,7 +51,7 @@ func TestGenerateRequestIDFromFailsClosedOnShortRandomness(t *testing.T) {
 }
 
 func TestTunnelClientPinsConcurrentWingIdentities(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "known_wings.json")
+	path := filepath.Join(testsocket.Dir(t), "known_wings.json")
 	var wg sync.WaitGroup
 	for index := range 32 {
 		wg.Add(1)

@@ -102,7 +102,10 @@ DOCKER_ARCH = $(shell arch=$$(docker info --format '{{.Architecture}}' 2>/dev/nu
 LINUX_TEST_ARCH ?= $(DOCKER_ARCH)
 LINUX_DISTROS ?= debian ubuntu
 WEB_TEST_ARCH ?= $(DOCKER_ARCH)
-CONVERSATION_FIXTURE_ROOT ?= $(abspath ..)
+# Protected state must be outside the sandbox's temporary write grants, while
+# still disposable and independent of checkout depth and the account's HOME.
+# Both fallbacks support short private children even when TMPDIR is /var/tmp.
+CONVERSATION_FIXTURE_ROOT ?= $(or $(strip $(XDG_RUNTIME_DIR)),$(if $(filter darwin,$(HOST_OS)),/Users/Shared,/run/user/$(shell id -u)))
 CONVERSATION_BINARY ?=
 CONVERSATION_BINARY_SHA256 ?=
 PREVIEW_CONTEXT_BINARY ?= ./wt-preview

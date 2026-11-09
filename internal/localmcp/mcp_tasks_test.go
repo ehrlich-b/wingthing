@@ -18,14 +18,12 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
 )
 
 func newTaskWingFixture(t *testing.T) *runWingFixture {
 	t.Helper()
-	root, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	root := testprovider.TempDir(t)
 	if err := os.MkdirAll(root, 0700); err != nil {
 		t.Fatal(err)
 	}

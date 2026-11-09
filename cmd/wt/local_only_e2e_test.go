@@ -18,6 +18,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/fsnotify/fsnotify"
 	"golang.org/x/sys/unix"
 )
@@ -43,7 +44,7 @@ func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture := t.TempDir()
+	fixture := testsocket.Dir(t)
 	binary := localOnlyFixtureBinary(t, repo, fixture)
 	python, err := exec.LookPath("python3")
 	if err != nil {
@@ -64,7 +65,7 @@ func TestBuiltWTLocalOnlyStdioWingEggFakeCodexResult(t *testing.T) {
 	}
 	// State and provider homes remain disposable; reserve the full runtime ID
 	// width in Darwin's egg socket address, even in a long checkout path.
-	scratch := filepath.Join(repo, ".scratch")
+	scratch := testprovider.TempDir(t)
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -324,8 +325,8 @@ func TestBuiltWTDefaultDaemonBootsWithoutAccountOrRelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := localOnlyFixtureBinary(t, repo, t.TempDir())
-	scratch := filepath.Join(repo, ".scratch")
+	binary := localOnlyFixtureBinary(t, repo, testsocket.Dir(t))
+	scratch := testprovider.TempDir(t)
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}

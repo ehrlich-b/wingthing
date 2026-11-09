@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestNorthstarBuildUsesProvidedBinaries(t *testing.T) {
@@ -72,7 +74,7 @@ func TestNorthstarBuildHelper(t *testing.T) {
 
 func TestNorthstarBuildCancellationKillsCompilerGroup(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=^TestNorthstarBuildHelper$")
-	readyDir := t.TempDir()
+	readyDir := testsocket.Dir(t)
 	cmd.Env = append(os.Environ(), "WT_NORTHSTAR_BUILD_HELPER=root", "WT_NORTHSTAR_BUILD_READY_DIR="+readyDir)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()

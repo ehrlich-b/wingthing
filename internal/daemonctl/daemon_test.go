@@ -14,10 +14,11 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/procinfo"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestWingStartupSeparatesRelay401FromDaemonExit(t *testing.T) {
-	t.Setenv("WINGTHING_DIR", t.TempDir())
+	t.Setenv("WINGTHING_DIR", testsocket.Dir(t))
 	WriteWingStatusForRoost("auth_failed", "relay rejected authentication (401)", "https://relay.example")
 	if state := WaitForWingStatus(os.Getpid(), time.Second); state != "auth_failed" {
 		t.Fatalf("live local daemon with relay 401: %s", state)
@@ -75,7 +76,7 @@ func TestParseSavedDaemonArgsValidatesKindAndForeground(t *testing.T) {
 }
 
 func TestReadPidFromRejectsAndRemovesUnrelatedLiveProcess(t *testing.T) {
-	pidPath := filepath.Join(t.TempDir(), "wing.pid")
+	pidPath := filepath.Join(testsocket.Dir(t), "wing.pid")
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +89,7 @@ func TestReadPidFromRejectsAndRemovesUnrelatedLiveProcess(t *testing.T) {
 }
 
 func TestReadPidFromRejectsAndRemovesMalformedMetadata(t *testing.T) {
-	pidPath := filepath.Join(t.TempDir(), "wing.pid")
+	pidPath := filepath.Join(testsocket.Dir(t), "wing.pid")
 	if err := os.WriteFile(pidPath, []byte("not-a-pid"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +111,7 @@ func TestStopDaemonAndWaitNeverSignalsUnrelatedProcess(t *testing.T) {
 }
 
 func TestWriteDaemonMetadataCommitsArgsBeforePIDWithPrivateModes(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	pidPath := filepath.Join(dir, "wing.pid")
 	argsPath := filepath.Join(dir, "wing.args")
 	args := []string{"wing", "start", "--foreground", "--paths", "/private/project"}
@@ -143,7 +144,7 @@ func TestWriteDaemonMetadataCommitsArgsBeforePIDWithPrivateModes(t *testing.T) {
 }
 
 func TestWriteDaemonMetadataRollsBackArgsWhenPIDCommitFails(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	pidPath := filepath.Join(dir, "wing.pid")
 	if err := os.Mkdir(pidPath, 0700); err != nil {
 		t.Fatal(err)
@@ -158,7 +159,7 @@ func TestWriteDaemonMetadataRollsBackArgsWhenPIDCommitFails(t *testing.T) {
 }
 
 func TestDaemonLifecycleLockSerializesCompetingOperations(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "daemon.lock")
+	path := filepath.Join(testsocket.Dir(t), "daemon.lock")
 	first, err := AcquireDaemonLifecycleLockAt(path)
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +181,7 @@ func TestDaemonLifecycleLockSerializesCompetingOperations(t *testing.T) {
 }
 
 func TestDaemonLifecycleContextWaitsAndCancels(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	real := filepath.Join(root, "real")
 	alias := filepath.Join(root, "alias")
 	if err := os.Mkdir(real, 0700); err != nil {
@@ -232,7 +233,7 @@ func infoMode(info os.FileInfo) os.FileMode {
 func TestWingStatusRoundTrip(t *testing.T) {
 	// writeWingStatus/readWingStatus use wingStatusPath() which depends on config.Load().
 	// We test the JSON struct directly for unit isolation.
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	statusPath := filepath.Join(dir, "wing.status")
 
 	s := WingStatus{State: "connected", Error: "", TS: "2026-02-21T00:00:00Z", RoostURL: "https://roost.example"}
@@ -261,7 +262,7 @@ func TestWingStatusRoundTrip(t *testing.T) {
 }
 
 func TestWriteWingStatusForRoostUsesPrivateMode(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", dir)
 	WriteWingStatusForRoost("connected", "", "wss://user:secret@roost.example/?token=private#fragment")
 
@@ -282,7 +283,7 @@ func TestWriteWingStatusForRoostUsesPrivateMode(t *testing.T) {
 }
 
 func TestWingStatusAuthFailed(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	statusPath := filepath.Join(dir, "wing.status")
 
 	s := WingStatus{State: "auth_failed", Error: "relay rejected authentication (401)", TS: "2026-02-21T00:00:00Z"}
@@ -329,7 +330,7 @@ func TestWingRoostFlags(t *testing.T) {
 }
 
 func TestActiveWingRelayHTTPURLPrefersStatusAndSupportsOldDaemonArgs(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", dir)
 	cfg, err := config.Load()
 	if err != nil {
@@ -348,7 +349,7 @@ func TestActiveWingRelayHTTPURLPrefersStatusAndSupportsOldDaemonArgs(t *testing.
 }
 
 func TestSignalDaemonStoppedInstallationIsNoOpButInvalidMetadataRejects(t *testing.T) {
-	t.Setenv("WINGTHING_DIR", t.TempDir())
+	t.Setenv("WINGTHING_DIR", testsocket.Dir(t))
 	if err := SignalDaemon(syscall.SIGHUP); err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +367,7 @@ func TestSignalDaemonStoppedInstallationIsNoOpButInvalidMetadataRejects(t *testi
 }
 
 func TestManualWingRestartGuidanceIgnoresStaleStatus(t *testing.T) {
-	t.Setenv("WINGTHING_DIR", t.TempDir())
+	t.Setenv("WINGTHING_DIR", testsocket.Dir(t))
 	if err := os.WriteFile(WingStatusPath(), []byte(`{"roost_url":"https://dead.example"}`), 0600); err != nil {
 		t.Fatal(err)
 	}

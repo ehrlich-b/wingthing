@@ -11,13 +11,11 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestParentLifecycleFixtureSocketPaths(t *testing.T) {
-	scratch, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	scratch := TempDir(t)
 	// Reproduce the measured standalone fixture address without a listener.
 	// Its 104-byte address fits Linux but fails Darwin before attachment.
 	legacy := filepath.Join("/Users/fixture/repos/w7-wingthing-parent-lifecycle-20261011", ".scratch", "a1234567890", "s", "eggs", "fixture", "egg.sock")
@@ -65,11 +63,32 @@ func TestParentLifecycleFixtureSocketPaths(t *testing.T) {
 }
 
 func TestParentLifecycleFixtureRefusesUnusableCheckoutBeforeWriting(t *testing.T) {
-	scratch := filepath.Join(t.TempDir(), strings.Repeat("x", 104))
+	scratch := filepath.Join(testsocket.Dir(t), strings.Repeat("x", 104))
 	if _, err := shortStateDir(scratch); err == nil || !strings.Contains(err.Error(), "shorter checkout path") {
 		t.Fatalf("unusable checkout accepted: %v", err)
 	}
 	if _, err := os.Stat(scratch); !os.IsNotExist(err) {
 		t.Fatalf("unusable checkout created state: %v", err)
+	}
+}
+
+func TestShortFixtureRootIgnoresLongTMPDIR(t *testing.T) {
+	ambient := filepath.Join(testsocket.Dir(t), strings.Repeat("x", 150))
+	if err := os.MkdirAll(ambient, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", ambient)
+	root := TempDir(t)
+	physicalTmp, err := filepath.EvalSymlinks("/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(root) != physicalTmp || !strings.HasPrefix(filepath.Base(root), "wt") {
+		t.Fatalf("fixture root depends on ambient paths: %s", root)
+	}
+	state := ShortStateDir(t, root)
+	endpoint := filepath.Join(state, "eggs", cmdutil.NewRuntimeID(), "egg.sock")
+	if len(endpoint) > 103 {
+		t.Fatalf("fixture endpoint exceeds socket budget: %s", endpoint)
 	}
 }

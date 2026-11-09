@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -22,7 +23,7 @@ func fixture(t *testing.T) (*Verifier, ed25519.PrivateKey, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(t.TempDir(), "public.json")
+	path := filepath.Join(testsocket.Dir(t), "public.json")
 	data, _ := json.Marshal(map[string]any{"keys": []publicKey{{Kty: "OKP", Crv: "Ed25519", Alg: "EdDSA", Use: "sig", Kid: "fixture", X: base64.RawURLEncoding.EncodeToString(pub)}}})
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)

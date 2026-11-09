@@ -8,13 +8,14 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 func TestMCPSubdirectoryRetainsRootPolicy(t *testing.T) {
 	for _, rootConfig := range []bool{false, true} {
 		t.Run(map[bool]string{false: "wing default", true: "root egg.yaml"}[rootConfig], func(t *testing.T) {
-			home := config.CanonicalProviderPath(t.TempDir())
+			home := config.CanonicalProviderPath(testsocket.Dir(t))
 			t.Setenv("HOME", home)
 			t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
 			root, child := filepath.Join(home, "work"), filepath.Join(home, "work", "child")
@@ -65,7 +66,7 @@ func TestMCPSubdirectoryRetainsRootPolicy(t *testing.T) {
 }
 
 func TestMCPLaunchPreservesExplicitNestedRootPolicy(t *testing.T) {
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
 	root, nested := filepath.Join(home, "work"), filepath.Join(home, "work", "nested")

@@ -17,11 +17,12 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
 func TestAgentWaitAnyCLI(t *testing.T) {
-	t.Chdir(t.TempDir())
+	t.Chdir(testsocket.Dir(t))
 	dir := "s"
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)

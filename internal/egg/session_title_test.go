@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestCleanSessionTitle(t *testing.T) {
@@ -61,7 +63,7 @@ func TestVTermReportsTitleChangesOnce(t *testing.T) {
 }
 
 func TestSessionTitleFileRoundTrip(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	if got := ReadSessionTitle(dir); got != "" {
 		t.Fatalf("missing title = %q, want empty", got)
 	}

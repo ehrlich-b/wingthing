@@ -10,12 +10,27 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
-// ShortStateDir creates disposable clone-local state that fits Darwin's Unix
-// socket limit with a full runtime ID. MkdirTemp's decimal suffix is too long
-// in some checkout paths. A physical directory also keeps the control socket's
-// canonical address local instead of relocating it to the host's /tmp.
+// TempDir creates a private physical fixture root independent of the checkout
+// and TMPDIR. Keep socket state below this short root on every platform.
+func TempDir(t *testing.T) string {
+	t.Helper()
+	return testsocket.Dir(t)
+}
+
+// ProtectedTempDir creates disposable state outside sandbox temporary write
+// grants. Use it for a HOME containing protected state.
+func ProtectedTempDir(t *testing.T) string {
+	t.Helper()
+	return testsocket.RuntimeDir(t, "")
+}
+
+// ShortStateDir creates disposable state below scratch that fits Darwin's Unix
+// socket limit with a full runtime ID. Use TempDir for the scratch root to keep
+// sockets independent of checkout depth. The physical directory also keeps the
+// control socket at the same canonical address as the egg endpoints.
 func ShortStateDir(t *testing.T, scratch string) string {
 	t.Helper()
 	dir, err := shortStateDir(scratch)

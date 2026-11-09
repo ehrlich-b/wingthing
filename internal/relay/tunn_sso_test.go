@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/tunnidentity"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -29,7 +30,7 @@ func TestTunnSSOHTTPIngressPreservesLocalGateAndOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	file := filepath.Join(t.TempDir(), "public.json")
+	file := filepath.Join(testsocket.Dir(t), "public.json")
 	data, _ := json.Marshal(map[string]any{"keys": []map[string]string{{"kty": "OKP", "crv": "Ed25519", "alg": "EdDSA", "use": "sig", "kid": "fixture", "x": base64.RawURLEncoding.EncodeToString(pub)}}})
 	if err := os.WriteFile(file, data, 0600); err != nil {
 		t.Fatal(err)

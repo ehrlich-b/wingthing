@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestSettingsHookTimeoutPreservesDeadlineHeadroom(t *testing.T) {
@@ -13,7 +15,7 @@ func TestSettingsHookTimeoutPreservesDeadlineHeadroom(t *testing.T) {
 		timeout  int
 	}{{"250ms", 4}, {"1s", 4}, {"1.5s", 5}, {"10s", 13}} {
 		t.Run(tc.deadline, func(t *testing.T) {
-			output, err := os.CreateTemp(t.TempDir(), "settings")
+			output, err := os.CreateTemp(testsocket.Dir(t), "settings")
 			if err != nil {
 				t.Fatal(err)
 			}

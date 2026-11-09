@@ -19,6 +19,8 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
@@ -26,13 +28,10 @@ func TestBoundStdioUnavailableSocketExplainsMailbox(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root bypasses directory permission denial")
 	}
-	// A short endpoint under the checkout avoids the long-path runtime fallback;
+	// A short physical temporary endpoint avoids the long-path runtime fallback;
 	// removing directory search permission reproduces the sandbox's inability
 	// to reach a live wing before initialization or linked-child reservation.
-	scratch, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	scratch := testprovider.TempDir(t)
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +67,7 @@ func TestBoundStdioUnavailableSocketExplainsMailbox(t *testing.T) {
 
 func localSocketPolicyFixture(t *testing.T) (*wingsession.Service, *config.WingConfig) {
 	t.Helper()
-	t.Chdir(t.TempDir())
+	t.Chdir(testsocket.Dir(t))
 	t.Setenv("WINGTHING_DIR", "state")
 	if err := os.Mkdir("state", 0700); err != nil {
 		t.Fatal(err)

@@ -16,6 +16,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func writeFakeRemoteSSH(t *testing.T, script string) string {
@@ -26,7 +27,7 @@ func writeFakeRemoteSSH(t *testing.T, script string) string {
 // Attachment route assertions must see the original SSH security options.
 func writeRawFakeRemoteSSH(t *testing.T, script string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "ssh")
+	path := filepath.Join(testsocket.Dir(t), "ssh")
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +65,7 @@ func seedRemoteListSession(t *testing.T, cfg *config.Config, id, principal strin
 }
 
 func TestConfiguredRemoteCommandsRoundTrip(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", dir)
 	var out bytes.Buffer
 	streams := remotepkg.IO{Out: &out, ErrOut: io.Discard, SSHPath: filepath.Join(dir, "must-not-run-ssh")}
@@ -117,7 +118,7 @@ func TestConfiguredRemoteCommandsValidateBeforeWriting(t *testing.T) {
 		{"remote", "add", "work", "host", "--wt-binary", "/opt/$(touch canary)/wt"},
 		{"remote", "add", "work", "host", "--wt-binary", "/opt/wt\n"},
 	} {
-		dir := t.TempDir()
+		dir := testsocket.Dir(t)
 		t.Setenv("WINGTHING_DIR", dir)
 		if err := executeCLI(context.Background(), args, remotepkg.IO{Out: io.Discard, ErrOut: io.Discard}); err == nil {
 			t.Errorf("accepted invalid add %v", args)
@@ -151,7 +152,7 @@ func TestParseRemoteSession(t *testing.T) {
 }
 
 func TestConfiguredRemoteAttachUsesRunner(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", dir)
 	if err := config.SaveRemotes(dir, map[string]config.Remote{"work": {SSHTarget: "me@host", WingthingDir: "/home/me/wt state/it's isolated"}}); err != nil {
 		t.Fatal(err)
@@ -197,7 +198,7 @@ func TestConfiguredRemoteAttachUsesRunner(t *testing.T) {
 }
 
 func TestConfiguredRemoteCommandsUseRememberedWTBinary(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", dir)
 	binary := "/opt/wt builds/wt-dev"
 	if err := config.SaveRemotes(dir, map[string]config.Remote{"work": {SSHTarget: "host", WTBinary: binary}}); err != nil {
@@ -232,9 +233,9 @@ func TestConfiguredRemoteCommandsUseRememberedWTBinary(t *testing.T) {
 }
 
 func TestSessionPSAggregatesHealthyAndFailingFakeRemotesInParallel(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", dir)
-	t.Setenv("WT_REMOTE_TEST_DIR", t.TempDir())
+	t.Setenv("WT_REMOTE_TEST_DIR", testsocket.Dir(t))
 	cfg := &config.Config{Dir: dir}
 	seedRemoteListSession(t, cfg, "local-session", "")
 	if err := config.SaveRemotes(dir, map[string]config.Remote{"work": {SSHTarget: "healthy"}, "down": {SSHTarget: "down"}}); err != nil {
@@ -280,7 +281,7 @@ func TestSessionPSAggregatesHealthyAndFailingFakeRemotesInParallel(t *testing.T)
 }
 
 func TestSessionPSRemoteTimeoutProducesOneRowPerRemote(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	if err := config.SaveRemotes(cfg.Dir, map[string]config.Remote{"one": {SSHTarget: "one"}, "two": {SSHTarget: "two"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +317,7 @@ func TestRemoteTimeoutBoundsInheritedOutputPipes(t *testing.T) {
 }
 
 func TestSessionPSRemoteInventorySkipsConfiguredRemotes(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", dir)
 	// Even a malformed registry is irrelevant to a receiver's inventory.
 	if err := os.WriteFile(filepath.Join(dir, "remotes.yaml"), []byte("invalid yaml: ["), 0600); err != nil {
@@ -344,7 +345,7 @@ func TestSessionPSRemoteVersionMismatchNamesBothVersions(t *testing.T) {
 		{"unversioned array", "echo '[]'", "unsupported"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			cfg := &config.Config{Dir: t.TempDir()}
+			cfg := &config.Config{Dir: testsocket.Dir(t)}
 			if err := config.SaveRemotes(cfg.Dir, map[string]config.Remote{"old": {SSHTarget: "host"}}); err != nil {
 				t.Fatal(err)
 			}

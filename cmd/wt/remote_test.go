@@ -13,6 +13,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/spf13/cobra"
 )
 
@@ -54,7 +55,7 @@ func TestPreviewRemoteSelectsPreviewBinaryAndBindsChannel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sshPath := filepath.Join(t.TempDir(), "ssh")
+	sshPath := filepath.Join(testsocket.Dir(t), "ssh")
 	if err := os.WriteFile(sshPath, []byte("#!/bin/sh\nprintf '%s\\n' \"$3\"\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +137,7 @@ func TestBareRemoteJSONIsDiscoverableAndNeverAttaches(t *testing.T) {
 }
 
 func TestRemoteInteractiveEmptyInventoryRequiresWorkingDirectory(t *testing.T) {
-	t.Setenv("WINGTHING_DIR", t.TempDir())
+	t.Setenv("WINGTHING_DIR", testsocket.Dir(t))
 	command := remoteEnterCmd()
 	command.SetArgs([]string{"enter"})
 	err := command.Execute()
@@ -146,7 +147,7 @@ func TestRemoteInteractiveEmptyInventoryRequiresWorkingDirectory(t *testing.T) {
 }
 
 func TestRemoteNoninteractiveEmptyInventoryIsJSONArray(t *testing.T) {
-	stateDir := t.TempDir()
+	stateDir := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", stateDir)
 	readEnd, writeEnd, err := os.Pipe()
 	if err != nil {
@@ -202,7 +203,7 @@ func TestRemoteSessionListCommandIsExecutable(t *testing.T) {
 	if err := remotepkg.ValidateRemoteCommand([]string{"session", "list"}); err != nil {
 		t.Fatalf("remote validation rejected session list: %v", err)
 	}
-	t.Setenv("WINGTHING_DIR", t.TempDir())
+	t.Setenv("WINGTHING_DIR", testsocket.Dir(t))
 	command := newRootCommand()
 	command.SetArgs([]string{"session", "list"})
 	if err := command.Execute(); err != nil {
@@ -303,8 +304,8 @@ func TestRemoteStateRejectsInvalidOrAmbiguousSelection(t *testing.T) {
 		}
 	}
 	// The transport rejects an unvalidated state too, before starting SSH.
-	sshMarker := filepath.Join(t.TempDir(), "ssh-started")
-	sshPath := filepath.Join(t.TempDir(), "ssh")
+	sshMarker := filepath.Join(testsocket.Dir(t), "ssh-started")
+	sshPath := filepath.Join(testsocket.Dir(t), "ssh")
 	if err := os.WriteFile(sshPath, []byte("#!/bin/sh\ntouch '"+sshMarker+"'\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +340,7 @@ func TestRemoteStateByteContractRejectsOnlyNULCRLF(t *testing.T) {
 // returning exactly what the remote executable would receive after argv[0].
 func receivedRemoteArgv(t *testing.T, channel string, invocation remotepkg.Invocation) []string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	sshPath := filepath.Join(dir, "ssh")
 	receiver := filepath.Join(dir, "receiver")
 	if err := os.WriteFile(sshPath, []byte("#!/bin/sh\nexec /bin/sh -c \"$3\"\n"), 0o700); err != nil {

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func writeToolTestFile(t *testing.T, dir, name, body string) {
@@ -15,7 +17,7 @@ func writeToolTestFile(t *testing.T, dir, name, body string) {
 }
 
 func TestLoadToolsDir_Valid(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	yaml := `name: echo-test
 description: "Echo args back"
 params:
@@ -71,7 +73,7 @@ func TestLoadToolsDir_MissingDir(t *testing.T) {
 }
 
 func TestLoadToolsDir_MissingName(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	writeToolTestFile(t, dir, "bad.yaml", "run: echo hi\n")
 	_, err := LoadToolsDir(dir)
 	if err == nil {
@@ -80,7 +82,7 @@ func TestLoadToolsDir_MissingName(t *testing.T) {
 }
 
 func TestLoadToolsDir_MissingRun(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	writeToolTestFile(t, dir, "bad.yaml", "name: test\n")
 	_, err := LoadToolsDir(dir)
 	if err == nil {
@@ -89,7 +91,7 @@ func TestLoadToolsDir_MissingRun(t *testing.T) {
 }
 
 func TestLoadToolsDir_SkipsNonYAML(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	writeToolTestFile(t, dir, "readme.txt", "not yaml")
 	writeToolTestFile(t, dir, "tool.yaml", "name: t\nrun: echo\n")
 	tools, err := LoadToolsDir(dir)
@@ -102,7 +104,7 @@ func TestLoadToolsDir_SkipsNonYAML(t *testing.T) {
 }
 
 func TestLoadToolsDir_MultipleFiles(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	writeToolTestFile(t, dir, "a.yaml", "name: alpha\nrun: echo a\n")
 	writeToolTestFile(t, dir, "b.yml", "name: beta\nrun: echo b\n")
 	tools, err := LoadToolsDir(dir)
@@ -115,7 +117,7 @@ func TestLoadToolsDir_MultipleFiles(t *testing.T) {
 }
 
 func TestLoadToolsDir_InvalidYAML(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	writeToolTestFile(t, dir, "bad.yaml", ":::invalid\n")
 	_, err := LoadToolsDir(dir)
 	if err == nil {
@@ -130,7 +132,7 @@ func TestLoadToolsDir_RejectsUnknownFieldsAndInvalidEnvNames(t *testing.T) {
 		"second-doc":    "name: test\nrun: echo\n---\nname: other\nrun: echo\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			if err := os.WriteFile(filepath.Join(dir, "bad.yaml"), []byte(body), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -157,7 +159,7 @@ func TestToolConfig_TimeoutDuration(t *testing.T) {
 }
 
 func TestLoadToolsDir_PathTraversalName(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	writeToolTestFile(t, dir, "evil.yaml", "name: ../evil\nrun: echo\n")
 	_, err := LoadToolsDir(dir)
 	if err == nil {
@@ -166,7 +168,7 @@ func TestLoadToolsDir_PathTraversalName(t *testing.T) {
 }
 
 func TestLoadToolsDir_ShellMetacharName(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	writeToolTestFile(t, dir, "bad.yaml", "name: \"foo;rm\"\nrun: echo\n")
 	_, err := LoadToolsDir(dir)
 	if err == nil {
@@ -175,7 +177,7 @@ func TestLoadToolsDir_ShellMetacharName(t *testing.T) {
 }
 
 func TestLoadToolsDir_ValidNameChars(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	writeToolTestFile(t, dir, "a.yaml", "name: example-db\nrun: echo\n")
 	writeToolTestFile(t, dir, "b.yaml", "name: my_tool2\nrun: echo\n")
 	tools, err := LoadToolsDir(dir)
@@ -188,7 +190,7 @@ func TestLoadToolsDir_ValidNameChars(t *testing.T) {
 }
 
 func TestLoadToolsDir_DuplicateName(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	writeToolTestFile(t, dir, "a.yaml", "name: echo\nrun: echo a\n")
 	writeToolTestFile(t, dir, "b.yaml", "name: echo\nrun: echo b\n")
 	_, err := LoadToolsDir(dir)
@@ -206,7 +208,7 @@ func TestLoadToolsDir_ValidatesParams(t *testing.T) {
 		"empty-enum":   "  - name: method\n    enum: ['']\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			body := "name: test\nparams:\n" + params + "run: echo\n"
 			if err := os.WriteFile(filepath.Join(dir, "tool.yaml"), []byte(body), 0600); err != nil {
 				t.Fatal(err)

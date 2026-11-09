@@ -615,7 +615,7 @@ func TestTerminalFidelityRemoteHelper(t *testing.T) {
 	streams.SSHPath = writeFakeRemoteSSH(t, "exec /usr/bin/python3 "+remotepkg.ShellQuote(provider)+" --ssh --exercise-saves\n")
 	args := []string{"--remote", "fixture-host", "attach", "--", "full-id"}
 	if route == "configured" {
-		dir := t.TempDir()
+		dir := testsocket.Dir(t)
 		t.Setenv("WINGTHING_DIR", dir)
 		t.Setenv("WINGTHING_PREVIEW_DIR", "")
 		binary, state := os.Getenv("WT_FIDELITY_REMOTE_BINARY"), os.Getenv("WT_FIDELITY_REMOTE_STATE")

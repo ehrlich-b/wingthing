@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestLifecycleJournalSurvivesWingReaping(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "egg")
+	dir := filepath.Join(testsocket.Dir(t), "egg")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

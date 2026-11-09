@@ -7,10 +7,11 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestPWAExplicitPhoneFleetConfigPreservesOtherGates(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", dir)
 	if err := config.SaveWingConfig(dir, &config.WingConfig{Locked: true, HostedRelay: config.HostedRelayDeny}); err != nil {
 		t.Fatal(err)

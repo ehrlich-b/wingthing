@@ -17,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/contextclient"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -125,7 +126,7 @@ func TestContextThroughEggTools(t *testing.T) {
 	}))
 	defer server.Close()
 	endpoint = server.URL
-	root, err := os.MkdirTemp("/tmp", "wt-ctx-")
+	root, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +267,7 @@ func TestContextThroughEggTools(t *testing.T) {
 }
 
 func TestContextSecretProtectsSymlinkTarget(t *testing.T) {
-	root, err := filepath.EvalSymlinks(t.TempDir())
+	root, err := filepath.EvalSymlinks(testsocket.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +294,7 @@ func TestContextSecretProtectsSymlinkTarget(t *testing.T) {
 
 func TestContextSecretNeverInEggOrToolEnvironment(t *testing.T) {
 	const secret = "unique-secret-stays-in-wing-memory"
-	root, err := filepath.EvalSymlinks(t.TempDir())
+	root, err := filepath.EvalSymlinks(testsocket.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +333,7 @@ func TestContextSecretNeverInEggOrToolEnvironment(t *testing.T) {
 }
 
 func TestContextSecretRejectsGrantAliases(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	private := filepath.Join(root, "private")
 	if err := os.Mkdir(private, 0700); err != nil {
 		t.Fatal(err)
@@ -365,7 +366,7 @@ func TestContextSecretRejectsGrantAliases(t *testing.T) {
 }
 
 func TestContextSecretMasksAncestorGrantAliases(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	private := filepath.Join(root, "private")
 	if err := os.MkdirAll(filepath.Join(private, "sub"), 0700); err != nil {
 		t.Fatal(err)

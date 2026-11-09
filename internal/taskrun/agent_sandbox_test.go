@@ -15,11 +15,12 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestDirectAgentSandboxConfigAppliesOpenCodeProfile(t *testing.T) {
 	t.Setenv("WT_PROVIDER_BASE_URL", "")
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	cfg, err := directAgentSandboxConfig("opencode", "standard", home, []string{"/work/project"})
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +60,7 @@ func TestDirectAgentSandboxConfigCapabilities(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := directAgentSandboxConfig(tt.agent, tt.isolation, t.TempDir(), nil)
+			cfg, err := directAgentSandboxConfig(tt.agent, tt.isolation, testsocket.Dir(t), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -72,7 +73,7 @@ func TestDirectAgentSandboxConfigCapabilities(t *testing.T) {
 
 func TestDirectAgentSandboxConfigUsesExplicitLocalProvider(t *testing.T) {
 	t.Setenv("WT_PROVIDER_BASE_URL", "http://127.0.0.1:4000/v1")
-	cfg, err := directAgentSandboxConfig("codex", "standard", t.TempDir(), nil)
+	cfg, err := directAgentSandboxConfig("codex", "standard", testsocket.Dir(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,15 +87,15 @@ func TestDirectAgentSandboxConfigUsesExplicitLocalProvider(t *testing.T) {
 
 func TestDirectAgentSandboxConfigRejectsUnsafeProviderURL(t *testing.T) {
 	t.Setenv("WT_PROVIDER_BASE_URL", "http://api.example.com/v1")
-	if _, err := directAgentSandboxConfig("opencode", "standard", t.TempDir(), nil); err == nil {
+	if _, err := directAgentSandboxConfig("opencode", "standard", testsocket.Dir(t), nil); err == nil {
 		t.Fatal("unsafe non-loopback http provider URL was accepted")
 	}
 }
 
 func TestDirectAgentSandboxConfigAppliesTaskEggPolicy(t *testing.T) {
 	t.Setenv("WT_PROVIDER_BASE_URL", "")
-	home := t.TempDir()
-	workDir := t.TempDir()
+	home := testsocket.Dir(t)
+	workDir := testsocket.Dir(t)
 	eggCfg := &egg.EggConfig{
 		FS:      []string{"rw:artifacts", "deny:~/.factory-secret", "deny-write:egg.yaml"},
 		Network: egg.NetworkField{Domains: []string{"factory.example.test"}, AgentDomains: "none"},
@@ -128,7 +129,7 @@ func TestDirectAgentSandboxConfigAppliesTaskEggPolicy(t *testing.T) {
 }
 
 func TestRunEggConfigDiscoveryPersistsDomainWithoutActivatingEnvFiltering(t *testing.T) {
-	workDir := t.TempDir()
+	workDir := testsocket.Dir(t)
 	configYAML := "base: none\nfs:\n  - rw:./\nnetwork:\n  domains:\n    - api.arliai.com\nenv:\n  - ARLIAI_API_KEY\n"
 	if err := os.WriteFile(filepath.Join(workDir, "egg.yaml"), []byte(configYAML), 0600); err != nil {
 		t.Fatal(err)
@@ -150,7 +151,7 @@ func TestRunEggConfigDiscoveryPersistsDomainWithoutActivatingEnvFiltering(t *tes
 	}
 	t.Setenv("ARLIAI_API_KEY", "canary-secret")
 	t.Setenv("UNDECLARED_COMPAT_CANARY", "also-preserved")
-	env := directAgentEnvWithPolicy("opencode", t.TempDir(), 0, true)
+	env := directAgentEnvWithPolicy("opencode", testsocket.Dir(t), 0, true)
 	joined := "\n" + strings.Join(env, "\n") + "\n"
 	for _, want := range []string{"\nARLIAI_API_KEY=canary-secret\n", "\nUNDECLARED_COMPAT_CANARY=also-preserved\n"} {
 		if !strings.Contains(joined, want) {
@@ -177,7 +178,7 @@ func TestMergeAgentFailureDiagnosticsIncludesSandboxLog(t *testing.T) {
 }
 
 func TestReadSandboxDiagnosticsKeepsTailWithinLimit(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "deny_init.log")
+	path := filepath.Join(testsocket.Dir(t), "deny_init.log")
 	prefix := strings.Repeat("x", maxSandboxDiagnostics)
 	want := "actionable failure"
 	if err := os.WriteFile(path, []byte(prefix+want), 0o600); err != nil {
@@ -194,7 +195,7 @@ func TestReadSandboxDiagnosticsKeepsTailWithinLimit(t *testing.T) {
 
 func TestDirectAgentEnvPreservesHomeAndAddsProxy(t *testing.T) {
 	t.Setenv("WT_PROVIDER_BASE_URL", "")
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	env := directAgentEnv("opencode", home, 43210)
 	joined := "\n" + strings.Join(env, "\n") + "\n"
 	for _, want := range []string{
@@ -217,7 +218,7 @@ func TestDirectAgentEnvBypassesProxyForExplicitLocalProvider(t *testing.T) {
 	t.Setenv("WT_PROVIDER_BASE_URL", "http://localhost:4000/v1")
 	t.Setenv("NO_PROXY", "example.test")
 	t.Setenv("no_proxy", "")
-	env := directAgentEnv("codex", t.TempDir(), 0)
+	env := directAgentEnv("codex", testsocket.Dir(t), 0)
 	joined := "\n" + strings.Join(env, "\n") + "\n"
 	for _, want := range []string{"\nNO_PROXY=example.test,localhost\n", "\nno_proxy=localhost\n"} {
 		if !strings.Contains(joined, want) {
@@ -229,7 +230,7 @@ func TestDirectAgentEnvBypassesProxyForExplicitLocalProvider(t *testing.T) {
 func TestSharedHostDirectAgentEnvDropsAmbientProviderCredentials(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "host-secret")
 	t.Setenv("OPENAI_API_KEY", "another-host-secret")
-	env := directAgentEnvWithPolicy("claude", t.TempDir(), 0, false)
+	env := directAgentEnvWithPolicy("claude", testsocket.Dir(t), 0, false)
 	joined := "\n" + strings.Join(env, "\n") + "\n"
 	for _, forbidden := range []string{"ANTHROPIC_API_KEY=", "OPENAI_API_KEY="} {
 		if strings.Contains(joined, forbidden) {
@@ -242,7 +243,7 @@ func TestSharedHostDirectAgentEnvDropsAmbientProviderCredentials(t *testing.T) {
 }
 
 func TestSandboxAgentExecutableUsesOwnerScopedSharedRuntime(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	command := filepath.Join(home, ".local", "bin", "claude")
 	if err := os.MkdirAll(filepath.Dir(command), 0o700); err != nil {
 		t.Fatal(err)
@@ -274,10 +275,10 @@ func TestSandboxAgentExecutableResolvesHostCommandForPersonalTask(t *testing.T) 
 
 func TestSharedHostDirectAgentPreservesAdministratorFilesystemPolicy(t *testing.T) {
 	t.Setenv("WT_PROVIDER_BASE_URL", "")
-	home := t.TempDir()
-	workspace := t.TempDir()
-	readOnlySource := t.TempDir()
-	deniedSecret := t.TempDir()
+	home := testsocket.Dir(t)
+	workspace := testsocket.Dir(t)
+	readOnlySource := testsocket.Dir(t)
+	deniedSecret := testsocket.Dir(t)
 	eggCfg := &egg.EggConfig{FS: []string{
 		"deny:/",
 		"rw:" + workspace,
@@ -308,7 +309,7 @@ func TestSharedHostDirectAgentPreservesAdministratorFilesystemPolicy(t *testing.
 }
 
 func TestSharedHostTaskMountsValidatedWorkspaceRoots(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	workDir := filepath.Join(root, "mutable", "checkout")
 	options := TaskRunOptions{SharedHost: true, AllowedPaths: []string{root}}
 	mounts := taskSandboxMountPaths([]string{workDir, "/caller/widening"}, workDir, options)
@@ -323,9 +324,9 @@ func TestSharedHostTaskMountsValidatedWorkspaceRoots(t *testing.T) {
 }
 
 func TestSharedHostDirectAgentIgnoresCallerMounts(t *testing.T) {
-	home := t.TempDir()
-	workspace := t.TempDir()
-	callerMount := t.TempDir()
+	home := testsocket.Dir(t)
+	workspace := testsocket.Dir(t)
+	callerMount := testsocket.Dir(t)
 	cfg, err := directAgentSandboxConfigForTask(&egg.EggConfig{FS: []string{
 		"deny:/",
 		"rw:" + workspace,
@@ -360,7 +361,7 @@ func TestDirectAgentSandboxPreservesRoostRootPins(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("Seatbelt profile is macOS-only")
 	}
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
 	t.Setenv("HOME", home)
 	t.Setenv("WT_PROVIDER_BASE_URL", "")
 	root := filepath.Join(home, "role")

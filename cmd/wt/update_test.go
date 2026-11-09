@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/updater"
 )
 
@@ -17,7 +18,7 @@ func TestStableUpdateRejectsPreviewStateBeforeAnyWork(t *testing.T) {
 	old := config.ReleaseChannel
 	config.ReleaseChannel = "stable"
 	t.Cleanup(func() { config.ReleaseChannel = old })
-	state := t.TempDir()
+	state := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", state)
 	files := map[string]string{
 		".release-channel": "preview\n",
@@ -62,7 +63,7 @@ func (unavailableReleaseTransport) RoundTrip(*http.Request) (*http.Response, err
 	return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("missing"))}, nil
 }
 func TestUpdateUnavailableReportsOnePlainSentence(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	t.Setenv("HOME", root)
 	t.Setenv("WINGTHING_DIR", filepath.Join(root, "state"))
 	transport := http.DefaultTransport

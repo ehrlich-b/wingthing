@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestParsePromptValues(t *testing.T) {
@@ -25,8 +26,8 @@ func TestParsePromptValues(t *testing.T) {
 }
 
 func TestPromptSaveAndListCLI(t *testing.T) {
-	dir := t.TempDir()
-	cwd := t.TempDir()
+	dir := testsocket.Dir(t)
+	cwd := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", dir)
 
 	var saved bytes.Buffer

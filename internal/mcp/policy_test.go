@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestPolicyMaximumSubsetAcrossEnabledRoles(t *testing.T) {
@@ -77,7 +78,7 @@ func TestWingConfigRejectsUnknownAndAmbiguousMCPFields(t *testing.T) {
 		"allow-and-deny": "mcp:\n  enabled: true\n  roles:\n    eng:\n      enabled: true\n      allow: [a]\n      deny: [b]\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			path := filepath.Join(dir, "wing.yaml")
 			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 				t.Fatal(err)

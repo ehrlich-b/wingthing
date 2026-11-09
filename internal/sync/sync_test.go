@@ -10,10 +10,11 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestBuildManifest(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 
 	// Create some .md files
 	if err := os.WriteFile(filepath.Join(dir, "identity.md"), []byte("# Identity\nI am a test."), 0o644); err != nil {
@@ -120,7 +121,7 @@ func TestDiffManifests(t *testing.T) {
 }
 
 func TestApplyDiffs(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 
 	eng := &Engine{
 		MemoryDir: dir,
@@ -163,7 +164,7 @@ func TestApplyDiffs(t *testing.T) {
 }
 
 func TestConflictLogging(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 
 	// Write an existing file that will be overwritten
 	if err := os.WriteFile(filepath.Join(dir, "existing.md"), []byte("local content"), 0o644); err != nil {

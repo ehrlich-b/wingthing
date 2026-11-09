@@ -9,6 +9,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
@@ -49,8 +50,8 @@ func writeResumeSessionFixture(t *testing.T, cfg *config.Config, sessionID, owne
 }
 
 func TestPrepareBrowserResumeRestoresOwnedProviderConversationWithoutChangingSource(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
-	cwd := t.TempDir()
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
+	cwd := testsocket.Dir(t)
 	sourceDir := writeResumeSessionFixture(t, cfg, "old-session", "alice", "claude", cwd, "provider-id", "conversation\n")
 	before, err := os.ReadFile(filepath.Join(sourceDir, "chat.jsonl.gz"))
 	if err != nil {
@@ -78,15 +79,15 @@ func TestPrepareBrowserResumeRestoresOwnedProviderConversationWithoutChangingSou
 }
 
 func TestPrepareBrowserResumeRequiresExactOwnerAgentAndCurrentPath(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
-	cwd := t.TempDir()
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
+	cwd := testsocket.Dir(t)
 	writeResumeSessionFixture(t, cfg, "old-session", "alice", "claude", cwd, "provider-id", "conversation\n")
 	base := ws.PTYStart{SessionID: "new-session", ResumeSessionID: "old-session", UserID: "alice", Agent: "claude", CWD: cwd}
 	for name, mutate := range map[string]func(*ws.PTYStart, *[]string){
 		"other owner":  func(start *ws.PTYStart, _ *[]string) { start.UserID = "bob" },
 		"other agent":  func(start *ws.PTYStart, _ *[]string) { start.Agent = "codex" },
-		"other cwd":    func(start *ws.PTYStart, _ *[]string) { start.CWD = t.TempDir() },
-		"revoked path": func(_ *ws.PTYStart, paths *[]string) { *paths = []string{t.TempDir()} },
+		"other cwd":    func(start *ws.PTYStart, _ *[]string) { start.CWD = testsocket.Dir(t) },
+		"revoked path": func(_ *ws.PTYStart, paths *[]string) { *paths = []string{testsocket.Dir(t)} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			start := base
@@ -100,8 +101,8 @@ func TestPrepareBrowserResumeRequiresExactOwnerAgentAndCurrentPath(t *testing.T)
 }
 
 func TestPrepareBrowserResumeAllowsPersonalOwnerWithoutConfiguredPaths(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
-	cwd := t.TempDir()
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
+	cwd := testsocket.Dir(t)
 	writeResumeSessionFixture(t, cfg, "old-session", "alice", "claude", cwd, "provider-id", "conversation\n")
 	start := ws.PTYStart{
 		SessionID: "new-session", ResumeSessionID: "old-session", UserID: "alice",
@@ -124,8 +125,8 @@ func TestPrepareBrowserResumeAllowsPersonalOwnerWithoutConfiguredPaths(t *testin
 }
 
 func TestPrepareBrowserResumeReservesIdenticalProviderConversationUntilRelease(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
-	cwd := t.TempDir()
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
+	cwd := testsocket.Dir(t)
 	writeResumeSessionFixture(t, cfg, "old-session", "alice", "claude", cwd, "provider-id", "conversation\n")
 	wingCfg := &config.WingConfig{Org: "example"}
 	first := ws.PTYStart{SessionID: "new-one", ResumeSessionID: "old-session", UserID: "alice", Agent: "claude", CWD: cwd}
@@ -154,8 +155,8 @@ func TestPrepareBrowserResumeReservesIdenticalProviderConversationUntilRelease(t
 }
 
 func TestSessionResumeStatusRequiresNativeMetadata(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
-	cwd := t.TempDir()
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
+	cwd := testsocket.Dir(t)
 	dir := writeResumeSessionFixture(t, cfg, "old-session", "alice", "claude", cwd, "provider-id", "conversation\n")
 	if ok, reason := eggclient.SessionResumeStatus(dir, "claude", cwd); !ok || reason != "" {
 		t.Fatalf("resumable=%v reason=%q", ok, reason)

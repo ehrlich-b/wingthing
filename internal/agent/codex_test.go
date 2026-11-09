@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestNewCodexDefaults(t *testing.T) {
@@ -64,7 +66,7 @@ func TestCodexRunCommandContract(t *testing.T) {
 }
 
 func TestCodexRunUsesExplicitPromptAndNullStdin(t *testing.T) {
-	binary := filepath.Join(t.TempDir(), "codex")
+	binary := filepath.Join(testsocket.Dir(t), "codex")
 	script := `#!/bin/sh
 if [ ! /dev/fd/0 -ef /dev/null ]; then
     echo 'stdin is not /dev/null' >&2

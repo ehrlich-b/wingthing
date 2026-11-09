@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestAbsentOptionalMemoryDoesNotWarn(t *testing.T) {
@@ -13,7 +15,7 @@ func TestAbsentOptionalMemoryDoesNotWarn(t *testing.T) {
 	prior := log.Writer()
 	log.SetOutput(&out)
 	defer log.SetOutput(prior)
-	s := New(filepath.Join(t.TempDir(), "not-created"))
+	s := New(filepath.Join(testsocket.Dir(t), "not-created"))
 	if got := s.Load("index"); got != "" {
 		t.Fatal(got)
 	}
@@ -27,7 +29,7 @@ func TestUnreadableOptionalMemoryStillWarns(t *testing.T) {
 	prior := log.Writer()
 	log.SetOutput(&out)
 	defer log.SetOutput(prior)
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	if err := os.Mkdir(filepath.Join(dir, "index.md"), 0700); err != nil {
 		t.Fatal(err)
 	}

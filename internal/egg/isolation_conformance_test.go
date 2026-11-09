@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // These canaries exercise the production preparation and native execution
@@ -32,7 +33,7 @@ type isolationFixture struct {
 
 func isolationSetup(t *testing.T) isolationFixture {
 	t.Helper()
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	f := isolationFixture{home: filepath.Join(root, "home"), work: filepath.Join(root, "home", "work"), outside: filepath.Join(root, "outside"), config: DefaultEggConfig()}
 	var err error
 	f.python, err = exec.LookPath("python3")

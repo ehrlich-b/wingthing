@@ -63,14 +63,14 @@ func northstarNewFixture(t *testing.T) *northstarFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scratch := filepath.Join(repo, ".scratch")
+	scratch := testprovider.ProtectedTempDir(t)
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}
 	// Keep workspace and executable paths bounded too: policy reports must fit
 	// the same terminal viewport regardless of the checkout's path length.
 	root := testsocket.Dir(t)
-	home, local, remote := testprovider.ScopedHomeDirs(t, testsocket.Dir(t))
+	home, local, remote := testprovider.ScopedHomeDirs(t, scratch)
 	f := &northstarFixture{repo: repo, root: root, home: home, local: local, remote: remote,
 		work: filepath.Join(root, "work"), tmp: filepath.Join(root, "tmp-alias"), bin: filepath.Join(root, "tmp-alias", "bin"),
 		evidence: filepath.Join(scratch, "northstar", "northstar-evidence")}

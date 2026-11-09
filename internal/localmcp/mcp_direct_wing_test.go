@@ -14,12 +14,13 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	pionwebrtc "github.com/pion/webrtc/v4"
 )
 
 func TestResolveDirectMCPPolicyCompatibilityMatrix(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	openPath := filepath.Join(home, "open")
 	memberPath := filepath.Join(home, "member")
 	otherPath := filepath.Join(home, "other")
@@ -128,7 +129,7 @@ func TestResolveDirectMCPPolicyHonorsAdditiveWingRestrictions(t *testing.T) {
 		MaxSessions:      2,
 		MaxSpawnsPerHour: 3,
 	}}
-	policy, err := resolveDirectMCPPolicy(wingCfg, t.TempDir(), false, webrtcpkg.PeerIdentity{
+	policy, err := resolveDirectMCPPolicy(wingCfg, testsocket.Dir(t), false, webrtcpkg.PeerIdentity{
 		UserID: "owner", Email: "owner@example.com", OrgRole: "owner",
 	})
 	if err != nil {
@@ -141,7 +142,7 @@ func TestResolveDirectMCPPolicyHonorsAdditiveWingRestrictions(t *testing.T) {
 		t.Fatalf("restricted bounds = sessions:%d spawns:%d", policy.maxSessions, policy.maxSpawnsPerHour)
 	}
 	server := testWingServer(t, &Server{Version: "dev",
-		Cfg: &config.Config{Dir: t.TempDir()}, Principal: "owner", Actor: "codex",
+		Cfg: &config.Config{Dir: testsocket.Dir(t)}, Principal: "owner", Actor: "codex",
 		Surface: control.SurfaceDirectMCP, Grants: policy.grants,
 	})
 	result, isError, protocolErr := server.callTool(context.Background(), "terminal_list", json.RawMessage(`{}`))
@@ -167,7 +168,7 @@ func TestResolveDirectMCPPolicyRejectsDisabledAndUnknownGrant(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := resolveDirectMCPPolicy(&config.WingConfig{DirectMCP: testCase.direct}, t.TempDir(), false, identity)
+			_, err := resolveDirectMCPPolicy(&config.WingConfig{DirectMCP: testCase.direct}, testsocket.Dir(t), false, identity)
 			if err == nil || !strings.Contains(err.Error(), testCase.want) {
 				t.Fatalf("resolve error = %v, want %q", err, testCase.want)
 			}
@@ -193,7 +194,7 @@ func TestDirectMCPSpawnRateSurvivesClientReconnect(t *testing.T) {
 }
 
 func TestDirectMCPMaxSessionsIsSharedAcrossConnections(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	sessionDir := filepath.Join(dir, "eggs", "existing")
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -266,9 +267,9 @@ func connectDirectMCPTestClientWithPolicySourceAndLease(t *testing.T, cfg *confi
 }
 
 func TestDirectMCPIdentityIsALimitedCoordinatorLease(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}
+	cfg := &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "claude"}
 	wingCfg := &config.WingConfig{}
-	client, _ := connectDirectMCPTestClientWithPolicySourceAndLease(t, cfg, t.TempDir(), false, webrtcpkg.PeerIdentity{
+	client, _ := connectDirectMCPTestClientWithPolicySourceAndLease(t, cfg, testsocket.Dir(t), false, webrtcpkg.PeerIdentity{
 		UserID: "leased-user", Email: "owner@example.com", OrgRole: "owner",
 	}, func() (*config.WingConfig, []config.AllowKey) { return wingCfg.Clone(), nil }, 200*time.Millisecond)
 	deadline := time.Now().Add(3 * time.Second)
@@ -281,11 +282,11 @@ func TestDirectMCPIdentityIsALimitedCoordinatorLease(t *testing.T) {
 }
 
 func TestDirectMCPTransportAppliesConfiguredGrants(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}
+	cfg := &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "claude"}
 	wingCfg := &config.WingConfig{DirectMCP: &config.DirectMCPConfig{
 		AllowGrants: []string{"capabilities.read"},
 	}}
-	client, ctx := connectDirectMCPTestClient(t, cfg, wingCfg, t.TempDir(), false, webrtcpkg.PeerIdentity{
+	client, ctx := connectDirectMCPTestClient(t, cfg, wingCfg, testsocket.Dir(t), false, webrtcpkg.PeerIdentity{
 		UserID: "grant-owner", Email: "owner@example.com", OrgRole: "owner",
 	})
 	result, isError, err := client.Call(ctx, "terminal_list", json.RawMessage(`{}`))
@@ -299,7 +300,7 @@ func TestDirectMCPTransportAppliesConfiguredGrants(t *testing.T) {
 }
 
 func TestDirectMCPTransportPreservesOrgPathBoundary(t *testing.T) {
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := config.CanonicalProviderPath(testsocket.Dir(t))
 	memberPath := filepath.Join(home, "member")
 	ownerPath := filepath.Join(home, "owner-visible")
 	for _, path := range []string{memberPath, ownerPath} {
@@ -311,7 +312,7 @@ func TestDirectMCPTransportPreservesOrgPathBoundary(t *testing.T) {
 		{Path: memberPath, Members: []string{"member@example.com"}},
 		{Path: ownerPath, Members: []string{"someone-else@example.com"}},
 	}}
-	cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}
+	cfg := &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "claude"}
 
 	member, memberCtx := connectDirectMCPTestClient(t, cfg, wingCfg, home, false, webrtcpkg.PeerIdentity{
 		UserID: "member", Email: "member@example.com", OrgRole: "member",
@@ -334,9 +335,9 @@ func TestDirectMCPTransportPreservesOrgPathBoundary(t *testing.T) {
 }
 
 func TestDirectMCPExecutesOnAuthenticatedWing(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}
+	cfg := &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "claude"}
 	wingCfg := &config.WingConfig{}
-	client, ctx := connectDirectMCPTestClient(t, cfg, wingCfg, t.TempDir(), false, webrtcpkg.PeerIdentity{
+	client, ctx := connectDirectMCPTestClient(t, cfg, wingCfg, testsocket.Dir(t), false, webrtcpkg.PeerIdentity{
 		UserID: "user-direct", Email: "owner@example.com", OrgRole: "owner",
 	})
 	result, isError, err := client.Call(ctx, "wingthing_capabilities", json.RawMessage(`{}`))
@@ -349,9 +350,9 @@ func TestDirectMCPExecutesOnAuthenticatedWing(t *testing.T) {
 }
 
 func TestDirectMCPFailsClosedForLockedWing(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}
+	cfg := &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "claude"}
 	wingCfg := &config.WingConfig{Locked: true}
-	client, ctx := connectDirectMCPTestClient(t, cfg, wingCfg, t.TempDir(), false, webrtcpkg.PeerIdentity{
+	client, ctx := connectDirectMCPTestClient(t, cfg, wingCfg, testsocket.Dir(t), false, webrtcpkg.PeerIdentity{
 		UserID: "user-direct", Email: "owner@example.com", OrgRole: "owner",
 	})
 	_, _, err := client.Call(ctx, "wingthing_capabilities", json.RawMessage(`{}`))
@@ -361,7 +362,7 @@ func TestDirectMCPFailsClosedForLockedWing(t *testing.T) {
 }
 
 func TestDirectMCPExistingChannelRechecksLiveWingPolicy(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}
+	cfg := &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "claude"}
 	var policyMu sync.Mutex
 	wingCfg := &config.WingConfig{}
 	policySource := func() (*config.WingConfig, []config.AllowKey) {
@@ -369,7 +370,7 @@ func TestDirectMCPExistingChannelRechecksLiveWingPolicy(t *testing.T) {
 		defer policyMu.Unlock()
 		return wingCfg.Clone(), nil
 	}
-	client, ctx := connectDirectMCPTestClientWithPolicySource(t, cfg, t.TempDir(), false, webrtcpkg.PeerIdentity{
+	client, ctx := connectDirectMCPTestClientWithPolicySource(t, cfg, testsocket.Dir(t), false, webrtcpkg.PeerIdentity{
 		UserID: "user-direct", Email: "owner@example.com", OrgRole: "owner",
 	}, policySource)
 	if _, isError, err := client.Call(ctx, "wingthing_capabilities", json.RawMessage(`{}`)); err != nil || isError {

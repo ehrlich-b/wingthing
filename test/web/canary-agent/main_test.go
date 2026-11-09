@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestCanaryModelPolicy(t *testing.T) {
@@ -32,10 +34,10 @@ func TestCanaryModelPolicy(t *testing.T) {
 				name = tc.name + "/file"
 			}
 			t.Run(name, func(t *testing.T) {
-				t.Setenv("HOME", t.TempDir())
+				t.Setenv("HOME", testsocket.Dir(t))
 				settings := tc.settings
 				if file {
-					settings = filepath.Join(t.TempDir(), "lifecycle settings.json")
+					settings = filepath.Join(testsocket.Dir(t), "lifecycle settings.json")
 					if err := os.WriteFile(settings, []byte(tc.settings), 0600); err != nil {
 						t.Fatal(err)
 					}
@@ -57,10 +59,10 @@ func TestCanaryModelPolicy(t *testing.T) {
 	for _, args := range [][]string{
 		{"--model", "claude-sonnet-5"},
 		{"--model", "claude-sonnet-5", "--settings"},
-		{"--model", "claude-sonnet-5", "--settings", filepath.Join(t.TempDir(), "missing.json")},
+		{"--model", "claude-sonnet-5", "--settings", filepath.Join(testsocket.Dir(t), "missing.json")},
 	} {
 		t.Run("unavailable settings", func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
+			t.Setenv("HOME", testsocket.Dir(t))
 			if got := canaryModelPolicyOutput(t, args); got != "CANARY_MODEL_POLICY ok=false saved_model= theme=\r\n" {
 				t.Fatalf("unavailable policy = %q", got)
 			}
@@ -83,7 +85,7 @@ func TestCanaryModelPolicyPreservesPreferences(t *testing.T) {
 				name = tc.name + "/file"
 			}
 			t.Run(name, func(t *testing.T) {
-				home := t.TempDir()
+				home := testsocket.Dir(t)
 				t.Setenv("HOME", home)
 				prefsPath := filepath.Join(home, ".claude", "settings.json")
 				if tc.prefs != "" {
@@ -96,7 +98,7 @@ func TestCanaryModelPolicyPreservesPreferences(t *testing.T) {
 				}
 				settings := policy
 				if file {
-					settings = filepath.Join(t.TempDir(), "policy.json")
+					settings = filepath.Join(testsocket.Dir(t), "policy.json")
 					if err := os.WriteFile(settings, []byte(policy), 0600); err != nil {
 						t.Fatal(err)
 					}

@@ -16,13 +16,14 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 func lifecycleFixture(t *testing.T) (dir, home, cwd, path string) {
 	t.Helper()
-	dir = t.TempDir()
-	home = t.TempDir()
+	dir = testsocket.Dir(t)
+	home = testsocket.Dir(t)
 	cwd = "/fixture/shared-workspace"
 	project := filepath.Join(home, Profile("claude").SessionDir, encodeCWDForClaude(cwd))
 	if err := os.MkdirAll(project, 0700); err != nil {
@@ -356,7 +357,7 @@ func TestLifecycleTerminalFailureMissingProcessAndUnknownProvider(t *testing.T) 
 	if v.State != "failed" || v.StateSource != "egg_process" || v.Ready {
 		t.Fatalf("termination overwritten: %+v", v)
 	}
-	unknown := t.TempDir()
+	unknown := testsocket.Dir(t)
 	v, err = ReadSessionLifecycle(unknown, "codex", cwd, home, "", true, 0, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -412,7 +413,7 @@ func TestClaudeLifecycleArgsStopAtNativeTerminator(t *testing.T) {
 		{"--settings", `{"model":"sonnet","disableAllHooks":true}`, "--", "--settings=literal-settings"},
 	} {
 		t.Run(strings.Join(supplied, " "), func(t *testing.T) {
-			home, dir, cwd := t.TempDir(), t.TempDir(), t.TempDir()
+			home, dir, cwd := testsocket.Dir(t), testsocket.Dir(t), testsocket.Dir(t)
 			original := slices.Clone(supplied)
 			args, err := ClaudeLifecycleArgs(supplied, home, filepath.Base(dir), "ours")
 			if err != nil {
@@ -450,7 +451,7 @@ func TestClaudeLifecycleArgsStopAtNativeTerminator(t *testing.T) {
 }
 
 func TestClaudeLifecycleArgsPreserveSettingsAndNativeIdentity(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	args, err := ClaudeLifecycleArgs([]string{"--session-id", "ours", "--settings", `{"model":"sonnet","hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo existing"}]}]}}`}, home, "wing-session", "ours")
 	if err != nil {
 		t.Fatal(err)
@@ -482,10 +483,10 @@ func TestClaudeLifecycleArgsPreserveSettingsAndNativeIdentity(t *testing.T) {
 }
 
 func TestClaudeLifecycleSettingsFileKeepsCredentialsPrivateAndCleansUp(t *testing.T) {
-	dir, home := t.TempDir(), t.TempDir()
-	settingsPath := filepath.Join(t.TempDir(), "settings.json")
+	dir, home := testsocket.Dir(t), testsocket.Dir(t)
+	settingsPath := filepath.Join(testsocket.Dir(t), "settings.json")
 	lifecycleWrite(t, settingsPath, `{"env":{"ANTHROPIC_API_KEY":"fixture-secret"},"model":"sonnet"}`)
-	args, err := prepareClaudeLifecycleArgs([]string{"--session-id", "ours", "--settings", settingsPath}, home, dir, "ours", t.TempDir())
+	args, err := prepareClaudeLifecycleArgs([]string{"--session-id", "ours", "--settings", settingsPath}, home, dir, "ours", testsocket.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -525,13 +526,13 @@ func TestClaudeLifecycleSettingsFileKeepsCredentialsPrivateAndCleansUp(t *testin
 }
 
 func TestClaudeLifecycleSettingsFileReplacesPreviousLaunch(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	path := filepath.Join(dir, claudeLifecycleSettingsFile)
 	lifecycleWrite(t, path, strings.Repeat("previous launch settings", 1000))
 	if err := os.Chmod(path, 0644); err != nil {
 		t.Fatal(err)
 	}
-	args, err := prepareClaudeLifecycleArgs([]string{"--settings", `{"model":"new-model","disableAllHooks":true}`}, t.TempDir(), dir, "ours", t.TempDir())
+	args, err := prepareClaudeLifecycleArgs([]string{"--settings", `{"model":"new-model","disableAllHooks":true}`}, testsocket.Dir(t), dir, "ours", testsocket.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -558,13 +559,13 @@ func TestClaudeLifecycleSettingsFileRefusesLinks(t *testing.T) {
 		create func(string, string) error
 	}{{"symlink", os.Symlink}, {"hardlink", os.Link}} {
 		t.Run(link.name, func(t *testing.T) {
-			dir := t.TempDir()
-			target := filepath.Join(t.TempDir(), "target.json")
+			dir := testsocket.Dir(t)
+			target := filepath.Join(testsocket.Dir(t), "target.json")
 			lifecycleWrite(t, target, "target settings")
 			if err := link.create(target, filepath.Join(dir, claudeLifecycleSettingsFile)); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := prepareClaudeLifecycleArgs(nil, t.TempDir(), dir, "ours", t.TempDir()); err == nil {
+			if _, err := prepareClaudeLifecycleArgs(nil, testsocket.Dir(t), dir, "ours", testsocket.Dir(t)); err == nil {
 				t.Fatal("accepted linked settings file")
 			}
 			data, err := os.ReadFile(target)
@@ -578,13 +579,13 @@ func TestClaudeLifecycleSettingsFileRefusesLinks(t *testing.T) {
 func TestClaudeLifecycleSettingsResolveRelativePathsFromProviderCWD(t *testing.T) {
 	for _, equal := range []bool{false, true} {
 		t.Run(fmt.Sprintf("equals=%t", equal), func(t *testing.T) {
-			cwd := t.TempDir()
+			cwd := testsocket.Dir(t)
 			lifecycleWrite(t, filepath.Join(cwd, "settings.json"), `{"model":"cwd-model","disableAllHooks":true}`)
 			args := []string{"--settings", "settings.json"}
 			if equal {
 				args = []string{"--settings=settings.json"}
 			}
-			out, err := prepareClaudeLifecycleArgs(args, t.TempDir(), t.TempDir(), "ours", cwd)
+			out, err := prepareClaudeLifecycleArgs(args, testsocket.Dir(t), testsocket.Dir(t), "ours", cwd)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -655,7 +656,7 @@ func TestLifecycleCleanProcessExitPreservesNativeTurnFailure(t *testing.T) {
 	}
 	// Readers still understand the termination records written by live old eggs
 	// that have no native turn evidence, including unsupported providers.
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	if err := RecordSessionProcessEvent(dir, "session_exit", "completed", "legacy exit"); err != nil {
 		t.Fatal(err)
 	}
@@ -913,7 +914,7 @@ func TestLifecycleHookPublishRetriesSequenceCollisionsWithoutLegacyFallback(t *t
 	}
 	// After arming, the first 17 listings are stale (empty), so each link
 	// targets the already published seq 1 and collides for real.
-	bin := t.TempDir()
+	bin := testsocket.Dir(t)
 	count := filepath.Join(bin, "count")
 	fake := "#!/bin/sh\nc=" + count + "; if [ -f \"$c\" ]; then n=$(($(cat \"$c\")+1)); echo $n > \"$c\"; [ $n -le 17 ] && exit 0; fi\nexec " + realLS + " \"$@\"\n"
 	if err = os.WriteFile(filepath.Join(bin, "ls"), []byte(fake), 0700); err != nil {
@@ -985,7 +986,7 @@ func TestLifecycleHookPublishOrderSurvivesEqualMtimeReversedTempNames(t *testing
 		t.Fatal(err)
 	}
 	// Each mktemp call yields a name sorting before the previous one.
-	bin := t.TempDir()
+	bin := testsocket.Dir(t)
 	fake := "#!/bin/sh\nc=" + bin + "/count; n=$(cat \"$c\" 2>/dev/null || echo 0); n=$((n+1)); echo $n > \"$c\"\n" +
 		"case $n in 1) s=zzzzzz;; 2) s=yyyyyy;; 3) s=xxxxxx;; *) s=aaaaa$n;; esac\n" +
 		"f=$(printf '%s' \"$1\" | sed \"s/XXXXXX\\$/$s/\"); : > \"$f\" && printf '%s\\n' \"$f\"\n"

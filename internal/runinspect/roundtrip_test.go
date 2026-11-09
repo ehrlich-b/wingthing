@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/runinspect"
@@ -21,8 +20,14 @@ func newRoundTrip(t *testing.T) *fixture.Builder {
 	if root == "" {
 		t.Fatal("WT_INSPECT_FIXTURE_ROOT required; run make test-run-inspect-roundtrip")
 	}
-	workspace, err := os.MkdirTemp(root, strings.ReplaceAll(t.Name(), "/", "_")+"-")
+	// These offline snapshots open no sockets and intentionally outlive the
+	// test so callers can inspect the artifacts under their requested root.
+	dir, err := os.MkdirTemp(root, "roundtrip-")
 	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := filepath.Join(dir, ".scratch")
+	if err := os.Mkdir(workspace, 0700); err != nil {
 		t.Fatal(err)
 	}
 	return fixture.New(t, filepath.Join(workspace, "snapshot"))

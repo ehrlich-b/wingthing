@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func compatScript(t *testing.T) string {
@@ -24,7 +26,7 @@ func TestCompatDefaultBaselines(t *testing.T) {
 	if !ok {
 		t.Fatal("compatibility script baseline selection is missing")
 	}
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	log := filepath.Join(root, "baselines")
 	recorder := filepath.Join(root, "record-baseline")
 	if err := os.WriteFile(recorder, []byte("#!/bin/sh\nprintf '%s\\n' \"$WT_COMPAT_BASELINE_REF\" >> \"$BASELINE_LOG\"\n"), 0700); err != nil {
@@ -82,7 +84,7 @@ func TestCompatTokenUpgradeAndRollback(t *testing.T) {
 		{"rollback changes token", "local_device_token.yaml", ":", "echo changed > local_device_token.yaml", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
+			root := testsocket.Dir(t)
 			state := filepath.Join(root, "state")
 			if err := os.Mkdir(state, 0700); err != nil {
 				t.Fatal(err)
@@ -120,7 +122,7 @@ func TestCompatWingUsesBaselineTokenStore(t *testing.T) {
 			name = "legacy"
 		}
 		t.Run(name, func(t *testing.T) {
-			root := t.TempDir()
+			root := testsocket.Dir(t)
 			if legacy {
 				if err := os.WriteFile(filepath.Join(root, "baseline-device_token.yaml"), []byte("token"), 0600); err != nil {
 					t.Fatal(err)

@@ -15,12 +15,13 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestSessionRenameCLIAndMCPShareStoreLock(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	t.Setenv("WINGTHING_DIR", cfg.Dir)
-	workspace := t.TempDir()
+	workspace := testsocket.Dir(t)
 	writeActiveRenameFixture(t, cfg, "first", "alice", workspace, "one")
 	writeActiveRenameFixture(t, cfg, "second", "alice", workspace, "two")
 	lock, err := os.OpenFile(filepath.Join(cfg.Dir, "eggs", ".session-name.lock"), os.O_CREATE|os.O_RDWR, 0o600)
@@ -87,13 +88,10 @@ func TestSessionRenameCLIAndMCPShareStoreLock(t *testing.T) {
 }
 
 func TestEggLaunchLabelChecksAvailabilityUnderStoreLock(t *testing.T) {
-	scratch, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	scratch := testprovider.TempDir(t)
 	state := testprovider.ShortStateDir(t, scratch)
 	cfg := &config.Config{Dir: state}
-	workspace := t.TempDir()
+	workspace := testsocket.Dir(t)
 	writeActiveRenameFixture(t, cfg, "first", "alice", workspace, "one")
 	lock, err := os.OpenFile(filepath.Join(cfg.Dir, "eggs", ".session-name.lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {

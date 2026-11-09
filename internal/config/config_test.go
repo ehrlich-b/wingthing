@@ -6,10 +6,12 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestLoadPersistsStableWingID(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "new-config")
+	dir := filepath.Join(testsocket.Dir(t), "new-config")
 	t.Setenv("WINGTHING_DIR", dir)
 	first, err := Load()
 	if err != nil {
@@ -28,7 +30,7 @@ func TestLoadPersistsStableWingID(t *testing.T) {
 }
 
 func TestLoadRestrictsExistingStateDirectory(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "existing-config")
+	dir := filepath.Join(testsocket.Dir(t), "existing-config")
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +51,7 @@ func TestLoadRestrictsExistingStateDirectory(t *testing.T) {
 }
 
 func TestDefaultWingIDConcurrentFirstLoadIsStable(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "new-config")
+	dir := filepath.Join(testsocket.Dir(t), "new-config")
 	const callers = 32
 	ids := make(chan string, callers)
 	errs := make(chan error, callers)
@@ -96,7 +98,7 @@ func TestDefaultWingIDFallsBackWhenHardLinksAreUnavailable(t *testing.T) {
 	}
 	t.Cleanup(func() { linkWingIDFile = originalLink })
 
-	dir := filepath.Join(t.TempDir(), "no-hard-links")
+	dir := filepath.Join(testsocket.Dir(t), "no-hard-links")
 	const callers = 32
 	ids := make(chan string, callers)
 	errs := make(chan error, callers)
@@ -134,7 +136,7 @@ func TestDefaultWingIDFallsBackWhenHardLinksAreUnavailable(t *testing.T) {
 }
 
 func TestDefaultWingIDConcurrentCorruptRepairIsStable(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	if err := os.WriteFile(filepath.Join(dir, "wing-id"), []byte("corrupt\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +176,7 @@ func TestDefaultWingIDConcurrentCorruptRepairIsStable(t *testing.T) {
 }
 
 func TestLoadReportsWingIDPersistenceFailure(t *testing.T) {
-	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	blocker := filepath.Join(testsocket.Dir(t), "not-a-directory")
 	if err := os.WriteFile(blocker, []byte("file"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +187,7 @@ func TestLoadReportsWingIDPersistenceFailure(t *testing.T) {
 }
 
 func TestRelayDBPathMigratesLegacyDatabaseAndSidecars(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	for suffix, body := range map[string]string{"": "db", "-wal": "wal", "-shm": "shm"} {
 		if err := os.WriteFile(filepath.Join(dir, "social.db")+suffix, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
@@ -210,7 +212,7 @@ func TestRelayDBPathMigratesLegacyDatabaseAndSidecars(t *testing.T) {
 }
 
 func TestRelayDBPathConcurrentLegacyMigrationIsStable(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	for suffix, body := range map[string]string{"": "db", "-wal": "wal", "-shm": "shm"} {
 		if err := os.WriteFile(filepath.Join(dir, "social.db")+suffix, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
@@ -255,7 +257,7 @@ func TestRelayDBPathConcurrentLegacyMigrationIsStable(t *testing.T) {
 }
 
 func TestRelayDBPathRollsBackSidecarsOnMigrationFailure(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	oldPath := filepath.Join(dir, "social.db")
 	if err := os.WriteFile(oldPath, []byte("db"), 0o600); err != nil {
 		t.Fatal(err)
@@ -285,7 +287,7 @@ func TestRelayDBPathRollsBackSidecarsOnMigrationFailure(t *testing.T) {
 }
 
 func TestRelayDBPathRejectsDirectoryAtDatabasePath(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	if err := os.Mkdir(filepath.Join(dir, "roost.db"), 0o700); err != nil {
 		t.Fatal(err)
 	}

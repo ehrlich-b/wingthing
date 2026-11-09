@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 const fixtureSchema = `
@@ -21,7 +23,7 @@ CREATE TABLE conversation_wake_policy (root_id TEXT,delivery_cursor INTEGER);
 
 func fixture(t *testing.T, setup func(*sql.DB, string)) (string, string) {
 	t.Helper()
-	workspace := t.TempDir()
+	workspace := testsocket.Dir(t)
 	path := filepath.Join(workspace, "snapshot")
 	if err := os.Mkdir(path, 0700); err != nil {
 		t.Fatal(err)
@@ -163,7 +165,7 @@ func TestRunInspectSymlinkedWorkspaceParent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parentAlias := filepath.Join(t.TempDir(), "parent-alias")
+	parentAlias := filepath.Join(testsocket.Dir(t), "parent-alias")
 	if err := os.Symlink(filepath.Dir(workspace), parentAlias); err != nil {
 		t.Fatal(err)
 	}

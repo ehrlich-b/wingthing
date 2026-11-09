@@ -16,10 +16,11 @@ import (
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/ehrlich-b/wingthing/internal/sessionrole"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestPinCLIAndWingToolPersistWithoutChangingRole(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	t.Setenv("WINGTHING_DIR", cfg.Dir)
 	t.Setenv("WT_MCP_CLIENT", "")
 	seedRemoteListSession(t, cfg, "ours", "")
@@ -53,12 +54,9 @@ func TestPinCLIAndWingToolPersistWithoutChangingRole(t *testing.T) {
 }
 
 func TestRoleStandaloneResumeRefusesBeforeHistoryRestore(t *testing.T) {
-	scratch, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	scratch := testprovider.TempDir(t)
 	cfg := &config.Config{Dir: testprovider.ShortStateDir(t, scratch)}
-	home, work := t.TempDir(), t.TempDir()
+	home, work := testsocket.Dir(t), testsocket.Dir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("WINGTHING_DIR", cfg.Dir)
 	dir := filepath.Join(cfg.Dir, "eggs", "source")
@@ -68,7 +66,7 @@ func TestRoleStandaloneResumeRefusesBeforeHistoryRestore(t *testing.T) {
 	if err := sessionrole.Write(dir, sessionrole.Metadata{Role: "coordinator", Pinned: true}); err != nil {
 		t.Fatal(err)
 	}
-	err = eggSpawn(t.Context(), "claude", "", false, "source", "", work, true, true, false, false, nil)
+	err := eggSpawn(t.Context(), "claude", "", false, "source", "", work, true, true, false, false, nil)
 	if err == nil || !strings.Contains(err.Error(), "standalone --resume cannot preserve") {
 		t.Fatalf("role resumed without protected MCP: %v", err)
 	}
@@ -104,7 +102,7 @@ func TestPinnedCoordinatorFleetSelectionDoesNotGuess(t *testing.T) {
 }
 
 func TestSessionPSPinnedRemoteFirstWithUnreachablePeer(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	t.Setenv("WINGTHING_DIR", cfg.Dir)
 	for i := 0; i < 36; i++ {
 		seedRemoteListSession(t, cfg, fmt.Sprintf("egg-%02d", i), "")
@@ -133,7 +131,7 @@ printf '%s\n' '{"version":"fixture","contract_version":"v1","sessions":[{"id":"p
 }
 
 func TestPinStandaloneSessionAndMissingRoleRemainOrdinary(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	t.Setenv("WINGTHING_DIR", cfg.Dir)
 	t.Setenv("WT_MCP_CLIENT", "")
 	seedRemoteListSession(t, cfg, "plain", "")
@@ -155,7 +153,7 @@ func TestPinStandaloneSessionAndMissingRoleRemainOrdinary(t *testing.T) {
 }
 
 func TestAttachCoordinatorDispatchesQualifiedRemoteID(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	t.Setenv("WINGTHING_DIR", cfg.Dir)
 	t.Setenv("WT_MCP_CLIENT", "")
 	if err := config.SaveRemotes(cfg.Dir, map[string]config.Remote{"work": {SSHTarget: "fixture-peer"}}); err != nil {
@@ -190,7 +188,7 @@ esac
 }
 
 func TestPinConfiguredRemoteRoutesWithoutInventoryFanout(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	t.Setenv("WINGTHING_DIR", cfg.Dir)
 	if err := config.SaveRemotes(cfg.Dir, map[string]config.Remote{"work": {SSHTarget: "fixture-peer"}}); err != nil {
 		t.Fatal(err)

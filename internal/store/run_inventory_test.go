@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func inventoryFixture(t *testing.T, s *Store, id, owner, user, cwd, status, key string, at time.Time) *AgentRun {
@@ -226,7 +228,7 @@ func TestRunInventoryMetadataProjectionAndNonzeroFixture(t *testing.T) {
 
 func inventoryTestStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "inventory.db"))
+	s, err := Open(filepath.Join(testsocket.Dir(t), "inventory.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

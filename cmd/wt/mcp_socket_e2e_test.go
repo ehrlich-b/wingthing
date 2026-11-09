@@ -21,6 +21,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wing"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"google.golang.org/grpc"
@@ -61,11 +62,8 @@ func (f *localSocketEggFixture) Session(stream grpc.BidiStreamingServer[pb.Sessi
 }
 
 func TestStdioStartedSessionSurvivesClientExitAndIsWebVisible(t *testing.T) {
-	scratch, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
-	root := t.TempDir()
+	scratch := testprovider.TempDir(t)
+	root := testsocket.Dir(t)
 	state := testprovider.ShortStateDir(t, scratch)
 	t.Chdir(root)
 	t.Setenv("WINGTHING_DIR", state)

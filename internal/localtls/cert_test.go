@@ -15,10 +15,12 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestConcurrentFirstUseCreatesOneCoherentAuthority(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	now := time.Now()
 	const callers = 32
 	start := make(chan struct{})
@@ -77,7 +79,7 @@ func mustReadECPrivateKey(t *testing.T, path string) *ecdsa.PublicKey {
 
 func TestEnsureCreatesConstrainedCAAndLocalhostLeaf(t *testing.T) {
 	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
-	m, err := Ensure(t.TempDir(), now)
+	m, err := Ensure(testsocket.Dir(t), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +116,7 @@ func TestEnsureCreatesConstrainedCAAndLocalhostLeaf(t *testing.T) {
 
 func TestCANameConstraintsRejectEvenACertificateItSignedForPublicDNS(t *testing.T) {
 	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
-	m, err := Ensure(t.TempDir(), now)
+	m, err := Ensure(testsocket.Dir(t), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +152,7 @@ func TestCANameConstraintsRejectEvenACertificateItSignedForPublicDNS(t *testing.
 }
 
 func TestEnsureUsesRestrictivePermissionsAndReusesCA(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	first, err := Ensure(dir, now)
 	if err != nil {
@@ -187,7 +189,7 @@ func TestEnsureUsesRestrictivePermissionsAndReusesCA(t *testing.T) {
 }
 
 func TestLoadNeverCreatesOrRotatesCertificateMaterial(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	if _, err := Load(dir); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Load before Ensure = %v", err)
 	}
@@ -220,7 +222,7 @@ func TestLoadNeverCreatesOrRotatesCertificateMaterial(t *testing.T) {
 }
 
 func TestEnsureRotatesLeafWithoutReplacingCA(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
 	first, err := Ensure(dir, now)
 	if err != nil {
@@ -242,7 +244,7 @@ func TestEnsureRotatesLeafWithoutReplacingCA(t *testing.T) {
 }
 
 func TestEnsureRepairsLeafCorruptionButNeverCAIdentity(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	now := time.Now()
 	first, err := Ensure(dir, now)
 	if err != nil {
@@ -271,7 +273,7 @@ func TestEnsureRepairsLeafCorruptionButNeverCAIdentity(t *testing.T) {
 }
 
 func TestEnsureRefusesExpiredCARatherThanReplacingTrustedRoot(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
 	first, err := Ensure(dir, now)
 	if err != nil {
@@ -291,7 +293,7 @@ func TestEnsureRefusesExpiredCARatherThanReplacingTrustedRoot(t *testing.T) {
 }
 
 func TestEnsureAndLoadRefuseAnUnconstrainedReplacementCA(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
 	material, err := Ensure(dir, now)
 	if err != nil {
@@ -336,7 +338,7 @@ func TestEnsureAndLoadRefuseAnUnconstrainedReplacementCA(t *testing.T) {
 
 func TestEnsureRefusesIncompleteCAAndSymlinks(t *testing.T) {
 	t.Run("incomplete CA", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := testsocket.Dir(t)
 		tlsDir := filepath.Join(dir, directoryName)
 		if err := os.Mkdir(tlsDir, 0700); err != nil {
 			t.Fatal(err)
@@ -351,7 +353,7 @@ func TestEnsureRefusesIncompleteCAAndSymlinks(t *testing.T) {
 	})
 
 	t.Run("symlinked key", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := testsocket.Dir(t)
 		m, err := Ensure(dir, time.Now())
 		if err != nil {
 			t.Fatal(err)
@@ -412,12 +414,12 @@ func (r *sequenceRunner) Run(_ context.Context, _ string, _ ...string) error {
 func TestTrustCommandsNeverReceivePrivateKeyPaths(t *testing.T) {
 	for _, goos := range []string{"darwin", "windows", "linux"} {
 		t.Run(goos, func(t *testing.T) {
-			m, err := Ensure(t.TempDir(), time.Now())
+			m, err := Ensure(testsocket.Dir(t), time.Now())
 			if err != nil {
 				t.Fatal(err)
 			}
 			runner := &recordingRunner{}
-			home := t.TempDir()
+			home := testsocket.Dir(t)
 			if goos == "linux" {
 				nssDir := filepath.Join(home, ".pki", "nssdb")
 				if err := os.MkdirAll(nssDir, 0700); err != nil {
@@ -470,11 +472,11 @@ func TestTrustCommandsNeverReceivePrivateKeyPaths(t *testing.T) {
 }
 
 func TestTrustMarkerAtomicWriteDoesNotFollowExistingSymlink(t *testing.T) {
-	m, err := Ensure(t.TempDir(), time.Now())
+	m, err := Ensure(testsocket.Dir(t), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	outside := filepath.Join(t.TempDir(), "outside")
+	outside := filepath.Join(testsocket.Dir(t), "outside")
 	if err := os.WriteFile(outside, []byte("do not change"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +484,7 @@ func TestTrustMarkerAtomicWriteDoesNotFollowExistingSymlink(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	runner := &recordingRunner{}
-	installed, err := (TrustStore{GOOS: "darwin", HomeDir: t.TempDir(), Runner: runner}).Install(context.Background(), m)
+	installed, err := (TrustStore{GOOS: "darwin", HomeDir: testsocket.Dir(t), Runner: runner}).Install(context.Background(), m)
 	if err != nil || !installed {
 		t.Fatalf("Install = (%v, %v)", installed, err)
 	}
@@ -495,11 +497,11 @@ func TestTrustMarkerAtomicWriteDoesNotFollowExistingSymlink(t *testing.T) {
 }
 
 func TestDarwinTrustUsesExplicitLoginKeychainAndVerifiesLocalhost(t *testing.T) {
-	m, err := Ensure(t.TempDir(), time.Now())
+	m, err := Ensure(testsocket.Dir(t), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	runner := &recordingRunner{}
 	installed, err := (TrustStore{GOOS: "darwin", HomeDir: home, Runner: runner}).Install(context.Background(), m)
 	if err != nil || !installed {
@@ -523,11 +525,11 @@ func TestDarwinTrustUsesExplicitLoginKeychainAndVerifiesLocalhost(t *testing.T) 
 }
 
 func TestDarwinRemovalClearsTrustRuleAndPublicCertificate(t *testing.T) {
-	m, err := Ensure(t.TempDir(), time.Now())
+	m, err := Ensure(testsocket.Dir(t), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	if err := os.WriteFile(m.MarkerPath, []byte("darwin\n"+m.Fingerprint+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -553,12 +555,12 @@ func TestDarwinRemovalClearsTrustRuleAndPublicCertificate(t *testing.T) {
 }
 
 func TestRemovalRecoversWhenTrustMarkerWasLost(t *testing.T) {
-	m, err := Ensure(t.TempDir(), time.Now())
+	m, err := Ensure(testsocket.Dir(t), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	runner := &recordingRunner{}
-	removed, err := (TrustStore{GOOS: "darwin", HomeDir: t.TempDir(), Runner: runner}).Remove(context.Background(), m)
+	removed, err := (TrustStore{GOOS: "darwin", HomeDir: testsocket.Dir(t), Runner: runner}).Remove(context.Background(), m)
 	if err != nil || !removed {
 		t.Fatalf("Remove = (%v, %v)", removed, err)
 	}
@@ -571,12 +573,12 @@ func TestRemovalRecoversWhenTrustMarkerWasLost(t *testing.T) {
 }
 
 func TestMarkerlessRemovalDoesNotDeleteAnUnverifiedCertificate(t *testing.T) {
-	m, err := Ensure(t.TempDir(), time.Now())
+	m, err := Ensure(testsocket.Dir(t), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	runner := &sequenceRunner{errs: []error{errors.New("not present")}}
-	removed, err := (TrustStore{GOOS: "darwin", HomeDir: t.TempDir(), Runner: runner}).Remove(context.Background(), m)
+	removed, err := (TrustStore{GOOS: "darwin", HomeDir: testsocket.Dir(t), Runner: runner}).Remove(context.Background(), m)
 	if err != nil || removed {
 		t.Fatalf("Remove = (%v, %v)", removed, err)
 	}
@@ -586,7 +588,7 @@ func TestMarkerlessRemovalDoesNotDeleteAnUnverifiedCertificate(t *testing.T) {
 }
 
 func TestLegacyTrustMarkerIsReinstalledAndUpgraded(t *testing.T) {
-	m, err := Ensure(t.TempDir(), time.Now())
+	m, err := Ensure(testsocket.Dir(t), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -595,7 +597,7 @@ func TestLegacyTrustMarkerIsReinstalledAndUpgraded(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := &recordingRunner{}
-	installed, err := (TrustStore{GOOS: "darwin", HomeDir: t.TempDir(), Runner: runner}).Install(context.Background(), m)
+	installed, err := (TrustStore{GOOS: "darwin", HomeDir: testsocket.Dir(t), Runner: runner}).Install(context.Background(), m)
 	if err != nil || !installed {
 		t.Fatalf("Install = (%v, %v)", installed, err)
 	}
@@ -612,12 +614,12 @@ func TestLegacyTrustMarkerIsReinstalledAndUpgraded(t *testing.T) {
 }
 
 func TestTrustedRequiresVerifiedMarkerForThisPlatformAndCA(t *testing.T) {
-	m, err := Ensure(t.TempDir(), time.Now())
+	m, err := Ensure(testsocket.Dir(t), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	runner := &recordingRunner{}
-	store := TrustStore{GOOS: "darwin", HomeDir: t.TempDir(), Runner: runner}
+	store := TrustStore{GOOS: "darwin", HomeDir: testsocket.Dir(t), Runner: runner}
 	tests := []struct {
 		name   string
 		marker string
@@ -653,7 +655,7 @@ func TestTrustedRequiresVerifiedMarkerForThisPlatformAndCA(t *testing.T) {
 }
 
 func TestStaleVerifiedMarkerReinstallsPlatformTrust(t *testing.T) {
-	m, err := Ensure(t.TempDir(), time.Now())
+	m, err := Ensure(testsocket.Dir(t), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -662,7 +664,7 @@ func TestStaleVerifiedMarkerReinstallsPlatformTrust(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := &sequenceRunner{errs: []error{errors.New("certificate missing"), nil, nil}}
-	installed, err := (TrustStore{GOOS: "darwin", HomeDir: t.TempDir(), Runner: runner}).Install(context.Background(), m)
+	installed, err := (TrustStore{GOOS: "darwin", HomeDir: testsocket.Dir(t), Runner: runner}).Install(context.Background(), m)
 	if err != nil || !installed {
 		t.Fatalf("stale marker reinstall = (%v, %v)", installed, err)
 	}
@@ -672,11 +674,11 @@ func TestStaleVerifiedMarkerReinstallsPlatformTrust(t *testing.T) {
 }
 
 func TestTrustStoreRequiresRunnerOnlyWhenItMustChangeState(t *testing.T) {
-	m, err := Ensure(t.TempDir(), time.Now())
+	m, err := Ensure(testsocket.Dir(t), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := TrustStore{GOOS: "darwin", HomeDir: t.TempDir()}
+	store := TrustStore{GOOS: "darwin", HomeDir: testsocket.Dir(t)}
 	if _, err := store.Install(context.Background(), m); err == nil || !strings.Contains(err.Error(), "runner") {
 		t.Fatalf("Install error = %v", err)
 	}
@@ -695,7 +697,7 @@ func TestFailedDarwinRemovalPreservesMarkerForRecovery(t *testing.T) {
 		{name: "public certificate", errs: []error{nil, errors.New("keychain locked")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m, err := Ensure(t.TempDir(), time.Now())
+			m, err := Ensure(testsocket.Dir(t), time.Now())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -704,7 +706,7 @@ func TestFailedDarwinRemovalPreservesMarkerForRecovery(t *testing.T) {
 				t.Fatal(err)
 			}
 			runner := &sequenceRunner{errs: tc.errs}
-			removed, err := (TrustStore{GOOS: "darwin", HomeDir: t.TempDir(), Runner: runner}).Remove(context.Background(), m)
+			removed, err := (TrustStore{GOOS: "darwin", HomeDir: testsocket.Dir(t), Runner: runner}).Remove(context.Background(), m)
 			if err == nil || removed {
 				t.Fatalf("Remove = (%v, %v)", removed, err)
 			}
@@ -717,7 +719,7 @@ func TestFailedDarwinRemovalPreservesMarkerForRecovery(t *testing.T) {
 }
 
 func TestTrustCommandsRejectMissingHomeAndUnsupportedVerification(t *testing.T) {
-	m, err := Ensure(t.TempDir(), time.Now())
+	m, err := Ensure(testsocket.Dir(t), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -732,18 +734,18 @@ func TestTrustCommandsRejectMissingHomeAndUnsupportedVerification(t *testing.T) 
 			t.Fatalf("%s verification error = %v", goos, err)
 		}
 	}
-	if _, _, err := trustVerificationCommand("plan9", m, t.TempDir()); err == nil || !strings.Contains(err.Error(), "not yet supported") {
+	if _, _, err := trustVerificationCommand("plan9", m, testsocket.Dir(t)); err == nil || !strings.Contains(err.Error(), "not yet supported") {
 		t.Fatalf("unsupported verification error = %v", err)
 	}
 }
 
 func TestTrustStoreDoesNotMarkFailedInstall(t *testing.T) {
-	m, err := Ensure(t.TempDir(), time.Now())
+	m, err := Ensure(testsocket.Dir(t), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	runner := &recordingRunner{err: errors.New("denied")}
-	_, err = (TrustStore{GOOS: "darwin", HomeDir: t.TempDir(), Runner: runner}).Install(context.Background(), m)
+	_, err = (TrustStore{GOOS: "darwin", HomeDir: testsocket.Dir(t), Runner: runner}).Install(context.Background(), m)
 	if err == nil {
 		t.Fatal("Install succeeded")
 	}
@@ -753,12 +755,12 @@ func TestTrustStoreDoesNotMarkFailedInstall(t *testing.T) {
 }
 
 func TestTrustStoreDoesNotMarkFailedVerification(t *testing.T) {
-	m, err := Ensure(t.TempDir(), time.Now())
+	m, err := Ensure(testsocket.Dir(t), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	runner := &sequenceRunner{errs: []error{nil, errors.New("not trusted")}}
-	_, err = (TrustStore{GOOS: "darwin", HomeDir: t.TempDir(), Runner: runner}).Install(context.Background(), m)
+	_, err = (TrustStore{GOOS: "darwin", HomeDir: testsocket.Dir(t), Runner: runner}).Install(context.Background(), m)
 	if err == nil || !strings.Contains(err.Error(), "verify Wingthing localhost certificate") {
 		t.Fatalf("Install error = %v", err)
 	}
@@ -768,11 +770,11 @@ func TestTrustStoreDoesNotMarkFailedVerification(t *testing.T) {
 }
 
 func TestLinuxTrustStoreIsInitializedWithoutRoot(t *testing.T) {
-	m, err := Ensure(t.TempDir(), time.Now())
+	m, err := Ensure(testsocket.Dir(t), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	runner := &sequenceRunner{}
 	store := TrustStore{GOOS: "linux", HomeDir: home, Runner: runner}
 	installed, err := store.Install(context.Background(), m)
@@ -789,7 +791,7 @@ func TestLinuxTrustStoreIsInitializedWithoutRoot(t *testing.T) {
 }
 
 func TestUnsupportedTrustStoreExplainsWherePublicCAIs(t *testing.T) {
-	m, err := Ensure(t.TempDir(), time.Now())
+	m, err := Ensure(testsocket.Dir(t), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

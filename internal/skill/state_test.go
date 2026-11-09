@@ -2,6 +2,8 @@ package skill
 
 import (
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestStateDefaultEnabled(t *testing.T) {
@@ -35,7 +37,7 @@ func TestStateDisableEnable(t *testing.T) {
 }
 
 func TestStateSaveLoad(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 
 	s := &State{}
 	s.Disable("scorer")
@@ -60,7 +62,7 @@ func TestStateSaveLoad(t *testing.T) {
 }
 
 func TestStateLoadMissing(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	s, err := LoadState(dir)
 	if err != nil {
 		t.Fatalf("load missing: %v", err)

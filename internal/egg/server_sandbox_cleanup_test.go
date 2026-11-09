@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestRunSessionDestroysSandbox(t *testing.T) {
@@ -17,16 +18,9 @@ func TestRunSessionDestroysSandbox(t *testing.T) {
 	if ok, help := sandbox.CheckCapability(); !ok {
 		t.Skip(help)
 	}
-	root, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(root, 0700); err != nil {
-		t.Fatal(err)
-	}
 	for _, scenario := range []string{"exit", "initial turn", "endpoint", "pty", "cancel", "serve error"} {
 		t.Run(scenario, func(t *testing.T) {
-			temp, err := os.MkdirTemp(root, "s")
+			temp, err := os.MkdirTemp("/tmp", "wt")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -35,7 +29,7 @@ func TestRunSessionDestroysSandbox(t *testing.T) {
 			if err := os.MkdirAll(dir, 0700); err != nil {
 				t.Fatal(err)
 			}
-			home, tmp := t.TempDir(), t.TempDir()
+			home, tmp := testsocket.Dir(t), testsocket.Dir(t)
 			t.Setenv("HOME", home)
 			t.Setenv("TMPDIR", tmp)
 			t.Setenv("WINGTHING_DIR", filepath.Join(home, ".wingthing"))

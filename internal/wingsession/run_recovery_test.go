@@ -15,6 +15,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func recoveryRun(t *testing.T, id, phase string) *Run {
@@ -23,7 +24,7 @@ func recoveryRun(t *testing.T, id, phase string) *Run {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Run{ID: id, SessionID: "session-" + id, Agent: "claude", CWD: t.TempDir(), Phase: phase, Prompt: "request", OriginalPrompt: "request", TimeoutSeconds: 60, CreatedAt: time.Now().UTC(), Launch: RunLaunch{Authority: Authority{Principal: "owner", UserID: "owner", Unsandboxed: true}, ConfigYAML: yaml, Options: StartOptions{SessionID: "session-" + id, Agent: "claude"}}, Result: egg.RunTurnResult{RunID: id, SessionID: "session-" + id, Status: "pending", Deadline: time.Now().UTC().Add(time.Minute)}}
+	return &Run{ID: id, SessionID: "session-" + id, Agent: "claude", CWD: testsocket.Dir(t), Phase: phase, Prompt: "request", OriginalPrompt: "request", TimeoutSeconds: 60, CreatedAt: time.Now().UTC(), Launch: RunLaunch{Authority: Authority{Principal: "owner", UserID: "owner", Unsandboxed: true}, ConfigYAML: yaml, Options: StartOptions{SessionID: "session-" + id, Agent: "claude"}}, Result: egg.RunTurnResult{RunID: id, SessionID: "session-" + id, Status: "pending", Deadline: time.Now().UTC().Add(time.Minute)}}
 }
 
 func persistRecoveryRuns(t *testing.T, cfg *config.Config, runs ...*Run) {
@@ -66,7 +67,7 @@ func TestRunRecoveryPersistedBoundaries(t *testing.T) {
 		{name: "terminal", phase: "terminal", status: "done"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			cfg := &config.Config{Dir: t.TempDir()}
+			cfg := &config.Config{Dir: testsocket.Dir(t)}
 			r := recoveryRun(t, "child", test.phase)
 			parent := recoveryRun(t, "parent", "terminal")
 			parent.Result.Status, parent.Result.Text = "timeout", "safe prior partial Ω"
@@ -151,7 +152,7 @@ func TestRunRecoveryPersistedBoundaries(t *testing.T) {
 }
 
 func TestRunRecoveryStopTerminalParentCancelsUnstartedChildren(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	parent := recoveryRun(t, "parent", "terminal")
 	parent.Result.Status, parent.Result.Text = "done", "immutable parent"
 	queued, admitted := recoveryRun(t, "queued", "queued"), recoveryRun(t, "admitted", "admitted")

@@ -21,6 +21,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/orchestrator"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 var errOutputDestination = errors.New("output destination closed")
@@ -40,7 +41,7 @@ func TestRunTaskOutputFailureStopsProvider(t *testing.T) {
 			if config.Channel() == "preview" {
 				t.Skip("direct execution is unavailable in preview")
 			}
-			cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "codex", WingID: "test-wing"}
+			cfg := &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "codex", WingID: "test-wing"}
 			if err := os.MkdirAll(cfg.SkillsDir(), 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -53,8 +54,8 @@ func TestRunTaskOutputFailureStopsProvider(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = db.Close() })
-			workDir := t.TempDir()
-			binDir := t.TempDir()
+			workDir := testsocket.Dir(t)
+			binDir := testsocket.Dir(t)
 			// The provider waits indefinitely with a child and grandchild in its
 			// process group. Publish every PID before emitting any output.
 			script := `#!/bin/sh
@@ -162,13 +163,13 @@ func TestRunTaskCompletedProviderReceipts(t *testing.T) {
 			if config.Channel() == "preview" {
 				t.Skip("direct execution is unavailable in preview")
 			}
-			cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "codex", WingID: "test-wing"}
+			cfg := &config.Config{Dir: testsocket.Dir(t), DefaultAgent: "codex", WingID: "test-wing"}
 			db, err := store.Open(cfg.DBPath())
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = db.Close() })
-			binDir := t.TempDir()
+			binDir := testsocket.Dir(t)
 			script := "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"partial output\"}}'\n"
 			if mode == "provider-failure" {
 				script += "echo 'provider failed' >&2\nexit 1\n"
@@ -177,7 +178,7 @@ func TestRunTaskCompletedProviderReceipts(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", binDir+":/usr/bin:/bin")
-			task := &store.Task{ID: "completed-provider", Type: "prompt", What: "Print output.", RunAt: time.Now(), Agent: "codex", Isolation: "privileged", CWD: t.TempDir()}
+			task := &store.Task{ID: "completed-provider", Type: "prompt", What: "Print output.", RunAt: time.Now(), Agent: "codex", Isolation: "privileged", CWD: testsocket.Dir(t)}
 			if err := db.CreateTask(task); err != nil {
 				t.Fatal(err)
 			}
@@ -220,7 +221,7 @@ func outputFailureFixture(t *testing.T, provider, mode string) (*config.Config, 
 	if config.Channel() == "preview" {
 		t.Skip("direct execution is unavailable in preview")
 	}
-	cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: provider, WingID: "test-wing"}
+	cfg := &config.Config{Dir: testsocket.Dir(t), DefaultAgent: provider, WingID: "test-wing"}
 	if err := os.MkdirAll(cfg.SkillsDir(), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +233,7 @@ func outputFailureFixture(t *testing.T, provider, mode string) (*config.Config, 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	workDir, binDir := t.TempDir(), t.TempDir()
+	workDir, binDir := testsocket.Dir(t), testsocket.Dir(t)
 	event := func(text string) string {
 		switch provider {
 		case "codex":
@@ -396,7 +397,7 @@ func TestRunTaskCLIBrokenPipe(t *testing.T) {
 	if config.Channel() == "preview" {
 		t.Skip("direct execution is unavailable in preview")
 	}
-	binary := filepath.Join(t.TempDir(), "wt")
+	binary := filepath.Join(testsocket.Dir(t), "wt")
 	build := exec.Command("go", "build", "-p", "2", "-o", binary, "./cmd/wt")
 	build.Dir = filepath.Join("..", "..")
 	if out, err := build.CombinedOutput(); err != nil {

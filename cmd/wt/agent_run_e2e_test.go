@@ -25,6 +25,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/wing"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 	"golang.org/x/sys/unix"
@@ -80,7 +81,7 @@ func TestFakeCodexDoesNotAnnounceReadinessAtEmptyStartup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	args, enabled, err := egg.CodexRunArgs([]string{"-m", "fixture-model"}, home, "empty-startup")
 	if err != nil || !enabled {
 		t.Fatalf("native fake setup: %v", err)
@@ -133,9 +134,9 @@ func testBuiltWTStdioWingEggFakeCodexTimeout(t *testing.T, modal, nativeTask boo
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture := t.TempDir()
+	fixture := testsocket.Dir(t)
 	if nativeTask {
-		scratch := filepath.Join(repo, ".scratch")
+		scratch := testprovider.TempDir(t)
 		if err := os.MkdirAll(scratch, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -175,7 +176,7 @@ func testBuiltWTStdioWingEggFakeCodexTimeout(t *testing.T, modal, nativeTask boo
 	if err := os.WriteFile(provider, []byte("#!"+python+"\n"+fakeRunCodex), 0700); err != nil {
 		t.Fatal(err)
 	}
-	scratch := filepath.Join(repo, ".scratch")
+	scratch := testprovider.TempDir(t)
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}

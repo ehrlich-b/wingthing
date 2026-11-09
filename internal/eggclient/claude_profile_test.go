@@ -4,10 +4,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestPrepareIsolatedClaudeConfigLoadsStableWritableProfile(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	legacy := filepath.Join(home, ".claude.json")
 	legacyData := []byte(`{"hasCompletedOnboarding":true,"wtFixture":"persisted"}`)
 	if err := os.WriteFile(legacy, legacyData, 0600); err != nil {
@@ -36,7 +38,7 @@ func TestPrepareIsolatedClaudeConfigLoadsStableWritableProfile(t *testing.T) {
 }
 
 func TestPrepareIsolatedClaudeConfigNeverOverwritesCurrentProfile(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	claudeDir := filepath.Join(home, ".claude")
 	if err := os.MkdirAll(claudeDir, 0700); err != nil {
 		t.Fatal(err)
@@ -61,8 +63,8 @@ func TestPrepareIsolatedClaudeConfigNeverOverwritesCurrentProfile(t *testing.T) 
 }
 
 func TestPrepareIsolatedClaudeConfigDoesNotFollowLegacySymlink(t *testing.T) {
-	home := t.TempDir()
-	outside := filepath.Join(t.TempDir(), "outside.json")
+	home := testsocket.Dir(t)
+	outside := filepath.Join(testsocket.Dir(t), "outside.json")
 	if err := os.WriteFile(outside, []byte(`{"secret":"outside"}`), 0600); err != nil {
 		t.Fatal(err)
 	}

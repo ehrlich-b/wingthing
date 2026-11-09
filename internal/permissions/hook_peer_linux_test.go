@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/ehrlich-b/wingthing/internal/permissionbridge"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"net"
 	"os"
 	"os/exec"
@@ -73,7 +74,7 @@ func TestPermissionPeerBashCannotRegisterOrReplace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings := filepath.Join(t.TempDir(), "settings.json")
+	settings := filepath.Join(testsocket.Dir(t), "settings.json")
 	ready := make(chan int, 1)
 	b, socket := brokerFixture(t, 4*time.Second, func(b *Broker) {
 		b.Authenticate = func(c net.Conn, input *os.File) error {

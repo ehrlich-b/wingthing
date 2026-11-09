@@ -8,10 +8,12 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestCodexSandboxConformance(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	work := filepath.Join(root, "work with spaces")
 	if err := os.Mkdir(work, 0700); err != nil {
 		t.Fatal(err)
@@ -67,7 +69,7 @@ func TestCodexSandboxConformance(t *testing.T) {
 }
 
 func TestCodexSandboxCanonicalRoots(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	work := filepath.Join(home, "work")
 	if err := os.Mkdir(work, 0700); err != nil {
 		t.Fatal(err)
@@ -95,7 +97,7 @@ func TestCodexSandboxOverrideConformance(t *testing.T) {
 }
 
 func TestCodexSandboxLaunchConformance(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	work := filepath.Join(home, "work")
 	if err := os.Mkdir(work, 0700); err != nil {
 		t.Fatal(err)
@@ -103,7 +105,7 @@ func TestCodexSandboxLaunchConformance(t *testing.T) {
 	for _, resume := range []string{"", "exact-thread"} {
 		rc := RunConfig{Agent: "codex", CodexNativeSandbox: true, CWD: work, UserHome: home, FS: []string{"ro:/", "rw:" + work, "deny:" + filepath.Join(home, "private")}, DangerouslySkipPermissions: true, ResumeSessionID: resume}
 		opts := LaunchPreparationOptions{Binary: "/usr/bin/codex", Home: home, HostHome: home, EggDir: filepath.Join(home, "egg"), CodexCapability: SavedCodexCapability("codex-cli 0.159.3")}
-		state, err := NewDryLaunchState(t.TempDir())
+		state, err := NewDryLaunchState(testsocket.Dir(t))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -145,10 +147,10 @@ func TestCodexSandboxNestingAdmission(t *testing.T) {
 		for _, unattended := range []bool{false, true} {
 			for _, native := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/unattended=%t/native-state=%t", platform, unattended, native), func(t *testing.T) {
-					home := t.TempDir()
+					home := testsocket.Dir(t)
 					rc := RunConfig{Agent: "codex", CodexNativeSandbox: true, CWD: home, UserHome: home, DangerouslySkipPermissions: unattended}
 					opts := LaunchPreparationOptions{Binary: "/usr/bin/codex", Home: home, HostHome: home, EggDir: filepath.Join(home, "egg"), Platform: platform, CodexCapability: SavedCodexCapability("codex-cli 0.162.1")}
-					state, err := NewDryLaunchState(t.TempDir())
+					state, err := NewDryLaunchState(testsocket.Dir(t))
 					if err != nil {
 						t.Fatal(err)
 					}

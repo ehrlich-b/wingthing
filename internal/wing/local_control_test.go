@@ -2,6 +2,7 @@ package wing
 
 import (
 	"github.com/ehrlich-b/wingthing/internal/auth"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,7 +11,7 @@ import (
 func TestLocalWingOwnerBindingSurvivesOfflineStart(t *testing.T) {
 	for _, local := range []bool{false, true} {
 		t.Run(map[bool]string{false: "ordinary", true: "local"}[local], func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			ordinary := auth.NewTokenStore(dir)
 			store := ordinary
 			if local {
@@ -54,7 +55,7 @@ func TestLocalWingOwnerBindingSurvivesOfflineStart(t *testing.T) {
 }
 
 func TestLocalWingOwnerBindingRejectsMissingIdentity(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	token := &auth.DeviceToken{Token: "fixture"}
 	store := auth.NewTokenStore(dir)
 	if err := store.Save(token); err != nil {

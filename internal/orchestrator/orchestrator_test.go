@@ -14,6 +14,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/memory"
 	"github.com/ehrlich-b/wingthing/internal/skill"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // mockAgent implements agent.Agent for testing.
@@ -38,7 +39,7 @@ func (m *mockThread) Render(_ context.Context, _ *store.Store, _ time.Time, _ in
 
 func setupMemory(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 
 	write := func(name, content string) {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
@@ -55,7 +56,7 @@ func setupMemory(t *testing.T) string {
 
 func setupSkills(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 
 	skillContent := `---
 name: test-skill
@@ -133,7 +134,7 @@ func setupBuilder(t *testing.T, memDir, skillsDir string, threadContent string) 
 	// Actually config.SkillsDir() = filepath.Join(c.Dir, "skills")
 	// So set Dir to parent of skills dir, then create skills subdir
 	// Easier: just set Dir to a temp dir and copy skills there
-	wtDir := t.TempDir()
+	wtDir := testsocket.Dir(t)
 	if err := os.MkdirAll(filepath.Join(wtDir, "skills"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +395,7 @@ func TestBuildSkillTaskNoAgentFlag(t *testing.T) {
 
 func TestBuildSkillTaskMountsAndTimeout(t *testing.T) {
 	memDir := setupMemory(t)
-	skillsDir := t.TempDir()
+	skillsDir := testsocket.Dir(t)
 
 	skillContent := `---
 name: mount-skill
@@ -600,7 +601,7 @@ func TestBuildWithThread(t *testing.T) {
 
 func TestCompressSkillE2E(t *testing.T) {
 	// Set up memory dir with index + feeds
-	memDir := t.TempDir()
+	memDir := testsocket.Dir(t)
 	if err := os.WriteFile(filepath.Join(memDir, "index.md"), []byte("# Memory Index\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -611,7 +612,7 @@ func TestCompressSkillE2E(t *testing.T) {
 	}
 
 	// Set up skills dir with compress skill
-	skillsDir := t.TempDir()
+	skillsDir := testsocket.Dir(t)
 	compressSkill := `---
 name: compress
 description: Fetch RSS feeds and compress articles to 1024 chars

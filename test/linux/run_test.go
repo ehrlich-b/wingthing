@@ -21,6 +21,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestMain(m *testing.M) {
@@ -54,8 +56,8 @@ func batteryPrerequisites() []string {
 }
 
 func TestBatteryPrerequisitesReportAllMissing(t *testing.T) {
-	t.Setenv("WT_TEST_BIN_DIR", t.TempDir())
-	t.Setenv("PATH", t.TempDir())
+	t.Setenv("WT_TEST_BIN_DIR", testsocket.Dir(t))
+	t.Setenv("PATH", testsocket.Dir(t))
 	t.Setenv("WT_TEST_USER", "wingthing-user-that-does-not-exist")
 	missing := strings.Join(batteryPrerequisites(), "\n")
 	for _, want := range []string{
@@ -132,7 +134,7 @@ func testUserTempDir(t *testing.T, name string) string {
 	if err != nil {
 		t.Fatalf("parse gid %q for %s: %v", account.Gid, name, err)
 	}
-	dir, err := os.MkdirTemp("", "wt-user-cwd-*")
+	dir, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatalf("create test-user cwd: %v", err)
 	}
@@ -232,7 +234,7 @@ func runEgg(t *testing.T, extraFS []string, extraNetwork []string) (*probeResult
 	defer os.Remove(deniedCanary)
 
 	// Create a temp working directory for the egg
-	cwd := t.TempDir()
+	cwd := testsocket.Dir(t)
 
 	sessionID := fmt.Sprintf("test-%d", time.Now().UnixNano()%100000)
 
@@ -478,7 +480,7 @@ func runRealAgent(t *testing.T, agentName, commandName, agentBin string, writeDi
 		os.MkdirAll(filepath.Join(home, dir), 0700)
 	}
 
-	cwd := t.TempDir()
+	cwd := testsocket.Dir(t)
 	sessionID := fmt.Sprintf("test-real-%d", time.Now().UnixNano()%100000)
 
 	// Create a shim under the canonical executable name the catalog resolves.
@@ -684,7 +686,7 @@ func TestRealOllamaToolCalling(t *testing.T) {
 		t.Skipf("Ollama model %s is not installed", model)
 	}
 
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	cases := []struct {
 		name    string
 		path    string
@@ -920,7 +922,7 @@ func TestTraceMode(t *testing.T) {
 	os.MkdirAll(logsDir, 0700)
 	os.MkdirAll(filepath.Join(home, ".claude"), 0700)
 
-	cwd := t.TempDir()
+	cwd := testsocket.Dir(t)
 	sessionID := fmt.Sprintf("test-trace-%d", time.Now().UnixNano()%100000)
 
 	args := []string{"egg", "run",
@@ -993,7 +995,7 @@ func TestDenyInitFailsClosedOnRejectedMount(t *testing.T) {
 		t.Skip("the wt executable already has an AppArmor profile")
 	}
 
-	tmp := t.TempDir()
+	tmp := testsocket.Dir(t)
 	denied := filepath.Join(tmp, "denied")
 	if err := os.MkdirAll(denied, 0700); err != nil {
 		t.Fatal(err)

@@ -2,12 +2,13 @@ package sessionrole
 
 import (
 	"github.com/ehrlich-b/wingthing/internal/fleet"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"testing"
 	"time"
 )
 
 func TestCoordinatorPresenceRecordedStaleDeadAndUnknown(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	now := time.Now().UTC()
 	if p := ReadPresence(dir, true, "", "", now); p.State != "unknown" || !p.Stale {
 		t.Fatalf("invented heartbeat: %+v", p)
@@ -35,7 +36,7 @@ func TestCoordinatorPresenceRecordedStaleDeadAndUnknown(t *testing.T) {
 }
 
 func TestCoordinatorPresenceNativeEvidenceDoesNotRefreshOnRead(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	now := time.Now().UTC()
 	old := now.Add(-time.Hour).Format(time.RFC3339Nano)
 	for _, readAt := range []time.Time{now, now.Add(time.Minute)} {

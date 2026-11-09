@@ -5,10 +5,11 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/relay"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestEnsureSelfHostedProIsAtomicAndIdempotent(t *testing.T) {
-	store, err := relay.OpenRelay(filepath.Join(t.TempDir(), "relay.db"))
+	store, err := relay.OpenRelay(filepath.Join(testsocket.Dir(t), "relay.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +40,7 @@ func TestEnsureSelfHostedProIsAtomicAndIdempotent(t *testing.T) {
 }
 
 func TestEnsureSelfHostedProRepairsExistingSubscriptionWithoutEntitlement(t *testing.T) {
-	store, err := relay.OpenRelay(filepath.Join(t.TempDir(), "relay.db"))
+	store, err := relay.OpenRelay(filepath.Join(testsocket.Dir(t), "relay.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

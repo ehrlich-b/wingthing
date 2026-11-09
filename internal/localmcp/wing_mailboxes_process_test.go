@@ -145,8 +145,8 @@ func builtScopedParentProtocol(t *testing.T, exitParent bool) {
 	}
 	localGate := testprovider.NewCompletionGate(t, work)
 	remoteGate := testprovider.NewCompletionGate(t, remoteWork)
-	localState := testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))
-	remoteState := testprovider.ShortStateDir(t, filepath.Join(repo, ".scratch"))
+	localState := testprovider.ShortStateDir(t, testprovider.TempDir(t))
+	remoteState := testprovider.ShortStateDir(t, testprovider.TempDir(t))
 	path := bin + string(os.PathListSeparator) + h.Root + string(os.PathListSeparator) + os.Getenv("PATH")
 	t.Setenv("HOME", home)
 	t.Setenv("PATH", path)

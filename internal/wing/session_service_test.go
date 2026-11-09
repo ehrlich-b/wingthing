@@ -210,22 +210,19 @@ type sessionTransportFixture struct {
 
 func newSessionTransportFixture(t *testing.T) *sessionTransportFixture {
 	t.Helper()
-	home := config.CanonicalProviderPath(t.TempDir())
+	home := testprovider.TempDir(t)
 	t.Setenv("HOME", home)
 	work := filepath.Join(home, "work")
 	if err := os.Mkdir(work, 0700); err != nil {
 		t.Fatal(err)
 	}
-	// Reserve the full runtime ID width within Darwin's Unix socket limit.
+	// Keep state independent of checkout depth within Darwin's socket limit.
 	// State is physical so provider readers can pin directories with O_NOFOLLOW.
-	scratch, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	scratch := testprovider.TempDir(t)
 	state := testprovider.ShortStateDir(t, scratch)
 	t.Setenv("WINGTHING_DIR", state)
 	cfg := &config.Config{Dir: state, WingID: "fixture-wing", DefaultAgent: "claude"}
-	if _, err = auth.EnsureKeyPair(state); err != nil {
+	if _, err := auth.EnsureKeyPair(state); err != nil {
 		t.Fatal(err)
 	}
 	wingKey, err := auth.LoadPrivateKey(state)

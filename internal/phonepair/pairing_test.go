@@ -20,6 +20,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/pake"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 type fixtureHandler struct {
@@ -50,7 +51,7 @@ func fixture(t *testing.T) *phoneFixture {
 		t.Fatal(e)
 	}
 	handler := &fixtureHandler{}
-	m, e := New(t.TempDir(), "main-wing", "my-mac", "http://192.168.1.40:6078", nil, private, handler)
+	m, e := New(testsocket.Dir(t), "main-wing", "my-mac", "http://192.168.1.40:6078", nil, private, handler)
 	if e != nil {
 		t.Fatal(e)
 	}

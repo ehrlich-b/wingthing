@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -122,7 +123,7 @@ func TestTunnelKeyCacheConcurrentInsertionsStayBounded(t *testing.T) {
 }
 
 func TestSessionHistoryFiltersBeforePagination(t *testing.T) {
-	workspace := t.TempDir()
+	workspace := testsocket.Dir(t)
 	member := ws.TunnelRequest{SenderUserID: "alice", SenderOrgRole: "member"}
 	sessions := []pastSessionInfo{
 		{SessionID: "hidden-newest", UserID: "mallory", CWD: workspace},

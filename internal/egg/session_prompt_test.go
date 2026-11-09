@@ -13,6 +13,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func promptFixtureOptions(t *testing.T) (dir, path string, o SessionPromptOptions) {
@@ -460,8 +462,8 @@ func TestSessionPromptComposedTextBothProviders(t *testing.T) {
 				var sends int
 				var publish func()
 				if agent == "codex" {
-					dir = t.TempDir()
-					home := t.TempDir()
+					dir = testsocket.Dir(t)
+					home := testsocket.Dir(t)
 					spool := filepath.Join(home, ".codex", "wingthing-events", filepath.Base(dir))
 					if err := os.MkdirAll(spool, 0700); err != nil {
 						t.Fatal(err)

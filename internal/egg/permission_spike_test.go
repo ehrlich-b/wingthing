@@ -6,12 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 // The experiment enters through invocation settings; existing observer hooks
 // remain present and never become decision-producing hooks.
 func TestPermissionSpikePreservesLifecycleObservers(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	settings := filepath.Join(home, "spike-settings.json")
 	data := `{"hooks":{"PermissionRequest":[{"matcher":"Bash","hooks":[{"type":"command","command":"fixture hook","timeout":5}]}],"Stop":[{"hooks":[{"type":"command","command":"fixture stop"}]}]}}`
 	if err := os.WriteFile(settings, []byte(data), 0600); err != nil {

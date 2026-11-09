@@ -3,10 +3,12 @@ package promptmgr
 import (
 	"strings"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestSaveRenderHistoryAndConflict(t *testing.T) {
-	store := New(t.TempDir())
+	store := New(testsocket.Dir(t))
 	first, err := store.Save(Asset{
 		Name: "review", Description: "Review a change", Template: "Review {{.target}}",
 		Variables: []string{"target"}, Agent: "codex", CWD: "/work/repo",
@@ -52,7 +54,7 @@ func TestSaveRenderHistoryAndConflict(t *testing.T) {
 }
 
 func TestValidationAndRenderFailures(t *testing.T) {
-	store := New(t.TempDir())
+	store := New(testsocket.Dir(t))
 	if _, err := store.Save(Asset{Name: "../escape", Template: "no"}, ""); err == nil {
 		t.Fatal("path traversal name was accepted")
 	}

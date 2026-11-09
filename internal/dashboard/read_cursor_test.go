@@ -2,11 +2,12 @@ package dashboard
 
 import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"testing"
 )
 
 func TestDashboardDurableUnreadSurvivesReopenAndKeepsRoutesSeparate(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	mk := func(completion int64) *state {
 		s := &state{localDir: dir, persistAttention: true, machines: map[string]machine{"local": {sessions: []eggclient.LocalSession{{ID: "same", State: "completed", StateSource: "claude_hook", StateCursor: completion, CompletionCursor: completion}}}}}
 		s.loadReadCursors()
@@ -42,7 +43,7 @@ func TestDashboardDurableUnreadSurvivesReopenAndKeepsRoutesSeparate(t *testing.T
 }
 
 func TestDashboardFirstBaselineDecidedUnderLock(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	a := &state{localDir: dir, persistAttention: true}
 	a.loadReadCursors()
 	b := &state{localDir: dir, persistAttention: true}
@@ -61,7 +62,7 @@ func TestDashboardFirstBaselineDecidedUnderLock(t *testing.T) {
 }
 
 func TestDashboardDelayedBaselineNeverRegressesSavedRead(t *testing.T) {
-	s := &state{localDir: t.TempDir(), persistAttention: true}
+	s := &state{localDir: testsocket.Dir(t), persistAttention: true}
 	id := attentionIdentity{machine: "local", session: "same", localDir: s.localDir}
 	s.saveReadCursor(id, 2)
 	if got := s.baselineReadCursor(id, 1); got != 1 {

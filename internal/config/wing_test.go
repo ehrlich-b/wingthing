@@ -7,12 +7,14 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestWingConversationsOptInRoundTrip(t *testing.T) {
 	for _, value := range []string{"", ConversationsEnabled, ConversationsDisabled} {
 		t.Run(value, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			if err := SaveWingConfig(dir, &WingConfig{WingID: "wing-1", Conversations: value}); err != nil {
 				t.Fatal(err)
 			}
@@ -29,7 +31,7 @@ func TestWingConversationsOptInRoundTrip(t *testing.T) {
 		})
 	}
 	for _, invalid := range []string{"allow", "true", "enable"} {
-		dir := t.TempDir()
+		dir := testsocket.Dir(t)
 		if err := SaveWingConfig(dir, &WingConfig{Conversations: invalid}); err == nil {
 			t.Fatalf("saved invalid conversations value %q", invalid)
 		}
@@ -50,7 +52,7 @@ func TestPreviewConversationsOptInStillRefusesHostedRelays(t *testing.T) {
 		if err := ValidatePreviewRelay(relay); err == nil {
 			t.Fatalf("preview accepted hosted relay %s", relay)
 		}
-		dir := t.TempDir()
+		dir := testsocket.Dir(t)
 		if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte("conversations: enabled\nhosted_relay: allow\nroost: "+relay+"\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -61,7 +63,7 @@ func TestPreviewConversationsOptInStillRefusesHostedRelays(t *testing.T) {
 }
 
 func TestSaveWingConfigRestrictsSigningKeyFile(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	path := filepath.Join(dir, "wing.yaml")
 	if err := os.WriteFile(path, []byte("wing_id: old\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -79,8 +81,8 @@ func TestSaveWingConfigRestrictsSigningKeyFile(t *testing.T) {
 }
 
 func TestSaveWingConfigAtomicallyReplacesSymlinkWithoutFollowingIt(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(t.TempDir(), "unrelated")
+	dir := testsocket.Dir(t)
+	target := filepath.Join(testsocket.Dir(t), "unrelated")
 	if err := os.WriteFile(target, []byte("do not overwrite"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +121,7 @@ func TestSaveWingConfigAtomicallyReplacesSymlinkWithoutFollowingIt(t *testing.T)
 }
 
 func TestSaveWingConfigReportsDirectoryCreationFailure(t *testing.T) {
-	parent := t.TempDir()
+	parent := testsocket.Dir(t)
 	blocker := filepath.Join(parent, "not-a-directory")
 	if err := os.WriteFile(blocker, []byte("file"), 0o600); err != nil {
 		t.Fatal(err)
@@ -131,7 +133,7 @@ func TestSaveWingConfigReportsDirectoryCreationFailure(t *testing.T) {
 
 func TestLoadWingConfigDirectMCPIsAdditiveAndStrict(t *testing.T) {
 	t.Run("legacy config keeps implicit compatibility policy", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := testsocket.Dir(t)
 		if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte("wing_id: legacy\npaths: [~/repos]\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -145,7 +147,7 @@ func TestLoadWingConfigDirectMCPIsAdditiveAndStrict(t *testing.T) {
 	})
 
 	t.Run("valid restrictions load without changing old fields", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := testsocket.Dir(t)
 		body := `wing_id: current
 label: office
 direct_mcp:
@@ -176,7 +178,7 @@ direct_mcp:
 		"empty grant":         "  allow_grants: ['']\n",
 	} {
 		t.Run(name+" fails closed", func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			body := "direct_mcp:\n" + direct
 			if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte(body), 0o600); err != nil {
 				t.Fatal(err)
@@ -190,7 +192,7 @@ direct_mcp:
 
 func TestLoadWingConfigHostedRelayIsAdditiveAndStrict(t *testing.T) {
 	t.Run("legacy config keeps hosted relay compatibility", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := testsocket.Dir(t)
 		if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte("wing_id: legacy\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -208,7 +210,7 @@ func TestLoadWingConfigHostedRelayIsAdditiveAndStrict(t *testing.T) {
 
 	for _, policy := range []string{HostedRelayAllow, HostedRelayDeny} {
 		t.Run(policy+" loads", func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			body := "hosted_relay: " + policy + "\n"
 			if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte(body), 0o600); err != nil {
 				t.Fatal(err)
@@ -224,7 +226,7 @@ func TestLoadWingConfigHostedRelayIsAdditiveAndStrict(t *testing.T) {
 	}
 
 	t.Run("unknown policy fails closed", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := testsocket.Dir(t)
 		if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte("hosted_relay: sometimes\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -345,8 +347,8 @@ func TestPathsForUser(t *testing.T) {
 }
 
 func TestExportTargetsRequireExplicitMemberAndAbsoluteUniquePath(t *testing.T) {
-	dir := t.TempDir()
-	exportRoot := t.TempDir()
+	dir := testsocket.Dir(t)
+	exportRoot := testsocket.Dir(t)
 	body := "exports:\n  - name: isolated\n    path: " + exportRoot + "\n    members: [support@example.com]\n"
 	if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -368,7 +370,7 @@ func TestExportTargetsRequireExplicitMemberAndAbsoluteUniquePath(t *testing.T) {
 		"duplicate name": "exports:\n  - name: isolated\n    path: " + exportRoot + "\n    members: [a@example.com]\n  - name: isolated\n    path: " + filepath.Join(dir, "other") + "\n    members: [b@example.com]\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			caseDir := t.TempDir()
+			caseDir := testsocket.Dir(t)
 			if err := os.WriteFile(filepath.Join(caseDir, "wing.yaml"), []byte(invalid), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -380,13 +382,13 @@ func TestExportTargetsRequireExplicitMemberAndAbsoluteUniquePath(t *testing.T) {
 }
 
 func TestExportTargetMustBeOutsideStateAndConfiguredWorkspaces(t *testing.T) {
-	workspace := t.TempDir()
+	workspace := testsocket.Dir(t)
 	for name, target := range map[string]string{
 		"wing state": "STATE_EXPORT",
 		"workspace":  filepath.Join(workspace, "exports"),
 	} {
 		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			if target == "STATE_EXPORT" {
 				target = filepath.Join(dir, "exports")
 			}
@@ -402,8 +404,8 @@ func TestExportTargetMustBeOutsideStateAndConfiguredWorkspaces(t *testing.T) {
 }
 
 func TestSaveWingConfigRejectsExportOverlapAfterPathMutation(t *testing.T) {
-	dir := t.TempDir()
-	workspace := t.TempDir()
+	dir := testsocket.Dir(t)
+	workspace := testsocket.Dir(t)
 	cfg := &WingConfig{
 		Exports: []ExportTarget{{Name: "isolated", Path: filepath.Join(workspace, "export"), Members: []string{"member@example.com"}}},
 	}
@@ -424,8 +426,8 @@ func TestSaveWingConfigRejectsExportOverlapAfterPathMutation(t *testing.T) {
 }
 
 func TestValidateExportsChecksLegacyRootWithoutMutatingConfig(t *testing.T) {
-	dir := t.TempDir()
-	workspace := t.TempDir()
+	dir := testsocket.Dir(t)
+	workspace := testsocket.Dir(t)
 	cfg := &WingConfig{
 		Root:    workspace,
 		Exports: []ExportTarget{{Name: "isolated", Path: filepath.Join(workspace, "export"), Members: []string{"member@example.com"}}},

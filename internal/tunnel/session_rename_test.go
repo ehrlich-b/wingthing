@@ -12,12 +12,13 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 func TestSessionRenameCreatesEggsDirectoryForStoreLock(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
-	workspace := t.TempDir()
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
+	workspace := testsocket.Dir(t)
 	sessions := []ws.SessionInfo{{SessionID: "first", UserID: "alice", CWD: workspace}}
 	err := renameTunnelSession(cfg, ws.TunnelRequest{SenderUserID: "alice"}, "first", "shared", sessions, []string{workspace})
 	if err == nil || !strings.Contains(err.Error(), "write session name") {
@@ -33,8 +34,8 @@ func TestSessionRenameCreatesEggsDirectoryForStoreLock(t *testing.T) {
 }
 
 func TestTunnelSessionRenameHoldsStoreLockThroughUniquenessCheck(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
-	workspace := t.TempDir()
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
+	workspace := testsocket.Dir(t)
 	writeActiveRenameFixture(t, cfg, "first", "alice", workspace, "one")
 	writeActiveRenameFixture(t, cfg, "second", "alice", workspace, "two")
 	sessions := []ws.SessionInfo{{SessionID: "first", UserID: "alice", CWD: workspace}}
@@ -75,8 +76,8 @@ func TestTunnelSessionRenameHoldsStoreLockThroughUniquenessCheck(t *testing.T) {
 }
 
 func TestTunnelSessionRenameHidesCrossOwnerCollisionAndAllowsOwnedRename(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
-	workspace := t.TempDir()
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
+	workspace := testsocket.Dir(t)
 	writeActiveRenameFixture(t, cfg, "alice-session", "alice", workspace, "alice-old")
 	writeActiveRenameFixture(t, cfg, "bob-private-session", "bob", workspace, "shared-name")
 

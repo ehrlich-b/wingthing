@@ -9,10 +9,11 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestSessionReportCLIRecordsExactSessionAndRejectsUnknownFields(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	t.Setenv("WINGTHING_DIR", dir)
 	sessionDir := filepath.Join(dir, "eggs", "report-target")
 	if err := os.MkdirAll(sessionDir, 0700); err != nil {

@@ -8,13 +8,14 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestPreviewUpdateRefusesStableNamesSymlinksAndHardlinks(t *testing.T) {
 	old := config.ReleaseChannel
 	config.ReleaseChannel = "preview"
 	t.Cleanup(func() { config.ReleaseChannel = old })
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	stable := filepath.Join(dir, "wt")
 	if err := os.WriteFile(stable, []byte("stable"), 0755); err != nil {
 		t.Fatal(err)

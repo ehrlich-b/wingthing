@@ -17,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/controlsocket"
 	"github.com/ehrlich-b/wingthing/internal/sshcontrol"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/testssh"
 )
 
@@ -196,7 +197,7 @@ func TestSSHInspectUsageErrorsSuggestWTBinary(t *testing.T) {
 		{"wing control socket does not exist", 1, false},
 	} {
 		t.Run(test.diagnostic, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			ssh := filepath.Join(dir, "ssh")
 			script := fmt.Sprintf("#!/bin/sh\ncat >&2 <<'DIAGNOSTIC'\n%s\nDIAGNOSTIC\nexit %d\n", test.diagnostic, test.code)
 			if err := os.WriteFile(ssh, []byte(script), 0700); err != nil {
@@ -215,7 +216,7 @@ func TestSSHInspectUsageErrorsSuggestWTBinary(t *testing.T) {
 
 func TestSSHInspectRejectsInvalidBinaryBeforeSSH(t *testing.T) {
 	for _, binary := range []string{"~/bin/wt", "bin/wt", "wt;true", "/bin/wt\n", "/bin/wt\x00"} {
-		_, err := (sshcontrol.Transport{SSHPath: filepath.Join(t.TempDir(), "must-not-run-ssh")}).Inspect(t.Context(), "host", "", binary, "")
+		_, err := (sshcontrol.Transport{SSHPath: filepath.Join(testsocket.Dir(t), "must-not-run-ssh")}).Inspect(t.Context(), "host", "", binary, "")
 		if err == nil || !strings.Contains(err.Error(), "wt-binary") {
 			t.Errorf("invalid binary %q: %v", binary, err)
 		}

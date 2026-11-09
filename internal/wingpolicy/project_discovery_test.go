@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -44,7 +45,7 @@ func requireProjectPaths(t *testing.T, projects []ws.WingProject, paths ...strin
 }
 
 func TestDiscoverWingProjectsLinkedWorktrees(t *testing.T) {
-	base := t.TempDir()
+	base := testsocket.Dir(t)
 	primary := discoveryRepository(t, base)
 	root := filepath.Join(base, "worktrees")
 	first := filepath.Join(root, "first")
@@ -72,7 +73,7 @@ func TestDiscoverWingProjectsConfiguredGitRootRoleChildren(t *testing.T) {
 			name = "worktree"
 		}
 		t.Run(name, func(t *testing.T) {
-			base := t.TempDir()
+			base := testsocket.Dir(t)
 			primary := discoveryRepository(t, base)
 			root := primary
 			if linked {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func previewProviderFixture(t *testing.T, script string) previewProviderProfile {
@@ -20,7 +21,7 @@ func previewProviderFixture(t *testing.T, script string) previewProviderProfile 
 	old := config.ReleaseChannel
 	config.ReleaseChannel = "preview"
 	t.Cleanup(func() { config.ReleaseChannel = old })
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	t.Setenv("HOME", filepath.Join(root, "host-home"))
 	t.Setenv("WINGTHING_DIR", filepath.Join(root, "preview state"))
 	t.Setenv("WINGTHING_PREVIEW_DIR", "")

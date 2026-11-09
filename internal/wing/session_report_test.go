@@ -9,10 +9,11 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/sessionrole"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestSessionReportStoppedPinSurvivesWebInventoryWithoutChangingActiveDiscovery(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	for _, id := range []string{"coordinator", "ordinary"} {
 		dir := filepath.Join(cfg.Dir, "eggs", id)
 		if err := os.MkdirAll(dir, 0700); err != nil {

@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/runinspect"
@@ -25,8 +24,14 @@ func cliRoundTripFixture(t *testing.T) (string, *fixture.Builder) {
 	if binary == "" || root == "" {
 		t.Fatal("built binary and scratch fixture root required; run make test-run-inspect-roundtrip")
 	}
-	workspace, err := os.MkdirTemp(root, strings.ReplaceAll(t.Name(), "/", "_")+"-")
+	// Retain the offline input and serialized CLI reports at the caller's
+	// requested root; this fixture opens no sockets or provider processes.
+	dir, err := os.MkdirTemp(root, "cli-roundtrip-")
 	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := filepath.Join(dir, ".scratch")
+	if err := os.Mkdir(workspace, 0700); err != nil {
 		t.Fatal(err)
 	}
 	return binary, fixture.New(t, filepath.Join(workspace, "snapshot"))

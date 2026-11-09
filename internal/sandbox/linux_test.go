@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestNetworkBridgeCloseJoinsIdleReceiver(t *testing.T) {
@@ -52,7 +54,7 @@ func TestLinuxSandboxConcurrentDestroy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &linuxSandbox{tmpDir: t.TempDir(), networkBridge: bridge}
+	s := &linuxSandbox{tmpDir: testsocket.Dir(t), networkBridge: bridge}
 	start, results := make(chan struct{}), make(chan error, 2)
 	for range 2 {
 		go func() { <-start; results <- s.Destroy() }()
@@ -313,7 +315,7 @@ func TestExecPassesRlimitsToWrapper(t *testing.T) {
 	jailConfig.Deny = []string{"/"}
 	for name, cfg := range map[string]Config{"none": {}, "limits": limitsConfig, "jail": jailConfig} {
 		t.Run(name, func(t *testing.T) {
-			s := &linuxSandbox{cfg: cfg, tmpDir: t.TempDir()}
+			s := &linuxSandbox{cfg: cfg, tmpDir: testsocket.Dir(t)}
 			cmd, err := s.Exec(context.Background(), "/bin/sh", []string{"-c", "ulimit -n"})
 			if err != nil {
 				t.Fatal(err)

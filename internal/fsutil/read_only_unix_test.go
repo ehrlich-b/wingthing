@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestOpenBoundedRegularRejectsFIFOWithoutOpening(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "fifo")
+	path := filepath.Join(testsocket.Dir(t), "fifo")
 	if err := syscall.Mkfifo(path, 0600); err != nil {
 		t.Fatal(err)
 	}

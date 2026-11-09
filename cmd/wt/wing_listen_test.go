@@ -15,6 +15,9 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/pake"
 	"github.com/ehrlich-b/wingthing/internal/phonepair"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
+
+	"github.com/ehrlich-b/wingthing/internal/testprovider"
 )
 
 func TestWingListenHelpAndValidation(t *testing.T) {
@@ -48,7 +51,7 @@ func TestBuiltWTLocalOnlyListen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := localOnlyFixtureBinary(t, repo, t.TempDir())
+	binary := localOnlyFixtureBinary(t, repo, testsocket.Dir(t))
 	// A local interface is used only to connect back to this test's own listener.
 	lan := ""
 	addrs, err := net.InterfaceAddrs()
@@ -89,7 +92,7 @@ func TestBuiltWTLocalOnlyListen(t *testing.T) {
 				}
 				probe.Close()
 			}
-			scratch := filepath.Join(repo, ".scratch")
+			scratch := testprovider.TempDir(t)
 			if err := os.MkdirAll(scratch, 0700); err != nil {
 				t.Fatal(err)
 			}

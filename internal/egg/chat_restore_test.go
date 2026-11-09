@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func writeRestoreFixture(t *testing.T, eggDir, meta, content string) {
@@ -31,8 +33,8 @@ func writeRestoreFixture(t *testing.T, eggDir, meta, content string) {
 }
 
 func TestRestoreSessionHistory_Claude(t *testing.T) {
-	home := t.TempDir()
-	eggDir := t.TempDir()
+	home := testsocket.Dir(t)
+	eggDir := testsocket.Dir(t)
 	cwd := "/Users/test/project"
 
 	// Create chat.meta
@@ -61,7 +63,7 @@ func TestRestoreSessionHistory_Claude(t *testing.T) {
 }
 
 func TestRestoreSessionHistory_NoChat(t *testing.T) {
-	eggDir := t.TempDir()
+	eggDir := testsocket.Dir(t)
 	_, err := RestoreSessionHistory("claude", "/tmp", eggDir, "/home/test")
 	if err == nil {
 		t.Error("expected error for missing chat history")
@@ -69,12 +71,12 @@ func TestRestoreSessionHistory_NoChat(t *testing.T) {
 }
 
 func TestRestoreSessionHistory_BadMeta(t *testing.T) {
-	eggDir := t.TempDir()
+	eggDir := testsocket.Dir(t)
 
 	// Create invalid chat.meta (missing agent_session_id)
 	writeRestoreFixture(t, eggDir, "agent=claude\n", "test")
 
-	_, err := RestoreSessionHistory("claude", "/tmp", eggDir, t.TempDir())
+	_, err := RestoreSessionHistory("claude", "/tmp", eggDir, testsocket.Dir(t))
 	if err == nil {
 		t.Error("expected error for bad meta")
 	}
@@ -83,8 +85,8 @@ func TestRestoreSessionHistory_BadMeta(t *testing.T) {
 func TestRestoreSessionHistory_RejectsInvalidSessionID(t *testing.T) {
 	for _, id := range []string{"../outside", "..", ".", "dir/session", strings.Repeat("x", 241)} {
 		t.Run(id, func(t *testing.T) {
-			eggDir := t.TempDir()
-			home := t.TempDir()
+			eggDir := testsocket.Dir(t)
+			home := testsocket.Dir(t)
 			meta := "agent_session_id=" + id + "\nagent=claude\nformat=jsonl\ncwd=/tmp/project\n"
 			writeRestoreFixture(t, eggDir, meta, "sensitive")
 
@@ -99,8 +101,8 @@ func TestRestoreSessionHistory_RejectsInvalidSessionID(t *testing.T) {
 }
 
 func TestRestoreSessionHistory_RejectsExistingSymlinkWithoutFollowingIt(t *testing.T) {
-	home := t.TempDir()
-	eggDir := t.TempDir()
+	home := testsocket.Dir(t)
+	eggDir := testsocket.Dir(t)
 	cwd := "/Users/test/project"
 	meta := "agent_session_id=abc123\nagent=claude\nformat=jsonl\ncwd=/Users/test/project\n"
 	writeRestoreFixture(t, eggDir, meta, "restored transcript\n")
@@ -109,7 +111,7 @@ func TestRestoreSessionHistory_RejectsExistingSymlinkWithoutFollowingIt(t *testi
 	if err := os.MkdirAll(dstDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	target := filepath.Join(t.TempDir(), "must-not-change")
+	target := filepath.Join(testsocket.Dir(t), "must-not-change")
 	if err := os.WriteFile(target, []byte("original"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -138,8 +140,8 @@ func TestRestoreSessionHistory_RejectsExistingSymlinkWithoutFollowingIt(t *testi
 }
 
 func TestRestoreSessionHistoryRejectsProviderRollbackAndAllowsIdenticalRetry(t *testing.T) {
-	home := t.TempDir()
-	eggDir := t.TempDir()
+	home := testsocket.Dir(t)
+	eggDir := testsocket.Dir(t)
 	cwd := "/tmp/project"
 	meta := "agent_session_id=abc123\nagent=claude\nformat=jsonl\ncwd=/tmp/project\n"
 	writeRestoreFixture(t, eggDir, meta, "snapshot\n")
@@ -173,10 +175,10 @@ func TestRestoreSessionHistoryRejectsProviderRollbackAndAllowsIdenticalRetry(t *
 }
 
 func TestRestoreSessionHistorySerializesConflictingConcurrentResumes(t *testing.T) {
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	cwd := "/tmp/project"
 	meta := "agent_session_id=shared-id\nagent=claude\nformat=jsonl\ncwd=/tmp/project\n"
-	dirs := []string{t.TempDir(), t.TempDir()}
+	dirs := []string{testsocket.Dir(t), testsocket.Dir(t)}
 	writeRestoreFixture(t, dirs[0], meta, "first\n")
 	writeRestoreFixture(t, dirs[1], meta, "second\n")
 	var wg sync.WaitGroup
@@ -205,9 +207,9 @@ func TestRestoreSessionHistorySerializesConflictingConcurrentResumes(t *testing.
 }
 
 func TestRestoreSessionHistoryPreservesCLICrossCWDCompatibility(t *testing.T) {
-	eggDir := t.TempDir()
+	eggDir := testsocket.Dir(t)
 	writeRestoreFixture(t, eggDir, "agent_session_id=abc\nagent=claude\nformat=jsonl\ncwd=/tmp/a\n", "content")
-	home := t.TempDir()
+	home := testsocket.Dir(t)
 	if _, err := RestoreSessionHistory("claude", "/tmp/b", eggDir, home); err != nil {
 		t.Fatalf("cross-CWD CLI restore failed: %v", err)
 	}
@@ -218,20 +220,20 @@ func TestRestoreSessionHistoryPreservesCLICrossCWDCompatibility(t *testing.T) {
 }
 
 func TestRestoreSessionHistoryRejectsMismatchedAgent(t *testing.T) {
-	eggDir := t.TempDir()
+	eggDir := testsocket.Dir(t)
 	writeRestoreFixture(t, eggDir, "agent_session_id=abc\nagent=claude\nformat=jsonl\ncwd=/tmp/a\n", "content")
-	if _, err := RestoreSessionHistory("codex", "/tmp/a", eggDir, t.TempDir()); err == nil {
+	if _, err := RestoreSessionHistory("codex", "/tmp/a", eggDir, testsocket.Dir(t)); err == nil {
 		t.Fatal("Claude history was restored into another provider's session tree")
 	}
 }
 
 func TestRestoreSessionHistoryDoesNotEscapeProviderHomeSymlink(t *testing.T) {
-	home := t.TempDir()
-	outside := t.TempDir()
+	home := testsocket.Dir(t)
+	outside := testsocket.Dir(t)
 	if err := os.Symlink(outside, filepath.Join(home, ".claude")); err != nil {
 		t.Fatal(err)
 	}
-	eggDir := t.TempDir()
+	eggDir := testsocket.Dir(t)
 	writeRestoreFixture(t, eggDir, "agent_session_id=abc\nagent=claude\nformat=jsonl\ncwd=/tmp/project\n", "sensitive")
 	if _, err := RestoreSessionHistory("claude", "/tmp/project", eggDir, home); err == nil {
 		t.Fatal("provider home symlink escape was accepted")
@@ -248,9 +250,9 @@ func TestRestoreSessionHistoryDoesNotEscapeProviderHomeSymlink(t *testing.T) {
 func TestRestoreSessionHistoryRejectsSymlinkedSourceArtifacts(t *testing.T) {
 	for _, artifact := range []string{"chat.meta", "chat.jsonl.gz"} {
 		t.Run(artifact, func(t *testing.T) {
-			eggDir := t.TempDir()
+			eggDir := testsocket.Dir(t)
 			writeRestoreFixture(t, eggDir, "agent_session_id=abc\nagent=claude\nformat=jsonl\ncwd=/tmp/project\n", "sensitive")
-			target := filepath.Join(t.TempDir(), "outside")
+			target := filepath.Join(testsocket.Dir(t), "outside")
 			if err := os.WriteFile(target, []byte("outside"), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -260,7 +262,7 @@ func TestRestoreSessionHistoryRejectsSymlinkedSourceArtifacts(t *testing.T) {
 			if err := os.Symlink(target, filepath.Join(eggDir, artifact)); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := RestoreSessionHistory("claude", "/tmp/project", eggDir, t.TempDir()); err == nil {
+			if _, err := RestoreSessionHistory("claude", "/tmp/project", eggDir, testsocket.Dir(t)); err == nil {
 				t.Fatal("symlinked source artifact was accepted")
 			}
 		})

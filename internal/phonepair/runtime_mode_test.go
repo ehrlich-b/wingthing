@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestRunningModeRejectsUnusableLiveReplies(t *testing.T) {
@@ -22,7 +24,7 @@ func TestRunningModeRejectsUnusableLiveReplies(t *testing.T) {
 		`{`,
 	} {
 		t.Run(reply, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/admin" || r.Method != "POST" || r.Header.Get("Authorization") != "Bearer fixture-token" {
 					t.Error("invalid mode request")

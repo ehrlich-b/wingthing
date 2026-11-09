@@ -10,12 +10,13 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestClaudeLifecycleJailSettingsRejectDirectorySymlinks(t *testing.T) {
 	for _, attack := range []string{"unmounted", "nested-unmounted", "mounted"} {
 		t.Run(attack, func(t *testing.T) {
-			root := t.TempDir()
+			root := testsocket.Dir(t)
 			home, work, victim := filepath.Join(root, "home"), filepath.Join(root, "work"), filepath.Join(root, "victim", ".claude")
 			for _, path := range []string{home, work, victim} {
 				if err := os.MkdirAll(path, 0700); err != nil {
@@ -71,7 +72,7 @@ func TestClaudeLifecycleJailSettingsRejectDirectorySymlinks(t *testing.T) {
 }
 
 func TestClaudeLifecycleJailSettingsUseMostSpecificMount(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	home, work := filepath.Join(root, "home"), filepath.Join(root, "work")
 	path := filepath.Join(work, "sub", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {

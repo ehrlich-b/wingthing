@@ -10,10 +10,12 @@ import (
 	"testing"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestOpenRenamePathRefusesSymlinksAndInvalidPaths(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	alias := filepath.Join(root, "alias")
 	if err := os.Symlink(root, alias); err != nil {
 		t.Fatal(err)
@@ -29,7 +31,7 @@ func TestOpenRenamePathRefusesSymlinksAndInvalidPaths(t *testing.T) {
 }
 
 func TestOpenRenamePathNeedsSearchRatherThanReadPermission(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	searchable := filepath.Join(root, "searchable")
 	if err := os.Mkdir(searchable, 0111); err != nil {
 		t.Fatal(err)
@@ -43,7 +45,7 @@ func TestOpenRenamePathNeedsSearchRatherThanReadPermission(t *testing.T) {
 }
 
 func TestOpenPolicyPathRejectsCreatableMissingPaths(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	for _, tc := range []struct {
 		path      string
 		directory bool
@@ -66,7 +68,7 @@ func TestOpenPolicyPathRejectsCreatableMissingPaths(t *testing.T) {
 func TestOpenPolicyPathRejectsMutablePermissionBarriers(t *testing.T) {
 	for _, mode := range []os.FileMode{0500, 0} {
 		t.Run(mode.String(), func(t *testing.T) {
-			root := t.TempDir()
+			root := testsocket.Dir(t)
 			if err := os.Chmod(root, mode); err != nil {
 				t.Fatal(err)
 			}
@@ -89,7 +91,7 @@ func TestOpenPolicyPathRejectsMutablePermissionBarriers(t *testing.T) {
 }
 
 func TestReadMountInfoParsesEffectiveMounts(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "mountinfo")
+	path := filepath.Join(testsocket.Dir(t), "mountinfo")
 	data := strings.Join([]string{
 		"31 20 0:25 / / rw,relatime - ext4 /dev/root rw",
 		"32 31 0:44 / /home/agent/.aws ro,nosuid,nodev - tmpfs tmpfs ro",
@@ -166,7 +168,7 @@ func TestMountFlagsFromOptionsPreservesRemountState(t *testing.T) {
 }
 
 func TestPrepareDenyMountpointsCreatesMissingAndPreservesExisting(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	missing := filepath.Join(root, ".aws")
 	existing := filepath.Join(root, ".ssh")
 	if err := os.Mkdir(existing, 0o700); err != nil {

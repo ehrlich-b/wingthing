@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/localtls"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestRequireLoopbackAddress(t *testing.T) {
@@ -68,7 +69,7 @@ func TestPrepareLocalHTTPSRejectsUnsafeAddressesBeforeCreatingAKey(t *testing.T)
 		{defaultLocalHTTPAddr, "127.0.0.2:8443", true},
 		{"127.0.0.1:8443", "127.1.2.3:8443", true},
 	} {
-		dir := t.TempDir()
+		dir := testsocket.Dir(t)
 		if _, err := PrepareLocalHTTPS(context.Background(), dir, tc.httpAddr, tc.httpsAddr, tc.explicit); err == nil {
 			t.Fatalf("prepareLocalHTTPS(%q, %q) succeeded", tc.httpAddr, tc.httpsAddr)
 		}
@@ -181,7 +182,7 @@ func TestRelayListenersBoundRequestHeadersWithoutTimingOutWebSockets(t *testing.
 }
 
 func TestRelayListenersServeSameHandlerOverLoopbackHTTPAndHTTPS(t *testing.T) {
-	m, err := localtls.Ensure(t.TempDir(), time.Now())
+	m, err := localtls.Ensure(testsocket.Dir(t), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +230,7 @@ func TestRelayListenersServeSameHandlerOverLoopbackHTTPAndHTTPS(t *testing.T) {
 }
 
 func TestRelayListenersFailAtomicallyWhenHTTPSAddressIsOccupied(t *testing.T) {
-	m, err := localtls.Ensure(t.TempDir(), time.Now())
+	m, err := localtls.Ensure(testsocket.Dir(t), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

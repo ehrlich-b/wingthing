@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 const testOrigin = "https://phone.tunn.invalid"
@@ -24,7 +26,7 @@ func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f
 
 func fixture(t *testing.T) (*Gateway, *int) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "phone.key")
+	path := filepath.Join(testsocket.Dir(t), "phone.key")
 	if err := os.WriteFile(path, []byte(testKey+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +232,7 @@ func TestGatewayLogoutCancelsAnActiveProxyRequest(t *testing.T) {
 }
 
 func TestGatewayKeyAndConfigurationFailClosed(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "phone.key")
+	path := filepath.Join(testsocket.Dir(t), "phone.key")
 	if err := os.WriteFile(path, []byte(testKey), 0600); err != nil {
 		t.Fatal(err)
 	}

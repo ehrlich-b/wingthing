@@ -21,6 +21,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"google.golang.org/grpc"
 )
 
@@ -58,7 +59,7 @@ func inventorySessionsFixtureWithTeardown(t *testing.T, slowFrom int, teardownDe
 	t.Helper()
 	// These fixtures use short explicit IDs; validate the canonical socket
 	// below rather than reserving the unrelated full runtime ID width.
-	home, state, _ := testprovider.ScopedHomeDirs(t, "../../.scratch")
+	home, state, _ := testprovider.ScopedHomeDirs(t, testprovider.ProtectedTempDir(t))
 	home, _ = filepath.Abs(home)
 	state, _ = filepath.Abs(state)
 	real, alias := filepath.Join(home, "t"), filepath.Join(home, "a")
@@ -405,7 +406,7 @@ func TestValidateSessionName(t *testing.T) {
 }
 
 func TestSessionNameRoundTrip(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	if err := WriteSessionName(dir, "api-server"); err != nil {
 		t.Fatalf("writeSessionName: %v", err)
 	}
@@ -428,7 +429,7 @@ func TestSessionNameRoundTrip(t *testing.T) {
 }
 
 func TestReadSessionNameRejectsInvalidFile(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	if err := os.WriteFile(filepath.Join(dir, sessionNameFile), []byte("bad\x1b[2Jname\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +439,7 @@ func TestReadSessionNameRejectsInvalidFile(t *testing.T) {
 }
 
 func TestReadEggMetaValuesPreservesEquals(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	data := []byte("kind=command\ncommand=\"sh\" \"-c\" \"A=B echo $A\"\ncwd=/tmp/project\n")
 	if err := os.WriteFile(filepath.Join(dir, "egg.meta"), data, 0600); err != nil {
 		t.Fatal(err)
@@ -450,7 +451,7 @@ func TestReadEggMetaValuesPreservesEquals(t *testing.T) {
 }
 
 func TestSessionDiscoveryDoesNotCleanDeadMetadata(t *testing.T) {
-	root := t.TempDir()
+	root := testsocket.Dir(t)
 	dir := filepath.Join(root, "eggs", "stale")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -468,7 +469,7 @@ func TestSessionDiscoveryDoesNotCleanDeadMetadata(t *testing.T) {
 }
 
 func TestEggEnvironmentUsesOwnerOnlyOneShotFile(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	secret := "must-not-enter-argv"
 	args, path, err := prepareEggEnvironmentTransport(dir, []string{"egg", "run", "--session-id", "session"}, map[string]string{"OPENAI_API_KEY": secret})
 	if err != nil {

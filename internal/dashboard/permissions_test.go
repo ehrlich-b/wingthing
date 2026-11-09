@@ -9,6 +9,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/permissionbridge"
 	"github.com/ehrlich-b/wingthing/internal/permissions"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"google.golang.org/protobuf/types/known/structpb"
 	"os"
 	"path/filepath"
@@ -376,7 +377,7 @@ func TestPermissionTUIParallelPendingOverridesSiblingToolStatus(t *testing.T) {
 func TestPermissionRefreshQueriesActiveClaudeOnSupportedPlatform(t *testing.T) {
 	for _, supported := range []bool{false, true} {
 		t.Run(fmt.Sprint(supported), func(t *testing.T) {
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			var mu sync.Mutex
 			var calls []string
 			connections := 0
@@ -537,7 +538,7 @@ func TestPermissionRefreshShowsParallelRequestAfterSiblingPostToolUse(t *testing
 	m.sessions[0].Permissions = nil
 	m.sessions[0].Status, m.sessions[0].State = "running", "working"
 	m.sessions[0].StateCursor++
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	server, err := controlsocket.Listen(t.Context(), dir, "personal", func(controlsocket.Hello) (controlsocket.Welcome, controlsocket.Handler, error) {
 		return controlsocket.Welcome{WingID: "personal", Grants: map[string]bool{"permission.read": true, "permission.respond": true}}, func(_ context.Context, r control.DirectRequest) control.DirectResponse {
 			return control.DirectResponse{Version: control.ContractVersion, ID: r.ID, Result: map[string]any{"requests": []permissions.Request{remaining}}}

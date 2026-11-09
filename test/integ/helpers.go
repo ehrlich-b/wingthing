@@ -12,17 +12,10 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/relay"
 )
 
-// Keep real egg socket paths short on macOS and fixture state inside the clone.
+// Keep real egg socket paths short on macOS independent of checkout depth.
 func shortIntegrationRoot(t *testing.T) string {
 	t.Helper()
-	scratch, err := filepath.Abs("../../.scratch")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(scratch, 0700); err != nil {
-		t.Fatal(err)
-	}
-	root, err := os.MkdirTemp(scratch, "i")
+	root, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatal(err)
 	}

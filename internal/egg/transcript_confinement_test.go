@@ -9,11 +9,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func transcriptFixture(t *testing.T, agent, id string) (eggDir, home, cwd, sessionDir string) {
 	t.Helper()
-	eggDir, home, cwd = t.TempDir(), t.TempDir(), "/fixture/shared-workspace"
+	eggDir, home, cwd = testsocket.Dir(t), testsocket.Dir(t), "/fixture/shared-workspace"
 	sessionDir = filepath.Join(home, Profile(agent).SessionDir)
 	if agent == "claude" {
 		sessionDir = filepath.Join(sessionDir, encodeCWDForClaude(cwd))
@@ -60,7 +62,7 @@ func TestProviderTranscriptRefusesDirectorySymlinks(t *testing.T) {
 			for i, component := range parts {
 				t.Run(agent+"/"+operation+"/"+component, func(t *testing.T) {
 					eggDir, home, cwd, _ := transcriptFixture(t, agent, "victim")
-					victim := t.TempDir()
+					victim := testsocket.Dir(t)
 					victimDir := filepath.Join(append([]string{victim}, parts[i+1:]...)...)
 					if err := os.MkdirAll(victimDir, 0700); err != nil {
 						t.Fatal(err)
@@ -155,7 +157,7 @@ func TestProviderHooksRefuseDirectorySymlinks(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(spool), 0700); err != nil {
 				t.Fatal(err)
 			}
-			victim := t.TempDir()
+			victim := testsocket.Dir(t)
 			lifecycleWrite(t, filepath.Join(victim, "seq.00000000000000000001.json"), `{"session_id":"ours","hook_event_name":"UserPromptSubmit","prompt":"victim-secret"}`)
 			if err := os.Symlink(victim, spool); err != nil {
 				t.Fatal(err)
@@ -182,7 +184,7 @@ func TestProviderResumeRefusesDirectorySymlinks(t *testing.T) {
 			eggDir, home, cwd, sessionDir := transcriptFixture(t, "claude", "ours")
 			writeRestoreFixture(t, eggDir, "agent=claude\nagent_session_id=ours\n", "own-message\n")
 			if component == "home" {
-				link := filepath.Join(t.TempDir(), "provider-home")
+				link := filepath.Join(testsocket.Dir(t), "provider-home")
 				if err := os.Symlink(home, link); err != nil {
 					t.Fatal(err)
 				}

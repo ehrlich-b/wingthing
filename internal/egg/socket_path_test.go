@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestSocketPathByteLimit(t *testing.T) {
@@ -44,7 +46,7 @@ func TestSocketPathByteLimit(t *testing.T) {
 }
 
 func TestSocketPathPreflightLeavesEndpointAndProviderStateUntouched(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), strings.Repeat("x", 120))
+	dir := filepath.Join(testsocket.Dir(t), strings.Repeat("x", 120))
 	if _, err := NewServer(dir); err == nil {
 		t.Fatal("long server endpoint accepted")
 	}

@@ -8,11 +8,12 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestCollectSessionsHistoryUsesDurableNameStartAndProviderResumeStatus(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
-	cwd := t.TempDir()
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
+	cwd := testsocket.Dir(t)
 	dir := writeResumeSessionFixture(t, cfg, "old-session", "alice", "claude", cwd, "provider-id", "conversation\n")
 	if err := eggclient.WriteSessionName(dir, "support-case"); err != nil {
 		t.Fatal(err)
@@ -28,8 +29,8 @@ func TestCollectSessionsHistoryUsesDurableNameStartAndProviderResumeStatus(t *te
 }
 
 func TestSessionHistoryForkAvailabilityRequiresClaudeHistory(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
-	cwd := t.TempDir()
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
+	cwd := testsocket.Dir(t)
 	writeResumeSessionFixture(t, cfg, "claude-source", "alice", "claude", cwd, "provider", "{}\n")
 	writeResumeSessionFixture(t, cfg, "codex-source", "alice", "codex", cwd, "other", "{}\n")
 	for _, session := range collectSessionsHistory(cfg) {

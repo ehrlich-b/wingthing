@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 type mirrorTransport func(*http.Request) (*http.Response, error)
@@ -63,7 +64,7 @@ func TestMirrorUpdateCompleteBundleWithoutFallback(t *testing.T) {
 				}
 				return &http.Response{StatusCode: status, Status: fmt.Sprint(status), Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 			})
-			dir := t.TempDir()
+			dir := testsocket.Dir(t)
 			sentinel := filepath.Join(dir, "wt")
 			if err := os.WriteFile(sentinel, []byte("existing"), 0755); err != nil {
 				t.Fatal(err)
@@ -151,7 +152,7 @@ func TestMirrorPreviewMissingFeedNeverFallsBack(t *testing.T) {
 	if _, err := LatestRelease(context.Background()); err != ErrPreviewUnavailable {
 		t.Fatalf("missing preview feed: %v", err)
 	}
-	if _, path, err := PrepareUpdate(context.Background(), "v0.149.4-preview.1", t.TempDir()); err != ErrPreviewUnavailable || path != "" {
+	if _, path, err := PrepareUpdate(context.Background(), "v0.149.4-preview.1", testsocket.Dir(t)); err != ErrPreviewUnavailable || path != "" {
 		t.Fatalf("path=%q err=%v", path, err)
 	}
 	if calls != 2 || !strings.Contains(ErrPreviewUnavailable.Error(), "/dl/preview.json") || !strings.Contains(ErrPreviewUnavailable.Error(), "update --file") {
@@ -171,7 +172,7 @@ func TestMirrorUpdateNeverDowngradesNewerRelease(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"tag_name":"v0.149.5"}`))}, nil
 	})
-	dir := t.TempDir()
+	dir := testsocket.Dir(t)
 	_, path, err := PrepareUpdate(context.Background(), "v0.150.0", dir)
 	if err != ErrReleaseUnavailable || path != "" || len(requests) != 1 {
 		t.Fatalf("path=%q err=%v requests=%v", path, err, requests)

@@ -7,10 +7,11 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/sessionrole"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestRoleResumeTransfersPinAndForkDoesNotDuplicateIt(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	source := filepath.Join(cfg.Dir, "eggs", "source")
 	if err := os.MkdirAll(source, 0700); err != nil {
 		t.Fatal(err)
@@ -37,7 +38,7 @@ func TestRoleResumeTransfersPinAndForkDoesNotDuplicateIt(t *testing.T) {
 }
 
 func TestRoleResumeRequiresProtectedMailboxAndOrdinaryResumesDoNot(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	dir := filepath.Join(cfg.Dir, "eggs", "source")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)

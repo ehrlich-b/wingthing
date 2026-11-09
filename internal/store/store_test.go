@@ -9,10 +9,12 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestConcurrentStoreHandlesWaitForSQLiteWriter(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "concurrent.db")
+	path := filepath.Join(testsocket.Dir(t), "concurrent.db")
 	initial, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +54,7 @@ func TestConcurrentStoreHandlesWaitForSQLiteWriter(t *testing.T) {
 }
 
 func TestConcurrentStoreHandlesMigrateFirstUse(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "concurrent-first-use.db")
+	path := filepath.Join(testsocket.Dir(t), "concurrent-first-use.db")
 	const workers = 8
 	start := make(chan struct{})
 	errs := make(chan error, workers)
@@ -592,7 +594,7 @@ func TestUpgradeEveryStoreMigrationBaselinePreservesData(t *testing.T) {
 	for baseline := 1; baseline <= len(migrations); baseline++ {
 		baseline := baseline
 		t.Run(fmt.Sprintf("through_%s", migrations[baseline-1]), func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "store.db")
+			path := filepath.Join(testsocket.Dir(t), "store.db")
 			db, err := sql.Open("sqlite", path)
 			if err != nil {
 				t.Fatal(err)

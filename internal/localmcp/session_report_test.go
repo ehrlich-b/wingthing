@@ -11,10 +11,11 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 func TestSessionReportStrictSchemaOwnershipAndPathBounds(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	dir := filepath.Join(cfg.Dir, "eggs", "ours")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -42,7 +43,7 @@ func TestSessionReportStrictSchemaOwnershipAndPathBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.enforcePathBounds = true
-	s.allowedPaths = []string{t.TempDir()}
+	s.allowedPaths = []string{testsocket.Dir(t)}
 	if _, err := s.ToolSessionReport(t.Context(), args); err == nil {
 		t.Fatal("out-of-path report accepted")
 	}
@@ -60,7 +61,7 @@ func TestSessionReportStrictSchemaOwnershipAndPathBounds(t *testing.T) {
 }
 
 func TestShellReportMCPRejectsMutableAndForeignSession(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	for _, id := range []string{"shell-ours", "shell-other"} {
 		dir := filepath.Join(cfg.Dir, "eggs", id)
 		if err := os.MkdirAll(dir, 0700); err != nil {

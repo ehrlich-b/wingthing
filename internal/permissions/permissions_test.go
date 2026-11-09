@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/ehrlich-b/wingthing/internal/permissionbridge"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"net"
 	"os"
 	"path/filepath"
@@ -19,7 +20,7 @@ import (
 
 func brokerFixture(t *testing.T, duration time.Duration, configure ...func(*Broker)) (*Broker, string) {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "wp-")
+	dir, err := os.MkdirTemp("/tmp", "wt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +143,7 @@ func TestPermissionBrokerAllowDenyExpiryAuthenticationAndReplacement(t *testing.
 	})
 }
 func TestPermissionLedgerRaceRetriesAuditFailureAndLostReply(t *testing.T) {
-	l := Ledger{Dir: filepath.Join(t.TempDir(), "permissions")}
+	l := Ledger{Dir: filepath.Join(testsocket.Dir(t), "permissions")}
 	r := Response{WingID: "wing", SessionID: "egg", RequestID: "request", Digest: "digest", AttemptID: "attempt", Decision: "deny"}
 	a := Actor{"owner", "tui", "tui"}
 	auth := func() error { return nil }
@@ -194,7 +195,7 @@ func TestPermissionLedgerRaceRetriesAuditFailureAndLostReply(t *testing.T) {
 		t.Fatal("changed decision accepted")
 	}
 	t.Run("audit failure", func(t *testing.T) {
-		l := Ledger{Dir: t.TempDir()}
+		l := Ledger{Dir: testsocket.Dir(t)}
 		os.Mkdir(filepath.Join(l.Dir, "audit.jsonl"), 0700)
 		calls := 0
 		for i := 0; i < 2; i++ {
@@ -219,7 +220,7 @@ func TestPermissionLedgerRaceRetriesAuditFailureAndLostReply(t *testing.T) {
 		}
 	})
 	t.Run("crash and lost reply", func(t *testing.T) {
-		l := Ledger{Dir: t.TempDir()}
+		l := Ledger{Dir: testsocket.Dir(t)}
 		calls := 0
 		send := func() (Outcome, error) { calls++; return Outcome{}, errors.New("lost connection") }
 		if _, err := l.Decide(r, a, auth, auth, send); err == nil {
@@ -231,7 +232,7 @@ func TestPermissionLedgerRaceRetriesAuditFailureAndLostReply(t *testing.T) {
 		}
 	})
 	t.Run("revoked while reserving", func(t *testing.T) {
-		l := Ledger{Dir: t.TempDir()}
+		l := Ledger{Dir: testsocket.Dir(t)}
 		checks, calls := 0, 0
 		_, err := l.Decide(r, a, func() error {
 			checks++
@@ -295,7 +296,7 @@ func TestPermissionBrokerHookDisconnectInvalidatesRequest(t *testing.T) {
 }
 
 func TestPermissionDecisionAttemptCannotMoveToAnotherRequest(t *testing.T) {
-	l := Ledger{Dir: t.TempDir()}
+	l := Ledger{Dir: testsocket.Dir(t)}
 	a := Actor{"owner", "tui", "tui"}
 	r := Response{WingID: "wing", SessionID: "egg", RequestID: "first", Digest: "digest", AttemptID: "one-attempt", Decision: "allow"}
 	calls := 0
@@ -337,7 +338,7 @@ func TestPermissionDeadRequestRefusedBeforeReservation(t *testing.T) {
 			if dead == "disconnected" || dead == "expired" {
 				<-done
 			}
-			l := Ledger{Dir: t.TempDir()}
+			l := Ledger{Dir: testsocket.Dir(t)}
 			answer := response(req, "allow")
 			sends := 0
 			_, err := l.Decide(answer, Actor{"owner", "tui", "tui"}, func() error { return nil }, func() error { return b.Check(answer) }, func() (Outcome, error) { sends++; return b.Respond(answer) })
@@ -360,7 +361,7 @@ func TestPermissionDeadRequestRefusedBeforeReservation(t *testing.T) {
 func TestPermissionAuditAppendsDeliveryOutcome(t *testing.T) {
 	for _, state := range []string{"delivered", "unconfirmed", "failed"} {
 		t.Run(state, func(t *testing.T) {
-			l := Ledger{Dir: t.TempDir()}
+			l := Ledger{Dir: testsocket.Dir(t)}
 			r := Response{WingID: "wing", SessionID: "egg", RequestID: "request", Digest: "digest", AttemptID: "attempt", Decision: "allow"}
 			auth := func() error { return nil }
 			out, err := l.Decide(r, Actor{"owner", "tui", "tui"}, auth, auth, func() (Outcome, error) {
@@ -390,7 +391,7 @@ func TestPermissionLedgerPersistFailuresNeverInventDelivery(t *testing.T) {
 		for failAt := 1; failAt <= 5; failAt++ {
 			for _, afterWrite := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/write-%d/after-%t", state, failAt, afterWrite), func(t *testing.T) {
-					l := Ledger{Dir: t.TempDir()}
+					l := Ledger{Dir: testsocket.Dir(t)}
 					r := Response{WingID: "wing", SessionID: "egg", RequestID: "request", Digest: "digest", AttemptID: "attempt", Decision: "allow"}
 					a := Actor{"owner", "tui", "tui"}
 					writes, sends := 0, 0
@@ -457,7 +458,7 @@ func TestPermissionLedgerPersistFailuresNeverInventDelivery(t *testing.T) {
 func TestPermissionLedgerPreparationCrashAndReservationAuditFailure(t *testing.T) {
 	for _, stopAt := range []int{1, 2} {
 		t.Run(fmt.Sprintf("crash-after-write-%d", stopAt), func(t *testing.T) {
-			l := Ledger{Dir: t.TempDir()}
+			l := Ledger{Dir: testsocket.Dir(t)}
 			r := Response{WingID: "wing", SessionID: "egg", RequestID: "request", Digest: "digest", AttemptID: "attempt", Decision: "deny"}
 			a := Actor{"owner", "tui", "tui"}
 			auth := func() error { return nil }
@@ -488,7 +489,7 @@ func TestPermissionLedgerPreparationCrashAndReservationAuditFailure(t *testing.T
 		})
 	}
 	t.Run("reservation audit failure", func(t *testing.T) {
-		l := Ledger{Dir: t.TempDir()}
+		l := Ledger{Dir: testsocket.Dir(t)}
 		r := Response{WingID: "wing", SessionID: "egg", RequestID: "request", Digest: "digest", AttemptID: "attempt", Decision: "allow"}
 		a := Actor{"owner", "tui", "tui"}
 		writes, sends := 0, 0
@@ -538,7 +539,7 @@ func TestPermissionLedgerFailureReceiptPersistsWhenOneRepairWriteFails(t *testin
 		for failAt := firstRepair; failAt <= firstRepair+1; failAt++ {
 			for _, afterWrite := range []bool{false, true} {
 				t.Run(fmt.Sprintf("revoked-%t/write-%d/after-%t", revoked, failAt, afterWrite), func(t *testing.T) {
-					l := Ledger{Dir: t.TempDir()}
+					l := Ledger{Dir: testsocket.Dir(t)}
 					r := Response{WingID: "wing", SessionID: "egg", RequestID: "request", Digest: "digest", AttemptID: "attempt", Decision: "allow"}
 					a := Actor{"owner", "tui", "tui"}
 					writes, checks, sends := 0, 0, 0
@@ -584,7 +585,7 @@ func TestPermissionLedgerPersistentWriteFailureUsesAuditReceipt(t *testing.T) {
 		for _, failAt := range []int{3, 4} {
 			for _, afterWrite := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/write-%d/after-%t", state, failAt, afterWrite), func(t *testing.T) {
-					l := Ledger{Dir: t.TempDir()}
+					l := Ledger{Dir: testsocket.Dir(t)}
 					r := Response{WingID: "wing", SessionID: "egg", RequestID: "request", Digest: "digest", AttemptID: "attempt", Decision: "allow"}
 					a := Actor{"owner", "tui", "tui"}
 					writes, sends := 0, 0
@@ -628,7 +629,7 @@ func TestPermissionLedgerPersistentWriteFailureUsesAuditReceipt(t *testing.T) {
 func TestPermissionLedgerTornAuditPreservesIdenticalRetry(t *testing.T) {
 	for _, state := range []string{"delivered", "failed", "unconfirmed"} {
 		t.Run(state, func(t *testing.T) {
-			l := Ledger{Dir: t.TempDir()}
+			l := Ledger{Dir: testsocket.Dir(t)}
 			r := Response{WingID: "wing", SessionID: "egg", RequestID: "request", Digest: "digest", AttemptID: "attempt", Decision: "allow"}
 			a := Actor{"owner", "tui", "tui"}
 			writes, sends := 0, 0

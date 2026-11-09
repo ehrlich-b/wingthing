@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
 const oversizedTestLine = 3 * 1024 * 1024
@@ -56,7 +58,7 @@ func checkAgentWarning(t *testing.T, warnings *bytes.Buffer, provider string, si
 
 func runFakeProvider(t *testing.T, provider Agent, data string) *Stream {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "stdout")
+	path := filepath.Join(testsocket.Dir(t), "stdout")
 	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +201,7 @@ func TestReadProviderLinesLaterFinalReplacesSkippedResponse(t *testing.T) {
 func TestProviderOversizedFinalPreservesCommandError(t *testing.T) {
 	warnings := captureAgentWarnings(t)
 	line := sizedEvent(`{"type":"item.completed","item":{"type":"agent_message","text":"`, `"}}`, oversizedTestLine)
-	path := filepath.Join(t.TempDir(), "stdout")
+	path := filepath.Join(testsocket.Dir(t), "stdout")
 	if err := os.WriteFile(path, []byte(line), 0600); err != nil {
 		t.Fatal(err)
 	}

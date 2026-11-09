@@ -20,28 +20,13 @@ import (
 // make accept-linux-provider-guard target treats every skip as a failure.
 func guardNativeRoot(t *testing.T) string {
 	t.Helper()
+	root := protectedFixtureRoot(t)
 	if err := CheckProviderWriteProtection(); err != nil {
 		t.Skip(err)
 	}
 	if err := namespaceCapabilityError(hasEffectiveCAPSYSADMIN()); err != nil {
 		t.Skip(err)
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	base := os.Getenv("WT_PROVIDER_GUARD_FIXTURE_ROOT")
-	if base == "" {
-		base = filepath.Join(cwd, "..", "..", ".scratch")
-	}
-	if err := os.MkdirAll(base, 0700); err != nil {
-		t.Fatal(err)
-	}
-	root, err := os.MkdirTemp(base, "provider-guard-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(root) })
 	return root
 }
 

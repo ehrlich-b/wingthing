@@ -14,11 +14,12 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/ehrlich-b/wingthing/internal/sshcontrol"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/ehrlich-b/wingthing/internal/testssh"
 )
 
 func TestMCPTerminalListRemoteArgument(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
+	cfg := &config.Config{Dir: testsocket.Dir(t)}
 	seedRemoteListSession(t, cfg, "local-session", "alpha")
 	if err := config.SaveRemotes(cfg.Dir, map[string]config.Remote{"work": {SSHTarget: "me@host"}}); err != nil {
 		t.Fatal(err)
@@ -39,7 +40,7 @@ func TestMCPTerminalListRemoteArgument(t *testing.T) {
 	}
 	h := testssh.New(t)
 	t.Setenv("PATH", h.Root+string(os.PathListSeparator)+os.Getenv("PATH"))
-	remoteCfg := &config.Config{Dir: t.TempDir(), WingID: "remote-wing"}
+	remoteCfg := &config.Config{Dir: testsocket.Dir(t), WingID: "remote-wing"}
 	seedRemoteListSession(t, remoteCfg, "remote-owned", "alpha")
 	seedRemoteListSession(t, remoteCfg, "remote-other", "beta")
 	remoteServer := testWingServer(t, &Server{Version: "test", Cfg: remoteCfg, Principal: "alpha", Logs: io.Discard})
@@ -86,7 +87,7 @@ func TestMCPTerminalListRemotePreservesConnectionBounds(t *testing.T) {
 	for _, server := range []*Server{
 		{enforcePathBounds: true}, {BoundConversation: "conversation"},
 	} {
-		server.Cfg = &config.Config{Dir: t.TempDir()}
+		server.Cfg = &config.Config{Dir: testsocket.Dir(t)}
 		ctx := context.WithValue(context.Background(), remotepkg.IOContextKey{}, remotepkg.IO{SSHPath: filepath.Join(server.Cfg.Dir, "must-not-run-ssh")})
 		_, err := server.ToolTerminalList(ctx, json.RawMessage(`{"remote":"work"}`))
 		if err == nil || !strings.Contains(err.Error(), "bound MCP connection") {

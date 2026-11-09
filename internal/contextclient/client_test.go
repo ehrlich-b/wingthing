@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/testsocket"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -29,7 +30,7 @@ func (rt handlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func TestClientExchangeCacheAndErrors(t *testing.T) {
 	const secret = "memory-only-context-client-secret"
-	path := filepath.Join(t.TempDir(), "secret")
+	path := filepath.Join(testsocket.Dir(t), "secret")
 	if err := os.WriteFile(path, []byte(secret), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +146,7 @@ func TestClientExchangeCacheAndErrors(t *testing.T) {
 }
 
 func TestClientRefusesRedirectAndSanitizesReadErrors(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "not-a-secret")
+	path := filepath.Join(testsocket.Dir(t), "not-a-secret")
 	if _, err := New(&config.ContextConfig{URL: "https://context.example", ClientID: "wingthing-stage", SecretFile: path}); err == nil || strings.Contains(err.Error(), path) {
 		t.Fatalf("file error: %v", err)
 	}
@@ -183,7 +184,7 @@ func TestTokenCacheWaitHonorsCancellation(t *testing.T) {
 
 func newErrorTestClient(t *testing.T) *Client {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "secret")
+	path := filepath.Join(testsocket.Dir(t), "secret")
 	if err := os.WriteFile(path, []byte("private-context-client-secret"), 0600); err != nil {
 		t.Fatal(err)
 	}
