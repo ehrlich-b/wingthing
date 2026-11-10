@@ -116,7 +116,19 @@ func (s *Server) roostUserAllowed(user *User) bool {
 	if user == nil {
 		return false
 	}
-	if s.LocalMode || len(s.Config.RoostAllowedEmails) == 0 || user.ID == roostWingServiceUserID {
+	if s.LocalMode || user.ID == roostWingServiceUserID {
+		return true
+	}
+	if s.Store != nil && !s.IsEdge() {
+		email, known, err := s.Store.oauthEnrollment(user.ID)
+		if err != nil {
+			return false
+		}
+		if known {
+			return email != nil && s.roostEmailAllowed(*email)
+		}
+	}
+	if len(s.Config.RoostAllowedEmails) == 0 {
 		return true
 	}
 	if user.Email == nil {
@@ -153,6 +165,10 @@ func (s *Server) clearDeniedOAuthEnrollment(user *User) error {
 	if user == nil {
 		return nil
 	}
+	if _, err := s.Store.db.Exec(`INSERT INTO user_oauth_enrollment (user_id, verified_email) VALUES (?, NULL)
+        ON CONFLICT(user_id) DO UPDATE SET verified_email = NULL, checked_at = CURRENT_TIMESTAMP`, user.ID); err != nil {
+		return err
+	}
 	if err := s.Store.ClearUserEmail(user.ID); err != nil {
 		return err
 	}
@@ -161,7 +177,7 @@ func (s *Server) clearDeniedOAuthEnrollment(user *User) error {
 }
 
 func (s *Server) roostUserIDAllowed(userID string) bool {
-	if s.LocalMode || len(s.Config.RoostAllowedEmails) == 0 || userID == roostWingServiceUserID {
+	if s.LocalMode || userID == roostWingServiceUserID {
 		return true
 	}
 	// Edge stores contain process-local plumbing, not authoritative users. Reuse
@@ -176,9 +192,15 @@ func (s *Server) roostUserIDAllowed(userID string) bool {
 		return known && allowed
 	}
 	if s.Store == nil {
+		return len(s.Config.RoostAllowedEmails) == 0
+	}
+	user, err := s.Store.GetUserByID(userID)
+	if err != nil {
 		return false
 	}
-	user, _ := s.Store.GetUserByID(userID)
+	if user == nil {
+		return len(s.Config.RoostAllowedEmails) == 0
+	}
 	return s.roostUserAllowed(user)
 }
 
@@ -516,6 +538,13 @@ func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if ghEmail != "" {
+		if err := s.Store.saveVerifiedEnrollment(user.ID, ghEmail); err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+	}
+
 	s.createSessionAndRedirect(w, r, user)
 }
 
@@ -679,6 +708,16 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	existingUser := user != nil
+	proved := false
+	if existingUser {
+		proved, err = s.Store.hasGoogleSignInProof(user.ID, gUser.ID)
+		if err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+	}
+	verifiedEmail, emailErr := normalizeRecoveryEmail(gUser.Email)
+	currentProof := gUser.VerifiedEmail && emailErr == nil
 	if !existingUser {
 		user = &User{
 			ID:         uuid.New().String(),
@@ -694,7 +733,7 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	if gUser.Picture != "" {
 		user.AvatarURL = &gUser.Picture
 	}
-	if !s.roostProviderEmailAllowed(gUser.Email, gUser.VerifiedEmail) {
+	if !s.roostProviderEmailAllowed(gUser.Email, currentProof) || (proved && !currentProof) {
 		if existingUser {
 			if err := s.clearDeniedOAuthEnrollment(user); err != nil {
 				http.Error(w, "db error", http.StatusInternalServerError)
@@ -708,11 +747,19 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		var recovered *User
 		var err error
 		if existingUser {
-			if gUser.VerifiedEmail {
+			if currentProof && !proved {
 				err = s.Store.checkExistingRecoveryCollision(user, gUser.Email)
 			}
 		} else {
 			recovered, err = s.Store.RecoverGitHubUser("google", gUser.ID, gUser.Email, gUser.VerifiedEmail)
+		}
+		if err == nil && recovered != nil {
+			user = recovered
+			existingUser = true
+			proved, err = s.Store.hasGoogleSignInProof(user.ID, gUser.ID)
+			if err == nil && !proved {
+				err = s.Store.checkExistingRecoveryCollision(user, gUser.Email)
+			}
 		}
 		if err != nil {
 			if errors.Is(err, ErrAccountRecoveryRefused) {
@@ -723,23 +770,31 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		if recovered != nil {
-			user = recovered
+	}
+	if currentProof {
+		provenance := ""
+		if proved {
+			provenance = "verified_recovery"
+		} else if !existingUser {
+			provenance = "verified_signup"
 		}
-	}
-	// An unverified provider address must never become a recovery credential.
-	if gUser.VerifiedEmail && gUser.Email != "" {
-		user.Email = &gUser.Email
-	}
-	if err := s.Store.UpsertUser(user); err != nil {
+		if err := s.Store.saveGoogleSignIn(user, gUser.ID, verifiedEmail, provenance); err != nil {
+			if errors.Is(err, ErrAccountRecoveryRefused) {
+				http.Error(w, "account recovery could not safely match this identity", http.StatusForbidden)
+			} else {
+				http.Error(w, "db error", http.StatusInternalServerError)
+			}
+			return
+		}
+	} else if err := s.Store.UpsertUser(user); err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
-	if user.Email != nil {
-		if err := s.Store.UpdateUserEmail(user.ID, *user.Email); err != nil {
-			http.Error(w, "db error", http.StatusInternalServerError)
-			return
-		}
+	// Re-read contact metadata for the session; enrollment uses its own proof.
+	user, err = s.Store.GetUserByID(user.ID)
+	if err != nil || user == nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
 	}
 
 	s.createSessionAndRedirect(w, r, user)
@@ -826,6 +881,11 @@ func (s *Server) handleMagicVerify(w http.ResponseWriter, r *http.Request) {
 		} else {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
+		return
+	}
+
+	if err := s.Store.saveVerifiedEnrollment(user.ID, email); err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
 

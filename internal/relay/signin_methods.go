@@ -106,6 +106,11 @@ func (s *RelayStore) linkSignInMethod(userID, provider, providerID, email string
 	err = tx.QueryRow("SELECT user_id, provider_id FROM user_identities WHERE provider = ? AND (provider_id = ? OR user_id = ?)", provider, providerID, userID).Scan(&owner, &subject)
 	if err == nil {
 		if owner == userID && subject == providerID {
+			if email != "" && provider == "google" {
+				if err := recordSignInProof(tx, userID, provider, providerID, email, "explicit_link"); err != nil {
+					return err
+				}
+			}
 			return tx.Commit()
 		}
 		return ErrIdentityInUse
@@ -115,6 +120,11 @@ func (s *RelayStore) linkSignInMethod(userID, provider, providerID, email string
 	}
 	if _, err = tx.Exec("INSERT INTO user_identities (user_id, provider, provider_id) VALUES (?, ?, ?)", userID, provider, providerID); err != nil {
 		return err
+	}
+	if email != "" && provider == "google" {
+		if err := recordSignInProof(tx, userID, provider, providerID, email, "explicit_link"); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

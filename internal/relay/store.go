@@ -745,8 +745,14 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-func (s *RelayStore) UpsertUser(u *User) error {
-	_, err := s.db.Exec(
+type userExecer interface {
+	Exec(string, ...any) (sql.Result, error)
+}
+
+func (s *RelayStore) UpsertUser(u *User) error { return upsertUser(s.db, u) }
+
+func upsertUser(db userExecer, u *User) error {
+	_, err := db.Exec(
 		`INSERT INTO users (id, provider, provider_id, display_name, avatar_url, is_pro)
 		 VALUES (?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET

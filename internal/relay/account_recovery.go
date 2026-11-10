@@ -20,11 +20,9 @@ func normalizeRecoveryEmail(email string) (string, error) {
 // An identity created before recovery shipped may belong to an empty account
 // left by the outage. Refuse a collision for manual investigation rather than
 // silently using that account or failing the unique email update with a 500.
-// Already recovered identities continue to resolve to their GitHub user.
+// Google subjects with durable link/recovery proof bypass this legacy check;
+// their binding remains authoritative even after primary-provider rotation.
 func (s *RelayStore) checkExistingRecoveryCollision(user *User, email string) error {
-	if user.Provider == "github" {
-		return nil
-	}
 	normalized, err := normalizeRecoveryEmail(email)
 	if err != nil {
 		return nil
@@ -193,6 +191,11 @@ func (s *RelayStore) RecoverGitHubUser(provider, providerID, email string, verif
 	}
 	if _, err := tx.Exec("INSERT INTO user_identities (provider, provider_id, user_id) VALUES (?, ?, ?)", provider, providerID, targetID); err != nil {
 		return nil, err
+	}
+	if provider == "google" {
+		if err := recordSignInProof(tx, targetID, provider, providerID, normalized, "verified_recovery"); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
