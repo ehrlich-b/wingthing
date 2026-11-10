@@ -159,10 +159,10 @@ func TestFaviconAndPageIconAssets(t *testing.T) {
 
 func assertICO(t *testing.T, data []byte) {
 	t.Helper()
-	if len(data) < 54 || !bytes.Equal(data[:6], []byte{0, 0, 1, 0, 3, 0}) {
-		t.Fatal("expected ICO header with three images")
+	if len(data) < 86 || !bytes.Equal(data[:6], []byte{0, 0, 1, 0, 5, 0}) {
+		t.Fatal("expected ICO header with five images")
 	}
-	for i, size := range []int{16, 32, 48} {
+	for i, size := range []int{16, 29, 32, 48, 64} {
 		entry := data[6+i*16 : 22+i*16]
 		length := uint64(binary.LittleEndian.Uint32(entry[8:12]))
 		offset := uint64(binary.LittleEndian.Uint32(entry[12:16]))
