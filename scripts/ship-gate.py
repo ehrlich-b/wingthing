@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.request
 
 GATES = [
     ["make", "web"],
@@ -36,6 +37,33 @@ def baseline():
     if not arch:
         raise ValueError("release skew requires Linux amd64 or arm64")
     return Path("downloads/v0.149.5") / f"wt-linux-{arch}"
+
+
+# Published SHA256SUMS for the original artifacts, never rebuilt tag binaries.
+BASELINE_HASHES = {
+    "amd64": "dfbe82d1f0fad9ba8eb408acc83cc2ff78aa2f019942cb2bd694db498e7cbccf",
+    "arm64": "bcf6fe0d6f8584785e98d2ad31837e33cc6a21fa92758f8411465520c632b63b",
+}
+BASELINE_URL = "https://gitlab.com/api/v4/projects/ehrlich-b%2Fwingthing/packages/generic/wingthing/v0.149.5/"
+
+
+def prepare_baseline():
+    artifact = baseline()
+    expected = BASELINE_HASHES[artifact.name.removeprefix("wt-linux-")]
+    if not artifact.exists():
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        print(f"fetching original v0.149.5 artifact: {artifact}", flush=True)
+        # Validate before installing; an interrupted fetch cannot become a baseline.
+        with urllib.request.urlopen(BASELINE_URL + artifact.name, timeout=60) as response:
+            data = response.read(64 * 1024 * 1024 + 1)
+        if hashlib.sha256(data).hexdigest() != expected:
+            raise ValueError("downloaded release baseline checksum mismatch")
+        with artifact.open("xb") as stream:
+            stream.write(data)
+        artifact.chmod(0o755)
+    if digest(artifact) != expected:
+        raise ValueError("release baseline does not match published v0.149.5 checksum")
+    return artifact
 
 
 def digest(path):
@@ -69,7 +97,7 @@ def promote(output):
     # Do not allow a failed rerun to leave an older receipt looking successful.
     output = Path(tempfile.mkdtemp(prefix="run-", dir=output))
     receipt = output / f"ship-gate-{head}.txt"
-    artifact = baseline()
+    artifact = prepare_baseline()
     artifact_hash = digest(artifact)
     for i, command in enumerate(GATES, 1):
         log = output / f"{i:02d}.log"
@@ -118,12 +146,15 @@ def main():
     sub.add_parser("run").add_argument("--output", type=Path, required=True)
     sub.add_parser("verify").add_argument("--receipt", default="")
     sub.add_parser("stage-downloads")
+    sub.add_parser("prepare-baseline")
     args = parser.parse_args()
     try:
         if args.action == "run":
             promote(args.output)
         elif args.action == "verify":
             verify(args.receipt)
+        elif args.action == "prepare-baseline":
+            print(prepare_baseline())
         else:
             stage_downloads()
     except (ValueError, OSError, subprocess.CalledProcessError) as error:

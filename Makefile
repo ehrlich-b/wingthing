@@ -378,6 +378,7 @@ ship-gate:
 	python3 -B scripts/ship-gate.py run --output "$(SHIP_GATE_DIR)"
 
 test-release-skew: | web/dist
+	python3 -B scripts/ship-gate.py prepare-baseline
 	WT_RELEASE_SKEW_REQUIRED=1 $(GO) test -p 2 ./internal/relay -run '^TestReleasedCLISkew$$' -count=1 -v -timeout=90s
 
 test-ship-gate:

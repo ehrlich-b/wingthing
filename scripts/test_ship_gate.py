@@ -1,4 +1,5 @@
 """Tiny isolated git fixtures for receipt rejection; no Fly process is started."""
+import hashlib
 import importlib.util
 import json
 import os
@@ -6,6 +7,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
+import io
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("ship_gate", ROOT / "scripts/ship-gate.py")
@@ -81,6 +84,31 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("fly deploy", result.stdout)
         self.assertNotIn("make --no-print-directory check gate", result.stdout)
+
+    def test_prepare_baseline_fetches_only_missing_original_and_rejects_corruption(self):
+        artifact = Path("downloads/v0.149.5/wt-linux-arm64")
+        data = b"isolated download fixture"
+        expected = hashlib.sha256(data).hexdigest()
+        with mock.patch.object(ship, "baseline", return_value=artifact), \
+                mock.patch.dict(ship.BASELINE_HASHES, arm64=expected), \
+                mock.patch.object(ship.urllib.request, "urlopen", return_value=io.BytesIO(data)) as fetch:
+            self.assertEqual(ship.prepare_baseline(), artifact)
+            self.assertEqual(artifact.read_bytes(), data)
+            self.assertTrue(os.access(artifact, os.X_OK))
+            ship.prepare_baseline()
+            fetch.assert_called_once_with(ship.BASELINE_URL + artifact.name, timeout=60)
+            artifact.write_bytes(b"corrupt")
+            with self.assertRaisesRegex(ValueError, "published"):
+                ship.prepare_baseline()
+            self.assertEqual(artifact.read_bytes(), b"corrupt")
+
+    def test_prepare_baseline_rejects_unverified_download_before_installing(self):
+        artifact = Path("downloads/v0.149.5/wt-linux-arm64")
+        with mock.patch.object(ship, "baseline", return_value=artifact), \
+                mock.patch.object(ship.urllib.request, "urlopen", return_value=io.BytesIO(b"corrupt")):
+            with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                ship.prepare_baseline()
+            self.assertFalse(artifact.exists())
 
     def test_download_context_preserves_release_bytes(self):
         ship.stage_downloads()
