@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,8 +129,8 @@ func TestRelayRateDeadlineDoesNotReportQuotaOrDetach(t *testing.T) {
 			done := make(chan error, 1)
 			go func() {
 				if recipient == "controller" {
-					s.writeControllerPayload(ctx, route, browser, "owner", "session", []byte("limited"))
-				} else if s.writeMeteredRelayPayload(ctx, browser, []byte("limited")) {
+					s.writeControllerPayload(ctx, ctx, route, browser, "owner", "session", []byte("limited"))
+				} else if s.writeMeteredRelayPayload(ctx, ctx, browser, []byte("limited")) {
 					done <- context.Canceled
 					return
 				}
@@ -198,5 +199,98 @@ func TestRelayBrowserWriteHasFiveSecondDeadline(t *testing.T) {
 		}
 	case <-time.After(6 * time.Second):
 		t.Fatal("browser socket write lost its five-second deadline")
+	}
+}
+
+func TestRelayBrowserOverflowCancelsSharedRateWait(t *testing.T) {
+	for _, recipient := range []string{"controller", "viewer", "tunnel", "coordination"} {
+		for _, limit := range []string{"messages", "bytes"} {
+			t.Run(recipient+"/"+limit, func(t *testing.T) {
+				browser, peer := detachWebSocketPair(t)
+				wing, wingPeer := detachWebSocketPair(t)
+				meter := NewBandwidthMeter(SustainedRate, 1<<20, nil)
+				meter.SetTierLookup(func(string) string { return "pro" })
+				limiter := meter.limiter("owner")
+				// Shared connections can reserve minutes of bandwidth in advance.
+				for range 100 {
+					if r := limiter.ReserveN(time.Now(), 1<<20); !r.OK() {
+						t.Fatal("reservation failed")
+					}
+				}
+				tokens := limiter.Tokens()
+				s := &Server{LocalMode: true, Bandwidth: meter, PTY: NewPTYRoutes(), Wings: NewWingRegistry(), browserConns: make(map[*websocket.Conn]*browserConnection), tunnelRequests: make(map[tunnelRequestKey]pendingTunnelRequest)}
+				s.Wings.Add(&ConnectedWing{ID: "wing", WingID: "wing", Conn: wing})
+				s.trackBrowser(browser, "owner")
+				t.Cleanup(func() { s.untrackBrowser(browser) })
+				route := &PTYRoute{WingID: "wing", UserID: "owner", BrowserConn: browser, ControllerID: "old"}
+				wantDetach := ws.PTYDetach{Type: ws.TypePTYDetach, SessionID: "session", ControllerID: "old"}
+				if recipient == "viewer" {
+					route.BrowserConn = nil
+					route.Viewers = map[string]*websocket.Conn{"viewer": browser}
+					wantDetach.ControllerID, wantDetach.ViewerID = "", "viewer"
+				}
+				s.PTY.Set("session", route)
+				frame := []byte(`{"type":"pty.output","session_id":"session","data":"` + strings.Repeat("x", 64<<10) + `"}`)
+				if recipient == "viewer" {
+					frame = []byte(`{"type":"pty.output","session_id":"session","viewer_id":"viewer","data":"` + strings.Repeat("x", 64<<10) + `"}`)
+				}
+				if recipient == "tunnel" || recipient == "coordination" {
+					if !s.registerTunnelRequest("wing", "request", browser, recipient == "coordination") {
+						t.Fatal("registration failed")
+					}
+					s.forwardTunnelToBrowser("wing", "request", frame, false)
+				} else {
+					s.forwardPTYToBrowser("session", "wing", frame)
+				}
+				// Observe the reservation, including coordination's unmetered wait,
+				// before overflowing; the writer must actually be rate blocked.
+				deadline := time.Now().Add(time.Second)
+				for limiter.Tokens() >= tokens-float64(len(frame))/2 {
+					if time.Now().After(deadline) {
+						t.Fatal("writer never entered shared rate wait")
+					}
+					time.Sleep(time.Millisecond)
+				}
+				count, size := browserOutboundMessages+1, 1
+				if limit == "bytes" {
+					count, size = 1, browserOutboundBytes+1
+				}
+				for range count {
+					s.enqueueBrowser(browser, size, "session", func(context.Context, context.Context) {
+						t.Error("overflowed job was executed")
+					})
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+				defer cancel()
+				_, data, err := peer.Read(ctx)
+				if err != nil {
+					t.Fatalf("browser did not receive slow-connection error during shared rate wait: %v", err)
+				}
+				var got ws.ErrorMsg
+				if err := json.Unmarshal(data, &got); err != nil || got.Type != ws.TypeError || got.SessionID != "session" || got.Message != "detached: slow connection" {
+					t.Fatalf("wrong slow-connection error: %s (%v)", data, err)
+				}
+				if _, data, err := peer.Read(ctx); err == nil || ctx.Err() != nil {
+					t.Fatalf("want close after exactly one error, got %s (%v)", data, err)
+				}
+				_, data, err = wingPeer.Read(ctx)
+				if err != nil {
+					t.Fatalf("wing did not receive overflow detach during shared rate wait: %v", err)
+				}
+				var detached ws.PTYDetach
+				if err := json.Unmarshal(data, &detached); err != nil || detached != wantDetach {
+					t.Fatalf("wrong wing detach: %s (%v)", data, err)
+				}
+				if routes := s.PTY.browserDetachRoutes(browser, ""); len(routes) != 0 {
+					t.Fatalf("overflow left attached routes: %v", routes)
+				}
+				s.tunnelMu.Lock()
+				pending := len(s.tunnelRequests)
+				s.tunnelMu.Unlock()
+				if pending != 0 {
+					t.Fatal("overflow retained tunnel requests")
+				}
+			})
+		}
 	}
 }

@@ -192,7 +192,7 @@ func TestRelayBrowserOverflowDisconnectForwardsDetach(t *testing.T) {
 			}
 			s.PTY.Set("session", route)
 			transport.blocked.Store(true)
-			s.enqueueBrowser(browser, 1, "session", func(ctx context.Context) {
+			s.enqueueBrowser(browser, 1, "session", func(ctx, rateCtx context.Context) {
 				_ = writeWebSocketJSON(ctx, browser, ws.ErrorMsg{Type: ws.TypeError, Message: "in flight"})
 			})
 			select {
@@ -202,7 +202,7 @@ func TestRelayBrowserOverflowDisconnectForwardsDetach(t *testing.T) {
 			}
 			// Overflow while the in-flight write is still blocked, then disconnect
 			// before the writer can reach the slow-connection error branch.
-			s.enqueueBrowser(browser, browserOutboundBytes+1, "session", func(context.Context) {
+			s.enqueueBrowser(browser, browserOutboundBytes+1, "session", func(context.Context, context.Context) {
 				t.Error("overflowed job was executed")
 			})
 			if captured := s.PTY.browserDetachRoutes(browser, ""); len(captured) != 0 {

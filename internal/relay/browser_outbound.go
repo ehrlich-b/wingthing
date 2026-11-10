@@ -17,25 +17,27 @@ const (
 
 type browserOutboundJob struct {
 	bytes int
-	write func(context.Context)
+	write func(ctx, rateCtx context.Context)
 }
 
 // One writer per browser keeps wing readers independent of browser transport
 // and rate-limit waits. Both the frame count and retained payload bytes are capped.
 type browserOutbound struct {
-	mu        sync.Mutex
-	jobs      []browserOutboundJob
-	bytes     int
-	slow      bool
-	detached  []browserDetachRoute
-	sessionID string
-	wake      chan struct{}
-	done      chan struct{}
-	ctx       context.Context
-	cancel    context.CancelFunc
+	mu         sync.Mutex
+	jobs       []browserOutboundJob
+	bytes      int
+	slow       bool
+	detached   []browserDetachRoute
+	sessionID  string
+	wake       chan struct{}
+	done       chan struct{}
+	ctx        context.Context
+	cancel     context.CancelFunc
+	rateCtx    context.Context
+	rateCancel context.CancelFunc
 }
 
-func (s *Server) enqueueBrowser(conn *websocket.Conn, size int, sessionID string, write func(context.Context)) {
+func (s *Server) enqueueBrowser(conn *websocket.Conn, size int, sessionID string, write func(ctx, rateCtx context.Context)) {
 	s.browserMu.Lock()
 	tracked := s.browserConns[conn]
 	if tracked == nil {
@@ -45,7 +47,8 @@ func (s *Server) enqueueBrowser(conn *websocket.Conn, size int, sessionID string
 	q := tracked.outbound
 	if q == nil {
 		ctx, cancel := context.WithCancel(context.Background())
-		q = &browserOutbound{wake: make(chan struct{}, 1), done: make(chan struct{}), ctx: ctx, cancel: cancel}
+		rateCtx, rateCancel := context.WithCancel(ctx)
+		q = &browserOutbound{wake: make(chan struct{}, 1), done: make(chan struct{}), ctx: ctx, cancel: cancel, rateCtx: rateCtx, rateCancel: rateCancel}
 		tracked.outbound = q
 		go s.runBrowserWriter(conn, q)
 	}
@@ -64,6 +67,9 @@ func (s *Server) enqueueBrowser(conn *websocket.Conn, size int, sessionID string
 		clear(q.jobs)
 		q.jobs = nil
 		q.bytes = 0
+		// Interrupt bandwidth reservations without canceling a socket write:
+		// canceling that write would close the socket before its error can be sent.
+		q.rateCancel()
 	} else {
 		q.jobs = append(q.jobs, browserOutboundJob{size, write})
 		q.bytes += size
@@ -76,6 +82,7 @@ func (s *Server) enqueueBrowser(conn *websocket.Conn, size int, sessionID string
 
 func (s *Server) runBrowserWriter(conn *websocket.Conn, q *browserOutbound) {
 	defer close(q.done)
+	defer q.cancel()
 	defer func() {
 		// Overflow already cleared the browser's routes. Deliver their saved
 		// detaches even if disconnect cancels an in-flight write before the
@@ -117,9 +124,9 @@ func (s *Server) runBrowserWriter(conn *websocket.Conn, q *browserOutbound) {
 			q.jobs = q.jobs[1:]
 			q.bytes -= job.bytes
 			q.mu.Unlock()
-			// Rate limiting uses the browser lifetime. Each socket write starts
-			// its own deadline after the shared limiter has admitted the frame.
-			job.write(q.ctx)
+			// Overflow cancels rate waits while preserving the socket context for
+			// the slow-connection error. Disconnect cancels both contexts.
+			job.write(q.ctx, q.rateCtx)
 		}
 	}
 }

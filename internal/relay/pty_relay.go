@@ -497,7 +497,7 @@ func mapValues(values map[string]*websocket.Conn) []*websocket.Conn {
 func (s *Server) notifyWingOffline(wingID string) {
 	msg := []byte(`{"type":"wing.offline"}`)
 	for _, connection := range s.PTY.offlineRecipients(wingID) {
-		s.enqueueBrowser(connection, len(msg), "", func(ctx context.Context) {
+		s.enqueueBrowser(connection, len(msg), "", func(ctx, rateCtx context.Context) {
 			if err := writeBrowserPayload(ctx, connection, msg); err != nil {
 				log.Printf("notify browser that wing %s is offline: %v", wingID, err)
 			}
@@ -1265,12 +1265,12 @@ clickURL := s.ntfyClickURL(sourceWingID, sessionID)
 		// Detached — drop the data (wing has ring buffer for replay)
 		return
 	}
-	s.enqueueBrowser(bc, len(data), sessionID, func(ctx context.Context) {
-		s.writeControllerPayload(ctx, route, bc, userID, sessionID, data)
+	s.enqueueBrowser(bc, len(data), sessionID, func(ctx, rateCtx context.Context) {
+		s.writeControllerPayload(ctx, rateCtx, route, bc, userID, sessionID, data)
 	})
 }
 
-func (s *Server) writeControllerPayload(ctx context.Context, route *PTYRoute, bc *websocket.Conn, userID, sessionID string, data []byte) {
+func (s *Server) writeControllerPayload(ctx, rateCtx context.Context, route *PTYRoute, bc *websocket.Conn, userID, sessionID string, data []byte) {
 	if allowed, notify := s.browserRelayPayloadAccess(bc, "session:"+sessionID); !allowed {
 		if notify {
 			denied := ws.ErrorMsg{
@@ -1287,7 +1287,7 @@ func (s *Server) writeControllerPayload(ctx context.Context, route *PTYRoute, bc
 
 	// Meter outbound bandwidth (relay → browser is what costs on Fly)
 	if s.Bandwidth != nil {
-		if err := s.Bandwidth.Wait(ctx, userID, len(data)); err != nil {
+		if err := s.Bandwidth.Wait(rateCtx, userID, len(data)); err != nil {
 			if !errors.Is(err, errMonthlyBandwidthExceeded) {
 				log.Printf("wait for relay bandwidth: %v", err)
 				return
@@ -1326,19 +1326,19 @@ func (s *Server) writeControllerPayload(ctx context.Context, route *PTYRoute, bc
 }
 
 func (s *Server) queueRelayPayload(conn *websocket.Conn, data []byte, sessionID, requestID string) {
-	s.enqueueBrowser(conn, len(data), sessionID, func(ctx context.Context) {
-		s.deliverRelayPayload(ctx, conn, data, sessionID, requestID)
+	s.enqueueBrowser(conn, len(data), sessionID, func(ctx, rateCtx context.Context) {
+		s.deliverRelayPayload(ctx, rateCtx, conn, data, sessionID, requestID)
 	})
 }
 
-func (s *Server) deliverRelayPayload(ctx context.Context, conn *websocket.Conn, data []byte, sessionID, requestID string) {
+func (s *Server) deliverRelayPayload(ctx, rateCtx context.Context, conn *websocket.Conn, data []byte, sessionID, requestID string) {
 	resource := "session:" + sessionID
 	if requestID != "" {
 		resource = "request:" + requestID
 	}
 	allowed, notify := s.browserRelayPayloadAccess(conn, resource)
 	if allowed {
-		s.writeMeteredRelayPayload(ctx, conn, data)
+		s.writeMeteredRelayPayload(ctx, rateCtx, conn, data)
 		return
 	}
 	if notify {
@@ -1352,13 +1352,13 @@ func (s *Server) deliverRelayPayload(ctx context.Context, conn *websocket.Conn, 
 	}
 }
 
-func (s *Server) writeMeteredRelayPayload(ctx context.Context, conn *websocket.Conn, data []byte) bool {
+func (s *Server) writeMeteredRelayPayload(ctx, rateCtx context.Context, conn *websocket.Conn, data []byte) bool {
 	userID := s.browserUserID(conn)
 	if s.Bandwidth != nil {
 		if userID == "" {
 			return false
 		}
-		if err := s.Bandwidth.Wait(ctx, userID, len(data)); err != nil {
+		if err := s.Bandwidth.Wait(rateCtx, userID, len(data)); err != nil {
 			if !errors.Is(err, errMonthlyBandwidthExceeded) {
 				log.Printf("wait for metered relay bandwidth: %v", err)
 				return false
@@ -1380,13 +1380,13 @@ func (s *Server) writeMeteredRelayPayload(ctx context.Context, conn *websocket.C
 	return true
 }
 
-func (s *Server) writeCoordinationPayload(ctx context.Context, conn *websocket.Conn, data []byte) bool {
+func (s *Server) writeCoordinationPayload(ctx, rateCtx context.Context, conn *websocket.Conn, data []byte) bool {
 	userID := s.browserUserID(conn)
 	if s.Bandwidth != nil {
 		if userID == "" {
 			return false
 		}
-		if err := s.Bandwidth.WaitRate(ctx, userID, len(data)); err != nil {
+		if err := s.Bandwidth.WaitRate(rateCtx, userID, len(data)); err != nil {
 			return false
 		}
 	}

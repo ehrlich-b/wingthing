@@ -947,12 +947,12 @@ func (s *Server) forwardTunnelToBrowser(wingID, requestID string, data []byte, d
 	if pending == nil {
 		return
 	}
-	s.enqueueBrowser(pending.Browser, len(data), "", func(ctx context.Context) {
-		s.deliverTunnelToBrowser(ctx, wingID, requestID, data, pending, overBudget)
+	s.enqueueBrowser(pending.Browser, len(data), "", func(ctx, rateCtx context.Context) {
+		s.deliverTunnelToBrowser(ctx, rateCtx, wingID, requestID, data, pending, overBudget)
 	})
 }
 
-func (s *Server) deliverTunnelToBrowser(ctx context.Context, wingID, requestID string, data []byte, pending *pendingTunnelRequest, overBudget bool) {
+func (s *Server) deliverTunnelToBrowser(ctx, rateCtx context.Context, wingID, requestID string, data []byte, pending *pendingTunnelRequest, overBudget bool) {
 	if overBudget {
 		message := ws.ErrorMsg{
 			Type: ws.TypeError, RequestID: requestID,
@@ -964,7 +964,7 @@ func (s *Server) deliverTunnelToBrowser(ctx context.Context, wingID, requestID s
 		return
 	}
 	if pending.Coordination {
-		if !s.writeCoordinationPayload(ctx, pending.Browser, data) {
+		if !s.writeCoordinationPayload(ctx, rateCtx, pending.Browser, data) {
 			// A closed browser or canceled rate wait cannot consume the rest
 			// of this response. Remove the request immediately so a modified
 			// wing cannot keep making the relay rate-limit or notify dead clients
@@ -979,7 +979,7 @@ func (s *Server) deliverTunnelToBrowser(ctx context.Context, wingID, requestID s
 		s.denyHostedRelay(ctx, pending.Browser, s.browserUserID(pending.Browser), wingID, ws.TypeTunnelResponse, requestID, "")
 		return
 	}
-	s.deliverRelayPayload(ctx, pending.Browser, data, "", requestID)
+	s.deliverRelayPayload(ctx, rateCtx, pending.Browser, data, "", requestID)
 }
 
 func (s *Server) discardTunnelRequest(wingID, requestID string) {
