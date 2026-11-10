@@ -17,7 +17,7 @@ import { showPalette } from '../palette.js';
 import { loadHome, probeWing } from '../data.js';
 import { wingOf, machineName, sessions, coordinator, workSessions, needing, findSession, machines, machineCounts } from './select.js';
 import { inputAllowed, selectComposer, squares, lines, terminal, composer, project, ui, drafts } from './common.js';
-import { viewWing } from './views/home.js';
+import { viewWing, viewBrowserAccess, syncHomePolling } from './views/home.js';
 import { viewNew } from './views/new.js';
 import { viewSessions } from './views/sessions.js';
 import { viewMachines } from './views/machines.js';
@@ -27,12 +27,12 @@ let root, main, side, lastSignature = '', routing = false;
 const homes = new Map();
 function paperRoute(hash = location.hash) { return route(hash); }
 function isPaperRoute(hash) { return !!paperRoute(hash); }
-function head(title, meta) {
+function head(title, meta, strip) {
     const current = paperRoute();
     const back = current.view === 'session' ? '<a href="#sessions">← Sessions</a>' : current.view === 'machine' ? '<a href="#machines">← Machines</a>' : '';
     const counts = machineCounts();
     const status = !machines().length ? 'Waiting for your first machine…' : counts.connected === machines().length ? 'All machines connected.' : counts.offline ? counts.offline + ' offline. Sessions are kept.' : 'Checking machines…';
-    return '<header class="pp-hdr" data-stable><h1>' + title + '</h1><div class="pp-meta">' + meta + '</div></header><div class="pp-strip" data-stable role="status">' + (back || status) + '</div>';
+    return '<header class="pp-hdr" data-stable><h1>' + title + '</h1><div class="pp-meta">' + meta + '</div></header><div class="pp-strip" data-stable role="status">' + (strip ?? (back || status)) + '</div>';
 }
 function nav(route) {
     if (browserUnavailable(S.currentUser)) return '<a href="#"' + (route.view !== 'account' ? ' aria-current="page"' : '') + '>Get started</a><a href="#account"' + (route.view === 'account' ? ' aria-current="page"' : '') + '>Account</a>';
@@ -50,6 +50,10 @@ function frame() {
         const anchor = document.createComment('Shell engine mount'); node.before(anchor); homes.set(node, anchor);
     }
     root.addEventListener('click', event => {
+        if (event.target.closest('[data-home-needs]')) window.addEventListener('hashchange', () => {
+            const input = root.querySelector('#pp-filter');
+            if (input) { input.value = 'Needs you'; updateSessionSearch(); }
+        }, { once: true });
         if (event.target.closest('a[href="#needs"]') && location.hash === '#needs') main.querySelector('#pp-needs')?.focus({ preventScroll: true });
         if (event.target.closest('[data-clear-search]')) {
             const input = root.querySelector('#pp-filter');
@@ -62,7 +66,7 @@ function frame() {
         }
         if (event.target.closest('[data-more-machines]')) { ui.allMachines = true; render(true); return; }
         const take = event.target.closest('[data-takeover]');
-        if (take) { const [wingId, sessionId] = take.dataset.takeover.split('/'); if (machineState(wingOf(wingId)) !== 'connected') return; switchToSession(sessionId, true, wingId); return; }
+        if (take) { const [wingId, sessionId] = take.dataset.takeover.split('/'); if (machineState(wingOf(wingId)) !== 'connected') return; switchToSession(sessionId, true, wingId); S.term?.focus(); return; }
         const copy = event.target.closest('[data-copy]');
         if (copy) { navigator.clipboard?.writeText(copy.dataset.copy).then(() => { copy.textContent = 'Copied'; }, () => { copy.textContent = 'Copy failed'; }); return; }
         if (browserUnavailable(S.currentUser)) return;
@@ -229,9 +233,10 @@ function render(force) {
     const current = paperRoute();
     const denied = browserUnavailable(S.currentUser);
     const live = !denied && S.activeView === 'terminal';
+    syncHomePolling(current.view === 'wing' && !denied);
     selectComposer(!denied ? (current.view === 'wing' ? coordinator() : current.view === 'session' && !live ? findSession(current) : null) : null);
     const views = { wing: viewWing, sessions: viewSessions, machines: viewMachines, pair: viewPair, new: viewNew, session: viewSession, account: viewAccount, machine: viewMachine, canvas: viewCanvas };
-    const html = denied && current.view !== 'account' ? head('Get started', 'Free native access') + directSetup(S.currentUser) : live ? head(esc(sessionDisplayName(findSession(current) || {}) || 'Session'), esc(machineName(wingOf(S.ptyWingId)))) + '<div class="pp-live" data-engine="terminal" data-stable></div>' : views[current.view](current);
+    const html = denied && current.view !== 'account' ? (current.view === 'wing' ? viewBrowserAccess() : head('Get started', 'Free native access') + directSetup(S.currentUser)) : live ? head(esc(sessionDisplayName(findSession(current) || {}) || 'Session'), esc(machineName(wingOf(S.ptyWingId)))) + '<div class="pp-live" data-engine="terminal" data-stable></div>' : views[current.view](current);
     const sig = location.hash + S.activeView + html;
     renderNavigation(current, denied);
     if (sig === lastSignature) return;

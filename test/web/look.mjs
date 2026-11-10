@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { removeState } from './fixture-state.mjs';
+import { runHome } from './home.mjs';
 import { assertListViewRefresh } from './shell-list-focus.mjs';
 import { x25519 } from '../../web/node_modules/@noble/curves/ed25519.js';
 import { hkdf } from '../../web/node_modules/@noble/hashes/hkdf.js';
@@ -144,7 +145,7 @@ async function machine(id) {
         const inner = JSON.parse(new TextDecoder().decode(gcm(key, encrypted.subarray(0, 12)).decrypt(encrypted.subarray(12))));
         let response;
         if (inner.type === 'wing.info') response = { hostname: fixture.name, wing_label: fixture.name, platform: 'darwin', agents: ['claude', 'codex'], projects: [{ name: 'wingthing', path: '/Users/example/code/wingthing' }], capabilities: ['session.rename.v1'] };
-        else if (inner.type === 'sessions.list') response = { sessions: fixture.rows };
+        else if (inner.type === 'sessions.list') { if (shellMode === 'home') console.log('INVENTORY',id,fixture.rows.length); response = { sessions: fixture.rows }; }
         else if (inner.type === 'session.control' && inner.operation === 'session_read') {
             const selected = fixture.rows.find(item => item.session_id === inner.arguments.session);
             const list = selected && (events[selected.session_id] || fallback(selected.name));
@@ -429,7 +430,7 @@ async function go(page, hash, hashOnly = false) {
     await page.waitForTimeout(shellMode ? 100 : 900);
     if (shellMode) {
         const count=[...sockets.keys()].reduce((total,id)=>total+machines[id].rows.filter(s=>!(s.pinned && s.role==='coordinator')).length,0);
-        await page.waitForFunction(expected => document.querySelector('.pp-nav-sessions small')?.textContent === String(expected.sessions || '') && document.querySelector('.pp-nav-machines small')?.textContent === String(expected.machines || ''), {sessions:count,machines:sockets.size});
+        await page.waitForFunction(expected => document.querySelector('.pp-nav-sessions small')?.textContent === String(expected.sessions || '') && document.querySelector('.pp-nav-machines small')?.textContent === String(expected.machines || ''), {sessions:count,machines:sockets.size}).catch(async error => { console.error('Inventory mismatch', {expectedSessions:count,expectedMachines:sockets.size,actual:await page.locator('#paper').innerText()}); throw error; });
         await page.waitForFunction(expected => document.querySelectorAll('.pp-side-squares .pp-sq-connected').length === expected, Math.min(sockets.size, 3));
     }
 }
@@ -595,8 +596,9 @@ async function assertSessionRowRefresh(page) {
 async function runShell(browser) {
     const original=machines.studio.rows.slice(), pages=[], contexts=[], errors=[];
     for (const viewport of [{width:1440,height:900},{width:390,height:844}]) {
-        const context=await browser.newContext({viewport}); contexts.push(context);
+        const context=await browser.newContext({viewport, ...(shellMode === 'home' ? {colorScheme:'dark'} : {})}); contexts.push(context);
         const page=await context.newPage(); pages.push(page);
+        if (shellMode === 'home') page.on('console', message => { if (message.type() === 'error') console.error('BROWSER', message.text()); });
         page.on('pageerror',error=>{ errors.push(String(error)); console.error('PAGEERROR '+error); });
         page.on('dialog',dialog=>{ errors.push('Unexpected dialog: '+dialog.message()); dialog.dismiss(); });
         await page.route('**/*',route=>new URL(route.request().url()).origin===base?route.continue():route.abort());
@@ -607,6 +609,12 @@ async function runShell(browser) {
             const entries=await response.json();
             await route.fulfill({response,json:entries.filter(w=>Object.hasOwn(machines,w.wing_id))});
         });
+    }
+    if (shellMode === 'home') {
+        await runHome({pages, machines, sockets, machine, row, events, at, go, shoot, checked, base});
+        assert.deepEqual(errors, []); checked('no-page-errors-or-dialogs', errors);
+        for (const context of contexts) await context.close();
+        return;
     }
     if (shellMode==='routes') for (const page of pages) {
         await go(page,'#'); await assertShell(page,'zero-machines-'+page.viewportSize().width);

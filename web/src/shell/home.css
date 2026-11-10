@@ -1,0 +1,62 @@
+/* Home answers: what needs me, and what should I do next? */
+.pp-main[data-view="wing"] { font-family: var(--wt-sans); }
+.pp-main[data-view="wing"] .pp-hdr h1 { font: 600 18px var(--wt-sans); }
+.pp-main[data-view="wing"] .pp-strip { gap: 12px; }
+.pp-main[data-view="wing"] .pp-strip .pp-btn { height: 28px; min-height: 28px; margin-left: auto; }
+.home-columns { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 32px; padding-top: 12px; }
+.home-work, .home-rail, .home-section { min-width: 0; }
+.home-section > h2, .home-rail > h2 { height: 40px; display: flex; align-items: center; justify-content: space-between; margin: 0; border-bottom: 1px solid var(--wt-rule); font-size: 13px; font-weight: 600; color: var(--wt-ink-2); }
+.home-section > h2 small { font-weight: 400; color: var(--wt-ink-3); }
+.home-section + .home-section { margin-top: 12px; }
+.home-need { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; border: 1px solid var(--wt-rule-2); border-radius: var(--wt-r1); padding: 12px 14px; margin-top: 12px; }
+.home-need h3 { margin: 0; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.home-need p { color: var(--wt-ink-2); font-size: 13px; }
+.home-commands { color: var(--wt-ink); background: var(--wt-surface); border: 1px solid var(--wt-rule); border-radius: var(--wt-r1); padding: 10px 12px; font: 12px/1.7 var(--wt-mono) !important; white-space: pre-wrap; overflow-wrap: anywhere; margin: 12px 0; }
+.home-commands i { color: var(--wt-ink-3); font-style: normal; }
+.home-commands span { display: block; }
+.home-need .home-commands { margin: 8px 0 0; }
+.home-row { display: grid; grid-template-columns: 80px minmax(0, 1.1fr) minmax(0, 1fr) 32px; align-items: center; gap: 12px; height: 44px; border-bottom: 1px solid var(--wt-rule); font-size: 13px; }
+.home-row:hover { background: var(--wt-surface); }
+.home-identity, .home-identity b, .home-identity small, .home-line { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.home-identity b { font-size: 13px; font-weight: 600; }
+.home-identity small, .home-line, .home-row time { font-size: 12px; color: var(--wt-ink-2); }
+.home-row time { text-align: right; }
+.home-offline { opacity: .55; }
+.home-more { display: inline-block; margin: 8px 0 0; font-size: 13px; color: var(--wt-ink-2); }
+.home-rail > p { margin: 12px 0 !important; color: var(--wt-ink-2); font-size: 13px; }
+.home-rail > a { font-size: 13px; text-decoration: underline !important; }
+.home-rail .pp-composer { position: static; margin: 0; padding: 0; border: 0; }
+.home-rail .pp-delivery { min-height: 18px; }
+.home-steps { max-width: 720px; list-style: none; padding: 24px 0; margin: 0; }
+.home-step { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 16px; padding: 16px 0; }
+.home-number { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--wt-rule-2); border-radius: 50%; color: var(--wt-ink-2); font-size: 13px; }
+.home-tick { color: var(--wt-green); border-color: var(--wt-green); }
+.home-step-active .home-number { color: var(--wt-blue); border-color: var(--wt-blue); }
+.home-step h2 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+.home-step:not(.home-step-active):has(.home-number:not(.home-tick)) h2 { color: var(--wt-ink-2); }
+.home-step p, .home-access p { color: var(--wt-ink-2); font-size: 13px; }
+.home-step .pp-btn { margin-top: 8px; }
+.home-access { max-width: 760px; margin-top: 32px; }
+.home-access h2 { font-size: 18px; font-weight: 600; }
+.home-access .home-commands { margin: 20px 0; }
+@media (max-width: 1100px) { .home-columns { grid-template-columns: minmax(0, 1fr) 260px; gap: 24px; } }
+@media (max-width: 760px) {
+    .home-columns { grid-template-columns: minmax(0, 1fr); gap: 24px; padding-bottom: 24px; }
+    .home-row { height: 56px; grid-template-columns: 70px minmax(0, 1fr) 32px; gap: 8px; }
+    .home-line { display: none; }
+    .home-need { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+    .home-need .pp-btn, .home-step .pp-btn, .home-access .pp-btn { min-height: 44px; }
+    .home-rail .pp-composer { position: static; padding: 0; }
+    .home-steps { padding: 8px 0 24px; }
+    .home-step { gap: 12px; }
+}
+#paper:has(.pp-main[data-view="wing"]) {
+    --pp-paper: var(--wt-bg); --pp-folio: var(--wt-surface); --pp-field: var(--wt-surface);
+    --pp-ink: var(--wt-ink); --pp-ink-2: var(--wt-ink-2); --pp-ink-3: var(--wt-ink-3);
+    --pp-rule: var(--wt-rule); --pp-rule-2: var(--wt-rule-2);
+    --pp-accent: var(--wt-blue); --pp-accent-2: var(--wt-blue); --pp-on-accent: var(--wt-on-blue);
+    --pp-sans: var(--wt-sans); --pp-mono: var(--wt-mono);
+    --pp-amber: var(--wt-orange); --pp-blue: var(--wt-blue); --pp-green: var(--wt-green);
+}
+.home-row .pp-st { font: 400 12px var(--wt-sans); letter-spacing: 0; text-transform: none; }
+#paper:has(.pp-main[data-view="wing"]) .pp-brand { color: var(--wt-blue); font: 600 16px var(--wt-sans); }
