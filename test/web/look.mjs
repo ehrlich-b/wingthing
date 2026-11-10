@@ -447,6 +447,45 @@ async function assertDisclosureRefresh(page, disclosure, label) {
     }
     checked(label+'-'+page.viewportSize().width, results);
 }
+async function assertSessionGroupRefresh(page) {
+    const patchSource = fs.readFileSync(path.join(root, 'web/src/shell/patch.js'), 'utf8').replace('export function patchRegion', 'function patchRegion');
+    const result = await page.locator('.pp-col-main').evaluate((region, source) => {
+        const patch = eval(source + '; patchRegion');
+        const group = title => [...region.querySelectorAll('.pp-group')].find(node => node.querySelector('.pp-kick span').textContent === title);
+        const complete = region.innerHTML;
+        group('Needs you').remove();
+        const withoutEarlier = region.innerHTML;
+        const working = group('Working'), row = working.querySelector('.pp-srow');
+        const disclosure = working.querySelector('details');
+        disclosure.open = true;
+        row.focus();
+        const selection = getSelection(), text = row.querySelector('b').firstChild;
+        selection.setBaseAndExtent(text, 0, text, 4);
+        const selected = selection.toString();
+        let blurs = 0;
+        row.addEventListener('blur', () => blurs++);
+        const observe = () => ({
+            groupRetained: group('Working') === working,
+            rowRetained: group('Working').querySelector('.pp-srow') === row,
+            focused: document.activeElement === row,
+            disclosureRetained: group('Working').querySelector('details') === disclosure,
+            expanded: disclosure.open,
+            selectionRetained: selection.anchorNode === text && selection.toString() === selected,
+            blurs,
+        });
+        patch(region, complete);
+        const inserted = observe();
+        patch(region, withoutEarlier);
+        const removed = observe();
+        patch(region, complete);
+        return { inserted, removed, restored: observe() };
+    }, patchSource);
+    const expected = {groupRetained:true, rowRetained:true, focused:true, disclosureRetained:true, expanded:true, selectionRetained:true, blurs:0};
+    assert.deepEqual(result, {inserted:expected, removed:expected, restored:expected});
+    checked('session-group-refresh-' + page.viewportSize().width, result);
+    // Discard the probe's local disclosure state before the navigation checks.
+    await go(page, '#sessions');
+}
 async function runShell(browser) {
     const original=machines.studio.rows.slice(), pages=[], contexts=[], errors=[];
     for (const viewport of [{width:1440,height:900},{width:390,height:844}]) {
@@ -473,7 +512,7 @@ async function runShell(browser) {
         if (shellMode==='routes') await shoot(page,'shell-volume-1','-'+page.viewportSize().width);
     }
     if (shellMode==='routes') {
-        machines.studio.rows=[...original,...Array.from({length:10},(_,i)=>row('long-'+i,'Improve organization invitation recovery for interrupted workspace migration '+(i+1),'claude',i<9?'blocked':'working','wingthing'))];
+        machines.studio.rows=[...original,...Array.from({length:18},(_,i)=>row('long-'+i,'Improve organization invitation recovery for interrupted workspace migration '+(i+1),'claude',i<9?'blocked':'working','wingthing'))];
         for (const id of ['macbook','mini']) await machine(id);
         // Change fixture inventories across a full load, so the assertion
         // does not depend on the application's thirty-second data poll.
@@ -494,6 +533,8 @@ async function runShell(browser) {
                 assert.equal(await page.evaluate(()=>location.hash),expected);
                 await shoot(page,'shell-route-'+index,'-'+page.viewportSize().width);
             }
+            await go(page,'#sessions');
+            await assertSessionGroupRefresh(page);
             await go(page,'#');
             await page.locator('#pp-needs .pp-more').click();
             await page.locator('#pp-filter').waitFor();

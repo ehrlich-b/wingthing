@@ -20,6 +20,11 @@ function patchNode(current, next) {
 function patchChildren(current, next) {
     const wanted = [...next.childNodes];
     const retained = new Set();
+    // Remove departed keyed siblings first. Moving an unchanged group ahead
+    // of a departed one would detach its focused descendants in the browser.
+    for (const child of [...current.childNodes]) {
+        if (key(child) && !wanted.some(node => compatible(child, node))) child.remove();
+    }
     let cursor = current.firstChild;
     for (const child of wanted) {
         const identity = key(child);
