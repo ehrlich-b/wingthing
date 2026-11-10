@@ -76,6 +76,16 @@ func (s *Server) enqueueBrowser(conn *websocket.Conn, size int, sessionID string
 
 func (s *Server) runBrowserWriter(conn *websocket.Conn, q *browserOutbound) {
 	defer close(q.done)
+	defer func() {
+		// Overflow already cleared the browser's routes. Deliver their saved
+		// detaches even if disconnect cancels an in-flight write before the
+		// slow-connection branch runs, and finish before untrackBrowser returns.
+		q.mu.Lock()
+		detached := q.detached
+		q.detached = nil
+		q.mu.Unlock()
+		s.forwardDetachedRoutes(detached)
+	}()
 	for {
 		select {
 		case <-q.ctx.Done():
@@ -88,7 +98,7 @@ func (s *Server) runBrowserWriter(conn *websocket.Conn, q *browserOutbound) {
 			}
 			q.mu.Lock()
 			if q.slow {
-				detached, sessionID := q.detached, q.sessionID
+				sessionID := q.sessionID
 				q.mu.Unlock()
 				// A genuinely dead transport cannot receive an error. Try once with a
 				// deadline, then close it; reconnecting browsers can attach for replay.
@@ -96,7 +106,6 @@ func (s *Server) runBrowserWriter(conn *websocket.Conn, q *browserOutbound) {
 				_ = writeWebSocketJSON(ctx, conn, ws.ErrorMsg{Type: ws.TypeError, SessionID: sessionID, Message: "detached: slow connection"})
 				cancel()
 				_ = conn.CloseNow()
-				s.forwardDetachedRoutes(detached)
 				return
 			}
 			if len(q.jobs) == 0 {

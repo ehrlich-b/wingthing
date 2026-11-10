@@ -167,3 +167,68 @@ func TestRelayBrowserDisconnectStopsWriter(t *testing.T) {
 		t.Fatal("disconnect did not cancel and join blocked writer")
 	}
 }
+
+func TestRelayBrowserOverflowDisconnectForwardsDetach(t *testing.T) {
+	for _, attachment := range []string{"controller", "pending controller", "viewer"} {
+		t.Run(attachment, func(t *testing.T) {
+			browser, _, transport := fakeBlockedBrowser(t)
+			wing, wingPeer := detachWebSocketPair(t)
+			s := &Server{LocalMode: true, PTY: NewPTYRoutes(), Wings: NewWingRegistry(), browserConns: make(map[*websocket.Conn]*browserConnection)}
+			s.Wings.Add(&ConnectedWing{ID: "wing", WingID: "wing", Conn: wing})
+			s.trackBrowser(browser, "owner")
+			t.Cleanup(func() { s.untrackBrowser(browser) })
+			route := &PTYRoute{WingID: "wing", UserID: "owner"}
+			want := ws.PTYDetach{Type: ws.TypePTYDetach, SessionID: "session"}
+			switch attachment {
+			case "controller":
+				route.BrowserConn, route.ControllerID = browser, "old"
+				want.ControllerID = "old"
+			case "pending controller":
+				route.PendingController, route.PendingControllerID = browser, "pending"
+				want.ControllerID = "pending"
+			case "viewer":
+				route.Viewers = map[string]*websocket.Conn{"viewer": browser}
+				want.ViewerID = "viewer"
+			}
+			s.PTY.Set("session", route)
+			transport.blocked.Store(true)
+			s.enqueueBrowser(browser, 1, "session", func(ctx context.Context) {
+				_ = writeWebSocketJSON(ctx, browser, ws.ErrorMsg{Type: ws.TypeError, Message: "in flight"})
+			})
+			select {
+			case <-transport.entered:
+			case <-time.After(time.Second):
+				t.Fatal("writer never blocked")
+			}
+			// Overflow while the in-flight write is still blocked, then disconnect
+			// before the writer can reach the slow-connection error branch.
+			s.enqueueBrowser(browser, browserOutboundBytes+1, "session", func(context.Context) {
+				t.Error("overflowed job was executed")
+			})
+			if captured := s.PTY.browserDetachRoutes(browser, ""); len(captured) != 0 {
+				t.Fatalf("overflow left routes for normal disconnect cleanup: %v", captured)
+			}
+			disconnected := make(chan struct{})
+			go func() { s.untrackBrowser(browser); close(disconnected) }()
+			t.Cleanup(func() { <-disconnected })
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			_, data, err := wingPeer.Read(ctx)
+			if err != nil {
+				t.Fatalf("wing did not receive overflow detach after disconnect within 100 ms: %v", err)
+			}
+			var got ws.PTYDetach
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Fatalf("wrong attachment released: got %+v, want %+v", got, want)
+			}
+			select {
+			case <-disconnected:
+			case <-ctx.Done():
+				t.Fatal("disconnect did not join writer after forwarding detach")
+			}
+		})
+	}
+}
