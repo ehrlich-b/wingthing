@@ -416,6 +416,37 @@ async function assertShell(page, label) {
     assert.ok(result.scrollWidth<=result.width,JSON.stringify(result));
     checked(label,result);
 }
+async function assertDisclosureRefresh(page, disclosure, label) {
+    const patchSource = fs.readFileSync(path.join(root,'web/src/shell/patch.js'),'utf8').replace('export function patchRegion','function patchRegion');
+    const results = [];
+    for (const open of [true, false]) {
+        await disclosure.locator('summary').click();
+        assert.equal(await disclosure.evaluate(node => node.open), open);
+        // Exercise the production patcher on the mounted view's default-closed
+        // markup directly, keeping this regression independent of inventory polls.
+        const result = await disclosure.evaluate((node, source) => {
+            const region = node.parentElement, next = region.cloneNode(true);
+            next.querySelectorAll('details').forEach(details => details.removeAttribute('open'));
+            const title = next.querySelector('details a b') || next.querySelector('details a');
+            title.textContent += ' updated';
+            node.querySelector('summary').focus();
+            const scroll = document.querySelector('.pp-main').scrollTop;
+            const patch = eval(source+'; patchRegion');
+            patch(region, next.innerHTML);
+            return {
+                retained: node === region.querySelector('details'),
+                open: node.open,
+                focused: document.activeElement === node.querySelector('summary'),
+                scrollRetained: document.querySelector('.pp-main').scrollTop === scroll,
+                updated: region.textContent.includes(title.textContent),
+            };
+        }, patchSource);
+        assert.deepEqual(result, {retained:true, open, focused:true, scrollRetained:true, updated:true});
+        results.push(result);
+        if (open) await shoot(page, label, '-'+page.viewportSize().width);
+    }
+    checked(label+'-'+page.viewportSize().width, results);
+}
 async function runShell(browser) {
     const original=machines.studio.rows.slice(), pages=[], contexts=[], errors=[];
     for (const viewport of [{width:1440,height:900},{width:390,height:844}]) {
@@ -442,7 +473,7 @@ async function runShell(browser) {
         if (shellMode==='routes') await shoot(page,'shell-volume-1','-'+page.viewportSize().width);
     }
     if (shellMode==='routes') {
-        machines.studio.rows=[...original,...Array.from({length:5},(_,i)=>row('long-'+i,'Improve organization invitation recovery for interrupted workspace migration '+(i+1),'claude',i===0?'blocked':'working','wingthing'))];
+        machines.studio.rows=[...original,...Array.from({length:10},(_,i)=>row('long-'+i,'Improve organization invitation recovery for interrupted workspace migration '+(i+1),'claude',i<9?'blocked':'working','wingthing'))];
         for (const id of ['macbook','mini']) await machine(id);
         // Change fixture inventories across a full load, so the assertion
         // does not depend on the application's thirty-second data poll.
@@ -463,6 +494,23 @@ async function runShell(browser) {
                 assert.equal(await page.evaluate(()=>location.hash),expected);
                 await shoot(page,'shell-route-'+index,'-'+page.viewportSize().width);
             }
+            await go(page,'#');
+            await page.locator('#pp-needs .pp-more').click();
+            await page.locator('#pp-filter').waitFor();
+            assert.equal(await page.evaluate(()=>location.hash),'#sessions');
+            const waiting = page.locator('.pp-group').filter({has:page.locator('.pp-kick', {hasText:'Needs you'})});
+            assert.equal(await waiting.locator('.pp-srow').count(),10);
+            const waitingOverflow = waiting.locator('details.pp-more-sessions');
+            const waitingRow = waitingOverflow.locator('.pp-srow').last();
+            const waitingHref = await waitingRow.getAttribute('href');
+            await assertDisclosureRefresh(page,waitingOverflow,'shell-waiting-expanded');
+            await waitingOverflow.locator('summary').click();
+            await waitingRow.click();
+            await page.waitForFunction(hash=>location.hash===hash,waitingHref);
+            await assertShell(page,'home-overflow-answer-'+page.viewportSize().width);
+            checked('home-overflow-reachable-'+page.viewportSize().width,{waiting:10,opened:waitingHref});
+            await go(page,'#machines');
+            await assertDisclosureRefresh(page,page.locator('[data-machine="studio"] details.pp-more-sessions'),'shell-machines-expanded');
             await go(page,'#sessions'); const input=page.locator('#pp-filter'); await input.fill('migration'); await input.focus();
             await page.evaluate(()=>{ window.savedFilter=document.querySelector('#pp-filter'); window.savedHeader=document.querySelector('.pp-hdr'); window.savedFirst=document.querySelector('.pp-srow'); });
             await page.waitForTimeout(2200);

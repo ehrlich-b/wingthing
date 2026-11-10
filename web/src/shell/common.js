@@ -128,7 +128,7 @@ function needsSummary() {
     const need = needing();
     return '<section class="pp-needs" id="pp-needs" tabindex="-1" aria-labelledby="pp-needs-title">' +
         '<div class="pp-needs-heading"><h2 id="pp-needs-title">Needs you <span>' + need.length + '</span></h2>' +
-        (need.length > 2 ? '<a class="pp-more" href="#decisions">+' + (need.length - 2) + ' more</a>' : '') + '</div>' +
+        (need.length > 2 ? '<a class="pp-more" href="#sessions">+' + (need.length - 2) + ' more</a>' : '') + '</div>' +
         (need.length ? need.slice(0, 2).map(needRow).join('') : '<p class="pp-quiet">Nothing waiting</p>') + '</section>';
 }
 function kicker(left, right = '') { return '<div class="pp-kick"><span>' + left + '</span><span>' + right + '</span></div>'; }

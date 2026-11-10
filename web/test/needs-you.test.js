@@ -50,3 +50,11 @@ test('attention navigation leads to a focusable home summary or the complete wai
     assert.deepEqual(paperRoute('#needs'), { view: 'wing' });
     assert.deepEqual(paperRoute('#decisions'), { view: 'wing' });
 });
+
+test('home overflow leads to Sessions where every waiting session is listed', () => {
+    const { S, context } = setup();
+    S.sessionsData.push({ ...S.sessionsData[0], id: 'third-request' });
+    const summary = context.needsSummary();
+    assert.match(summary, /href="#sessions">\+1 more/);
+    assert.deepEqual(paperRoute('#sessions'), { view: 'sessions' });
+});

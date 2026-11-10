@@ -10,8 +10,10 @@ function patchNode(current, next) {
     }
     // These engines own their children and listeners.
     if (current.hasAttribute('data-engine')) return;
-    for (const attr of [...current.attributes]) if (!next.hasAttribute(attr.name)) current.removeAttribute(attr.name);
-    for (const attr of next.attributes) if (current.getAttribute(attr.name) !== attr.value) current.setAttribute(attr.name, attr.value);
+    // Disclosure state belongs to the reader after the element is mounted.
+    const readerOwned = name => current.tagName === 'DETAILS' && name === 'open';
+    for (const attr of [...current.attributes]) if (!readerOwned(attr.name) && !next.hasAttribute(attr.name)) current.removeAttribute(attr.name);
+    for (const attr of next.attributes) if (!readerOwned(attr.name) && current.getAttribute(attr.name) !== attr.value) current.setAttribute(attr.name, attr.value);
     patchChildren(current, next);
 }
 
