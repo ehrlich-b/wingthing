@@ -19,13 +19,23 @@ fs.writeFileSync(path.join(state,'wing.yaml'),'label: Local session proof\n');
 const env={PATH:bin+':'+process.env.PATH,HOME:home,WINGTHING_DIR:state,SHELL:'/bin/sh',TERM:'xterm-256color',HTTP_PROXY:'http://127.0.0.1:1',HTTPS_PROXY:'http://127.0.0.1:1',NO_PROXY:'127.0.0.1,localhost',TMPDIR:process.env.WT_LOOP_SCRATCH};
 const port=Number(process.env.WT_LOOP_PORT||18273),base='http://127.0.0.1:'+port;
 const roostLog=fs.openSync(path.join(out,'roost.log'),'w');
-const roost=spawn('nice',['-n','10',binary,'roost','start','--foreground','--addr','127.0.0.1:'+port],{cwd:work,env,stdio:['ignore',roostLog,roostLog]});
+const roost=spawn('nice',['-n','10',binary,'roost','start','--foreground','--addr','127.0.0.1:'+port],{cwd:work,env:{...env,WT_ROOST_READY_FD:'3'},stdio:['ignore',roostLog,roostLog,'pipe']});
 const children=[],checks=[],failures=[],dialogs=[];
+// HTTP health precedes embedded-wing startup. Wait for the real roost's
+// readiness pipe before Chromium or any session client can compete with it.
+const roostReady = new Promise((resolve,reject)=>{
+ let token='';
+ roost.stdio[3].setEncoding('utf8');
+ roost.stdio[3].on('data',chunk=>{token+=chunk;});
+ roost.stdio[3].on('end',()=>token==='ready\n'?resolve():reject(Error('roost readiness closed with '+JSON.stringify(token)+'; see roost.log')));
+ roost.on('error',reject);
+});
 let browser;
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn,timeout=10000){const start=Date.now();let last;while(Date.now()-start<timeout){try{if(await fn())return Date.now()-start;}catch(e){last=e;}await sleep(50);}throw Error('deadline '+timeout+' '+(last||''));}
 async function check(name,fn){try{const result=await fn();checks.push({name,result});console.log('PASS',name,JSON.stringify(result));}catch(e){failures.push({name,error:e.message});console.log('FAIL',name,e.message);if(!baseline)throw e;}}
 try {
+ await roostReady;
  await until(async()=> (await fetch(base+'/health')).ok);
  browser=await chromium.launch({headless:true,args:['--disable-background-networking','--renderer-process-limit=2']});
  const page=await browser.newPage({viewport:{width:1440,height:900}});
@@ -34,7 +44,6 @@ try {
  page.on('pageerror',e=>console.log('PAGEERROR',e.message));
  await page.route('**/*',route=>new URL(route.request().url()).origin===base?route.continue():route.abort());
  await page.goto(base+'/app/#sessions');
- await until(()=>fs.existsSync(path.join(state,'wing-id'))).catch(()=>{});
  const list=()=>fs.existsSync(path.join(state,'eggs'))?fs.readdirSync(path.join(state,'eggs')).filter(id=>/^[a-f0-9]{16}$/.test(id)):[];
  for(const agent of ['claude','codex']) {
   const before=list();
