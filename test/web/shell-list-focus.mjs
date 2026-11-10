@@ -7,6 +7,56 @@ import path from 'node:path';
 export async function assertListViewRefresh(page, { root, go, checked }) {
     const source = fs.readFileSync(path.join(root, 'web/src/shell/patch.js'), 'utf8')
         .replace('export function patchRegion', 'function patchRegion');
+    for (const [view, hash, region, rows, focus] of [
+        ['Home', '#', '.pp-conversation', '.pp-row-session', 'a'],
+        ['Sessions', '#sessions', '[data-k="session-group/work"]', '.pp-srow', null],
+        ['Machines', '#machines', '.pp-col-main', '.pp-machine', 'li a'],
+        ['Machine', '#machine/studio', '#wd-active-sessions', '.wd-session-row', null],
+    ]) {
+        await go(page, hash);
+        await page.locator(region).locator(rows).nth(2).waitFor({ state: 'attached' });
+        const results = await page.locator(region).evaluate((region, {source, rows, focus}) => {
+            const patch = eval(source + '; patchRegion');
+            const original = region.innerHTML;
+            const templates = Object.fromEntries([...region.querySelectorAll(rows)].slice(0, 3).map((row, i) => {
+                const copy = row.cloneNode(true), key = 'abc'[i];
+                copy.dataset.key = key;
+                if (copy.hasAttribute('data-k')) copy.dataset.k = key;
+                return [key, copy.outerHTML];
+            }));
+            const results = [];
+            for (const fallback of [false, true]) {
+                const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'moveBefore');
+                if (fallback) Object.defineProperty(Element.prototype, 'moveBefore', {value: undefined, configurable: true});
+                try {
+                    for (const [before, after] of [['bc', 'abc'], ['abc', 'cba'], ['abc', 'bc']]) {
+                        patch(region, [...before].map(key => templates[key]).join(''));
+                        const row = region.querySelector('[data-key="b"]');
+                        const target = focus ? row.querySelector(focus) : row;
+                        target.focus({preventScroll: true});
+                        if (document.activeElement !== target) throw Error('Probe did not focus b');
+                        let blurs = 0;
+                        target.addEventListener('blur', () => blurs++);
+                        patch(region, [...after].map(key => templates[key]).join(''));
+                        results.push({before, after, fallback,
+                            order: [...region.querySelectorAll(rows)].map(row => row.dataset.key).join(''),
+                            focused: document.activeElement === target,
+                            retained: region.querySelector('[data-key="b"]') === row, blurs});
+                    }
+                } finally {
+                    if (descriptor) Object.defineProperty(Element.prototype, 'moveBefore', descriptor);
+                    else delete Element.prototype.moveBefore;
+                    patch(region, original);
+                }
+            }
+            return results;
+        }, {source, rows, focus});
+        for (const result of results) assert.deepEqual(result, {
+            before: result.before, after: result.after, fallback: result.fallback,
+            order: result.after, focused: true, retained: true, blurs: 0,
+        }, view + ': ' + JSON.stringify(result));
+        checked('list-order-' + view + '-' + page.viewportSize().width, results);
+    }
     for (const [view, hash, region, rows, focus, focusedIndex] of [
         ['Home', '#', '.pp-col-main', '.pp-row-session', 'a', 1],
         ['Sessions', '#sessions', '.pp-col-main', '[data-k="session-group/work"] .pp-srow', null, 7],
@@ -72,6 +122,14 @@ export async function assertListViewRefresh(page, { root, go, checked }) {
                         blurs,
                     });
                     const next = region.cloneNode(true);
+                    let expectedOrder;
+                    const apply = next => {
+                        expectedOrder = [...next.querySelectorAll(rows)].map(row => row.dataset.key);
+                        patch(region, next.innerHTML);
+                        if (JSON.stringify([...region.querySelectorAll(rows)].map(row => row.dataset.key)) !== JSON.stringify(expectedOrder)) {
+                            throw Error('Incoming row order was not preserved: ' + JSON.stringify({ expectedOrder, actual: [...region.querySelectorAll(rows)].map(row => row.dataset.key) }));
+                        }
+                    };
                     const arrival = next.querySelector(rows).cloneNode(true);
                     arrival.dataset.key += '/earlier';
                     if (arrival.hasAttribute('data-k')) arrival.dataset.k = arrival.dataset.key;
@@ -83,7 +141,7 @@ export async function assertListViewRefresh(page, { root, go, checked }) {
                     // Render the incoming inventory's normal preview/overflow
                     // boundary too: the last preview row must stay mounted.
                     rebalance(next);
-                    patch(region, next.innerHTML);
+                    apply(next);
                     if (![...region.querySelectorAll(rows)].some(node => node.dataset.key === arrival.dataset.key)) throw Error('Arrival was dropped');
                     results.push(observe('insert-earlier'));
                     patch(region, original);
@@ -91,7 +149,7 @@ export async function assertListViewRefresh(page, { root, go, checked }) {
                     const reordered = region.cloneNode(true);
                     const orderedRows = [...reordered.querySelectorAll(rows)];
                     orderedRows[0].before(orderedRows[Math.min(1, orderedRows.length - 1)]);
-                    patch(region, reordered.innerHTML);
+                    apply(reordered);
                     results.push(observe('reorder'));
                     patch(region, original);
                     // A pending stop can finish while the ninth row is
@@ -100,7 +158,7 @@ export async function assertListViewRefresh(page, { root, go, checked }) {
                     const departed = region.cloneNode(true);
                     departed.querySelector(rows).remove();
                     rebalance(departed);
-                    patch(region, departed.innerHTML);
+                    apply(departed);
                     results.push(observe('remove-first'));
                     patch(region, original);
                 } finally {

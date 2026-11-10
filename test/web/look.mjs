@@ -544,9 +544,10 @@ async function assertSessionRowRefresh(page) {
             const row = group.querySelectorAll('.pp-srow')[focusedIndex];
             const details = group.querySelector('details');
             if (details) details.open = open;
-            const originals = [...group.querySelectorAll('.pp-srow')].map(node => ({node, parent:node.parentElement}));
+            const originals = [...group.querySelectorAll('.pp-srow')];
+            const parent = row.parentElement;
             const changed = change(before);
-            const survivors = originals.filter(({node}) => changed.some(next => next.dataset.k === node.dataset.k));
+            const survivors = originals.filter(node => changed.some(next => next.dataset.k === node.dataset.k));
             row.focus();
             const selection = getSelection(), text = row.querySelector('b').firstChild;
             selection.setBaseAndExtent(text, 0, text, 4);
@@ -555,12 +556,12 @@ async function assertSessionRowRefresh(page) {
             row.addEventListener('blur', () => blurs++);
             for (const [step, list] of [['changed', changed], ['restored', before]]) {
                 patch(region, markup(list));
-                const retained = survivors;
                 results.push({
                     name, step,
                     focused: document.activeElement === row,
-                    sameRowsAndParents: retained.every(({node, parent}) => node.isConnected && node.parentElement === parent),
-                    sameOrder: retained.every(({node}, i) => !i || !!(retained[i-1].node.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)),
+                    sameRows: survivors.every(node => node.isConnected && group.querySelector('[data-k="' + node.dataset.k + '"]') === node),
+                    focusedParentRetained: row.parentElement === parent,
+                    incomingOrder: JSON.stringify([...group.querySelectorAll('.pp-srow')].map(row => row.dataset.k)) === JSON.stringify(list.map(row => row.dataset.k)),
                     selectionRetained: selection.anchorNode === text && selection.toString() === selected,
                     scrollRetained: document.querySelector('.pp-main').scrollTop === scroll,
                     disclosureRetained: !details || group.querySelector('details') === details && details.open === open,
@@ -572,7 +573,7 @@ async function assertSessionRowRefresh(page) {
         return results;
     }, patchSource);
     for (const result of results) assert.deepEqual(result, {
-        name:result.name, step:result.step, focused:true, sameRowsAndParents:true, sameOrder:true,
+        name:result.name, step:result.step, focused:true, sameRows:true, focusedParentRetained:true, incomingOrder:true,
         selectionRetained:true, scrollRetained:true, disclosureRetained:true, inventoryMatches:true, blurs:0,
     });
     checked('session-row-boundary-refresh-' + page.viewportSize().width, results);

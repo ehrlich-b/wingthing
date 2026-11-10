@@ -2,23 +2,28 @@
 // terminal mounts, scroll containers, or the surrounding frame.
 const key = node => node.nodeType === 1 ? node.getAttribute('data-key') || node.getAttribute('data-k') || node.id || node.getAttribute('data-machine') || node.getAttribute('href') || '' : '';
 const compatible = (a, b) => a && a.nodeType === b.nodeType && (a.nodeType !== 1 || a.tagName === b.tagName) && key(a) === key(b);
+const move = (parent, node, before) => {
+    if (parent.moveBefore && node.isConnected) parent.moveBefore(node, before);
+    else parent.insertBefore(node, before);
+};
 
 function retainSessionLayout(current, next) {
-    // Preview and overflow rows have different DOM parents. Surviving rows
-    // keep their mounted order and parent; arrivals fill vacant preview slots.
+    // Keep the incoming order. Only adjust the preview boundary when moving
+    // the reader's row between parents would detach it and lose focus.
     const selector = '.pp-srow, .wd-session-row, [data-session-row]';
-    const arrivals = new Map([...next.querySelectorAll(selector)].map(row => [key(row), row]));
-    const preview = [], overflow = [];
+    const rows = [...next.querySelectorAll(selector)];
     const currentPreview = current.querySelector(':scope > ul') || current;
     const nextPreview = next.querySelector(':scope > ul') || next;
-    const limit = Number(current.getAttribute('data-session-list')) || 8;
-    for (const row of current.querySelectorAll(selector)) {
-        const updated = arrivals.get(key(row));
-        if (!updated) continue;
-        (row.parentElement === currentPreview ? preview : overflow).push(updated);
-        arrivals.delete(key(row));
+    let limit = Number(current.getAttribute('data-session-list')) || 8;
+    const selection = current.ownerDocument.getSelection();
+    const mountedRows = [...current.querySelectorAll(selector)];
+    const reader = mountedRows.find(row => row.contains(current.ownerDocument.activeElement)) ||
+        mountedRows.find(row => selection && (row.contains(selection.anchorNode) || row.contains(selection.focusNode)));
+    const index = reader ? rows.findIndex(row => key(row) === key(reader)) : -1;
+    if (index !== -1) {
+        limit = reader.parentElement === currentPreview ? Math.max(limit, index + 1) : Math.min(limit, index);
     }
-    for (const row of arrivals.values()) (preview.length < limit ? preview : overflow).push(row);
+    const preview = rows.slice(0, limit), overflow = rows.slice(limit);
     let details = next.querySelector(':scope > .pp-more-sessions, :scope > .wd-more');
     for (const row of [...preview, ...overflow]) row.remove();
     if (overflow.length) {
@@ -38,6 +43,20 @@ function retainSessionLayout(current, next) {
     for (const row of preview) {
         if (nextPreview === next) next.insertBefore(row, details);
         else nextPreview.append(row);
+    }
+    // Reuse surviving keyed rows even when their preview/overflow parent
+    // changes. The boundary above guarantees the reader's row never moves.
+    const mounted = new Map(mountedRows.map(row => [key(row), row]));
+    let currentDetails = current.querySelector(':scope > .pp-more-sessions, :scope > .wd-more');
+    if (details && !currentDetails) {
+        currentDetails = details.cloneNode(true);
+        currentDetails.querySelectorAll(selector).forEach(row => row.remove());
+        current.append(currentDetails);
+    }
+    for (const row of rows) {
+        const live = mounted.get(key(row));
+        const parent = preview.includes(row) ? currentPreview : currentDetails.querySelector('ul') || currentDetails;
+        if (live && live.parentElement !== parent) move(parent, live, parent === current ? currentDetails : null);
     }
 }
 
@@ -59,36 +78,23 @@ function patchNode(current, next) {
 function patchChildren(current, next) {
     const wanted = [...next.childNodes];
     const retained = new Set();
-    // Remove departed keyed siblings first. Moving an unchanged group ahead
-    // of a departed one would detach its focused descendants in the browser.
-    for (const child of [...current.childNodes]) {
-        if (key(child) && !wanted.some(node => compatible(child, node))) child.remove();
-    }
+    const selection = current.ownerDocument.getSelection();
+    const focused = current.ownerDocument.activeElement;
+    const ownsReader = node => node.contains(focused) ||
+        !current.contains(focused) && selection && (node.contains(selection.anchorNode) || node.contains(selection.focusNode));
     let cursor = current.firstChild;
     for (const child of wanted) {
-        const identity = key(child);
-        let match = compatible(cursor, child) ? cursor : identity ? [...current.childNodes].find(n => !retained.has(n) && compatible(n, child)) : null;
+        let match = compatible(cursor, child) ? cursor : [...current.childNodes].find(n =>
+            !retained.has(n) && compatible(n, child));
         if (!match) {
             match = child.cloneNode(true);
             current.insertBefore(match, cursor);
         } else if (match !== cursor) {
             // Never detach the reader's focused or selected subtree. Even
             // moveBefore preserves focus but can reset a DOM text selection.
-            const selection = current.ownerDocument.getSelection();
-            const ownsReader = node => node.contains(current.ownerDocument.activeElement) ||
-                selection && (node.contains(selection.anchorNode) || node.contains(selection.focusNode));
-            const move = (node, before) => {
-                if (current.moveBefore && node.isConnected) current.moveBefore(node, before);
-                else current.insertBefore(node, before);
-            };
-            if (ownsReader(match)) {
-                const after = match.nextSibling;
-                while (cursor !== match) {
-                    const displaced = cursor;
-                    cursor = cursor.nextSibling;
-                    move(displaced, after);
-                }
-            } else move(match, cursor);
+            // Leave the reader's row mounted and advance past it. Later
+            // incoming siblings move around it to reach their final order.
+            if (!ownsReader(match)) move(current, match, cursor);
         }
         patchNode(match, child);
         retained.add(match);
