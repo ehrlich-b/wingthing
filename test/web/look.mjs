@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -21,13 +22,28 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
 fs.mkdirSync(shots, { recursive: true });
 fs.mkdirSync(path.join(root, '.scratch'), { recursive: true });
 const state = fs.mkdtempSync(path.join(tmpdir(), 'wt'));
-const port = Number(process.env.WT_LOOK_PORT || 18191);
+// Shell runs need only one listener. Let the OS choose a free port so a
+// concurrent look run cannot supply this fixture's health or inventory.
+async function availablePort() {
+    const probe = createServer();
+    await new Promise((resolve, reject) => {
+        probe.once('error', reject);
+        probe.listen(0, '127.0.0.1', resolve);
+    });
+    const port = probe.address().port;
+    await new Promise((resolve, reject) => probe.close(error => error ? reject(error) : resolve()));
+    return port;
+}
+const port = Number(process.env.WT_LOOK_PORT || (shellMode ? await availablePort() : 18191));
 const base = 'http://127.0.0.1:' + port;
 const env = { HTTP_PROXY:'http://127.0.0.1:1', HTTPS_PROXY:'http://127.0.0.1:1', NO_PROXY:'127.0.0.1,localhost', PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, HOME: path.join(state, 'home'), WINGTHING_DIR: state };
 fs.mkdirSync(env.HOME);
 fs.writeFileSync(path.join(state, 'wing.yaml'), 'label: Laptop\n', { mode: 0o600 });
 const log = fs.openSync(path.join(shots, 'fixture.log'), 'w');
-const roost = spawn('nice', ['-n', '10', process.env.WT_LOOK_BIN || path.join(root, 'wt'), 'roost', 'start', '--foreground', '--dev', '--addr', '127.0.0.1:' + port], { cwd: root, env, stdio: ['ignore', log, log] });
+const roost = spawn('nice', ['-n', '10', process.env.WT_LOOK_BIN || path.join(root, 'wt'), 'roost', 'start', '--foreground', '--dev', '--addr', '127.0.0.1:' + port], { cwd: root, env: shellMode ? {...env, WT_ROOST_READY_FD:'3'} : env, stdio: shellMode ? ['ignore', log, log, 'pipe'] : ['ignore', log, log] });
+let roostReady = '', roostStartupError;
+roost.on('error', error => { roostStartupError = error; });
+roost.stdio[3]?.on('data', data => { roostReady += data; });
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const sockets = new Map();
 const sent = [];
@@ -392,13 +408,15 @@ async function checkConversationRefresh(page, name, suffix) {
         await go(page, name==='01-wing' ? '' : '#session/studio/migrate');
     }
 }
-async function go(page, hash) {
-    await page.goto(base + '/app/' + hash);
+async function go(page, hash, hashOnly = false) {
+    if (hashOnly) await page.evaluate(hash => { location.hash = hash; }, hash);
+    else await page.goto(base + '/app/' + hash);
     await page.waitForLoadState('networkidle').catch(() => {});
     await page.waitForTimeout(shellMode ? 100 : 900);
     if (shellMode) {
         const count=[...sockets.keys()].reduce((total,id)=>total+machines[id].rows.filter(s=>!(s.pinned && s.role==='coordinator')).length,0);
         await page.waitForFunction(expected => document.querySelector('.pp-nav-sessions small')?.textContent === String(expected.sessions || '') && document.querySelector('.pp-nav-machines small')?.textContent === String(expected.machines || ''), {sessions:count,machines:sockets.size});
+        await page.waitForFunction(expected => document.querySelectorAll('.pp-side-squares .pp-sq-connected').length === expected, Math.min(sockets.size, 3));
     }
 }
 
@@ -516,7 +534,7 @@ async function runShell(browser) {
         for (const id of ['macbook','mini']) await machine(id);
         // Change fixture inventories across a full load, so the assertion
         // does not depend on the application's thirty-second data poll.
-        for (const page of pages) { await page.reload(); await go(page,'#sessions'); }
+        for (const page of pages) await go(page,'#sessions');
         for (let i=0;i<5;i++) {
             const id='research-'+i; machines[id]={name:'Research workstation for extended migration projects '+(i+1),rows:[]}; await machine(id);
             if (i===2) for (const page of pages) {
@@ -524,11 +542,13 @@ async function runShell(browser) {
                 await shoot(page,'shell-volume-plan-limit-6','-'+page.viewportSize().width);
             }
         }
-        for (const page of pages) await page.reload();
+        for (const page of pages) await go(page,'#sessions');
         const routes=['#','#sessions','#machines','#account','#new','#s/redirect?wing=studio','#chat/redirect?wing=studio','#w/studio','#bogus','#new/studio','#machine/studio','#approve/studio/redirect','#needs','#decisions','#session/studio/migrate','#%broken'];
         for (const page of pages) {
             for (const [index,hash] of routes.entries()) {
-                await go(page,hash); await assertShell(page,hash+'-'+page.viewportSize().width);
+                // Route through the app as a user does. Reopening all eight
+                // tunnels on every hash would exhaust the roost's WS burst.
+                await go(page,hash,true); await assertShell(page,hash+'-'+page.viewportSize().width);
                 const expected=/^#(s\/|chat\/|approve\/)/.test(hash)?'#session/studio/redirect':hash==='#w/studio'?'#machine/studio':['#','#bogus','#needs','#decisions','#%broken'].includes(hash)?'':hash;
                 assert.equal(await page.evaluate(()=>location.hash),expected);
                 await shoot(page,'shell-route-'+index,'-'+page.viewportSize().width);
@@ -623,7 +643,18 @@ const viewports = [{ width: 1440, height: 900, suffix: '-desktop' }, { width: 39
 let browser;
 let complete = false;
 try {
-    for (let i = 0; i < 100; i++) { try { if ((await fetch(base + '/health')).ok) break; } catch {} await sleep(100); }
+    if (shellMode) {
+        // The child's readiness pipe proves this roost owns the listener,
+        // even if another process claims the port between probing and spawn.
+        for (let i = 0; i < 150 && roostReady !== 'ready\n'; i++) {
+            if (roostStartupError || roost.exitCode !== null || roost.signalCode !== null) break;
+            await sleep(100);
+        }
+        if (roostReady !== 'ready\n') throw Error('Fixture roost did not become ready: ' + (roostStartupError || fs.readFileSync(path.join(shots, 'fixture.log'), 'utf8')));
+        checked('fixture-roost-ready', {base, pid:roost.pid});
+    } else {
+        for (let i = 0; i < 100; i++) { try { if ((await fetch(base + '/health')).ok) break; } catch {} await sleep(100); }
+    }
     browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH, args: ['--disable-background-networking','--disable-component-update','--disable-default-apps','--disable-sync','--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'] });
     if (shellMode) {
         await runShell(browser);
