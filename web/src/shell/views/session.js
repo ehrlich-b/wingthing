@@ -8,7 +8,7 @@ function missing() { return head('Session', '') + '<section class="pp-empty"><h2
 function viewSession(route) {
     const s = findSession(route); if (!s) return missing();
     const w = wingOf(s.wing_id), st = sessionState(s), entry = read(s), term = terminal(s);
-    const msgs = lines(s).slice(-24).map(l => '<div class="pp-row pp-row-' + (l.who === 'you' ? 'you' : 'session') + '"><div class="pp-who"><b>' + (l.who === 'you' ? 'you' : 'session') + '</b><small>' + esc(clock(l.at)) + '</small></div><div class="pp-say">' + prose(l.text) + '</div></div>').join('');
+    const msgs = lines(s).slice(-24).map(l => '<div class="pp-row pp-row-' + (l.who === 'you' ? 'you' : 'session') + '" data-key="' + esc(s.wing_id + '/' + s.id + '/' + l.id) + '"><div class="pp-who"><b>' + (l.who === 'you' ? 'you' : 'session') + '</b><small>' + esc(clock(l.at)) + '</small></div><div class="pp-say">' + prose(l.text) + '</div></div>').join('');
     const live = machineState(w) === 'connected', phone = matchMedia('(max-width: 760px)').matches;
     const meta = esc([agentName(s.agent), machineName(w), project(s)].filter(Boolean).join(' · ')) + chip(st);
     return head(esc(sessionDisplayName(s)), meta) + accessPanel(w) + (staleState(s) ? '<p class="pp-quiet pp-stale">' + esc(staleState(s)) + '</p>' : '') + '<div class="pp-cols pp-split"><div class="pp-col-main"><div class="pp-conversation" tabindex="0" aria-label="Session messages">' + kicker('Messages', entry.error ? esc(entry.error) : '') +

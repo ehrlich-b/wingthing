@@ -17,15 +17,15 @@ function viewWing() {
     const work = workSessions(), coord = coordinator();
     if (!work.length && !coord) return viewEmpty();
     const rows = [];
-    if (coord) for (const l of lines(coord)) rows.push({ who: l.who === 'you' ? 'you' : 'wing', text: l.text, at: l.at, where: machineName(wingOf(coord.wing_id)) });
+    if (coord) for (const l of lines(coord)) rows.push({ id: coord.wing_id + '/' + coord.id + '/' + l.id, who: l.who === 'you' ? 'you' : 'wing', text: l.text, at: l.at, where: machineName(wingOf(coord.wing_id)) });
     for (const s of work) {
         const last = lines(s).filter(l => l.who === 'agent').pop();
-        if (last) rows.push({ who: 'session', s, text: last.text, at: last.at, where: agentName(s.agent) + ' · ' + machineName(wingOf(s.wing_id)) });
+        if (last) rows.push({ id: s.wing_id + '/' + s.id, who: 'session', s, text: last.text, at: last.at, where: agentName(s.agent) + ' · ' + machineName(wingOf(s.wing_id)) });
     }
     rows.sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
     const reporting = new Set(rows.filter(r => r.s).map(r => JSON.stringify([r.s.wing_id, r.s.id]))).size;
     const need = needing();
-    const thread = rows.slice(-14).map(r => '<div class="pp-row pp-row-' + r.who + '" data-source="' + esc((r.s ? sessionDisplayName(r.s) : r.who) + ' · ' + (r.s ? machineName(wingOf(r.s.wing_id)) : r.where)) + '">' +
+    const thread = rows.slice(-14).map(r => '<div class="pp-row pp-row-' + r.who + '" data-key="' + esc(r.id) + '" data-source="' + esc((r.s ? sessionDisplayName(r.s) : r.who) + ' · ' + (r.s ? machineName(wingOf(r.s.wing_id)) : r.where)) + '">' +
         '<div class="pp-who">' + (r.s ? '<a href="' + sessionHref(r.s) + '">' + esc(sessionDisplayName(r.s)) + '</a>' + chip(sessionState(r.s)) : '<b>' + r.who + '</b>') +
         '<small>' + esc([clock(r.at), r.who === 'you' ? '' : r.where].filter(Boolean).join(' · ')) + '</small></div>' +
         '<div class="pp-say">' + prose(r.text) + '</div></div>').join('');
@@ -35,7 +35,7 @@ function viewWing() {
         '<div class="pp-thread-heading">' + kicker('<span data-thread-source>Today</span>', reporting + (reporting === 1 ? ' session' : ' sessions') + ' reporting') + '</div><div class="pp-conversation" tabindex="0" aria-label="Wing messages">' +
         (coord ? accessPanel(wingOf(coord.wing_id)) : '') + (thread || '<p class="pp-quiet">Wing has not reported yet. Its updates and each session\'s latest line appear here.</p>') +
         '</div>' + (coord ? composer('Message wing', coord) : '') + '</div>' +
-        '<aside class="pp-col-rail">' + kicker('Sessions', String(work.length)) + work.slice(0, 8).map(s => '<a class="pp-mini" href="' + sessionHref(s) + '">' + chip(sessionState(s)) + '<span>' + esc(sessionDisplayName(s)) + '</span><small>' + esc(machineName(wingOf(s.wing_id))) + '</small></a>').join('') + (work.length > 8 ? '<a class="pp-quiet" href="#sessions">+' + (work.length - 8) + ' more</a>' : '') +
+        '<aside class="pp-col-rail">' + kicker('Sessions', String(work.length)) + work.slice(0, 8).map(s => '<a class="pp-mini" data-key="' + esc(s.wing_id + '/' + s.id) + '" href="' + sessionHref(s) + '">' + chip(sessionState(s)) + '<span>' + esc(sessionDisplayName(s)) + '</span><small>' + esc(machineName(wingOf(s.wing_id))) + '</small></a>').join('') + (work.length > 8 ? '<a class="pp-quiet" href="#sessions">+' + (work.length - 8) + ' more</a>' : '') +
         kicker('Machines', String(machines().length)) + '<div class="pp-squares">' + squares() + '</div></aside></div>';
 }
 

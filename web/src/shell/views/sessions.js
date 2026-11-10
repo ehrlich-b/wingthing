@@ -9,7 +9,7 @@ import { lines, kicker, machineRow, machineOverflow, clock, prose, machineLimit 
 function viewSessions() {
     const { work, by, offlineWings, awake, unavailable, away } = sessionGroups();
     if (!work.length) return viewEmpty();
-    const banner = unavailable.slice(0, machineLimit).map(w => '<p class="pp-machine-status">' + esc(machineName(w) + ' · ' + machineLabel(w)) + ' · <a href="#machines">Machine controls</a></p>').join('') + (unavailable.length > machineLimit ? '<a class="pp-more" href="#machines">+' + (unavailable.length - machineLimit) + ' more machines</a>' : '');
+    const banner = unavailable.slice(0, machineLimit).map(w => '<p class="pp-machine-status" data-key="' + esc(w.wing_id) + '">' + esc(machineName(w) + ' · ' + machineLabel(w)) + ' · <a href="#machines">Machine controls</a></p>').join('') + (unavailable.length > machineLimit ? '<a class="pp-more" href="#machines">+' + (unavailable.length - machineLimit) + ' more machines</a>' : '');
     const meta = '<span data-session-summary><b>' + work.length + '</b> sessions</span> · ' + machines().length + (machines().length === 1 ? ' machine' : ' machines') + ' · ' + awake.length + ' connected';
     const coord = coordinator(), coordLast = coord && lines(coord).filter(l => l.who === 'agent').pop();
     return head('Sessions', meta) + '<div class="pp-cols"><div class="pp-col-main">' +

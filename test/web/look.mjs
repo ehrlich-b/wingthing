@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { removeState } from './fixture-state.mjs';
+import { assertListViewRefresh } from './shell-list-focus.mjs';
 import { x25519 } from '../../web/node_modules/@noble/curves/ed25519.js';
 import { hkdf } from '../../web/node_modules/@noble/hashes/hkdf.js';
 import { sha256 } from '../../web/node_modules/@noble/hashes/sha2.js';
@@ -512,7 +513,7 @@ async function assertSessionRowRefresh(page) {
         const rows = [...sample.querySelectorAll('.pp-srow')];
         if (rows.length < 10) throw Error('Boundary fixture requires ten working sessions');
         const arrival = rows[0].cloneNode(true);
-        arrival.dataset.k = 'studio/earlier-arrival';
+        arrival.dataset.key = arrival.dataset.k = 'studio/earlier-arrival';
         arrival.href = '#session/studio/earlier-arrival';
         const markup = list => {
             const group = sample.cloneNode(true);
@@ -602,9 +603,9 @@ async function runShell(browser) {
         await go(page,'#sessions'); await page.locator('.pp-srow[href="#session/studio/migrate"]').waitFor();
         if (shellMode==='routes') await shoot(page,'shell-volume-1','-'+page.viewportSize().width);
     }
-    if (shellMode==='routes' || shellMode==='refresh') {
+    if (shellMode==='routes' || shellMode==='refresh' || shellMode==='focus') {
         machines.studio.rows=[...original,...Array.from({length:18},(_,i)=>row('long-'+i,'Improve organization invitation recovery for interrupted workspace migration '+(i+1),'claude',i<9?'blocked':'working','wingthing'))];
-        if (shellMode==='routes') for (const id of ['macbook','mini']) await machine(id);
+        if (shellMode==='routes' || shellMode==='focus') for (const id of ['macbook','mini']) await machine(id);
         // Change fixture inventories across a full load, so the assertion
         // does not depend on the application's thirty-second data poll.
         for (const page of pages) await go(page,'#sessions');
@@ -618,6 +619,10 @@ async function runShell(browser) {
         for (const page of pages) await go(page,'#sessions');
         const routes=['#','#sessions','#machines','#account','#new','#s/redirect?wing=studio','#chat/redirect?wing=studio','#w/studio','#bogus','#new/studio','#machine/studio','#approve/studio/redirect','#needs','#decisions','#session/studio/migrate','#%broken'];
         for (const page of pages) {
+            if (shellMode==='focus') {
+                await assertListViewRefresh(page, {root, go, checked});
+                continue;
+            }
             if (shellMode==='refresh') {
                 await assertSessionGroupRefresh(page);
                 await assertSessionRowRefresh(page);

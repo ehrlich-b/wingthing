@@ -64,7 +64,7 @@ function machineActions(w) {
 }
 function squares() {
     const named = machines().filter(w => wingDisplayName(w));
-    return named.slice(0, 3).map(w => { const m = machineState(w); return '<a href="#machine/' + encodeURIComponent(w.wing_id) + '" class="pp-sq pp-sq-' + m + '" title="' + esc(machineName(w) + ' · ' + machineLabel(w)) + '"><i aria-hidden="true"></i><span class="pp-sq-name">' + esc(machineName(w)) + '</span><span class="pp-sr"> ' + esc(machineLabel(w)) + '</span></a>'; }).join('') + (named.length > 3 ? '<a class="pp-more" href="#machines">+' + (named.length - 3) + ' more</a>' : '');
+    return named.slice(0, 3).map(w => { const m = machineState(w); return '<a data-key="' + esc(w.wing_id) + '" href="#machine/' + encodeURIComponent(w.wing_id) + '" class="pp-sq pp-sq-' + m + '" title="' + esc(machineName(w) + ' · ' + machineLabel(w)) + '"><i aria-hidden="true"></i><span class="pp-sq-name">' + esc(machineName(w)) + '</span><span class="pp-sr"> ' + esc(machineLabel(w)) + '</span></a>'; }).join('') + (named.length > 3 ? '<a class="pp-more" href="#machines">+' + (named.length - 3) + ' more</a>' : '');
 }
 function read(s) {
     if (ui.inputSnapshot?.target && ui.inputSnapshot.target.userId === S.currentUser?.id && ui.inputSnapshot.target.wingId === s.wing_id && ui.inputSnapshot.target.sessionId === s.id) {
@@ -87,7 +87,7 @@ function read(s) {
 }
 function lines(s) {
     return read(s).state.messages.filter(m => (m.type === 'user' || m.type === 'assistant') && m.content || m.type === 'activity' && m.report && m.report.update)
-        .map(m => ({ who: m.type === 'user' ? 'you' : 'agent', text: m.report ? m.report.update : m.content, at: m.timestamp }));
+        .map(m => ({ id: m.sequence + '/' + (m.itemIndex || 0), who: m.type === 'user' ? 'you' : 'agent', text: m.report ? m.report.update : m.content, at: m.timestamp }));
 }
 function request(s) {
     const marker = read(s).state.messages.filter(m => m.type === 'lifecycle' && m.kind === 'attention' || m.type === 'activity' && m.state === 'needs_input').pop();
@@ -110,7 +110,7 @@ function terminal(s) {
 }
 function needCard(s, primary = 'Answer in terminal') {
     const r = request(s), w = wingOf(s.wing_id);
-    return '<article class="pp-need" tabindex="-1"><div class="pp-need-top"><span class="pp-st pp-st-need">Needs you</span><time>' + esc(clock(r.at)) + '</time></div>' +
+    return '<article class="pp-need" data-key="' + esc(s.wing_id + '/' + s.id) + '" tabindex="-1"><div class="pp-need-top"><span class="pp-st pp-st-need">Needs you</span><time>' + esc(clock(r.at)) + '</time></div>' +
         '<h3>' + esc(sessionDisplayName(s)) + ' is waiting for you</h3>' +
         '<p>' + (r.command ? 'It asks to run this on ' + esc(machineName(w)) + '.' : r.reason ? prose(r.reason) + ' on ' + esc(machineName(w)) + '.' : 'The session on ' + esc(machineName(w)) + ' asked for a decision.') + '</p>' +
         (r.command ? '<pre class="pp-cmd"><span class="pp-prompt">$</span> ' + esc(r.command) + '</pre>' : '') +
@@ -120,7 +120,7 @@ function needRow(s) {
     const r = request(s), w = wingOf(s.wing_id);
     const line = r.reason || 'Request unavailable. Check the terminal.';
     const where = machineName(w) + (machineState(w) === 'connected' ? '' : ' · ' + machineLabel(w));
-    return '<a class="pp-need-row" href="' + sessionHref(s, 'approve') + '">' +
+    return '<a class="pp-need-row" data-key="' + esc(s.wing_id + '/' + s.id) + '" href="' + sessionHref(s, 'approve') + '">' +
         '<span class="pp-need-identity"><b>' + esc(sessionDisplayName(s)) + '</b><small>' + esc(where) + '</small></span>' +
         '<span class="pp-need-request" title="' + esc(line) + '">' + esc(line) + '</span><span class="pp-need-answer">Answer →</span></a>';
 }
@@ -146,14 +146,14 @@ function composer(label, s) {
 function sessionRow(s) {
     const st = sessionState(s), last = lines(s).filter(l => l.who === 'agent').pop(), w = wingOf(s.wing_id);
     const line = st.key === 'need' ? (request(s).reason || (last && last.text) || '') : last ? last.text : '';
-    return '<a class="pp-srow" data-k="' + esc(s.wing_id + '/' + s.id) + '" href="' + sessionHref(s) + '">' + chip(st) +
+    return '<a class="pp-srow" data-key="' + esc(s.wing_id + '/' + s.id) + '" data-k="' + esc(s.wing_id + '/' + s.id) + '" href="' + sessionHref(s) + '">' + chip(st) +
         '<span class="pp-sname"><b>' + esc(sessionDisplayName(s)) + '</b><i>' + esc([agentName(s.agent), machineName(w), project(s)].filter(Boolean).join(' · ')) + '</i></span>' +
         '<span class="pp-sline">' + esc(staleState(s) || line) + '</span><time>' + esc(ago(last && last.at)) + '</time></a>';
 }
 function machineRow(w, detail = '') {
     const m = machineState(w), n = machineSessions(w.wing_id).length;
     const label = isAway(w) ? awayText(w).replace(/^./, c => c.toUpperCase()) : machineLabel(w);
-    return '<div class="pp-mrow"><span class="pp-sq pp-sq-' + m + '"><i aria-hidden="true"></i></span><span class="pp-mname"><b>' + esc(machineName(w)) + '</b><i>' + esc(label) + '</i>' + (detail ? '<span class="pp-mdetail">' + esc(detail) + '</span>' : '') + '</span><small>' + n + (n === 1 ? ' session' : ' sessions') + '</small></div>';
+    return '<div class="pp-mrow" data-key="' + esc(w.wing_id) + '"><span class="pp-sq pp-sq-' + m + '"><i aria-hidden="true"></i></span><span class="pp-mname"><b>' + esc(machineName(w)) + '</b><i>' + esc(label) + '</i>' + (detail ? '<span class="pp-mdetail">' + esc(detail) + '</span>' : '') + '</span><small>' + n + (n === 1 ? ' session' : ' sessions') + '</small></div>';
 }
 function machineOverflow() { return machines().length > machineLimit ? '<a class="pp-more" href="#machines">+' + (machines().length - machineLimit) + ' more</a>' : ''; }
 

@@ -10,7 +10,7 @@ function viewNew(route) {
     const w = machines().find(w => w.wing_id === (route.wingId || ui.launchWingId)) || machines().find(w => machineState(w) === 'connected') || machines()[0];
     ui.launchWingId = w.wing_id;
     return head('New session', 'Choose a machine') + '<section class="pp-setup"><label for="pp-launch-machine">Machine</label><select id="pp-launch-machine">' +
-        machines().map(item => '<option value="' + esc(item.wing_id) + '"' + (item === w ? ' selected' : '') + '>' + esc(machineName(item)) + '</option>').join('') + '</select>' +
+        machines().map(item => '<option data-key="' + esc(item.wing_id) + '" value="' + esc(item.wing_id) + '"' + (item === w ? ' selected' : '') + '>' + esc(machineName(item)) + '</option>').join('') + '</select>' +
         (needsPasskey(w) ? '<h2>Machine locked</h2><p>Unlock ' + esc(machineName(w)) + ' with your passkey to check its agents.</p>' +
             (w.tunnel_error === 'no_passkeys_configured' ? '<p>Add a passkey to your account first.</p><button type="button" class="pp-btn" data-add-passkey>Add passkey</button>' : '<button type="button" class="pp-btn pp-btn-ink" data-unlock-machine="' + esc(w.wing_id) + '">Unlock machine</button>') :
         machineState(w) !== 'connected' ? '<h2>Machine unavailable</h2><p>Reconnect ' + esc(machineName(w)) + ', then try again.</p><button type="button" class="pp-btn" data-retry>Retry</button>' :
