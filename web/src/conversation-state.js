@@ -83,8 +83,12 @@ export function applyConversationRead(previous, view, meta) {
             next.messages.push({ type: 'activity', eventType: event.type, state: event.state || '', reason: event.reason || '', report: event.report, sequence: event.sequence, timestamp: event.timestamp || '' });
         }
         if (agent === 'codex' && event.source === 'codex_hook' && event.type === 'prompt_submitted' && typeof event.text === 'string') {
-            const native = next.messages.findIndex(m => m.type === 'user' && m.source === 'codex_transcript' && !m.hookMatched && m.content === event.text);
-            if (native !== -1) next.messages[native] = { ...next.messages[native], hookMatched: true };
+            // A hook may arrive just after its native user record. Only the
+            // open native turn can be that record: an assistant reply closes
+            // it, even when a resumed conversation repeats the same prompt.
+            const native = next.messages.findLastIndex(m => ['user', 'assistant'].includes(m.type));
+            const tail = next.messages[native];
+            if (tail && tail.type === 'user' && tail.source === 'codex_transcript' && !tail.hookMatched && tail.content === event.text) next.messages[native] = { ...tail, hookMatched: true };
             else next.messages.push({ type: 'user', content: event.text, source: 'codex_hook', timestamp: event.timestamp || '', sequence: event.sequence });
         } else if (event.raw) {
             var parsed = parseJSONL(JSON.stringify(event.raw), agent);

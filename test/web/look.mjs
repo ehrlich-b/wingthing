@@ -808,6 +808,11 @@ try {
         await checkConversation(page, '03-session', v.suffix);
         await shoot(page, '03-session', v.suffix);
         await checkConversationRefresh(page,'03-session',v.suffix);
+        if (!process.env.WT_LOOK_LEGACY) {
+            await go(page, '#session/macbook/notes');
+            assert.equal(await page.locator('.pp-conversation .pp-row').count(), 1);
+            await shoot(page, '03-session-one', v.suffix);
+        }
         await go(page, process.env.WT_LOOK_LEGACY ? '#chat/redirect?wing=studio' : '#approve/studio/redirect');
         await shoot(page, '04-approve', v.suffix);
         if (!process.env.WT_LOOK_LEGACY) {

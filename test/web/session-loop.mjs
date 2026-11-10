@@ -10,7 +10,8 @@ const out=process.env.WT_LOOP_OUT; assert.ok(out && path.isAbsolute(out));
 const binary=process.env.WT_LOOP_BIN; assert.ok(binary && path.isAbsolute(binary));
 const baseline=process.env.WT_LOOP_BASELINE==='1';
 const work=fs.mkdtempSync(path.join(process.env.WT_LOOP_SCRATCH,'run-'));
-const home=path.join(work,'home'), state=path.join(work,'state'), bin=path.join(work,'bin');
+// Keep provider socket paths within Linux's 107-byte Unix socket limit.
+const home=path.join(work,'h'), state=path.join(work,'state'), bin=path.join(work,'bin');
 for(const p of [out,home,state,bin]) fs.mkdirSync(p,{recursive:true});
 for(const agent of ['claude','codex']) fs.copyFileSync(path.join(root,'test/web/session-loop/provider.py'),path.join(bin,agent));
 for(const agent of ['claude','codex']) fs.chmodSync(path.join(bin,agent),0o700);
