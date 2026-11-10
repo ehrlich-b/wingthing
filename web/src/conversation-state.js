@@ -119,6 +119,17 @@ export function applyConversationRead(previous, view, meta) {
         }
     });
     next.messages.sort((a, b) => (a.sequence || 0) - (b.sequence || 0) || (a.itemIndex || 0) - (b.itemIndex || 0));
+    if (agent === 'codex') {
+        // Hooks can announce several prompts before the native transcript is
+        // read. Keep unmatched prompts after its current tail, so a later
+        // prompt cannot precede an earlier native user turn and its replies.
+        const pending = message => message.type === 'user' && message.source === 'codex_hook';
+        const native = message => ['user', 'assistant'].includes(message.type) && message.source === 'codex_transcript';
+        const chat = next.messages.filter(native).concat(next.messages.filter(pending));
+        let index = 0;
+        // Leave lifecycle and provider records in their existing positions.
+        next.messages = next.messages.map(message => native(message) || pending(message) ? chat[index++] : message);
+    }
     if (Number.isSafeInteger(view.cursor) && view.cursor >= previous.cursor) next.cursor = view.cursor;
     return next;
 }
