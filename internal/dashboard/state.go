@@ -190,7 +190,7 @@ func (s *state) rows() []row {
 		}
 		for _, session := range machine.sessions {
 			r := s.sessionRow(name, session)
-			if !r.Pinned && s.machineFilter != "" && name != s.machineFilter {
+			if (grouped || !r.Pinned) && s.machineFilter != "" && name != s.machineFilter {
 				continue
 			}
 			if !r.Pinned && s.attentionOnly && !needsAttention(r.attention) {
@@ -207,9 +207,6 @@ func (s *state) rows() []row {
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		left, right := rows[i], rows[j]
-		if left.Pinned != right.Pinned {
-			return left.Pinned
-		}
 		if grouped {
 			if a, b := s.machineContext(left.machine), s.machineContext(right.machine); a != b {
 				return a < b
@@ -220,6 +217,9 @@ func (s *state) rows() []row {
 				}
 				return left.machine < right.machine
 			}
+		}
+		if left.Pinned != right.Pinned {
+			return left.Pinned
 		}
 		li, lk := order[left.key()]
 		ri, rk := order[right.key()]

@@ -72,7 +72,7 @@ func TestContextGroupsCountsAndCycle(t *testing.T) {
 	}
 }
 func TestContextViewportSelectionAndEvidence(t *testing.T) {
-	for _, n := range []int{0, 1, 3, 8, 12} {
+	for _, n := range []int{0, 1, 3, 8, 12, 40} {
 		for _, dim := range [][2]int{{48, 36}, {120, 36}, {180, 36}} {
 			s := contextFixture(n)
 			output := render(s, dim[0], dim[1], time.Date(2026, time.November, 9, 14, 30, 0, 0, time.UTC))
@@ -104,4 +104,69 @@ func TestContextViewportSelectionAndEvidence(t *testing.T) {
 	if s.hasContexts() {
 		t.Fatal("old config unexpectedly grouped")
 	}
+}
+
+// Grouped navigation and action routing must follow the exact rendered order,
+// including coordinators pinned on more than one machine.
+func TestContextPinnedNavigationMatchesDisplay(t *testing.T) {
+	s := contextFixture(9)
+	for _, name := range s.machineNames() {
+		m := s.machines[name]
+		pinned := session("coordinator", "wing", "/projects/product", "working")
+		pinned.Pinned, pinned.Role = true, "coordinator"
+		m.sessions = append(m.sessions, pinned)
+		s.machines[name] = m
+	}
+	s.reconcile()
+	now := time.Date(2026, time.November, 9, 14, 30, 0, 0, time.UTC)
+	check := func() {
+		t.Helper()
+		rows := s.rows()
+		lines := make([]viewLine, len(rows)+10)
+		s.renderContexts(lines, rows, 0, len(lines)-1, 120, now)
+		var displayed []string
+		for _, line := range lines {
+			for _, r := range rows {
+				if line.text == sessionLine(s, r, 120, now).text {
+					displayed = append(displayed, r.key())
+				}
+			}
+		}
+		if len(displayed) != len(rows) {
+			t.Fatalf("displayed %v; rows %v", displayed, rows)
+		}
+		s.selected = rows[0].key()
+		for i, key := range displayed {
+			if rows[i].key() != key || s.selected != key {
+				t.Fatalf("row %d: displayed %s, ordered %s, selected %s", i, key, rows[i].key(), s.selected)
+			}
+			act, _ := s.handle("enter")
+			if act == nil || act.row.key() != key {
+				t.Fatalf("action targets hidden row: %+v", act)
+			}
+			s.move(1)
+		}
+	}
+	check()
+	for _, name := range s.machineNames() {
+		s.machineFilter = name
+		s.reconcile()
+		for _, r := range s.rows() {
+			if r.machine != name {
+				t.Fatalf("hidden pinned row %s escaped machine filter %s", r.key(), name)
+			}
+		}
+		check()
+	}
+	s.machineFilter = ""
+	s.contextFiltered, s.contextFilter = true, "work"
+	s.reconcile()
+	check()
+	// Search and attention filters still retain visible pins on scoped machines.
+	s.machineFilter, s.filter, s.attentionOnly = "studio", "no-match", true
+	s.reconcile()
+	if rows := s.rows(); len(rows) != 1 || !rows[0].Pinned {
+		t.Fatalf("lost scoped pin: %+v", rows)
+	}
+	check()
 }

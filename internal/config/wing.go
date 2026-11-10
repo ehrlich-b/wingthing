@@ -44,7 +44,7 @@ type WingConfig struct {
 	PhoneFleet       bool           `yaml:"phone_fleet,omitempty"`     // explicit owner phone delegation to verified personal remotes
 	Conversations    string         `yaml:"conversations,omitempty"`   // opt-in stable host mailbox: "enabled" or "disabled" (default)
 
-	MachineContext            string   `yaml:"-"` // scalar context in wing.yaml
+	MachineContext            string   `yaml:"machine_context,omitempty"` // also accepts scalar context in wing.yaml
 	PhoneFleetExcludeContexts []string `yaml:"phone_fleet_exclude_contexts,omitempty"`
 
 	// P2P / Direct mode settings

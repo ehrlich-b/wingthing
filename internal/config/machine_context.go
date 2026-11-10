@@ -25,9 +25,6 @@ func (c *WingConfig) validateMachineContexts() error {
 	if err := ValidateMachineContext(c.MachineContext); err != nil {
 		return err
 	}
-	if c.MachineContext != "" && c.Context != nil {
-		return fmt.Errorf("context cannot be both a machine name and a service block")
-	}
 	for _, name := range c.PhoneFleetExcludeContexts {
 		if err := ValidateMachineContext(name); err != nil {
 			return err
@@ -37,7 +34,7 @@ func (c *WingConfig) validateMachineContexts() error {
 }
 
 // The scalar form groups machines; the preexisting mapping form continues to
-// configure service impersonation. Keep their runtime fields independent.
+// configure service impersonation. machine_context supports both at once.
 func (c *WingConfig) UnmarshalYAML(node *yaml.Node) error {
 	type plain WingConfig
 	copy := *node
@@ -49,10 +46,16 @@ func (c *WingConfig) UnmarshalYAML(node *yaml.Node) error {
 			return fmt.Errorf("duplicate wing config key %q", key)
 		}
 		seen[key] = true
+		if key == "machine_context" && (node.Content[i+1].Kind != yaml.ScalarNode || node.Content[i+1].Tag != "!!str") {
+			return fmt.Errorf("machine_context must be a string")
+		}
 	}
 	c.MachineContext = ""
 	for i := 0; i+1 < len(copy.Content); i += 2 {
 		if copy.Content[i].Value == "context" && copy.Content[i+1].Kind == yaml.ScalarNode && copy.Content[i+1].Tag == "!!str" {
+			if seen["machine_context"] {
+				return fmt.Errorf("use either scalar context or machine_context")
+			}
 			c.MachineContext = copy.Content[i+1].Value
 			c.Context = nil
 			copy.Content = append(copy.Content[:i:i], copy.Content[i+2:]...)
@@ -71,10 +74,14 @@ func (c WingConfig) MarshalYAML() (any, error) {
 		return nil, err
 	}
 	var node yaml.Node
-	if err := node.Encode(plain(c)); err != nil {
+	encoded := plain(c)
+	if c.Context == nil {
+		encoded.MachineContext = ""
+	}
+	if err := node.Encode(encoded); err != nil {
 		return nil, err
 	}
-	if c.MachineContext != "" {
+	if c.MachineContext != "" && c.Context == nil {
 		node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "context"}, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: c.MachineContext})
 	}
 	return &node, nil

@@ -17,7 +17,7 @@ Press **Ctrl+B then q** (or Q) to detach. Press **Ctrl+B twice** to send a liter
 Ctrl+B to the provider. Bracketed paste passes through literally in an attachment;
 the navigator ignores it. Detach and leaving wt preserve running sessions.
 
-Run `wt` in a terminal to open the work list. wing stays pinned above the list.
+Run `wt` in a terminal to open the work list. wing stays pinned first on its machine.
 Sessions that need a reply come first. Each row shows its state, agent, machine
 and age. Unread responses have a `*` in the Unread column.
 
@@ -55,7 +55,9 @@ Group the work list by adding `context: home` to local `wing.yaml`, and
 sessions currently need your reply; `c` cycles all contexts, then each named
 context, including Other for machines without a context. Work stays grouped by
 machine inside each context. The existing structured `context` service block in
-`wing.yaml` keeps its original meaning.
+`wing.yaml` keeps its original meaning. To group a wing that also uses that
+service block, add `machine_context: home` alongside it. Both settings survive
+configuration saves.
 
 `wt session list --json` lists local chat-history sessions with a `context` on
 every row (`""` when unset). `wt session ps --json` includes context for local and
