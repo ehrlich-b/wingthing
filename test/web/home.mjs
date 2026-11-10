@@ -47,6 +47,21 @@ export async function runHome({pages, machines, sockets, machine, row, events, a
         assert.ok(await page.getByRole('link',{name:'Set one up',exact:true}).isVisible());
         await shoot(page,'home-volume-1',suffix(page));
     }
+    // The pinned wing has its own composer and never counts as work or Recent.
+    machines.studio.rows.push({...row('wing','wing','claude','working','wingthing'),pinned:true,role:'coordinator'});
+    for (const status of ['working','idle']) {
+        machines.studio.rows[1].lifecycle.status=status;
+        for (const page of pages) {
+            await go(page,'#');
+            await page.locator('#paper [data-composer]').waitFor();
+            assert.equal(await page.locator('.pp-meta').innerText(),'1 working');
+            assert.equal(await page.locator('.pp-nav-sessions small').first().innerText(),'1');
+            assert.equal(await page.locator('.home-row').count(),1);
+            assert.equal(await page.locator('.home-row[data-k="studio/wing"]').count(),0);
+            assert.equal(await page.locator('[data-k="recent"]').count(),0);
+            checked('home-wing-excluded-'+status+suffix(page),'One work session, one composer, no wing work or Recent row');
+        }
+    }
     machines.studio.rows.push(row('redirect','fix-login-redirect','claude','blocked','wingthing'));
     // A fresh load reads the changed fixture without waiting for the normal 30 s poll.
     for (const page of pages) {
@@ -69,6 +84,8 @@ export async function runHome({pages, machines, sockets, machine, row, events, a
         row('redirect','fix-login-redirect','claude','blocked','wingthing'),
         ...Array.from({length:3},(_,i)=>row('need-'+i,'Confirm staged workspace migration for the extended organization '+(i+1),'claude','blocked','wingthing')),
     ];
+    machines.studio.rows.find(s=>s.session_id==='work-0').name='Needs you copy audit for extended organization migrations';
+    events['work-1']=[{sequence:1,type:'message',role:'assistant',text:'Reviewing the Needs you copy in the settings page',timestamp:at(1)}];
     // The plan boundary includes five machines that were connected previously.
     // Seed their persisted inventory exactly as the offline fixture does; only
     // Studio is awake, so this Home test does not exercise tunnel-pool capacity.
@@ -84,25 +101,44 @@ export async function runHome({pages, machines, sockets, machine, row, events, a
         assert.equal(await page.locator('.home-need').count(),3);
         assert.equal(await page.locator('[data-k="working"] .home-row').count(),8);
         assert.equal(await page.locator('[data-k="recent"] .home-row').count(),5);
+        assert.equal(await page.locator('.pp-meta').innerText(),'9 working · 4 needs you');
+        assert.equal(await page.locator('.home-row[data-k="studio/wing"]').count(),0);
         assert.ok(await page.locator('[data-home-needs]').isVisible());
         assert.equal(await page.locator('[data-home-needs]').innerText(),'+1 more');
         for (const height of await page.locator('.home-row').evaluateAll(rows=>rows.map(r=>r.getBoundingClientRect().height))) assert.equal(height,page.viewportSize().width===390?56:44);
         await verify(page,'home-volume-plan-limit-6','Needs you');
         await page.locator('[data-home-needs]').click();
         await page.locator('#pp-filter').waitFor();
-        assert.equal(await page.locator('#pp-filter').inputValue(),'Needs you');
+        assert.equal(await page.evaluate(()=>location.hash),'#sessions?state=need');
+        assert.equal(await page.locator('#pp-filter').inputValue(),'');
+        await page.waitForFunction(()=>document.querySelector('.pp-srow[data-k="studio/work-1"] .pp-sline')?.textContent.includes('Needs you'));
         assert.equal(await page.locator('.pp-group:not([hidden])').count(),1);
-        checked('home-needs-overflow-filter'+suffix(page),'All four waiting sessions reachable in filtered Sessions');
+        const waiting=['redirect','need-0','need-1','need-2'].map(id=>'studio/'+id).sort();
+        const visible = () => page.locator('.pp-group:not([hidden]) .pp-srow:not([hidden])').evaluateAll(rows=>rows.map(r=>r.dataset.k).sort());
+        assert.deepEqual(await visible(),waiting);
+        await page.locator('#pp-filter').fill('staged');
+        assert.deepEqual(await visible(),waiting.filter(id=>!id.endsWith('/redirect')));
+        await page.locator('#pp-filter').fill('no-such-session');
+        await page.getByRole('button',{name:'Clear search',exact:true}).click();
+        assert.deepEqual(await visible(),waiting);
+        await page.reload();
+        await page.locator('.pp-group:not([hidden]) .pp-srow').first().waitFor();
+        assert.deepEqual(await visible(),waiting);
+        assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth));
+        await shoot(page,'home-needs-filter',suffix(page));
+        await page.getByRole('link',{name:'All sessions',exact:true}).click();
+        await page.waitForFunction(()=>location.hash==='#sessions' && document.querySelectorAll('.pp-group:not([hidden]) .pp-srow:not([hidden])').length===20);
+        checked('home-needs-overflow-filter'+suffix(page),{waiting,searchAndReload:true,allSessions:20,falseMatchesExcluded:['work-0 name','work-1 latest line']});
     }
     // Stability: no membership changes; new report lines/times every two seconds.
     // Both viewports sample the actual production DOM every 500 ms for 60 seconds.
-    const previous = events.wing.slice();
+    const previous = events.migrate.slice();
     const originalLines = new Map();
     for (const page of pages) {
         await openHome(page);
         await page.locator('#pp-message:not([disabled])').waitFor();
         await page.waitForTimeout(1200);
-        originalLines.set(page, await page.locator('.home-row[data-k="studio/wing"] .home-line').textContent());
+        originalLines.set(page, await page.locator('.home-row[data-k="studio/migrate"] .home-line').textContent());
         await page.evaluate(()=>{
             window.homeStable=[...document.querySelectorAll('[data-stable]')].map(el=>({el,box:JSON.stringify(el.getBoundingClientRect().toJSON())}));
             window.homeChanges=[];window.homeShift=0;window.homeSamples=0;
@@ -116,10 +152,10 @@ export async function runHome({pages, machines, sockets, machine, row, events, a
     }
     const counts=pages.map(p=>inventories.get(p));
     for(let i=0;i<30;i++) {
-        events.wing.push({sequence:10+i,type:'message',role:'assistant',text:'Reviewing workspace migration batch '+(i+1)+' with longer summary text',timestamp:at(i%2?2:1)});
+        events.migrate.push({sequence:10+i,type:'message',role:'assistant',text:'Reviewing workspace migration batch '+(i+1)+' with longer summary text',timestamp:at(i%2?2:1)});
         await pages[0].waitForTimeout(2000);
     }
-    events.wing=previous;
+    events.migrate=previous;
     for(const [i,page] of pages.entries()) {
         const stable=await page.evaluate(()=>{
             clearInterval(window.homeSampler);window.homeObserver.disconnect();
@@ -129,7 +165,7 @@ export async function runHome({pages, machines, sockets, machine, row, events, a
         assert.ok(stable.samples>=120);assert.deepEqual(stable.changes,[]);assert.equal(stable.shift,0);assert.ok(stable.focus);assert.deepEqual(stable.selection,[7,11]);assert.equal(stable.scroll,stable.expectedScroll);
         // Ordinary Home polling is every 30 s. No onboarding cadence remains.
         assert.ok(inventories.get(page)-counts[i]<=3);
-        const updatedLine = await page.locator('.home-row[data-k="studio/wing"] .home-line').textContent();
+        const updatedLine = await page.locator('.home-row[data-k="studio/migrate"] .home-line').textContent();
         assert.notEqual(updatedLine, originalLines.get(page));
         assert.match(updatedLine, /Reviewing workspace migration batch/);
         checked('home-stable-60s'+suffix(page),{...stable,originalLine:originalLines.get(page),updatedLine});

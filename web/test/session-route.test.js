@@ -20,3 +20,8 @@ test('every route in the table stays inside the shell', () => {
     }
     assert.equal(sessionRoute('a/b','m?'),'#session/m%3F/a%2Fb');
 });
+
+test('the Home overflow route selects waiting sessions independently of search text', () => {
+    assert.deepEqual(resolveShellRoute('#sessions?state=need').route, { view: 'sessions', state: 'need' });
+    assert.deepEqual(resolveShellRoute('#sessions').route, { view: 'sessions' });
+});

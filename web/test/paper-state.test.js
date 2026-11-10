@@ -89,7 +89,7 @@ test('checking presence preserves every last reported lifecycle label', () => {
 const paperSource = readFileSync(new URL('../src/shell/frame.js', import.meta.url), 'utf8')
     .replace(/^import .*;\n/gm, '').replace(/^export \{.*\};\n/gm, '').replace(/^export /gm, '');
 
-function searchFixture() {
+function searchFixture(hash = '#sessions') {
     const input = { value: '' }, message = { textContent: '' }, summary = { textContent: '' };
     const empty = { hidden: true, querySelector: () => message };
     const groups = [
@@ -99,7 +99,7 @@ function searchFixture() {
     ].map((names, i) => {
         const rows = names.map(textContent => ({ textContent, hidden: false }));
         const label = { textContent: String(rows.length) };
-        return { rows, label, hidden: false,
+        return { rows, label, hidden: false, dataset: { k: 'session-group/' + ['need', 'work', 'idle'][i] },
             querySelectorAll: selector => { assert.equal(selector, '.pp-srow'); return rows; },
             querySelector: selector => {
                 if (selector === '.pp-more-sessions') return rows.length > 8 ? {
@@ -119,11 +119,26 @@ function searchFixture() {
     };
     const filter = query => {
         input.value = query;
-        runInNewContext(paperSource + '\nroot = fixture; updateSessionSearch();', { fixture });
+        runInNewContext(paperSource + '\nroot = fixture; updateSessionSearch();', { fixture, location: { hash }, route: paperRoute });
         return groups.map(group => [group.label.textContent, group.hidden, group.rows.filter(row => !row.hidden).length]);
     };
-    return { filter, empty, message, summary };
+    return { filter, empty, message, summary, groups };
 }
+
+test('waiting state filtering ignores matching copy in other groups and composes with search', () => {
+    const { filter, summary, groups, message } = searchFixture('#sessions?state=need');
+    groups[1].rows[0].textContent = 'Needs you copy audit';
+    groups[2].rows[0].textContent = 'Finished reviewing Needs you';
+    assert.deepEqual(filter(''), [['3', false, 3], ['0', true, 0], ['0', true, 0]]);
+    assert.equal(summary.textContent, '3 matches');
+    assert.deepEqual(filter('Studio'), [['2', false, 2], ['0', true, 0], ['0', true, 0]]);
+    assert.deepEqual(filter(''), [['3', false, 3], ['0', true, 0], ['0', true, 0]]);
+    // A refreshed group with no waiting sessions stays empty even when other
+    // states contain the filter label in their user-provided text.
+    groups[0].rows.length = 0;
+    assert.deepEqual(filter(''), [['0', true, 0], ['0', true, 0], ['0', true, 0]]);
+    assert.equal(message.textContent, 'No sessions need you.');
+});
 
 test('paper search counts visible rows, hides empty groups and restores all 23 rows', () => {
     const { filter, empty } = searchFixture();

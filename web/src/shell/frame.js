@@ -50,10 +50,6 @@ function frame() {
         const anchor = document.createComment('Shell engine mount'); node.before(anchor); homes.set(node, anchor);
     }
     root.addEventListener('click', event => {
-        if (event.target.closest('[data-home-needs]')) window.addEventListener('hashchange', () => {
-            const input = root.querySelector('#pp-filter');
-            if (input) { input.value = 'Needs you'; updateSessionSearch(); }
-        }, { once: true });
         if (event.target.closest('a[href="#needs"]') && location.hash === '#needs') main.querySelector('#pp-needs')?.focus({ preventScroll: true });
         if (event.target.closest('[data-clear-search]')) {
             const input = root.querySelector('#pp-filter');
@@ -109,34 +105,36 @@ function updateSessionSearch() {
     const input = root.querySelector('#pp-filter');
     if (!input) return;
     const query = input.value.trim().toLowerCase();
+    const state = paperRoute().state;
+    const filtered = !!query || !!state;
     let visible = 0;
     for (const group of root.querySelectorAll('.pp-group')) {
         const rows = [...group.querySelectorAll('.pp-srow')];
         const count = rows.reduce((total, row) => {
-            const matches = !query || row.textContent.toLowerCase().includes(query);
+            const matches = (!state || group.dataset.k === 'session-group/' + state) && (!query || row.textContent.toLowerCase().includes(query));
             row.hidden = !matches;
             return total + Number(matches);
         }, 0);
         const overflow = group.querySelector('.pp-more-sessions');
         if (overflow) {
             const more = [...overflow.querySelectorAll('.pp-srow')].filter(row => !row.hidden).length;
-            overflow.hidden = !!query && more === 0;
-            if (query) overflow.open = true;
+            overflow.hidden = filtered && more === 0;
+            if (filtered) overflow.open = true;
             overflow.querySelector('summary').textContent = '+' + more + ' more';
         }
         visible += count;
         const countLabel = group.querySelector('[data-group-count]');
         if (countLabel) countLabel.textContent = String(count);
-        group.hidden = !!query && count === 0;
+        group.hidden = filtered && count === 0;
     }
     const empty = root.querySelector('[data-search-empty]');
     if (empty) {
-        empty.hidden = !query || visible > 0;
+        empty.hidden = !filtered || visible > 0;
         const message = empty.querySelector('[data-search-message]');
-        if (message) message.textContent = 'No sessions match “' + input.value.trim() + '”.';
+        if (message) message.textContent = query ? 'No sessions match “' + input.value.trim() + '”.' : 'No sessions need you.';
     }
     const summary = root.querySelector('[data-session-summary]');
-    if (summary) summary.textContent = query ? visible + (visible === 1 ? ' match' : ' matches') : visible + (visible === 1 ? ' session' : ' sessions');
+    if (summary) summary.textContent = filtered ? visible + (visible === 1 ? ' match' : ' matches') : visible + (visible === 1 ? ' session' : ' sessions');
 }
 function show() {
     if (!root) return;

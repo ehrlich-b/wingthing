@@ -5,7 +5,7 @@ import { agentName, machineState, requestedCommand, sessionState as reportedStat
 import { browserUnavailable } from '../../onboarding.js';
 import { loadHome } from '../../data.js';
 import { head, render, paperRoute } from '../frame.js';
-import { wingOf, machineName, sessions, coordinator, sessionState, needing, machines } from '../select.js';
+import { wingOf, machineName, sessions, workSessions, coordinator, sessionState, needing, machines } from '../select.js';
 import { lines, request, composer, sessionHref, chip, lastSeen, ui } from '../common.js';
 import '../home.css';
 
@@ -65,7 +65,8 @@ function ordered(key, rows) {
 function section(title, rows, limit, draw) {
     if (!rows.length) return '';
     const key = title.toLowerCase().replaceAll(' ', '-');
-    return '<section class="home-section" data-k="' + key + '" aria-labelledby="home-' + key + '"><h2 id="home-' + key + '" data-stable>' + title + '<small aria-hidden="true">' + rows.length + '</small></h2><div class="home-list">' + rows.slice(0, limit).map(draw).join('') + '</div>' + (rows.length > limit ? '<a class="home-more pp-more" href="#sessions"' + (title === 'Needs you' ? ' data-home-needs' : '') + '>+' + (rows.length - limit) + ' more</a>' : '') + '</section>';
+    const needs = title === 'Needs you';
+    return '<section class="home-section" data-k="' + key + '" aria-labelledby="home-' + key + '"><h2 id="home-' + key + '" data-stable>' + title + '<small aria-hidden="true">' + rows.length + '</small></h2><div class="home-list">' + rows.slice(0, limit).map(draw).join('') + '</div>' + (rows.length > limit ? '<a class="home-more pp-more" href="' + (needs ? '#sessions?state=need' : '#sessions') + '"' + (needs ? ' data-home-needs' : '') + '>+' + (rows.length - limit) + ' more</a>' : '') + '</section>';
 }
 function needCard(s) {
     const r = request(s), command = r.command || requestedCommand(s.lifecycle?.reason);
@@ -84,7 +85,7 @@ function row(s) {
 export function viewWing() {
     if (browserUnavailable(S.currentUser)) return viewBrowserAccess();
     if (!sessions().length) return viewEmpty();
-    const all = sessions(), coord = coordinator();
+    const all = workSessions(), coord = coordinator();
     const need = ordered('need', needing().filter(s => sessionState(s).key === 'need'));
     const work = ordered('work', all.filter(s => {
         const key = sessionState(s).key;

@@ -37,6 +37,7 @@ export function resolveShellRoute(hash = '', inventory = []) {
         if (target === '#needs' || target === '#decisions') target = '#';
         let route;
         if (target === '#') route = { view: 'wing' };
+        else if (target === '#sessions?state=need') route = { view: 'sessions', state: 'need' };
         else if (/^#(sessions|machines|new|pair|canvas)$/.test(target)) route = { view: target.slice(1) };
         else if (/^#account(?:\/[^/?]+)?$/.test(target)) route = { view: 'account', orgSlug: target.slice(9) || null };
         else {

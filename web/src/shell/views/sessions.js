@@ -3,7 +3,7 @@ import { machineLabel } from '../../paper-state.js';
 import { viewEmpty } from './home.js';
 import { sessionRow } from '../common.js';
 import { sessionGroups } from '../select.js';
-import { head } from '../frame.js';
+import { head, paperRoute } from '../frame.js';
 import { machineName, sessions, coordinator, machines } from '../select.js';
 import { lines, kicker, machineRow, machineOverflow, clock, prose, machineLimit } from '../common.js';
 function viewSessions() {
@@ -14,6 +14,7 @@ function viewSessions() {
     const coord = coordinator(), coordLast = coord && lines(coord).filter(l => l.who === 'agent').pop();
     return head('Sessions', meta) + '<div class="pp-cols"><div class="pp-col-main">' +
         '<div class="pp-searchbar"><label class="pp-sr" for="pp-filter">Search sessions</label><input id="pp-filter" type="search" placeholder="Search work or machines" autocomplete="off"><button type="button" class="pp-btn" data-new-session>New session</button></div>' +
+        (paperRoute().state === 'need' ? '<p class="pp-machine-status">Needs you · <a href="#sessions">All sessions</a></p>' : '') +
         '<div class="pp-search-result" data-search-empty role="status" hidden><span data-search-message></span><button type="button" class="pp-btn" data-clear-search>Clear search</button></div>' +
         group('need', 'Needs you', by('need')) + banner + group('work', 'Working', by('work')) + group('idle', 'Idle and done', [...by('idle'), ...by('done'), ...by('ended'), ...by('unknown')]) +
         group('access', 'Access needed', [...by('locked'), ...by('no-access'), ...by('key-mismatch'), ...by('unavailable')]) +
