@@ -8,7 +8,6 @@ import subprocess
 import tempfile
 import unittest
 from unittest import mock
-import io
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("ship_gate", ROOT / "scripts/ship-gate.py")
@@ -33,6 +32,9 @@ class ReceiptTests(unittest.TestCase):
         self.artifact = Path("downloads/v0.149.5/wt-linux-amd64")
         self.artifact.parent.mkdir(parents=True)
         self.artifact.write_bytes(b"receipt parser fixture, never executed")
+        self.environment = mock.patch.dict(os.environ, WT_RELEASE_SKEW_BINARY=str(self.artifact.resolve()))
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
         self.receipt = dict(version=1, head=ship.source(), platform="Linux", gates=ship.GATES,
                             baseline=str(self.artifact), baseline_sha256=ship.digest(self.artifact))
         self.write_receipt()
@@ -85,30 +87,43 @@ class ReceiptTests(unittest.TestCase):
         self.assertIn("fly deploy", result.stdout)
         self.assertNotIn("make --no-print-directory check gate", result.stdout)
 
-    def test_prepare_baseline_fetches_only_missing_original_and_rejects_corruption(self):
+    def test_prepare_baseline_requires_retained_original_and_manifest(self):
         artifact = Path("downloads/v0.149.5/wt-linux-arm64")
-        data = b"isolated download fixture"
+        data = b"isolated release fixture"
         expected = hashlib.sha256(data).hexdigest()
         with mock.patch.object(ship, "baseline", return_value=artifact), \
-                mock.patch.dict(ship.BASELINE_HASHES, arm64=expected), \
-                mock.patch.object(ship.urllib.request, "urlopen", return_value=io.BytesIO(data)) as fetch:
+                mock.patch.object(ship.platform, "machine", return_value="aarch64"), \
+                mock.patch.dict(ship.BASELINE_HASHES, arm64=expected):
+            with self.assertRaisesRegex(ValueError, "WT_RELEASE_SKEW_BINARY"):
+                ship.prepare_baseline()
+            self.assertFalse(artifact.exists())
+            artifact.write_bytes(data)
+            artifact.chmod(0o755)
+            manifest = artifact.parent / "SHA256SUMS"
+            with self.assertRaises(FileNotFoundError):
+                ship.prepare_baseline()
+            manifest.write_text(f"{expected} *{artifact.name}\n")
             self.assertEqual(ship.prepare_baseline(), artifact)
-            self.assertEqual(artifact.read_bytes(), data)
-            self.assertTrue(os.access(artifact, os.X_OK))
-            ship.prepare_baseline()
-            fetch.assert_called_once_with(ship.BASELINE_URL + artifact.name, timeout=60)
             artifact.write_bytes(b"corrupt")
+            with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                ship.prepare_baseline()
+            # Even a matching edited manifest cannot replace the original.
+            manifest.write_text(f"{ship.digest(artifact)}  {artifact.name}\n")
             with self.assertRaisesRegex(ValueError, "published"):
                 ship.prepare_baseline()
             self.assertEqual(artifact.read_bytes(), b"corrupt")
 
-    def test_prepare_baseline_rejects_unverified_download_before_installing(self):
-        artifact = Path("downloads/v0.149.5/wt-linux-arm64")
-        with mock.patch.object(ship, "baseline", return_value=artifact), \
-                mock.patch.object(ship.urllib.request, "urlopen", return_value=io.BytesIO(b"corrupt")):
-            with self.assertRaisesRegex(ValueError, "checksum mismatch"):
-                ship.prepare_baseline()
-            self.assertFalse(artifact.exists())
+    def test_baseline_default_and_environment_override(self):
+        with mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch.object(ship.platform, "machine", return_value="x86_64"):
+            self.assertEqual(ship.baseline(), Path("/work/cache/wingthing-releases/v0.149.5/wt-linux-amd64"))
+            os.environ["WT_RELEASE_SKEW_BINARY"] = str(self.artifact.resolve())
+            self.assertEqual(ship.baseline(), self.artifact.resolve())
+
+    def test_receipt_can_verify_same_artifact_at_another_path(self):
+        self.receipt["baseline"] = "/another-host/release/wt-linux-amd64"
+        self.write_receipt()
+        ship.verify("receipt.txt")
 
     def test_download_context_preserves_release_bytes(self):
         ship.stage_downloads()

@@ -379,7 +379,7 @@ ship-gate:
 
 test-release-skew: | web/dist
 	python3 -B scripts/ship-gate.py prepare-baseline
-	WT_RELEASE_SKEW_REQUIRED=1 $(GO) test -p 2 ./internal/relay -run '^TestReleasedCLISkew$$' -count=1 -v -timeout=90s
+	WT_RELEASE_SKEW_REQUIRED=1 $(GO) test -p 2 ./internal/relay -run '^TestReleasedCLI(Skew|BaselineValidation)$$' -count=1 -v -timeout=90s
 
 test-ship-gate:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p test_ship_gate.py -v

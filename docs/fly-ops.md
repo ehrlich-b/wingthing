@@ -603,12 +603,14 @@ The inspected `origin/main` (`72c7be5`) already routes these encrypted operation
 ## Promotion and deployment
 
 Run `make ship-gate SHIP_GATE_DIR=/path/to/evidence` on Linux from a clean,
-committed checkout. The gate fetches a missing original previous-release binary
-from GitLab into
-`downloads/v0.149.5/wt-linux-amd64` (or `wt-linux-arm64`) and checks its pinned
-published SHA256 before execution. To stage it in advance, including for an
-offline host, run `python3 scripts/ship-gate.py prepare-baseline`. An existing
-artifact with a different checksum is rejected without replacement. The gate runs
+committed checkout. Set `WT_RELEASE_SKEW_BINARY` to the absolute path of the
+original v0.149.5 Linux binary, with the published `SHA256SUMS` beside it.
+The default is `/work/cache/wingthing-releases/v0.149.5/wt-linux-amd64`
+(`wt-linux-arm64` on an arm64 promotion host). No download occurs. Run
+`python3 scripts/ship-gate.py prepare-baseline` to validate the retained artifact
+against both `SHA256SUMS` and the pinned published digest before promotion.
+Missing or mismatched artifacts fail with an actionable error; no artifact is
+copied into the source checkout or replaced. The gate runs
 web tests/build, Go vet, launch-plan tests, whitespace validation, receipt
 preflight tests and the previous-release CLI probe. It writes
 `ship-gate-<full-sha>.txt` only after every check succeeds, in a fresh run
@@ -616,7 +618,8 @@ subdirectory printed by the command. This bounded promotion set does not replace
 separate full release qualification in release-verification.md.
 
 Transfer that receipt and the matching source/released artifact to the deploy
-host, then run `make deploy RECEIPT=/path/to/ship-gate-<full-sha>.txt`.
+host (set `WT_RELEASE_SKEW_BINARY` there if its path differs), then run
+`make deploy RECEIPT=/path/to/ship-gate-<full-sha>.txt`.
 Even a dry run refuses missing, stale or incomplete receipts. Deployment checks
 staged download integrity, copies those files into `.ship-downloads/`, and runs
 Fly; it does not run promotion tests on the deploy host. For manual container
@@ -627,12 +630,14 @@ directory. Docker copies the staged release directory while ignoring the origina
 `downloads/` tree and local experiments, mobile sources and scratch artifacts.
 A context containing stale release files is rejected; use a fresh checkout.
 
-The skew probe executes the downloaded binary for `whoami` and `wings --json
---no-probe` against a loopback HEAD relay advertising a HEAD wing. It checks
+The skew probe verifies the adjacent checksum manifest before executing the
+released binary for `whoami` and `wings --json --no-probe` against a loopback
+HEAD relay advertising a HEAD wing. It checks
 nonempty `attach --json` inventory and attaches to a real HEAD egg on that
 wing, asserting input and output through HEAD wing control and a confirmed
 exit. Native attach uses local/SSH control; it has no HTTP relay attachment
 route. The command fixture is isolated in temporary state and uses no real
 provider or credentials; it is a transport check, not sandbox qualification.
-A missing release can be fetched; a mismatched artifact fails, and no current
+Retain the binary and `SHA256SUMS` with the receipt so promotion and verification
+can be reproduced offline. A missing or mismatched artifact fails, and no current
 build is substituted for the released CLI.

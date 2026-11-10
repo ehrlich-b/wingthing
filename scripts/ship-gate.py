@@ -10,7 +10,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import urllib.request
 
 GATES = [
     ["make", "web"],
@@ -36,7 +35,8 @@ def baseline():
     arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(platform.machine())
     if not arch:
         raise ValueError("release skew requires Linux amd64 or arm64")
-    return Path("downloads/v0.149.5") / f"wt-linux-{arch}"
+    return Path(os.environ.get("WT_RELEASE_SKEW_BINARY",
+                               f"/work/cache/wingthing-releases/v0.149.5/wt-linux-{arch}"))
 
 
 # Published SHA256SUMS for the original artifacts, never rebuilt tag binaries.
@@ -44,31 +44,28 @@ BASELINE_HASHES = {
     "amd64": "dfbe82d1f0fad9ba8eb408acc83cc2ff78aa2f019942cb2bd694db498e7cbccf",
     "arm64": "bcf6fe0d6f8584785e98d2ad31837e33cc6a21fa92758f8411465520c632b63b",
 }
-BASELINE_URL = "https://gitlab.com/api/v4/projects/ehrlich-b%2Fwingthing/packages/generic/wingthing/v0.149.5/"
 
 
 def prepare_baseline():
     artifact = baseline()
-    expected = BASELINE_HASHES[artifact.name.removeprefix("wt-linux-")]
-    if not artifact.exists():
-        artifact.parent.mkdir(parents=True, exist_ok=True)
-        print(f"fetching original v0.149.5 artifact: {artifact}", flush=True)
-        # Validate before installing; an interrupted fetch cannot become a baseline.
-        with urllib.request.urlopen(BASELINE_URL + artifact.name, timeout=60) as response:
-            data = response.read(64 * 1024 * 1024 + 1)
-        if hashlib.sha256(data).hexdigest() != expected:
-            raise ValueError("downloaded release baseline checksum mismatch")
-        with artifact.open("xb") as stream:
-            stream.write(data)
-        artifact.chmod(0o755)
-    if digest(artifact) != expected:
+    actual = digest(artifact)
+    expected = BASELINE_HASHES[{"x86_64": "amd64", "aarch64": "arm64"}[platform.machine()]]
+    manifest = artifact.parent / "SHA256SUMS"
+    entries = [line.split() for line in manifest.read_text().splitlines()]
+    matches = [fields[0] for fields in entries
+               if len(fields) == 2 and fields[1].lstrip("*") == artifact.name]
+    if matches != [actual]:
+        raise ValueError(f"release baseline checksum mismatch against {manifest}: {artifact}")
+    if actual != expected:
         raise ValueError("release baseline does not match published v0.149.5 checksum")
+    if not os.access(artifact, os.X_OK):
+        raise ValueError(f"released CLI is not executable: {artifact}")
     return artifact
 
 
 def digest(path):
     if path.is_symlink() or not path.is_file():
-        raise ValueError(f"missing regular release artifact: {path}")
+        raise ValueError(f"missing regular release artifact: {path}; set WT_RELEASE_SKEW_BINARY to the original v0.149.5 binary with adjacent SHA256SUMS")
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
@@ -81,10 +78,14 @@ def verify(receipt):
             or data.get("platform") != "Linux" or data.get("gates") != GATES):
         raise ValueError("receipt does not match HEAD and the Linux promotion set")
     # The deploy host may be macOS; verify the Linux artifact named by the gate.
-    artifact = data.get("baseline", "")
-    if artifact not in ("downloads/v0.149.5/wt-linux-amd64", "downloads/v0.149.5/wt-linux-arm64"):
+    artifact = Path(data.get("baseline", ""))
+    asset = data.get("baseline_asset", artifact.name)
+    if asset not in ("wt-linux-amd64", "wt-linux-arm64"):
         raise ValueError("receipt has an invalid release baseline")
-    if data.get("baseline_sha256") != digest(Path(artifact)):
+    # Hosts may retain the same original artifact at different paths.
+    artifact = Path(os.environ.get("WT_RELEASE_SKEW_BINARY",
+                                  f"/work/cache/wingthing-releases/v0.149.5/{asset}"))
+    if data.get("baseline_sha256") != digest(artifact):
         raise ValueError("released CLI changed after the ship gate")
     print(f"ship receipt verified for {data['head']}")
 
@@ -111,7 +112,9 @@ def promote(output):
         raise ValueError("source or released CLI changed during promotion")
     with receipt.open("x") as stream:
         json.dump(dict(version=1, head=head, platform="Linux", gates=GATES,
-                       baseline=str(artifact), baseline_sha256=artifact_hash), stream, indent=2)
+                       baseline=str(artifact), baseline_asset="wt-linux-" +
+                       {"x86_64": "amd64", "aarch64": "arm64"}[platform.machine()],
+                       baseline_sha256=artifact_hash), stream, indent=2)
         stream.write("\n")
     print(receipt)
 

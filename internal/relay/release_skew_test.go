@@ -3,15 +3,16 @@ package relay
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -24,6 +25,65 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
+
+// Verify the retained release bytes before executing any command, including
+// --version. SHA256SUMS travels beside the original release binary.
+func verifyReleasedCLI(binary string) error {
+	info, err := os.Lstat(binary)
+	if err != nil || !info.Mode().IsRegular() {
+		return fmt.Errorf("released v0.149.5 binary required at %s; set WT_RELEASE_SKEW_BINARY to the original binary with adjacent SHA256SUMS", binary)
+	}
+	manifest := filepath.Join(filepath.Dir(binary), "SHA256SUMS")
+	sums, err := os.ReadFile(manifest)
+	if err != nil {
+		return fmt.Errorf("released v0.149.5 SHA256SUMS required: %w", err)
+	}
+	file, err := os.Open(binary)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return err
+	}
+	actual := fmt.Sprintf("%x", hash.Sum(nil))
+	var matches []string
+	for _, line := range strings.Split(string(sums), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && strings.TrimPrefix(fields[1], "*") == filepath.Base(binary) {
+			matches = append(matches, fields[0])
+		}
+	}
+	if len(matches) != 1 || matches[0] != actual {
+		return fmt.Errorf("released v0.149.5 checksum mismatch against %s: %s", manifest, binary)
+	}
+	return nil
+}
+
+func TestReleasedCLIBaselineValidation(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "wt-linux-amd64")
+	if err := verifyReleasedCLI(binary); err == nil || !strings.Contains(err.Error(), "WT_RELEASE_SKEW_BINARY") {
+		t.Fatalf("missing artifact must be actionable: %v", err)
+	}
+	data := []byte("small nonexecutable checksum fixture")
+	mustTest(t, os.WriteFile(binary, data, 0600))
+	if err := verifyReleasedCLI(binary); err == nil || !strings.Contains(err.Error(), "SHA256SUMS required") {
+		t.Fatalf("missing manifest accepted: %v", err)
+	}
+	manifest := filepath.Join(filepath.Dir(binary), "SHA256SUMS")
+	entry := fmt.Sprintf("%x *%s\n", sha256.Sum256(data), filepath.Base(binary))
+	mustTest(t, os.WriteFile(manifest, []byte(entry), 0600))
+	mustTest(t, verifyReleasedCLI(binary))
+	mustTest(t, os.WriteFile(binary, []byte("corrupt"), 0600))
+	if err := verifyReleasedCLI(binary); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("corrupt artifact accepted: %v", err)
+	}
+	mustTest(t, os.WriteFile(manifest, []byte(entry+entry), 0600))
+	if err := verifyReleasedCLI(binary); err == nil {
+		t.Fatal("ambiguous checksum manifest accepted")
+	}
+}
 
 // releaseSkewOutput acknowledges receipt of the complete response before the
 // fixture shell may exit; the released CLI can observe exit before draining PTY.
@@ -46,15 +106,20 @@ func (w *releaseSkewOutput) Write(p []byte) (int, error) {
 // make test-release-skew requires it; ordinary unit tests remain artifact-free.
 func TestReleasedCLISkew(t *testing.T) {
 	if os.Getenv("WT_RELEASE_SKEW_REQUIRED") != "1" {
-		t.Skip("run make test-release-skew with downloads/v0.149.5 staged")
+		t.Skip("run make test-release-skew with the original v0.149.5 binary and SHA256SUMS")
 	}
-	binary, err := filepath.Abs("../../downloads/v0.149.5/wt-" + runtime.GOOS + "-" + runtime.GOARCH)
+	binary := os.Getenv("WT_RELEASE_SKEW_BINARY")
+	if binary == "" {
+		binary = "/work/cache/wingthing-releases/v0.149.5/wt-linux-amd64"
+	}
+	binary, err := filepath.Abs(binary)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(binary); err != nil {
-		t.Fatalf("released v0.149.5 binary required: %v", err)
+	if err := verifyReleasedCLI(binary); err != nil {
+		t.Fatal(err)
 	}
+	t.Logf("SHA256SUMS verified for %s", binary)
 	store := testStore(t)
 	token, userID := createTestToken(t, store, "release-skew")
 	server := NewServer(store, ServerConfig{})

@@ -154,7 +154,7 @@ func TestDeployGuardNormalEntryPoint(t *testing.T) {
 					}
 					cmd := exec.Command("make", parallel, "deploy", "GO=go", "RECEIPT="+receiptPath)
 					cmd.Dir = root
-					cmd.Env = append(os.Environ(), "PATH="+tools+":"+os.Getenv("PATH"))
+					cmd.Env = append(os.Environ(), "PATH="+tools+":"+os.Getenv("PATH"), "WT_RELEASE_SKEW_BINARY="+filepath.Join(root, "downloads/v0.149.5/wt-linux-amd64"))
 					output, err := cmd.CombinedOutput()
 					success := staged && receipt == "valid"
 					if success && err != nil {
