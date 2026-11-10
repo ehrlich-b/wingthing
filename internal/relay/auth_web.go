@@ -182,14 +182,17 @@ func (s *Server) roostUserIDAllowed(userID string) bool {
 	}
 	// Edge stores contain process-local plumbing, not authoritative users. Reuse
 	// the login node's synchronized per-user decision instead of denying every
-	// enrolled account because it is absent from the edge database. A cache miss
-	// fails closed until the first successful synchronization.
+	// enrolled account because it is absent from the edge database. Public edges
+	// retain legacy access until a decision is published for this user, including
+	// during rolling upgrades from login nodes that publish no enrollment data.
+	// An explicitly configured allowlist still requires a known decision.
 	if s.IsEdge() {
-		if s.EntitlementCache == nil {
-			return false
+		if s.EntitlementCache != nil {
+			if allowed, known := s.EntitlementCache.GetEnrollment(userID); known {
+				return allowed
+			}
 		}
-		allowed, known := s.EntitlementCache.GetEnrollment(userID)
-		return known && allowed
+		return len(s.Config.RoostAllowedEmails) == 0
 	}
 	if s.Store == nil {
 		return len(s.Config.RoostAllowedEmails) == 0

@@ -58,9 +58,9 @@ func (c *EntitlementCache) GetRelayAccess(userID string) RelayAccess {
 	return access
 }
 
-// GetEnrollment returns the authoritative private-roost enrollment decision.
-// N-1 login nodes did not publish such a decision, so callers opting into the
-// new enrollment boundary must fail closed until the login node is upgraded.
+// GetEnrollment returns the login node's enrollment decision and whether it was
+// published for this user. Public edges preserve legacy access when unknown;
+// edges with a configured enrollment allowlist require a known decision.
 func (c *EntitlementCache) GetEnrollment(userID string) (bool, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
