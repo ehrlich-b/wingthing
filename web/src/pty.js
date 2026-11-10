@@ -799,7 +799,7 @@ export function attachPTY(sessionId, _retries, wingId, requestId, options) {
         DOM.ptyStatus.textContent = 'Observation is not enabled for this wing';
         return false;
     }
-    var explicitTakeover = !!(options.takeover && S.currentUser && S.currentUser.release_channel === 'preview');
+    var explicitTakeover = !!(options.takeover && S.currentUser);
     S.spectating = !!(((isOtherUser && !explicitTakeover) || options.spectate) && wing && wing.spectate);
 
     // Session not in our list (spectator deep link, path ACLs, etc.) —

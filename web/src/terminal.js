@@ -198,10 +198,10 @@ export function initTerminal() {
         fontSize: 14,
         fontFamily: "'JetBrains Mono', monospace",
         theme: {
-            background: '#2B2420',
-            foreground: '#EFE6D6',
+            background: '#07131A',
+            foreground: '#E6F1F6',
             cursor: '#ffffff',
-            selectionBackground: '#5A4A3C',
+            selectionBackground: '#264553',
         },
         allowProposedApi: true,
     });
@@ -449,7 +449,7 @@ export function saveTermThumb(wingId, sessionId) {
         c.width = W * dpr; c.height = H * dpr;
         var ctx = c.getContext('2d');
         ctx.scale(dpr, dpr);
-        ctx.fillStyle = '#2B2420';
+        ctx.fillStyle = '#07131A';
         ctx.fillRect(0, 0, W, H);
 
         var buffer = S.term.buffer.active;

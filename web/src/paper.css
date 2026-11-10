@@ -429,3 +429,7 @@ body.paper-on #app { display: none; }
 .pp-search-result > span { min-width: 0; overflow-wrap: anywhere; }
 
 #paper :is(h1,h2,h3) { font-family: "Space Grotesk", sans-serif; }
+
+.pp-live-terminal { height: 340px; min-width: 0; margin-bottom: 12px; background: #07131A; }
+.pp-live-terminal #terminal-container { height: 100%; padding: 6px; }
+@media (max-width: 760px) { .pp-live-terminal { height: 180px; } }

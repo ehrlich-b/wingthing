@@ -150,7 +150,7 @@ async function machine(id) {
             const list = selected && (events[selected.session_id] || fallback(selected.name));
             response = selected ? { session: selected.session_id, lifecycle: { ...selected.lifecycle, session_id: selected.session_id, agent: selected.agent, provider_session_id: 'provider-' + selected.session_id, process_alive: true, ready: true, cursor: list.length, head_cursor: list.length, has_more: false, report_cursor: list.length, reported_at: at(1), report: { goal: 'Fix the redirect loop and deploy to staging', update: 'Deploy script is ready on Studio and needs your go.', presence: 'awake' }, events: list } } : { error: 'Session not found' };
         }
-        else if (inner.type === 'session.control' && inner.operation === 'terminal_read') response = { result: { ansi: (screens[inner.arguments.session] || '$ ').replace(/\r/g, '') } };
+        else if (inner.type === 'session.control' && inner.operation === 'session_action' && inner.arguments.operation === 'terminal_read') response = { result: { ansi: (screens[inner.arguments.session_id] || '$ ').replace(/\r/g, '') } };
         else if (inner.type === 'session.control' && inner.operation === 'terminal_send') { sent.push({ machine: id, ...inner.arguments }); response = { session: inner.arguments.session, bytes_sent: inner.arguments.input.length }; }
         else if (inner.type === 'dir.list') response = { entries: [{ name:'wingthing', path:'/Users/example/code/wingthing', is_dir:true }] };
         else if (inner.type === 'pty.resize' || inner.type === 'pty.detach') response = {};
@@ -329,6 +329,8 @@ async function checkConversation(page, name, suffix) {
     assert.ok(identity.includes('Studio') && identity.includes('Claude'));
     if(name === '03-session') {
         assert.ok(identity.includes('migrate-sessions-table'));
+        assert.ok((await page.locator('.pp-term').textContent()).includes('backfill:'), 'real browser operation must yield the terminal snapshot');
+        checked(name + suffix + '-terminal-snapshot', await page.locator('.pp-term').textContent());
         if(page.viewportSize().width===390) assert.equal(await page.locator('.pp-terminal').evaluate(el=>el.open),false);
     }
     const geometry = await page.evaluate(() => {
@@ -392,9 +394,11 @@ async function checkConversationRefresh(page, name, suffix) {
         if(name==='01-wing') {
             const latest = await page.locator('.pp-say').filter({hasText:'Latest progress receipt at the end of the conversation.'}).boundingBox();
             assert.ok(latest.y >= 0 && latest.y+latest.height <= page.viewportSize().height);
-            const action = await page.getByRole('link',{name:'Answer in terminal',exact:true}).boundingBox();
-            const viewport = await page.locator('.pp-conversation').boundingBox();
-            assert.ok(action.y >= viewport.y && action.y+action.height <= viewport.y+viewport.height);
+            const action = await page.locator('.pp-needs .pp-need-row').first().boundingBox();
+            const summary = await page.locator('.pp-needs').boundingBox();
+            assert.ok(action.y >= summary.y && action.y + action.height <= summary.y + summary.height);
+            assert.ok(action.y >= 0 && action.y + action.height <= page.viewportSize().height);
+            checked('01-wing' + suffix + '-needs-action-visible', action);
             await page.screenshot({path:path.join(shots, 'follow-latest'+suffix+'.png')});
             const dimensions = await page.evaluate(() => ({viewport:innerWidth,width:Math.max(document.documentElement.scrollWidth,document.body.scrollWidth)}));
             captures.push({file:'follow-latest'+suffix+'.png',url:page.url(),...dimensions});

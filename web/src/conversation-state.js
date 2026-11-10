@@ -83,7 +83,9 @@ export function applyConversationRead(previous, view, meta) {
             next.messages.push({ type: 'activity', eventType: event.type, state: event.state || '', reason: event.reason || '', report: event.report, sequence: event.sequence, timestamp: event.timestamp || '' });
         }
         if (agent === 'codex' && event.source === 'codex_hook' && event.type === 'prompt_submitted' && typeof event.text === 'string') {
-            next.messages.push({ type: 'user', content: event.text, timestamp: event.timestamp || '', sequence: event.sequence });
+            const native = next.messages.findIndex(m => m.type === 'user' && m.source === 'codex_transcript' && !m.hookMatched && m.content === event.text);
+            if (native !== -1) next.messages[native] = { ...next.messages[native], hookMatched: true };
+            else next.messages.push({ type: 'user', content: event.text, source: 'codex_hook', timestamp: event.timestamp || '', sequence: event.sequence });
         } else if (event.raw) {
             var parsed = parseJSONL(JSON.stringify(event.raw), agent);
             parsed.forEach(function(message, index) {
@@ -101,7 +103,12 @@ export function applyConversationRead(previous, view, meta) {
                 next.messages.push({ type: 'provider_record', name: event.type || 'provider record', content: record, sequence: event.sequence, truncated: event.truncated === true });
             }
         } else if (event.type === 'message' && (event.role === 'user' || event.role === 'assistant')) {
-            next.messages.push({ type: event.role, content: event.text || '', timestamp: event.timestamp || '', sequence: event.sequence, truncated: event.truncated === true });
+            let hookMatched = false;
+            if (event.source === 'codex_transcript' && event.role === 'user') {
+                const hook = next.messages.findIndex(m => m.type === 'user' && (m.source === 'codex_hook' || !m.source) && m.content === event.text);
+                if (hook !== -1) { next.messages.splice(hook, 1); hookMatched = true; }
+            }
+            next.messages.push({ type: event.role, source: event.source || '', hookMatched, content: event.text || '', timestamp: event.timestamp || '', sequence: event.sequence, truncated: event.truncated === true });
         } else if (agent === 'codex' && event.type === 'prompt_submitted' && typeof event.text === 'string') {
             next.messages.push({ type: 'user', content: event.text, timestamp: event.timestamp || '', sequence: event.sequence, truncated: event.truncated === true });
         }

@@ -1180,6 +1180,16 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	if options.SetSessionService != nil {
 		options.SetSessionService(sessions)
 	}
+	client.OnPTYAttach = func(ctx context.Context, attach ws.PTYAttach) error {
+		// Standalone terminal sessions can appear after wing startup. Authorize
+		// the exact live egg before registering its normal browser bridge; that
+		// bridge still enforces passkey policy before exposing any PTY content.
+		policy := sessions.Policy()
+		if _, err := sessions.Resolve(ctx, attachmentAuthority(policy.Wing, attach), attach.SessionID, false); err != nil {
+			return err
+		}
+		return sessions.Register(attach.SessionID)
+	}
 	client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
 		start.UserID = localOwner.OwnerForRelay(roostURL, start.UserID)
 		wingCfgMu.Lock()

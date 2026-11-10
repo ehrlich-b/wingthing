@@ -229,17 +229,12 @@ func openAgentSession(root *os.File, agent, cwd, sessionDir string, startedAfter
 		if agent != "codex" {
 			return nil, "", nil
 		}
-		// Main's Codex capture supports flat rollout files. Select only a
-		// filename ending in the bound thread ID, never another thread's newest.
-		entries, err := dir.ReadDir(-1)
-		if err != nil {
-			return nil, "", err
-		}
-		for _, entry := range entries {
-			if strings.HasPrefix(entry.Name(), "rollout-") && strings.HasSuffix(entry.Name(), "-"+id+".jsonl") {
-				file, err := openProviderPath(dir, entry.Name(), false)
-				return file, id, err
-			}
+		// Codex stores rollouts flat or under YYYY/MM/DD. Traverse only those
+		// date directories with pinned, no-follow handles and a finite budget.
+		budget := 10000
+		file, err = openCodexRollout(dir, id, 0, &budget)
+		if file != nil || err != nil {
+			return file, id, err
 		}
 		return nil, "", nil
 	}

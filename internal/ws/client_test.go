@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -463,5 +464,80 @@ func TestClientRuntimeConfigPublishesOneDefensiveSnapshot(t *testing.T) {
 	snapshot = client.runtimeConfig()
 	if snapshot.Locked || snapshot.AllowedCount != 1 || !snapshot.DirectMCP || snapshot.RootDir != "/work" {
 		t.Fatalf("access update tore unrelated runtime config: %#v", snapshot)
+	}
+}
+
+func TestClientRegistersLatePTYAttachAfterAuthorization(t *testing.T) {
+	for _, allowed := range []bool{false, true} {
+		t.Run(fmt.Sprint(allowed), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			forwarded := make(chan PTYAttach, 1)
+			client := &Client{Token: "fixture", OwnerForRelay: func(string) string { return "local-owner" }}
+			client.OnPTYAttach = func(_ context.Context, attach PTYAttach) error {
+				if attach.UserID != "local-owner" {
+					t.Error("relay owner was not mapped before authorization")
+				}
+				if !allowed {
+					return errors.New("denied")
+				}
+				input := make(chan []byte, 1)
+				if !client.registerPTYSession(attach.SessionID, input) {
+					t.Fatal("duplicate registration")
+				}
+				go func() {
+					select {
+					case raw := <-input:
+						var got PTYAttach
+						_ = json.Unmarshal(raw, &got)
+						forwarded <- got
+					case <-ctx.Done():
+					}
+				}()
+				return nil
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := websocket.Accept(w, r, nil)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer conn.Close(websocket.StatusNormalClosure, "done")
+				if _, _, err = conn.Read(ctx); err != nil {
+					t.Error(err)
+					return
+				}
+				if err = wsjson.Write(ctx, conn, RegisteredMsg{Type: TypeRegistered, WingID: "wing"}); err != nil {
+					t.Error(err)
+					return
+				}
+				if err = wsjson.Write(ctx, conn, PTYAttach{Type: TypePTYAttach, SessionID: "late-session", UserID: "relay-owner"}); err != nil {
+					t.Error(err)
+					return
+				}
+				if allowed {
+					select {
+					case got := <-forwarded:
+						if got.SessionID != "late-session" || got.UserID != "local-owner" {
+							t.Errorf("wrong forwarded attach: %+v", got)
+						}
+					case <-ctx.Done():
+						t.Error("late attach was dropped")
+					}
+				} else {
+					var response ErrorMsg
+					if err = wsjson.Read(ctx, conn, &response); err != nil {
+						t.Error(err)
+						return
+					}
+					if response.Type != TypeError || response.SessionID != "late-session" || client.ptyRoutes().HasPTYSession("late-session") {
+						t.Errorf("denied attach registered: %+v", response)
+					}
+				}
+			}))
+			defer server.Close()
+			client.RoostURL = strings.Replace(server.URL, "http://", "ws://", 1)
+			_, _ = client.connectAndServe(ctx)
+		})
 	}
 }
