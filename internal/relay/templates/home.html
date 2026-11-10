@@ -7,7 +7,6 @@
 .site-nav .logo-mark{width:36px;height:36px}
 .site-nav .nav-cta{padding:9px 16px;border-radius:6px}
 .hero{padding:88px 0 56px}
-.eyebrow{font-size:12px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--primary);margin-bottom:22px}
 .hero h1{max-width:20ch;font-size:clamp(40px,4.6vw,64px);font-weight:600;line-height:1.08;letter-spacing:-.022em;text-wrap:balance}
 .hero h1 span{color:var(--kingfisher-accent);display:inline}
 .tagline{max-width:620px;font-size:19px;line-height:1.6;color:var(--text-dim);margin:28px 0}
@@ -74,7 +73,6 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--primary);outline-of
   .site-nav .nav-secondary{font-size:12px}
   .hero{padding:48px 0 30px}
   .hero h1{font-size:38px;letter-spacing:-.02em}
-  .eyebrow{font-size:11px;margin-bottom:20px}
   .tagline{font-size:17px;margin:24px 0}
   .hero-actions{gap:20px;font-size:14px}
   .hero-install{padding:12px 18px}
@@ -99,7 +97,6 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--primary);outline-of
 {{define "content"}}
 <main>
 <section class="hero" aria-labelledby="home-headline">
-<p class="eyebrow">Your agents. Your direction.</p>
 <h1 id="home-headline">The agent manager for agents <span>(and people)</span></h1>
 <p class="tagline">Launch agents on your machines, follow their progress, and step in when the work needs you.</p>
 <div class="hero-actions">
@@ -115,7 +112,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--primary);outline-of
 <p class="copy-status" role="status" aria-live="polite"></p>
 </section>
 <section class="product-preview" aria-labelledby="preview-title">
-<div class="preview-bar"><h2 id="preview-title">Your sessions, together</h2><span class="preview-label">Illustrative example <span>Example · 8 sessions</span></span></div>
+<div class="preview-bar"><h2 id="preview-title">Example agent sessions</h2><span class="preview-label">Illustrative example <span>Example · 8 sessions</span></span></div>
 <div class="preview-grid">
 <div class="work-list" aria-label="Illustrative work"><ul style="list-style:none">
 <li class="work-row"><span class="work-state blocked">Needs you</span><div class="work-copy"><p class="work-name" title="fix-login-redirect">fix-login-redirect</p><p class="work-note">Claude · Studio</p></div></li>
@@ -148,7 +145,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--primary);outline-of
 </div>
 </section>
 <section class="closing" aria-label="Get started">
-<h2>Agents can work. <span>People can join.</span></h2><a href="/install">Get started with wingthing ↗</a>
+<h2>Launch agents. <span>Join their terminals.</span></h2><a href="/install">Get started with wingthing ↗</a>
 </section>
 </main>
 <script>
