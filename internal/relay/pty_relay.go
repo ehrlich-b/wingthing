@@ -97,7 +97,7 @@ type PTYRoute struct {
 	PendingController   *websocket.Conn            // attach awaiting wing authorization
 	PendingUserID       string                     // promoted with PendingController
 	Viewers             map[string]*websocket.Conn // viewer_id → spectator conn (read-only)
-	UserID              string                     // bandwidth metering only
+	UserID              string                     // session user for bandwidth metering and notifications
 	WingID              string                     // machine ID for offline notification
 	Agent               string                     // agent name for ntfy notifications
 	CWD                 string                     // working directory for ntfy notifications
@@ -1121,7 +1121,7 @@ func (s *Server) forwardPTYToBrowser(sessionID, sourceWingID string, data []byte
 		}
 
 		// Send ntfy exit notification
-		clickURL := ntfyClickURL(sessionID)
+		clickURL := s.ntfyClickURL(sessionID)
 		s.trySendNtfy("exit:"+sessionID, userID, func(c *ntfy.Client) {
 			c.SendExit(sessionID, agent, cwd, exited.ExitCode, clickURL)
 		})

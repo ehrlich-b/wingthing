@@ -724,8 +724,16 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			}
 			// Push notification via ntfy (nonce-deduped)
 			if attn.Nonce != "" {
-				clickURL := ntfyClickURL(attn.SessionID)
-				s.trySendNtfy(attn.Nonce, wing.UserID, func(c *ntfy.Client) {
+				userID := wing.UserID
+				if route := s.PTY.Get(attn.SessionID); route != nil {
+					route.mu.Lock()
+					if route.WingID == wing.WingID && route.UserID != "" {
+						userID = route.UserID
+					}
+					route.mu.Unlock()
+				}
+				clickURL := s.ntfyClickURL(attn.SessionID)
+				s.trySendNtfy(attn.Nonce, userID, func(c *ntfy.Client) {
 					c.SendAttention(attn.SessionID, attn.Agent, attn.CWD, clickURL)
 				})
 			}
@@ -1066,6 +1074,10 @@ func (s *Server) trySendNtfy(nonce, userID string, send func(c *ntfy.Client)) {
 }
 
 // ntfyClickURL builds the click URL for a session notification.
-func ntfyClickURL(sessionID string) string {
-	return fmt.Sprintf("https://app.wingthing.ai/#s/%s", sessionID)
+func (s *Server) ntfyClickURL(sessionID string) string {
+	appURL := s.appURL()
+	if s.Config.AppHost == "" {
+		appURL = strings.TrimRight(s.Config.BaseURL, "/") + appURL
+	}
+	return fmt.Sprintf("%s#s/%s", appURL, sessionID)
 }
