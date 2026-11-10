@@ -60,3 +60,6 @@
 }
 .home-row .pp-st { font: 400 12px var(--wt-sans); letter-spacing: 0; text-transform: none; }
 #paper:has(.pp-main[data-view="wing"]) .pp-brand { color: var(--wt-blue); font: 600 16px var(--wt-sans); }
+#paper:has(.pp-main[data-view="wing"]) .pp-hot { color: var(--wt-orange); }
+#paper:has(.pp-main[data-view="wing"]) .pp-sq:not(.pp-sq-connected) i { background: transparent; border-color: var(--wt-ink-3); }
+.home-row .pp-st-offline, .home-row .pp-st-locked { color: var(--wt-ink-3); }

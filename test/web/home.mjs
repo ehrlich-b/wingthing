@@ -144,6 +144,8 @@ export async function runHome({pages, machines, sockets, machine, row, events, a
         await verify(page,'home-offline','Working','Retry');
         assert.equal(await page.locator('.home-row').count(),13);
         assert.equal(await page.locator('.home-row:not(.home-offline)').count(),0);
+        const offlineColors = await page.locator('.home-offline .pp-st,.pp-sq-offline i').evaluateAll(elements=>elements.map(el=>({color:getComputedStyle(el).color,border:getComputedStyle(el).borderColor})));
+        for (const color of offlineColors) { assert.notEqual(color.color,'rgb(255, 138, 61)');assert.notEqual(color.border,'rgb(255, 138, 61)'); }
         assert.equal(await page.locator('.pp-away').count(),0);
         assert.equal(await page.locator('.home-need').count(),0);
         assert.equal(await page.locator('#paper [data-composer]').count(),0);
