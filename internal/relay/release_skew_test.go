@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -110,7 +111,7 @@ func TestReleasedCLISkew(t *testing.T) {
 	}
 	binary := os.Getenv("WT_RELEASE_SKEW_BINARY")
 	if binary == "" {
-		binary = "/work/cache/wingthing-releases/v0.149.5/wt-linux-amd64"
+		binary = "/work/cache/wingthing-releases/v0.149.5/wt-linux-" + runtime.GOARCH
 	}
 	binary, err := filepath.Abs(binary)
 	if err != nil {
