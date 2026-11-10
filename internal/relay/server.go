@@ -149,6 +149,11 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 
 	// App dashboard API (cookie auth)
 	s.mux.HandleFunc("GET /api/app/me", s.handleAppMe)
+	s.mux.HandleFunc("GET /api/app/signin", s.handleSignInMethods)
+	s.mux.HandleFunc("DELETE /api/app/signin/{provider}", s.handleSignInMethodDelete)
+	s.mux.HandleFunc("POST /api/app/signin/email", s.handleSignInEmailAdd)
+	s.mux.HandleFunc("POST /api/app/signin/google", s.handleGoogleAuth)
+	s.mux.HandleFunc("GET /auth/google/link", s.handleGoogleAuth)
 	s.mux.HandleFunc("GET /api/app/wings", s.handleAppWings)
 	s.mux.HandleFunc("GET /ws/app", s.handleAppWS)
 	s.mux.HandleFunc("GET /api/app/usage", s.handleAppUsage)

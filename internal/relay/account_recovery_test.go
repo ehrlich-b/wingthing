@@ -32,7 +32,7 @@ func recoveryUser(t *testing.T, store *RelayStore, id, provider, email string) {
 
 // Exercise the real callback with fixed in-memory provider responses. No
 // provider server, network request, production account or login is involved.
-func googleRecoveryCallback(t *testing.T, s *Server, id, email string, verified bool) *httptest.ResponseRecorder {
+func googleRecoveryCallback(t *testing.T, s *Server, id, email string, verified bool, requests ...*http.Request) *httptest.ResponseRecorder {
 	t.Helper()
 	s.oauthHTTPClient = &http.Client{Transport: recoveryTransport(func(r *http.Request) (*http.Response, error) {
 		var payload any
@@ -55,6 +55,9 @@ func googleRecoveryCallback(t *testing.T, s *Server, id, email string, verified 
 	})}
 	r := httptest.NewRequest(http.MethodGet, "/auth/google/callback?code=fixture-code&state=fixture-state", nil)
 	r.AddCookie(&http.Cookie{Name: "oauth_state", Value: "fixture-state"})
+	if len(requests) > 0 {
+		r = requests[0]
+	}
 	w := httptest.NewRecorder()
 	s.handleGoogleCallback(w, r)
 	return w

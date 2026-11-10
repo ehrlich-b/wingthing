@@ -518,7 +518,6 @@ function saveEggOrder() {
 export function renderAccountPage() {
     var tier = S.currentUser.tier || 'free';
     var email = S.currentUser.email || '';
-    var provider = S.currentUser.provider || '';
     var pubKeyShort = identityPubKey ? identityPubKey.substring(0, 16) + '...' : 'none';
 
     var html = '<div class="ac-page">' +
@@ -542,8 +541,18 @@ export function renderAccountPage() {
         }
     }
     html += '</section>' +
-        '<section class="ac-section" aria-labelledby="ac-signin-heading"><h2 id="ac-signin-heading">Sign-in</h2>' +
-            (provider ? '<p class="text-dim ac-provider">Signed in with ' + escapeHtml(provider) + '</p>' : '');
+        '<section class="ac-section" aria-labelledby="ac-signin-heading"><h2 id="ac-signin-heading">Sign-in methods</h2>' +
+        '<div id="ac-signin-list"><span class="text-dim">Loading…</span></div>' +
+        '<div class="ac-signin-actions">' +
+            '<form method="POST" action="/api/app/signin/google"><button type="submit" class="btn-sm" id="ac-google-add" disabled>Add Google</button></form>' +
+            '<button type="button" class="btn-sm" id="ac-email-add" disabled aria-expanded="false" aria-controls="ac-email-form">Add email link</button>' +
+        '</div>' +
+        '<form id="ac-email-form" class="ac-signin-email" hidden>' +
+            '<label for="ac-email-address">Email address</label>' +
+            '<div class="ac-form-row"><input class="ac-input" type="email" autocomplete="email" id="ac-email-address" required>' +
+            '<button class="btn-sm" type="submit">Send link</button></div>' +
+        '</form>' +
+        '<p id="ac-signin-status" class="text-dim" role="status"></p>';
 
     // Passkeys section
     html += '<div class="ac-section">' +
@@ -680,6 +689,27 @@ export function renderAccountPage() {
 
         loadAccountOrgs();
     }
+    loadAccountSignInMethods();
+    document.getElementById('ac-email-add').addEventListener('click', function() {
+        var form = document.getElementById('ac-email-form');
+        form.hidden = !form.hidden;
+        this.setAttribute('aria-expanded', String(!form.hidden));
+        if (!form.hidden) document.getElementById('ac-email-address').focus();
+    });
+    document.getElementById('ac-email-form').addEventListener('submit', function(event) {
+        event.preventDefault();
+        var button = this.querySelector('button');
+        var status = document.getElementById('ac-signin-status');
+        button.disabled = true;
+        fetch('/api/app/signin/email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ email: document.getElementById('ac-email-address').value }).toString()
+        }).then(function(r) { return r.json().then(function(data) { if (!r.ok) throw new Error(data.error); return data; }); })
+        .then(function() { status.textContent = 'Check your email to add this method'; })
+        .catch(function(err) { status.textContent = err.message || 'Could not send email link'; })
+        .finally(function() { button.disabled = false; });
+    });
     loadAccountPasskeys();
     loadNtfyConfig();
 
@@ -741,6 +771,39 @@ export function renderAccountPage() {
 function accountPreview(rows) {
     return rows.slice(0, 3).join('') + (rows.length > 3 ?
         '<details class="ac-more"><summary>+' + (rows.length - 3) + ' more</summary>' + rows.slice(3).join('') + '</details>' : '');
+}
+
+function loadAccountSignInMethods() {
+    var list = document.getElementById('ac-signin-list');
+    var status = document.getElementById('ac-signin-status');
+    fetch('/api/app/signin').then(function(r) {
+        if (!r.ok) throw new Error('Could not load sign-in methods');
+        return r.json();
+    }).then(function(data) {
+        if (!list.isConnected) return;
+        var methods = data.methods || [];
+        var names = { github: 'GitHub', google: 'Google', email: 'Email link' };
+        var has = function(provider) { return methods.some(function(m) { return m.provider === provider; }); };
+        document.getElementById('ac-google-add').disabled = !data.can_add_google || has('google');
+        document.getElementById('ac-email-add').disabled = !data.can_add_email || has('email');
+        list.innerHTML = methods.length ? methods.map(function(m) {
+            return '<div class="ac-signin-row"><div><strong>' + escapeHtml(names[m.provider] || m.provider) + '</strong>' +
+                (m.label ? '<span class="text-dim">' + escapeHtml(m.label) + '</span>' : '') +
+                (methods.length === 1 ? '<span class="text-dim">This is your only way in</span>' : '') +
+                '</div><button type="button" class="btn-sm btn-danger" data-provider="' + escapeHtml(m.provider) + '"' +
+                (methods.length === 1 ? ' disabled' : '') + '>Remove</button></div>';
+        }).join('') : '<p class="text-dim">No linked sign-in methods</p>';
+        list.querySelectorAll('[data-provider]').forEach(function(button) {
+            button.addEventListener('click', function() {
+                var provider = button.getAttribute('data-provider');
+                button.disabled = true;
+                fetch('/api/app/signin/' + encodeURIComponent(provider), { method: 'DELETE' })
+                .then(function(r) { return r.json().then(function(data) { if (!r.ok) throw new Error(data.error); }); })
+                .then(function() { status.textContent = 'Sign-in method removed'; loadAccountSignInMethods(); })
+                .catch(function(err) { status.textContent = err.message || 'Could not remove method'; button.disabled = false; });
+            });
+        });
+    }).catch(function(err) { if (list.isConnected) list.textContent = err.message; });
 }
 
 function loadAccountPasskeys() {

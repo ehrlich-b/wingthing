@@ -554,14 +554,41 @@ func (s *Server) handleGoogleAuth(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	state := s.setOAuthState(w)
+	state := generateToken()
+	if r.Method == http.MethodPost {
+		user := s.sessionUser(r)
+		if user == nil {
+			writeError(w, http.StatusUnauthorized, "not logged in")
+			return
+		}
+		state = "link_" + state
+		if err := s.Store.createSignInLink(state, user.ID, "google", ""); err != nil {
+			signInError(w, err)
+			return
+		}
+		// Start on the login host so its host-only state cookie is available to
+		// the callback. The initial POST stays on the app's own origin.
+		http.Redirect(w, r, strings.TrimRight(s.Config.BaseURL, "/")+"/auth/google/link?state="+state, http.StatusSeeOther)
+		return
+	}
+	if r.URL.Path == "/auth/google/link" {
+		state = r.URL.Query().Get("state")
+		var owner string
+		err := s.Store.db.QueryRow("SELECT user_id FROM signin_links WHERE token = ? AND provider = 'google' AND used = 0 AND expires_at > ?", state, time.Now().UTC().Format("2006-01-02 15:04:05")).Scan(&owner)
+		current := s.sessionUser(r)
+		if err != nil || current == nil || current.ID != owner {
+			http.Error(w, "invalid or expired sign-in request", http.StatusForbidden)
+			return
+		}
+	}
+	s.setAuthFlowCookie(w, "oauth_state", state, "/auth", 600)
 	u := fmt.Sprintf(
 		"https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=openid+email+profile&state=%s",
 		url.QueryEscape(s.Config.GoogleClientID),
 		url.QueryEscape(s.Config.BaseURL+"/auth/google/callback"),
 		url.QueryEscape(state),
 	)
-	http.Redirect(w, r, u, http.StatusTemporaryRedirect)
+	http.Redirect(w, r, u, http.StatusSeeOther)
 }
 
 func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
@@ -628,6 +655,21 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decodeOAuthProviderJSON(userResp, &gUser); err != nil || gUser.ID == "" {
 		http.Error(w, "invalid user response", http.StatusInternalServerError)
+		return
+	}
+
+	if state := r.URL.Query().Get("state"); isSignInLink(state) {
+		userID, _, err := s.Store.consumeSignInLink(state, "google")
+		current := s.sessionUser(r)
+		if err != nil || current == nil || current.ID != userID || !gUser.VerifiedEmail || !s.roostProviderEmailAllowed(gUser.Email, true) {
+			http.Error(w, "sign-in method could not be verified", http.StatusForbidden)
+			return
+		}
+		if err := s.Store.LinkSignInMethod(userID, "google", gUser.ID); err != nil {
+			signInError(w, err)
+			return
+		}
+		s.redirectToSignInMethods(w, r)
 		return
 	}
 
@@ -739,15 +781,16 @@ func (s *Server) handleMagicLink(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) sendMagicLinkEmail(to, link string) error {
+	return s.sendAuthEmail(to, "Your wingthing login link", fmt.Sprintf("Click here to log in:\n\n%s\n\nThis link expires in 15 minutes.", link))
+}
+
+func (s *Server) sendAuthEmail(to, subject, body string) error {
 	to, err := normalizeBareEmail(to)
 	if err != nil {
 		return err
 	}
 	from := s.Config.SMTPFrom
-	subject := "Your wingthing login link"
-	body := fmt.Sprintf("Click here to log in:\n\n%s\n\nThis link expires in 15 minutes.", link)
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\n\r\n%s", from, to, subject, body)
-
 	addr := s.Config.SMTPHost + ":" + s.Config.SMTPPort
 	auth := smtp.PlainAuth("", s.Config.SMTPUser, s.Config.SMTPPass, s.Config.SMTPHost)
 	return smtp.SendMail(addr, auth, from, []string{to}, []byte(msg))
@@ -757,6 +800,11 @@ func (s *Server) handleMagicVerify(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	if token == "" {
 		http.Error(w, "missing token", http.StatusBadRequest)
+		return
+	}
+
+	if isSignInLink(token) {
+		s.verifySignInEmail(w, r, token)
 		return
 	}
 
