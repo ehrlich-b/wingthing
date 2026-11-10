@@ -1287,6 +1287,8 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 					wingCfg.Locked = newCfg.Locked
 					wingCfg.AllowUnsandboxed = newCfg.AllowUnsandboxed
 					wingCfg.PhoneFleet = newCfg.PhoneFleet
+					wingCfg.PhoneFleetExcludeContexts = append([]string(nil), newCfg.PhoneFleetExcludeContexts...)
+					wingCfg.MachineContext = newCfg.MachineContext
 					wingCfg.Spectate = newCfg.Spectate
 					wingCfg.AllowKeys = newCfg.AllowKeys
 					wingCfg.Admins = newCfg.Admins

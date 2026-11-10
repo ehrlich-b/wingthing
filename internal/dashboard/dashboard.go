@@ -40,6 +40,11 @@ func Run(ctx context.Context, version string, streams remotepkg.IO) error {
 	}
 	home, _ := os.UserHomeDir()
 	s := &state{machines: map[string]machine{"local": {}}, defaultAgent: cfg.DefaultAgent, defaultCWD: cwd, home: home, localDir: cfg.Dir, agents: onboarding.Discover(), persistAttention: true, theme: detectTheme()}
+	wc, err := config.LoadWingConfig(cfg.Dir)
+	if err != nil {
+		return err
+	}
+	s.localContext = wc.MachineContext
 	s.loadReadCursors()
 	s.previewReader = readSessionPreview
 	inv := newInventory(nil)

@@ -38,6 +38,7 @@ type RemoteSessionInventory struct {
 type MachineSession struct {
 	LocalSession
 	Machine string `json:"machine"`
+	Context string `json:"context"`
 	Error   string `json:"error,omitempty"`
 }
 
@@ -165,11 +166,15 @@ func DiscoverMachineSessions(localVersion string, ctx context.Context, cfg *conf
 	if err != nil {
 		return nil, err
 	}
+	wc, err := config.LoadWingConfig(cfg.Dir)
+	if err != nil {
+		return nil, err
+	}
 	rows := make([]MachineSession, 0, len(local))
 	for _, session := range local {
 		session.OriginWingID = cfg.WingID
 		session.MachineLabel = "local"
-		rows = append(rows, MachineSession{LocalSession: session, Machine: "local"})
+		rows = append(rows, MachineSession{LocalSession: session, Machine: "local", Context: wc.MachineContext})
 	}
 	names := SortedRemoteNames(remotes)
 	results := make([][]MachineSession, len(names))
@@ -180,11 +185,11 @@ func DiscoverMachineSessions(localVersion string, ctx context.Context, cfg *conf
 			defer wg.Done()
 			sessions, err := QueryRemoteSessions(localVersion, ctx, name, remotes[name], streams)
 			if err != nil {
-				results[i] = []MachineSession{{Machine: name, Error: err.Error()}}
+				results[i] = []MachineSession{{Machine: name, Context: remotes[name].Context, Error: err.Error()}}
 				return
 			}
 			for _, session := range sessions {
-				results[i] = append(results[i], MachineSession{LocalSession: session, Machine: name})
+				results[i] = append(results[i], MachineSession{LocalSession: session, Machine: name, Context: remotes[name].Context})
 			}
 		}()
 	}

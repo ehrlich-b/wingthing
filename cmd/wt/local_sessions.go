@@ -29,6 +29,21 @@ func printActiveSessions(ctx context.Context, cfg *config.Config, jsonOutput boo
 	return writeLocalSessions(os.Stdout, sessions, jsonOutput)
 }
 
+func writeConfiguredLocalSessions(out io.Writer, sessions []eggclient.LocalSession, dir string, jsonOutput bool) error {
+	if !jsonOutput {
+		return writeLocalSessions(out, sessions, false)
+	}
+	wc, err := config.LoadWingConfig(dir)
+	if err != nil {
+		return err
+	}
+	rows := make([]eggclient.MachineSession, 0, len(sessions))
+	for _, session := range sessions {
+		rows = append(rows, eggclient.MachineSession{LocalSession: session, Machine: "local", Context: wc.MachineContext})
+	}
+	return writeMachineSessions(out, rows, true)
+}
+
 func writeLocalSessions(out io.Writer, sessions []eggclient.LocalSession, jsonOutput bool) error {
 	if jsonOutput {
 		if sessions == nil {

@@ -13,7 +13,7 @@ import (
 
 func remoteCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "remote", Short: "Manage configured SSH remotes"}
-	var wingthingDir, wtBinary string
+	var wingthingDir, wtBinary, machineContext string
 	add := &cobra.Command{
 		Use: "add NAME SSH_TARGET", Short: "Add an SSH remote", Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -41,11 +41,12 @@ func remoteCmd() *cobra.Command {
 				if _, exists := remotes[args[0]]; exists {
 					return fmt.Errorf("remote %q already exists; remove it before adding it again", args[0])
 				}
-				remotes[args[0]] = config.Remote{SSHTarget: args[1], WTBinary: wtBinary, WingthingDir: wingthingDir}
+				remotes[args[0]] = config.Remote{SSHTarget: args[1], WTBinary: wtBinary, WingthingDir: wingthingDir, Context: machineContext}
 				return nil
 			})
 		},
 	}
+	add.Flags().StringVar(&machineContext, "context", "", "machine context, such as home or work")
 	add.Flags().StringVar(&wtBinary, "wt-binary", "", "executable name or absolute path on the remote host")
 	add.Flags().StringVar(&wingthingDir, "wingthing-dir", "", "absolute Wingthing state directory on the remote host")
 	ls := &cobra.Command{

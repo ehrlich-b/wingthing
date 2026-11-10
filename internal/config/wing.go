@@ -44,6 +44,9 @@ type WingConfig struct {
 	PhoneFleet       bool           `yaml:"phone_fleet,omitempty"`     // explicit owner phone delegation to verified personal remotes
 	Conversations    string         `yaml:"conversations,omitempty"`   // opt-in stable host mailbox: "enabled" or "disabled" (default)
 
+	MachineContext            string   `yaml:"machine_context,omitempty"` // also accepts scalar context in wing.yaml
+	PhoneFleetExcludeContexts []string `yaml:"phone_fleet_exclude_contexts,omitempty"`
+
 	// P2P / Direct mode settings
 	ICEServers []ICEServer `yaml:"ice_servers,omitempty"` // STUN/TURN servers for WebRTC
 	DirectPort int         `yaml:"direct_port,omitempty"` // port for direct WebSocket connections
@@ -71,6 +74,7 @@ func (c *WingConfig) Clone() *WingConfig {
 		return nil
 	}
 	clone := *c
+	clone.PhoneFleetExcludeContexts = append([]string(nil), c.PhoneFleetExcludeContexts...)
 	clone.Labels = append([]string(nil), c.Labels...)
 	clone.AllowKeys = append([]AllowKey(nil), c.AllowKeys...)
 	clone.Admins = append([]string(nil), c.Admins...)
@@ -399,6 +403,9 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 	if err := ValidatePreviewRelay(cfg.Roost); err != nil {
 		return nil, err
 	}
+	if err := cfg.validateMachineContexts(); err != nil {
+		return nil, err
+	}
 	if err := cfg.Context.Validate(); err != nil {
 		return nil, err
 	}
@@ -431,6 +438,9 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 // SaveWingConfig writes wing.yaml to dir. The file may contain the roost's JWT signing
 // key, so it must never be readable by other local users.
 func SaveWingConfig(dir string, cfg *WingConfig) error {
+	if err := cfg.validateMachineContexts(); err != nil {
+		return err
+	}
 	if err := cfg.Context.Validate(); err != nil {
 		return err
 	}

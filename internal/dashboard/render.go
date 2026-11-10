@@ -196,6 +196,9 @@ func (s *state) scopeLine(now time.Time) string {
 	if s.machineFilter != "" {
 		scope = machineLabel(s.machineFilter)
 	}
+	if s.contextFiltered {
+		scope = contextLabel(s.contextFilter)
+	}
 	if s.attentionOnly {
 		scope += " · needs you"
 	}
@@ -203,6 +206,9 @@ func (s *state) scopeLine(now time.Time) string {
 	connected, loading := 0, 0
 	for _, name := range s.machineNames() {
 		if s.machineFilter != "" && name != s.machineFilter {
+			continue
+		}
+		if s.contextFiltered && s.machineContext(name) != s.contextFilter {
 			continue
 		}
 		m := s.machines[name]
@@ -383,22 +389,22 @@ func keyHints(s *state) []string {
 	if len(s.rows()) == 0 && s.filter == "" {
 		for name, m := range s.machines {
 			if (s.machineFilter == "" || name == s.machineFilter) && (s.stale(name) || m.updated.IsZero()) {
-				return []string{s.refreshKey() + "   A agents   m machines   h runs", "? help   q quit"}
+				return []string{s.refreshKey() + "   A agents   c context   m machines   h runs", "? help   q quit"}
 			}
 		}
 	}
 	if len(s.rows()) == 0 && s.filter == "" && !s.hasAgent() && (s.machineFilter == "" || s.machineFilter == "local") {
-		return []string{"A install an agent   m machines   h runs", "? help   q quit"}
+		return []string{"A install an agent   c context   m machines   h runs", "? help   q quit"}
 	}
 	if len(s.rows()) == 0 && s.filter == "" {
-		return []string{"n new session   A agents   m machines   h runs", "? help   q quit"}
+		return []string{"n new session   A agents   c context   m machines   h runs", "? help   q quit"}
 	}
 	if r, ok := s.selection(); ok {
 		if _, live := s.livePermission(r); live && r.PermissionRespond {
 			return []string{s.permissionKeys(r) + "   / search", "j/k move   A agents   D diagnostics   ? help   q quit   Ctrl+B then q detaches"}
 		}
 	}
-	return []string{"Enter open   v read only   / search   n new   ! needs you   . actions", "j/k move   m machines   h runs   " + s.refreshKey() + "   ? help   q quit   Ctrl+B then q detaches"}
+	return []string{"Enter open   v read only   / search   n new   ! needs you   . actions", "j/k move   c context   m machines   h runs   " + s.refreshKey() + "   ? help   q quit   Ctrl+B then q detaches"}
 }
 
 // refreshKey names R for what it does now: reconnect when a machine is
@@ -432,13 +438,14 @@ func render(s *state, width, height int, now time.Time) string {
 			lines[y] = viewLine{text: text, tone: role, split: old.split, frame: old.frame, right: old.right, rightTone: old.rightTone}
 		}
 	}
-	// wing sits outside the session table, so it is not counted as a session.
+	// In the ungrouped view wing sits outside the table and its session count.
+	grouped := s.hasContexts()
 	total, blocked, unread, cached := 0, 0, 0, 0
 	pinCounted := false
 	for name, m := range s.machines {
 		for _, session := range m.sessions {
 			r := s.sessionRow(name, session)
-			pin := r.Pinned && !pinCounted
+			pin := !grouped && r.Pinned && !pinCounted
 			if pin {
 				pinCounted = true
 			} else {
@@ -499,8 +506,9 @@ func render(s *state, width, height int, now time.Time) string {
 	rows := s.rows()
 	var work []row
 	var pin *row
+	// Grouped pins stay with their machines so display and navigation agree.
 	for i := range rows {
-		if rows[i].Pinned && pin == nil {
+		if !grouped && rows[i].Pinned && pin == nil {
 			r := rows[i]
 			pin = &r
 		} else {
@@ -696,6 +704,9 @@ func render(s *state, width, height int, now time.Time) string {
 		set(8, "  No matching sessions", plain)
 		set(10, "  Ctrl-U clear", secondary)
 	}
+	if s.hasContexts() {
+		s.renderContexts(lines, work, listStart, listEnd, listWidth-3*boolCell(wide), now)
+	}
 	if s.mode != help && (s.filter != "" || s.mode == filter) {
 		query := s.filter
 		if s.mode == filter {
@@ -715,7 +726,7 @@ func render(s *state, width, height int, now time.Time) string {
 		}
 		set(1, search, plain)
 	}
-	if height >= 18 && (s.mode == navigate || s.mode == filter) && !s.recent && hasSelection {
+	if height >= 18 && (s.mode == navigate || s.mode == filter) && !s.recent && hasSelection && !s.hasContexts() {
 		// Reports follow a short table directly instead of the reserved window.
 		reportsAt := listEnd
 		if shown := len(work) - start; shown < count {
@@ -798,6 +809,9 @@ func render(s *state, width, height int, now time.Time) string {
 	}
 	if width < 65 && s.mode == navigate && !s.recent {
 		hints = []string{"Enter open  / search  ! attention  n new", "j/k move m scope " + s.refreshKey() + " ? help q quit"}
+		if s.hasContexts() {
+			hints[1] = "j/k c context m scope ? help q quit"
+		}
 	}
 	for i, text := range hints {
 		set(height-2+i, text, secondary)
@@ -1047,7 +1061,7 @@ func overlayLines(s *state, now time.Time) []string {
 				lines = append(lines, "  a approve: read the command, then Enter allows it once   d decline")
 			}
 		}
-		return append(lines, "  Ctrl+B then q returns here; Ctrl+B twice sends Ctrl+B.", "", "Find", "  / search sessions   ! needs you   m machine scope", "",
+		return append(lines, "  Ctrl+B then q returns here; Ctrl+B twice sends Ctrl+B.", "", "Find", "  / search sessions   ! needs you   c context   m machine scope", "",
 			"Manage", "  n new   A agents   . actions   h recent runs",
 			"  M machine details   D diagnostics   R refresh   b bell "+s.bellSetting(), "",
 			"Leave", "  q or Ctrl-C quits. Leaving keeps sessions running.", "* marks a new reply. Unknown means the agent does not say if it is working.")
