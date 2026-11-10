@@ -173,6 +173,16 @@ func (s *RelayStore) RecoverGitHubUser(provider, providerID, email string, verif
 		slices.Sort(userIDs)
 		return nil, fmt.Errorf("%w: user_ids=%q", ErrAccountRecoveryRefused, userIDs)
 	}
+	// A deliberate removal revokes automatic recovery through every provider
+	// sharing this email. Existing identities above still resolve normally;
+	// only an explicit verified link may add access to this account again.
+	var disabled bool
+	if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM signin_recovery_disabled WHERE user_id = ?)", targetID).Scan(&disabled); err != nil {
+		return nil, err
+	}
+	if disabled {
+		return nil, fmt.Errorf("%w: user_id=%q", ErrAccountRecoveryRefused, targetID)
+	}
 	var existingID string
 	err = tx.QueryRow("SELECT provider_id FROM user_identities WHERE user_id = ? AND provider = ?", targetID, provider).Scan(&existingID)
 	if err == nil {

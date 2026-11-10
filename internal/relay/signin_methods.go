@@ -122,6 +122,12 @@ func (s *RelayStore) RemoveSignInMethod(userID, provider string) error {
 	if _, err = tx.Exec("DELETE FROM user_identities WHERE user_id = ? AND provider = ?", userID, provider); err != nil {
 		return err
 	}
+	// The stored email must not recreate this access through magic links or
+	// another provider with the same verified address. Keep explicit linking
+	// available, and preserve this decision across subsequent links/removals.
+	if _, err = tx.Exec("INSERT OR IGNORE INTO signin_recovery_disabled (user_id) VALUES (?)", userID); err != nil {
+		return err
+	}
 	// Retire the original provider metadata as well, so it neither reserves a
 	// removed subject nor causes later callbacks to restore the removed method.
 	if _, err = tx.Exec(`UPDATE users SET (provider, provider_id) =

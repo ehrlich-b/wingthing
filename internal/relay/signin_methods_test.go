@@ -87,6 +87,75 @@ func TestSignInMethodRemoval(t *testing.T) {
 	}
 }
 
+// Removing a method must survive a restart and must not be undone by either
+// provider's automatic recovery using the account's stored verified address.
+func TestSignInMethodRemovalRevokesRecovery(t *testing.T) {
+	for _, removed := range []string{"email", "google"} {
+		t.Run(removed, func(t *testing.T) {
+			path := filepath.Join(testsocket.Dir(t), "relay.db")
+			store, err := OpenRelay(path)
+			mustTest(t, err)
+			t.Cleanup(func() { _ = store.Close() })
+			recoveryUser(t, store, "owner", "github", " Owner@Example.COM ")
+			subject := "owner@example.com"
+			if removed == "google" {
+				subject = "google-subject"
+			}
+			mustTest(t, store.LinkSignInMethod("owner", removed, subject))
+			mustTest(t, store.RemoveSignInMethod("owner", removed))
+			mustTest(t, store.Close())
+			store, err = OpenRelay(path)
+			mustTest(t, err)
+			s := NewServer(store, ServerConfig{})
+			login := func(provider string) *httptest.ResponseRecorder {
+				if provider == "google" {
+					return googleRecoveryCallback(t, s, "google-subject", "owner@example.com", true)
+				}
+				token := generateToken()
+				mustTest(t, store.CreateMagicLink(token, "owner@example.com", token, time.Now().Add(time.Minute)))
+				w := httptest.NewRecorder()
+				s.handleMagicVerify(w, signInRequest(http.MethodGet, "/auth/magic/verify?token="+token, ""))
+				return w
+			}
+			for cycle := 0; cycle < 2; cycle++ {
+				for _, provider := range []string{"email", "google"} {
+					w := login(provider)
+					if user := recoverySession(t, s, w); w.Code != http.StatusForbidden || user != nil {
+						t.Fatalf("%s restored access after removing %s: status=%d user=%#v", provider, removed, w.Code, user)
+					}
+				}
+				methods, err := store.ListSignInMethods("owner")
+				if err != nil || len(methods) != 1 || methods[0].Provider != "github" {
+					t.Fatalf("removed method restored: %#v %v", methods, err)
+				}
+				github, err := store.GetUserByProvider("github", "owner")
+				if err != nil || github == nil || github.ID != "owner" {
+					t.Fatalf("remaining identity changed: %#v %v", github, err)
+				}
+				// Only an explicit, verified add may restore the removed method.
+				mustTest(t, store.LinkSignInMethod("owner", removed, subject))
+				w := login(removed)
+				if user := recoverySession(t, s, w); w.Code != http.StatusSeeOther || user == nil || user.ID != "owner" {
+					t.Fatalf("explicitly relinked method refused: status=%d user=%#v", w.Code, user)
+				}
+				mustTest(t, store.RemoveSignInMethod("owner", removed))
+			}
+		})
+	}
+}
+
+func TestSignInMethodLastRefusalPreservesRecovery(t *testing.T) {
+	store := testStore(t)
+	recoveryUser(t, store, "owner", "github", "owner@example.com")
+	if err := store.RemoveSignInMethod("owner", "github"); !errors.Is(err, ErrLastSignInMethod) {
+		t.Fatalf("last removal: %v", err)
+	}
+	user, err := store.RecoverGitHubUser("email", "owner@example.com", "owner@example.com", true)
+	if err != nil || user == nil || user.ID != "owner" {
+		t.Fatalf("refused removal disabled recovery: %#v %v", user, err)
+	}
+}
+
 func TestSignInMethodConcurrentRemoval(t *testing.T) {
 	store, err := OpenRelay(filepath.Join(testsocket.Dir(t), "relay.db"))
 	mustTest(t, err)
