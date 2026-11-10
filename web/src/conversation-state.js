@@ -15,9 +15,15 @@ export function emptyConversationState() {
 export function restoredConversationState(record) {
     var state = emptyConversationState();
     if (!record) return state;
-    state.messages = Array.isArray(record.messages) ? record.messages.filter(message => !(message.type === 'user' && message.source === 'codex_hook')) : [];
+    var messages = Array.isArray(record.messages) ? record.messages : [];
+    var codex = record.agent === 'codex' || record.lifecycle?.agent === 'codex';
+    // Older Codex caches did not distinguish hook rows from native user rows.
+    // Replay their transcript from the start rather than guessing from text or
+    // keeping a cursor that would skip already imported native messages.
+    var replay = codex && messages.some(message => message.type === 'user' && !message.source);
+    state.messages = replay ? [] : messages.filter(message => !(message.type === 'user' && message.source === 'codex_hook'));
     state.messages.forEach(function(message) { if (Number.isSafeInteger(message.sequence)) state.seen.add(message.sequence); });
-    state.cursor = Number.isSafeInteger(record.cursor) ? record.cursor : 0;
+    state.cursor = !replay && Number.isSafeInteger(record.cursor) ? record.cursor : 0;
     state.lifecycle = record.lifecycle || null;
     return state;
 }

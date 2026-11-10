@@ -92,3 +92,26 @@ test('restoring an older cache discards hook fallback rows and transient sending
     assert.deepEqual(rows(state), ['repeat']);
     assert.equal(state.sending, null);
 });
+
+test('legacy Codex caches replay native history without guessing which untagged rows were hooks', () => {
+    const fixture = JSON.parse(readFileSync(new URL('./fixtures/codex-legacy-cache.json', import.meta.url)));
+    for (const record of [fixture, { ...fixture, lifecycle: null }]) {
+        let state = restoredConversationState(record);
+        assert.deepEqual(rows(state), []);
+        assert.equal(state.cursor, 0);
+        assert.equal(state.seen.size, 0);
+        state = read(state, fixture.events);
+        assert.deepEqual(rows(state), ['repeat', 'first reply', 'repeat', 'second reply']);
+        assert.deepEqual(rows(read(restoredConversationState(state), fixture.events)), rows(state));
+    }
+});
+
+test('Claude caches and known native Codex caches keep their history and cursor', () => {
+    for (const [agent, source] of [['claude', undefined], ['codex', 'codex_transcript'], ['codex', 'codex_app_server']]) {
+        const messages = [{ type: 'user', content: 'saved prompt', sequence: 1, source }];
+        const state = restoredConversationState({ lifecycle: { agent }, cursor: 2, messages });
+        assert.deepEqual(state.messages, messages);
+        assert.equal(state.cursor, 2);
+        assert.ok(state.seen.has(1));
+    }
+});
