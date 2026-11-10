@@ -36,7 +36,9 @@ func lifecycleFixture(t *testing.T) (dir, home, cwd, path string) {
 
 func lifecycleWrite(t *testing.T, path, data string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+	// Match native hook publication: concurrent readers must never see the
+	// empty or partial JSON between creating a file and finishing its write.
+	if err := atomicWritePrivate(path, []byte(data)); err != nil {
 		t.Fatal(err)
 	}
 }
