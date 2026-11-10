@@ -25,6 +25,23 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/wingsession"
 )
 
+// releaseSkewOutput acknowledges receipt of the complete response before the
+// fixture shell may exit; the released CLI can observe exit before draining PTY.
+// exec serializes writes to the shared stdout/stderr writer, and Wait joins it.
+type releaseSkewOutput struct {
+	buffer bytes.Buffer
+	echoed chan struct{}
+	once   sync.Once
+}
+
+func (w *releaseSkewOutput) Write(p []byte) (int, error) {
+	n, err := w.buffer.Write(p)
+	if bytes.Contains(w.buffer.Bytes(), []byte("HEAD-ATTACH-ECHO:previous-release-input")) {
+		w.once.Do(func() { close(w.echoed) })
+	}
+	return n, err
+}
+
 // TestReleasedCLISkew executes the shipped artifact, never a rebuild of its tag.
 // make test-release-skew requires it; ordinary unit tests remain artifact-free.
 func TestReleasedCLISkew(t *testing.T) {
@@ -53,8 +70,9 @@ func TestReleasedCLISkew(t *testing.T) {
 		server.ServeHTTP(w, r)
 	}))
 	defer ts.Close()
-	// Keep Unix socket paths short, including on deeply nested checkouts.
-	state, err := os.MkdirTemp("", "wt-skew-")
+	// Reserve socket-path space for long TMPDIR roots as well as the egg suffix.
+	// MkdirTemp still gives each run private, unique state.
+	state, err := os.MkdirTemp("", "wt-")
 	mustTest(t, err)
 	defer os.RemoveAll(state)
 	mustTest(t, os.WriteFile(filepath.Join(state, "config.yaml"), []byte("roost_url: "+ts.URL+"\n"), 0600))
@@ -85,7 +103,7 @@ func TestReleasedCLISkew(t *testing.T) {
 	// The released CLI attaches through native wing control, never an HTTP
 	// relay PTY route. Advertise that same HEAD runtime in the HEAD directory
 	// and exercise its real control listener and egg with a finite command.
-	const wingID, sessionID = "release-skew-wing", "release-skew-session"
+	const wingID, sessionID = "release-skew-wing", "s"
 	cfg := &config.Config{Dir: state, WingID: wingID}
 	wc := &config.WingConfig{WingID: wingID, Paths: config.PathList{{Path: home}}}
 	service := &wingsession.Service{Config: cfg, Home: home, Policy: func() wingsession.Policy {
@@ -118,7 +136,7 @@ func TestReleasedCLISkew(t *testing.T) {
 	// for this transport fixture. The isolated shell owns only its test home.
 	go func() {
 		finished <- headEgg.RunSession(ctx, egg.RunConfig{
-			Command: []string{"/bin/sh", "-c", "printf 'HEAD-ATTACH-READY\\n'; read line; printf 'HEAD-ATTACH-ECHO:%s\\n' \"$line\""},
+			Command: []string{"/bin/sh", "-c", "printf 'HEAD-ATTACH-READY\\n'; read line; printf 'HEAD-ATTACH-ECHO:%s\\n' \"$line\"; read finish"},
 			CWD:     home, UserHome: home, OuterBoundary: true, Network: []string{"*"},
 			Env: map[string]string{"HOME": home}, Rows: 24, Cols: 80, OmitBrowserBridge: true,
 		})
@@ -163,18 +181,28 @@ func TestReleasedCLISkew(t *testing.T) {
 		"TMPDIR=" + os.TempDir(), "NO_COLOR=1"}
 	stdin, err := command.StdinPipe()
 	mustTest(t, err)
-	var output bytes.Buffer
+	output := releaseSkewOutput{echoed: make(chan struct{})}
 	command.Stdout, command.Stderr = &output, &output
 	mustTest(t, command.Start())
 	_, err = fmt.Fprintln(stdin, "previous-release-input")
 	mustTest(t, err)
+	select {
+	case <-output.echoed:
+		// Keep the egg alive until the old client has delivered its response.
+		_, err = fmt.Fprintln(stdin, "finish")
+		if err != nil {
+			attachCancel()
+		}
+	case <-attachCtx.Done():
+		attachCancel()
+	}
 	err = command.Wait()
 	stdin.Close()
-	t.Logf("v0.149.5 wt attach %s on HEAD wing %s advertised by HEAD relay %s: exit=%v\n%s", sessionID, wingID, ts.URL, err, output.String())
+	t.Logf("v0.149.5 wt attach %s on HEAD wing %s advertised by HEAD relay %s: exit=%v\n%s", sessionID, wingID, ts.URL, err, output.buffer.String())
 	mustTest(t, err)
 	for _, expected := range []string{"HEAD-ATTACH-READY", "HEAD-ATTACH-ECHO:previous-release-input"} {
-		if !strings.Contains(output.String(), expected) {
-			t.Fatalf("attachment missing %q: %s", expected, &output)
+		if !strings.Contains(output.buffer.String(), expected) {
+			t.Fatalf("attachment missing %q: %s", expected, output.buffer.String())
 		}
 	}
 	mu.Lock()
