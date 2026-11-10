@@ -49,6 +49,24 @@ wt attach -- my-server:FULL_SESSION_ID
 wt remote rm my-server
 ```
 
+Group the work list by adding `context: home` to local `wing.yaml`, and
+`context: work` to entries in `remotes.yaml`. For a new remote, use
+`wt remote add studio my-ssh-alias --context work`. Context headings show how many
+sessions currently need your reply; `c` cycles all contexts, then each named
+context, including Other for machines without a context. Work stays grouped by
+machine inside each context. The existing structured `context` service block in
+`wing.yaml` keeps its original meaning.
+
+`wt session list --json` lists local chat-history sessions with a `context` on
+every row (`""` when unset). `wt session ps --json` includes context for local and
+saved SSH machines, using the saved remote's context.
+
+On the personal gateway, `phone_fleet_exclude_contexts: [work]` refuses phone
+inventory, search, actions, launches and attachments to those remote contexts.
+A remote inventory or search that includes an excluded context is refused as a
+whole. Exclusions also revoke existing phone attachments. SSH navigation remains
+available; adding a context never opts a machine into phone delegation.
+
 To change a profile, remove it and add the replacement, or atomically replace the
 validated `remotes.yaml` under the selected state directory. Background SSH uses
 batch mode without a TTY or authentication prompt; explicit foreground attach can

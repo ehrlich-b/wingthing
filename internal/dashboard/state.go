@@ -132,6 +132,9 @@ type state struct {
 	message                            string
 	busy                               bool
 	machineFilter                      string
+	localContext                       string
+	contextFilter                      string
+	contextFiltered                    bool
 	attentionOnly                      bool
 	picker                             int
 	overlayOffset                      int
@@ -180,7 +183,11 @@ func (s *state) rows() []row {
 	for i, key := range s.rowOrder {
 		order[key] = i
 	}
+	grouped := s.hasContexts()
 	for name, machine := range s.machines {
+		if s.contextFiltered && s.machineContext(name) != s.contextFilter {
+			continue
+		}
 		for _, session := range machine.sessions {
 			r := s.sessionRow(name, session)
 			if !r.Pinned && s.machineFilter != "" && name != s.machineFilter {
@@ -202,6 +209,17 @@ func (s *state) rows() []row {
 		left, right := rows[i], rows[j]
 		if left.Pinned != right.Pinned {
 			return left.Pinned
+		}
+		if grouped {
+			if a, b := s.machineContext(left.machine), s.machineContext(right.machine); a != b {
+				return a < b
+			}
+			if left.machine != right.machine {
+				if left.machine == "local" || right.machine == "local" {
+					return left.machine == "local"
+				}
+				return left.machine < right.machine
+			}
 		}
 		li, lk := order[left.key()]
 		ri, rk := order[right.key()]
@@ -570,6 +588,8 @@ func (s *state) handle(key string) (act *action, quit bool) {
 		s.move(-1)
 	case "down", "right", "j":
 		s.move(1)
+	case "c":
+		s.cycleContext()
 	case "m":
 		s.mode, s.picker = machinePicker, 0
 		for i, name := range s.machineNames() {

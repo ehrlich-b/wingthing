@@ -73,6 +73,9 @@ func (a *FleetAttachment) Check(ctx context.Context, write bool) error {
 		if !ok || current != *a.remote {
 			return errors.New("attachment route changed; refresh and explicitly attach again")
 		}
+		if err := checkPhoneFleetContexts(s.Cfg.Dir, s.Sessions.Policy().Wing, a.Identity.OriginWingID, false); err != nil {
+			return err
+		}
 		if a.forward != nil {
 			raw, _ := json.Marshal(actionArgs{OriginWingID: a.Identity.OriginWingID, SessionID: a.Identity.SessionID, Operation: "session_status", Arguments: json.RawMessage(`{}`), LocalOnly: true})
 			checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -196,6 +199,11 @@ func OwnerFleetAttach(ctx context.Context, sessions *wingsession.Service, owner 
 	hello := controlsocket.Hello{WingID: id.OriginWingID, Attach: &controlsocket.Attachment{Session: id.SessionID, Exact: true, ReadOnly: readOnly, Takeover: takeover, RequireLease: takeover}}
 	if !readOnly {
 		hello.Attach.Rows, hello.Attach.Cols = 30, 80
+	}
+	if id.OriginWingID != origin {
+		if err := checkPhoneFleetContexts(s.Cfg.Dir, s.Sessions.Policy().Wing, id.OriginWingID, false); err != nil {
+			return nil, err
+		}
 	}
 	path, err := controlsocket.Path(sessions.Config.Dir)
 	if err != nil {

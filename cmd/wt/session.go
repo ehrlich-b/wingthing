@@ -97,7 +97,7 @@ func sessionPSCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return writeLocalSessions(cmd.OutOrStdout(), sessions, jsonFlag)
+				return writeConfiguredLocalSessions(cmd.OutOrStdout(), sessions, cfg.Dir, jsonFlag)
 			}
 			remotes, err := config.LoadRemotes(cfg.Dir)
 			if err != nil {
@@ -108,7 +108,7 @@ func sessionPSCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return writeLocalSessions(cmd.OutOrStdout(), sessions, jsonFlag)
+				return writeConfiguredLocalSessions(cmd.OutOrStdout(), sessions, cfg.Dir, jsonFlag)
 			}
 			rows, err := eggclient.DiscoverMachineSessions(version, cmd.Context(), cfg, remotepkg.Streams(cmd.Context()))
 			if err != nil {
@@ -493,7 +493,8 @@ func sessionSyncCmd() *cobra.Command {
 }
 
 func sessionListCmd() *cobra.Command {
-	return &cobra.Command{
+	var jsonOutput bool
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List local sessions with chat history",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -502,6 +503,9 @@ func sessionListCmd() *cobra.Command {
 				return err
 			}
 
+			if jsonOutput {
+				return writeSessionHistoryJSON(cmd.OutOrStdout(), cfg.Dir)
+			}
 			eggsDir := filepath.Join(cfg.Dir, "eggs")
 			entries, err := os.ReadDir(eggsDir)
 			if err != nil {
@@ -554,6 +558,8 @@ func sessionListCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "print machine-readable JSON")
+	return cmd
 }
 
 // shortenPath shortens a path for display by replacing home dir with ~.

@@ -43,12 +43,15 @@ func OwnerFleetControl(ctx context.Context, sessions *wingsession.Service, owner
 		operation = "session_inventory"
 	}
 	remote := false
+	origin := ""
+	all := false
 	if operation == "session_inventory" {
 		var a inventoryArgs
 		if e := decodeStrict(args, &a); e != nil {
 			return nil, e
 		}
 		remote = a.IncludeRemotes
+		all = a.IncludeRemotes
 	} else if operation == "session_action" {
 		var a actionArgs
 		if e := decodeStrict(args, &a); e != nil {
@@ -59,6 +62,7 @@ func OwnerFleetControl(ctx context.Context, sessions *wingsession.Service, owner
 			id = sessions.Config.WingID
 		}
 		remote = a.OriginWingID != id
+		origin = a.OriginWingID
 	} else {
 		var a launchArgs
 		if e := decodeFleetArguments(args, &a); e != nil {
@@ -74,9 +78,15 @@ func OwnerFleetControl(ctx context.Context, sessions *wingsession.Service, owner
 			id = sessions.Config.WingID
 		}
 		remote = a.OriginWingID != id
+		origin = a.OriginWingID
 	}
 	if remote && !policy.Wing.PhoneFleet {
 		return nil, errors.New("phone fleet access requires phone_fleet: true on the personal gateway")
+	}
+	if remote {
+		if err := checkPhoneFleetContexts(sessions.Config.Dir, policy.Wing, origin, all); err != nil {
+			return nil, err
+		}
 	}
 	return CallLocalWingTool(ctx, sessions.Config.Dir, "", operation, args)
 }

@@ -16,6 +16,7 @@ import (
 )
 
 type Remote struct {
+	Context        string `yaml:"context,omitempty" json:"context"`
 	SSHTarget      string `yaml:"ssh_target" json:"ssh_target"`
 	WTBinary       string `yaml:"wt_binary,omitempty" json:"wt_binary,omitempty"`
 	WingthingDir   string `yaml:"wingthing_dir,omitempty" json:"wingthing_dir,omitempty"`
@@ -102,6 +103,9 @@ func validateRemotes(remotes map[string]Remote) error {
 	for name, remote := range remotes {
 		if err := ValidateRemoteName(name); err != nil {
 			return err
+		}
+		if err := ValidateMachineContext(remote.Context); err != nil {
+			return fmt.Errorf("remote %q: %w", name, err)
 		}
 		if err := ValidateSSHTarget(remote.SSHTarget); err != nil {
 			return fmt.Errorf("remote %q: %w", name, err)
