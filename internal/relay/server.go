@@ -542,6 +542,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Keep the public site's app entry on the canonical app origin. Single-host
+	// and local installations still serve their app under /app/.
+	if !s.LocalMode && !s.RoostMode && s.Config.AppHost != "" &&
+		!strings.EqualFold(host, stripPort(s.Config.AppHost)) && (path == "/app" || path == "/app/") {
+		target := s.appURL()
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusPermanentRedirect)
+		return
+	}
+
 	// The default-host pages render a user-specific navigation bar when a
 	// session cookie is present. Never let that representation enter a shared
 	// cache. Anonymous pages remain cacheable, but Vary prevents an intermediary

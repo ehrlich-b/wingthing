@@ -512,9 +512,9 @@ func TestHomepageStoryPublicRoute(t *testing.T) {
 		`href="/install" class="nav-cta">Install wingthing`,
 		`href="/login">Log in`,
 		`href="/install" class="hero-install">Install wingthing</a>`,
-		`href="/patterns">choose a route</a>`,
-		"Illustrative example",
-		"Headless run results stay in the CLI and MCP.",
+		`href="/patterns">See patterns</a>`,
+		"Example · 8 sessions",
+		"Agents run on your machines. Watch and steer from the browser, your phone or the CLI.",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Errorf("home is missing %q", contract)
@@ -576,7 +576,7 @@ func TestPublicDemoAssetsSupportPlayback(t *testing.T) {
 	}
 }
 
-func TestPublicDocsAndInstallRenderLocalFirstHierarchy(t *testing.T) {
+func TestPublicDocsAndInstallRenderSetupHierarchy(t *testing.T) {
 	_, ts := testServer(t)
 	for _, test := range []struct {
 		path      string
@@ -585,11 +585,9 @@ func TestPublicDocsAndInstallRenderLocalFirstHierarchy(t *testing.T) {
 		{
 			path: "/install",
 			contracts: []string{
-				"On each execution wing,",
-				"authorized for the connector account personally or through an organization",
-				"parent/connector machine",
-				"connector token",
-				"Run <code>wt start</code> on the parent only when that machine also executes agents",
+				"Install wingthing",
+				"Use it without an account",
+				`class="inst-open">Open the app</a>`,
 			},
 		},
 		{
@@ -617,13 +615,11 @@ func TestPublicDocsAndInstallRenderLocalFirstHierarchy(t *testing.T) {
 			}
 			page := string(body)
 			previous := -1
-			for _, route := range []string{
-				`data-route="local-human"`,
-				`data-route="local-agent"`,
-				`data-route="direct-remote"`,
-				`data-route="self-hosted-browser"`,
-				`data-route="hosted-relay"`,
-			} {
+			routes := []string{`data-route="local-human"`, `data-route="local-agent"`, `data-route="direct-remote"`, `data-route="self-hosted-browser"`, `data-route="hosted-relay"`}
+			if test.path == "/install" {
+				routes = []string{"curl -fsSL https://wingthing.ai/install.sh | sh", ">wt login<", ">wt start<", `class="inst-open">Open the app</a>`, "Use it without an account", ">wt egg claude --name work<"}
+			}
+			for _, route := range routes {
 				index := strings.Index(page, route)
 				if index < 0 {
 					t.Fatalf("%s is missing rendered route %q", test.path, route)
@@ -658,7 +654,7 @@ func TestHomepageStorySandboxBoundary(t *testing.T) {
 	for _, want := range []string{
 		"Set the boundaries",
 		"Inspect sandbox policy before launch. Control file, network, and environment access.",
-		"browser access uses a self-hosted roost or an entitled hosted account and an allowed wing",
+		"Agents run on your machines. Watch and steer from the browser, your phone or the CLI.",
 	} {
 		if !strings.Contains(body.String(), want) {
 			t.Errorf("home omitted execution boundary %q", want)
