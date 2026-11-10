@@ -172,6 +172,15 @@ async function checkPublic(page, name, suffix) {
         checked(name + suffix + '-navigation', nav);
     }
     if (name === '09-landing') {
+        const hero = await page.locator('.hero').evaluate(el => {
+            const heading = el.querySelector('h1');
+            return { firstElement:el.firstElementChild.tagName, top:el.getBoundingClientRect().top,
+                headingTop:heading.getBoundingClientRect().top, paddingTop:parseFloat(getComputedStyle(el).paddingTop) };
+        });
+        assert.equal(hero.firstElement, 'H1');
+        assert.equal(await page.locator('.eyebrow').count(), 0);
+        assert.ok(Math.abs(hero.headingTop - hero.top - hero.paddingTop) < 1, JSON.stringify(hero));
+        checked(name + suffix + '-headline-first', hero);
         const visible = await page.locator('.product-preview').evaluate(el => {
             const r = el.getBoundingClientRect();
             return {top:r.top, bottom:r.bottom, capabilitiesTop:document.querySelector('.how').getBoundingClientRect().top};

@@ -65,6 +65,16 @@ func TestHomepageStoryHeroContract(t *testing.T) {
 				t.Fatalf("hero count = %d, want 1", len(heroes))
 			}
 			hero := heroes[0]
+			var firstElement *html.Node
+			for child := hero.FirstChild; child != nil; child = child.NextSibling {
+				if child.Type == html.ElementNode {
+					firstElement = child
+					break
+				}
+			}
+			if firstElement == nil || firstElement.Data != "h1" {
+				t.Fatal("hero must start with the headline")
+			}
 			headings := storyElements(page, func(n *html.Node) bool { return n.Data == "h1" })
 			if len(headings) != 1 || storyText(headings[0]) != "The agent manager for agents (and people)" {
 				t.Fatal("page must have exactly one h1 with the approved headline")
@@ -113,7 +123,7 @@ func TestHomepageStoryHeroContract(t *testing.T) {
 				t.Fatal("missing closing band")
 			}
 			closingHeadings := storyElements(closing[0], func(n *html.Node) bool { return n.Data == "h2" })
-			if len(closingHeadings) != 1 || storyText(closingHeadings[0]) != "Agents can work. People can join." {
+			if len(closingHeadings) != 1 || storyText(closingHeadings[0]) != "Launch agents. Join their terminals." {
 				t.Fatal("closing band must contain the approved invitation")
 			}
 		})
