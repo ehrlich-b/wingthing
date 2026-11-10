@@ -818,7 +818,7 @@ func (s *Server) handleMagicVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.Store.GetOrCreateUserByEmail(email)
+	user, err := s.Store.GetUserForEmailSignIn(email)
 	if err != nil {
 		if errors.Is(err, ErrAccountRecoveryRefused) {
 			log.Printf("account recovery refused: provider=email: %v", err)

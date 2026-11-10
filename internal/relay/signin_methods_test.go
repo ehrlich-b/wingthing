@@ -455,20 +455,29 @@ func TestSignInEmailRequestSendsProofBeforeLinking(t *testing.T) {
 }
 
 func TestSignInMagicRecoveryAddressProof(t *testing.T) {
-	for _, tc := range []string{"verified", "mismatched", "unverified"} {
+	for _, tc := range []string{"verified", "mismatched", "unrelated", "unverified", "expired", "no account"} {
 		t.Run(tc, func(t *testing.T) {
 			store := testStore(t)
-			recoveryUser(t, store, "github-owner", "github", "Owner@Example.com")
+			if tc != "no account" {
+				recoveryUser(t, store, "github-owner", "github", "Owner@Example.com")
+			}
 			s := NewServer(store, ServerConfig{})
 			email := "owner@example.com"
 			if tc == "mismatched" {
 				email = "owner+alias@example.com"
 			}
+			if tc == "unrelated" {
+				email = "someone-else@example.net"
+			}
 			if tc != "unverified" {
-				mustTest(t, store.CreateMagicLink("fixture", email, "fixture-token", time.Now().Add(time.Minute)))
+				expiry := time.Now().Add(time.Minute)
+				if tc == "expired" {
+					expiry = time.Now().Add(-time.Minute)
+				}
+				mustTest(t, store.CreateMagicLink("fixture", email, "fixture-token", expiry))
 			}
 			w := httptest.NewRecorder()
-			s.handleMagicVerify(w, signInRequest(http.MethodGet, "/auth/magic/verify?token=fixture-token", ""))
+			s.ServeHTTP(w, signInRequest(http.MethodGet, "/auth/magic/verify?token=fixture-token", ""))
 			user := recoverySession(t, s, w)
 			if tc == "verified" {
 				if w.Code != http.StatusSeeOther || user == nil || user.ID != "github-owner" {
@@ -477,11 +486,25 @@ func TestSignInMagicRecoveryAddressProof(t *testing.T) {
 			} else if user != nil && user.ID == "github-owner" {
 				t.Fatalf("unsafe recovery: %#v", user)
 			}
-			if tc == "mismatched" && (w.Code != http.StatusSeeOther || user == nil || user.ID == "github-owner") {
-				t.Fatalf("mismatched address must remain a separate signup: %d %#v", w.Code, user)
+			if (tc == "mismatched" || tc == "unrelated" || tc == "no account") && (w.Code != http.StatusForbidden || user != nil) {
+				t.Fatalf("unknown address must be refused without a session: %d %#v", w.Code, user)
 			}
-			if tc == "unverified" && (w.Code != http.StatusBadRequest || user != nil) {
+			if (tc == "unverified" || tc == "expired") && (w.Code != http.StatusBadRequest || user != nil) {
 				t.Fatalf("unverified login: %d %#v", w.Code, user)
+			}
+			var users, identities, sessions int
+			mustTest(t, store.DB().QueryRow("SELECT COUNT(*) FROM users").Scan(&users))
+			mustTest(t, store.DB().QueryRow("SELECT COUNT(*) FROM user_identities").Scan(&identities))
+			mustTest(t, store.DB().QueryRow("SELECT COUNT(*) FROM sessions").Scan(&sessions))
+			wantUsers, wantIdentities, wantSessions := 1, 1, 0
+			if tc == "no account" {
+				wantUsers, wantIdentities = 0, 0
+			}
+			if tc == "verified" {
+				wantIdentities, wantSessions = 2, 1
+			}
+			if users != wantUsers || identities != wantIdentities || sessions != wantSessions {
+				t.Fatalf("unexpected account mutation: users=%d identities=%d sessions=%d", users, identities, sessions)
 			}
 		})
 	}

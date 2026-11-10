@@ -289,12 +289,12 @@ func TestGoogleRecoveryUnverifiedSignupCannotCaptureRecovery(t *testing.T) {
 func TestRecoveryPreservesLegacyMagicIdentity(t *testing.T) {
 	store := testStore(t)
 	mustTest(t, store.UpsertUser(&User{ID: "legacy", Provider: "email", ProviderID: "Owner@Example.COM"}))
-	user, err := store.GetOrCreateUserByEmail("owner@example.com")
+	user, err := store.GetUserForEmailSignIn("owner@example.com")
 	if err != nil || user == nil || user.ID != "legacy" {
 		t.Fatalf("normalized legacy email identity = %#v %v", user, err)
 	}
 	mustTest(t, store.UpsertUser(&User{ID: "duplicate", Provider: "email", ProviderID: "OWNER@EXAMPLE.COM"}))
-	if user, err := store.GetOrCreateUserByEmail("owner@example.com"); user != nil || !errors.Is(err, ErrAccountRecoveryRefused) {
+	if user, err := store.GetUserForEmailSignIn("owner@example.com"); user != nil || !errors.Is(err, ErrAccountRecoveryRefused) {
 		t.Fatalf("ambiguous legacy email identity = %#v %v", user, err)
 	}
 }
@@ -382,7 +382,7 @@ func TestMagicLinkRecovery(t *testing.T) {
 				if replay := verify(); replay.Code != http.StatusBadRequest || recoverySession(t, s, replay) != nil {
 					t.Fatal("magic link replay authenticated")
 				}
-				later, err := store.GetOrCreateUserByEmail(" OWNER@EXAMPLE.COM ")
+				later, err := store.GetUserForEmailSignIn(" OWNER@EXAMPLE.COM ")
 				if err != nil || later == nil || later.ID != user.ID {
 					t.Fatalf("later email login=%#v %v", later, err)
 				}
@@ -524,7 +524,7 @@ func TestRecoveryRefusesOutageIdentityCollisionsAfterUpgrade(t *testing.T) {
 	}
 }
 
-func TestRecoveryPreservesNonGitHubAlternateSignups(t *testing.T) {
+func TestRecoveryPreservesNonGitHubGoogleSignupAndRefusesUnlinkedEmail(t *testing.T) {
 	for _, original := range []string{"google", "email"} {
 		t.Run(original, func(t *testing.T) {
 			store := testStore(t)
@@ -544,17 +544,23 @@ func TestRecoveryPreservesNonGitHubAlternateSignups(t *testing.T) {
 				s.handleMagicVerify(w, httptest.NewRequest(http.MethodGet, "/auth/magic/verify?token=token", nil))
 			}
 			user := recoverySession(t, s, w)
-			if w.Code != http.StatusSeeOther || user == nil || user.ID == "original" {
-				t.Fatalf("alternate signup changed: status=%d user=%#v body=%s", w.Code, user, w.Body)
+			if original == "email" {
+				if w.Code != http.StatusSeeOther || user == nil || user.ID == "original" {
+					t.Fatalf("Google signup changed: status=%d user=%#v body=%s", w.Code, user, w.Body)
+				}
+			} else if w.Code != http.StatusForbidden || user != nil {
+				t.Fatalf("unlinked email must not create a separate account: status=%d user=%#v", w.Code, user)
 			}
 		})
 	}
 }
 
-func TestRecoveryEmailSignupThenGoogleLogin(t *testing.T) {
+func TestRecoveryExistingEmailThenGoogleLogin(t *testing.T) {
 	store := testStore(t)
 	s := NewServer(store, ServerConfig{SMTPHost: "fixture"})
 	const address = "owner@example.com"
+	// Existing email accounts still sign in; only implicit signup is refused.
+	mustTest(t, store.UpsertUser(&User{ID: "email-owner", Provider: "email", ProviderID: address}))
 	mustTest(t, store.CreateMagicLink("signup-link", address, "signup-token", time.Now().Add(time.Minute)))
 	w := httptest.NewRecorder()
 	s.handleMagicVerify(w, httptest.NewRequest(http.MethodGet, "/auth/magic/verify?token=signup-token", nil))
