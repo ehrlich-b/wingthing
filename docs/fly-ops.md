@@ -601,3 +601,31 @@ WHERE e.user_id = '<account-id>' AND s.status = 'active';
 `users.tier='pro'` alone is insufficient. The alternative is `users.created_at` no later than the running `WT_RELAY_MIGRATION_BEFORE` cutoff (checked in: `2026-08-26T00:00:00Z`). `hosted_relay: allow` cannot grant entitlement; missing rows require operator/billing action.
 
 The inspected `origin/main` (`72c7be5`) already routes these encrypted operations; no relay code deploy is needed. The running hosted deployment/account was not verified. The [hosted native path](agent-manager-product-brief.md#hosted-native-path) lists all admission checks. No production change is made here.
+
+## Promotion and deployment
+
+Run `make ship-gate SHIP_GATE_DIR=/path/to/evidence` on Linux from a clean,
+committed checkout. Stage the actual previous release binary at
+`downloads/v0.149.5/wt-linux-amd64` (or `wt-linux-arm64`) first. The gate runs
+web tests/build, Go vet, launch-plan tests, whitespace validation, receipt
+preflight tests and the previous-release CLI probe. It writes
+`ship-gate-<full-sha>.txt` only after every check succeeds, in a fresh run
+subdirectory printed by the command. This bounded promotion set does not replace the
+separate full release qualification in release-verification.md.
+
+Transfer that receipt and the matching source/released artifact to the deploy
+host, then run `make deploy RECEIPT=/path/to/ship-gate-<full-sha>.txt`.
+Even a dry run refuses missing, stale or incomplete receipts. Deployment checks
+staged download integrity, copies those files into `.ship-downloads/`, and runs
+Fly; it does not run promotion tests on the deploy host. For manual container
+builds, run `make check-downloads` and `python3 scripts/ship-gate.py stage-downloads`
+first. Docker copies the staged release directory while ignoring the original
+`downloads/` tree and local experiments, mobile sources and scratch artifacts.
+A context containing stale release files is rejected; use a fresh checkout.
+
+The skew probe executes the downloaded binary for `whoami`, `wings --json
+--no-probe` and `attach --json` with isolated state and a loopback HEAD relay.
+The first two commands exercise HTTP identity and discovery. Native attach
+uses local/SSH control rather than the relay, so this probe covers its empty
+noninteractive inventory contract, not terminal attachment through the relay.
+A missing released artifact is a failure, never a substituted current build.

@@ -12,14 +12,14 @@ RUN go mod download
 COPY . .
 COPY --from=web /app/web/dist web/dist
 ARG REQUIRE_DOWNLOADS=0
-RUN if [ "$REQUIRE_DOWNLOADS" = "1" ]; then nice -n 10 go run -p 2 ./cmd/check-downloads downloads; fi
+RUN if [ "$REQUIRE_DOWNLOADS" = "1" ]; then nice -n 10 go run -p 2 ./cmd/check-downloads .ship-downloads; fi
 RUN CGO_ENABLED=0 nice -n 10 go build -p 2 -o wt ./cmd/wt
 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates sqlite
 WORKDIR /app
 COPY --from=build /app/wt .
-COPY downloads/ /app/downloads/
+COPY .ship-downloads/ /app/downloads/
 ENV WT_DOWNLOAD_DIR=/app/downloads
 ENV HOME=/data
 EXPOSE 8080
