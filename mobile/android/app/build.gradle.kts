@@ -1,4 +1,7 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.plugin.compose") }
+val uploadStore = System.getenv("WT_SIGNING_STORE")?.takeIf { it.isNotBlank() }
+val uploadPassword = System.getenv("WT_SIGNING_PASSWORD")?.takeIf { it.isNotBlank() }
+val hasUploadSigning = uploadStore != null && uploadPassword != null
 android {
  namespace = "ai.wingthing.phone"
  compileSdk { version = release(37) { minorApiLevel = 0 } }
@@ -7,20 +10,23 @@ android {
   applicationId = "ai.wingthing.phone"
   minSdk = 26
   targetSdk = 37
-  versionCode = 1
+  versionCode = providers.gradleProperty("wtBuildNumber").orElse("1").get().toInt()
   versionName = "0.1.0"
   testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
  }
  signingConfigs {
-  create("upload") {
-   storeFile = rootProject.file(System.getenv("WT_SIGNING_STORE") ?: "signing/wingthing-upload.jks")
-   storePassword = System.getenv("WT_SIGNING_PASSWORD")
+  if (hasUploadSigning) { create("upload") {
+   storeFile = rootProject.file(uploadStore!!)
+   storePassword = uploadPassword
    keyAlias = "wingthing"
-   keyPassword = System.getenv("WT_SIGNING_PASSWORD")
-  }
+   keyPassword = uploadPassword
+  } }
  }
- buildTypes { release { signingConfig = signingConfigs.getByName("upload"); isMinifyEnabled = false } }
+ buildTypes { release {
+  if (hasUploadSigning) { signingConfig = signingConfigs.getByName("upload") }
+  isMinifyEnabled = false
+ } }
  buildFeatures { compose = true; buildConfig = true }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
  packaging { resources.excludes += listOf("META-INF/AL2.0", "META-INF/LGPL2.1") }
