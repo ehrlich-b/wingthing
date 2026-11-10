@@ -504,6 +504,79 @@ async function assertSessionGroupRefresh(page) {
     // Discard the probe's local disclosure state before the navigation checks.
     await go(page, '#sessions');
 }
+async function assertSessionRowRefresh(page) {
+    const patchSource = fs.readFileSync(path.join(root, 'web/src/shell/patch.js'), 'utf8').replace('export function patchRegion', 'function patchRegion');
+    const results = await page.locator('.pp-col-main').evaluate((region, source) => {
+        const patch = eval(source + '; patchRegion');
+        const sample = region.querySelector('[data-k="session-group/work"]').cloneNode(true);
+        const rows = [...sample.querySelectorAll('.pp-srow')];
+        if (rows.length < 10) throw Error('Boundary fixture requires ten working sessions');
+        const arrival = rows[0].cloneNode(true);
+        arrival.dataset.k = 'studio/earlier-arrival';
+        arrival.href = '#session/studio/earlier-arrival';
+        const markup = list => {
+            const group = sample.cloneNode(true);
+            group.querySelectorAll('.pp-srow, details').forEach(node => node.remove());
+            group.querySelector('[data-group-count]').textContent = String(list.length);
+            group.append(...list.slice(0, 8).map(row => row.cloneNode(true)));
+            if (list.length > 8) {
+                const details = document.createElement('details');
+                details.className = 'pp-more-sessions';
+                details.innerHTML = '<summary>+' + (list.length - 8) + ' more</summary>';
+                details.append(...list.slice(8).map(row => row.cloneNode(true)));
+                group.append(details);
+            }
+            return group.outerHTML;
+        };
+        const results = [];
+        for (const [name, size, focusedIndex, open, change] of [
+            ['create-overflow', 8, 7, false, list => [arrival, ...list]],
+            ['closed-overflow', 10, 7, false, list => [arrival, ...list]],
+            ['open-overflow', 10, 7, true, list => [arrival, ...list]],
+            ['remove-preview', 10, 8, true, list => list.slice(1)],
+            ['reordered-inventory', 10, 7, true, list => list.slice().reverse()],
+        ]) {
+            const before = rows.slice(0, size);
+            // Mount a fresh production group before each independent probe.
+            region.innerHTML = markup(before);
+            const group = region.firstElementChild;
+            const row = group.querySelectorAll('.pp-srow')[focusedIndex];
+            const details = group.querySelector('details');
+            if (details) details.open = open;
+            const originals = [...group.querySelectorAll('.pp-srow')].map(node => ({node, parent:node.parentElement}));
+            const changed = change(before);
+            const survivors = originals.filter(({node}) => changed.some(next => next.dataset.k === node.dataset.k));
+            row.focus();
+            const selection = getSelection(), text = row.querySelector('b').firstChild;
+            selection.setBaseAndExtent(text, 0, text, 4);
+            const selected = selection.toString(), scroll = document.querySelector('.pp-main').scrollTop;
+            let blurs = 0;
+            row.addEventListener('blur', () => blurs++);
+            for (const [step, list] of [['changed', changed], ['restored', before]]) {
+                patch(region, markup(list));
+                const retained = survivors;
+                results.push({
+                    name, step,
+                    focused: document.activeElement === row,
+                    sameRowsAndParents: retained.every(({node, parent}) => node.isConnected && node.parentElement === parent),
+                    sameOrder: retained.every(({node}, i) => !i || !!(retained[i-1].node.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)),
+                    selectionRetained: selection.anchorNode === text && selection.toString() === selected,
+                    scrollRetained: document.querySelector('.pp-main').scrollTop === scroll,
+                    disclosureRetained: !details || group.querySelector('details') === details && details.open === open,
+                    inventoryMatches: group.querySelectorAll('.pp-srow').length === list.length && list.every(next => [...group.querySelectorAll('.pp-srow')].some(node => node.dataset.k === next.dataset.k)),
+                    blurs,
+                });
+            }
+        }
+        return results;
+    }, patchSource);
+    for (const result of results) assert.deepEqual(result, {
+        name:result.name, step:result.step, focused:true, sameRowsAndParents:true, sameOrder:true,
+        selectionRetained:true, scrollRetained:true, disclosureRetained:true, inventoryMatches:true, blurs:0,
+    });
+    checked('session-row-boundary-refresh-' + page.viewportSize().width, results);
+    await go(page, '#sessions');
+}
 async function runShell(browser) {
     const original=machines.studio.rows.slice(), pages=[], contexts=[], errors=[];
     for (const viewport of [{width:1440,height:900},{width:390,height:844}]) {
@@ -529,13 +602,13 @@ async function runShell(browser) {
         await go(page,'#sessions'); await page.locator('.pp-srow[href="#session/studio/migrate"]').waitFor();
         if (shellMode==='routes') await shoot(page,'shell-volume-1','-'+page.viewportSize().width);
     }
-    if (shellMode==='routes') {
+    if (shellMode==='routes' || shellMode==='refresh') {
         machines.studio.rows=[...original,...Array.from({length:18},(_,i)=>row('long-'+i,'Improve organization invitation recovery for interrupted workspace migration '+(i+1),'claude',i<9?'blocked':'working','wingthing'))];
-        for (const id of ['macbook','mini']) await machine(id);
+        if (shellMode==='routes') for (const id of ['macbook','mini']) await machine(id);
         // Change fixture inventories across a full load, so the assertion
         // does not depend on the application's thirty-second data poll.
         for (const page of pages) await go(page,'#sessions');
-        for (let i=0;i<5;i++) {
+        if (shellMode==='routes') for (let i=0;i<5;i++) {
             const id='research-'+i; machines[id]={name:'Research workstation for extended migration projects '+(i+1),rows:[]}; await machine(id);
             if (i===2) for (const page of pages) {
                 await go(page,'#machines'); await page.locator('[data-machine="research-2"]').waitFor();
@@ -545,6 +618,11 @@ async function runShell(browser) {
         for (const page of pages) await go(page,'#sessions');
         const routes=['#','#sessions','#machines','#account','#new','#s/redirect?wing=studio','#chat/redirect?wing=studio','#w/studio','#bogus','#new/studio','#machine/studio','#approve/studio/redirect','#needs','#decisions','#session/studio/migrate','#%broken'];
         for (const page of pages) {
+            if (shellMode==='refresh') {
+                await assertSessionGroupRefresh(page);
+                await assertSessionRowRefresh(page);
+                continue;
+            }
             for (const [index,hash] of routes.entries()) {
                 // Route through the app as a user does. Reopening all eight
                 // tunnels on every hash would exhaust the roost's WS burst.
@@ -555,6 +633,7 @@ async function runShell(browser) {
             }
             await go(page,'#sessions');
             await assertSessionGroupRefresh(page);
+            await assertSessionRowRefresh(page);
             await go(page,'#');
             await page.locator('#pp-needs .pp-more').click();
             await page.locator('#pp-filter').waitFor();

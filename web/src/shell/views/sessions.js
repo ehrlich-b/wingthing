@@ -25,5 +25,5 @@ function viewSessions() {
 export { viewSessions };
 function group(id, title, list) {
     const count = String(list.length);
-    return list.length ? '<section class="pp-group" data-k="session-group/' + esc(id) + '"><div class="pp-kick"><span>' + title + '</span><span data-group-count>' + esc(count) + '</span></div>' + list.slice(0, 8).map(sessionRow).join('') + (list.length > 8 ? '<details class="pp-more-sessions"><summary>+' + (list.length - 8) + ' more</summary>' + list.slice(8).map(sessionRow).join('') + '</details>' : '') + '</section>' : '';
+    return list.length ? '<section class="pp-group" data-session-list data-k="session-group/' + esc(id) + '"><div class="pp-kick"><span>' + title + '</span><span data-group-count>' + esc(count) + '</span></div>' + list.slice(0, 8).map(sessionRow).join('') + (list.length > 8 ? '<details class="pp-more-sessions"><summary>+' + (list.length - 8) + ' more</summary>' + list.slice(8).map(sessionRow).join('') + '</details>' : '') + '</section>' : '';
 }
