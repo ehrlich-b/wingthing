@@ -15,7 +15,7 @@ import (
 )
 
 func TestRoostAttentionPushRecipient(t *testing.T) {
-	for _, scenario := range []string{"session-starter", "missing-route", "empty-user", "different-wing"} {
+	for _, scenario := range []string{"session-starter", "admin-takeover", "reattached-without-starter", "missing-route", "empty-user", "different-wing"} {
 		t.Run(scenario, func(t *testing.T) {
 			type push struct{ topic, click string }
 			pushes := make(chan push, 4)
@@ -29,8 +29,13 @@ func TestRoostAttentionPushRecipient(t *testing.T) {
 			mustTest(t, store.CreateUser(roostWingServiceUserID))
 			mustTest(t, store.CreateDeviceToken("service-token", roostWingServiceUserID, "roost-wing", nil))
 			starterToken, starterID := createTestToken(t, store, "b")
+			adminToken, adminID := createTestToken(t, store, "admin")
+			mustTest(t, store.CreateOrgWithSeats("attention-org", "Attention Org", "attention-org", roostWingServiceUserID, 3))
+			mustTest(t, store.AddOrgMember("attention-org", starterID, "member"))
+			mustTest(t, store.AddOrgMember("attention-org", adminID, "admin"))
 			mustTest(t, store.SetNtfyConfig(roostWingServiceUserID, NtfyConfig{Topic: ntfyServer.URL + "/service", Events: "attention"}))
 			mustTest(t, store.SetNtfyConfig(starterID, NtfyConfig{Topic: ntfyServer.URL + "/user-b", Events: "attention"}))
+			mustTest(t, store.SetNtfyConfig(adminID, NtfyConfig{Topic: ntfyServer.URL + "/admin", Events: "attention"}))
 			baseURL := os.Getenv("WT_BASE_URL")
 			if baseURL == "" {
 				baseURL = "https://roost.example"
@@ -52,7 +57,7 @@ func TestRoostAttentionPushRecipient(t *testing.T) {
 			}
 			wing := dial("/ws/wing", "service-token")
 			defer func() { _ = wing.CloseNow() }()
-			mustTest(t, wsjson.Write(ctx, wing, ws.WingRegister{Type: ws.TypeWingRegister, WingID: "shared-roost"}))
+			mustTest(t, wsjson.Write(ctx, wing, ws.WingRegister{Type: ws.TypeWingRegister, WingID: "shared-roost", OrgSlug: "attention-org"}))
 			var ack ws.RegisteredMsg
 			mustTest(t, wsjson.Read(ctx, wing, &ack))
 			if ack.Type != ws.TypeRegistered {
@@ -60,7 +65,7 @@ func TestRoostAttentionPushRecipient(t *testing.T) {
 			}
 
 			sessionID, wantTopic, wantUser := "unknown-session", "/service", roostWingServiceUserID
-			if scenario == "session-starter" {
+			if scenario == "session-starter" || scenario == "admin-takeover" {
 				browser := dial("/ws/pty", starterToken)
 				defer func() { _ = browser.CloseNow() }()
 				mustTest(t, wsjson.Write(ctx, browser, ws.PTYStart{Type: ws.TypePTYStart, WingID: "shared-roost", Agent: "claude", CWD: "/project"}))
@@ -79,7 +84,32 @@ func TestRoostAttentionPushRecipient(t *testing.T) {
 			} else if scenario == "empty-user" {
 				server.PTY.Set(sessionID, &PTYRoute{WingID: "shared-roost"})
 			} else if scenario == "different-wing" {
-				server.PTY.Set(sessionID, &PTYRoute{WingID: "another-wing", UserID: starterID})
+				server.PTY.Set(sessionID, &PTYRoute{WingID: "another-wing", UserID: starterID, StarterUserID: starterID})
+			}
+
+			if scenario == "admin-takeover" || scenario == "reattached-without-starter" {
+				admin := dial("/ws/pty", adminToken)
+				defer func() { _ = admin.CloseNow() }()
+				mustTest(t, wsjson.Write(ctx, admin, ws.PTYAttach{Type: ws.TypePTYAttach, WingID: "shared-roost", SessionID: sessionID}))
+				var attach ws.PTYAttach
+				mustTest(t, wsjson.Read(ctx, wing, &attach))
+				if attach.Type != ws.TypePTYAttach || attach.UserID != adminID || attach.OrgRole != "admin" || attach.SessionID != sessionID {
+					t.Fatalf("forwarded admin attach = %+v", attach)
+				}
+				// The wing confirms authorization before the admin takes control.
+				mustTest(t, wsjson.Write(ctx, wing, ws.PTYStarted{Type: ws.TypePTYStarted, SessionID: sessionID, ControllerID: attach.ControllerID}))
+				var started ws.PTYStarted
+				mustTest(t, wsjson.Read(ctx, admin, &started))
+				if started.Type != ws.TypePTYStarted || started.SessionID != sessionID {
+					t.Fatalf("admin attachment confirmation = %+v", started)
+				}
+				route := server.PTY.Get(sessionID)
+				route.mu.Lock()
+				controllerUser := route.UserID
+				route.mu.Unlock()
+				if controllerUser != adminID {
+					t.Fatalf("controller user = %q, want %q", controllerUser, adminID)
+				}
 			}
 
 			mustTest(t, wsjson.Write(ctx, wing, ws.SessionAttention{

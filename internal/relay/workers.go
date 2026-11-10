@@ -727,8 +727,8 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 				userID := wing.UserID
 				if route := s.PTY.Get(attn.SessionID); route != nil {
 					route.mu.Lock()
-					if route.WingID == wing.WingID && route.UserID != "" {
-						userID = route.UserID
+					if route.WingID == wing.WingID && route.StarterUserID != "" {
+						userID = route.StarterUserID
 					}
 					route.mu.Unlock()
 				}

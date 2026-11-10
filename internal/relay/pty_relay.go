@@ -89,7 +89,7 @@ func roleForWingUser(s *Server, wing *ConnectedWing, userID string, orgIDs []str
 }
 
 // PTYRoute is a minimal routing entry for wing→browser output forwarding.
-// No session metadata — the wing owns all session intelligence.
+// The wing owns session intelligence; the relay retains notification identity.
 type PTYRoute struct {
 	ControllerID        string
 	PendingControllerID string
@@ -97,7 +97,8 @@ type PTYRoute struct {
 	PendingController   *websocket.Conn            // attach awaiting wing authorization
 	PendingUserID       string                     // promoted with PendingController
 	Viewers             map[string]*websocket.Conn // viewer_id → spectator conn (read-only)
-	UserID              string                     // session user for bandwidth metering and notifications
+	UserID              string                     // current controller for bandwidth metering
+	StarterUserID       string                     // authenticated session starter, unchanged by reattach
 	WingID              string                     // machine ID for offline notification
 	Agent               string                     // agent name for ntfy notifications
 	CWD                 string                     // working directory for ntfy notifications
@@ -729,7 +730,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			route := &PTYRoute{BrowserConn: conn, ControllerID: start.ControllerID, UserID: userID, WingID: wing.WingID, Agent: start.Agent, CWD: start.CWD}
+			route := &PTYRoute{BrowserConn: conn, ControllerID: start.ControllerID, UserID: userID, StarterUserID: userID, WingID: wing.WingID, Agent: start.Agent, CWD: start.CWD}
 			if !s.PTY.AddControllerStart(sessionID, route) {
 				if err := writeWebSocketJSON(ctx, conn, ws.ErrorMsg{Type: ws.TypeError, Message: "relay has too many pending session starts; retry shortly"}); err != nil {
 					log.Printf("report pending PTY start limit: %v", err)
