@@ -13,6 +13,9 @@ export async function assertListViewRefresh(page, { root, go, checked }) {
         ['Machines', '#machines', '.pp-col-main', '.pp-machine', 'li a', 1],
         ['Machines sessions', '#machines', '[data-machine="studio"]', 'li', 'a', 2],
         ['Machine', '#machine/studio', '#wing-detail-content', '.wd-session-row', null, 7],
+        ['Sessions list', '#sessions', '[data-k="session-group/work"]', '.pp-srow', null, 8],
+        ['Machines session list', '#machines', '[data-machine="studio"] [data-session-list]', 'li', 'a', 3],
+        ['Machine session list', '#machine/studio', '#wd-active-sessions', '.wd-session-row', null, 8],
     ]) {
         await go(page, hash);
         await page.locator(region).locator(rows).first().waitFor({ state: 'attached' });
@@ -20,6 +23,22 @@ export async function assertListViewRefresh(page, { root, go, checked }) {
             const patch = eval(source + '; patchRegion');
             const original = region.innerHTML;
             const results = [];
+            // Model the renderer's eight-row (or three-row) boundary for
+            // both whole-view refreshes and direct list refreshes.
+            const rebalance = next => {
+                const lists = [...next.querySelectorAll('[data-session-list]')];
+                if (next.matches('[data-session-list]')) lists.unshift(next);
+                for (const list of lists) {
+                    const preview = list.querySelector(':scope > ul') || list;
+                    const items = [...list.querySelectorAll('.pp-srow, .wd-session-row, [data-session-row]')];
+                    const limit = Number(list.getAttribute('data-session-list')) || 8;
+                    const details = list.querySelector('details');
+                    if (!details || items.length <= limit) continue;
+                    const overflow = details.querySelector('ul') || details;
+                    for (const item of items.slice(0, limit)) preview.insertBefore(item, preview === list ? details : null);
+                    for (const item of items.slice(limit)) overflow.append(item);
+                }
+            };
             for (const fallback of [false, true]) {
                 // Also pin the fallback used by browsers without moveBefore.
                 const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'moveBefore');
@@ -31,6 +50,9 @@ export async function assertListViewRefresh(page, { root, go, checked }) {
                     const row = mounted[Math.min(focusedIndex, mounted.length - 1)];
                     const parent = row.parentElement;
                     const target = focus ? row.querySelector(focus) : row;
+                    for (let ancestor = target.parentElement; ancestor && region.contains(ancestor); ancestor = ancestor.parentElement) {
+                        if (ancestor.tagName === 'DETAILS') ancestor.open = true;
+                    }
                     const text = [...(function* walk(node) {
                         if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) yield node;
                         for (const child of node.childNodes) yield* walk(child);
@@ -60,16 +82,7 @@ export async function assertListViewRefresh(page, { root, go, checked }) {
                     first.before(arrival);
                     // Render the incoming inventory's normal preview/overflow
                     // boundary too: the last preview row must stay mounted.
-                    for (const list of next.querySelectorAll('[data-session-list]')) {
-                        const preview = list.querySelector(':scope > ul') || list;
-                        const items = [...list.querySelectorAll('.pp-srow, .wd-session-row, [data-session-row]')];
-                        const limit = Number(list.getAttribute('data-session-list')) || 8;
-                        const details = list.querySelector('details');
-                        if (!details || items.length <= limit) continue;
-                        const overflow = details.querySelector('ul') || details;
-                        for (const item of items.slice(0, limit)) preview.insertBefore(item, preview === list ? details : null);
-                        for (const item of items.slice(limit)) overflow.append(item);
-                    }
+                    rebalance(next);
                     patch(region, next.innerHTML);
                     if (![...region.querySelectorAll(rows)].some(node => node.dataset.key === arrival.dataset.key)) throw Error('Arrival was dropped');
                     results.push(observe('insert-earlier'));
@@ -80,6 +93,15 @@ export async function assertListViewRefresh(page, { root, go, checked }) {
                     orderedRows[0].before(orderedRows[Math.min(1, orderedRows.length - 1)]);
                     patch(region, reordered.innerHTML);
                     results.push(observe('reorder'));
+                    patch(region, original);
+                    // A pending stop can finish while the ninth row is
+                    // focused inside expanded overflow. Its renderer now
+                    // puts that row in the first eight; keep its live node.
+                    const departed = region.cloneNode(true);
+                    departed.querySelector(rows).remove();
+                    rebalance(departed);
+                    patch(region, departed.innerHTML);
+                    results.push(observe('remove-first'));
                     patch(region, original);
                 } finally {
                     if (descriptor) Object.defineProperty(Element.prototype, 'moveBefore', descriptor);

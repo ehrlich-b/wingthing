@@ -98,7 +98,9 @@ function patchChildren(current, next) {
 }
 
 export function patchRegion(current, html) {
-    const template = document.createElement('template');
-    template.innerHTML = html;
-    patchChildren(current, template.content);
+    // Apply the same layout and disclosure policies when the caller patches
+    // a list itself as when that list is nested inside a larger region.
+    const next = current.cloneNode(false);
+    next.innerHTML = html;
+    patchNode(current, next);
 }
