@@ -218,3 +218,19 @@ func TestContextPinnedNavigationMatchesDisplay(t *testing.T) {
 	}
 	check()
 }
+
+func TestNewSessionInEmptyContext(t *testing.T) {
+	s := contextFixture(1) // Home has a session; both Work machines are empty.
+	s.defaultCWD = "/projects/home"
+	drive(s, "ccn\r")
+	if s.mode != newCWD || s.machineContext(s.target.machine) != "work" || s.input != "" {
+		t.Fatalf("new session escaped Work or inherited local cwd: target=%q input=%q", s.target.machine, s.input)
+	}
+	if actions, _ := drive(s, "\r"); len(actions) != 0 {
+		t.Fatal("empty remote directory launched a session")
+	}
+	actions, _ := drive(s, "/projects/work\r")
+	if len(actions) != 1 || s.machineContext(actions[0].row.machine) != "work" || actions[0].cwd != "/projects/work" {
+		t.Fatalf("new session = %#v", actions)
+	}
+}

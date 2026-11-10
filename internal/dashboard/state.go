@@ -641,6 +641,18 @@ func (s *state) handle(key string) (act *action, quit bool) {
 		}
 		if !ok {
 			r.machine = s.machineFilter
+			if r.machine == "" && s.contextFiltered {
+				for _, name := range s.machineNames() {
+					if s.machineContext(name) == s.contextFilter {
+						r.machine = name
+						break
+					}
+				}
+				if r.machine == "" {
+					s.message = "No machine in this context"
+					return nil, false
+				}
+			}
 			if r.machine == "" {
 				r.machine = "local"
 			}
