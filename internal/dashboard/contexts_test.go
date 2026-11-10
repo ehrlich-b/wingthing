@@ -288,3 +288,33 @@ func TestContextSmallViewportActionVisibility(t *testing.T) {
 		}
 	}
 }
+
+func TestContextMachinePickerReconcilesLaunch(t *testing.T) {
+	s := contextFixture(3)
+	s.defaultCWD = "/projects/home"
+	drive(s, "ccm") // Work, then choose This machine.
+	for i, name := range s.machineNames() {
+		if name == "local" {
+			s.picker = i + 1
+		}
+	}
+	drive(s, "\r")
+	if s.contextFiltered || s.machineFilter != "local" || len(s.rows()) != 1 {
+		t.Fatalf("incompatible filters: context=%q active=%t machine=%q rows=%v", s.contextFilter, s.contextFiltered, s.machineFilter, s.rows())
+	}
+	drive(s, "n\r")
+	if s.target.machine != "local" || s.mode != newCWD {
+		t.Fatalf("launch target=%q mode=%v", s.target.machine, s.mode)
+	}
+	s = contextFixture(3)
+	drive(s, "ccm")
+	for i, name := range s.machineNames() {
+		if name == "studio" {
+			s.picker = i + 1
+		}
+	}
+	drive(s, "\r")
+	if !s.contextFiltered || s.contextFilter != "work" {
+		t.Fatal("compatible context was cleared")
+	}
+}
