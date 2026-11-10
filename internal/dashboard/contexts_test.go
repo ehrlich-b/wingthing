@@ -234,3 +234,57 @@ func TestNewSessionInEmptyContext(t *testing.T) {
 		t.Fatalf("new session = %#v", actions)
 	}
 }
+
+// The actionable row must remain visible through navigation and small resizes.
+func TestContextSmallViewportActionVisibility(t *testing.T) {
+	now := time.Date(2026, time.November, 9, 14, 30, 0, 0, time.UTC)
+	for _, grouped := range []bool{true, false} {
+		s := contextFixture(12)
+		for _, name := range []string{"local", "slide"} {
+			m := s.machines[name]
+			pinned := session("coordinator", "wing", "/projects/product", "working")
+			pinned.Pinned, pinned.Role = true, "coordinator"
+			m.sessions = append(m.sessions, pinned)
+			s.machines[name] = m
+		}
+		if !grouped {
+			s.localContext = ""
+			s.remotes["slide"] = config.Remote{}
+			s.remotes["studio"] = config.Remote{}
+		}
+		s.reconcile()
+		check := func(height int) {
+			t.Helper()
+			rows := s.rows()
+			for _, r := range rows {
+				if r.key() != s.selected {
+					continue
+				}
+				screen := strings.Join(renderedLines(t, render(s, 100, height, now), 100, height), "\n")
+				expected := strings.TrimRight(sessionLine(s, r, 100, now).text, " ")
+				if !grouped && r.Pinned && !strings.Contains(screen, expected) {
+					expected = "> " + r.name()
+				}
+				if !strings.Contains(screen, expected) {
+					t.Fatalf("grouped=%t height=%d selected=%s missing %q:\n%s", grouped, height, r.key(), expected, screen)
+				}
+				act, _ := s.handle("enter")
+				if act == nil || act.row.key() != r.key() {
+					t.Fatalf("action for %s: %+v", r.key(), act)
+				}
+				return
+			}
+			t.Fatalf("selection %s missing from rows", s.selected)
+		}
+		for i := 0; i < len(s.rows()); i++ {
+			for _, h := range []int{8, 9, 10, 11, 12, 8} {
+				check(h)
+			}
+			s.handle("j")
+		}
+		for i := 0; i < len(s.rows()); i++ {
+			check(8)
+			s.handle("k")
+		}
+	}
+}

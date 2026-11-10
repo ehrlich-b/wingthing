@@ -515,6 +515,11 @@ func render(s *state, width, height int, now time.Time) string {
 			work = append(work, rows[i])
 		}
 	}
+	// On very short screens, give the selected session the pinned block’s space.
+	if pin != nil && height < 9 && pin.key() != s.selected {
+		work = append([]row{*pin}, work...)
+		pin = nil
+	}
 	listWidth := width
 	_, hasSelection := s.selection()
 	wide := width >= 120 && height >= 30 && hasSelection && (s.mode == navigate || s.mode == filter) && !s.recent

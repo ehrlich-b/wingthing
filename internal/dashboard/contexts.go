@@ -155,6 +155,10 @@ func (s *state) renderContexts(lines []viewLine, work []row, top, bottom, width 
 	start := max(0, min(selected-capacity/2, len(items)-max(1, capacity-1)))
 	// Repeat the heading when the viewport starts inside a context.
 	sticky := capacity > 1 && start > 0 && items[start].session
+	if sticky && selected >= start+capacity-1 {
+		start = selected - capacity + 2
+		sticky = start > 0 && items[start].session
+	}
 	used := 0
 	if sticky {
 		set(top, viewLine{text: fmt.Sprintf("%s · %d needs you", clean(contextLabel(items[start].context)), s.contextNeedsYou(items[start].context)), tone: secondary})
