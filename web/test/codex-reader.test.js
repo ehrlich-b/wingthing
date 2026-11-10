@@ -43,7 +43,8 @@ test('normalized hook tools, completion and unknown variants stay visible withou
         { sequence: 2, type: 'turn_completed', state: 'completed', source: 'codex_hook' },
         { sequence: 3, type: 'future_hook', detail: 'inspect me' },
     ] });
-    assert.equal(state.messages.find(m => m.type === 'user').content, 'Exact accepted prompt');
+    assert.equal(state.messages.some(m => m.type === 'user'), false);
+    assert.equal(state.sending.sequence, 0);
     assert.equal(state.messages.find(m => m.sequence === 1 && m.type === 'lifecycle').kind, 'tool');
     assert.equal(state.messages.find(m => m.sequence === 2 && m.type === 'lifecycle').kind, 'turn');
     assert.match(state.messages.at(-1).content, /inspect me/);

@@ -9,9 +9,9 @@ const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const out=process.env.WT_LOOP_OUT; assert.ok(out && path.isAbsolute(out));
 const binary=process.env.WT_LOOP_BIN; assert.ok(binary && path.isAbsolute(binary));
 const baseline=process.env.WT_LOOP_BASELINE==='1';
-const work=fs.mkdtempSync(path.join(process.env.WT_LOOP_SCRATCH,'run-'));
+const work=fs.mkdtempSync(path.join(process.env.WT_LOOP_SCRATCH,'r'));
 // Keep provider socket paths within Linux's 107-byte Unix socket limit.
-const home=path.join(work,'h'), state=path.join(work,'state'), bin=path.join(work,'bin');
+const home=path.join(work,'h'), state=path.join(work,'s'), bin=path.join(work,'b');
 for(const p of [out,home,state,bin]) fs.mkdirSync(p,{recursive:true});
 for(const agent of ['claude','codex']) fs.copyFileSync(path.join(root,'test/web/session-loop/provider.py'),path.join(bin,agent));
 for(const agent of ['claude','codex']) fs.chmodSync(path.join(bin,agent),0o700);
@@ -82,6 +82,8 @@ try {
    await page.locator('[data-handback]').click();
    await send(inputs[3]);
    await until(async()=>(await page.locator('.pp-term').textContent()).includes(inputs[3]),3000);
+   const screen=await page.locator('.pp-term').textContent();
+   for(const text of inputs) assert.ok(screen.includes('INPUT '+text));
    const received=fs.readFileSync(path.join(work,agent+'-pty.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
    fs.copyFileSync(path.join(work,agent+'-pty.jsonl'),path.join(out,agent+'-pty.jsonl'));
    assert.deepEqual(received,inputs);
@@ -92,7 +94,31 @@ try {
   if(agent==='codex' && !baseline) {
    const attach=spawn('nice',['-n','10',binary,'attach',sid],{cwd:work,env,stdio:['pipe','ignore','ignore']}); children.push(attach);
    await sleep(300);
-   for(let i=0;i<8;i++) attach.stdin.write('Long follow-up '+i+' investigating session message order and native transcript replay\r');
+   await check('codex repeated prompts without turn IDs and transient sending',async()=>{
+    const repeated='Repeat without a turn ID';
+    const before=await page.locator('.pp-row-you .pp-say').allTextContents();
+    for(let turn=1;turn<=2;turn++) {
+     attach.stdin.write(repeated+'\r');
+     await page.locator('.pp-sending').waitFor({timeout:3000});
+     assert.equal(await page.locator('.pp-sending').innerText(),'Sending...');
+     assert.deepEqual(await page.locator('.pp-row-you .pp-say').allTextContents(),before.concat(Array(turn-1).fill(repeated)));
+     if(turn===1) for(const width of [1440,390]) {await page.setViewportSize({width,height:width===390?844:900}); await page.screenshot({path:path.join(out,'codex-sending-'+width+'.png')});}
+     await page.setViewportSize({width:1440,height:900});
+     fs.writeFileSync(path.join(work,'release-transcript'),String(turn));
+     await until(async()=>(await page.locator('.pp-row-you .pp-say').allTextContents()).length===before.length+turn,3000);
+     await until(async()=>await page.locator('.pp-sending').count()===0,3000);
+    }
+    const expected=inputs.concat([repeated,repeated]).flatMap(text=>[text,'Reply to '+text]);
+    await until(async()=>(await page.locator('.pp-conversation .pp-say').allTextContents()).length===expected.length,3000);
+    assert.deepEqual(await page.locator('.pp-conversation .pp-say').allTextContents(),expected);
+    const rows=await page.locator('.pp-row-you .pp-say').allTextContents();
+    assert.deepEqual(rows,before.concat([repeated,repeated]));
+    const received=fs.readFileSync(path.join(work,'codex-pty.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+    assert.deepEqual(received,inputs.concat([repeated,repeated]));
+    fs.copyFileSync(path.join(work,'codex-pty.jsonl'),path.join(out,'codex-repeated-pty.jsonl'));
+    return {rows,received};
+   });
+   for(let i=0;i<6;i++) attach.stdin.write('Long follow-up '+i+' investigating session message order and native transcript replay\r');
    await until(async()=>await page.locator('.pp-conversation .pp-row').count()===24,10000);
    for(const width of [1440,390]) {await page.setViewportSize({width,height:width===390?844:900});await page.waitForTimeout(150); await page.screenshot({path:path.join(out,'codex-limit24-'+width+'.png')});}
    attach.stdin.write('One more turn beyond the message display limit\r');

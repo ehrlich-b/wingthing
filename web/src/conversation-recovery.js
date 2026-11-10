@@ -76,7 +76,7 @@ export function createConversationReader(options) {
             presentation: shown, cached: cached, observedAt: observedAt, readError: readError, storageError: storageError,
             identityError: state.identityError || '', halted: halted,
             pending: pending, otherPending: otherPending.slice(), checking: !!checking, notice: notice,
-            deliveryReceipt: deliveryReceipt,
+            deliveryReceipt: deliveryReceipt, sendingUntil: state.sending?.expiresAt || 0,
             stop: { ...stop },
             continuation: continuation, continuationAvailable: canContinue,
             continuationReady: canContinue && !pending && !continuation && !checking,
@@ -115,7 +115,7 @@ export function createConversationReader(options) {
             var view = result && result.lifecycle;
             if (!view) throw new Error('The wing does not support the conversation reader yet. Open its terminal.');
             if (result.session && result.session !== t.sessionId) view = { ...view, session_id: result.session };
-            var next = applyConversationRead(state, view, { readSeq: seq, expected: { sessionId: t.sessionId, providerSessionId: t.providerSessionId } });
+            var next = applyConversationRead(state, view, { readSeq: seq, now: now(), expected: { sessionId: t.sessionId, providerSessionId: t.providerSessionId } });
             if (next.identityError) {
                 state = next;
                 halted = true;

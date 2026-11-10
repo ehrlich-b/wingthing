@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Offline interactive providers: native transcript files and real installed hooks."""
-import json, os, re, subprocess, sys, tty, uuid
+import json, os, re, subprocess, sys, time, tty, uuid
 from pathlib import Path
 agent = Path(sys.argv[0]).name
 args = sys.argv[1:]
@@ -33,6 +33,7 @@ tty.setraw(0)
 hook('SessionStart', source='startup')
 os.write(1, (agent+' ready: native transcript\r\n').encode())
 buffer = b''
+repeated = 0
 while True:
     chunk = os.read(0,1)
     if not chunk: break
@@ -43,8 +44,14 @@ while True:
     if not text: continue
     with (Path.cwd()/(agent+'-pty.jsonl')).open('a') as f: f.write(json.dumps(text)+'\n')
     turn_id = str(uuid.uuid4())
-    hook('UserPromptSubmit', prompt=text, turn_id=turn_id)
-    if agent == 'codex': append(dict(type='event_msg', payload=dict(type='task_started', turn_id=turn_id)))
+    hook('UserPromptSubmit', prompt=text, **(dict(turn_id=turn_id) if agent == 'claude' else {}))
+    if agent == 'codex' and text == 'Repeat without a turn ID':
+        repeated += 1
+        deadline = time.monotonic() + 15
+        release = Path.cwd()/'release-transcript'
+        while not release.exists() or int(release.read_text()) < repeated:
+            if time.monotonic() > deadline: raise TimeoutError('native transcript was not released')
+            time.sleep(0.025)
     answer = 'Reply to '+text
     for role, content in [('user',text),('assistant',answer)]:
         if agent == 'claude': append(dict(type=role, sessionId=sid, message=dict(role=role, content=content, stop_reason='end_turn' if role=='assistant' else None)))

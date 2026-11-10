@@ -607,3 +607,17 @@ test('invalid and oversized messages stay unsent without a reservation', async (
     }
     assert.deepEqual(h.operations(), ['session_read']);
 });
+
+test('Codex reader exposes sending separately from transcript rows and clears it on native input', async () => {
+    let events = [{ sequence: 6, source: 'codex_hook', type: 'prompt_submitted', text: 'repeat' }];
+    const h = harness(memoryStorage(), () => ({ lifecycle: live({ agent: 'codex', state_source: 'codex_hook', cursor: events.at(-1).sequence, events }) }));
+    h.reader.open(mac);
+    await h.tick();
+    assert.equal(h.latest.sendingUntil, 1_060_000);
+    assert.equal(h.latest.messages.some(m => m.type === 'user'), false);
+    events = [{ sequence: 7, source: 'codex_transcript', type: 'message', role: 'user', text: 'repeat' }];
+    await h.tick();
+    assert.equal(h.latest.sendingUntil, 0);
+    assert.deepEqual(h.latest.messages.filter(m => m.type === 'user').map(m => m.content), ['repeat']);
+    h.reader.close();
+});

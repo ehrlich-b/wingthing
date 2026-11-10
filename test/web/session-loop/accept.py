@@ -29,13 +29,13 @@ def log_run(args, target, env=ENV):
     with target.open('w') as f:
         subprocess.run(['nice','-n','10',*map(str,args)],cwd=ROOT,env=env,stdout=f,stderr=subprocess.STDOUT,check=True)
     print(target.relative_to(LANE), flush=True)
-base_src=SCRATCH/'baseline-src'
-if not base_src.exists():
-    run(['git','worktree','add','--detach',base_src,BASE])
+base_src=LANE/'wingthing'
 assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=base_src,text=True).strip()==BASE
+# The browser driver always imports this checkout's Playwright, even for the base.
+run(['npm','ci'],cwd=ROOT/'web')
 # Both executables embed their own source tree's assets. No tunnel is mocked.
 for source, name in [(base_src,'baseline'),(ROOT,'candidate')]:
-    run(['npm','ci'],cwd=source/'web')
+    if source != ROOT: run(['npm','ci'],cwd=source/'web')
     run(['npm','run','build'],cwd=source/'web')
     binary=SCRATCH/('wt-'+name)
     run(['go','build','-p','2','-o',binary,'./cmd/wt'],cwd=source)
@@ -46,10 +46,10 @@ for source, name in [(base_src,'baseline'),(ROOT,'candidate')]:
         assert len(data['failures'])==6, data
         assert [c['name'] for c in data['checks']]==['claude direct user and assistant within 3s'], data
     else:
-        assert len(data['checks'])==7 and not data['failures'] and not data['dialogs'], data
+        assert len(data['checks'])==8 and not data['failures'] and not data['dialogs'], data
 run(['go','test','-p','2','./internal/egg','-run','^(TestCodexTranscript.*|TestLifecycleExactIdentityPartialReplayAndConcurrentReaders|TestCodexUnboundCaptureUnavailableWithoutGuessing)$','-count=1'])
 run(['go','test','-p','2','./internal/ws','-run','^TestClientRegistersLatePTYAttachAfterAuthorization$','-count=1'])
-run(['node','--test','web/test/codex-transcript.test.js'])
+run(['node','--test','web/test/codex-transcript.test.js','web/src/conversation-recovery.test.js'])
 run(['go','build','-p','2','-o','.scratch/look-public','./test/web/public-server'])
 look_env=dict(ENV, WT_LOOK_BIN=str(SCRATCH/'wt-candidate'), WT_LOOK_PORT=str(ports()), WT_LOOK_SHOTS=str(EVIDENCE/'look'), WT_LOOK_ONLY='03-session', PLAYWRIGHT_MODULE='../../web/node_modules/playwright/index.mjs')
 log_run(['node','test/web/look.mjs'],EVIDENCE/'look.log',look_env)
