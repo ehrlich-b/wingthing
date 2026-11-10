@@ -132,7 +132,7 @@ async function machine(id) {
         socket.onerror = reject;
         socket.onmessage = e => { if (JSON.parse(e.data).type === 'registered') resolve(); };
     });
-    socket.onmessage = e => {
+    socket.onmessage = async e => {
         const outer = JSON.parse(e.data);
         if (shellMode && (outer.type === 'pty.start' || outer.type === 'pty.attach')) {
             if (outer.type === 'pty.start') fixture.rows.push(row(outer.session_id, 'fixture-new-session', outer.agent, 'working', 'wingthing'));
@@ -147,6 +147,7 @@ async function machine(id) {
         if (inner.type === 'wing.info') response = { hostname: fixture.name, wing_label: fixture.name, platform: 'darwin', agents: ['claude', 'codex'], projects: [{ name: 'wingthing', path: '/Users/example/code/wingthing' }], capabilities: ['session.rename.v1'] };
         else if (inner.type === 'sessions.list') { if (shellMode === 'home') console.log('INVENTORY',id,fixture.rows.length); response = { sessions: fixture.rows }; }
         else if (inner.type === 'session.control' && inner.operation === 'session_read') {
+            await fixture.beforeSessionRead?.(inner.arguments.session);
             const selected = fixture.rows.find(item => item.session_id === inner.arguments.session);
             const list = selected && (events[selected.session_id] || fallback(selected.name));
             response = selected ? { session: selected.session_id, lifecycle: { ...selected.lifecycle, session_id: selected.session_id, agent: selected.agent, provider_session_id: 'provider-' + selected.session_id, process_alive: true, ready: true, cursor: list.length, head_cursor: list.length, has_more: false, report_cursor: list.length, reported_at: at(1), report: { goal: 'Fix the redirect loop and deploy to staging', update: 'Deploy script is ready on Studio and needs your go.', presence: 'awake' }, events: list } } : { error: 'Session not found' };

@@ -1,5 +1,6 @@
 // R4 acceptance through the existing look harness, real roost and encrypted wings.
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 
 export async function runHome({pages, machines, sockets, machine, row, events, at, go, shoot, checked, base}) {
     const suffix = p => '-' + p.viewportSize().width;
@@ -44,7 +45,13 @@ export async function runHome({pages, machines, sockets, machine, row, events, a
         await verify(page,'home-sessions','Working');
         assert.equal(await page.locator('.home-row').count(),1);
         assert.equal(await page.locator('#paper [data-composer]').count(),0);
-        assert.ok(await page.getByRole('link',{name:'Set one up',exact:true}).isVisible());
+        const setup=page.getByRole('link',{name:'Set one up',exact:true});
+        assert.ok(await setup.isVisible());
+        const href=await setup.getAttribute('href');
+        assert.equal(href,'/docs#wing-setup');
+        const docs=fs.readFileSync('internal/relay/templates/docs.html','utf8');
+        assert.ok(docs.includes('id="'+href.split('#')[1]+'"'));
+        checked('home-setup-anchor'+suffix(page),{href,anchorExists:true});
         await shoot(page,'home-volume-1',suffix(page));
     }
     // The pinned wing has its own composer and never counts as work or Recent.
@@ -65,8 +72,41 @@ export async function runHome({pages, machines, sockets, machine, row, events, a
     machines.studio.rows.push(row('redirect','fix-login-redirect','claude','blocked','wingthing'));
     // A fresh load reads the changed fixture without waiting for the normal 30 s poll.
     for (const page of pages) {
-        await go(page,'#');
+        // Hold the real encrypted session read until the initial card is measured.
+        let release;
+        const held=new Promise(resolve=>{release=resolve;});
+        machines.studio.beforeSessionRead=id=>id==='redirect'?held:undefined;
+        // Reload discards any read the other viewport received while this one ran.
+        await page.reload();
+        await page.locator('.home-need').waitFor();
         assert.equal(await page.locator('.home-need').count(),1);
+        const command=page.locator('.home-need .home-commands');
+        assert.equal(await command.count(),1);
+        assert.equal(await command.getAttribute('aria-hidden'),'true');
+        assert.equal(await command.textContent(),'');
+        await page.getByRole('button',{name:'Answer',exact:true}).focus();
+        const snapshot=()=>page.evaluate(()=>({
+            boxes:[...document.querySelectorAll('.home-need, .home-need .pp-btn, .home-section > h2, .home-row')].map(el=>el.getBoundingClientRect().toJSON()),
+            focus:document.activeElement.textContent,
+        }));
+        const before=await snapshot();
+        await shoot(page,'home-request-loading',suffix(page));
+        release();
+        await page.waitForFunction(()=>document.querySelector('.home-need pre')?.textContent.includes('./scripts/deploy.sh staging'));
+        assert.deepEqual(await snapshot(),before);
+        assert.equal(await command.getAttribute('aria-hidden'),'false');
+        // A longer, multiline reason must stay in the same command slot too.
+        const longCommand='./scripts/'+('extended-workspace-migration/').repeat(20)+'deploy.sh\n--runInBand';
+        events.redirect.push({...events.redirect.at(-1),sequence:6,reason:'Run '+longCommand});
+        await page.evaluate(()=>{const now=Date.now;Date.now=()=>now()+9000;});
+        await page.waitForFunction(()=>document.querySelector('.home-need pre')?.textContent.includes('extended-workspace-migration/'));
+        assert.deepEqual(await snapshot(),before);
+        assert.equal(await command.getAttribute('title'),longCommand);
+        assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+        checked('home-request-loading-stable'+suffix(page),{before,after:await snapshot(),longMultilineCommand:true});
+        await shoot(page,'home-request-loaded',suffix(page));
+        events.redirect.pop();
+        delete machines.studio.beforeSessionRead;
         const answer=page.getByRole('button',{name:'Answer',exact:true});
         assert.equal(await answer.count(),1);
         await page.locator('.home-need .home-commands').waitFor();

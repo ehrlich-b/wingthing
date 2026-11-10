@@ -9,12 +9,15 @@
 .home-section > h2 small { font-weight: 400; color: var(--wt-ink-3); }
 .home-section + .home-section { margin-top: 12px; }
 .home-need { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; border: 1px solid var(--wt-rule-2); border-radius: var(--wt-r1); padding: 12px 14px; margin-top: 12px; }
+.home-need > div { min-width: 0; }
 .home-need h3 { margin: 0; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.home-need p { color: var(--wt-ink-2); font-size: 13px; }
+.home-need p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--wt-ink-2); font-size: 13px; }
 .home-commands { color: var(--wt-ink); background: var(--wt-surface); border: 1px solid var(--wt-rule); border-radius: var(--wt-r1); padding: 10px 12px; font: 12px/1.7 var(--wt-mono) !important; white-space: pre-wrap; overflow-wrap: anywhere; margin: 12px 0; }
 .home-commands i { color: var(--wt-ink-3); font-style: normal; }
 .home-commands span { display: block; }
-.home-need .home-commands { margin: 8px 0 0; }
+/* Keep the request slot the same size before and after the session read. */
+.home-need .home-commands { box-sizing: border-box; height: 44px; margin: 8px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.home-need .home-commands[aria-hidden="true"] { visibility: hidden; }
 .home-row { display: grid; grid-template-columns: 80px minmax(0, 1.1fr) minmax(0, 1fr) 32px; align-items: center; gap: 12px; height: 44px; border-bottom: 1px solid var(--wt-rule); font-size: 13px; }
 .home-row:hover { background: var(--wt-surface); }
 .home-identity, .home-identity b, .home-identity small, .home-line { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

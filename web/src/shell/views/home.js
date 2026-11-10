@@ -70,7 +70,7 @@ function section(title, rows, limit, draw) {
 }
 function needCard(s) {
     const r = request(s), command = r.command || requestedCommand(s.lifecycle?.reason);
-    return '<article class="home-need" data-k="' + esc(s.wing_id + '/' + s.id) + '"><div><h3 title="' + esc(sessionDisplayName(s)) + '">' + esc(sessionDisplayName(s)) + '</h3><p>' + (command ? 'Wants to run a command on ' : 'Wants an answer on ') + esc(machineName(wingOf(s.wing_id))) + '.</p>' + (command ? '<pre class="home-commands"><i>$ </i>' + esc(command) + '</pre>' : '') + '</div><button type="button" class="pp-btn pp-btn-ink" data-takeover="' + esc(s.wing_id + '/' + s.id) + '">Answer</button></article>';
+    return '<article class="home-need" data-k="' + esc(s.wing_id + '/' + s.id) + '"><div><h3 title="' + esc(sessionDisplayName(s)) + '">' + esc(sessionDisplayName(s)) + '</h3><p>' + (command ? 'Wants to run a command on ' : 'Wants an answer on ') + esc(machineName(wingOf(s.wing_id))) + '.</p>' + '<pre class="home-commands" aria-hidden="' + !command + '" title="' + esc(command || '') + '">' + (command ? '<i>$ </i>' + esc(command) : '') + '</pre>' + '</div><button type="button" class="pp-btn pp-btn-ink" data-takeover="' + esc(s.wing_id + '/' + s.id) + '">Answer</button></article>';
 }
 function relative(at) {
     const ms = Date.parse(at);
@@ -94,5 +94,5 @@ export function viewWing() {
     const recent = ordered('recent', all.filter(s => !need.includes(s) && !work.includes(s)));
     const workingCount = work.filter(s => sessionState(s).key === 'work').length;
     const meta = [workingCount ? workingCount + ' working' : '', need.length ? need.length + ' needs you' : ''].filter(Boolean).join(' · ');
-    return homeHead(esc(meta)) + '<div class="home-columns"><div class="home-work">' + section('Needs you', need, 3, needCard) + section('Working', work, 8, row) + section('Recent', recent, 5, row) + '</div><aside class="home-rail" data-k="wing" data-stable><h2>' + (coord ? 'Message wing' : 'Your wing') + '</h2>' + (coord ? '<p>Your wing on ' + esc(machineName(wingOf(coord.wing_id))) + ' summarises the others and can start work for you.</p>' + composer('Message wing', coord) : '<p>A wing is an agent that watches the others and summarises here.</p><a href="/docs#wing">Set one up</a>') + '</aside></div>';
+    return homeHead(esc(meta)) + '<div class="home-columns"><div class="home-work">' + section('Needs you', need, 3, needCard) + section('Working', work, 8, row) + section('Recent', recent, 5, row) + '</div><aside class="home-rail" data-k="wing" data-stable><h2>' + (coord ? 'Message wing' : 'Your wing') + '</h2>' + (coord ? '<p>Your wing on ' + esc(machineName(wingOf(coord.wing_id))) + ' summarises the others and can start work for you.</p>' + composer('Message wing', coord) : '<p>A wing is an agent that watches the others and summarises here.</p><a href="/docs#wing-setup">Set one up</a>') + '</aside></div>';
 }
