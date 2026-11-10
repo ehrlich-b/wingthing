@@ -36,7 +36,8 @@ metadata). Verify the archive before unpacking it into a local SDK. Check your
 JDK distributor's checksum before unpacking a JDK. The preflight reports missing
 or incompatible components; it does not download software or accept licenses.
 Run `make check-android` after populating the offline Gradle cache. Release
-signing remains a separate explicit operation in `build-release.sh`.
+signing is optional; see [README.md](README.md) for unsigned builds and the
+separate `sign-release.sh` step.
 
 One Linux x86-64 JDK pin is Temurin 21.0.13+9:
 `https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/OpenJDK21U-jdk_x64_linux_hotspot_21.0.13_9.tar.gz`
