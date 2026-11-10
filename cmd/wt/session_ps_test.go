@@ -17,7 +17,7 @@ import (
 
 func TestSessionPSLocalFormatGolden(t *testing.T) {
 	// Taken from the format before configured remotes (204bce9^).
-	// Status and optional native lifecycle metadata are additive to the existing format.
+	// Status, lifecycle, and machine context metadata extend the existing format.
 	const human = "NAME    ID             KIND     PROCESS  STATUS   ISOLATION  READERS  UPTIME  IDLE  CWD\n" +
 		"review  local-session  command  /bin/sh  unknown  unknown    0        0s      0s    /tmp/work\n"
 	const jsonGolden = `[
@@ -36,7 +36,9 @@ func TestSessionPSLocalFormatGolden(t *testing.T) {
     "uptime_seconds": 0,
     "idle_seconds": 0,
     "buffer_bytes": 0,
-    "total_written": 0
+    "total_written": 0,
+    "machine": "local",
+    "context": ""
   }
 ]
 `
