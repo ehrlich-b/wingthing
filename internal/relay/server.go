@@ -347,6 +347,7 @@ func (s *Server) SetSessionCache(sc *SessionCache) { s.sessionCache = sc }
 func (s *Server) GetSessionCache() *SessionCache { return s.sessionCache }
 
 type browserConnection struct {
+	outbound      *browserOutbound
 	userID        string
 	relayNotified map[string]bool
 }
@@ -361,8 +362,15 @@ func (s *Server) trackBrowser(conn *websocket.Conn, userID string) {
 
 func (s *Server) untrackBrowser(conn *websocket.Conn) {
 	s.browserMu.Lock()
+	tracked := s.browserConns[conn]
 	delete(s.browserConns, conn)
 	s.browserMu.Unlock()
+	if tracked != nil && tracked.outbound != nil {
+		tracked.outbound.cancel()
+		// The browser handler owns this writer's lifetime. Never wait while
+		// holding browserMu: an in-flight delivery may still need the registry.
+		<-tracked.outbound.done
+	}
 }
 
 // browserRelayPayloadAccess re-evaluates entitlement for long-lived sockets.

@@ -491,17 +491,16 @@ func mapValues(values map[string]*websocket.Conn) []*websocket.Conn {
 	return result
 }
 
-// NotifyWingOffline sends a wing.offline message to all PTY browsers connected
-// to the given wing. Snapshot route ownership before I/O so one slow browser
-// cannot hold the global routing lock and stall every session on the relay.
-func (r *PTYRoutes) NotifyWingOffline(wingID string) {
+// notifyWingOffline queues the event behind output already accepted from this
+// wing, without waiting for any browser's transport.
+func (s *Server) notifyWingOffline(wingID string) {
 	msg := []byte(`{"type":"wing.offline"}`)
-	for _, connection := range r.offlineRecipients(wingID) {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		if err := connection.Write(ctx, websocket.MessageText, msg); err != nil {
-			log.Printf("notify browser that wing %s is offline: %v", wingID, err)
-		}
-		cancel()
+	for _, connection := range s.PTY.offlineRecipients(wingID) {
+		s.enqueueBrowser(connection, len(msg), "", func(ctx context.Context) {
+			if err := connection.Write(ctx, websocket.MessageText, msg); err != nil {
+				log.Printf("notify browser that wing %s is offline: %v", wingID, err)
+			}
+		})
 	}
 }
 
@@ -739,7 +738,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			if err := writeWebSocketJSON(ctx, wing.Conn, start); err != nil {
+			if err := writeWingJSON(ctx, wing.Conn, start); err != nil {
 				s.PTY.removeProvisional(sessionID, route)
 				log.Printf("forward PTY start to wing %s: %v", wing.WingID, err)
 				return
@@ -826,7 +825,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				log.Printf("pty session %s reattach pending wing authorization (user=%s)", attach.SessionID, userID)
 			}
 
-			if err := writeWebSocketJSON(ctx, wing.Conn, attach); err != nil {
+			if err := writeWingJSON(ctx, wing.Conn, attach); err != nil {
 				log.Printf("forward PTY attach to wing %s: %v", wing.WingID, err)
 				return
 			}
@@ -857,7 +856,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				s.denyHostedRelay(ctx, conn, userID, wing.WingID, env.Type, "", control.SessionID)
 				continue
 			}
-			if err := wing.Conn.Write(ctx, websocket.MessageText, data); err != nil {
+			if err := writeWingPayload(ctx, wing.Conn, data); err != nil {
 				log.Printf("forward PTY control to wing %s: %v", wing.WingID, err)
 				return
 			}
@@ -886,7 +885,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				s.denyHostedRelay(ctx, conn, userID, wing.WingID, ws.TypePasskeyResponse, "", response.SessionID)
 				continue
 			}
-			if err := wing.Conn.Write(ctx, websocket.MessageText, data); err != nil {
+			if err := writeWingPayload(ctx, wing.Conn, data); err != nil {
 				log.Printf("forward passkey response to wing %s: %v", wing.WingID, err)
 				return
 			}
@@ -946,7 +945,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				s.denyHostedRelay(ctx, conn, userID, wing.WingID, ws.TypePTYKill, "", kill.SessionID)
 				continue
 			}
-			if err := writeWebSocketJSON(ctx, wing.Conn, kill); err != nil {
+			if err := writeWingJSON(ctx, wing.Conn, kill); err != nil {
 				log.Printf("forward PTY kill to wing %s: %v", wing.WingID, err)
 				return
 			}
@@ -1015,7 +1014,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				}
 				continue
 			}
-			if err := writeWebSocketJSON(ctx, wing.Conn, req); err != nil {
+			if err := writeWingJSON(ctx, wing.Conn, req); err != nil {
 				log.Printf("forward tunnel request to wing %s: %v", wing.WingID, err)
 				return
 			}
@@ -1089,9 +1088,7 @@ func (s *Server) forwardPTYToBrowser(sessionID, sourceWingID string, data []byte
 			route.mu.Unlock()
 			s.PTY.removeProvisionalIfEmpty(sessionID, route)
 			if vc != nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				s.writeRelayPayload(ctx, vc, data, sessionID, "")
-				cancel()
+				s.queueRelayPayload(vc, data, sessionID, "")
 			}
 			return
 		}
@@ -1109,16 +1106,14 @@ func (s *Server) forwardPTYToBrowser(sessionID, sourceWingID string, data []byte
 		}
 		route.mu.Unlock()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
 		if bc != nil {
-			s.writeRelayPayload(ctx, bc, data, sessionID, "")
+			s.queueRelayPayload(bc, data, sessionID, "")
 		}
 		if pending != nil && pending != bc {
-			s.writeRelayPayload(ctx, pending, data, sessionID, "")
+			s.queueRelayPayload(pending, data, sessionID, "")
 		}
 		for _, vc := range viewers {
-			s.writeRelayPayload(ctx, vc, data, sessionID, "")
+			s.queueRelayPayload(vc, data, sessionID, "")
 		}
 
 		// Send ntfy exit notification
@@ -1184,10 +1179,8 @@ clickURL := s.ntfyClickURL(sourceWingID, sessionID)
 		route.Provisional = false
 		route.mu.Unlock()
 		if config.Channel() == "preview" && replaced && oldController != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			message, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, SessionID: sessionID, ControllerID: oldControllerID, Message: "terminal attachment taken over; attach again to request control"})
-			s.writeRelayPayload(ctx, oldController, message, sessionID, "")
-			cancel()
+			s.queueRelayPayload(oldController, message, sessionID, "")
 		}
 	} else if env.Type == ws.TypePTYStarted && viewerID != "" {
 		route.mu.Lock()
@@ -1209,9 +1202,8 @@ clickURL := s.ntfyClickURL(sourceWingID, sessionID)
 		if vc == nil {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		s.writeRelayPayload(ctx, vc, data, sessionID, "")
+
+		s.queueRelayPayload(vc, data, sessionID, "")
 		return
 	}
 
@@ -1237,9 +1229,7 @@ clickURL := s.ntfyClickURL(sourceWingID, sessionID)
 			}
 			route.mu.Unlock()
 			if target != nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				s.writeRelayPayload(ctx, target, data, sessionID, "")
-				cancel()
+				s.queueRelayPayload(target, data, sessionID, "")
 			}
 			return
 		}
@@ -1255,9 +1245,7 @@ clickURL := s.ntfyClickURL(sourceWingID, sessionID)
 			s.PTY.removeProvisionalIfEmpty(sessionID, route)
 		}
 		if pending != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			s.writeRelayPayload(ctx, pending, data, sessionID, "")
+			s.queueRelayPayload(pending, data, sessionID, "")
 			return
 		}
 	}
@@ -1276,25 +1264,28 @@ clickURL := s.ntfyClickURL(sourceWingID, sessionID)
 		// Detached — drop the data (wing has ring buffer for replay)
 		return
 	}
+	s.enqueueBrowser(bc, len(data), sessionID, func(ctx context.Context) {
+		s.writeControllerPayload(ctx, route, bc, userID, sessionID, data)
+	})
+}
+
+func (s *Server) writeControllerPayload(ctx context.Context, route *PTYRoute, bc *websocket.Conn, userID, sessionID string, data []byte) {
 	if allowed, notify := s.browserRelayPayloadAccess(bc, "session:"+sessionID); !allowed {
 		if notify {
 			denied := ws.ErrorMsg{
 				Type: ws.TypeError, SessionID: sessionID,
 				Message: "hosted relay is not included on the free direct tier; connect directly, use a self-hosted roost, or upgrade to Pro",
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
 			if err := writeWebSocketJSON(ctx, bc, denied); err != nil {
 				log.Printf("report browser relay denial: %v", err)
 			}
-			cancel()
 		}
 		return
 	}
 
 	// Meter outbound bandwidth (relay → browser is what costs on Fly)
 	if s.Bandwidth != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
 		if err := s.Bandwidth.Wait(ctx, userID, len(data)); err != nil {
 			msg := ws.BandwidthExceeded{
 				Type:    ws.TypeBandwidthExceeded,
@@ -1317,8 +1308,6 @@ clickURL := s.ntfyClickURL(sourceWingID, sessionID)
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	if err := bc.Write(ctx, websocket.MessageText, data); err != nil {
 		log.Printf("forward PTY payload to browser: %v", err)
 		s.forwardBrowserDetach(bc, sessionID)
@@ -1330,7 +1319,13 @@ clickURL := s.ntfyClickURL(sourceWingID, sessionID)
 	}
 }
 
-func (s *Server) writeRelayPayload(ctx context.Context, conn *websocket.Conn, data []byte, sessionID, requestID string) {
+func (s *Server) queueRelayPayload(conn *websocket.Conn, data []byte, sessionID, requestID string) {
+	s.enqueueBrowser(conn, len(data), sessionID, func(ctx context.Context) {
+		s.deliverRelayPayload(ctx, conn, data, sessionID, requestID)
+	})
+}
+
+func (s *Server) deliverRelayPayload(ctx context.Context, conn *websocket.Conn, data []byte, sessionID, requestID string) {
 	resource := "session:" + sessionID
 	if requestID != "" {
 		resource = "request:" + requestID

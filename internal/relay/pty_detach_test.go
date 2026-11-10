@@ -54,6 +54,7 @@ func TestBrowserOutboundFailureForwardsDetachBeforeClearingController(t *testing
 			server := &Server{LocalMode: true, PTY: NewPTYRoutes(), Wings: NewWingRegistry(), browserConns: make(map[*websocket.Conn]*browserConnection)}
 			server.Wings.wings["wing"] = &ConnectedWing{WingID: "wing", Conn: wing}
 			server.trackBrowser(browser, "owner")
+			t.Cleanup(func() { server.untrackBrowser(browser) })
 			route := &PTYRoute{WingID: "wing", UserID: "owner", BrowserConn: browser, ControllerID: "controller-1"}
 			server.PTY.Set("session", route)
 			if failure == "write" {
@@ -74,8 +75,18 @@ func TestBrowserOutboundFailureForwardsDetachBeforeClearingController(t *testing
 				}()
 			}
 			server.forwardPTYToBrowser("session", "wing", []byte(`{"type":"pty.output","session_id":"session","data":"a"}`))
-			if route.BrowserConn != nil {
-				t.Fatal("failed browser remained connected")
+			deadline := time.Now().Add(time.Second)
+			for {
+				route.mu.Lock()
+				detached := route.BrowserConn == nil
+				route.mu.Unlock()
+				if detached {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("failed browser remained connected")
+				}
+				time.Sleep(time.Millisecond)
 			}
 			// The normal disconnect cleanup now has no controller to capture.
 			if captured := server.PTY.browserDetachRoutes(browser, ""); len(captured) != 0 {
