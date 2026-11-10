@@ -171,9 +171,9 @@ func (s *RelayStore) createSignInLink(token, userID, provider, email string) err
 	return err
 }
 
-func (s *RelayStore) consumeSignInLink(token, provider string) (userID, email string, err error) {
+func (s *RelayStore) consumeSignInLink(token, provider, currentUserID string) (userID, email string, err error) {
 	err = s.db.QueryRow(`UPDATE signin_links SET used = 1
-		WHERE token = ? AND provider = ? AND used = 0 AND expires_at > ? RETURNING user_id, email`, token, provider, time.Now().UTC().Format("2006-01-02 15:04:05")).Scan(&userID, &email)
+		WHERE token = ? AND provider = ? AND user_id = ? AND used = 0 AND expires_at > ? RETURNING user_id, email`, token, provider, currentUserID, time.Now().UTC().Format("2006-01-02 15:04:05")).Scan(&userID, &email)
 	return
 }
 
@@ -260,7 +260,14 @@ func (s *Server) redirectToSignInMethods(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) verifySignInEmail(w http.ResponseWriter, r *http.Request, token string) {
-	userID, email, err := s.Store.consumeSignInLink(token, "email")
+	current := s.sessionUser(r)
+	if current == nil {
+		http.Error(w, "sign-in method could not be verified", http.StatusForbidden)
+		return
+	}
+	// Bind consumption to the authenticated account so another browser cannot
+	// complete the link or invalidate the initiating account's unused proof.
+	userID, email, err := s.Store.consumeSignInLink(token, "email", current.ID)
 	if err != nil {
 		http.Error(w, "invalid or expired link", http.StatusBadRequest)
 		return

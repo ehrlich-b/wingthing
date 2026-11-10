@@ -688,9 +688,13 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if state := r.URL.Query().Get("state"); isSignInLink(state) {
-		userID, _, err := s.Store.consumeSignInLink(state, "google")
 		current := s.sessionUser(r)
-		if err != nil || current == nil || current.ID != userID || !gUser.VerifiedEmail || !s.roostProviderEmailAllowed(gUser.Email, true) {
+		if current == nil || !gUser.VerifiedEmail || !s.roostProviderEmailAllowed(gUser.Email, true) {
+			http.Error(w, "sign-in method could not be verified", http.StatusForbidden)
+			return
+		}
+		userID, _, err := s.Store.consumeSignInLink(state, "google", current.ID)
+		if err != nil {
 			http.Error(w, "sign-in method could not be verified", http.StatusForbidden)
 			return
 		}

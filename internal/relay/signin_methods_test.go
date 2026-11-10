@@ -402,6 +402,7 @@ func TestSignInEmailLinkProof(t *testing.T) {
 		t.Run(tc, func(t *testing.T) {
 			store := testStore(t)
 			recoveryUser(t, store, "owner", "github", "owner@example.com")
+			mustTest(t, store.CreateSession("owner-session", "owner", time.Now().Add(time.Hour)))
 			s := NewServer(store, ServerConfig{SMTPHost: "fixture"})
 			if tc == "not enrolled" {
 				s.Config.RoostAllowedEmails = []string{"owner@example.com"}
@@ -418,7 +419,7 @@ func TestSignInEmailLinkProof(t *testing.T) {
 			}
 			verify := func() *httptest.ResponseRecorder {
 				w := httptest.NewRecorder()
-				s.handleMagicVerify(w, signInRequest(http.MethodGet, "/auth/magic/verify?token=link_fixture", ""))
+				s.ServeHTTP(w, signInRequest(http.MethodGet, "/auth/magic/verify?token=link_fixture", "owner-session"))
 				return w
 			}
 			w := verify()
@@ -439,6 +440,75 @@ func TestSignInEmailLinkProof(t *testing.T) {
 				}
 			} else if w.Code < 400 || (linked != nil && linked.ID == "owner") {
 				t.Fatalf("unsafe link: %d %#v", w.Code, linked)
+			}
+		})
+	}
+}
+
+func TestSignInEmailLinkRequiresInitiatingAccount(t *testing.T) {
+	for _, tc := range []struct {
+		session string
+		status  int
+	}{
+		{"other-session", http.StatusBadRequest},
+		{"", http.StatusForbidden},
+		{"expired-session", http.StatusForbidden},
+		{"unknown-session", http.StatusForbidden},
+	} {
+		t.Run("session="+tc.session, func(t *testing.T) {
+			store := testStore(t)
+			recoveryUser(t, store, "owner", "github", "owner@example.com")
+			recoveryUser(t, store, "other", "google", "other@example.com")
+			mustTest(t, store.CreateSession("owner-session", "owner", time.Now().Add(time.Hour)))
+			mustTest(t, store.CreateSession("other-session", "other", time.Now().Add(time.Hour)))
+			mustTest(t, store.CreateSession("expired-session", "owner", time.Now().Add(-time.Hour)))
+			mustTest(t, store.createSignInLink("link_bound", "owner", "email", "backup@example.com"))
+			s := NewServer(store, ServerConfig{SMTPHost: "fixture", BaseURL: "https://login.example.com", AppHost: "app.example.com"})
+			verify := func(session string) *httptest.ResponseRecorder {
+				w := httptest.NewRecorder()
+				s.ServeHTTP(w, signInRequest(http.MethodGet, "https://login.example.com/auth/magic/verify?token=link_bound", session))
+				if recoverySession(t, s, w) != nil {
+					t.Fatal("email-add callback issued a login session")
+				}
+				return w
+			}
+			w := verify(tc.session)
+			if w.Code != tc.status {
+				t.Fatalf("email proof accepted without initiating account: %d %s", w.Code, w.Body)
+			}
+			if linked, err := store.GetUserByProvider("email", "backup@example.com"); err != nil || linked != nil {
+				t.Fatalf("refused callback linked email: %#v %v", linked, err)
+			}
+			for _, id := range []string{"owner", "other"} {
+				methods, err := store.ListSignInMethods(id)
+				if err != nil || len(methods) != 1 {
+					t.Fatalf("refused callback changed %s methods: %#v %v", id, methods, err)
+				}
+			}
+			var used, sessions int
+			mustTest(t, store.DB().QueryRow("SELECT used FROM signin_links WHERE token = 'link_bound'").Scan(&used))
+			mustTest(t, store.DB().QueryRow("SELECT COUNT(*) FROM sessions").Scan(&sessions))
+			if used != 0 || sessions != 3 {
+				t.Fatalf("refused callback consumed proof or changed sessions: used=%d sessions=%d", used, sessions)
+			}
+			// A rejected request must not prevent the initiating account from
+			// completing its proof, including through the login host.
+			w = verify("owner-session")
+			if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "https://app.example.com/#account" {
+				t.Fatalf("owner proof refused: %d %s", w.Code, w.Body)
+			}
+			linked, err := store.GetUserByProvider("email", "backup@example.com")
+			if err != nil || linked == nil || linked.ID != "owner" {
+				t.Fatalf("owner proof did not link email: %#v %v", linked, err)
+			}
+			if replay := verify("owner-session"); replay.Code != http.StatusBadRequest {
+				t.Fatalf("owner proof replayed: %d", replay.Code)
+			}
+			for _, id := range []string{"owner", "other"} {
+				user, err := store.GetSession(id + "-session")
+				if err != nil || user == nil || user.ID != id {
+					t.Fatalf("existing session ownership changed: %#v %v", user, err)
+				}
 			}
 		})
 	}
