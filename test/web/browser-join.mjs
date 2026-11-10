@@ -17,15 +17,16 @@ const out = process.env.WT_JOIN_OUT || path.join(root, '.scratch/browser-join');
 const shots = process.env.WT_JOIN_SHOTS || path.join(out, 'shots');
 // Playwright and Chromium also create Unix sockets beneath their temp root.
 // Set it before loading Playwright so neither inherits a deep caller TMPDIR.
-const tmp = fs.realpathSync(fs.mkdtempSync('/tmp/wt'));
+const tempRoot = process.env.TMPDIR || '/tmp';
+const tmp = fs.realpathSync(fs.mkdtempSync(path.join(tempRoot, 'wt')));
 const originalTMPDIR = process.env.TMPDIR;
 process.env.TMPDIR = tmp;
 const { chromium } = process.env.PLAYWRIGHT_MODULE
     ? await import(process.env.PLAYWRIGHT_MODULE)
     : createRequire(new URL('../../web/package.json', import.meta.url))('playwright');
 fs.mkdirSync(out, {recursive:true}); fs.mkdirSync(shots, {recursive:true});
-const state = fs.realpathSync(fs.mkdtempSync('/tmp/wt'));
-const home = fs.realpathSync(fs.mkdtempSync('/tmp/wt'));
+const state = fs.realpathSync(fs.mkdtempSync(path.join(tempRoot, 'wt')));
+const home = fs.realpathSync(fs.mkdtempSync(path.join(tempRoot, 'wt')));
 // Each fixture owns its loopback listener even when other checkouts run too.
 const unusedPort = () => new Promise((resolve,reject) => {
     const listener = net.createServer();
@@ -36,7 +37,9 @@ const unusedPort = () => new Promise((resolve,reject) => {
     });
 });
 const port = Number(process.env.WT_JOIN_PORT || await unusedPort()), base = 'http://127.0.0.1:' + port;
+const cacheSelectors = ['GOMODCACHE', 'GOCACHE', 'GOPATH', 'GOTOOLCHAIN', 'GOPROXY', 'GOSUMDB', 'GOFLAGS', 'npm_config_cache', 'npm_config_offline', 'npm_config_audit', 'npm_config_update_notifier', 'PLAYWRIGHT_BROWSERS_PATH', 'CHROMIUM_PATH', 'WINGTHING_ANDROID_HOME', 'PYTHONPATH', 'PYTHONDONTWRITEBYTECODE', 'XDG_RUNTIME_DIR'];
 const env = { PATH:process.env.PATH,TMPDIR:tmp,HOME:home,WINGTHING_DIR:state,WT_BASE_URL:base };
+for (const name of cacheSelectors) if (process.env[name] !== undefined) env[name] = process.env[name];
 fs.writeFileSync(path.join(state,'wing.yaml'),'label: Studio\n',{mode:0o600});
 const log = fs.openSync(path.join(out,'roost.log'),'w');
 const startRoost = () => spawn('nice',['-n','10',path.join(root,'wt'),'roost','start','--foreground','--addr','127.0.0.1:'+port],{cwd:root,env,stdio:['ignore',log,log]});
