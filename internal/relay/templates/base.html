@@ -19,10 +19,11 @@
   --bg:#07131A;--bg-card:#0F1F28;--text:#E6F1F6;--text-dim:#8CA5B2;
   --primary:#2AA8FF;--kingfisher-accent:#FF8A3D;--success:#36D69A;--danger:#FF5D6C;--on-action:#07131A;
 }}
-body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14px;line-height:1.6;min-height:100vh}
+html{scrollbar-gutter:stable}
+body{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14px;line-height:1.6;min-height:100vh}
 code,pre,.mono{font-family:var(--mono)}
 .container{max-width:1400px;margin:0 auto;padding:0 12px 12px}
-nav{display:flex;justify-content:space-between;align-items:center;padding:12px 8px;border-bottom:1px solid var(--accent);margin-bottom:24px;font-family:var(--mono);font-size:13px}
+nav{display:flex;justify-content:space-between;align-items:center;padding:12px 8px;border-bottom:1px solid var(--accent);margin-bottom:24px;font-family:var(--sans);font-size:13px}
 nav .logo{display:inline-flex;align-items:center;gap:8px;font-size:18px;font-weight:700;color:var(--text);text-decoration:none}
 nav .logo-mark{width:30px;height:30px;flex:none;color:var(--primary)}
 nav .logo-wing{color:var(--primary)}
@@ -30,9 +31,9 @@ nav .logo-wing{color:var(--primary)}
 .nav-secondary{display:flex;align-items:center;gap:16px}
 .nav-links a{color:var(--text-dim);text-decoration:none}
 .nav-links a:hover{color:var(--text)}
-.nav-btn{background:none;border:none;color:var(--text-dim);font-family:var(--mono);font-size:13px;cursor:pointer;padding:0}
+.nav-btn{background:none;border:none;color:var(--text-dim);font-family:var(--sans);font-size:13px;cursor:pointer;padding:0}
 .nav-btn:hover{color:var(--text)}
-.nav-cta{background:var(--action);color:var(--on-action) !important;padding:6px 14px;border-radius:4px;font-weight:600;text-decoration:none}
+.nav-cta{background:var(--action);color:var(--on-action) !important;padding:6px 14px;border-radius:6px;font-weight:600;text-decoration:none}
 .nav-cta:hover{background:var(--action-hover);color:var(--on-action) !important}
 .user-name{color:var(--text);font-size:13px}
 a{color:var(--action)}a:hover{color:var(--action-hover)}
@@ -65,7 +66,7 @@ a{color:var(--action)}a:hover{color:var(--action-hover)}
 </div>
 </nav>
 {{template "content" .}}
-<footer style="margin-top:48px;padding:16px 0;border-top:1px solid var(--accent);font-size:12px;color:var(--text-dim);font-family:var(--mono);display:flex;gap:16px"><a href="/terms" style="color:var(--text-dim);text-decoration:none">terms</a><a href="/privacy" style="color:var(--text-dim);text-decoration:none">privacy</a><a href="/abuse" style="color:var(--text-dim);text-decoration:none">abuse</a></footer>
+<footer style="margin-top:48px;padding:16px 0;border-top:1px solid var(--accent);font-size:13px;color:var(--text-dim);font-family:var(--sans);display:flex;gap:16px"><a href="/terms" style="color:var(--text-dim);text-decoration:none">Terms</a><a href="/privacy" style="color:var(--text-dim);text-decoration:none">Privacy</a><a href="/abuse" style="color:var(--text-dim);text-decoration:none">Abuse</a></footer>
 </div>
 </body>
 </html>{{end}}

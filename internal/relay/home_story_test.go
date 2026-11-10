@@ -72,7 +72,7 @@ func TestHomepageStoryHeroContract(t *testing.T) {
 			if len(storyElements(hero, func(n *html.Node) bool { return n == headings[0] })) != 1 {
 				t.Fatal("headline is outside the hero")
 			}
-			for _, href := range []string{"/skill.md", "/docs"} {
+			for _, href := range []string{"/docs"} {
 				links := storyElements(hero, func(n *html.Node) bool { return n.Data == "a" && storyAttr(n, "href") == href })
 				if len(links) != 1 || storyAttr(links[0], "class") != "hero-resource" {
 					t.Errorf("hero must give %s the shared resource-link style", href)
@@ -96,7 +96,7 @@ func TestHomepageStoryHeroContract(t *testing.T) {
 			if strings.Join(titles, "|") != want {
 				t.Errorf("feature grid = %q, want %q", titles, want)
 			}
-			for role, state := range map[string]string{"Parent": "working", "Workers": "blocked", "People": "done"} {
+			for role, state := range map[string]string{"migrate-sessions-table": "Working", "fix-login-redirect": "Needs you", "bump-playwright": "Done"} {
 				rows := storyElements(page, func(n *html.Node) bool {
 					return n.Data == "li" && storyAttr(n, "class") == "work-row" && strings.Contains(storyText(n), role)
 				})

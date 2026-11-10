@@ -205,7 +205,7 @@ func wingStartCmd() *cobra.Command {
 			} else if localFlag {
 				fmt.Println("open http://localhost:8080/app/ for wing status and direct-agent setup")
 			} else {
-				fmt.Println("open https://app.wingthing.ai/ for wing status and direct-agent setup")
+				fmt.Println("open https://app.wingthing.ai/ to start a session")
 			}
 			if !localFlag && !localOnlyFlag {
 				fmt.Println("hosted browser terminals require relay access")
