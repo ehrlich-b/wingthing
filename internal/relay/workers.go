@@ -732,7 +732,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 					}
 					route.mu.Unlock()
 				}
-				clickURL := s.ntfyClickURL(attn.SessionID)
+				clickURL := s.ntfyClickURL(wing.WingID, attn.SessionID)
 				s.trySendNtfy(attn.Nonce, userID, func(c *ntfy.Client) {
 					c.SendAttention(attn.SessionID, attn.Agent, attn.CWD, clickURL)
 				})
@@ -1074,10 +1074,10 @@ func (s *Server) trySendNtfy(nonce, userID string, send func(c *ntfy.Client)) {
 }
 
 // ntfyClickURL builds the click URL for a session notification.
-func (s *Server) ntfyClickURL(sessionID string) string {
+func (s *Server) ntfyClickURL(wingID, sessionID string) string {
 	appURL := s.appURL()
 	if s.Config.AppHost == "" {
 		appURL = strings.TrimRight(s.Config.BaseURL, "/") + appURL
 	}
-	return fmt.Sprintf("%s#s/%s", appURL, sessionID)
+	return fmt.Sprintf("%s#session/%s/%s", appURL, url.PathEscape(wingID), url.PathEscape(sessionID))
 }

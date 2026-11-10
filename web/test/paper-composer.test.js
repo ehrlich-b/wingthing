@@ -9,7 +9,7 @@ test('paper Send stays disabled for read-only accounts, spectators and offline w
     const S = { currentUser: { id: 'owner' }, wingsData: [{ wing_id: 'machine', online: true }] };
     const context = moduleContext('paper', { S, machineState, esc: escapeMarkup });
     const session = { wing_id: 'machine', id: 'execution' };
-    vm.runInContext("inputSnapshot = { inputReady: true }; inputKey = 'selected'; drafts.set(inputKey, 'draft');", context);
+    vm.runInContext("ui.inputSnapshot = { inputReady: true }; ui.inputKey = 'selected'; drafts.set(ui.inputKey, 'draft');", context);
     assert.doesNotMatch(context.composer('Message', session), /disabled/);
     for (const scenario of ['spectator', 'account', 'offline']) {
         S.spectating = scenario === 'spectator';

@@ -117,7 +117,7 @@ func TestRoostAttentionPushRecipient(t *testing.T) {
 			}))
 			select {
 			case got := <-pushes:
-				if got.topic != wantTopic || got.click != strings.TrimRight(baseURL, "/")+"/app/#s/"+sessionID {
+				if got.topic != wantTopic || got.click != strings.TrimRight(baseURL, "/")+"/app/#session/shared-roost/"+sessionID {
 					t.Fatalf("push = %+v, want topic %s and configured session URL", got, wantTopic)
 				}
 				t.Logf("session.attention: topic=%s click=%s", got.topic, got.click)
@@ -139,16 +139,16 @@ func TestNtfyClickURL(t *testing.T) {
 	for _, tc := range []struct {
 		name, baseURL, appHost, want string
 	}{
-		{"roost", "https://roost.example", "", "https://roost.example/app/#s/session-1"},
-		{"trailing-slash", "https://roost.example/", "", "https://roost.example/app/#s/session-1"},
-		{"split-host", "https://wingthing.ai", "app.wingthing.ai", "https://app.wingthing.ai/#s/session-1"},
-		{"http-app-host", "http://login.example:8080", "app.example:8080", "http://app.example:8080/#s/session-1"},
-		{"local", "http://localhost:8080", "", "http://localhost:8080/app/#s/session-1"},
-		{"relative", "", "", "/app/#s/session-1"},
+		{"roost", "https://roost.example", "", "https://roost.example/app/#session/wing-1/session-1"},
+		{"trailing-slash", "https://roost.example/", "", "https://roost.example/app/#session/wing-1/session-1"},
+		{"split-host", "https://wingthing.ai", "app.wingthing.ai", "https://app.wingthing.ai/#session/wing-1/session-1"},
+		{"http-app-host", "http://login.example:8080", "app.example:8080", "http://app.example:8080/#session/wing-1/session-1"},
+		{"local", "http://localhost:8080", "", "http://localhost:8080/app/#session/wing-1/session-1"},
+		{"relative", "", "", "/app/#session/wing-1/session-1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := NewServer(nil, ServerConfig{BaseURL: tc.baseURL, AppHost: tc.appHost})
-			if got := server.ntfyClickURL("session-1"); got != tc.want {
+			if got := server.ntfyClickURL("wing-1", "session-1"); got != tc.want {
 				t.Fatalf("click URL = %q, want %q", got, tc.want)
 			}
 		})

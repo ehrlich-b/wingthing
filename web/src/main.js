@@ -3,35 +3,27 @@ import '@xterm/xterm/css/xterm.css';
 import { S, DOM, initDOM } from './state.js';
 import { loginRedirect } from './helpers.js';
 import { initTerminal, sendPTYInput } from './terminal.js';
-import { showHome, showTerminal, showCanvas, switchToSession, restoreSessionChatRoute, navigateToWingDetail, navigateToAccount, deleteSession } from './nav.js';
+import { showHome, showCanvas, navigateToAccount, deleteSession } from './nav.js';
 import { initCanvas, isCanvasActive, canvasSpawnAtCenter, toggleCanvasMode } from './canvas.js';
 import { setCanvasLaunchCallback } from './palette.js';
 import { initChatView, refreshChat } from './chat-view.js';
-import { detachPTY, disconnectPTY, retryReconnect, attachPTY, handlePTYPasskey } from './pty.js';
+import { detachPTY, disconnectPTY, retryReconnect, handlePTYPasskey } from './pty.js';
 import { showPalette, hidePalette, cyclePaletteAgent, cyclePaletteWing, navigatePalette, tabCompletePalette, launchFromPalette, debouncedDirList, isDirListPending } from './palette.js';
 import { connectAppWS } from './dashboard.js';
 import { loadHome, fetchWingSessions, mergeWingSessions } from './data.js';
 import { scopeBrowserStateToUser } from './storage-scope.js';
-import { closeAuditOverlay } from './audit.js';
 import { hideDetailModal, showSessionInfo, renderSidebar, renderDashboard } from './render.js';
 import { initNotifyListeners } from './notify.js';
 import { loadTunnelAuthTokens } from './tunnel.js';
 import { initPreview } from './preview.js';
 import { initSessionFiles } from './session-files.js';
-import { sessionRoute, parseSessionRoute } from './session-route.js';
-import { restoreConversationRoute } from './conversation-view.js';
 import { initParentDot } from './parent-dot.js';
 import { initCoordinatorHome } from './coordinator-home.js';
 import { conversationViewport } from './mobile-viewport.js';
 import { createForegroundRefresh } from './phone-refresh.js';
 import { initReachShare } from './reach-share.js';
-import { initPaper, isPaperRoute } from './paper.js';
+import { initPaper, routeShell } from './shell/frame.js';
 import { renderHostedPlanGuidance } from './onboarding.js';
-
-function denyBrowserRelayView() {
-    history.replaceState({ view: 'home' }, '', location.pathname);
-    showHome(false);
-}
 
 async function init() {
     initDOM();
@@ -93,10 +85,6 @@ async function init() {
                 setTimeout(function() { button.textContent = 'copy'; }, 1500);
             });
         });
-    }
-
-    if (!location.hash.startsWith('#s/') && !location.hash.startsWith('#w/') && !location.hash.startsWith('#account') && location.hash !== '#canvas' && !location.hash.startsWith('#conversation/') && !location.hash.startsWith('#chat/') && !isPaperRoute()) {
-        history.replaceState({ view: 'home' }, '', location.pathname);
     }
 
     // Event handlers
@@ -418,97 +406,14 @@ async function init() {
     setInterval(loadHome, 30000);
     connectAppWS();
 
-    await restoreConversationRoute();
-    restoreSessionChatRoute();
-
-    // Deep links
-    var sessionLink = parseSessionRoute(location.hash);
-    if (sessionLink) {
-        if (S.currentUser && S.currentUser.relay_allowed === false) {
-            denyBrowserRelayView();
-        } else {
-            var deepSessionId = sessionLink.sessionId;
-            history.replaceState({ view: 'terminal', sessionId: deepSessionId, wingId: sessionLink.wingId }, '', sessionRoute(deepSessionId, sessionLink.wingId));
-            showTerminal();
-            attachPTY(deepSessionId, undefined, sessionLink.wingId);
-        }
-    }
-    var wingMatch = location.hash.match(/^#w\/(.+)$/);
-    if (wingMatch) {
-        if (S.currentUser && S.currentUser.relay_allowed === false) denyBrowserRelayView();
-        else navigateToWingDetail(wingMatch[1]);
-    }
-    var accountMatch = location.hash.match(/^#account(?:\/(.+))?$/);
-    if (accountMatch) {
-        navigateToAccount(true, accountMatch[1] || null);
-    }
-    if (location.hash === '#canvas') {
-        if (S.currentUser && S.currentUser.relay_allowed === false) denyBrowserRelayView();
-        else showCanvas(false);
-    }
+    routeShell();
 }
 
-// Hash change (user pastes #s/ URL while page is already loaded)
-window.addEventListener('hashchange', function() {
-    if (document.getElementById('paid-root')) return;
-    if (location.hash.startsWith('#conversation/')) { restoreConversationRoute(); return; }
-    if (restoreSessionChatRoute()) return;
-    var sessionLink = parseSessionRoute(location.hash);
-    if (sessionLink) {
-        if (S.currentUser && S.currentUser.relay_allowed === false) {
-            denyBrowserRelayView();
-            return;
-        }
-        history.replaceState({ view: 'terminal', sessionId: sessionLink.sessionId, wingId: sessionLink.wingId }, '', sessionRoute(sessionLink.sessionId, sessionLink.wingId));
-        showTerminal();
-        attachPTY(sessionLink.sessionId, undefined, sessionLink.wingId);
-        return;
-    }
-    var wingMatch = location.hash.match(/^#w\/(.+)$/);
-    if (wingMatch) {
-        if (S.currentUser && S.currentUser.relay_allowed === false) {
-            denyBrowserRelayView();
-            return;
-        }
-        navigateToWingDetail(wingMatch[1]);
-        return;
-    }
-    var accountMatch = location.hash.match(/^#account(?:\/(.+))?$/);
-    if (accountMatch) {
-        navigateToAccount(true, accountMatch[1] || null);
-        return;
-    }
-    if (location.hash === '#canvas') {
-        if (S.currentUser && S.currentUser.relay_allowed === false) denyBrowserRelayView();
-        else showCanvas(false);
-    }
+window.addEventListener('hashchange', () => {
+    if (!document.getElementById('paid-root')) routeShell();
 });
-
-// Browser history (back/forward)
-window.addEventListener('popstate', function(e) {
-    if (document.getElementById('paid-root')) return;
-    var auditOverlay = document.getElementById('audit-overlay');
-    if (auditOverlay && auditOverlay.style.display !== 'none') {
-        closeAuditOverlay();
-        return;
-    }
-    if (location.hash.startsWith('#conversation/')) { restoreConversationRoute(); return; }
-    if (restoreSessionChatRoute()) return;
-    var state = e.state;
-    if (!state || state.view === 'home') {
-        showHome(false);
-    } else if (state.view === 'terminal' && state.sessionId) {
-        if (S.currentUser && S.currentUser.relay_allowed === false) denyBrowserRelayView();
-        else switchToSession(state.sessionId, false, state.wingId);
-    } else if (state.view === 'wing-detail' && state.wingId) {
-        if (S.currentUser && S.currentUser.relay_allowed === false) denyBrowserRelayView();
-        else navigateToWingDetail(state.wingId, false);
-    } else if (state.view === 'account') {
-        navigateToAccount(false, state.orgSlug || null);
-    } else if (state.view === 'canvas') {
-        if (S.currentUser && S.currentUser.relay_allowed === false) denyBrowserRelayView();
-        else showCanvas(false);
-    }
+window.addEventListener('popstate', () => {
+    if (!document.getElementById('paid-root')) routeShell();
 });
 
 initPWA();

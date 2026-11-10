@@ -47,6 +47,6 @@ test('session and request text cannot inject markup into waiting rows', () => {
 });
 
 test('attention navigation leads to a focusable home summary or the complete waiting list', () => {
-    assert.deepEqual(paperRoute('#needs'), { view: 'wing', focusNeeds: true });
-    assert.deepEqual(paperRoute('#decisions'), { view: 'decisions' });
+    assert.deepEqual(paperRoute('#needs'), { view: 'wing' });
+    assert.deepEqual(paperRoute('#decisions'), { view: 'wing' });
 });

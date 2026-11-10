@@ -1122,7 +1122,7 @@ func (s *Server) forwardPTYToBrowser(sessionID, sourceWingID string, data []byte
 		}
 
 		// Send ntfy exit notification
-		clickURL := s.ntfyClickURL(sessionID)
+clickURL := s.ntfyClickURL(sourceWingID, sessionID)
 		s.trySendNtfy("exit:"+sessionID, userID, func(c *ntfy.Client) {
 			c.SendExit(sessionID, agent, cwd, exited.ExitCode, clickURL)
 		})

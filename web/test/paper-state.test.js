@@ -38,11 +38,11 @@ test('a blocked request names the command it will run', () => {
     assert.equal(requestedCommand('Needs a decision'), '');
 });
 
-test('paper routes are separate from legacy routes', () => {
+test('paper routes resolve bookmarks inside the shell', () => {
     assert.deepEqual(paperRoute(''), { view: 'wing' });
-    assert.deepEqual(paperRoute('#approve/studio/a%2Fb'), { view: 'approve', wingId: 'studio', sessionId: 'a/b' });
-    assert.equal(paperRoute('#chat/x?wing=y'), null);
-    assert.equal(paperRoute('#w/abc'), null);
+    assert.deepEqual(paperRoute('#approve/studio/a%2Fb'), { view: 'session', wingId: 'studio', sessionId: 'a/b' });
+    assert.deepEqual(paperRoute('#chat/x?wing=y'), { view: 'session', wingId: 'y', sessionId: 'x' });
+    assert.deepEqual(paperRoute('#w/abc'), { view: 'machine', wingId: 'abc' });
 });
 
 test('a machine that stopped reporting uses neutral wording and last contact time', () => {
@@ -86,8 +86,8 @@ test('checking presence preserves every last reported lifecycle label', () => {
 });
 
 // Execute the shell's actual filter without loading its browser-only imports.
-const paperSource = readFileSync(new URL('../src/paper.js', import.meta.url), 'utf8')
-    .replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
+const paperSource = readFileSync(new URL('../src/shell/frame.js', import.meta.url), 'utf8')
+    .replace(/^import .*;\n/gm, '').replace(/^export \{.*\};\n/gm, '').replace(/^export /gm, '');
 
 function searchFixture() {
     const input = { value: '' }, message = { textContent: '' }, summary = { textContent: '' };

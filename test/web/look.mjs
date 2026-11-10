@@ -15,6 +15,7 @@ import { gcm } from '../../web/node_modules/@noble/ciphers/aes.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const shots = process.env.WT_LOOK_SHOTS || path.join(root, '.scratch/look');
+const shellMode = process.env.WT_LOOK_SHELL || '';
 const only = (process.env.WT_LOOK_ONLY || '').split(',').filter(Boolean);
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 fs.mkdirSync(shots, { recursive: true });
@@ -22,7 +23,7 @@ fs.mkdirSync(path.join(root, '.scratch'), { recursive: true });
 const state = fs.mkdtempSync(path.join(tmpdir(), 'wt'));
 const port = Number(process.env.WT_LOOK_PORT || 18191);
 const base = 'http://127.0.0.1:' + port;
-const env = { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, HOME: path.join(state, 'home'), WINGTHING_DIR: state };
+const env = { HTTP_PROXY:'http://127.0.0.1:1', HTTPS_PROXY:'http://127.0.0.1:1', NO_PROXY:'127.0.0.1,localhost', PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, HOME: path.join(state, 'home'), WINGTHING_DIR: state };
 fs.mkdirSync(env.HOME);
 fs.writeFileSync(path.join(state, 'wing.yaml'), 'label: Laptop\n', { mode: 0o600 });
 const log = fs.openSync(path.join(shots, 'fixture.log'), 'w');
@@ -35,7 +36,7 @@ const overflow = [];
 const checks = [];
 const checked = (name, evidence) => { checks.push({name, evidence}); console.log('CHECK ' + name); };
 const publicBase = 'http://127.0.0.1:' + (port + 2);
-const publicServer = spawn('nice', ['-n', '10', path.join(root, '.scratch/look-public'), '127.0.0.1:' + (port + 2)], { cwd: root, env, stdio: ['ignore', log, log] });
+const publicServer = shellMode ? null : spawn('nice', ['-n', '10', path.join(root, '.scratch/look-public'), '127.0.0.1:' + (port + 2)], { cwd: root, env, stdio: ['ignore', log, log] });
 
 function writeIndex(complete) {
     fs.writeFileSync(path.join(shots, 'capture.json'), JSON.stringify({ complete, captures, overflow, checks }, null, 2) + '\n');
@@ -115,6 +116,11 @@ async function machine(id) {
     });
     socket.onmessage = e => {
         const outer = JSON.parse(e.data);
+        if (shellMode && (outer.type === 'pty.start' || outer.type === 'pty.attach')) {
+            if (outer.type === 'pty.start') fixture.rows.push(row(outer.session_id, 'fixture-new-session', outer.agent, 'working', 'wingthing'));
+            socket.send(JSON.stringify({ type:'pty.started', session_id:outer.session_id, agent:outer.agent || 'claude', public_key:pub, controller_id:outer.controller_id }));
+            return;
+        }
         if (outer.type !== 'tunnel.req') return;
         const key = hkdf(sha256, x25519.getSharedSecret(priv, Buffer.from(outer.sender_pub, 'base64')), new Uint8Array(32), new TextEncoder().encode('wt-tunnel'), 32);
         const encrypted = Buffer.from(outer.payload, 'base64');
@@ -129,6 +135,8 @@ async function machine(id) {
         }
         else if (inner.type === 'session.control' && inner.operation === 'terminal_read') response = { result: { ansi: (screens[inner.arguments.session] || '$ ').replace(/\r/g, '') } };
         else if (inner.type === 'session.control' && inner.operation === 'terminal_send') { sent.push({ machine: id, ...inner.arguments }); response = { session: inner.arguments.session, bytes_sent: inner.arguments.input.length }; }
+        else if (inner.type === 'dir.list') response = { entries: [{ name:'wingthing', path:'/Users/example/code/wingthing', is_dir:true }] };
+        else if (inner.type === 'pty.resize' || inner.type === 'pty.detach') response = {};
         else if (inner.type === 'sessions.history') response = { sessions: [] };
         else if (inner.type === 'conversations.list') response = { conversations: [] };
         else response = { error: 'unsupported fixture request' };
@@ -138,7 +146,7 @@ async function machine(id) {
 
 async function shoot(page, name, suffix) {
     if (only.length && !only.includes(name)) return;
-    await page.waitForTimeout(700);
+    await page.waitForTimeout(shellMode ? 100 : 700);
     if (name === '02-sessions') {
         const pinned = await page.locator('.pp-pin').innerText();
         assert.ok(pinned.includes(events.wing[1].text));
@@ -387,7 +395,106 @@ async function checkConversationRefresh(page, name, suffix) {
 async function go(page, hash) {
     await page.goto(base + '/app/' + hash);
     await page.waitForLoadState('networkidle').catch(() => {});
-    await page.waitForTimeout(900);
+    await page.waitForTimeout(shellMode ? 100 : 900);
+    if (shellMode) {
+        const count=[...sockets.keys()].reduce((total,id)=>total+machines[id].rows.filter(s=>!(s.pinned && s.role==='coordinator')).length,0);
+        await page.waitForFunction(expected => document.querySelector('.pp-nav-sessions small')?.textContent === String(expected.sessions || '') && document.querySelector('.pp-nav-machines small')?.textContent === String(expected.machines || ''), {sessions:count,machines:sockets.size});
+    }
+}
+
+// R1 runs the production bundle against the existing encrypted-machine fixture.
+async function assertShell(page, label) {
+    await page.locator('#paper').waitFor({state:'visible'});
+    const result = await page.evaluate(() => {
+        const box = selector => { const r=document.querySelector(selector).getBoundingClientRect(); return {x:r.x,y:r.y,width:r.width,height:r.height}; };
+        return {hash:location.hash,sessions:document.querySelector('.pp-nav-sessions small')?.textContent,machines:document.querySelector('.pp-nav-machines small')?.textContent,paper:box('#paper'),nav:box(innerWidth===390?'.pp-tabs':'.pp-side'),old:['#sidebar','#main-header','#home-section'].map(box),width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth};
+    });
+    assert.ok(result.paper.width>0 && result.paper.height>0,JSON.stringify(result));
+    const n=result.nav;
+    assert.ok(n.width>0 && n.height>0 && n.x>=0 && n.y>=0 && n.x+n.width<=result.width+1 && n.y+n.height<=result.height+1,JSON.stringify(result));
+    for (const old of result.old) assert.equal(old.width*old.height,0,JSON.stringify(result));
+    assert.ok(result.scrollWidth<=result.width,JSON.stringify(result));
+    checked(label,result);
+}
+async function runShell(browser) {
+    const original=machines.studio.rows.slice(), pages=[], contexts=[], errors=[];
+    for (const viewport of [{width:1440,height:900},{width:390,height:844}]) {
+        const context=await browser.newContext({viewport}); contexts.push(context);
+        const page=await context.newPage(); pages.push(page);
+        page.on('pageerror',error=>{ errors.push(String(error)); console.error('PAGEERROR '+error); });
+        page.on('dialog',dialog=>{ errors.push('Unexpected dialog: '+dialog.message()); dialog.dismiss(); });
+        await page.route('**/*',route=>new URL(route.request().url()).origin===base?route.continue():route.abort());
+        // The roost starts a local wing too. Keep this scenario's inventory
+        // limited to its synthetic machines, including a true zero state.
+        await page.route('**/api/app/wings', async route => {
+            const response=await route.fetch();
+            const entries=await response.json();
+            await route.fulfill({response,json:entries.filter(w=>Object.hasOwn(machines,w.wing_id))});
+        });
+    }
+    if (shellMode==='routes') for (const page of pages) {
+        await go(page,'#'); await assertShell(page,'zero-machines-'+page.viewportSize().width);
+        await shoot(page,'shell-volume-0','-'+page.viewportSize().width);
+    }
+    machines.studio.rows=[original[2]]; await machine('studio');
+    for (const page of pages) {
+        await go(page,'#sessions'); await page.locator('.pp-srow[href="#session/studio/migrate"]').waitFor();
+        if (shellMode==='routes') await shoot(page,'shell-volume-1','-'+page.viewportSize().width);
+    }
+    if (shellMode==='routes') {
+        machines.studio.rows=[...original,...Array.from({length:5},(_,i)=>row('long-'+i,'Improve organization invitation recovery for interrupted workspace migration '+(i+1),'claude',i===0?'blocked':'working','wingthing'))];
+        for (const id of ['macbook','mini']) await machine(id);
+        // Change fixture inventories across a full load, so the assertion
+        // does not depend on the application's thirty-second data poll.
+        for (const page of pages) { await page.reload(); await go(page,'#sessions'); }
+        for (let i=0;i<5;i++) {
+            const id='research-'+i; machines[id]={name:'Research workstation for extended migration projects '+(i+1),rows:[]}; await machine(id);
+            if (i===2) for (const page of pages) {
+                await go(page,'#machines'); await page.locator('[data-machine="research-2"]').waitFor();
+                await shoot(page,'shell-volume-plan-limit-6','-'+page.viewportSize().width);
+            }
+        }
+        for (const page of pages) await page.reload();
+        const routes=['#','#sessions','#machines','#account','#new','#s/redirect?wing=studio','#chat/redirect?wing=studio','#w/studio','#bogus','#new/studio','#machine/studio','#approve/studio/redirect','#needs','#decisions','#session/studio/migrate','#%broken'];
+        for (const page of pages) {
+            for (const [index,hash] of routes.entries()) {
+                await go(page,hash); await assertShell(page,hash+'-'+page.viewportSize().width);
+                const expected=/^#(s\/|chat\/|approve\/)/.test(hash)?'#session/studio/redirect':hash==='#w/studio'?'#machine/studio':['#','#bogus','#needs','#decisions','#%broken'].includes(hash)?'':hash;
+                assert.equal(await page.evaluate(()=>location.hash),expected);
+                await shoot(page,'shell-route-'+index,'-'+page.viewportSize().width);
+            }
+            await go(page,'#sessions'); const input=page.locator('#pp-filter'); await input.fill('migration'); await input.focus();
+            await page.evaluate(()=>{ window.savedFilter=document.querySelector('#pp-filter'); window.savedHeader=document.querySelector('.pp-hdr'); window.savedFirst=document.querySelector('.pp-srow'); });
+            await page.waitForTimeout(2200);
+            assert.ok(await page.evaluate(()=>window.savedFilter===document.activeElement && window.savedHeader===document.querySelector('.pp-hdr') && window.savedFirst===document.querySelector('.pp-srow')));
+            assert.equal(await input.inputValue(),'migration'); checked('retained-nodes-'+page.viewportSize().width,'Filter, header and row retained across data ticks');
+            await page.evaluate(()=>document.querySelector('#home-btn').click()); await assertShell(page,'showHome-'+page.viewportSize().width);
+            assert.equal(await page.evaluate(()=>location.hash),'');
+            await page.evaluate(()=>{location.hash='#machines';}); await page.waitForTimeout(150);
+            await page.evaluate(()=>{location.hash='#account';}); await page.waitForTimeout(150);
+            await page.goBack(); await page.waitForTimeout(150); await assertShell(page,'back-'+page.viewportSize().width);
+            await page.goForward(); await page.waitForTimeout(150); await assertShell(page,'forward-'+page.viewportSize().width);
+        }
+    } else if (shellMode==='launch') {
+        for (const page of pages) {
+            await go(page,'#new/studio'); await page.getByRole('button',{name:'Choose project',exact:true}).click();
+            await page.locator('#palette-search').fill('/Users/example/code/wingthing');
+            await page.waitForTimeout(500);
+            await page.locator('.palette-item[data-path="/Users/example/code/wingthing"]').click();
+            await page.waitForFunction(()=>/^#session\//.test(location.hash)); await page.locator('#paper .xterm').waitFor({state:'visible'});
+            await assertShell(page,'launch-'+page.viewportSize().width);
+            assert.ok(await page.evaluate(()=>document.querySelector('#paper .pp-live').contains(document.querySelector('#terminal-section'))));
+            await shoot(page,'shell-started','-'+page.viewportSize().width);
+            await go(page,'#session/studio/migrate');
+            if (page.viewportSize().width===390) await page.locator('.pp-terminal').evaluate(el=>el.open=true);
+            await page.getByRole('button',{name:'Take over terminal',exact:true}).click();
+            await page.locator('#paper .pp-live .xterm').waitFor({state:'visible'}); await assertShell(page,'takeover-'+page.viewportSize().width);
+            await page.evaluate(()=>{location.hash='#sessions';}); await page.locator('#pp-filter').waitFor();
+            assert.equal(await page.locator('#paper #terminal-section').count(),0);
+        }
+    } else throw Error('Unknown shell fixture mode');
+    assert.deepEqual(errors,[]); checked('no-page-errors-or-dialogs',errors);
+    for (const context of contexts) await context.close();
 }
 
 // A real one-time invitation from a second, non-dev roost's own wing (the
@@ -429,6 +536,10 @@ let complete = false;
 try {
     for (let i = 0; i < 100; i++) { try { if ((await fetch(base + '/health')).ok) break; } catch {} await sleep(100); }
     browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH, args: ['--disable-background-networking','--disable-component-update','--disable-default-apps','--disable-sync','--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'] });
+    if (shellMode) {
+        await runShell(browser);
+        complete = true;
+    } else {
     const contexts = [];
     for (const v of viewports) contexts.push(await browser.newContext({ viewport: { width: v.width, height: v.height }, colorScheme: 'light' }));
     const dark = [{ width: 1440, height: 900, suffix: '-desktop-dark' }, { width: 390, height: 844, suffix: '-phone-dark' }];
@@ -543,13 +654,14 @@ try {
     if (captures.length !== expected) throw Error('Incomplete capture: ' + captures.length + ' of ' + expected);
     complete = true;
     if (overflow.length) throw Error('Horizontal overflow in ' + overflow.length + ' phone captures');
+    }
 } finally {
     writeIndex(complete);
     if (browser) await browser.close();
     for (const socket of sockets.values()) try { socket.close(); } catch {}
     roost.kill('SIGTERM');
     if (joinRoost) joinRoost.kill('SIGTERM');
-    publicServer.kill('SIGTERM');
+    publicServer?.kill('SIGTERM');
     await removeState(joinState);
     await removeState(state);
     fs.closeSync(log);

@@ -486,6 +486,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                 }
                 if (!reattach) {
                     history.pushState({ view: 'terminal', sessionId: msg.session_id, wingId: S.ptyWingId }, '', sessionRoute(msg.session_id, S.ptyWingId));
+                    window.dispatchEvent(new Event('shell-navigate'));
                 }
 
                 keyReady = false;
