@@ -665,7 +665,7 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "sign-in method could not be verified", http.StatusForbidden)
 			return
 		}
-		if err := s.Store.LinkSignInMethod(userID, "google", gUser.ID); err != nil {
+		if err := s.Store.LinkGoogleSignInMethod(userID, gUser.ID, gUser.Email); err != nil {
 			signInError(w, err)
 			return
 		}

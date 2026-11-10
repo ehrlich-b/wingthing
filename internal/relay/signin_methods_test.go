@@ -250,7 +250,7 @@ func TestSignInGoogleSplitHostHandoff(t *testing.T) {
 }
 
 func TestSignInGoogleLinkProof(t *testing.T) {
-	for _, tc := range []string{"verified", "unverified", "wrong session", "expired", "identity in use", "no session"} {
+	for _, tc := range []string{"verified", "unverified", "missing email", "wrong session", "expired", "identity in use", "no session"} {
 		t.Run(tc, func(t *testing.T) {
 			store := testStore(t)
 			recoveryUser(t, store, "owner", "github", "owner@example.com")
@@ -299,7 +299,14 @@ func TestSignInGoogleLinkProof(t *testing.T) {
 					r.AddCookie(cookie)
 				}
 			}
-			w := googleRecoveryCallback(t, s, "google-subject", "another-verified@example.com", tc != "unverified", r)
+			email := "another-verified@example.com"
+			if tc == "missing email" {
+				email = ""
+			}
+			w := googleRecoveryCallback(t, s, "google-subject", email, tc != "unverified", r)
+			if tc == "missing email" && w.Code != http.StatusForbidden {
+				t.Fatalf("missing email: %d %s", w.Code, w.Body)
+			}
 			linked, err := store.GetUserByProvider("google", "google-subject")
 			mustTest(t, err)
 			if tc == "verified" {
@@ -311,6 +318,80 @@ func TestSignInGoogleLinkProof(t *testing.T) {
 				}
 			} else if w.Code < 400 || (linked != nil && linked.ID == "owner") {
 				t.Fatalf("unsafe link: %d %#v", w.Code, linked)
+			}
+		})
+	}
+}
+
+func TestSignInGoogleLinkEmailCollision(t *testing.T) {
+	for _, tc := range []struct {
+		name, provider, email string
+		allowed               bool
+	}{
+		{name: "GitHub address", provider: "github", email: "backup@example.com"},
+		{name: "Google address", provider: "google", email: "backup@example.com"},
+		{name: "normalized address", provider: "github", email: " Backup@Example.COM "},
+		{name: "legacy email identity", provider: "email", email: " Backup@Example.COM "},
+		{name: "own address", email: "owner@example.com", allowed: true},
+		{name: "unclaimed address", email: "backup@example.com", allowed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := testStore(t)
+			recoveryUser(t, store, "owner", "github", "owner@example.com")
+			if tc.provider == "email" {
+				// Legacy email accounts can have only a provider subject.
+				mustTest(t, store.UpsertUser(&User{ID: "other", Provider: "email", ProviderID: tc.email}))
+			} else if tc.provider != "" {
+				recoveryUser(t, store, "other", tc.provider, tc.email)
+			}
+			mustTest(t, store.CreateSession("owner-session", "owner", time.Now().Add(time.Hour)))
+			mustTest(t, store.createSignInLink("link_collision", "owner", "google", ""))
+			s := NewServer(store, ServerConfig{GoogleClientID: "fixture"})
+			r := signInRequest(http.MethodGet, "/auth/google/callback?code=fixture&state=link_collision", "owner-session")
+			r.AddCookie(&http.Cookie{Name: "oauth_state", Value: "link_collision"})
+			email := strings.ToLower(strings.TrimSpace(tc.email))
+			w := googleRecoveryCallback(t, s, "google-subject", email, true, r)
+			if recoverySession(t, s, w) != nil {
+				t.Fatal("link callback issued a login session")
+			}
+			if !tc.allowed {
+				if w.Code != http.StatusConflict {
+					t.Fatalf("email collision accepted: %d %s", w.Code, w.Body)
+				}
+				var refusal map[string]string
+				decodeTestJSON(t, w.Body, &refusal)
+				if w.Code != http.StatusConflict || refusal["code"] != "identity_in_use" {
+					t.Fatalf("email collision accepted: %d %#v", w.Code, refusal)
+				}
+				if linked, err := store.GetUserByProvider("google", "google-subject"); err != nil || linked != nil {
+					t.Fatalf("refused link registered an identity: %#v %v", linked, err)
+				}
+				methods, err := store.ListSignInMethods("owner")
+				if err != nil || len(methods) != 1 || methods[0].Provider != "github" {
+					t.Fatalf("refused link changed method count: %#v %v", methods, err)
+				}
+				if err := store.RemoveSignInMethod("owner", "github"); !errors.Is(err, ErrLastSignInMethod) {
+					t.Fatalf("working method could be removed: %v", err)
+				}
+				other, err := store.GetUserByID("other")
+				if err != nil || other == nil || (tc.provider == "email" && other.Email != nil) ||
+					(tc.provider != "email" && (other.Email == nil || *other.Email != tc.email)) {
+					t.Fatalf("other account changed: %#v %v", other, err)
+				}
+			} else {
+				if w.Code != http.StatusSeeOther {
+					t.Fatalf("valid link refused: %d %s", w.Code, w.Body)
+				}
+				mustTest(t, store.RemoveSignInMethod("owner", "github"))
+				for attempt := 0; attempt < 2; attempt++ {
+					login := googleRecoveryCallback(t, s, "google-subject", email, true)
+					if user := recoverySession(t, s, login); login.Code != http.StatusSeeOther || user == nil || user.ID != "owner" {
+						t.Fatalf("linked Google cannot sign in alone: %d %#v %s", login.Code, user, login.Body)
+					}
+				}
+			}
+			if user, err := store.GetSession("owner-session"); err != nil || user == nil || user.ID != "owner" {
+				t.Fatalf("existing session changed: %#v %v", user, err)
 			}
 		})
 	}

@@ -44,6 +44,21 @@ func (s *RelayStore) ListSignInMethods(userID string) ([]SignInMethod, error) {
 // LinkSignInMethod is called only after the provider (or a consumed email
 // token) has proved this identity. Never move an identity between accounts.
 func (s *RelayStore) LinkSignInMethod(userID, provider, providerID string) error {
+	return s.linkSignInMethod(userID, provider, providerID, "")
+}
+
+// LinkGoogleSignInMethod checks the verified address before counting Google
+// as a working method, rejecting conflicts with another account's unique email
+// or recovery identity in the same transaction that links the provider subject.
+func (s *RelayStore) LinkGoogleSignInMethod(userID, providerID, email string) error {
+	email, err := normalizeRecoveryEmail(email)
+	if err != nil {
+		return ErrAccountRecoveryRefused
+	}
+	return s.linkSignInMethod(userID, "google", providerID, email)
+}
+
+func (s *RelayStore) linkSignInMethod(userID, provider, providerID, email string) error {
 	if (provider != "google" && provider != "email") || providerID == "" {
 		return ErrAccountRecoveryRefused
 	}
@@ -58,6 +73,9 @@ func (s *RelayStore) LinkSignInMethod(userID, provider, providerID string) error
 			return ErrAccountRecoveryRefused
 		}
 		providerID = normalized
+		email = normalized
+	}
+	if email != "" {
 		// Legacy email subjects can have mixed case or whitespace. Also reserve
 		// another account's verified recovery address; linking must not make its
 		// next login ambiguous or steal its recovery path.
@@ -73,7 +91,7 @@ func (s *RelayStore) LinkSignInMethod(userID, provider, providerID string) error
 				return err
 			}
 			stored, err := normalizeRecoveryEmail(address)
-			if err == nil && stored == normalized && id != userID {
+			if err == nil && stored == email && id != userID {
 				rows.Close()
 				return ErrIdentityInUse
 			}
@@ -156,6 +174,8 @@ func signInError(w http.ResponseWriter, err error) {
 		code, status, message = "last_signin_method", http.StatusConflict, "This is your only way in"
 	case errors.Is(err, ErrIdentityInUse):
 		code, status, message = "identity_in_use", http.StatusConflict, "This sign-in method is already linked"
+	case errors.Is(err, ErrAccountRecoveryRefused):
+		code, status, message = "verification_required", http.StatusForbidden, "Sign-in method could not be verified"
 	case errors.Is(err, ErrSignInMethodNotFound):
 		code, status, message = "method_not_found", http.StatusNotFound, "Sign-in method not found"
 	}
