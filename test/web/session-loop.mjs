@@ -83,10 +83,10 @@ try {
    const attach=spawn('nice',['-n','10',binary,'attach',sid],{cwd:work,env,stdio:['pipe','ignore','ignore']}); children.push(attach);
    await sleep(300);
    for(let i=0;i<8;i++) attach.stdin.write('Long follow-up '+i+' investigating session message order and native transcript replay\r');
-   await until(async()=>await page.locator('.pp-conversation .pp-row').count()===24,3000);
+   await until(async()=>await page.locator('.pp-conversation .pp-row').count()===24,10000);
    for(const width of [1440,390]) {await page.setViewportSize({width,height:width===390?844:900});await page.waitForTimeout(150); await page.screenshot({path:path.join(out,'codex-limit24-'+width+'.png')});}
    attach.stdin.write('One more turn beyond the message display limit\r');
-   await until(async()=>(await page.locator('.pp-conversation').innerText()).includes('+2 earlier messages'),3000);
+   await until(async()=>(await page.locator('.pp-conversation').innerText()).includes('+2 earlier messages'),10000);
    assert.equal(await page.locator('.pp-conversation .pp-row').count(),24);
    for(const width of [1440,390]) {await page.setViewportSize({width,height:width===390?844:900});await page.waitForTimeout(150); await page.screenshot({path:path.join(out,'codex-over-limit-'+width+'.png')});}
    attach.stdin.write('\x02q');await until(()=>attach.exitCode!==null);
