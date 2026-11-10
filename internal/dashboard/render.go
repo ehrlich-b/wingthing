@@ -438,13 +438,14 @@ func render(s *state, width, height int, now time.Time) string {
 			lines[y] = viewLine{text: text, tone: role, split: old.split, frame: old.frame, right: old.right, rightTone: old.rightTone}
 		}
 	}
-	// wing sits outside the session table, so it is not counted as a session.
+	// In the ungrouped view wing sits outside the table and its session count.
+	grouped := s.hasContexts()
 	total, blocked, unread, cached := 0, 0, 0, 0
 	pinCounted := false
 	for name, m := range s.machines {
 		for _, session := range m.sessions {
 			r := s.sessionRow(name, session)
-			pin := r.Pinned && !pinCounted
+			pin := !grouped && r.Pinned && !pinCounted
 			if pin {
 				pinCounted = true
 			} else {
@@ -505,8 +506,9 @@ func render(s *state, width, height int, now time.Time) string {
 	rows := s.rows()
 	var work []row
 	var pin *row
+	// Grouped pins stay with their machines so display and navigation agree.
 	for i := range rows {
-		if rows[i].Pinned && pin == nil {
+		if !grouped && rows[i].Pinned && pin == nil {
 			r := rows[i]
 			pin = &r
 		} else {

@@ -109,8 +109,9 @@ func TestContextViewportSelectionAndEvidence(t *testing.T) {
 // Grouped navigation and action routing must follow the exact rendered order,
 // including coordinators pinned on more than one machine.
 func TestContextPinnedNavigationMatchesDisplay(t *testing.T) {
-	s := contextFixture(9)
-	for _, name := range s.machineNames() {
+	s := contextFixture(3)
+	// A Work-only pin must remain below the unpinned Home row.
+	for _, name := range []string{"slide", "studio"} {
 		m := s.machines[name]
 		pinned := session("coordinator", "wing", "/projects/product", "working")
 		pinned.Pinned, pinned.Role = true, "coordinator"
@@ -122,23 +123,48 @@ func TestContextPinnedNavigationMatchesDisplay(t *testing.T) {
 	check := func() {
 		t.Helper()
 		rows := s.rows()
-		lines := make([]viewLine, len(rows)+10)
-		s.renderContexts(lines, rows, 0, len(lines)-1, 120, now)
 		var displayed []string
-		for _, line := range lines {
-			for _, r := range rows {
-				if line.text == sessionLine(s, r, 120, now).text {
-					displayed = append(displayed, r.key())
+		for _, width := range []int{100, 120} {
+			displayed = nil
+			rowWidth := width
+			if width >= 120 {
+				rowWidth = 75 // The production split view reserves 78 cells, including its frame.
+			}
+			// Exercise the entire renderer, including its pinned-row handling.
+			screen := renderedLines(t, render(s, width, 48, now), width, 48)
+			total := 0
+			for _, m := range s.machines {
+				total += len(m.sessions)
+			}
+			if !strings.Contains(screen[0], plural(total, "session")) {
+				t.Fatalf("grouped session count excludes pins: %s", screen[0])
+			}
+			for _, line := range screen {
+				for _, r := range rows {
+					text := strings.TrimRight(sessionLine(s, r, rowWidth, now).text, " ")
+					if strings.HasPrefix(strings.TrimPrefix(line, "│ "), text) {
+						displayed = append(displayed, r.key())
+					}
 				}
 			}
-		}
-		if len(displayed) != len(rows) {
-			t.Fatalf("displayed %v; rows %v", displayed, rows)
+			if len(displayed) != len(rows) {
+				t.Fatalf("width %d: displayed %v; rows %v", width, displayed, rows)
+			}
+			for i, key := range displayed {
+				if rows[i].key() != key {
+					t.Fatalf("width %d row %d: displayed %s, ordered %s", width, i, key, rows[i].key())
+				}
+			}
 		}
 		s.selected = rows[0].key()
 		for i, key := range displayed {
 			if rows[i].key() != key || s.selected != key {
 				t.Fatalf("row %d: displayed %s, ordered %s, selected %s", i, key, rows[i].key(), s.selected)
+			}
+			screen := strings.Join(renderedLines(t, render(s, 120, 36, now), 120, 36), "\n")
+			selected := strings.TrimRight(sessionLine(s, rows[i], 75, now).text, " ")
+			if !strings.Contains(screen, selected) {
+				t.Fatalf("selected %s is invisible:\n%s", key, screen)
 			}
 			act, _ := s.handle("enter")
 			if act == nil || act.row.key() != key {
@@ -147,6 +173,28 @@ func TestContextPinnedNavigationMatchesDisplay(t *testing.T) {
 			s.move(1)
 		}
 	}
+	check()
+	if dir := os.Getenv("WT_CONTEXT_EVIDENCE"); dir != "" {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		for _, width := range []int{48, 120, 180} {
+			output := render(s, width, 36, now)
+			screen := strings.Join(renderedLines(t, output, width, 36), "\n") + "\n"
+			stem := filepath.Join(dir, fmt.Sprintf("context-%dx36-pinned", width))
+			for suffix, content := range map[string]string{".ansi": output, ".txt": screen} {
+				if err := os.WriteFile(stem+suffix, []byte(content), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	m := s.machines["local"]
+	pinned := session("coordinator", "wing", "/projects/product", "working")
+	pinned.Pinned, pinned.Role = true, "coordinator"
+	m.sessions = append(m.sessions, pinned)
+	s.machines["local"] = m
+	s.reconcile()
 	check()
 	for _, name := range s.machineNames() {
 		s.machineFilter = name
