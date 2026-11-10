@@ -41,6 +41,7 @@ type SessionEvent struct {
 	Text              string          `json:"text,omitempty"`
 	Raw               json.RawMessage `json:"raw,omitempty"`
 	ProviderSessionID string          `json:"provider_session_id,omitempty"`
+	TurnID            string          `json:"turn_id,omitempty"`
 	Timestamp         string          `json:"timestamp,omitempty"`
 	Reason            string          `json:"reason,omitempty"`
 	Truncated         bool            `json:"truncated,omitempty"`
@@ -830,6 +831,17 @@ func (j *lifecycleJournal) importTranscript(root *os.File, eggDir, cwd, id strin
 			return fmt.Errorf("provider transcript was truncated: %w", err)
 		}
 	}
+	// Restore transcript context independently of hooks, including across the
+	// bounded import batches and journal reopen. A hook may describe a newer
+	// turn than the resumed transcript currently being imported.
+	var transcriptTurnID string
+	if agent == "codex" {
+		for _, event := range j.events {
+			if event.Source == "codex_transcript" && event.ProviderSessionID == id && event.TurnID != "" {
+				transcriptTurnID = event.TurnID
+			}
+		}
+	}
 	r := bufio.NewReader(j.boundedReader(reader))
 	for count := 0; count < 500; count++ {
 		line, size, oversized, readErr := readNativeLifecycleLine(r)
@@ -862,6 +874,11 @@ func (j *lifecycleJournal) importTranscript(root *os.File, eggDir, cwd, id strin
 		}
 		if agent == "codex" {
 			parseCodexTranscriptEvent(&event, line, id)
+			if event.TurnID != "" {
+				transcriptTurnID = event.TurnID
+			} else if event.Type == "message" {
+				event.TurnID = transcriptTurnID
+			}
 			event = boundedLifecycleEvent(event)
 			if event.Truncated {
 				event.OriginalBytes = size
@@ -1077,6 +1094,7 @@ func (j *lifecycleJournal) importProviderHooks(root *os.File, spool, providerID,
 		}
 		var hook struct {
 			SessionID    string            `json:"session_id"`
+			TurnID       string            `json:"turn_id"`
 			Event        string            `json:"hook_event_name"`
 			Prompt       string            `json:"prompt"`
 			Notification string            `json:"notification_type"`
@@ -1092,6 +1110,9 @@ func (j *lifecycleJournal) importProviderHooks(root *os.File, spool, providerID,
 			providerID = hook.SessionID
 		}
 		e.ProviderSessionID = providerID
+		if agent == "codex" && validLifecycleID(hook.TurnID) {
+			e.TurnID = hook.TurnID
+		}
 		if providerID == "" || hook.SessionID != providerID {
 			e.Type = "provider_warning"
 			e.Reason = "native hook belongs to another provider session"

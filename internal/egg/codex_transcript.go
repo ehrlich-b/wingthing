@@ -53,6 +53,7 @@ func parseCodexTranscriptEvent(event *SessionEvent, line []byte, id string) {
 		Timestamp string `json:"timestamp"`
 		Payload   struct {
 			ID      string `json:"id"`
+			TurnID  string `json:"turn_id"`
 			Type    string `json:"type"`
 			Role    string `json:"role"`
 			Content []struct {
@@ -70,6 +71,9 @@ func parseCodexTranscriptEvent(event *SessionEvent, line []byte, id string) {
 		return
 	}
 	event.Timestamp = record.Timestamp
+	if (record.Type == "turn_context" || record.Type == "event_msg" && record.Payload.Type == "task_started" || record.Type == "response_item") && validLifecycleID(record.Payload.TurnID) {
+		event.TurnID = record.Payload.TurnID
+	}
 	if record.Type != "response_item" || record.Payload.Type != "message" || (record.Payload.Role != "user" && record.Payload.Role != "assistant") {
 		return
 	}

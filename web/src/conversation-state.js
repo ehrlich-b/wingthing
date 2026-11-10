@@ -83,13 +83,13 @@ export function applyConversationRead(previous, view, meta) {
             next.messages.push({ type: 'activity', eventType: event.type, state: event.state || '', reason: event.reason || '', report: event.report, sequence: event.sequence, timestamp: event.timestamp || '' });
         }
         if (agent === 'codex' && event.source === 'codex_hook' && event.type === 'prompt_submitted' && typeof event.text === 'string') {
-            // A hook may arrive just after its native user record. Only the
-            // open native turn can be that record: an assistant reply closes
-            // it, even when a resumed conversation repeats the same prompt.
-            const native = next.messages.findLastIndex(m => ['user', 'assistant'].includes(m.type));
+            // Journal order is import order, not provider turn order. Match
+            // only native turn identity; equal text can belong to resumed
+            // history, even when that history arrives after this hook.
+            const native = next.messages.findIndex(m => m.type === 'user' && m.source === 'codex_transcript' && !m.hookMatched && event.turn_id && m.turnId === event.turn_id && m.content === event.text);
             const tail = next.messages[native];
-            if (tail && tail.type === 'user' && tail.source === 'codex_transcript' && !tail.hookMatched && tail.content === event.text) next.messages[native] = { ...tail, hookMatched: true };
-            else next.messages.push({ type: 'user', content: event.text, source: 'codex_hook', timestamp: event.timestamp || '', sequence: event.sequence });
+            if (tail) next.messages[native] = { ...tail, hookMatched: true };
+            else next.messages.push({ type: 'user', content: event.text, source: 'codex_hook', turnId: event.turn_id || '', timestamp: event.timestamp || '', sequence: event.sequence });
         } else if (event.raw) {
             var parsed = parseJSONL(JSON.stringify(event.raw), agent);
             parsed.forEach(function(message, index) {
@@ -109,10 +109,10 @@ export function applyConversationRead(previous, view, meta) {
         } else if (event.type === 'message' && (event.role === 'user' || event.role === 'assistant')) {
             let hookMatched = false;
             if (event.source === 'codex_transcript' && event.role === 'user') {
-                const hook = next.messages.findIndex(m => m.type === 'user' && (m.source === 'codex_hook' || !m.source) && m.content === event.text);
+                const hook = next.messages.findIndex(m => m.type === 'user' && m.source === 'codex_hook' && event.turn_id && m.turnId === event.turn_id && m.content === event.text);
                 if (hook !== -1) { next.messages.splice(hook, 1); hookMatched = true; }
             }
-            next.messages.push({ type: event.role, source: event.source || '', hookMatched, content: event.text || '', timestamp: event.timestamp || '', sequence: event.sequence, truncated: event.truncated === true });
+            next.messages.push({ type: event.role, source: event.source || '', turnId: event.turn_id || '', hookMatched, content: event.text || '', timestamp: event.timestamp || '', sequence: event.sequence, truncated: event.truncated === true });
         } else if (agent === 'codex' && event.type === 'prompt_submitted' && typeof event.text === 'string') {
             next.messages.push({ type: 'user', content: event.text, timestamp: event.timestamp || '', sequence: event.sequence, truncated: event.truncated === true });
         }

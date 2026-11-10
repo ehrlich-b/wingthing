@@ -7,6 +7,55 @@ import (
 	"testing"
 )
 
+func TestCodexTranscriptTurnIdentitySurvivesResumedImportAndReopen(t *testing.T) {
+	for _, context := range []string{
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"old"}}`,
+		`{"type":"turn_context","payload":{"turn_id":"old"}}`,
+	} {
+		t.Run(context, func(t *testing.T) {
+			dir, home, cwd, sessions := transcriptFixture(t, "codex", "ours")
+			spool := filepath.Join(home, ".codex", "wingthing-events", filepath.Base(dir))
+			if err := os.MkdirAll(spool, 0700); err != nil {
+				t.Fatal(err)
+			}
+			lifecycleWrite(t, filepath.Join(spool, "prompt.json"), `{"session_id":"ours","hook_event_name":"UserPromptSubmit","prompt":"repeat","turn_id":"new"}`)
+			path := filepath.Join(sessions, "rollout-date-ours.jsonl")
+			prefix := `{"type":"session_meta","payload":{"id":"ours"}}` + "\n" + context + "\n"
+			user := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"repeat"}]}}` + "\n"
+			lifecycleWrite(t, path, prefix+user)
+			read := func(after int64) SessionView {
+				t.Helper()
+				view, err := ReadSessionLifecycle(dir, "codex", cwd, home, "ours", true, after, 200)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return view
+			}
+			first := read(0)
+			if len(first.Events) != 4 || first.Events[0].Source != "codex_hook" || first.Events[0].TurnID != "new" || first.Events[3].TurnID != "old" {
+				t.Fatalf("hook and historical native turn lost identity: %+v", first.Events)
+			}
+			// Import resumes from the journal's byte offset after reopening. The
+			// hook's newer ID must never become the historical transcript context.
+			answer := `{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"old reply"}]}}` + "\n"
+			lifecycleWrite(t, path, prefix+user+answer)
+			second := read(first.Cursor)
+			if len(second.Events) != 1 || second.Events[0].TurnID != "old" {
+				t.Fatalf("reopened importer lost historical context: %+v", second.Events)
+			}
+			newContext := `{"type":"event_msg","payload":{"type":"task_started","turn_id":"new"}}` + "\n"
+			lifecycleWrite(t, path, prefix+user+answer+newContext+user)
+			third := read(second.Cursor)
+			if len(third.Events) != 2 || third.Events[1].TurnID != "new" || third.Events[1].Text != "repeat" {
+				t.Fatalf("new native prompt lost hook identity: %+v", third.Events)
+			}
+			if replay := read(third.Cursor); len(replay.Events) != 0 {
+				t.Fatalf("replayed imported turns: %+v", replay.Events)
+			}
+		})
+	}
+}
+
 func TestCodexTranscriptExactThreadReplayAndPartialAppend(t *testing.T) {
 	dir, home, cwd, sessions := transcriptFixture(t, "codex", "ours")
 	dated := filepath.Join(sessions, "2026", "11", "09")

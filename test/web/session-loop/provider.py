@@ -42,7 +42,9 @@ while True:
     text = buffer.decode().removeprefix('\x1b[200~').removesuffix('\x1b[201~'); buffer=b''
     if not text: continue
     with (Path.cwd()/(agent+'-pty.jsonl')).open('a') as f: f.write(json.dumps(text)+'\n')
-    hook('UserPromptSubmit', prompt=text, turn_id=str(uuid.uuid4()))
+    turn_id = str(uuid.uuid4())
+    hook('UserPromptSubmit', prompt=text, turn_id=turn_id)
+    if agent == 'codex': append(dict(type='event_msg', payload=dict(type='task_started', turn_id=turn_id)))
     answer = 'Reply to '+text
     for role, content in [('user',text),('assistant',answer)]:
         if agent == 'claude': append(dict(type=role, sessionId=sid, message=dict(role=role, content=content, stop_reason='end_turn' if role=='assistant' else None)))
