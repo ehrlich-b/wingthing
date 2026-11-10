@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -460,12 +461,30 @@ func TestRecoveryRefusesOutageIdentityCollisionsAfterUpgrade(t *testing.T) {
 		for _, address := range []string{"owner@example.com", "OWNER@EXAMPLE.COM"} {
 			t.Run(provider+"/"+address, func(t *testing.T) {
 				path := filepath.Join(testsocket.Dir(t), "relay.db")
-				store, err := OpenRelay(path)
+				// Start from the actual pre-identity schema, including its
+				// migration ledger, rather than dismantling the current schema.
+				db, err := sql.Open("sqlite", path)
 				mustTest(t, err)
-				_, err = store.DB().Exec(`DROP TRIGGER users_register_identity;
-					DROP TABLE user_identities;
-					DELETE FROM schema_migrations WHERE version = '008_user_identities.sql'`)
+				t.Cleanup(func() { _ = db.Close() })
+				mustMigrationExec(t, db, "PRAGMA foreign_keys=ON")
+				mustMigrationExec(t, db, "CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
+				entries, err := migrationsFS.ReadDir("migrations")
 				mustTest(t, err)
+				for _, entry := range entries {
+					if entry.IsDir() || entry.Name() >= "008_user_identities.sql" {
+						continue
+					}
+					contents, err := migrationsFS.ReadFile("migrations/" + entry.Name())
+					mustTest(t, err)
+					tx, err := db.Begin()
+					mustTest(t, err)
+					_, err = tx.Exec(string(contents))
+					mustTest(t, err)
+					_, err = tx.Exec("INSERT INTO schema_migrations (version) VALUES (?)", entry.Name())
+					mustTest(t, err)
+					mustTest(t, tx.Commit())
+				}
+				store := &RelayStore{db: db}
 				recoveryUser(t, store, "github-owner", "github", "owner@example.com")
 				mustTest(t, store.CreateSession("original-session", "github-owner", time.Now().Add(time.Hour)))
 				mustTest(t, store.CreateDeviceToken("original-machine", "github-owner", "wing", nil))

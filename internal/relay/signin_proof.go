@@ -31,21 +31,23 @@ func (s *RelayStore) saveGoogleSignIn(user *User, subject, email, provenance str
 		return err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT email FROM users WHERE email IS NOT NULL AND id <> ?
-        UNION ALL SELECT provider_id FROM user_identities WHERE provider = 'email' AND user_id <> ?`, userID, userID)
+	rows, err := tx.Query(`SELECT email, 1 FROM users WHERE email IS NOT NULL AND id <> ?
+        UNION ALL SELECT provider_id, 0 FROM user_identities WHERE provider = 'email' AND user_id <> ?`, userID, userID)
 	if err != nil {
 		return err
 	}
-	collision := false
+	collision, contactCollision := false, false
 	for rows.Next() {
 		var address string
-		if err := rows.Scan(&address); err != nil {
+		var contact bool
+		if err := rows.Scan(&address, &contact); err != nil {
 			rows.Close()
 			return err
 		}
 		stored, err := normalizeRecoveryEmail(address)
 		if err == nil && stored == email {
 			collision = true
+			contactCollision = contactCollision || contact
 		}
 	}
 	err = rows.Err()
@@ -58,7 +60,10 @@ func (s *RelayStore) saveGoogleSignIn(user *User, subject, email, provenance str
         WHERE provider = 'google' AND provider_id = ? AND user_id = ?)`, subject, userID).Scan(&proved); err != nil {
 		return err
 	}
-	if collision && !proved {
+	// Preserve independent verified Google signup beside a legacy email-only
+	// identity, without claiming that identity's contact address. A conflicting
+	// contact or ambiguous legacy OAuth identity still cannot bootstrap trust.
+	if collision && !proved && (contactCollision || provenance != "verified_signup") {
 		return ErrAccountRecoveryRefused
 	}
 	if err := upsertUser(tx, user); err != nil {
