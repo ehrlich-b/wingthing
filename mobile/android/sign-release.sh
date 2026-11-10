@@ -2,6 +2,8 @@
 # Keep passwords in a file, including when the caller enables shell tracing.
 set +x
 set -euo pipefail
+# Signing is unattended; a bad key/password must fail instead of prompting.
+exec </dev/null
 if [[ $# != 5 ]]; then
   echo 'Usage: sign-release.sh <unsigned.apk> <unsigned.aab> <keystore.p12> <password-file> <out-dir>' >&2
   exit 2
@@ -27,7 +29,7 @@ trap 'rm -rf -- "$work_dir"' EXIT
 "$build_tools/zipalign" -P 16 -f 4 "$apk" "$work_dir/aligned.apk"
 "$build_tools/apksigner" sign --ks "$keystore" --ks-type PKCS12 \
   --ks-key-alias "${WT_SIGNING_ALIAS:-wingthing}" --ks-pass "file:$password_file" \
-  --key-pass "file:$password_file" --v1-signing-enabled false \
+  --v1-signing-enabled false \
   --v2-signing-enabled true --v3-signing-enabled true \
   --out "$signed_apk" "$work_dir/aligned.apk"
 jarsigner -keystore "$keystore" -storetype PKCS12 -storepass:file "$password_file" \

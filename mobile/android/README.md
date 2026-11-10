@@ -24,7 +24,8 @@ Sign the unsigned artifacts on the machine holding the release key:
 
 The PKCS12 key alias defaults to `wingthing`; set `WT_SIGNING_ALIAS` for another
 alias. Use a private password file containing the password on its
-first line, with permissions `0600`. The script passes the file directly to the
+first line, with permissions `0600`; the store and key must use that same
+password. The script passes the file directly to the
 signing tools. It zipaligns the APK for 16 KB pages, signs with APK v2 and v3,
 and jarsigns the AAB. It verifies both outputs and refuses to overwrite existing
 `wingthing-release.apk` or `wingthing-release.aab` files. Only the signed APK
