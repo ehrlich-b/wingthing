@@ -51,7 +51,7 @@ run(['go','test','-p','2','./internal/egg','-run','^(TestCodexTranscript.*|TestL
 run(['go','test','-p','2','./internal/ws','-run','^TestClientRegistersLatePTYAttachAfterAuthorization$','-count=1'])
 run(['node','--test','web/test/codex-transcript.test.js','web/src/conversation-recovery.test.js'])
 run(['go','build','-p','2','-o','.scratch/look-public','./test/web/public-server'])
-look_env=dict(ENV, WT_LOOK_BIN=str(SCRATCH/'wt-candidate'), WT_LOOK_PORT=str(ports()), WT_LOOK_SHOTS=str(EVIDENCE/'look'), WT_LOOK_ONLY='03-session', PLAYWRIGHT_MODULE='../../web/node_modules/playwright/index.mjs')
+look_env=dict(ENV, WT_LOOK_BIN=str(SCRATCH/'wt-candidate'), WT_LOOK_PORT=str(ports()), WT_LOOK_SHOTS=str(EVIDENCE/'look'), WT_LOOK_ONLY='03-session,03-session-one', PLAYWRIGHT_MODULE='../../web/node_modules/playwright/index.mjs')
 log_run(['node','test/web/look.mjs'],EVIDENCE/'look.log',look_env)
 look=json.loads((EVIDENCE/'look/capture.json').read_text())
 assert look['complete'] and not look['overflow'], look
