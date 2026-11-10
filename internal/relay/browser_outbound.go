@@ -117,9 +117,9 @@ func (s *Server) runBrowserWriter(conn *websocket.Conn, q *browserOutbound) {
 			q.jobs = q.jobs[1:]
 			q.bytes -= job.bytes
 			q.mu.Unlock()
-			ctx, cancel := context.WithTimeout(q.ctx, relayWriteTimeout)
-			job.write(ctx)
-			cancel()
+			// Rate limiting uses the browser lifetime. Each socket write starts
+			// its own deadline after the shared limiter has admitted the frame.
+			job.write(q.ctx)
 		}
 	}
 }
@@ -131,6 +131,18 @@ func writeWingPayload(ctx context.Context, conn *websocket.Conn, data []byte) er
 }
 
 func writeWingJSON(ctx context.Context, conn *websocket.Conn, value any) error {
+	ctx, cancel := context.WithTimeout(ctx, relayWriteTimeout)
+	defer cancel()
+	return writeWebSocketJSON(ctx, conn, value)
+}
+
+func writeBrowserPayload(ctx context.Context, conn *websocket.Conn, data []byte) error {
+	ctx, cancel := context.WithTimeout(ctx, relayWriteTimeout)
+	defer cancel()
+	return conn.Write(ctx, websocket.MessageText, data)
+}
+
+func writeBrowserJSON(ctx context.Context, conn *websocket.Conn, value any) error {
 	ctx, cancel := context.WithTimeout(ctx, relayWriteTimeout)
 	defer cancel()
 	return writeWebSocketJSON(ctx, conn, value)

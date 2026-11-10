@@ -953,21 +953,19 @@ func (s *Server) forwardTunnelToBrowser(wingID, requestID string, data []byte, d
 }
 
 func (s *Server) deliverTunnelToBrowser(ctx context.Context, wingID, requestID string, data []byte, pending *pendingTunnelRequest, overBudget bool) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	if overBudget {
 		message := ws.ErrorMsg{
 			Type: ws.TypeError, RequestID: requestID,
 			Message: "coordination response exceeded the hosted signaling limit",
 		}
-		if err := writeWebSocketJSON(ctx, pending.Browser, message); err != nil {
+		if err := writeBrowserJSON(ctx, pending.Browser, message); err != nil {
 			log.Printf("report oversized coordination response: %v", err)
 		}
 		return
 	}
 	if pending.Coordination {
 		if !s.writeCoordinationPayload(ctx, pending.Browser, data) {
-			// A closed browser or exhausted sustained-rate deadline cannot consume the rest
+			// A closed browser or canceled rate wait cannot consume the rest
 			// of this response. Remove the request immediately so a modified
 			// wing cannot keep making the relay rate-limit or notify dead clients
 			// until the normal request TTL expires.

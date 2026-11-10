@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -497,7 +498,7 @@ func (s *Server) notifyWingOffline(wingID string) {
 	msg := []byte(`{"type":"wing.offline"}`)
 	for _, connection := range s.PTY.offlineRecipients(wingID) {
 		s.enqueueBrowser(connection, len(msg), "", func(ctx context.Context) {
-			if err := connection.Write(ctx, websocket.MessageText, msg); err != nil {
+			if err := writeBrowserPayload(ctx, connection, msg); err != nil {
 				log.Printf("notify browser that wing %s is offline: %v", wingID, err)
 			}
 		})
@@ -1036,7 +1037,7 @@ func (s *Server) denyRelayEntitlement(ctx context.Context, conn *websocket.Conn,
 }
 
 func (s *Server) denyHostedRelay(ctx context.Context, conn *websocket.Conn, userID, wingID, operation, requestID, sessionID string) {
-	if err := writeWebSocketJSON(ctx, conn, ws.ErrorMsg{
+	if err := writeBrowserJSON(ctx, conn, ws.ErrorMsg{
 		Type: ws.TypeError, RequestID: requestID, SessionID: sessionID,
 		Message: "hosted relay payload transport is disabled by this wing",
 	}); err != nil {
@@ -1277,7 +1278,7 @@ func (s *Server) writeControllerPayload(ctx context.Context, route *PTYRoute, bc
 				Message: "hosted relay is not included on the free direct tier; connect directly, use a self-hosted roost, or upgrade to Pro",
 			}
 
-			if err := writeWebSocketJSON(ctx, bc, denied); err != nil {
+			if err := writeBrowserJSON(ctx, bc, denied); err != nil {
 				log.Printf("report browser relay denial: %v", err)
 			}
 		}
@@ -1287,11 +1288,16 @@ func (s *Server) writeControllerPayload(ctx context.Context, route *PTYRoute, bc
 	// Meter outbound bandwidth (relay → browser is what costs on Fly)
 	if s.Bandwidth != nil {
 		if err := s.Bandwidth.Wait(ctx, userID, len(data)); err != nil {
+			if !errors.Is(err, errMonthlyBandwidthExceeded) {
+				log.Printf("wait for relay bandwidth: %v", err)
+				return
+			}
+
 			msg := ws.BandwidthExceeded{
 				Type:    ws.TypeBandwidthExceeded,
 				Message: "Monthly bandwidth limit exceeded. Upgrade to pro for higher limits.",
 			}
-			if writeErr := writeWebSocketJSON(ctx, bc, msg); writeErr != nil {
+			if writeErr := writeBrowserJSON(ctx, bc, msg); writeErr != nil {
 				log.Printf("report relay bandwidth exhaustion: %v", writeErr)
 			}
 			// Detach browser so subsequent forwards are dropped (send once)
@@ -1308,7 +1314,7 @@ func (s *Server) writeControllerPayload(ctx context.Context, route *PTYRoute, bc
 		}
 	}
 
-	if err := bc.Write(ctx, websocket.MessageText, data); err != nil {
+	if err := writeBrowserPayload(ctx, bc, data); err != nil {
 		log.Printf("forward PTY payload to browser: %v", err)
 		s.forwardBrowserDetach(bc, sessionID)
 		route.mu.Lock()
@@ -1340,7 +1346,7 @@ func (s *Server) deliverRelayPayload(ctx context.Context, conn *websocket.Conn, 
 			Type: ws.TypeError, SessionID: sessionID, RequestID: requestID,
 			Message: "hosted relay is not included on the free direct tier; connect directly, use a self-hosted roost, or upgrade to Pro",
 		}
-		if err := writeWebSocketJSON(ctx, conn, denied); err != nil {
+		if err := writeBrowserJSON(ctx, conn, denied); err != nil {
 			log.Printf("report relay payload denial: %v", err)
 		}
 	}
@@ -1353,17 +1359,21 @@ func (s *Server) writeMeteredRelayPayload(ctx context.Context, conn *websocket.C
 			return false
 		}
 		if err := s.Bandwidth.Wait(ctx, userID, len(data)); err != nil {
+			if !errors.Is(err, errMonthlyBandwidthExceeded) {
+				log.Printf("wait for metered relay bandwidth: %v", err)
+				return false
+			}
 			message := ws.BandwidthExceeded{
 				Type:    ws.TypeBandwidthExceeded,
 				Message: "Monthly bandwidth limit exceeded. Upgrade to pro for higher limits.",
 			}
-			if writeErr := writeWebSocketJSON(ctx, conn, message); writeErr != nil {
+			if writeErr := writeBrowserJSON(ctx, conn, message); writeErr != nil {
 				log.Printf("report metered relay bandwidth exhaustion: %v", writeErr)
 			}
 			return false
 		}
 	}
-	if err := conn.Write(ctx, websocket.MessageText, data); err != nil {
+	if err := writeBrowserPayload(ctx, conn, data); err != nil {
 		log.Printf("write metered relay payload: %v", err)
 		return false
 	}
@@ -1380,7 +1390,7 @@ func (s *Server) writeCoordinationPayload(ctx context.Context, conn *websocket.C
 			return false
 		}
 	}
-	if err := conn.Write(ctx, websocket.MessageText, data); err != nil {
+	if err := writeBrowserPayload(ctx, conn, data); err != nil {
 		log.Printf("write coordination payload: %v", err)
 		return false
 	}

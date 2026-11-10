@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -100,11 +101,13 @@ func (b *BandwidthMeter) ExceededUsers() []string {
 	return result
 }
 
+var errMonthlyBandwidthExceeded = errors.New("bandwidth limit exceeded")
+
 // Wait blocks until the user's rate limiter allows n bytes, or ctx is done.
 // Rejects immediately if the user has exceeded their monthly bandwidth cap.
 func (b *BandwidthMeter) Wait(ctx context.Context, userID string, n int) error {
 	if b.IsExceeded(userID) || b.ExceededMonthly(userID) {
-		return fmt.Errorf("bandwidth limit exceeded")
+		return errMonthlyBandwidthExceeded
 	}
 	b.counter(userID).Add(int64(n))
 	return b.WaitRate(ctx, userID, n)
