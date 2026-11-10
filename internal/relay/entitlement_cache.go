@@ -61,10 +61,12 @@ func (c *EntitlementCache) GetRelayAccess(userID string) RelayAccess {
 // GetEnrollment returns the login node's enrollment decision and whether it was
 // published for this user. Public edges preserve legacy access when unknown;
 // edges with a configured enrollment allowlist require a known decision.
+// Published decisions remain authoritative until explicitly updated, even when
+// later snapshots omit the user or come from a legacy login node.
 func (c *EntitlementCache) GetEnrollment(userID string) (bool, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if !c.initialized || !c.policyDecisionsKnown {
+	if !c.initialized {
 		return false, false
 	}
 	allowed, ok := c.enrollment[userID]
@@ -162,7 +164,12 @@ func (c *EntitlementCache) fetch(ctx context.Context) {
 	c.mu.Lock()
 	c.tiers = newTiers
 	c.relay = newRelay
-	c.enrollment = newEnrollment
+	// A missing decision is not a revocation of a previously published one.
+	// Mixed-version login nodes may send tier-only responses during an upgrade
+	// or rollback; retain each user's last explicit enrollment decision.
+	for userID, allowed := range newEnrollment {
+		c.enrollment[userID] = allowed
+	}
 	c.initialized = true
 	c.policyDecisionsKnown = policyDecisionsKnown
 	c.mu.Unlock()
