@@ -24,6 +24,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/testprovider"
+	"github.com/fsnotify/fsnotify"
 	"golang.org/x/term"
 )
 
@@ -452,6 +453,17 @@ func TestNorthstarPTYColdClaude(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.env = append(f.env, "WINGTHING_DIR="+relative)
+		// A locked-owner refusal can arrive as soon as control.sock is bound,
+		// before phone pairing and the readiness log finish. Observe the later
+		// status publication before inspecting that log, without polling it.
+		startup, err := fsnotify.NewWatcher()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer startup.Close()
+		if err := startup.Add(f.local); err != nil {
+			t.Fatal(err)
+		}
 		started := time.Now()
 		first := northstarStartPTY(t, f, binary, 100, 24, "claude")
 		second := northstarStartPTY(t, f, binary, 100, 24, "claude")
@@ -459,6 +471,21 @@ func TestNorthstarPTYColdClaude(t *testing.T) {
 		second.expect("concurrent owner preserves passkey refusal", 0, "passkey authentication is required")
 		coldPTYExit(t, first, true)
 		coldPTYExit(t, second, true)
+		deadline := time.NewTimer(claudeWingStartupTimeout)
+		defer deadline.Stop()
+	awaitStartup:
+		for {
+			select {
+			case event := <-startup.Events:
+				if filepath.Base(event.Name) == "wing.status" && event.Has(fsnotify.Create) {
+					break awaitStartup
+				}
+			case err := <-startup.Errors:
+				t.Fatalf("watch daemon startup: %v", err)
+			case <-deadline.C:
+				t.Fatal("daemon did not publish startup status")
+			}
+		}
 		coldOneDaemon(t, f)
 		if entries, _ := os.ReadDir(filepath.Join(f.local, "eggs")); len(entries) != 0 {
 			t.Fatal("locked policy admitted a session")
