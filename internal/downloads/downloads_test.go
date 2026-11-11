@@ -60,7 +60,7 @@ func TestDownloadHandlerAllowlistAndSymlinks(t *testing.T) {
 	}
 }
 
-func TestDownloadInstallerMirrorOnlyAndAtomicity(t *testing.T) {
+func TestDownloadInstallerFallbackAndAtomicity(t *testing.T) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("installer supports Linux and Darwin")
 	}
@@ -102,7 +102,7 @@ esac
 			cmd.Env = append(os.Environ(), "HOME="+root, "WT_INSTALL_DIR="+install, "WT_DOWNLOAD_BASE=https://mirror.invalid/dl", "MODE="+mode, "CALLS="+calls, "SUMS="+sums, "FIXTURE_BINARY="+binary, "ASSET_NAME="+name, "PATH="+bin+":"+os.Getenv("PATH"))
 			output, err := cmd.CombinedOutput()
 			installed, _ := os.ReadFile(existing)
-			if mode != "healthy" {
+			if mode == "both404" {
 				want := "Unable to download a verified wt release; please try again later.\n"
 				if err == nil || string(installed) != "existing" || string(output) != want {
 					t.Fatalf("err=%v output=%q installed=%q", err, output, installed)
@@ -117,7 +117,7 @@ esac
 					fallback = true
 				}
 			}
-			if fallback {
+			if fallback != (mode != "healthy") {
 				t.Fatalf("fallback=%t requests=%s", fallback, requests)
 			}
 			files, _ := os.ReadDir(install)

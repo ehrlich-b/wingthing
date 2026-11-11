@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/downloads"
 	"github.com/ehrlich-b/wingthing/internal/testsocket"
 )
 
@@ -56,15 +57,15 @@ esac
 						requests = append(requests, r.URL.String())
 						var body string
 						switch r.URL.String() {
-						case ReleaseMetadataURL():
+						case ReleaseMetadataURL(), downloads.GitHubMetadataURL():
 							body = fmt.Sprintf(`{"tag_name":%q}`, advertised)
 							if channel == "preview" {
 								body = fmt.Sprintf(`[{"tag_name":%q,"prerelease":true}]`, advertised)
 							}
-						case "https://mirror.invalid/dl/" + advertised + "/SHA256SUMS":
+						case "https://mirror.invalid/dl/" + advertised + "/SHA256SUMS", downloads.GitHubBase() + "/" + advertised + "/SHA256SUMS":
 							// The checksum is correct even for the wrong version.
 							body = fmt.Sprintf("%x  %s\n", sha256.Sum256(binary), ReleaseAssetName())
-						case "https://mirror.invalid/dl/" + advertised + "/" + ReleaseAssetName():
+						case "https://mirror.invalid/dl/" + advertised + "/" + ReleaseAssetName(), downloads.GitHubBase() + "/" + advertised + "/" + ReleaseAssetName():
 							body = string(binary)
 						default:
 							t.Fatalf("unexpected release request: %s", r.URL)
@@ -96,7 +97,11 @@ esac
 					if files, err := os.ReadDir(dir); err != nil || len(files) != 1 {
 						t.Errorf("temporary download leaked: %v, %v", files, err)
 					}
-					if len(requests) != 3 {
+					wantRequests := 3
+					if !tc.accepted && channel == "stable" {
+						wantRequests = 6
+					}
+					if len(requests) != wantRequests {
 						t.Fatalf("bundle requests = %v", requests)
 					}
 				})

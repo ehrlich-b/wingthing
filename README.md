@@ -15,8 +15,8 @@ and gives each caller an owner, actor, grant set, bound, and audit trail.
 
 ![Illustrated local MCP workflow](docs/assets/local-mcp-demo.svg)
 
-[GitLab source](https://gitlab.com/ehrlich-b/wingthing) ·
-[GitLab issues](https://gitlab.com/ehrlich-b/wingthing/-/issues) ·
+[Star on GitHub](https://github.com/ehrlich-b/wingthing) ·
+[GitHub issues](https://github.com/ehrlich-b/wingthing/issues) ·
 [Build evidence](https://gitlab.com/ehrlich-b/wingthing/-/pipelines)
 (successful tag jobs retain verification receipts; see the [release checklist](docs/release-verification.md)).
 
@@ -49,7 +49,7 @@ codex mcp add wingthing -- wt mcp stdio --client codex
 claude mcp add --scope user wingthing -- wt mcp stdio --client claude
 ```
 
-Manual downloads: [GitLab releases](https://gitlab.com/ehrlich-b/wingthing/-/releases).
+Manual downloads: [GitHub releases](https://github.com/ehrlich-b/wingthing/releases).
 
 The installer verifies the release checksum and confirms that the downloaded
 binary implements the command surface shown by the website before replacing an
@@ -511,7 +511,7 @@ curl -fsSL https://wingthing.ai/install.sh | sh
 Or build from source with Go 1.26.9+ and Node.js:
 
 ```bash
-git clone https://gitlab.com/ehrlich-b/wingthing.git
+git clone https://github.com/ehrlich-b/wingthing.git
 cd wingthing
 make check
 ```

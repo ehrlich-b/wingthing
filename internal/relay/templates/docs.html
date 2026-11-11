@@ -72,7 +72,7 @@
 <p>Claude opens in a sandboxed terminal in your project. No Wingthing account or daemon is required. Detach with <code>Ctrl+B</code>, then <code>Q</code>; your agent keeps running.</p>
 <p>Return to that same terminal:</p>
 <div class="docs-code"><span class="prompt">$ </span><span class="cmd">wt attach work</span></div>
-<p>Manual downloads: <a href="https://gitlab.com/ehrlich-b/wingthing/-/releases">GitLab releases</a>.</p>
+<p>Manual downloads: <a href="https://github.com/ehrlich-b/wingthing/releases">GitHub releases</a>.</p>
 <h3 style="font-size:16px;margin:24px 0 8px;color:var(--text)">Optional next steps</h3>
 <h3 data-route="local-agent" style="font-size:14px;margin:16px 0 8px;color:var(--text)">Let another agent manage your sessions with MCP</h3>
 <div class="docs-code">
@@ -397,7 +397,7 @@ idle_timeout: 4h
 <p>Without an <code>egg.yaml</code>, the sandbox applies opinionated defaults: CWD is writable, home is read-only, sensitive directories (<code>~/.ssh</code>, <code>~/.gnupg</code>, <code>~/.aws</code>, etc.) are denied, and only essential env vars pass through. <code>~/.ssh/known_hosts</code> is preserved read-only so SSH can verify host keys without prompting (add <code>deny:~/.ssh/known_hosts</code> to disable this). Network is blocked except for exactly what your agent needs - each agent has a profile declaring its API domains, env vars, and config directories. Claude gets <code>api.anthropic.com</code>, Ollama gets <code>localhost</code>, etc. You don't configure any of this.</p>
 <p>A local <a href="https://en.wikipedia.org/wiki/HTTP_tunnel">CONNECT proxy</a> enforces domain-level filtering - agents can only reach their declared APIs, not the entire internet. On macOS, Seatbelt permits only the proxy endpoint. On Linux, every sandbox keeps a route-less network namespace and an inherited-FD relay exposes only the proxy and explicitly declared host-loopback ports. Removing <code>HTTPS_PROXY</code> does not create a route.</p>
 <p>Drop an <code>egg.yaml</code> in your project to customize. Configs are additive - you only declare what you're changing from the defaults.</p>
-<p>Place <code>egg.yaml</code> in your project directory for per-project config, or in <code>~/.wingthing/egg.yaml</code> for global defaults. Project configs are discovered automatically. Use the <a href="/">sandbox builder</a> on the homepage to generate configs visually, or install the <a href="https://gitlab.com/ehrlich-b/wingthing/-/tree/main/docs/skills/create-egg">Claude Code skill</a> for an interactive security interview that generates hardened configs.</p>
+<p>Place <code>egg.yaml</code> in your project directory for per-project config, or in <code>~/.wingthing/egg.yaml</code> for global defaults. Project configs are discovered automatically. Use the <a href="/">sandbox builder</a> on the homepage to generate configs visually, or install the <a href="https://github.com/ehrlich-b/wingthing/tree/main/docs/skills/create-egg">Claude Code skill</a> for an interactive security interview that generates hardened configs.</p>
 <p>Example <code>egg.yaml</code>:</p>
 <div class="docs-code">
 fs:<br>
@@ -424,7 +424,7 @@ dangerously_skip_permissions: true
 <tr><td>max_fds *</td><td>max open file descriptors. Linux only, ignored on macOS</td></tr>
 <tr><td>max_pids *</td><td>max processes in cgroup. Linux only, requires cgroups v2</td></tr>
 </table></div>
-<p style="font-size:12px;color:var(--text-dim)">* Linux only. macOS Seatbelt doesn't support resource limits. If these limitations are blocking you, <a href="https://gitlab.com/ehrlich-b/wingthing/-/issues">file an issue</a>.</p>
+<p style="font-size:12px;color:var(--text-dim)">* Linux only. macOS Seatbelt doesn't support resource limits. If these limitations are blocking you, <a href="https://github.com/ehrlich-b/wingthing/issues">file an issue</a>.</p>
 </div>
 
 <div class="docs-section" id="self-hosting">
@@ -564,7 +564,7 @@ WantedBy=multi-user.target
 <li><strong>Agent config is writable.</strong> <code>~/.claude/</code> and similar directories must be writable for the agent to function.</li>
 <li><strong>Resource limits are Linux-only.</strong> macOS agents can consume unbounded CPU and memory. On Linux, cgroups v2 limits real memory (RSS) and process count; rlimit covers CPU time, virtual address space, and file descriptors. Cgroups require v2 with delegation. Falls back to rlimit-only when unavailable.</li>
 </ul>
-<p>These are on the roadmap. If any of these are blocking you, <a href="https://gitlab.com/ehrlich-b/wingthing/-/issues">file an issue</a> - it helps us prioritize. If you need hard isolation today, run wingthing inside a VM or container.</p>
+<p>These are on the roadmap. If any of these are blocking you, <a href="https://github.com/ehrlich-b/wingthing/issues">file an issue</a> - it helps us prioritize. If you need hard isolation today, run wingthing inside a VM or container.</p>
 </div>
 
 

@@ -19,7 +19,7 @@ type mirrorTransport func(*http.Request) (*http.Response, error)
 
 func (f mirrorTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestMirrorUpdateCompleteBundleWithoutFallback(t *testing.T) {
+func TestMirrorUpdateCompleteBundleWithFallback(t *testing.T) {
 	good := []byte("#!/bin/sh\ncase \"$*\" in\n '--version') echo 'wt version v0.149.5';;\n 'mcp connect --help') echo connect;;\n 'serve --help'|'roost start --help') echo --https;;\n 'local-cert status --help') echo status;;\n *) exit 1;;\nesac\n")
 	for _, mode := range []string{"healthy", "metadata404", "invalidTag", "binary404", "checksumMismatch", "badContract", "missingManifest", "both404"} {
 		t.Run(mode, func(t *testing.T) {
@@ -70,7 +70,7 @@ func TestMirrorUpdateCompleteBundleWithoutFallback(t *testing.T) {
 				t.Fatal(err)
 			}
 			rel, path, err := PrepareUpdate(context.Background(), "v0.149.4", dir)
-			if mode != "healthy" {
+			if mode == "both404" {
 				if err != ErrReleaseUnavailable || path != "" {
 					t.Fatalf("path=%q err=%v", path, err)
 				}
@@ -100,7 +100,7 @@ func TestMirrorUpdateCompleteBundleWithoutFallback(t *testing.T) {
 					fallback = true
 				}
 			}
-			if fallback {
+			if fallback != (mode != "healthy") {
 				t.Fatalf("fallback=%t calls=%v", fallback, calls)
 			}
 		})
@@ -174,7 +174,7 @@ func TestMirrorUpdateNeverDowngradesNewerRelease(t *testing.T) {
 	})
 	dir := testsocket.Dir(t)
 	_, path, err := PrepareUpdate(context.Background(), "v0.150.0", dir)
-	if err != ErrReleaseUnavailable || path != "" || len(requests) != 1 {
+	if err != ErrReleaseUnavailable || path != "" || len(requests) != 2 {
 		t.Fatalf("path=%q err=%v requests=%v", path, err, requests)
 	}
 	files, _ := os.ReadDir(dir)
