@@ -11,7 +11,7 @@ Start that wing beforehand. `--read-only` receives output without claiming input
 resizing the terminal, or changing a native worker's turn ownership.
 
 For an aggregate MCP client, start an independent local-only wing on each
-machine beforehand. Remember an already running remote once, as in herdr:
+machine beforehand. Remember an already running remote once, :
 
 ```sh
 wt mcp connect add my-server --ssh my-server --wingthing-dir '~/my-wing-state'
@@ -317,3 +317,8 @@ isolate remote `HOME`. The preview channel check still reaches the real binary.
 The cloud route has no verified SSH identity; WSL admission remains separate.
 No test adds keys, trusts unknown hosts, opens SSH listeners, changes services,
 or alters a shared host's access policy.
+
+The session navigator shows the selected terminal’s output beside the list on wide
+screens. Press `v` for the full read-only viewer and `q` to return to the same
+session. Previewing output never takes input control or resizes the session.
+

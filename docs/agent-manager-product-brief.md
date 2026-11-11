@@ -172,6 +172,42 @@ and routing that do not exist yet.
 
 ## Runtime and control surfaces
 
+| Term | Meaning |
+| --- | --- |
+| **Portal** | The unified inventory and controls exposed to an agent through MCP or to a person through the browser. |
+
+### Place every run explicitly
+
+| Question | Wingthing's contract |
+| --- | --- |
+| **Execution** | Select the wing that will run the process. Direct remote calls require its `wing_id`; Wingthing never substitutes another wing. |
+| **Workspace** | Pass a `cwd` that already exists on that wing. Wingthing does not clone, create, or synchronize repositories. |
+| **Display** | Use `agent_run` for semantic status and a final result without a live browser view. Use `agent_start` when the task needs a PTY that a person can attach to from the CLI, SSH, or an entitled/self-hosted browser. |
+| **Credentials** | The provider CLI reads credentials from the execution owner's agent home on that wing. Shared hosts separate those homes by owner. Do not put provider tokens or SSH keys in prompts or MCP arguments. |
+| **Durable memory** | Wingthing stores task, result, message, and thread records in `~/.wingthing/wt.db`, session state under `~/.wingthing/eggs`, and optional prompt memory under `~/.wingthing/memory`. Provider-native history stays in the provider home. These are wing-local unless the operator arranges replication. |
+
+`WINGTHING_DIR` changes the `~/.wingthing` state root. A terminal survives client
+detachment, but not an unplanned host restart. A run's record and result persist;
+an active headless run still depends on the supervising Wingthing process.
+
+`wingthing.ai` can supply identity, an access-filtered directory, key exchange,
+and connection coordination for direct remote MCP. It does not run the agents or
+carry direct MCP payloads. Local MCP, local terminals, SSH, and self-hosted roosts
+do not require it.
+
+### Shared control contract
+
+Local stdio, authenticated HTTP, and direct remote MCP derive their tool schemas
+from one registry. The remote surface has no mutable current wing: every
+wing-owned call requires `wing_id`, while `wing_list` is coordinator-owned. A
+terminal created with MCP is the same durable egg a browser or CLI can inspect.
+
+Headless runs do not yet have a browser view, locked wings still need a native
+passkey ceremony, and independent self-hosted roosts do not yet federate their
+directories. See the [direct agent manager design](archive/direct-agent-manager-design.md)
+for the rollout and security boundary.
+
+
 A wing is the durable runtime. Eggs own agent processes and PTYs; clients,
 transports, access policy and deployment bundles surround that runtime. Closing
 an observer does not stop an execution. A gateway owns account and routing

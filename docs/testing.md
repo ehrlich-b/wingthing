@@ -619,3 +619,18 @@ source-bound JSON report and fails on missing or skipped probes. See
 [the probe matrix and initial baseline](isolation-conformance.md) for known gaps,
 controls, prerequisites and the distinction between admission refusal and
 measured enforcement.
+
+## Supported agents
+
+`wt doctor` reports what is installed. Interactive sessions support:
+
+| Agent | CLI |
+| --- | --- |
+| Claude Code | `claude` |
+| Codex | `codex` |
+| Cursor Agent | `agent` |
+| Gemini CLI | `gemini` |
+| Hermes Agent | `hermes` |
+| Ollama | `ollama` (`qwen3:4b` default) |
+| OpenCode | `opencode` |
+

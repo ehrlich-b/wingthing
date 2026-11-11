@@ -128,3 +128,57 @@ See [testing](testing.md) for the offline daily-loop gates,
 See the [browser overview](../README.md#4-browser-visibility-self-hosted-roost)
 for browser setup. Real provider, real SSH and physical terminal checks remain
 separate from isolated fixture tests.
+
+## Persistent shells and scripted session control
+
+The CLI also exposes persistent shells, arbitrary commands, and raw terminal
+operations:
+
+```bash
+wt terminal --name work                # persistent sandboxed shell
+wt terminal --name api -- npm run dev  # persistent arbitrary command
+
+# Ctrl+B Q detaches without stopping the process
+wt attach                              # list live sessions
+wt attach work                         # reattach by name or ID
+
+wt session ps --json
+wt session read api --json
+wt session send api r --enter --json
+wt session wait api --contains ready --json
+wt session rename api frontend --json
+wt session fork api --name experiment --json  # Claude only; keeps the source intact
+wt session kill frontend --json
+```
+
+Terminal snapshots are ANSI state. Wingthing does not infer that an agent is
+done because a string appeared on screen. Use `agent_run`, `agent_wait`, and
+`agent_result` when the caller needs semantic task state.
+
+## Coordinator reports
+
+### Coordinator home and session activity
+
+The web Home leads with explicitly pinned coordinator sessions. Open a pinned
+thread to read and message it; the terminal is available from that same session.
+The Activity tab shows native state changes, human input requests, reported
+updates, artifacts and links. Opening a thread only reads; it never grants
+approval. Artifact access retains the session's existing file permissions.
+
+A coordinator can publish its current intent through the owner-scoped
+`session_report` MCP tool (qualified by `wing_id` on direct connections), or
+from the CLI:
+
+```sh
+wt session report SESSION --json <<'JSON'
+{"goal":"Finish the release review","update":"Checks passed; results are ready","next_action":"Review the results","presence":"asleep","last_wake":"2026-10-12T22:00:00Z","next_wake":"2026-10-12T23:00:00Z","artifacts":[{"label":"Results","path":"results.md"}],"links":[{"label":"Documentation","url":"https://wingthing.ai/docs"}]}
+JSON
+```
+
+Reports persist in the session journal and survive browser reloads. Goal,
+update and next action are required; wake times and up to eight artifacts and
+links are optional. Native work and process exit override reported presence.
+Missing or stale heartbeat evidence is unknown; a missed reported wake is
+overdue. Wake times describe a plan: reporting does not create a timer or
+change provider readiness, grants, approval gates or scheduling policy.
+
