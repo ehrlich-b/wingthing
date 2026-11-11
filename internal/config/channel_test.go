@@ -237,6 +237,18 @@ func TestPreviewStateNeverAdoptsStableOrImportedDirectory(t *testing.T) {
 	if err := os.MkdirAll(stable, 0755); err != nil {
 		t.Fatal(err)
 	}
+	// Establish the fixture's mode independently of the inherited umask.
+	if err := os.Chmod(stable, 0755); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(stable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Mode().Perm() != 0755 {
+		t.Fatalf("stable fixture mode = %04o, want 0755", before.Mode().Perm())
+	}
+	t.Logf("stable fixture before Load: mode=%04o", before.Mode().Perm())
 	sentinel := filepath.Join(stable, "config.yaml")
 	if err := os.WriteFile(sentinel, []byte("secret-stable-marker"), 0644); err != nil {
 		t.Fatal(err)

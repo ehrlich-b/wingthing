@@ -95,6 +95,18 @@ func TestLocalOwnerRejectsCorruptOrPublicIdentity(t *testing.T) {
 	if err := os.WriteFile(path, []byte("id: public\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	// Establish the fixture's mode independently of the inherited umask.
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0644 {
+		t.Fatalf("public identity fixture mode = %04o, want 0644", info.Mode().Perm())
+	}
+	t.Logf("public identity fixture before EnsureLocalOwner: mode=%04o", info.Mode().Perm())
 	if _, err := EnsureLocalOwner(dir, ""); err == nil {
 		t.Fatal("accepted publicly readable owner file")
 	}
