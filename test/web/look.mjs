@@ -159,8 +159,7 @@ async function shoot(page, name, suffix) {
     console.log('SHOT ' + file);
 }
 async function checkPublic(page, name, suffix) {
-    assert.equal(await page.locator('a[href*="github.com"]').count(), 0);
-    assert.ok(await page.getByRole('link', {name:'GitLab source', exact:true}).count());
+    assert.equal(await page.getByRole('link', {name:'Star on GitHub', exact:true}).getAttribute('href'), 'https://github.com/ehrlich-b/wingthing');
     if (page.viewportSize().width === 390) {
         const nav = await page.locator('.site-nav').evaluate(el => {
             const box = selector => el.querySelector(selector).getBoundingClientRect().toJSON();
