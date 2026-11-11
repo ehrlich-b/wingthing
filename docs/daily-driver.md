@@ -181,4 +181,3 @@ links are optional. Native work and process exit override reported presence.
 Missing or stale heartbeat evidence is unknown; a missed reported wake is
 overdue. Wake times describe a plan: reporting does not create a timer or
 change provider readiness, grants, approval gates or scheduling policy.
-

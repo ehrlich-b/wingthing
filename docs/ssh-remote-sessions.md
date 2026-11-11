@@ -321,4 +321,3 @@ or alters a shared host's access policy.
 The session navigator shows the selected terminal’s output beside the list on wide
 screens. Press `v` for the full read-only viewer and `q` to return to the same
 session. Previewing output never takes input control or resizes the session.
-

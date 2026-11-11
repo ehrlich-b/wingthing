@@ -633,4 +633,3 @@ measured enforcement.
 | Hermes Agent | `hermes` |
 | Ollama | `ollama` (`qwen3:4b` default) |
 | OpenCode | `opencode` |
-
