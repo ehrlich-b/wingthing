@@ -14,8 +14,8 @@ import (
 
 func contextFixture(n int) *state {
 	now := time.Date(2026, time.November, 9, 14, 30, 0, 0, time.UTC)
-	s := &state{localContext: "home", machines: map[string]machine{"local": {updated: now}, "studio": {updated: now}, "slide": {updated: now}}, remotes: map[string]config.Remote{"studio": {Context: "work"}, "slide": {Context: "work"}}}
-	names := []string{"local", "slide", "studio"}
+	s := &state{localContext: "home", machines: map[string]machine{"local": {updated: now}, "studio": {updated: now}, "office": {updated: now}}, remotes: map[string]config.Remote{"studio": {Context: "work"}, "office": {Context: "work"}}}
+	names := []string{"local", "office", "studio"}
 	for i := 0; i < n; i++ {
 		name := names[i%3]
 		m := s.machines[name]
@@ -32,7 +32,7 @@ func contextFixture(n int) *state {
 func TestContextGroupsCountsAndCycle(t *testing.T) {
 	s := contextFixture(3)
 	screen := strings.Join(renderedLines(t, render(s, 120, 36, time.Date(2026, time.November, 9, 14, 30, 0, 0, time.UTC)), 120, 36), "\n")
-	for _, want := range []string{"Home · 1 needs you", "Work · 2 needs you", "This machine", "slide", "studio"} {
+	for _, want := range []string{"Home · 1 needs you", "Work · 2 needs you", "This machine", "office", "studio"} {
 		if !strings.Contains(screen, want) {
 			t.Fatalf("missing %q:\n%s", want, screen)
 		}
@@ -58,9 +58,9 @@ func TestContextGroupsCountsAndCycle(t *testing.T) {
 			t.Fatal("search escaped context")
 		}
 	}
-	m := s.machines["slide"]
+	m := s.machines["office"]
 	m.err = "offline"
-	s.machines["slide"] = m
+	s.machines["office"] = m
 	if s.contextNeedsYou("work") != 1 {
 		t.Fatal("stale session counted as current needs you")
 	}
@@ -111,7 +111,7 @@ func TestContextViewportSelectionAndEvidence(t *testing.T) {
 func TestContextPinnedNavigationMatchesDisplay(t *testing.T) {
 	s := contextFixture(3)
 	// A Work-only pin must remain below the unpinned Home row.
-	for _, name := range []string{"slide", "studio"} {
+	for _, name := range []string{"office", "studio"} {
 		m := s.machines[name]
 		pinned := session("coordinator", "wing", "/projects/product", "working")
 		pinned.Pinned, pinned.Role = true, "coordinator"
@@ -240,7 +240,7 @@ func TestContextSmallViewportActionVisibility(t *testing.T) {
 	now := time.Date(2026, time.November, 9, 14, 30, 0, 0, time.UTC)
 	for _, grouped := range []bool{true, false} {
 		s := contextFixture(12)
-		for _, name := range []string{"local", "slide"} {
+		for _, name := range []string{"local", "office"} {
 			m := s.machines[name]
 			pinned := session("coordinator", "wing", "/projects/product", "working")
 			pinned.Pinned, pinned.Role = true, "coordinator"
@@ -249,7 +249,7 @@ func TestContextSmallViewportActionVisibility(t *testing.T) {
 		}
 		if !grouped {
 			s.localContext = ""
-			s.remotes["slide"] = config.Remote{}
+			s.remotes["office"] = config.Remote{}
 			s.remotes["studio"] = config.Remote{}
 		}
 		s.reconcile()
@@ -286,5 +286,35 @@ func TestContextSmallViewportActionVisibility(t *testing.T) {
 			check(8)
 			s.handle("k")
 		}
+	}
+}
+
+func TestContextMachinePickerReconcilesLaunch(t *testing.T) {
+	s := contextFixture(3)
+	s.defaultCWD = "/projects/home"
+	drive(s, "ccm") // Work, then choose This machine.
+	for i, name := range s.machineNames() {
+		if name == "local" {
+			s.picker = i + 1
+		}
+	}
+	drive(s, "\r")
+	if s.contextFiltered || s.machineFilter != "local" || len(s.rows()) != 1 {
+		t.Fatalf("incompatible filters: context=%q active=%t machine=%q rows=%v", s.contextFilter, s.contextFiltered, s.machineFilter, s.rows())
+	}
+	drive(s, "n\r")
+	if s.target.machine != "local" || s.mode != newCWD {
+		t.Fatalf("launch target=%q mode=%v", s.target.machine, s.mode)
+	}
+	s = contextFixture(3)
+	drive(s, "ccm")
+	for i, name := range s.machineNames() {
+		if name == "studio" {
+			s.picker = i + 1
+		}
+	}
+	drive(s, "\r")
+	if !s.contextFiltered || s.contextFilter != "work" {
+		t.Fatal("compatible context was cleared")
 	}
 }

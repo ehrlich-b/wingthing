@@ -4,7 +4,15 @@ Stable `vMAJOR.MINOR.PATCH` tags run `.gitlab-ci.yml`. Other `v*` tags fail the
 tag guard before builds; branch pipelines do not start this release workflow.
 The final `verify-release` job retains a `verified-release/` artifact for 30 days.
 It contains the four binaries, `SHA256SUMS`, a validated `downloads/` tree and
-`receipt.json`. Nothing is uploaded to Releases, installed or deployed by CI.
+`receipt.json`. GitLab CI does not upload to Releases, install or deploy.
+
+GitHub's `.github/workflows/release.yml` also runs on `v*` tags and publishes
+the four tested binaries and `SHA256SUMS` after its Linux and macOS gates pass.
+Its Go version comes from `go.mod`. Runs for the same tag serialize without
+cancelling an earlier run. To build and verify on GitHub without publishing,
+dispatch the workflow on a stable tag with `dry_run: true` (the default).
+A manual run on a branch fails tag validation; setting `dry_run: false` on a
+stable tag enables publication after all gates pass.
 
 ## Runner contract
 
@@ -37,10 +45,7 @@ in the full GitLab checkout. Provider-gate prerequisites remain those of
 | Native macOS sandbox gate | `macos-sandbox` runs `make e2e-mac` |
 | Four-platform stable build and command contract | Same `make release CHANNEL=stable VERSION=...`, after Linux gates |
 | Transfer tested artifacts after both jobs | `verify-release` downloads both jobs, verifies gate receipts and every checksum |
-| Automatic GitHub publication | Replaced by verification artifacts and a separately authorized GitLab publication |
-
-The GitHub workflow is now a manual informational job with read-only permissions.
-No tag push can start its former release publisher.
+| Automatic GitHub publication | GitLab retains verification artifacts for a separately authorized GitLab publication |
 
 ## Local dry run
 

@@ -18,8 +18,15 @@ import (
 
 var ErrReleaseUnavailable = errors.New("Unable to download a verified wt release; please try again later.")
 
-// MetadataURLs contains only the product's channel feed.
-func MetadataURLs() []string { return []string{ReleaseMetadataURL()} }
+// Stable releases prefer the mirror and fall back to GitHub. Preview stays on
+// its own feed so a stable GitHub release cannot replace a preview installation.
+func MetadataURLs() []string {
+	urls := []string{ReleaseMetadataURL()}
+	if config.Channel() != "preview" {
+		urls = append(urls, downloads.GitHubMetadataURL())
+	}
+	return urls
+}
 
 var ErrPreviewUnavailable = errors.New("Preview release feed /dl/preview.json is unavailable; use update --file with a reviewed local preview package.")
 
@@ -55,6 +62,9 @@ func fetchRelease(ctx context.Context, endpoint string) (GhRelease, error) {
 		return GhRelease{}, errors.New("invalid release tag")
 	}
 	base := downloads.Base() + "/" + rel.TagName + "/"
+	if config.Channel() != "preview" && endpoint == downloads.GitHubMetadataURL() {
+		base = downloads.GitHubBase() + "/" + rel.TagName + "/"
+	}
 	rel.Assets = []GhAsset{{Name: ReleaseAssetName(), BrowserDownloadURL: base + ReleaseAssetName()}, {Name: "SHA256SUMS", BrowserDownloadURL: base + "SHA256SUMS"}}
 	return rel, nil
 }

@@ -18,8 +18,20 @@ var installerTemplate string
 
 // Base is the shared download setting for installers and update checks.
 func Base() string {
-	base := strings.TrimSpace(defaultBase)
-	if override := os.Getenv("WT_DOWNLOAD_BASE"); override != "" {
+	return releaseURL("WT_DOWNLOAD_BASE", strings.TrimSpace(defaultBase))
+}
+
+func GitHubMetadataURL() string {
+	return releaseURL("WT_GITHUB_METADATA_URL", "https://api.github.com/repos/ehrlich-b/wingthing/releases/latest")
+}
+
+func GitHubBase() string {
+	return releaseURL("WT_GITHUB_DOWNLOAD_BASE", "https://github.com/ehrlich-b/wingthing/releases/download")
+}
+
+func releaseURL(setting, fallback string) string {
+	base := fallback
+	if override := os.Getenv(setting); override != "" {
 		base = strings.TrimRight(override, "/")
 	}
 	u, err := url.Parse(base)

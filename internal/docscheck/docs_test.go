@@ -117,6 +117,7 @@ func TestPublicDocumentationContractsStayAligned(t *testing.T) {
 	root := repositoryRoot(t)
 	publicFiles := []string{
 		"README.md",
+		"docs/release-notes/v0.150.0.md",
 		"SKILL.md",
 		"docs/fly-ops.md",
 		"docs/agent-manager-product-brief.md",

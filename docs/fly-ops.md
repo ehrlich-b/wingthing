@@ -326,6 +326,23 @@ another portal.
 
 ### Multi-wing behavior
 
+A portal may have several wings. The native CLI can query the same authorized
+roster and probe each wing through the encrypted tunnel:
+
+```bash
+wt wings
+wt wings --json
+
+# Keep a separate state and login profile for another portal.
+WINGTHING_DIR=~/.wingthing-lab wt login --roost https://lab.example.com
+WINGTHING_DIR=~/.wingthing-lab wt wings --roost https://lab.example.com --json
+```
+
+The browser and native client select a wing by its stable `wing_id`. A
+self-hosted gateway can list its embedded wing and other wings registered with
+that same gateway. Independent roosts do not federate their directories.
+
+
 A roost gateway can register the embedded wing and external wings.
 
 - The browser receives its authorized wing roster, probes each wing through the

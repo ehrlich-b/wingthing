@@ -4,7 +4,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -29,7 +28,7 @@ func TestPublicSkillAndLinks(t *testing.T) {
 			t.Errorf("%s: status %d or content differs", path, resp.StatusCode)
 		}
 	}
-	for _, path := range []string{"/", "/docs"} {
+	for _, path := range []string{"/", "/docs", "/install", "/patterns", "/terms", "/privacy", "/abuse"} {
 		resp, err := http.Get(ts.URL + path)
 		if err != nil {
 			t.Fatal(err)
@@ -39,8 +38,8 @@ func TestPublicSkillAndLinks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if resp.StatusCode != http.StatusOK || regexp.MustCompile(`(?i)href\s*=\s*["'][^"']*github\.com`).Match(body) {
-			t.Errorf("%s: status %d or GitHub link", path, resp.StatusCode)
+		if resp.StatusCode != http.StatusOK || strings.Count(string(body), `href="https://github.com/ehrlich-b/wingthing">Star on GitHub</a>`) != 1 {
+			t.Errorf("%s: status %d or missing/duplicate Star on GitHub link", path, resp.StatusCode)
 		}
 		if path == "/" && !strings.Contains(string(body), `href="/skill.md"`) {
 			t.Error("homepage missing skill link")

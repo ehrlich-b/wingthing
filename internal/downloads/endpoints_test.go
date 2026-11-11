@@ -1,40 +1,34 @@
 package downloads
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
 
-func TestDownloadEndpointsNeverUseGitHub(t *testing.T) {
-	cmd := exec.Command("git", "ls-files", "-z", "--cached", "--others", "--exclude-standard")
-	cmd.Dir = "../.."
-	files, err := cmd.Output()
-	if err != nil {
-		t.Fatal(err)
+func TestDownloadEndpointsMirrorAndGitHub(t *testing.T) {
+	t.Setenv("WT_DOWNLOAD_BASE", "")
+	t.Setenv("WT_GITHUB_METADATA_URL", "")
+	t.Setenv("WT_GITHUB_DOWNLOAD_BASE", "")
+	if Base() != "https://wingthing.ai/dl" || GitHubMetadataURL() != "https://api.github.com/repos/ehrlich-b/wingthing/releases/latest" || GitHubBase() != "https://github.com/ehrlich-b/wingthing/releases/download" {
+		t.Fatal("unexpected release endpoints")
 	}
-	forbidden := regexp.MustCompile(`api[.]github[.]com/repos/|github[.]com/(ehrlich-b/[[:alnum:]_.-]+|\$\{REPO\})/releases`)
-	for _, name := range strings.Split(string(files), "\x00") {
-		if strings.HasSuffix(name, "_test.go") || strings.Contains(name, "/testdata/") {
-			continue
+	for _, endpoint := range []string{Base(), GitHubMetadataURL(), GitHubBase()} {
+		if !strings.Contains(Installer(), endpoint) {
+			t.Errorf("installer missing %s", endpoint)
 		}
-		switch filepath.Ext(name) {
-		case ".go", ".sh", ".tmpl", ".js", ".ts", ".tsx", ".html":
-		default:
-			continue
-		}
-		body, err := os.ReadFile(filepath.Join("../..", name))
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		if forbidden.Match(body) {
-			t.Errorf("%s contains a retired product download endpoint", name)
-		}
+	}
+	for _, setting := range []string{"WT_GITHUB_METADATA_URL", "WT_GITHUB_DOWNLOAD_BASE"} {
+		t.Run(setting, func(t *testing.T) {
+			for _, value := range []string{"http://example.test", "https://user:secret@example.test", "https://example.test/?query=1", "https://example.test/$(unsafe)"} {
+				t.Setenv(setting, value)
+				got := GitHubBase()
+				if setting == "WT_GITHUB_METADATA_URL" {
+					got = GitHubMetadataURL()
+				}
+				if got != "" {
+					t.Fatalf("unsafe override accepted: %s", value)
+				}
+			}
+		})
 	}
 }

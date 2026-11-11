@@ -427,6 +427,9 @@ func (s *state) handle(key string) (act *action, quit bool) {
 			s.machineFilter = ""
 			if s.picker > 0 {
 				s.machineFilter = s.machineNames()[s.picker-1]
+				if s.contextFiltered && s.machineContext(s.machineFilter) != s.contextFilter {
+					s.contextFiltered, s.contextFilter = false, ""
+				}
 			}
 			s.mode, s.message = navigate, ""
 			s.reconcile()
