@@ -4,6 +4,7 @@ import { sessionDisplayName } from '../../helpers.js';
 import { agentName, machineState, requestedCommand, sessionState as reportedState } from '../../paper-state.js';
 import { browserUnavailable } from '../../onboarding.js';
 import { loadHome } from '../../data.js';
+import { hostedPlanGuidance } from '../../onboarding.js';
 import { head, render, paperRoute } from '../frame.js';
 import { wingOf, machineName, sessions, workSessions, coordinator, sessionState, needing, machines } from '../select.js';
 import { lines, request, composer, sessionHref, chip, lastSeen, ui } from '../common.js';
@@ -51,7 +52,7 @@ export function viewEmpty() {
 }
 export function viewBrowserAccess() {
     const commands = ['codex mcp add wingthing -- wt mcp connect --client codex', 'claude mcp add --scope user wingthing -- wt mcp connect --client claude'];
-    return head('Home', '', 'Your agents can connect from a terminal.') + '<section class="home-access"><h2>Use wingthing with your agent</h2><p>Your account includes native agent access. Connect Claude or Codex on your machines. Browser control needs a plan with browser access.</p>' + commands.map(command => '<pre class="home-commands">' + esc(command) + '</pre>').join('') + '<a class="pp-btn pp-btn-ink" href="#account">See plans</a></section>';
+    return head('Home', '', 'Your agents can connect from a terminal.') + '<section class="home-access"><h2>Use wingthing with your agent</h2><p>Your account includes native agent access. Connect Claude or Codex on your machines. Browser control requires relay access on the account and permission on the selected machine. ' + esc(hostedPlanGuidance(S.currentUser)) + '</p>' + commands.map(command => '<pre class="home-commands">' + esc(command) + '</pre>').join('') + '<a class="pp-btn pp-btn-ink" href="#account">See plans</a></section>';
 }
 // Preserve a group's surviving order across data refreshes; new members append.
 const orders = new Map();

@@ -521,7 +521,7 @@ export function renderAccountPage() {
     var pubKeyShort = identityPubKey ? identityPubKey.substring(0, 16) + '...' : 'none';
 
     var html = '<div class="ac-page">' +
-        '<header class="pp-hdr"><h1>Account</h1><button type="button" class="btn-sm" id="ac-back">Back to wing</button></header>' +
+        '<div class="ac-back-row"><button type="button" class="btn-sm" id="ac-back">Back to Home</button></div>' +
         '<section class="ac-identity" aria-label="Identity">' +
             '<h2>' + escapeHtml(S.currentUser.display_name || 'Your account') + '</h2>' +
             (email ? '<p>' + escapeHtml(email) + '</p>' : '') +

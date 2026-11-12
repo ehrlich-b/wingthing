@@ -26,6 +26,7 @@ import { viewSession } from './views/session.js';
 import { viewPair } from './views/pair.js';
 let root, main, side, lastSignature = '', routing = false;
 const homes = new Map();
+const searchDisclosures = new WeakMap();
 function paperRoute(hash = location.hash) { return route(hash); }
 function isPaperRoute(hash) { return !!paperRoute(hash); }
 function head(title, meta, strip) {
@@ -63,7 +64,7 @@ function frame() {
         }
         if (event.target.closest('[data-more-machines]')) { ui.allMachines = true; render(true); return; }
         const take = event.target.closest('[data-takeover]');
-        if (take) { const [wingId, sessionId] = take.dataset.takeover.split('/'); if (machineState(wingOf(wingId)) !== 'connected') return; switchToSession(sessionId, true, wingId, { takeover: true }); render(true); S.term?.focus(); return; }
+        if (take) { const [wingId, sessionId] = take.dataset.takeover.split('/'); if (machineState(wingOf(wingId)) !== 'connected') return; switchToSession(sessionId, true, wingId, { takeover: true }); render(true); return; }
         if (event.target.closest('[data-handback]')) { showHome(false); ui.inputReader?.refresh(); render(true); main.querySelector('#pp-message')?.focus(); return; }
         const copy = event.target.closest('[data-copy]');
         if (copy) { navigator.clipboard?.writeText(copy.dataset.copy).then(() => { copy.textContent = 'Copied'; }, () => { copy.textContent = 'Copy failed'; }); return; }
@@ -121,7 +122,9 @@ function updateSessionSearch() {
         if (overflow) {
             const more = [...overflow.querySelectorAll('.pp-srow')].filter(row => !row.hidden).length;
             overflow.hidden = filtered && more === 0;
-            if (filtered) overflow.open = true;
+            const filterKey = state + '/' + query;
+            if (filtered && searchDisclosures.get(overflow) !== filterKey) overflow.open = true;
+            searchDisclosures.set(overflow, filterKey);
             overflow.querySelector('summary').textContent = '+' + more + ' more';
         }
         visible += count;
@@ -145,18 +148,23 @@ function show() {
 }
 
 function mountEngines(view, live) {
+    let focusTerminal = false;
     const nodes = new Map([['account', DOM.accountSection], ['machine', DOM.wingDetailSection], ['canvas', DOM.canvasSection], ['terminal', DOM.terminalSection]]);
     for (const [name, node] of nodes) {
         const slot = main.querySelector('[data-engine="' + name + '"]');
         if (slot && (name !== 'terminal' || live)) {
-            if (node.parentNode !== slot) slot.append(node);
+            if (node.parentNode !== slot) {
+                focusTerminal ||= name === 'terminal' && !main.contains(document.activeElement);
+                if (name === 'terminal') { const disclosure = slot.closest('details'); if (disclosure) disclosure.open = true; }
+                slot.append(node);
+            }
             node.style.display = '';
         } else if (homes.get(node)) {
             if (node.previousSibling !== homes.get(node)) homes.get(node).after(node);
             node.style.display = 'none';
         }
     }
-    if (live) requestAnimationFrame(() => S.fitAddon?.fit());
+    if (live) requestAnimationFrame(() => { S.fitAddon?.fit(); if (focusTerminal) S.term?.focus(); });
 }
 
 export function routeShell() {
@@ -271,9 +279,9 @@ function render(force) {
     if (current.view === 'sessions') updateSessionSearch();
 }
 function renderNavigation(route, denied) {
-    const nv = denied ? '<a href="#" aria-current="page">Get started</a><a href="#account">Account</a>' : nav(route);
+    const nv = nav(route);
     patchRegion(side.querySelector('.pp-nav'), nv);
-    patchRegion(root.querySelector('.pp-tabs'), denied ? nv : nv.replace(/<a href="#account"[\s\S]*?<\/a>$/, '') + '<a href="#new"' + (route.view === 'new' ? ' aria-current="page"' : '') + '>New</a>');
+    patchRegion(root.querySelector('.pp-tabs'), denied ? nv : nv + '<a href="#new"' + (route.view === 'new' ? ' aria-current="page"' : '') + '>New</a>');
     patchRegion(side.querySelector('.pp-side-squares'), denied ? '' : squares());
     side.querySelector('.pp-foot').textContent = S.currentUser?.display_name || 'Account';
 }

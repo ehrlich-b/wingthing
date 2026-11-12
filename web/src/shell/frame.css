@@ -34,3 +34,8 @@ body.paper-on { height: 100dvh; overflow: hidden; }
     .pp-live-terminal { height: 24dvh; min-height: 120px; }
     .pp-main[data-view="session"] .pp-terminal:has([data-handback]) { max-height: 36dvh; }
 }
+
+@media (max-width: 760px) {
+    .pp-tabs:has(a:nth-child(5)) { grid-template-columns: repeat(5, 1fr); }
+    .pp-tabs:has(a:nth-child(2):last-child) { grid-template-columns: repeat(2, 1fr); }
+}

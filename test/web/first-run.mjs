@@ -109,7 +109,7 @@ try {
                 await shot(`${mode}-${count}-machines`);
             }
             await page.evaluate(mode => {location.hash = '#'; window.fixture(true, 9); window.state.currentUser.roost_mode = mode === 'self-hosted'; window.state.currentUser.relay_reason = mode === 'self-hosted' ? 'self-hosted' : 'pro';}, mode);
-            await page.getByRole('button', {name: 'New session', exact: true}).click();
+            await page.getByRole('link', {name: 'New session', exact: true}).first().click();
             await page.waitForSelector('#pp-launch-machine');
             await page.selectOption('#pp-launch-machine', 'machine-8');
             const setup = await page.locator('#paper .pp-setup').first().innerText();

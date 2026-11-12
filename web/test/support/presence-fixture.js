@@ -37,7 +37,7 @@ function answer(wingId, inner) {
     if (inner.type === 'wing.info') return { hostname: wing.name, platform: 'linux', agents: ['claude'], projects: [] };
     if (inner.type === 'sessions.list') return { sessions: sessionRows(wingId) };
     if (inner.type === 'session.control' && inner.operation === 'session_read') return { session: inner.arguments.session, lifecycle: lifecycle(inner.arguments.session, inner.arguments.after_cursor, wingId) };
-    if (inner.type === 'session.control' && inner.operation === 'terminal_read') return { ansi: 'Reviewing release notes…' };
+    if (inner.type === 'session.control' && inner.operation === 'session_action' && inner.arguments.origin_wing_id === wingId && inner.arguments.operation === 'terminal_read' && Object.keys(inner.arguments.arguments).length === 0) return { result: { ansi: 'Reviewing release notes…' } };
     throw Error('Unexpected runtime operation: ' + JSON.stringify(inner));
 }
 class FixtureSocket {

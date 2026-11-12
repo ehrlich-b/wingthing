@@ -82,6 +82,7 @@ async function run() {
   if(before) {results.push({width,theme,state,sessions:24,errors});await context.close();continue;}
   assert.equal(await page.locator('body').evaluate(el=>el.classList.contains('paper-on')),true);
   assert.equal(await page.locator('#sidebar').isVisible(),false);
+  assert.equal(await page.getByRole('heading',{name:'Account',exact:true}).count(),1,'one shell Account heading');
   for(const name of ['Account','Current plan','Sign-in methods','Passkeys']) {
    const box=await page.getByRole('heading',{name,exact:true}).boundingBox();
    assert.ok(box&&box.y+box.height<(width===390?844:1000),name+' is identifiable in the first screen');

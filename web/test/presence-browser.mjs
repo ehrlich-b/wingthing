@@ -42,7 +42,7 @@ async function run() {
                 page.on('pageerror', error => errors.push(error.message));
                 await serve(context, page);
                 await page.goto(origin + '/app/#machines');
-                if (!count) await page.getByRole('heading', { name: 'No machines yet' }).waitFor();
+                if (!count) await page.getByRole('heading', { name: 'Connect a machine', exact: true }).waitFor();
                 else {
                     await page.waitForFunction(n => JSON.parse(localStorage.getItem('wt_sessions') || '[]').length === n + 1 && presenceFixture.calls.filter(c => c.type === 'sessions.list').length >= Math.min(2, n), count).catch(async error => { console.log(JSON.stringify(await page.evaluate(() => ({ cache: localStorage.wt_sessions, calls: presenceFixture.calls, wings: localStorage.wt_wings, text: document.body.innerText })), null, 2)); throw error; });
                     await page.locator('[data-machine="machine-0"] .pp-mname b').getByText('Design workstation', { exact: false }).waitFor();
@@ -69,7 +69,8 @@ async function run() {
                     assert.doesNotMatch(await page.locator('.pp-main').innerText(), /Asleep|deleted/i);
                     await page.screenshot({ path: resolve(output, `offline-session-${width}.png`), fullPage: true });
                     await page.evaluate(() => { location.hash = '#'; });
-                    await page.locator('.pp-away').waitFor();
+                    await page.locator('.home-offline[data-k="machine-0/same-id"]').waitFor();
+                    assert.match(await page.locator('.pp-strip').innerText(), /is offline/);
                     assert.equal(await page.locator('#paper [data-composer]').count(), 0, 'offline coordinator has no composer');
                     // Retry from the list while another machine remains the selected route.
                     await page.evaluate(() => { location.hash = '#session/machine-1/same-id'; });
@@ -83,10 +84,11 @@ async function run() {
                     await page.evaluate(() => { history.replaceState(null, '', '#session/machine-1/same-id'); document.querySelector('[data-machine="machine-0"] [data-retry]').click(); });
                     await page.locator('#paper [data-composer]').waitFor();
                     assert.equal(new URL(page.url()).hash, '#session/machine-1/same-id');
-                    await page.waitForFunction(() => presenceFixture.calls.slice(-1)[0]?.type === 'sessions.list');
+                    await page.waitForFunction(start => presenceFixture.calls.slice(start).some(c => c.type === 'sessions.list'), startCalls);
+                    assert.equal(await page.locator('#pp-message').inputValue(), 'Keep this unsent draft');
                     const retryCalls = await page.evaluate(start => presenceFixture.calls.slice(start), startCalls);
-                    assert.ok(retryCalls.every(c => ['wing.info', 'sessions.list', 'sessions.inventory'].includes(c.type) || c.type === 'session.control' && ['session_read', 'terminal_read'].includes(c.operation)), 'retry only reads inventory and output');
-                    assert.ok(retryCalls.every(c => c.wingId !== 'machine-0'), 'retry does not send to disconnected peer');
+                    assert.ok(retryCalls.every(c => ['wing.info', 'sessions.list', 'sessions.inventory'].includes(c.type) || c.type === 'session.control' && (c.operation === 'session_read' || c.operation === 'session_action' && c.arguments.operation === 'terminal_read' && c.arguments.origin_wing_id === c.wingId && Object.keys(c.arguments.arguments).length === 0)), 'retry only reads inventory and output');
+                    assert.ok(retryCalls.every(c => c.wingId !== 'machine-0'), 'retry does not send to disconnected peer: ' + JSON.stringify(retryCalls));
                     const listedBeforeRecovery = await page.evaluate(() => presenceFixture.calls.filter(c => c.wingId === 'machine-0' && c.type === 'sessions.list').length);
                     await page.evaluate(() => presenceFixture.restore('machine-0'));
                     await page.waitForFunction(n => presenceFixture.calls.filter(c => c.wingId === 'machine-0' && c.type === 'sessions.list').length > n, listedBeforeRecovery);
@@ -143,9 +145,10 @@ async function run() {
                     assert.ok((await page.locator('.pp-away').innerText()).includes(guidance));
                     assert.doesNotMatch(await page.locator('.pp-away').innerText(), /offline|Reconnect|Sessions.*kept/i);
                     await page.evaluate(() => { location.hash = '#approve/machine-1/same-id'; });
-                    await page.locator('.pp-note').waitFor();
-                    assert.ok((await page.locator('.pp-note').innerText()).includes(guidance));
-                    assert.doesNotMatch(await page.locator('.pp-note').innerText(), /offline|reconnect/i);
+                    await page.waitForFunction(() => location.hash === '#session/machine-1/same-id');
+                    await page.locator('.pp-away').waitFor();
+                    assert.ok((await page.locator('.pp-away').innerText()).includes(guidance));
+                    assert.doesNotMatch(await page.locator('.pp-away').innerText(), /offline|reconnect/i);
                     assert.equal(await page.locator('#paper [data-takeover]').count(), 0);
                 }
                 if (error !== 'decrypt') {

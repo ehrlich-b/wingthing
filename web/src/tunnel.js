@@ -260,6 +260,14 @@ function acquireToken() {
     return new Promise(function(resolve) { setTimeout(resolve, waitMs); });
 }
 
+// Recheck after each asynchronous wait: queued reads must not reopen a peer
+// after its offline event, or use a key replaced during connection setup.
+function assertTunnelWingAvailable(wingId, publicKey) {
+    const wing = S.wingsData.find(w => w.wing_id === wingId);
+    if (!wing || wing.online === false) throw new Error('wing offline');
+    if (publicKey && wing.public_key !== publicKey) throw new Error('wing identity changed');
+}
+
 // --- Public API ---
 
 export async function sendTunnelRequest(wingId, innerMsg, opts, _depth) {
@@ -267,6 +275,8 @@ export async function sendTunnelRequest(wingId, innerMsg, opts, _depth) {
     await acquireToken();
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
     if (!wing || !wing.public_key) throw new Error('wing not found or no public key');
+    var requestPublicKey = wing.public_key;
+    assertTunnelWingAvailable(wingId, requestPublicKey);
 	assertWingIdentity(wingId, wing.public_key);
 
     var key = deriveE2ETunnelKey(wing.public_key);
@@ -280,6 +290,7 @@ export async function sendTunnelRequest(wingId, innerMsg, opts, _depth) {
     var purpose = tunnelPurpose(innerMsg.type);
 
     var conn = await acquireConn(wingId);
+    assertTunnelWingAvailable(wingId, requestPublicKey);
 
     return new Promise(function(resolve, reject) {
         conn.pending[requestId] = { resolve: resolve, reject: reject };
@@ -340,6 +351,8 @@ export async function sendTunnelRequest(wingId, innerMsg, opts, _depth) {
 export async function sendTunnelStream(wingId, innerMsg, onChunk) {
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
     if (!wing || !wing.public_key) throw new Error('wing not found or no public key');
+    var requestPublicKey = wing.public_key;
+    assertTunnelWingAvailable(wingId, requestPublicKey);
 	assertWingIdentity(wingId, wing.public_key);
 
     var key = deriveE2ETunnelKey(wing.public_key);
@@ -353,6 +366,7 @@ export async function sendTunnelStream(wingId, innerMsg, onChunk) {
     var purpose = tunnelPurpose(innerMsg.type);
 
     var conn = await acquireConn(wingId);
+    assertTunnelWingAvailable(wingId, requestPublicKey);
 
     return new Promise(function(resolve, reject) {
         conn.pending[requestId] = {

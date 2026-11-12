@@ -8,7 +8,7 @@ export async function assertListViewRefresh(page, { root, go, checked }) {
     const source = fs.readFileSync(path.join(root, 'web/src/shell/patch.js'), 'utf8')
         .replace('export function patchRegion', 'function patchRegion');
     for (const [view, hash, region, rows, focus] of [
-        ['Home', '#', '.pp-conversation', '.pp-row-session', 'a'],
+        ['Home', '#', '.home-section[data-k="working"] .home-list', '.home-row', null],
         ['Sessions', '#sessions', '[data-k="session-group/work"]', '.pp-srow', null],
         ['Machines', '#machines', '.pp-col-main', '.pp-machine', 'li a'],
         ['Machine', '#machine/studio', '#wd-active-sessions', '.wd-session-row', null],
@@ -39,7 +39,7 @@ export async function assertListViewRefresh(page, { root, go, checked }) {
                         target.addEventListener('blur', () => blurs++);
                         patch(region, [...after].map(key => templates[key]).join(''));
                         results.push({before, after, fallback,
-                            order: [...region.querySelectorAll(rows)].map(row => row.dataset.key).join(''),
+                            order: [...region.querySelectorAll(rows)].map(row => row.dataset.key || row.dataset.k).join(''),
                             focused: document.activeElement === target,
                             retained: region.querySelector('[data-key="b"]') === row, blurs});
                     }
@@ -58,7 +58,7 @@ export async function assertListViewRefresh(page, { root, go, checked }) {
         checked('list-order-' + view + '-' + page.viewportSize().width, results);
     }
     for (const [view, hash, region, rows, focus, focusedIndex] of [
-        ['Home', '#', '.pp-col-main', '.pp-row-session', 'a', 1],
+        ['Home', '#', '.home-section[data-k="working"] .home-list', '.home-row', null, 1],
         ['Sessions', '#sessions', '.pp-col-main', '[data-k="session-group/work"] .pp-srow', null, 7],
         ['Machines', '#machines', '.pp-col-main', '.pp-machine', 'li a', 1],
         ['Machines sessions', '#machines', '[data-machine="studio"]', 'li', 'a', 2],
@@ -96,7 +96,7 @@ export async function assertListViewRefresh(page, { root, go, checked }) {
                 try {
                     patch(region, original);
                     const mounted = [...region.querySelectorAll(rows)];
-                    if (!mounted.length || mounted.some(row => !row.dataset.key)) throw Error('Every list row needs a stable data-key');
+                    if (!mounted.length || mounted.some(row => !(row.dataset.key || row.dataset.k))) throw Error('Every list row needs a stable data-key');
                     const row = mounted[Math.min(focusedIndex, mounted.length - 1)];
                     const parent = row.parentElement;
                     const target = focus ? row.querySelector(focus) : row;
@@ -115,7 +115,7 @@ export async function assertListViewRefresh(page, { root, go, checked }) {
                     target.addEventListener('blur', () => blurs++);
                     const observe = step => ({
                         step, fallback,
-                        retained: [...region.querySelectorAll(rows)].find(node => node.dataset.key === row.dataset.key) === row,
+                        retained: [...region.querySelectorAll(rows)].find(node => (node.dataset.key || node.dataset.k) === (row.dataset.key || row.dataset.k)) === row,
                         focused: document.activeElement === target,
                         parentRetained: row.parentElement === parent,
                         selectionRetained: selection.anchorNode === text && selection.toString() === selected,
@@ -124,14 +124,14 @@ export async function assertListViewRefresh(page, { root, go, checked }) {
                     const next = region.cloneNode(true);
                     let expectedOrder;
                     const apply = next => {
-                        expectedOrder = [...next.querySelectorAll(rows)].map(row => row.dataset.key);
+                        expectedOrder = [...next.querySelectorAll(rows)].map(row => row.dataset.key || row.dataset.k);
                         patch(region, next.innerHTML);
-                        if (JSON.stringify([...region.querySelectorAll(rows)].map(row => row.dataset.key)) !== JSON.stringify(expectedOrder)) {
-                            throw Error('Incoming row order was not preserved: ' + JSON.stringify({ expectedOrder, actual: [...region.querySelectorAll(rows)].map(row => row.dataset.key) }));
+                        if (JSON.stringify([...region.querySelectorAll(rows)].map(row => row.dataset.key || row.dataset.k)) !== JSON.stringify(expectedOrder)) {
+                            throw Error('Incoming row order was not preserved: ' + JSON.stringify({ expectedOrder, actual: [...region.querySelectorAll(rows)].map(row => row.dataset.key || row.dataset.k) }));
                         }
                     };
                     const arrival = next.querySelector(rows).cloneNode(true);
-                    arrival.dataset.key += '/earlier';
+                    arrival.dataset.key = (arrival.dataset.key || arrival.dataset.k) + '/earlier';
                     if (arrival.hasAttribute('data-k')) arrival.dataset.k = arrival.dataset.key;
                     for (const link of [arrival, ...arrival.querySelectorAll('a')]) {
                         if (link.hasAttribute('href')) link.setAttribute('href', link.getAttribute('href') + '-earlier');

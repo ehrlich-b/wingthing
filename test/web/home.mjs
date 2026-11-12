@@ -112,7 +112,7 @@ export async function runHome({pages, machines, sockets, machine, row, events, a
         await page.locator('.home-need .home-commands').waitFor();
         await shoot(page,'home-blocked',suffix(page));
         await answer.click();
-        await page.waitForFunction(()=>location.hash==='#session/studio/redirect' && document.querySelector('#paper .pp-live .xterm')?.contains(document.activeElement));
+        await page.waitForFunction(()=>location.hash==='#session/studio/redirect' && document.querySelector('#paper .pp-live .xterm')?.contains(document.activeElement)).catch(async error=>{console.log('ANSWER-FOCUS',JSON.stringify(await page.evaluate(()=>({hash:location.hash,active:document.activeElement.tagName+'.'+document.activeElement.className,terminal:!!document.querySelector('.pp-live .xterm'),composer:!!document.querySelector('#pp-message')}))));throw error;});
         checked('home-answer-focus'+suffix(page),await page.evaluate(()=>({hash:location.hash,focus:document.activeElement.className,terminal:!!document.querySelector('#paper .pp-live').contains(document.activeElement)})));
     }
     // Realistic long names, 8+ rows, and the six-machine plan boundary.

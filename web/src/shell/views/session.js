@@ -23,7 +23,7 @@ function viewSession(route) {
         (st.key === 'need' ? needCard(s) : '') + '</div>' + composer('Message ' + sessionDisplayName(s), s) + '</div>' +
         '<aside class="pp-col-rail pp-term-rail">' + (phone ? '<details class="pp-terminal"' + (controlling ? ' open' : '') + '><summary>Show terminal</summary>' : '<div class="pp-terminal">') + kicker('Terminal', controlling ? (controlReady ? 'You have control' : S.ptyInputBlocked ? 'Control unavailable · hand back and retry' : 'Connecting terminal…') : live ? 'Agent has control' : 'Last seen') +
         (controlling ? '<button type="button" class="pp-btn" data-handback>Hand back</button>' : '') +
-        (controlling ? '<div class="pp-live-terminal" data-engine="terminal"></div>' :
+        (controlling ? '<div class="pp-live pp-live-terminal" data-engine="terminal"></div>' :
         '<pre class="pp-term" aria-label="Terminal preview">' + esc((term.text || '').split('\n').slice(-18).join('\n').trimEnd() || term.error || (live ? 'Waiting for terminal output…' : machineName(w) + ' · ' + (isAway(w) ? awayText(w) : machineLabel(w)) + '. ' + machineGuidance(w))) + '</pre>') +
         (!controlling && live ? '<button type="button" class="pp-btn" data-takeover="' + esc(s.wing_id + '/' + s.id) + '">Take over terminal</button><p class="pp-quiet">Your keys go to the session until you hand control back.</p>' : '') + (phone ? '</details>' : '</div>') + '</aside></div>';
 }

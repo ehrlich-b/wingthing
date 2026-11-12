@@ -28,10 +28,11 @@ function inputAllowed(s) {
     return !!s && machineState(wingOf(s.wing_id)) === 'connected' && !S.spectating && S.currentUser?.relay_allowed !== false;
 }
 function selectComposer(s) {
-    const target = s && S.currentUser ? { userId: S.currentUser.id, wingId: s.wing_id, sessionId: s.id } : null;
+    const target = s && machineState(wingOf(s.wing_id)) === 'connected' && S.currentUser ? { userId: S.currentUser.id, wingId: s.wing_id, sessionId: s.id } : null;
     const key = target ? JSON.stringify(target) : '';
     if (key === ui.inputKey) return;
     if (ui.inputReader) ui.inputReader.close();
+    ui.inputReader = null;
     ui.inputKey = key; ui.inputSnapshot = null;
     if (!target) return;
     ui.inputReader = createConversationReader({

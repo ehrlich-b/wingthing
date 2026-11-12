@@ -453,7 +453,7 @@ async function assertDisclosureRefresh(page, disclosure, label) {
     const patchSource = fs.readFileSync(path.join(root,'web/src/shell/patch.js'),'utf8').replace('export function patchRegion','function patchRegion');
     const results = [];
     for (const open of [true, false]) {
-        await disclosure.locator('summary').click();
+        if (await disclosure.evaluate(node => node.open) !== open) await disclosure.locator('summary').click();
         assert.equal(await disclosure.evaluate(node => node.open), open);
         // Exercise the production patcher on the mounted view's default-closed
         // markup directly, keeping this regression independent of inventory polls.
@@ -625,6 +625,7 @@ async function runShell(browser) {
         await go(page,'#sessions'); await page.locator('.pp-srow[href="#session/studio/migrate"]').waitFor();
         if (shellMode==='routes') await shoot(page,'shell-volume-1','-'+page.viewportSize().width);
     }
+    if (shellMode==='conversation') for (const id of ['macbook','mini']) await machine(id);
     if (shellMode==='routes' || shellMode==='refresh' || shellMode==='focus') {
         machines.studio.rows=[...original,...Array.from({length:18},(_,i)=>row('long-'+i,'Improve organization invitation recovery for interrupted workspace migration '+(i+1),'claude',i<9?'blocked':'working','wingthing'))];
         if (shellMode==='routes' || shellMode==='focus') for (const id of ['macbook','mini']) await machine(id);
@@ -662,9 +663,9 @@ async function runShell(browser) {
             await assertSessionGroupRefresh(page);
             await assertSessionRowRefresh(page);
             await go(page,'#');
-            await page.locator('#pp-needs .pp-more').click();
+            await page.locator('.home-section[data-k="needs-you"] .pp-more').click();
             await page.locator('#pp-filter').waitFor();
-            assert.equal(await page.evaluate(()=>location.hash),'#sessions');
+            assert.equal(await page.evaluate(()=>location.hash),'#sessions?state=need');
             const waiting = page.locator('.pp-group').filter({has:page.locator('.pp-kick', {hasText:'Needs you'})});
             assert.equal(await waiting.locator('.pp-srow').count(),10);
             const waitingOverflow = waiting.locator('details.pp-more-sessions');
@@ -689,6 +690,18 @@ async function runShell(browser) {
             await page.evaluate(()=>{location.hash='#account';}); await page.waitForTimeout(150);
             await page.goBack(); await page.waitForTimeout(150); await assertShell(page,'back-'+page.viewportSize().width);
             await page.goForward(); await page.waitForTimeout(150); await assertShell(page,'forward-'+page.viewportSize().width);
+        }
+    } else if (shellMode==='conversation') {
+        for (const page of pages) {
+            const suffix='-'+page.viewportSize().width;
+            await go(page,'#session/studio/migrate');
+            await checkConversation(page,'03-session',suffix);
+            await shoot(page,'03-session',suffix);
+            await checkConversationRefresh(page,'03-session',suffix);
+            await go(page,'#session/macbook/notes');
+            await page.locator('.pp-conversation .pp-row').waitFor({timeout:3000});
+            assert.equal(await page.locator('.pp-conversation .pp-row').count(),1);
+            await shoot(page,'03-session-one',suffix);
         }
     } else if (shellMode==='launch') {
         for (const page of pages) {
