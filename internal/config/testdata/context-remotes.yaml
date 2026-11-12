@@ -1,0 +1,14 @@
+future_registry_setting: {enabled: true}
+remotes:
+  studio:
+    ssh_target: fixture-studio
+    wt_binary: /opt/wingthing/wt
+    wingthing_dir: /home/fixture/.wingthing
+    context: home
+    wing_id: abcdef0123456789abcd
+    control_socket: /home/fixture/.wingthing/control.sock
+    control_version: v1
+    future_setting: [false, 42, "042"]
+  office:
+    ssh_target: fixture-office
+    context: work

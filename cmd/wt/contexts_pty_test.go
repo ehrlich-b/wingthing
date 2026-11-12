@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -25,5 +26,30 @@ func TestContextBuiltPTYHomeWork(t *testing.T) {
 	northstarWrite(t, filepath.Join(f.evidence, "context-built-pty-120x36.txt"), screen, 0600)
 	h.expect("home filter", h.send("c"), "Home   1 machine connected")
 	h.expect("work filter", h.send("c"), "Work   2 machines connected")
+	h.exit("q")
+}
+
+func TestContextSetBuiltPTY(t *testing.T) {
+	f := northstarNewFixture(t)
+	binary := northstarBuild(t, f, "stable")
+	northstarWrite(t, filepath.Join(f.local, "remotes.yaml"), fmt.Sprintf("remotes:\n  studio:\n    ssh_target: ns-devbox\n    wingthing_dir: %s\n", f.remote), 0600)
+	northstarStandaloneEgg(t, f, f.local, "home-task", "investigate-long-running-home-task", "needs_input", "home")
+	h := northstarStartPTY(t, f, binary, 120, 36)
+	screen := h.expect("ungrouped context hint", 0, "wt context set", "Needs you")
+	if strings.Count(screen, "wt context set") != 1 {
+		t.Fatalf("expected one hint:\n%s", screen)
+	}
+	northstarWrite(t, filepath.Join(f.evidence, "context-set-unassigned-120x36.txt"), screen, 0600)
+	h.exit("q")
+	for _, args := range [][]string{{"context", "set", "local", "home"}, {"context", "set", "studio", "work"}} {
+		command := northstarStartPTY(t, f, binary, 120, 36, args...)
+		command.exit("")
+	}
+	h = northstarStartPTY(t, f, binary, 120, 36)
+	screen = h.expect("command configured Home and Work", 0, "Home · 1 needs you", "Work · 0 needs you", "studio", "This machine")
+	if strings.Contains(screen, "wt context set") {
+		t.Fatalf("assigned machines still show setup hint:\n%s", screen)
+	}
+	northstarWrite(t, filepath.Join(f.evidence, "context-set-grouped-120x36.txt"), screen, 0600)
 	h.exit("q")
 }

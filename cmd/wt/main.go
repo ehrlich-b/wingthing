@@ -150,6 +150,7 @@ func newRootCommand() *cobra.Command {
 		mcpCmd(),
 		localCertCmd(),
 		remoteCmd(),
+		contextCmd(),
 		remoteEnterCmd(),
 	)
 	if config.Channel() == "preview" {
