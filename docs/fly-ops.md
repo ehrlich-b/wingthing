@@ -89,16 +89,14 @@ download links, installer and binary version, and append those results to the
 release receipt before declaring the release complete. Then use the existing
 deployment gates below for any separately authorized site deployment.
 
-`make deploy` runs `check` and the default `gate` profiles: web and Go unit
-tests/build, integration fixtures, vet, race on touched packages, vulnerability
-checks, release command-surface contract, and the configured historical-baseline
-compatibility gate before
-`fly deploy`; it does not publish a GitLab release. The compatibility script uses
-`WT_COMPAT_BASELINE_REF` as a single override baseline when set and otherwise runs
-both pinned defaults, `v0.144.1` and `v0.147.0`, declared in
-`scripts/test-backward-compat.sh`. It exercises each selected baseline and the candidate
-in both gateway/wing orders; it is not a claim that either pin is always the immediately
-previous release, and it does not exercise a mixed Fly login/edge fleet.
+`make ship-gate` runs the Linux promotion set and writes a receipt for the
+committed HEAD. Transfer that receipt to the deployment host and run
+`make deploy RECEIPT=/path/to/ship-gate-<sha>.txt`. Deploy verifies the receipt
+and staged release downloads before Fly; it does not run the suite locally.
+See [Promotion and deployment](#promotion-and-deployment) for the exact set.
+The separate release qualification still exercises the historical baselines
+`v0.144.1` and `v0.147.0` in both gateway/wing orders; these pins do not claim
+to be the immediately previous release or a mixed Fly login/edge fleet.
 
 Deploying the site before the matching release creates an installation outage: the
 newer installer refuses an older binary whose command surface does not match the
@@ -618,3 +616,45 @@ WHERE e.user_id = '<account-id>' AND s.status = 'active';
 `users.tier='pro'` alone is insufficient. The alternative is `users.created_at` no later than the running `WT_RELAY_MIGRATION_BEFORE` cutoff (checked in: `2026-08-26T00:00:00Z`). `hosted_relay: allow` cannot grant entitlement; missing rows require operator/billing action.
 
 The inspected `origin/main` (`72c7be5`) already routes these encrypted operations; no relay code deploy is needed. The running hosted deployment/account was not verified. The [hosted native path](agent-manager-product-brief.md#hosted-native-path) lists all admission checks. No production change is made here.
+
+## Promotion and deployment
+
+Run `make ship-gate SHIP_GATE_DIR=/path/to/evidence` on Linux from a clean,
+committed checkout. Set `WT_RELEASE_SKEW_BINARY` to the absolute path of the
+original v0.149.5 Linux binary, with the published `SHA256SUMS` beside it.
+The default is `/work/cache/wingthing-releases/v0.149.5/wt-linux-amd64`
+(`wt-linux-arm64` on an arm64 promotion host). No download occurs. Run
+`python3 scripts/ship-gate.py prepare-baseline` to validate the retained artifact
+against both `SHA256SUMS` and the pinned published digest before promotion.
+Missing or mismatched artifacts fail with an actionable error; no artifact is
+copied into the source checkout or replaced. The gate runs
+web tests/build, Go vet, launch-plan tests, whitespace validation, receipt
+preflight tests and the previous-release CLI probe. It writes
+`ship-gate-<full-sha>.txt` only after every check succeeds, in a fresh run
+subdirectory printed by the command. This bounded promotion set does not replace the
+separate full release qualification in release-verification.md.
+
+Transfer that receipt and the matching source/released artifact to the deploy
+host (set `WT_RELEASE_SKEW_BINARY` there if its path differs), then run
+`make deploy RECEIPT=/path/to/ship-gate-<full-sha>.txt`.
+Even a dry run refuses missing, stale or incomplete receipts. Deployment checks
+staged download integrity, copies those files into `.ship-downloads/`, and runs
+Fly; it does not run promotion tests on the deploy host. For manual container
+builds, run `make check-downloads` and `python3 scripts/ship-gate.py stage-downloads`
+first when building a release image with `--build-arg REQUIRE_DOWNLOADS=1`.
+A plain `docker build .` needs no downloads and produces an empty downloads
+directory. Docker copies the staged release directory while ignoring the original
+`downloads/` tree and local experiments, mobile sources and scratch artifacts.
+A context containing stale release files is rejected; use a fresh checkout.
+
+The skew probe verifies the adjacent checksum manifest before executing the
+released binary for `whoami` and `wings --json --no-probe` against a loopback
+HEAD relay advertising a HEAD wing. It checks
+nonempty `attach --json` inventory and attaches to a real HEAD egg on that
+wing, asserting input and output through HEAD wing control and a confirmed
+exit. Native attach uses local/SSH control; it has no HTTP relay attachment
+route. The command fixture is isolated in temporary state and uses no real
+provider or credentials; it is a transport check, not sandbox qualification.
+Retain the binary and `SHA256SUMS` with the receipt so promotion and verification
+can be reproduced offline. A missing or mismatched artifact fails, and no current
+build is substituted for the released CLI.

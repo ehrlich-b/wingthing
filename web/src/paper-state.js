@@ -54,13 +54,4 @@ export function offlineLabel(since) {
     return since ? 'offline · last seen ' + since : 'offline';
 }
 
-export function paperRoute(hash) {
-    if (!hash || hash === '#') return { view: 'wing' };
-    if (hash === '#needs') return { view: 'wing', focusNeeds: true };
-    if (hash === '#decisions') return { view: 'decisions' };
-    if (hash === '#sessions' || hash === '#machines' || hash === '#pair' || hash === '#new') return { view: hash.slice(1) };
-    if (hash.startsWith('#new/')) return { view: 'new', wingId: decodeURIComponent(hash.slice(5)) };
-    const m = hash.match(/^#(session|approve)\/([^/]+)\/([^/?]+)$/);
-    if (m) return { view: m[1], wingId: decodeURIComponent(m[2]), sessionId: decodeURIComponent(m[3]) };
-    return null;
-}
+export { paperRoute } from './shell/routes.js';

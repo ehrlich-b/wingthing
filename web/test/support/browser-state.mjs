@@ -6,8 +6,9 @@ import * as references from '../../src/session-reference.js';
 
 // Run the real module bodies with only their transport/UI dependencies replaced.
 export function moduleContext(name, bindings) {
-    const source = readFileSync(new URL(`../../src/${name}.js`, import.meta.url), 'utf8')
-        .replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
+    const modules = name === 'paper' ? ['shell/select', 'shell/common'] : [name];
+    const source = modules.map(module => readFileSync(new URL(`../../src/${module}.js`, import.meta.url), 'utf8')).join('\n')
+        .replace(/^import .*;\n/gm, '').replace(/^export \{.*\};\n/gm, '').replace(/^export /gm, '');
     const context = vm.createContext({ ...helpers, ...references, ...inventory, ...bindings });
     vm.runInContext(source, context, { filename: `${name}.js` });
     return context;

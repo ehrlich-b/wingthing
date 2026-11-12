@@ -50,7 +50,11 @@ func (s *Server) forwardBrowserDetach(conn *websocket.Conn, onlySession string) 
 	if config.Channel() != "preview" {
 		return
 	}
-	for _, detached := range s.PTY.browserDetachRoutes(conn, onlySession) {
+	s.forwardDetachedRoutes(s.PTY.browserDetachRoutes(conn, onlySession))
+}
+
+func (s *Server) forwardDetachedRoutes(routes []browserDetachRoute) {
+	for _, detached := range routes {
 		wing := s.Wings.FindByID(detached.wingID)
 		if wing == nil {
 			wing = s.findAnyWingByWingID(detached.wingID)
@@ -59,7 +63,7 @@ func (s *Server) forwardBrowserDetach(conn *websocket.Conn, onlySession string) 
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_ = writeWebSocketJSON(ctx, wing.Conn, detached.message)
+		_ = writeWingJSON(ctx, wing.Conn, detached.message)
 		cancel()
 	}
 }

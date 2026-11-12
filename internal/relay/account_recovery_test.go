@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,7 +33,7 @@ func recoveryUser(t *testing.T, store *RelayStore, id, provider, email string) {
 
 // Exercise the real callback with fixed in-memory provider responses. No
 // provider server, network request, production account or login is involved.
-func googleRecoveryCallback(t *testing.T, s *Server, id, email string, verified bool) *httptest.ResponseRecorder {
+func googleRecoveryCallback(t *testing.T, s *Server, id, email string, verified bool, requests ...*http.Request) *httptest.ResponseRecorder {
 	t.Helper()
 	s.oauthHTTPClient = &http.Client{Transport: recoveryTransport(func(r *http.Request) (*http.Response, error) {
 		var payload any
@@ -55,6 +56,9 @@ func googleRecoveryCallback(t *testing.T, s *Server, id, email string, verified 
 	})}
 	r := httptest.NewRequest(http.MethodGet, "/auth/google/callback?code=fixture-code&state=fixture-state", nil)
 	r.AddCookie(&http.Cookie{Name: "oauth_state", Value: "fixture-state"})
+	if len(requests) > 0 {
+		r = requests[0]
+	}
 	w := httptest.NewRecorder()
 	s.handleGoogleCallback(w, r)
 	return w
@@ -286,12 +290,12 @@ func TestGoogleRecoveryUnverifiedSignupCannotCaptureRecovery(t *testing.T) {
 func TestRecoveryPreservesLegacyMagicIdentity(t *testing.T) {
 	store := testStore(t)
 	mustTest(t, store.UpsertUser(&User{ID: "legacy", Provider: "email", ProviderID: "Owner@Example.COM"}))
-	user, err := store.GetOrCreateUserByEmail("owner@example.com")
+	user, err := store.GetUserForEmailSignIn("owner@example.com")
 	if err != nil || user == nil || user.ID != "legacy" {
 		t.Fatalf("normalized legacy email identity = %#v %v", user, err)
 	}
 	mustTest(t, store.UpsertUser(&User{ID: "duplicate", Provider: "email", ProviderID: "OWNER@EXAMPLE.COM"}))
-	if user, err := store.GetOrCreateUserByEmail("owner@example.com"); user != nil || !errors.Is(err, ErrAccountRecoveryRefused) {
+	if user, err := store.GetUserForEmailSignIn("owner@example.com"); user != nil || !errors.Is(err, ErrAccountRecoveryRefused) {
 		t.Fatalf("ambiguous legacy email identity = %#v %v", user, err)
 	}
 }
@@ -379,7 +383,7 @@ func TestMagicLinkRecovery(t *testing.T) {
 				if replay := verify(); replay.Code != http.StatusBadRequest || recoverySession(t, s, replay) != nil {
 					t.Fatal("magic link replay authenticated")
 				}
-				later, err := store.GetOrCreateUserByEmail(" OWNER@EXAMPLE.COM ")
+				later, err := store.GetUserForEmailSignIn(" OWNER@EXAMPLE.COM ")
 				if err != nil || later == nil || later.ID != user.ID {
 					t.Fatalf("later email login=%#v %v", later, err)
 				}
@@ -457,12 +461,30 @@ func TestRecoveryRefusesOutageIdentityCollisionsAfterUpgrade(t *testing.T) {
 		for _, address := range []string{"owner@example.com", "OWNER@EXAMPLE.COM"} {
 			t.Run(provider+"/"+address, func(t *testing.T) {
 				path := filepath.Join(testsocket.Dir(t), "relay.db")
-				store, err := OpenRelay(path)
+				// Start from the actual pre-identity schema, including its
+				// migration ledger, rather than dismantling the current schema.
+				db, err := sql.Open("sqlite", path)
 				mustTest(t, err)
-				_, err = store.DB().Exec(`DROP TRIGGER users_register_identity;
-					DROP TABLE user_identities;
-					DELETE FROM schema_migrations WHERE version = '008_user_identities.sql'`)
+				t.Cleanup(func() { _ = db.Close() })
+				mustMigrationExec(t, db, "PRAGMA foreign_keys=ON")
+				mustMigrationExec(t, db, "CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
+				entries, err := migrationsFS.ReadDir("migrations")
 				mustTest(t, err)
+				for _, entry := range entries {
+					if entry.IsDir() || entry.Name() >= "008_user_identities.sql" {
+						continue
+					}
+					contents, err := migrationsFS.ReadFile("migrations/" + entry.Name())
+					mustTest(t, err)
+					tx, err := db.Begin()
+					mustTest(t, err)
+					_, err = tx.Exec(string(contents))
+					mustTest(t, err)
+					_, err = tx.Exec("INSERT INTO schema_migrations (version) VALUES (?)", entry.Name())
+					mustTest(t, err)
+					mustTest(t, tx.Commit())
+				}
+				store := &RelayStore{db: db}
 				recoveryUser(t, store, "github-owner", "github", "owner@example.com")
 				mustTest(t, store.CreateSession("original-session", "github-owner", time.Now().Add(time.Hour)))
 				mustTest(t, store.CreateDeviceToken("original-machine", "github-owner", "wing", nil))
@@ -521,7 +543,7 @@ func TestRecoveryRefusesOutageIdentityCollisionsAfterUpgrade(t *testing.T) {
 	}
 }
 
-func TestRecoveryPreservesNonGitHubAlternateSignups(t *testing.T) {
+func TestRecoveryPreservesNonGitHubGoogleSignupAndRefusesUnlinkedEmail(t *testing.T) {
 	for _, original := range []string{"google", "email"} {
 		t.Run(original, func(t *testing.T) {
 			store := testStore(t)
@@ -541,17 +563,23 @@ func TestRecoveryPreservesNonGitHubAlternateSignups(t *testing.T) {
 				s.handleMagicVerify(w, httptest.NewRequest(http.MethodGet, "/auth/magic/verify?token=token", nil))
 			}
 			user := recoverySession(t, s, w)
-			if w.Code != http.StatusSeeOther || user == nil || user.ID == "original" {
-				t.Fatalf("alternate signup changed: status=%d user=%#v body=%s", w.Code, user, w.Body)
+			if original == "email" {
+				if w.Code != http.StatusSeeOther || user == nil || user.ID == "original" {
+					t.Fatalf("Google signup changed: status=%d user=%#v body=%s", w.Code, user, w.Body)
+				}
+			} else if w.Code != http.StatusForbidden || user != nil {
+				t.Fatalf("unlinked email must not create a separate account: status=%d user=%#v", w.Code, user)
 			}
 		})
 	}
 }
 
-func TestRecoveryEmailSignupThenGoogleLogin(t *testing.T) {
+func TestRecoveryExistingEmailThenGoogleLogin(t *testing.T) {
 	store := testStore(t)
 	s := NewServer(store, ServerConfig{SMTPHost: "fixture"})
 	const address = "owner@example.com"
+	// Existing email accounts still sign in; only implicit signup is refused.
+	mustTest(t, store.UpsertUser(&User{ID: "email-owner", Provider: "email", ProviderID: address}))
 	mustTest(t, store.CreateMagicLink("signup-link", address, "signup-token", time.Now().Add(time.Minute)))
 	w := httptest.NewRecorder()
 	s.handleMagicVerify(w, httptest.NewRequest(http.MethodGet, "/auth/magic/verify?token=signup-token", nil))

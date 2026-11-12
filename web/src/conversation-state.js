@@ -7,7 +7,7 @@ export const CONVERSATION_FRESH_MS = 60000;
 // provider-backed lifecycle controls readiness, and sequence IDs deduplicate
 // replay after a tunnel reconnect.
 export function emptyConversationState() {
-    return { cursor: 0, messages: [], seen: new Set(), lifecycle: null, readSeq: 0, identityError: '' };
+    return { cursor: 0, messages: [], seen: new Set(), lifecycle: null, readSeq: 0, identityError: '', sending: null };
 }
 
 // Restore cached transcript evidence. The lifecycle is kept only as labeled
@@ -15,9 +15,15 @@ export function emptyConversationState() {
 export function restoredConversationState(record) {
     var state = emptyConversationState();
     if (!record) return state;
-    state.messages = Array.isArray(record.messages) ? record.messages.slice() : [];
+    var messages = Array.isArray(record.messages) ? record.messages : [];
+    var codex = record.agent === 'codex' || record.lifecycle?.agent === 'codex';
+    // Older Codex caches did not distinguish hook rows from native user rows.
+    // Replay their transcript from the start rather than guessing from text or
+    // keeping a cursor that would skip already imported native messages.
+    var replay = codex && messages.some(message => message.type === 'user' && !message.source);
+    state.messages = replay ? [] : messages.filter(message => !(message.type === 'user' && message.source === 'codex_hook'));
     state.messages.forEach(function(message) { if (Number.isSafeInteger(message.sequence)) state.seen.add(message.sequence); });
-    state.cursor = Number.isSafeInteger(record.cursor) ? record.cursor : 0;
+    state.cursor = !replay && Number.isSafeInteger(record.cursor) ? record.cursor : 0;
     state.lifecycle = record.lifecycle || null;
     return state;
 }
@@ -59,7 +65,7 @@ function markerFor(event, agent) {
     return { type: 'lifecycle', kind: kind, state: event.state || '', reason: event.reason || '', source: event.source || '', sequence: event.sequence, timestamp: event.timestamp || '' };
 }
 
-// meta: { readSeq, expected: { sessionId, providerSessionId } }. A delayed
+// meta: { readSeq, now?, expected: { sessionId, providerSessionId } }. A delayed
 // older page may still contribute unseen events, but never replaces a fresher
 // lifecycle observation.
 export function applyConversationRead(previous, view, meta) {
@@ -74,19 +80,29 @@ export function applyConversationRead(previous, view, meta) {
         lifecycle: older ? previous.lifecycle : view,
         readSeq: !older && Number.isSafeInteger(meta.readSeq) ? meta.readSeq : previous.readSeq,
         identityError: '',
+        sending: previous.sending || null,
     };
     var agent = view.agent || (previous.lifecycle && previous.lifecycle.agent) || '';
+    var now = meta.now === undefined ? Date.now() : meta.now;
     (view.events || []).forEach(function(event) {
         if (!Number.isSafeInteger(event.sequence) || next.seen.has(event.sequence)) return;
         next.seen.add(event.sequence);
+        if (agent === 'codex' && event.type === 'prompt_submitted' && event.source !== 'codex_app_server') {
+            // Hooks announce delivery, never transcript rows. Neither text nor
+            // optional turn IDs can reconcile native transcript import order.
+            var at = Date.parse(event.timestamp);
+            if (!next.sending || event.sequence > next.sending.sequence) {
+                next.sending = { sequence: event.sequence, expiresAt: Math.min(Number.isFinite(at) ? at : now, now) + 60000 };
+            }
+            return;
+        }
         if (event.type === 'session_report' && event.report || event.state || ['session_ready', 'prompt_submitted', 'session_exit'].includes(event.type)) {
             next.messages.push({ type: 'activity', eventType: event.type, state: event.state || '', reason: event.reason || '', report: event.report, sequence: event.sequence, timestamp: event.timestamp || '' });
         }
-        if (agent === 'codex' && event.source === 'codex_hook' && event.type === 'prompt_submitted' && typeof event.text === 'string') {
-            next.messages.push({ type: 'user', content: event.text, timestamp: event.timestamp || '', sequence: event.sequence });
-        } else if (event.raw) {
+        if (event.raw) {
             var parsed = parseJSONL(JSON.stringify(event.raw), agent);
             parsed.forEach(function(message, index) {
+                if (agent === 'codex') message.source = event.source || '';
                 message.timestamp = event.timestamp || message.timestamp || "";
                 message.sequence = event.sequence;
                 message.itemIndex = index;
@@ -101,9 +117,7 @@ export function applyConversationRead(previous, view, meta) {
                 next.messages.push({ type: 'provider_record', name: event.type || 'provider record', content: record, sequence: event.sequence, truncated: event.truncated === true });
             }
         } else if (event.type === 'message' && (event.role === 'user' || event.role === 'assistant')) {
-            next.messages.push({ type: event.role, content: event.text || '', timestamp: event.timestamp || '', sequence: event.sequence, truncated: event.truncated === true });
-        } else if (agent === 'codex' && event.type === 'prompt_submitted' && typeof event.text === 'string') {
-            next.messages.push({ type: 'user', content: event.text, timestamp: event.timestamp || '', sequence: event.sequence, truncated: event.truncated === true });
+            next.messages.push({ type: event.role, source: event.source || '', turnId: event.turn_id || '', content: event.text || '', timestamp: event.timestamp || '', sequence: event.sequence, truncated: event.truncated === true });
         }
         var marker = markerFor(event, agent);
         if (marker && (!event.raw || agent === 'codex')) next.messages.push(marker);
@@ -112,6 +126,10 @@ export function applyConversationRead(previous, view, meta) {
         }
     });
     next.messages.sort((a, b) => (a.sequence || 0) - (b.sequence || 0) || (a.itemIndex || 0) - (b.itemIndex || 0));
+    if (next.sending && (now >= next.sending.expiresAt || next.messages.some(message =>
+        message.type === 'user' && ['codex_transcript', 'codex_app_server'].includes(message.source) && message.sequence > next.sending.sequence))) {
+        next.sending = null;
+    }
     if (Number.isSafeInteger(view.cursor) && view.cursor >= previous.cursor) next.cursor = view.cursor;
     return next;
 }

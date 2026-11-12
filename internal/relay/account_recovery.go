@@ -20,11 +20,9 @@ func normalizeRecoveryEmail(email string) (string, error) {
 // An identity created before recovery shipped may belong to an empty account
 // left by the outage. Refuse a collision for manual investigation rather than
 // silently using that account or failing the unique email update with a 500.
-// Already recovered identities continue to resolve to their GitHub user.
+// Google subjects with durable link/recovery proof bypass this legacy check;
+// their binding remains authoritative even after primary-provider rotation.
 func (s *RelayStore) checkExistingRecoveryCollision(user *User, email string) error {
-	if user.Provider == "github" {
-		return nil
-	}
 	normalized, err := normalizeRecoveryEmail(email)
 	if err != nil {
 		return nil
@@ -173,6 +171,16 @@ func (s *RelayStore) RecoverGitHubUser(provider, providerID, email string, verif
 		slices.Sort(userIDs)
 		return nil, fmt.Errorf("%w: user_ids=%q", ErrAccountRecoveryRefused, userIDs)
 	}
+	// A deliberate removal revokes automatic recovery through every provider
+	// sharing this email. Existing identities above still resolve normally;
+	// only an explicit verified link may add access to this account again.
+	var disabled bool
+	if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM signin_recovery_disabled WHERE user_id = ?)", targetID).Scan(&disabled); err != nil {
+		return nil, err
+	}
+	if disabled {
+		return nil, fmt.Errorf("%w: user_id=%q", ErrAccountRecoveryRefused, targetID)
+	}
 	var existingID string
 	err = tx.QueryRow("SELECT provider_id FROM user_identities WHERE user_id = ? AND provider = ?", targetID, provider).Scan(&existingID)
 	if err == nil {
@@ -183,6 +191,11 @@ func (s *RelayStore) RecoverGitHubUser(provider, providerID, email string, verif
 	}
 	if _, err := tx.Exec("INSERT INTO user_identities (provider, provider_id, user_id) VALUES (?, ?, ?)", provider, providerID, targetID); err != nil {
 		return nil, err
+	}
+	if provider == "google" {
+		if err := recordSignInProof(tx, targetID, provider, providerID, normalized, "verified_recovery"); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err

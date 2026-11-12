@@ -3,6 +3,7 @@
 // root `node --test` discovery used by `make web` picks it up unchanged.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createConversationReader, createNavigationGuard, qualifyConversationRead, readConversationTree, resumeInTerminalState, findArchivedExecution, mergeRootRead, mergeWingListing } from './conversation-recovery.js';
 import { applyConversationRead, emptyConversationState, conversationExecutionPresentation, CONVERSATION_FRESH_MS } from './conversation-state.js';
 import { conversationTaskAvailability } from './conversation-response.js';
@@ -606,4 +607,47 @@ test('invalid and oversized messages stay unsent without a reservation', async (
         assert.match(h.latest.notice, /at most 64 KiB/);
     }
     assert.deepEqual(h.operations(), ['session_read']);
+});
+
+test('Codex reader exposes sending separately from transcript rows and clears it on native input', async () => {
+    let events = [{ sequence: 6, source: 'codex_hook', type: 'prompt_submitted', text: 'repeat' }];
+    const h = harness(memoryStorage(), () => ({ lifecycle: live({ agent: 'codex', state_source: 'codex_hook', cursor: events.at(-1).sequence, events }) }));
+    h.reader.open(mac);
+    await h.tick();
+    assert.equal(h.latest.sendingUntil, 1_060_000);
+    assert.equal(h.latest.messages.some(m => m.type === 'user'), false);
+    events = [{ sequence: 7, source: 'codex_transcript', type: 'message', role: 'user', text: 'repeat' }];
+    await h.tick();
+    assert.equal(h.latest.sendingUntil, 0);
+    assert.deepEqual(h.latest.messages.filter(m => m.type === 'user').map(m => m.content), ['repeat']);
+    h.reader.close();
+});
+
+test('upgrading a legacy Codex cache rereads native history and preserves unresolved input', async () => {
+    const fixture = JSON.parse(readFileSync(new URL('../test/fixtures/codex-legacy-cache.json', import.meta.url)));
+    for (const catchingUp of [false, true]) {
+        const storage = memoryStorage();
+        const pending = createPendingInput({ ...mac, request_id: 'unresolved', input: 'keep pending', providerSessionId: 'prov-1' });
+        writeExecution(storage, mac, { ...fixture, ...(catchingUp ? { cursor: 2, messages: fixture.messages.slice(0, 2) } : {}), pending });
+        const h = harness(storage, (_wing, payload) => {
+            const events = fixture.events.filter(event => event.sequence > payload.arguments.after_cursor);
+            return { lifecycle: live({ agent: 'codex', state_source: 'codex_hook', cursor: 6, events }) };
+        });
+        h.reader.open(mac);
+        assert.deepEqual(h.latest.messages, []);
+        assert.equal(h.latest.pending.request_id, 'unresolved');
+        await h.tick();
+        assert.equal(h.calls[0].payload.arguments.after_cursor, 0);
+        const expected = ['repeat', 'first reply', 'repeat', 'second reply'];
+        assert.deepEqual(h.latest.messages.filter(m => ['user', 'assistant'].includes(m.type)).map(m => m.content), expected);
+        assert.equal(h.latest.pending.request_id, 'unresolved');
+        h.reader.close();
+        const reopened = harness(storage, () => ({ lifecycle: live({ agent: 'codex', state_source: 'codex_hook', cursor: 6 }) }));
+        reopened.reader.open(mac);
+        await reopened.tick();
+        assert.equal(reopened.calls[0].payload.arguments.after_cursor, 6);
+        assert.deepEqual(reopened.latest.messages.filter(m => ['user', 'assistant'].includes(m.type)).map(m => m.content), expected);
+        assert.equal(reopened.latest.pending.request_id, 'unresolved');
+        reopened.reader.close();
+    }
 });

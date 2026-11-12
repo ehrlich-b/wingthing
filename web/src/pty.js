@@ -486,6 +486,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                 }
                 if (!reattach) {
                     history.pushState({ view: 'terminal', sessionId: msg.session_id, wingId: S.ptyWingId }, '', sessionRoute(msg.session_id, S.ptyWingId));
+                    window.dispatchEvent(new Event('shell-navigate'));
                 }
 
                 keyReady = false;
@@ -798,7 +799,7 @@ export function attachPTY(sessionId, _retries, wingId, requestId, options) {
         DOM.ptyStatus.textContent = 'Observation is not enabled for this wing';
         return false;
     }
-    var explicitTakeover = !!(options.takeover && S.currentUser && S.currentUser.release_channel === 'preview');
+    var explicitTakeover = !!(options.takeover && S.currentUser);
     S.spectating = !!(((isOtherUser && !explicitTakeover) || options.spectate) && wing && wing.spectate);
 
     // Session not in our list (spectator deep link, path ACLs, etc.) —

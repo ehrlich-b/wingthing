@@ -1,16 +1,13 @@
-import { S, DOM, CACHE_KEY, EGG_ORDER_KEY } from './state.js';
+import { S, DOM } from './state.js';
 import { renderSidebar, renderDashboard, renderAccountPage, renderWingDetailPage } from './render.js';
-import { detachPTY, connectPTY, attachPTY } from './pty.js';
+import { detachPTY, attachPTY } from './pty.js';
 import { clearTermBuffer } from './terminal.js';
-import { clearNotification } from './notify.js';
 import { sendTunnelRequest } from './tunnel.js';
 import { loadHome, saveSessionCache, setEggOrder } from './data.js';
-import { stopChatPolling, startChatPolling, setViewPreference } from './chat-view.js';
-import { refreshSessionFilesButton } from './session-files.js';
+import { stopChatPolling } from './chat-view.js';
 import { showCanvasView, hideCanvasView } from './canvas.js';
 import { findSessionResource, sessionResourceKey } from './session-inventory.js';
 import { sessionRoute } from './session-route.js';
-import { wingDisplayName } from './helpers.js';
 
 function hideCanvasChrome() {
     if (DOM.canvasToolbar) DOM.canvasToolbar.style.display = 'none';
@@ -54,7 +51,7 @@ export function showHome(pushHistory) {
     stopChatPolling();
     hideCanvasChrome();
     document.getElementById('app').classList.remove('in-terminal');
-    DOM.homeSection.style.display = '';
+    DOM.homeSection.style.display = 'none';
     DOM.terminalSection.style.display = 'none';
     DOM.chatSection.style.display = 'none';
     DOM.wingDetailSection.style.display = 'none';
@@ -74,7 +71,8 @@ export function showHome(pushHistory) {
     renderSidebar();
     renderDashboard();
     if (pushHistory !== false) {
-        history.pushState({ view: 'home' }, '', location.pathname);
+        history.pushState({ view: 'home' }, '', '#');
+        window.dispatchEvent(new Event('shell-navigate'));
     }
 }
 
@@ -98,6 +96,7 @@ export function showTerminal() {
         S.fitAddon.fit();
         S.term.focus();
     }
+    window.dispatchEvent(new Event('shell-navigate'));
     return true;
 }
 
@@ -105,47 +104,26 @@ export function switchToSession(sessionId, pushHistory, wingId) {
     if (hostedRelayUnavailable()) { showHome(pushHistory); return false; }
     var sess = findSessionResource(S.sessionsData, sessionId, wingId);
     if (!sess && S.sessionsData.filter(function(s) { return s.id === sessionId; }).length > 1) return false;
-    if (sess && !sess.swept) return;
     detachPTY();
     if (!showTerminal()) return false;
     attachPTY(sessionId, undefined, wingId || (sess && sess.wing_id));
     if (pushHistory !== false) {
         history.pushState({ view: 'terminal', sessionId: sessionId, wingId: wingId || (sess && sess.wing_id) }, '', sessionRoute(sessionId, wingId || (sess && sess.wing_id)));
     }
+    window.dispatchEvent(new Event('shell-navigate'));
     return true;
 }
 
 // The text reader opens without attaching a PTY writer or sending input.
 export function showSessionChat(sessionId, wingId, pushHistory = true) {
     if (!wingId || !sessionId || hostedRelayUnavailable()) return false;
-    detachPTY();
-    if (!showTerminal()) return false;
-    S.ptySessionId = sessionId;
-    S.ptyWingId = wingId;
-    const session = findSessionResource(S.sessionsData, sessionId, wingId);
-    const wing = S.wingsData.find(item => item.wing_id === wingId);
-    DOM.headerTitle.textContent = (session && session.name || 'Session') + ' · ' + (wingDisplayName(wing) || wingId);
-    DOM.sessionCloseBtn.style.display = 'none';
-    document.getElementById('terminal-section').classList.add('chat-active');
-    let toolbar = document.getElementById('conversation-toolbar');
-    if (!toolbar) { toolbar = document.createElement('div'); toolbar.id = 'conversation-toolbar'; document.getElementById('chat-view').prepend(toolbar); }
-    toolbar.className = 'conversation-toolbar';
-    toolbar.innerHTML = '<div class="conversation-actions"><button type="button" class="session-chat-back">Back</button><button type="button" class="session-chat-terminal">Open terminal</button></div>';
-    toolbar.querySelector('.session-chat-back').addEventListener('click', () => showHome());
-    toolbar.querySelector('.session-chat-terminal').addEventListener('click', () => switchToSession(sessionId, true, wingId));
-    setViewPreference('chat');
-    startChatPolling({ sessionId, wingId });
-    refreshSessionFilesButton();
-    if (pushHistory) history.pushState({ view: 'session-chat', sessionId, wingId }, '', '#chat/' + encodeURIComponent(sessionId) + '?wing=' + encodeURIComponent(wingId));
+    showHome(false);
+    if (pushHistory) history.pushState({}, '', sessionRoute(sessionId, wingId));
+    window.dispatchEvent(new Event('shell-navigate'));
     return true;
 }
 
-export function restoreSessionChatRoute() {
-    const match = location.hash.match(/^#chat\/([^?]+)\?wing=([^&]+)$/);
-    if (!match) return false;
-    try { return showSessionChat(decodeURIComponent(match[1]), decodeURIComponent(match[2]), false); }
-    catch { return false; }
-}
+export function restoreSessionChatRoute() { return false; }
 
 export function navigateToWingDetail(wingId, pushHistory) {
     if (hostedRelayUnavailable()) { showHome(pushHistory); return false; }
@@ -165,8 +143,9 @@ export function navigateToWingDetail(wingId, pushHistory) {
     DOM.ptyStatus.textContent = '';
     renderWingDetailPage(wingId);
     if (pushHistory !== false) {
-        history.pushState({ view: 'wing-detail', wingId: wingId }, '', '#w/' + wingId);
+        history.pushState({ view: 'wing-detail', wingId: wingId }, '', '#machine/' + encodeURIComponent(wingId));
     }
+    window.dispatchEvent(new Event('shell-navigate'));
     return true;
 }
 
@@ -193,6 +172,7 @@ export function navigateToAccount(pushHistory, orgSlug) {
         if (location.hash === hash) history.replaceState({ view: 'account', orgSlug: orgSlug || null }, '', hash);
         else history.pushState({ view: 'account', orgSlug: orgSlug || null }, '', hash);
     }
+    window.dispatchEvent(new Event('shell-navigate'));
 }
 
 export function deleteSession(sessionId, skipKill, targetWingId) {

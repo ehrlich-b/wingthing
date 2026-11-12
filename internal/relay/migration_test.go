@@ -236,6 +236,32 @@ func TestUpgradeEveryRelayMigrationBaselinePreservesRelationships(t *testing.T) 
 			if applied != len(migrations) {
 				t.Fatalf("applied migrations = %d, want %d", applied, len(migrations))
 			}
+			// No historical schema recorded provider verification provenance.
+			// Even a known primary Google subject must not acquire invented proof.
+			var proofs int
+			mustTest(t, store.DB().QueryRow("SELECT COUNT(*) FROM signin_identity_proofs").Scan(&proofs))
+			if proofs != 0 {
+				t.Fatalf("migration invented %d identity proofs", proofs)
+			}
+			if _, known, err := store.oauthEnrollment("upgrade-owner"); err != nil || known {
+				t.Fatalf("inferred enrollment: %v %v", known, err)
+			}
+			mustTest(t, store.LinkGoogleSignInMethod("upgrade-owner", "upgrade-owner", "verified@example.test"))
+			mustTest(t, store.saveVerifiedEnrollment("upgrade-owner", "verified@example.test"))
+			mustTest(t, store.Close())
+			store, err = OpenRelay(path)
+			mustTest(t, err)
+			if proved, err := store.hasGoogleSignInProof("upgrade-owner", "upgrade-owner"); err != nil || !proved {
+				t.Fatalf("durable proof: %v %v", proved, err)
+			}
+			if address, known, err := store.oauthEnrollment("upgrade-owner"); err != nil || !known || address == nil || *address != "verified@example.test" {
+				t.Fatalf("durable enrollment: %v %v %v", address, known, err)
+			}
+			mustTest(t, store.LinkSignInMethod("upgrade-owner", "email", "verified@example.test"))
+			mustTest(t, store.RemoveSignInMethod("upgrade-owner", "google"))
+			if proved, err := store.hasGoogleSignInProof("upgrade-owner", "upgrade-owner"); err != nil || proved {
+				t.Fatalf("removed proof retained: %v %v", proved, err)
+			}
 			rows, err := store.DB().Query("PRAGMA foreign_key_check")
 			if err != nil {
 				t.Fatal(err)

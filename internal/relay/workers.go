@@ -464,7 +464,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.wingRegistrationAllowed(userID, credentialWingID, reg.WingID) {
 		errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "wing ID does not match credential"}
-		if err := writeWebSocketJSON(ctx, conn, errMsg); err != nil {
+		if err := writeWingJSON(ctx, conn, errMsg); err != nil {
 			log.Printf("report rejected wing registration: %v", err)
 		}
 		return
@@ -499,7 +499,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			org, orgErr := s.Store.ResolveOrg(wing.OrgID, userID)
 			if orgErr != nil {
 				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: orgErr.Error()}
-				if err := writeWebSocketJSON(ctx, conn, errMsg); err != nil {
+				if err := writeWingJSON(ctx, conn, errMsg); err != nil {
 					log.Printf("report org resolution failure: %v", err)
 				}
 				return
@@ -524,7 +524,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			}
 			if org == nil {
 				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "org not found: " + wing.OrgID}
-				if err := writeWebSocketJSON(ctx, conn, errMsg); err != nil {
+				if err := writeWingJSON(ctx, conn, errMsg); err != nil {
 					log.Printf("report missing wing org: %v", err)
 				}
 				return
@@ -542,7 +542,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			}
 			if role == "" {
 				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "not a member of org: " + org.Name}
-				if err := writeWebSocketJSON(ctx, conn, errMsg); err != nil {
+				if err := writeWingJSON(ctx, conn, errMsg); err != nil {
 					log.Printf("report rejected org membership: %v", err)
 				}
 				return
@@ -552,7 +552,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			resolvedID, ok := s.validateOrgViaLogin(ctx, wing.OrgID, userID)
 			if !ok {
 				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "org validation failed for: " + wing.OrgID}
-				if err := writeWebSocketJSON(ctx, conn, errMsg); err != nil {
+				if err := writeWingJSON(ctx, conn, errMsg); err != nil {
 					log.Printf("report edge org validation failure: %v", err)
 				}
 				return
@@ -572,7 +572,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !active {
-		if err := writeWebSocketJSON(ctx, conn, ws.ErrorMsg{Type: ws.TypeError, Message: "wing ID is already active for another authenticated owner or newer connection"}); err != nil {
+		if err := writeWingJSON(ctx, conn, ws.ErrorMsg{Type: ws.TypeError, Message: "wing ID is already active for another authenticated owner or newer connection"}); err != nil {
 			log.Printf("report duplicate wing registration: %v", err)
 		}
 		return
@@ -594,7 +594,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			ack.RelayPubKey = pubStr
 		}
 	}
-	if err := writeWebSocketJSON(ctx, conn, ack); err != nil {
+	if err := writeWingJSON(ctx, conn, ack); err != nil {
 		log.Printf("acknowledge wing %s registration: %v", wing.WingID, err)
 		return
 	}
@@ -732,7 +732,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 					}
 					route.mu.Unlock()
 				}
-				clickURL := s.ntfyClickURL(attn.SessionID)
+				clickURL := s.ntfyClickURL(wing.WingID, attn.SessionID)
 				s.trySendNtfy(attn.Nonce, userID, func(c *ntfy.Client) {
 					c.SendAttention(attn.SessionID, attn.Agent, attn.CWD, clickURL)
 				})
@@ -801,7 +801,7 @@ func (s *Server) dispatchWingEvent(eventType string, wing *ConnectedWing) {
 
 	// Notify PTY browsers when a wing goes offline
 	if eventType == "wing.offline" {
-		s.PTY.NotifyWingOffline(wing.WingID)
+		s.notifyWingOffline(wing.WingID)
 	}
 
 	// Login or single-node: update wingMap
@@ -947,21 +947,25 @@ func (s *Server) forwardTunnelToBrowser(wingID, requestID string, data []byte, d
 	if pending == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	s.enqueueBrowser(pending.Browser, len(data), "", func(ctx, rateCtx context.Context) {
+		s.deliverTunnelToBrowser(ctx, rateCtx, wingID, requestID, data, pending, overBudget)
+	})
+}
+
+func (s *Server) deliverTunnelToBrowser(ctx, rateCtx context.Context, wingID, requestID string, data []byte, pending *pendingTunnelRequest, overBudget bool) {
 	if overBudget {
 		message := ws.ErrorMsg{
 			Type: ws.TypeError, RequestID: requestID,
 			Message: "coordination response exceeded the hosted signaling limit",
 		}
-		if err := writeWebSocketJSON(ctx, pending.Browser, message); err != nil {
+		if err := writeBrowserJSON(ctx, pending.Browser, message); err != nil {
 			log.Printf("report oversized coordination response: %v", err)
 		}
 		return
 	}
 	if pending.Coordination {
-		if !s.writeCoordinationPayload(ctx, pending.Browser, data) {
-			// A closed browser or exhausted sustained-rate deadline cannot consume the rest
+		if !s.writeCoordinationPayload(ctx, rateCtx, pending.Browser, data) {
+			// A closed browser or canceled rate wait cannot consume the rest
 			// of this response. Remove the request immediately so a modified
 			// wing cannot keep making the relay rate-limit or notify dead clients
 			// until the normal request TTL expires.
@@ -975,7 +979,7 @@ func (s *Server) forwardTunnelToBrowser(wingID, requestID string, data []byte, d
 		s.denyHostedRelay(ctx, pending.Browser, s.browserUserID(pending.Browser), wingID, ws.TypeTunnelResponse, requestID, "")
 		return
 	}
-	s.writeRelayPayload(ctx, pending.Browser, data, "", requestID)
+	s.deliverRelayPayload(ctx, rateCtx, pending.Browser, data, "", requestID)
 }
 
 func (s *Server) discardTunnelRequest(wingID, requestID string) {
@@ -1074,10 +1078,10 @@ func (s *Server) trySendNtfy(nonce, userID string, send func(c *ntfy.Client)) {
 }
 
 // ntfyClickURL builds the click URL for a session notification.
-func (s *Server) ntfyClickURL(sessionID string) string {
+func (s *Server) ntfyClickURL(wingID, sessionID string) string {
 	appURL := s.appURL()
 	if s.Config.AppHost == "" {
 		appURL = strings.TrimRight(s.Config.BaseURL, "/") + appURL
 	}
-	return fmt.Sprintf("%s#s/%s", appURL, sessionID)
+	return fmt.Sprintf("%s#session/%s/%s", appURL, url.PathEscape(wingID), url.PathEscape(sessionID))
 }

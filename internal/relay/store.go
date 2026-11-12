@@ -745,8 +745,14 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-func (s *RelayStore) UpsertUser(u *User) error {
-	_, err := s.db.Exec(
+type userExecer interface {
+	Exec(string, ...any) (sql.Result, error)
+}
+
+func (s *RelayStore) UpsertUser(u *User) error { return upsertUser(s.db, u) }
+
+func upsertUser(db userExecer, u *User) error {
+	_, err := db.Exec(
 		`INSERT INTO users (id, provider, provider_id, display_name, avatar_url, is_pro)
 		 VALUES (?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
@@ -781,7 +787,10 @@ func (s *RelayStore) GetUserByProvider(provider, providerID string) (*User, erro
 	return &u, nil
 }
 
-func (s *RelayStore) GetOrCreateUserByEmail(email string) (*User, error) {
+// GetUserForEmailSignIn resolves a linked identity or verified GitHub recovery.
+// A login link is not a signup: an unknown address must not silently create a
+// separate account when the recipient intended to recover an existing one.
+func (s *RelayStore) GetUserForEmailSignIn(email string) (*User, error) {
 	email, err := normalizeRecoveryEmail(email)
 	if err != nil {
 		return nil, err
@@ -800,16 +809,7 @@ func (s *RelayStore) GetOrCreateUserByEmail(email string) (*User, error) {
 	if err != nil || u != nil {
 		return u, err
 	}
-	u = &User{
-		ID:          generateToken(),
-		Provider:    "email",
-		ProviderID:  email,
-		DisplayName: email,
-	}
-	if err := s.UpsertUser(u); err != nil {
-		return nil, err
-	}
-	return u, nil
+	return nil, ErrAccountRecoveryRefused
 }
 
 // GetUserByID returns a user by their ID.

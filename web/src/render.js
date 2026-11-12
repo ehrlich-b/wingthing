@@ -27,6 +27,7 @@ import { unreadSessionOutput, acknowledgeSessionOutput } from './session-unread.
 import { unreadOutputBadge } from './session-inventory.js';
 import { stopSessionVerified, stopConfirmationText, checkStoppedSession } from './session-stop.js';
 
+import { patchRegion } from './shell/patch.js';
 import { render as renderPaper } from './paper.js';
 import { machineState, machineLabel, machineGuidance, agentName } from './paper-state.js';
 
@@ -517,7 +518,6 @@ function saveEggOrder() {
 export function renderAccountPage() {
     var tier = S.currentUser.tier || 'free';
     var email = S.currentUser.email || '';
-    var provider = S.currentUser.provider || '';
     var pubKeyShort = identityPubKey ? identityPubKey.substring(0, 16) + '...' : 'none';
 
     var html = '<div class="ac-page">' +
@@ -541,8 +541,18 @@ export function renderAccountPage() {
         }
     }
     html += '</section>' +
-        '<section class="ac-section" aria-labelledby="ac-signin-heading"><h2 id="ac-signin-heading">Sign-in</h2>' +
-            (provider ? '<p class="text-dim ac-provider">Signed in with ' + escapeHtml(provider) + '</p>' : '');
+        '<section class="ac-section" aria-labelledby="ac-signin-heading"><h2 id="ac-signin-heading">Sign-in methods</h2>' +
+        '<div id="ac-signin-list"><span class="text-dim">Loading…</span></div>' +
+        '<div class="ac-signin-actions">' +
+            '<form method="POST" action="/api/app/signin/google"><button type="submit" class="btn-sm" id="ac-google-add" disabled>Add Google</button></form>' +
+            '<button type="button" class="btn-sm" id="ac-email-add" disabled aria-expanded="false" aria-controls="ac-email-form">Add email link</button>' +
+        '</div>' +
+        '<form id="ac-email-form" class="ac-signin-email" hidden>' +
+            '<label for="ac-email-address">Email address</label>' +
+            '<div class="ac-form-row"><input class="ac-input" type="email" autocomplete="email" id="ac-email-address" required>' +
+            '<button class="btn-sm" type="submit">Send link</button></div>' +
+        '</form>' +
+        '<p id="ac-signin-status" class="text-dim" role="status"></p>';
 
     // Passkeys section
     html += '<div class="ac-section">' +
@@ -679,6 +689,27 @@ export function renderAccountPage() {
 
         loadAccountOrgs();
     }
+    loadAccountSignInMethods();
+    document.getElementById('ac-email-add').addEventListener('click', function() {
+        var form = document.getElementById('ac-email-form');
+        form.hidden = !form.hidden;
+        this.setAttribute('aria-expanded', String(!form.hidden));
+        if (!form.hidden) document.getElementById('ac-email-address').focus();
+    });
+    document.getElementById('ac-email-form').addEventListener('submit', function(event) {
+        event.preventDefault();
+        var button = this.querySelector('button');
+        var status = document.getElementById('ac-signin-status');
+        button.disabled = true;
+        fetch('/api/app/signin/email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ email: document.getElementById('ac-email-address').value }).toString()
+        }).then(function(r) { return r.json().then(function(data) { if (!r.ok) throw new Error(data.error); return data; }); })
+        .then(function() { status.textContent = 'Check your email to add this method'; })
+        .catch(function(err) { status.textContent = err.message || 'Could not send email link'; })
+        .finally(function() { button.disabled = false; });
+    });
     loadAccountPasskeys();
     loadNtfyConfig();
 
@@ -740,6 +771,39 @@ export function renderAccountPage() {
 function accountPreview(rows) {
     return rows.slice(0, 3).join('') + (rows.length > 3 ?
         '<details class="ac-more"><summary>+' + (rows.length - 3) + ' more</summary>' + rows.slice(3).join('') + '</details>' : '');
+}
+
+function loadAccountSignInMethods() {
+    var list = document.getElementById('ac-signin-list');
+    var status = document.getElementById('ac-signin-status');
+    fetch('/api/app/signin').then(function(r) {
+        if (!r.ok) throw new Error('Could not load sign-in methods');
+        return r.json();
+    }).then(function(data) {
+        if (!list.isConnected) return;
+        var methods = data.methods || [];
+        var names = { github: 'GitHub', google: 'Google', email: 'Email link' };
+        var has = function(provider) { return methods.some(function(m) { return m.provider === provider; }); };
+        document.getElementById('ac-google-add').disabled = !data.can_add_google || has('google');
+        document.getElementById('ac-email-add').disabled = !data.can_add_email || has('email');
+        list.innerHTML = methods.length ? methods.map(function(m) {
+            return '<div class="ac-signin-row"><div><strong>' + escapeHtml(names[m.provider] || m.provider) + '</strong>' +
+                (m.label ? '<span class="text-dim">' + escapeHtml(m.label) + '</span>' : '') +
+                (methods.length === 1 ? '<span class="text-dim">This is your only way in</span>' : '') +
+                '</div><button type="button" class="btn-sm btn-danger" data-provider="' + escapeHtml(m.provider) + '"' +
+                (methods.length === 1 ? ' disabled' : '') + '>Remove</button></div>';
+        }).join('') : '<p class="text-dim">No linked sign-in methods</p>';
+        list.querySelectorAll('[data-provider]').forEach(function(button) {
+            button.addEventListener('click', function() {
+                var provider = button.getAttribute('data-provider');
+                button.disabled = true;
+                fetch('/api/app/signin/' + encodeURIComponent(provider), { method: 'DELETE' })
+                .then(function(r) { return r.json().then(function(data) { if (!r.ok) throw new Error(data.error); }); })
+                .then(function() { status.textContent = 'Sign-in method removed'; loadAccountSignInMethods(); })
+                .catch(function(err) { status.textContent = err.message || 'Could not remove method'; button.disabled = false; });
+            });
+        });
+    }).catch(function(err) { if (list.isConnected) list.textContent = err.message; });
 }
 
 function loadAccountPasskeys() {
@@ -1400,6 +1464,11 @@ export function hideDetailModal() {
     DOM.detailDialog.innerHTML = '';
 }
 
+function setDetailListener(node, type, listener) {
+    // Refreshes retain nodes, so replace handlers captured against old data.
+    node['on' + type] = listener;
+}
+
 export function renderWingDetailPage(wingId) {
     renderPaper(true);
     var searchEl = document.getElementById('wd-search');
@@ -1450,7 +1519,7 @@ export function renderWingDetailPage(wingId) {
     var maxProjects = 8;
     var visibleProjects = projects.slice(0, maxProjects);
     var projList = visibleProjects.map(function(p) {
-        return '<div class="detail-subitem">' + escapeHtml(p.name) + ' <span class="text-dim">' + escapeHtml(p.path) + '</span></div>';
+        return '<div class="detail-subitem" data-key="' + escapeHtml(p.path) + '">' + escapeHtml(p.name) + ' <span class="text-dim">' + escapeHtml(p.path) + '</span></div>';
     }).join('');
     if (projects.length > maxProjects) {
         projList += '<div class="detail-projects-more">+' + (projects.length - maxProjects) + ' more</div>';
@@ -1460,7 +1529,7 @@ export function renderWingDetailPage(wingId) {
     var scopeHtml = w.org_id ? escapeHtml(w.org_id) : 'personal';
 
     var activeSessions = S.sessionsData.filter(function(s) { return s.wing_id === w.wing_id; });
-    var activeHtml = '<section class="wd-section"><h2 class="section-label">' + (isOnline ? 'Sessions' : connection === 'offline' ? 'Last seen sessions' : 'Saved sessions') + ' <span>' + activeSessions.length + '</span></h2><div class="wd-sessions" id="wd-active-sessions">' + (activeSessions.length ? renderActiveSessionRows(activeSessions) : '<p class="text-dim">' + (isOnline ? 'No sessions yet. Start one on this machine.' : 'No saved sessions.') + '</p>') + '</div></section>';
+    var activeHtml = '<section class="wd-section"><h2 class="section-label">' + (isOnline ? 'Sessions' : connection === 'offline' ? 'Last seen sessions' : 'Saved sessions') + ' <span>' + activeSessions.length + '</span></h2><div class="wd-sessions" id="wd-active-sessions" data-session-list>' + (activeSessions.length ? renderActiveSessionRows(activeSessions) : '<p class="text-dim">' + (isOnline ? 'No sessions yet. Start one on this machine.' : 'No saved sessions.') + '</p>') + '</div></section>';
 
     var isNotAllowed = w.tunnel_error === 'not_allowed';
     var isPasskeyNeeded = w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed';
@@ -1484,7 +1553,7 @@ export function renderWingDetailPage(wingId) {
         ? 'Last seen ' + (Number.isFinite(Date.parse(w.last_seen)) ? formatRelativeTime(Date.parse(w.last_seen)) : 'time unavailable') + '. Reconnect this machine, then retry.'
         : machineGuidance(w);
     var html =
-        '<div class="wd-page">' +
+        '<div class="wd-page" data-key="' + escapeHtml(wingId) + '">' +
         '<div class="wd-header"><a class="wd-back" href="#machines">Machines</a></div>' +
         '<header class="wd-hero"><h1 class="wd-name" id="wd-name">' + escapeHtml(name) + '</h1>' +
             '<p class="wd-connection"><strong>' + escapeHtml(machineLabel(w)) + '</strong>' +
@@ -1506,31 +1575,29 @@ export function renderWingDetailPage(wingId) {
             (isLocked ? '' : '<div class="detail-row"><span class="detail-key">projects</span><div class="detail-val">' + projList + '</div></div>') +
         '</div>' +
         (isOnline ? '<div class="wd-section"><h3 class="section-label">access control</h3>' +
-            '<div id="wd-allowlist"><span class="text-dim">loading...</span></div>' +
+            '<div id="wd-allowlist" data-engine="allowlist"><span class="text-dim">loading...</span></div>' +
             '<div class="wd-allow-actions">' +
                 '<button class="btn-sm btn-accent" id="wd-allow-me">allow me</button>' +
             '</div>' +
         '</div>' : '') +
         (isOnline && !isLocked ? '<div class="wd-section"><h3 class="section-label">folder access</h3>' +
-            '<div id="wd-paths"><span class="text-dim">loading...</span></div>' +
+            '<div id="wd-paths" data-engine="paths"><span class="text-dim">loading...</span></div>' +
         '</div>' : '') +
         '<button class="pp-btn" id="wd-rename">Rename machine</button>' +
         (w.wing_label ? '<button class="pp-btn" id="wd-delete-label">Clear machine name</button>' : '') +
         (!isOnline ? '<p class="wd-local-remove">Remove this machine from this browser’s saved list. Sessions on the machine are kept.</p><button class="pp-btn" id="wd-dismiss">Remove saved machine</button>' : '') +
         '</details>' +
-        (isLocked ? '' : '<details class="wd-details" data-detail="history"><summary>Session history</summary><div id="wd-past-sessions"><span class="text-dim">' + (isOnline ? 'Loading…' : 'Reconnect to view history.') + '</span></div></details>') +
+        (isLocked ? '' : '<details class="wd-details" data-detail="history"><summary>Session history</summary><div id="wd-past-sessions" data-engine="history"><span class="text-dim">' + (isOnline ? 'Loading…' : 'Reconnect to view history.') + '</span></div></details>') +
         '</div>';
 
-    var detailsOpen = new Map(Array.from(DOM.wingDetailContent.querySelectorAll('details')).map(function(d) { return [d.dataset.detail, d.open]; }));
-    DOM.wingDetailContent.innerHTML = html;
-    DOM.wingDetailContent.querySelectorAll('details').forEach(function(d) { d.open = !!detailsOpen.get(d.dataset.detail); });
+    patchRegion(DOM.wingDetailContent, html);
     setupCopyable(DOM.wingDetailContent);
 
 
 
     var authBtn = document.getElementById('wd-auth-btn');
     if (authBtn) {
-        authBtn.addEventListener('click', function() {
+        setDetailListener(authBtn, 'click', function() {
             authBtn.textContent = 'authenticating...';
             authBtn.disabled = true;
             delete w.tunnel_error;
@@ -1565,11 +1632,11 @@ export function renderWingDetailPage(wingId) {
 
     var passkeySetupBtn = document.getElementById('wd-passkey-setup-btn');
     if (passkeySetupBtn) {
-        passkeySetupBtn.addEventListener('click', function() { navigateToAccount(true); });
+        setDetailListener(passkeySetupBtn, 'click', function() { navigateToAccount(true); });
     }
 
     var nameEl = document.getElementById('wd-name');
-    document.getElementById('wd-rename').addEventListener('click', function() {
+    setDetailListener(document.getElementById('wd-rename'), 'click', function() {
         var current = w.wing_label || w.hostname || '';
         var input = document.createElement('input');
         input.type = 'text';
@@ -1593,8 +1660,8 @@ export function renderWingDetailPage(wingId) {
                 renderWingDetailPage(wingId);
             }
         }
-        input.addEventListener('blur', save);
-        input.addEventListener('keydown', function(e) {
+        setDetailListener(input, 'blur', save);
+        setDetailListener(input, 'keydown', function(e) {
             if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
             if (e.key === 'Escape') { e.preventDefault(); renderWingDetailPage(wingId); }
         });
@@ -1602,7 +1669,7 @@ export function renderWingDetailPage(wingId) {
 
     var delLabelBtn = document.getElementById('wd-delete-label');
     if (delLabelBtn) {
-        delLabelBtn.addEventListener('click', function(e) {
+        setDetailListener(delLabelBtn, 'click', function(e) {
             e.stopPropagation();
             fetch('/api/app/wings/' + encodeURIComponent(wingId) + '/label', { method: 'DELETE' })
                 .then(function() {
@@ -1614,7 +1681,7 @@ export function renderWingDetailPage(wingId) {
 
     var updateBtn = document.getElementById('wd-update');
     if (updateBtn) {
-        updateBtn.addEventListener('click', function() {
+        setDetailListener(updateBtn, 'click', function() {
             updateBtn.innerHTML = 'updating...';
             sendTunnelRequest(w.wing_id, { type: 'wing.update' })
                 .then(function() {
@@ -1627,7 +1694,7 @@ export function renderWingDetailPage(wingId) {
 
     var dismissBtn = document.getElementById('wd-dismiss');
     if (dismissBtn) {
-        dismissBtn.addEventListener('click', function() {
+        setDetailListener(dismissBtn, 'click', function() {
             S.wingsData = S.wingsData.filter(function(ww) { return ww.wing_id !== wingId; });
             saveWingCache();
             showHome();
@@ -1667,7 +1734,7 @@ function renderActiveSessionRows(sessions, expanded) {
             ? '<button class="btn-sm wd-replay-btn" data-sid="' + sid + '">replay</button>' +
               '<button class="btn-sm wd-keylog-btn" data-sid="' + sid + '">keylog</button>'
             : '';
-        return '<div class="wd-session-row" role="group" tabindex="0" aria-label="' + escapeHtml(sName + ' · ' + presentation.agentLabel + ' · ' + presentation.connectionLabel) + '" data-sid="' + sid + '" data-wing-id="' + escapeHtml(s.wing_id || '') + '" data-kind="' + escapeHtml(kind) + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
+        return '<div class="wd-session-row" data-key="' + escapeHtml(s.wing_id + '/' + s.id) + '" role="group" tabindex="0" aria-label="' + escapeHtml(sName + ' · ' + presentation.agentLabel + ' · ' + presentation.connectionLabel) + '" data-sid="' + sid + '" data-wing-id="' + escapeHtml(s.wing_id || '') + '" data-kind="' + escapeHtml(kind) + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
             '<span class="session-dot ' + sessionConnectionDot(s) + '"></span>' +
             '<span class="wd-session-identity"><span class="wd-session-name">' + escapeHtml(sName) + '</span><span class="wd-session-meta">' + escapeHtml(agentName(s.agent) + ' · ' + presentation.agentLabel) + '</span></span>' +
             auditBadge +
@@ -1680,12 +1747,12 @@ function renderActiveSessionRows(sessions, expanded) {
 function wireActiveSessionRows() {
     var rows = Array.from(DOM.wingDetailContent.querySelectorAll('.wd-session-row'));
     rows.forEach(function(row) {
-        row.addEventListener('click', function(e) {
+        setDetailListener(row, 'click', function(e) {
             if (e.target.classList.contains('wd-kill-btn') || e.target.classList.contains('wd-replay-btn') || e.target.classList.contains('wd-keylog-btn')) return;
             var sid = row.dataset.sid;
             location.hash = '#session/' + encodeURIComponent(row.dataset.wingId) + '/' + encodeURIComponent(sid);
         });
-        row.addEventListener('keydown', function(event) {
+        setDetailListener(row, 'keydown', function(event) {
             if (event.target !== row) return;
             if (navigateSessionRows(event, rows.filter(function(item) { return item.getClientRects().length > 0; }), row)) return;
             if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); location.hash = '#session/' + encodeURIComponent(row.dataset.wingId) + '/' + encodeURIComponent(row.dataset.sid); }
@@ -1696,7 +1763,7 @@ function wireActiveSessionRows() {
         var session = findSessionResource(S.sessionsData, row.dataset.sid, row.dataset.wingId);
         if (!session) return;
         bindStopCancellation(session, btn);
-        btn.addEventListener('click', function(e) {
+        setDetailListener(btn, 'click', function(e) {
             e.stopPropagation();
             stopInventorySession(session, btn, function() {
                 updateWingDetailSessions(session.wing_id);
@@ -1705,13 +1772,13 @@ function wireActiveSessionRows() {
         });
     });
     DOM.wingDetailContent.querySelectorAll('.wd-session-row .wd-replay-btn').forEach(function(btn) {
-        btn.addEventListener('click', function(e) {
+        setDetailListener(btn, 'click', function(e) {
             e.stopPropagation();
             openAuditReplay(S.currentWingId, btn.dataset.sid);
         });
     });
     DOM.wingDetailContent.querySelectorAll('.wd-session-row .wd-keylog-btn').forEach(function(btn) {
-        btn.addEventListener('click', function(e) {
+        setDetailListener(btn, 'click', function(e) {
             e.stopPropagation();
             openAuditKeylog(S.currentWingId, btn.dataset.sid);
         });
@@ -1724,10 +1791,7 @@ function updateWingDetailSessions(wingId) {
     var container = document.getElementById('wd-active-sessions');
     var activeSessions = S.sessionsData.filter(function(s) { return s.wing_id === w.wing_id; });
     if (container) {
-        var moreOpen = container.querySelector('.wd-more')?.open;
-        container.innerHTML = renderActiveSessionRows(activeSessions);
-        var more = container.querySelector('.wd-more');
-        if (more) more.open = !!moreOpen;
+        patchRegion(container, renderActiveSessionRows(activeSessions));
         wireActiveSessionRows();
     }
 }
@@ -2021,7 +2085,7 @@ function loadWingAllowlist(wing) {
 
     // Wire "Allow me" button
     if (allowBtn) {
-        allowBtn.addEventListener('click', function() {
+        setDetailListener(allowBtn, 'click', function() {
             allowBtn.textContent = 'adding...';
             allowBtn.disabled = true;
 

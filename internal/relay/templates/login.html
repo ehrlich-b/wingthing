@@ -11,7 +11,7 @@
 .divider::before,.divider::after{content:'';position:absolute;top:50%;width:40%;height:1px;background:var(--accent)}
 .divider::before{left:0}.divider::after{right:0}
 .magic-form{display:flex;gap:8px}
-.magic-form input{flex:1;background:var(--bg-card);border:1px solid var(--accent);color:var(--text);font-family:var(--mono);font-size:13px;padding:10px 12px;border-radius:4px;outline:none}
+.magic-form input{flex:1;min-width:0;background:var(--bg-card);border:1px solid var(--accent);color:var(--text);font-family:var(--mono);font-size:13px;padding:10px 12px;border-radius:4px;outline:none}
 .magic-form input:focus{border-color:var(--action)}
 .magic-form button{background:var(--action);color:var(--on-action);border:none;font-family:var(--mono);font-size:13px;padding:10px 16px;border-radius:4px;cursor:pointer;font-weight:600}
 .magic-form button:hover{background:var(--action-hover)}
@@ -20,7 +20,7 @@
 {{end}}
 {{define "content"}}
 <div class="login-box">
-<h1>login</h1>
+<h1>Sign in</h1>
 <p class="subtitle">sign in to wingthing.ai</p>
 {{if .Sent}}<div class="sent-msg">check your email for a login link</div>{{end}}
 <div class="auth-buttons">
@@ -30,8 +30,8 @@
 {{if .HasSMTP}}
 {{if .HasGitHub}}<div class="divider">or</div>{{end}}
 <form method="POST" action="/auth/magic" class="magic-form">
-<input type="email" name="email" placeholder="you@example.com" required>
-<button type="submit">send link</button>
+<input type="email" name="email" aria-label="Email address" autocomplete="email" placeholder="you@example.com" required>
+<button type="submit">Email link</button>
 </form>
 {{end}}
 {{if and (not .HasGitHub) (or .HasGoogle .HasSMTP)}}<p class="subtitle">Signed up with GitHub? Continue with Google or email using the same address and your account carries over.</p>{{end}}

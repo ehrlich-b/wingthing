@@ -149,6 +149,11 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 
 	// App dashboard API (cookie auth)
 	s.mux.HandleFunc("GET /api/app/me", s.handleAppMe)
+	s.mux.HandleFunc("GET /api/app/signin", s.handleSignInMethods)
+	s.mux.HandleFunc("DELETE /api/app/signin/{provider}", s.handleSignInMethodDelete)
+	s.mux.HandleFunc("POST /api/app/signin/email", s.handleSignInEmailAdd)
+	s.mux.HandleFunc("POST /api/app/signin/google", s.handleGoogleAuth)
+	s.mux.HandleFunc("GET /auth/google/link", s.handleGoogleAuth)
 	s.mux.HandleFunc("GET /api/app/wings", s.handleAppWings)
 	s.mux.HandleFunc("GET /ws/app", s.handleAppWS)
 	s.mux.HandleFunc("GET /api/app/usage", s.handleAppUsage)
@@ -342,6 +347,7 @@ func (s *Server) SetSessionCache(sc *SessionCache) { s.sessionCache = sc }
 func (s *Server) GetSessionCache() *SessionCache { return s.sessionCache }
 
 type browserConnection struct {
+	outbound      *browserOutbound
 	userID        string
 	relayNotified map[string]bool
 }
@@ -356,8 +362,15 @@ func (s *Server) trackBrowser(conn *websocket.Conn, userID string) {
 
 func (s *Server) untrackBrowser(conn *websocket.Conn) {
 	s.browserMu.Lock()
+	tracked := s.browserConns[conn]
 	delete(s.browserConns, conn)
 	s.browserMu.Unlock()
+	if tracked != nil && tracked.outbound != nil {
+		tracked.outbound.cancel()
+		// The browser handler owns this writer's lifetime. Never wait while
+		// holding browserMu: an in-flight delivery may still need the registry.
+		<-tracked.outbound.done
+	}
 }
 
 // browserRelayPayloadAccess re-evaluates entitlement for long-lived sockets.

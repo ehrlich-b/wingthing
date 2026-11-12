@@ -41,6 +41,7 @@ type SessionEvent struct {
 	Text              string          `json:"text,omitempty"`
 	Raw               json.RawMessage `json:"raw,omitempty"`
 	ProviderSessionID string          `json:"provider_session_id,omitempty"`
+	TurnID            string          `json:"turn_id,omitempty"`
 	Timestamp         string          `json:"timestamp,omitempty"`
 	Reason            string          `json:"reason,omitempty"`
 	Truncated         bool            `json:"truncated,omitempty"`
@@ -557,8 +558,8 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 			processEnd = event
 		}
 	}
-	if agent == "claude" && validLifecycleID(exactProviderID) {
-		if err = j.importTranscript(providerRoot, eggDir, cwd, exactProviderID, processEnded); err != nil {
+	if (agent == "claude" || agent == "codex") && validLifecycleID(exactProviderID) {
+		if err = j.importTranscript(providerRoot, eggDir, cwd, exactProviderID, processEnded, agent); err != nil {
 			return view, err
 		}
 	}
@@ -747,14 +748,14 @@ func boundedLifecycleString(value string) string {
 	return value
 }
 
-func (j *lifecycleJournal) importTranscript(root *os.File, eggDir, cwd, id string, processEnded bool) error {
+func (j *lifecycleJournal) importTranscript(root *os.File, eggDir, cwd, id string, processEnded bool, agent string) error {
 	var offset int64
 	for _, e := range j.events {
 		if e.SourceKey == "transcript" && e.ProviderSessionID == id && e.SourceOffset > offset {
 			offset = e.SourceOffset
 		}
 	}
-	source, _, err := openAgentSession(root, "claude", cwd, Profile("claude").SessionDir, time.Time{}, id)
+	source, _, err := openAgentSession(root, agent, cwd, Profile(agent).SessionDir, time.Time{}, id)
 	if err != nil {
 		return err
 	}
@@ -802,17 +803,43 @@ func (j *lifecycleJournal) importTranscript(root *os.File, eggDir, cwd, id strin
 		defer func() { _ = gz.Close() }()
 		reader = gz
 	}
+	if agent == "codex" {
+		r := bufio.NewReader(j.boundedReader(reader))
+		first, err := readLifecycleLine(r)
+		var meta struct {
+			Type    string `json:"type"`
+			Payload struct {
+				ID string `json:"id"`
+			} `json:"payload"`
+		}
+		if err != nil || json.Unmarshal(first, &meta) != nil || meta.Type != "session_meta" || meta.Payload.ID != id {
+			return errors.New("Codex transcript does not match the recorded provider session")
+		}
+		reader = io.MultiReader(bytes.NewReader(first), r)
+	}
 	if offset > 0 && gz == nil && source != nil {
 		info, e := source.Stat()
 		if e != nil || info.Size() < offset {
 			return errors.New("provider transcript was truncated")
 		}
+		reader = source
 		if _, err := source.Seek(offset, io.SeekStart); err != nil {
 			return err
 		}
 	} else if offset > 0 {
 		if _, err = io.CopyN(io.Discard, j.boundedReader(reader), offset); err != nil {
 			return fmt.Errorf("provider transcript was truncated: %w", err)
+		}
+	}
+	// Restore transcript context independently of hooks, including across the
+	// bounded import batches and journal reopen. A hook may describe a newer
+	// turn than the resumed transcript currently being imported.
+	var transcriptTurnID string
+	if agent == "codex" {
+		for _, event := range j.events {
+			if event.Source == "codex_transcript" && event.ProviderSessionID == id && event.TurnID != "" {
+				transcriptTurnID = event.TurnID
+			}
 		}
 	}
 	r := bufio.NewReader(j.boundedReader(reader))
@@ -831,7 +858,7 @@ func (j *lifecycleJournal) importTranscript(root *os.File, eggDir, cwd, id strin
 			return readErr
 		}
 		offset += size
-		event := SessionEvent{Type: "provider_event", Source: "claude_transcript", SourceKey: "transcript", SourceOffset: offset, ProviderSessionID: id}
+		event := SessionEvent{Type: "provider_event", Source: agent + "_transcript", SourceKey: "transcript", SourceOffset: offset, ProviderSessionID: id}
 		if oversized || readErr == io.EOF {
 			event.Type = "provider_warning"
 			event.Reason = "native transcript record exceeds 1 MiB; skipped"
@@ -840,6 +867,22 @@ func (j *lifecycleJournal) importTranscript(root *os.File, eggDir, cwd, id strin
 			}
 			event.Truncated = true
 			event.OriginalBytes = size
+			if err = j.append(event); err != nil {
+				return err
+			}
+			continue
+		}
+		if agent == "codex" {
+			parseCodexTranscriptEvent(&event, line, id)
+			if event.TurnID != "" {
+				transcriptTurnID = event.TurnID
+			} else if event.Type == "message" {
+				event.TurnID = transcriptTurnID
+			}
+			event = boundedLifecycleEvent(event)
+			if event.Truncated {
+				event.OriginalBytes = size
+			}
 			if err = j.append(event); err != nil {
 				return err
 			}
@@ -1051,6 +1094,7 @@ func (j *lifecycleJournal) importProviderHooks(root *os.File, spool, providerID,
 		}
 		var hook struct {
 			SessionID    string            `json:"session_id"`
+			TurnID       string            `json:"turn_id"`
 			Event        string            `json:"hook_event_name"`
 			Prompt       string            `json:"prompt"`
 			Notification string            `json:"notification_type"`
@@ -1066,6 +1110,9 @@ func (j *lifecycleJournal) importProviderHooks(root *os.File, spool, providerID,
 			providerID = hook.SessionID
 		}
 		e.ProviderSessionID = providerID
+		if agent == "codex" && validLifecycleID(hook.TurnID) {
+			e.TurnID = hook.TurnID
+		}
 		if providerID == "" || hook.SessionID != providerID {
 			e.Type = "provider_warning"
 			e.Reason = "native hook belongs to another provider session"

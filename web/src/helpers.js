@@ -32,8 +32,11 @@ export function loginRedirect(configuredBaseURL) {
     window.location.href = buildLoginURL(configuredBaseURL, window.location);
 }
 
+const copyableNodes = new WeakSet();
 export function setupCopyable(container) {
     container.querySelectorAll('.copyable').forEach(function(el) {
+        if (copyableNodes.has(el)) return;
+        copyableNodes.add(el);
         el.style.cursor = 'pointer';
         el.addEventListener('click', function() {
             navigator.clipboard.writeText(el.dataset.copy || el.textContent);

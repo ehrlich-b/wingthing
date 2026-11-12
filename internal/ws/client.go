@@ -64,6 +64,7 @@ type Client struct {
 	RelayPubKey string
 
 	OnPTY               PTYHandler
+	OnPTYAttach         func(context.Context, PTYAttach) error // authorize/register a newly discovered local egg
 	OnTunnel            TunnelHandler
 	OnOrphanKill        func(ctx context.Context, sessionID string) // kill egg with no active goroutine
 	OnReconnect         func(ctx context.Context)                   // called after re-registration with relay
@@ -338,6 +339,19 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 				continue
 			}
 			ch := c.ptyRoutes().lookup(partial.SessionID)
+			if ch == nil && c.OnPTYAttach != nil {
+				var attach PTYAttach
+				if err := json.Unmarshal(data, &attach); err != nil {
+					continue
+				}
+				if err := c.OnPTYAttach(ctx, attach); err != nil {
+					if err := c.writeJSON(ctx, ErrorMsg{Type: TypeError, SessionID: attach.SessionID, ViewerID: attach.ViewerID, Message: "session not found or not owned by caller"}); err != nil {
+						return connected, err
+					}
+					continue
+				}
+				ch = c.ptyRoutes().lookup(partial.SessionID)
+			}
 			if ch != nil {
 				select {
 				case ch <- data:

@@ -10,3 +10,11 @@ web/dist
 *.db
 *.db-wal
 *.db-shm
+
+.scratch
+wt-preview
+dist-preview
+downloads
+mobile
+android
+experiments

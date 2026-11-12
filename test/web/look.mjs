@@ -4,10 +4,13 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { removeState } from './fixture-state.mjs';
+import { runHome } from './home.mjs';
+import { assertListViewRefresh } from './shell-list-focus.mjs';
 import { x25519 } from '../../web/node_modules/@noble/curves/ed25519.js';
 import { hkdf } from '../../web/node_modules/@noble/hashes/hkdf.js';
 import { sha256 } from '../../web/node_modules/@noble/hashes/sha2.js';
@@ -15,18 +18,34 @@ import { gcm } from '../../web/node_modules/@noble/ciphers/aes.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const shots = process.env.WT_LOOK_SHOTS || path.join(root, '.scratch/look');
+const shellMode = process.env.WT_LOOK_SHELL || '';
 const only = (process.env.WT_LOOK_ONLY || '').split(',').filter(Boolean);
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 fs.mkdirSync(shots, { recursive: true });
 fs.mkdirSync(path.join(root, '.scratch'), { recursive: true });
 const state = fs.mkdtempSync(path.join(tmpdir(), 'wt'));
-const port = Number(process.env.WT_LOOK_PORT || 18191);
+// Shell runs need only one listener. Let the OS choose a free port so a
+// concurrent look run cannot supply this fixture's health or inventory.
+async function availablePort() {
+    const probe = createServer();
+    await new Promise((resolve, reject) => {
+        probe.once('error', reject);
+        probe.listen(0, '127.0.0.1', resolve);
+    });
+    const port = probe.address().port;
+    await new Promise((resolve, reject) => probe.close(error => error ? reject(error) : resolve()));
+    return port;
+}
+const port = Number(process.env.WT_LOOK_PORT || (shellMode ? await availablePort() : 18191));
 const base = 'http://127.0.0.1:' + port;
-const env = { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, HOME: path.join(state, 'home'), WINGTHING_DIR: state };
+const env = { HTTP_PROXY:'http://127.0.0.1:1', HTTPS_PROXY:'http://127.0.0.1:1', NO_PROXY:'127.0.0.1,localhost', PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, HOME: path.join(state, 'home'), WINGTHING_DIR: state };
 fs.mkdirSync(env.HOME);
 fs.writeFileSync(path.join(state, 'wing.yaml'), 'label: Laptop\n', { mode: 0o600 });
 const log = fs.openSync(path.join(shots, 'fixture.log'), 'w');
-const roost = spawn('nice', ['-n', '10', process.env.WT_LOOK_BIN || path.join(root, 'wt'), 'roost', 'start', '--foreground', '--dev', '--addr', '127.0.0.1:' + port], { cwd: root, env, stdio: ['ignore', log, log] });
+const roost = spawn('nice', ['-n', '10', process.env.WT_LOOK_BIN || path.join(root, 'wt'), 'roost', 'start', '--foreground', '--dev', '--addr', '127.0.0.1:' + port], { cwd: root, env: shellMode ? {...env, WT_ROOST_READY_FD:'3'} : env, stdio: shellMode ? ['ignore', log, log, 'pipe'] : ['ignore', log, log] });
+let roostReady = '', roostStartupError;
+roost.on('error', error => { roostStartupError = error; });
+roost.stdio[3]?.on('data', data => { roostReady += data; });
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const sockets = new Map();
 const sent = [];
@@ -35,7 +54,7 @@ const overflow = [];
 const checks = [];
 const checked = (name, evidence) => { checks.push({name, evidence}); console.log('CHECK ' + name); };
 const publicBase = 'http://127.0.0.1:' + (port + 2);
-const publicServer = spawn('nice', ['-n', '10', path.join(root, '.scratch/look-public'), '127.0.0.1:' + (port + 2)], { cwd: root, env, stdio: ['ignore', log, log] });
+const publicServer = shellMode ? null : spawn('nice', ['-n', '10', path.join(root, '.scratch/look-public'), '127.0.0.1:' + (port + 2)], { cwd: root, env, stdio: ['ignore', log, log] });
 
 function writeIndex(complete) {
     fs.writeFileSync(path.join(shots, 'capture.json'), JSON.stringify({ complete, captures, overflow, checks }, null, 2) + '\n');
@@ -113,22 +132,30 @@ async function machine(id) {
         socket.onerror = reject;
         socket.onmessage = e => { if (JSON.parse(e.data).type === 'registered') resolve(); };
     });
-    socket.onmessage = e => {
+    socket.onmessage = async e => {
         const outer = JSON.parse(e.data);
+        if (shellMode && (outer.type === 'pty.start' || outer.type === 'pty.attach')) {
+            if (outer.type === 'pty.start') fixture.rows.push(row(outer.session_id, 'fixture-new-session', outer.agent, 'working', 'wingthing'));
+            socket.send(JSON.stringify({ type:'pty.started', session_id:outer.session_id, agent:outer.agent || 'claude', public_key:pub, controller_id:outer.controller_id }));
+            return;
+        }
         if (outer.type !== 'tunnel.req') return;
         const key = hkdf(sha256, x25519.getSharedSecret(priv, Buffer.from(outer.sender_pub, 'base64')), new Uint8Array(32), new TextEncoder().encode('wt-tunnel'), 32);
         const encrypted = Buffer.from(outer.payload, 'base64');
         const inner = JSON.parse(new TextDecoder().decode(gcm(key, encrypted.subarray(0, 12)).decrypt(encrypted.subarray(12))));
         let response;
         if (inner.type === 'wing.info') response = { hostname: fixture.name, wing_label: fixture.name, platform: 'darwin', agents: ['claude', 'codex'], projects: [{ name: 'wingthing', path: '/Users/example/code/wingthing' }], capabilities: ['session.rename.v1'] };
-        else if (inner.type === 'sessions.list') response = { sessions: fixture.rows };
+        else if (inner.type === 'sessions.list') { if (shellMode === 'home') console.log('INVENTORY',id,fixture.rows.length); response = { sessions: fixture.rows }; }
         else if (inner.type === 'session.control' && inner.operation === 'session_read') {
+            await fixture.beforeSessionRead?.(inner.arguments.session);
             const selected = fixture.rows.find(item => item.session_id === inner.arguments.session);
             const list = selected && (events[selected.session_id] || fallback(selected.name));
             response = selected ? { session: selected.session_id, lifecycle: { ...selected.lifecycle, session_id: selected.session_id, agent: selected.agent, provider_session_id: 'provider-' + selected.session_id, process_alive: true, ready: true, cursor: list.length, head_cursor: list.length, has_more: false, report_cursor: list.length, reported_at: at(1), report: { goal: 'Fix the redirect loop and deploy to staging', update: 'Deploy script is ready on Studio and needs your go.', presence: 'awake' }, events: list } } : { error: 'Session not found' };
         }
-        else if (inner.type === 'session.control' && inner.operation === 'terminal_read') response = { result: { ansi: (screens[inner.arguments.session] || '$ ').replace(/\r/g, '') } };
+        else if (inner.type === 'session.control' && inner.operation === 'session_action' && inner.arguments.operation === 'terminal_read') response = { result: { ansi: (screens[inner.arguments.session_id] || '$ ').replace(/\r/g, '') } };
         else if (inner.type === 'session.control' && inner.operation === 'terminal_send') { sent.push({ machine: id, ...inner.arguments }); response = { session: inner.arguments.session, bytes_sent: inner.arguments.input.length }; }
+        else if (inner.type === 'dir.list') response = { entries: [{ name:'wingthing', path:'/Users/example/code/wingthing', is_dir:true }] };
+        else if (inner.type === 'pty.resize' || inner.type === 'pty.detach') response = {};
         else if (inner.type === 'sessions.history') response = { sessions: [] };
         else if (inner.type === 'conversations.list') response = { conversations: [] };
         else response = { error: 'unsupported fixture request' };
@@ -138,7 +165,7 @@ async function machine(id) {
 
 async function shoot(page, name, suffix) {
     if (only.length && !only.includes(name)) return;
-    await page.waitForTimeout(700);
+    await page.waitForTimeout(shellMode ? 100 : 700);
     if (name === '02-sessions') {
         const pinned = await page.locator('.pp-pin').innerText();
         assert.ok(pinned.includes(events.wing[1].text));
@@ -312,6 +339,8 @@ async function checkConversation(page, name, suffix) {
     assert.ok(identity.includes('Studio') && identity.includes('Claude'));
     if(name === '03-session') {
         assert.ok(identity.includes('migrate-sessions-table'));
+        assert.ok((await page.locator('.pp-term').textContent()).includes('backfill:'), 'real browser operation must yield the terminal snapshot');
+        checked(name + suffix + '-terminal-snapshot', await page.locator('.pp-term').textContent());
         if(page.viewportSize().width===390) assert.equal(await page.locator('.pp-terminal').evaluate(el=>el.open),false);
     }
     const geometry = await page.evaluate(() => {
@@ -375,9 +404,11 @@ async function checkConversationRefresh(page, name, suffix) {
         if(name==='01-wing') {
             const latest = await page.locator('.pp-say').filter({hasText:'Latest progress receipt at the end of the conversation.'}).boundingBox();
             assert.ok(latest.y >= 0 && latest.y+latest.height <= page.viewportSize().height);
-            const action = await page.getByRole('link',{name:'Answer in terminal',exact:true}).boundingBox();
-            const viewport = await page.locator('.pp-conversation').boundingBox();
-            assert.ok(action.y >= viewport.y && action.y+action.height <= viewport.y+viewport.height);
+            const action = await page.locator('.pp-needs .pp-need-row').first().boundingBox();
+            const summary = await page.locator('.pp-needs').boundingBox();
+            assert.ok(action.y >= summary.y && action.y + action.height <= summary.y + summary.height);
+            assert.ok(action.y >= 0 && action.y + action.height <= page.viewportSize().height);
+            checked('01-wing' + suffix + '-needs-action-visible', action);
             await page.screenshot({path:path.join(shots, 'follow-latest'+suffix+'.png')});
             const dimensions = await page.evaluate(() => ({viewport:innerWidth,width:Math.max(document.documentElement.scrollWidth,document.body.scrollWidth)}));
             captures.push({file:'follow-latest'+suffix+'.png',url:page.url(),...dimensions});
@@ -392,10 +423,293 @@ async function checkConversationRefresh(page, name, suffix) {
         await go(page, name==='01-wing' ? '' : '#session/studio/migrate');
     }
 }
-async function go(page, hash) {
-    await page.goto(base + '/app/' + hash);
+async function go(page, hash, hashOnly = false) {
+    if (hashOnly) await page.evaluate(hash => { location.hash = hash; }, hash);
+    else await page.goto(base + '/app/' + hash);
     await page.waitForLoadState('networkidle').catch(() => {});
-    await page.waitForTimeout(900);
+    await page.waitForTimeout(shellMode ? 100 : 900);
+    if (shellMode) {
+        const count=[...sockets.keys()].reduce((total,id)=>total+machines[id].rows.filter(s=>!(s.pinned && s.role==='coordinator')).length,0);
+        await page.waitForFunction(expected => document.querySelector('.pp-nav-sessions small')?.textContent === String(expected.sessions || '') && document.querySelector('.pp-nav-machines small')?.textContent === String(expected.machines || ''), {sessions:count,machines:sockets.size}).catch(async error => { console.error('Inventory mismatch', {expectedSessions:count,expectedMachines:sockets.size,actual:await page.locator('#paper').innerText()}); throw error; });
+        await page.waitForFunction(expected => document.querySelectorAll('.pp-side-squares .pp-sq-connected').length === expected, Math.min(sockets.size, 3));
+    }
+}
+
+// R1 runs the production bundle against the existing encrypted-machine fixture.
+async function assertShell(page, label) {
+    await page.locator('#paper').waitFor({state:'visible'});
+    const result = await page.evaluate(() => {
+        const box = selector => { const r=document.querySelector(selector).getBoundingClientRect(); return {x:r.x,y:r.y,width:r.width,height:r.height}; };
+        return {hash:location.hash,sessions:document.querySelector('.pp-nav-sessions small')?.textContent,machines:document.querySelector('.pp-nav-machines small')?.textContent,paper:box('#paper'),nav:box(innerWidth===390?'.pp-tabs':'.pp-side'),old:['#sidebar','#main-header','#home-section'].map(box),width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth};
+    });
+    assert.ok(result.paper.width>0 && result.paper.height>0,JSON.stringify(result));
+    const n=result.nav;
+    assert.ok(n.width>0 && n.height>0 && n.x>=0 && n.y>=0 && n.x+n.width<=result.width+1 && n.y+n.height<=result.height+1,JSON.stringify(result));
+    for (const old of result.old) assert.equal(old.width*old.height,0,JSON.stringify(result));
+    assert.ok(result.scrollWidth<=result.width,JSON.stringify(result));
+    checked(label,result);
+}
+async function assertDisclosureRefresh(page, disclosure, label) {
+    const patchSource = fs.readFileSync(path.join(root,'web/src/shell/patch.js'),'utf8').replace('export function patchRegion','function patchRegion');
+    const results = [];
+    for (const open of [true, false]) {
+        await disclosure.locator('summary').click();
+        assert.equal(await disclosure.evaluate(node => node.open), open);
+        // Exercise the production patcher on the mounted view's default-closed
+        // markup directly, keeping this regression independent of inventory polls.
+        const result = await disclosure.evaluate((node, source) => {
+            const region = node.parentElement, next = region.cloneNode(true);
+            next.querySelectorAll('details').forEach(details => details.removeAttribute('open'));
+            const title = next.querySelector('details a b') || next.querySelector('details a');
+            title.textContent += ' updated';
+            node.querySelector('summary').focus();
+            const scroll = document.querySelector('.pp-main').scrollTop;
+            const patch = eval(source+'; patchRegion');
+            patch(region, next.innerHTML);
+            return {
+                retained: node === region.querySelector('details'),
+                open: node.open,
+                focused: document.activeElement === node.querySelector('summary'),
+                scrollRetained: document.querySelector('.pp-main').scrollTop === scroll,
+                updated: region.textContent.includes(title.textContent),
+            };
+        }, patchSource);
+        assert.deepEqual(result, {retained:true, open, focused:true, scrollRetained:true, updated:true});
+        results.push(result);
+        if (open) await shoot(page, label, '-'+page.viewportSize().width);
+    }
+    checked(label+'-'+page.viewportSize().width, results);
+}
+async function assertSessionGroupRefresh(page) {
+    const patchSource = fs.readFileSync(path.join(root, 'web/src/shell/patch.js'), 'utf8').replace('export function patchRegion', 'function patchRegion');
+    const result = await page.locator('.pp-col-main').evaluate((region, source) => {
+        const patch = eval(source + '; patchRegion');
+        const group = title => [...region.querySelectorAll('.pp-group')].find(node => node.querySelector('.pp-kick span').textContent === title);
+        const complete = region.innerHTML;
+        group('Needs you').remove();
+        const withoutEarlier = region.innerHTML;
+        const working = group('Working'), row = working.querySelector('.pp-srow');
+        const disclosure = working.querySelector('details');
+        disclosure.open = true;
+        row.focus();
+        const selection = getSelection(), text = row.querySelector('b').firstChild;
+        selection.setBaseAndExtent(text, 0, text, 4);
+        const selected = selection.toString();
+        let blurs = 0;
+        row.addEventListener('blur', () => blurs++);
+        const observe = () => ({
+            groupRetained: group('Working') === working,
+            rowRetained: group('Working').querySelector('.pp-srow') === row,
+            focused: document.activeElement === row,
+            disclosureRetained: group('Working').querySelector('details') === disclosure,
+            expanded: disclosure.open,
+            selectionRetained: selection.anchorNode === text && selection.toString() === selected,
+            blurs,
+        });
+        patch(region, complete);
+        const inserted = observe();
+        patch(region, withoutEarlier);
+        const removed = observe();
+        patch(region, complete);
+        return { inserted, removed, restored: observe() };
+    }, patchSource);
+    const expected = {groupRetained:true, rowRetained:true, focused:true, disclosureRetained:true, expanded:true, selectionRetained:true, blurs:0};
+    assert.deepEqual(result, {inserted:expected, removed:expected, restored:expected});
+    checked('session-group-refresh-' + page.viewportSize().width, result);
+    // Discard the probe's local disclosure state before the navigation checks.
+    await go(page, '#sessions');
+}
+async function assertSessionRowRefresh(page) {
+    const patchSource = fs.readFileSync(path.join(root, 'web/src/shell/patch.js'), 'utf8').replace('export function patchRegion', 'function patchRegion');
+    const results = await page.locator('.pp-col-main').evaluate((region, source) => {
+        const patch = eval(source + '; patchRegion');
+        const sample = region.querySelector('[data-k="session-group/work"]').cloneNode(true);
+        const rows = [...sample.querySelectorAll('.pp-srow')];
+        if (rows.length < 10) throw Error('Boundary fixture requires ten working sessions');
+        const arrival = rows[0].cloneNode(true);
+        arrival.dataset.key = arrival.dataset.k = 'studio/earlier-arrival';
+        arrival.href = '#session/studio/earlier-arrival';
+        const markup = list => {
+            const group = sample.cloneNode(true);
+            group.querySelectorAll('.pp-srow, details').forEach(node => node.remove());
+            group.querySelector('[data-group-count]').textContent = String(list.length);
+            group.append(...list.slice(0, 8).map(row => row.cloneNode(true)));
+            if (list.length > 8) {
+                const details = document.createElement('details');
+                details.className = 'pp-more-sessions';
+                details.innerHTML = '<summary>+' + (list.length - 8) + ' more</summary>';
+                details.append(...list.slice(8).map(row => row.cloneNode(true)));
+                group.append(details);
+            }
+            return group.outerHTML;
+        };
+        const results = [];
+        for (const [name, size, focusedIndex, open, change] of [
+            ['create-overflow', 8, 7, false, list => [arrival, ...list]],
+            ['closed-overflow', 10, 7, false, list => [arrival, ...list]],
+            ['open-overflow', 10, 7, true, list => [arrival, ...list]],
+            ['remove-preview', 10, 8, true, list => list.slice(1)],
+            ['reordered-inventory', 10, 7, true, list => list.slice().reverse()],
+        ]) {
+            const before = rows.slice(0, size);
+            // Mount a fresh production group before each independent probe.
+            region.innerHTML = markup(before);
+            const group = region.firstElementChild;
+            const row = group.querySelectorAll('.pp-srow')[focusedIndex];
+            const details = group.querySelector('details');
+            if (details) details.open = open;
+            const originals = [...group.querySelectorAll('.pp-srow')];
+            const parent = row.parentElement;
+            const changed = change(before);
+            const survivors = originals.filter(node => changed.some(next => next.dataset.k === node.dataset.k));
+            row.focus();
+            const selection = getSelection(), text = row.querySelector('b').firstChild;
+            selection.setBaseAndExtent(text, 0, text, 4);
+            const selected = selection.toString(), scroll = document.querySelector('.pp-main').scrollTop;
+            let blurs = 0;
+            row.addEventListener('blur', () => blurs++);
+            for (const [step, list] of [['changed', changed], ['restored', before]]) {
+                patch(region, markup(list));
+                results.push({
+                    name, step,
+                    focused: document.activeElement === row,
+                    sameRows: survivors.every(node => node.isConnected && group.querySelector('[data-k="' + node.dataset.k + '"]') === node),
+                    focusedParentRetained: row.parentElement === parent,
+                    incomingOrder: JSON.stringify([...group.querySelectorAll('.pp-srow')].map(row => row.dataset.k)) === JSON.stringify(list.map(row => row.dataset.k)),
+                    selectionRetained: selection.anchorNode === text && selection.toString() === selected,
+                    scrollRetained: document.querySelector('.pp-main').scrollTop === scroll,
+                    disclosureRetained: !details || group.querySelector('details') === details && details.open === open,
+                    inventoryMatches: group.querySelectorAll('.pp-srow').length === list.length && list.every(next => [...group.querySelectorAll('.pp-srow')].some(node => node.dataset.k === next.dataset.k)),
+                    blurs,
+                });
+            }
+        }
+        return results;
+    }, patchSource);
+    for (const result of results) assert.deepEqual(result, {
+        name:result.name, step:result.step, focused:true, sameRows:true, focusedParentRetained:true, incomingOrder:true,
+        selectionRetained:true, scrollRetained:true, disclosureRetained:true, inventoryMatches:true, blurs:0,
+    });
+    checked('session-row-boundary-refresh-' + page.viewportSize().width, results);
+    await go(page, '#sessions');
+}
+async function runShell(browser) {
+    const original=machines.studio.rows.slice(), pages=[], contexts=[], errors=[];
+    for (const viewport of [{width:1440,height:900},{width:390,height:844}]) {
+        const context=await browser.newContext({viewport, ...(shellMode === 'home' ? {colorScheme:'dark'} : {})}); contexts.push(context);
+        const page=await context.newPage(); pages.push(page);
+        if (shellMode === 'home') page.on('console', message => { if (message.type() === 'error') console.error('BROWSER', message.text()); });
+        page.on('pageerror',error=>{ errors.push(String(error)); console.error('PAGEERROR '+error); });
+        page.on('dialog',dialog=>{ errors.push('Unexpected dialog: '+dialog.message()); dialog.dismiss(); });
+        await page.route('**/*',route=>new URL(route.request().url()).origin===base?route.continue():route.abort());
+        // The roost starts a local wing too. Keep this scenario's inventory
+        // limited to its synthetic machines, including a true zero state.
+        await page.route('**/api/app/wings', async route => {
+            const response=await route.fetch();
+            const entries=await response.json();
+            await route.fulfill({response,json:entries.filter(w=>Object.hasOwn(machines,w.wing_id))});
+        });
+    }
+    if (shellMode === 'home') {
+        await runHome({pages, machines, sockets, machine, row, events, at, go, shoot, checked, base});
+        assert.deepEqual(errors, []); checked('no-page-errors-or-dialogs', errors);
+        for (const context of contexts) await context.close();
+        return;
+    }
+    if (shellMode==='routes') for (const page of pages) {
+        await go(page,'#'); await assertShell(page,'zero-machines-'+page.viewportSize().width);
+        await shoot(page,'shell-volume-0','-'+page.viewportSize().width);
+    }
+    machines.studio.rows=[original[2]]; await machine('studio');
+    for (const page of pages) {
+        await go(page,'#sessions'); await page.locator('.pp-srow[href="#session/studio/migrate"]').waitFor();
+        if (shellMode==='routes') await shoot(page,'shell-volume-1','-'+page.viewportSize().width);
+    }
+    if (shellMode==='routes' || shellMode==='refresh' || shellMode==='focus') {
+        machines.studio.rows=[...original,...Array.from({length:18},(_,i)=>row('long-'+i,'Improve organization invitation recovery for interrupted workspace migration '+(i+1),'claude',i<9?'blocked':'working','wingthing'))];
+        if (shellMode==='routes' || shellMode==='focus') for (const id of ['macbook','mini']) await machine(id);
+        // Change fixture inventories across a full load, so the assertion
+        // does not depend on the application's thirty-second data poll.
+        for (const page of pages) await go(page,'#sessions');
+        if (shellMode==='routes') for (let i=0;i<5;i++) {
+            const id='research-'+i; machines[id]={name:'Research workstation for extended migration projects '+(i+1),rows:[]}; await machine(id);
+            if (i===2) for (const page of pages) {
+                await go(page,'#machines'); await page.locator('[data-machine="research-2"]').waitFor();
+                await shoot(page,'shell-volume-plan-limit-6','-'+page.viewportSize().width);
+            }
+        }
+        for (const page of pages) await go(page,'#sessions');
+        const routes=['#','#sessions','#machines','#account','#new','#s/redirect?wing=studio','#chat/redirect?wing=studio','#w/studio','#bogus','#new/studio','#machine/studio','#approve/studio/redirect','#needs','#decisions','#session/studio/migrate','#%broken'];
+        for (const page of pages) {
+            if (shellMode==='focus') {
+                await assertListViewRefresh(page, {root, go, checked});
+                continue;
+            }
+            if (shellMode==='refresh') {
+                await assertSessionGroupRefresh(page);
+                await assertSessionRowRefresh(page);
+                continue;
+            }
+            for (const [index,hash] of routes.entries()) {
+                // Route through the app as a user does. Reopening all eight
+                // tunnels on every hash would exhaust the roost's WS burst.
+                await go(page,hash,true); await assertShell(page,hash+'-'+page.viewportSize().width);
+                const expected=/^#(s\/|chat\/|approve\/)/.test(hash)?'#session/studio/redirect':hash==='#w/studio'?'#machine/studio':['#','#bogus','#needs','#decisions','#%broken'].includes(hash)?'':hash;
+                assert.equal(await page.evaluate(()=>location.hash),expected);
+                await shoot(page,'shell-route-'+index,'-'+page.viewportSize().width);
+            }
+            await go(page,'#sessions');
+            await assertSessionGroupRefresh(page);
+            await assertSessionRowRefresh(page);
+            await go(page,'#');
+            await page.locator('#pp-needs .pp-more').click();
+            await page.locator('#pp-filter').waitFor();
+            assert.equal(await page.evaluate(()=>location.hash),'#sessions');
+            const waiting = page.locator('.pp-group').filter({has:page.locator('.pp-kick', {hasText:'Needs you'})});
+            assert.equal(await waiting.locator('.pp-srow').count(),10);
+            const waitingOverflow = waiting.locator('details.pp-more-sessions');
+            const waitingRow = waitingOverflow.locator('.pp-srow').last();
+            const waitingHref = await waitingRow.getAttribute('href');
+            await assertDisclosureRefresh(page,waitingOverflow,'shell-waiting-expanded');
+            await waitingOverflow.locator('summary').click();
+            await waitingRow.click();
+            await page.waitForFunction(hash=>location.hash===hash,waitingHref);
+            await assertShell(page,'home-overflow-answer-'+page.viewportSize().width);
+            checked('home-overflow-reachable-'+page.viewportSize().width,{waiting:10,opened:waitingHref});
+            await go(page,'#machines');
+            await assertDisclosureRefresh(page,page.locator('[data-machine="studio"] details.pp-more-sessions'),'shell-machines-expanded');
+            await go(page,'#sessions'); const input=page.locator('#pp-filter'); await input.fill('migration'); await input.focus();
+            await page.evaluate(()=>{ window.savedFilter=document.querySelector('#pp-filter'); window.savedHeader=document.querySelector('.pp-hdr'); window.savedFirst=document.querySelector('.pp-srow'); });
+            await page.waitForTimeout(2200);
+            assert.ok(await page.evaluate(()=>window.savedFilter===document.activeElement && window.savedHeader===document.querySelector('.pp-hdr') && window.savedFirst===document.querySelector('.pp-srow')));
+            assert.equal(await input.inputValue(),'migration'); checked('retained-nodes-'+page.viewportSize().width,'Filter, header and row retained across data ticks');
+            await page.evaluate(()=>document.querySelector('#home-btn').click()); await assertShell(page,'showHome-'+page.viewportSize().width);
+            assert.equal(await page.evaluate(()=>location.hash),'');
+            await page.evaluate(()=>{location.hash='#machines';}); await page.waitForTimeout(150);
+            await page.evaluate(()=>{location.hash='#account';}); await page.waitForTimeout(150);
+            await page.goBack(); await page.waitForTimeout(150); await assertShell(page,'back-'+page.viewportSize().width);
+            await page.goForward(); await page.waitForTimeout(150); await assertShell(page,'forward-'+page.viewportSize().width);
+        }
+    } else if (shellMode==='launch') {
+        for (const page of pages) {
+            await go(page,'#new/studio'); await page.getByRole('button',{name:'Choose project',exact:true}).click();
+            await page.locator('#palette-search').fill('/Users/example/code/wingthing');
+            await page.waitForTimeout(500);
+            await page.locator('.palette-item[data-path="/Users/example/code/wingthing"]').click();
+            await page.waitForFunction(()=>/^#session\//.test(location.hash)); await page.locator('#paper .xterm').waitFor({state:'visible'});
+            await assertShell(page,'launch-'+page.viewportSize().width);
+            assert.ok(await page.evaluate(()=>document.querySelector('#paper .pp-live').contains(document.querySelector('#terminal-section'))));
+            await shoot(page,'shell-started','-'+page.viewportSize().width);
+            await go(page,'#session/studio/migrate');
+            if (page.viewportSize().width===390) await page.locator('.pp-terminal').evaluate(el=>el.open=true);
+            await page.getByRole('button',{name:'Take over terminal',exact:true}).click();
+            await page.locator('#paper .pp-live .xterm').waitFor({state:'visible'}); await assertShell(page,'takeover-'+page.viewportSize().width);
+            await page.evaluate(()=>{location.hash='#sessions';}); await page.locator('#pp-filter').waitFor();
+            assert.equal(await page.locator('#paper #terminal-section').count(),0);
+        }
+    } else throw Error('Unknown shell fixture mode');
+    assert.deepEqual(errors,[]); checked('no-page-errors-or-dialogs',errors);
+    for (const context of contexts) await context.close();
 }
 
 // A real one-time invitation from a second, non-dev roost's own wing (the
@@ -435,8 +749,23 @@ const viewports = [{ width: 1440, height: 900, suffix: '-desktop' }, { width: 39
 let browser;
 let complete = false;
 try {
-    for (let i = 0; i < 100; i++) { try { if ((await fetch(base + '/health')).ok) break; } catch {} await sleep(100); }
+    if (shellMode) {
+        // The child's readiness pipe proves this roost owns the listener,
+        // even if another process claims the port between probing and spawn.
+        for (let i = 0; i < 150 && roostReady !== 'ready\n'; i++) {
+            if (roostStartupError || roost.exitCode !== null || roost.signalCode !== null) break;
+            await sleep(100);
+        }
+        if (roostReady !== 'ready\n') throw Error('Fixture roost did not become ready: ' + (roostStartupError || fs.readFileSync(path.join(shots, 'fixture.log'), 'utf8')));
+        checked('fixture-roost-ready', {base, pid:roost.pid});
+    } else {
+        for (let i = 0; i < 100; i++) { try { if ((await fetch(base + '/health')).ok) break; } catch {} await sleep(100); }
+    }
     browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH, args: ['--disable-background-networking','--disable-component-update','--disable-default-apps','--disable-sync','--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'] });
+    if (shellMode) {
+        await runShell(browser);
+        complete = true;
+    } else {
     const contexts = [];
     for (const v of viewports) contexts.push(await browser.newContext({ viewport: { width: v.width, height: v.height }, colorScheme: 'light' }));
     const dark = [{ width: 1440, height: 900, suffix: '-desktop-dark' }, { width: 390, height: 844, suffix: '-phone-dark' }];
@@ -496,6 +825,11 @@ try {
         await checkConversation(page, '03-session', v.suffix);
         await shoot(page, '03-session', v.suffix);
         await checkConversationRefresh(page,'03-session',v.suffix);
+        if (!process.env.WT_LOOK_LEGACY) {
+            await go(page, '#session/macbook/notes');
+            assert.equal(await page.locator('.pp-conversation .pp-row').count(), 1);
+            await shoot(page, '03-session-one', v.suffix);
+        }
         await go(page, process.env.WT_LOOK_LEGACY ? '#chat/redirect?wing=studio' : '#approve/studio/redirect');
         await shoot(page, '04-approve', v.suffix);
         if (!process.env.WT_LOOK_LEGACY) {
@@ -551,13 +885,14 @@ try {
     if (captures.length !== expected) throw Error('Incomplete capture: ' + captures.length + ' of ' + expected);
     complete = true;
     if (overflow.length) throw Error('Horizontal overflow in ' + overflow.length + ' phone captures');
+    }
 } finally {
     writeIndex(complete);
     if (browser) await browser.close();
     for (const socket of sockets.values()) try { socket.close(); } catch {}
     roost.kill('SIGTERM');
     if (joinRoost) joinRoost.kill('SIGTERM');
-    publicServer.kill('SIGTERM');
+    publicServer?.kill('SIGTERM');
     await removeState(joinState);
     await removeState(state);
     fs.closeSync(log);

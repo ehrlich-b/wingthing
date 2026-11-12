@@ -38,12 +38,13 @@ test('unsupported providers and stopped processes cannot receive chat input', fu
     assert.equal(conversationInputReady({ agent: 'claude', state: 'completed', ready: true, process_alive: false }), false);
 });
 
-test('Codex prompt hooks retain exact user text in the message reader', () => {
+test('Codex prompt hooks show transient sending without creating user rows', () => {
     const text = '  Ω message\nsecond line\t  ';
     const event = { type: 'prompt_submitted', source: 'codex_hook', sequence: 4, state: 'working', text, raw: { hook_event_name: 'UserPromptSubmit', prompt: text } };
     const state = applyConversationRead(emptyConversationState(), { agent: 'codex', events: [event] });
-    assert.equal(state.messages.find(message => message.type === 'user').content, text);
-    assert.equal(applyConversationRead(state, { agent: 'codex', events: [event] }).messages.filter(message => message.type === 'user').length, 1);
+    assert.equal(state.messages.filter(message => message.type === 'user').length, 0);
+    assert.equal(state.sending.sequence, 4);
+    assert.equal(applyConversationRead(state, { agent: 'codex', events: [event] }).messages.filter(message => message.type === 'user').length, 0);
 });
 
 for (const agent of ['claude', 'codex']) {

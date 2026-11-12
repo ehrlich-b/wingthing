@@ -364,8 +364,30 @@ else
 	$(error CHANNEL must be stable or preview)
 endif
 
+# Validate while parsing, so even `make -n deploy` fails before printing Fly.
+ifneq ($(filter deploy,$(MAKECMDGOALS)),)
+DEPLOY_RECEIPT_CHECK := $(shell python3 -B scripts/ship-gate.py verify --receipt '$(subst ','"'"',$(RECEIPT))' 2>&1 || echo INVALID_SHIP_RECEIPT)
+ifneq ($(findstring INVALID_SHIP_RECEIPT,$(DEPLOY_RECEIPT_CHECK)),)
+$(error $(DEPLOY_RECEIPT_CHECK))
+endif
+endif
+
+.PHONY: ship-gate test-release-skew test-ship-gate
+SHIP_GATE_DIR ?= .scratch/ship-gate
+ship-gate:
+	python3 -B scripts/ship-gate.py run --output "$(SHIP_GATE_DIR)"
+
+test-release-skew: | web/dist
+	python3 -B scripts/ship-gate.py prepare-baseline
+	WT_RELEASE_SKEW_REQUIRED=1 $(GO) test -p 2 ./internal/relay -run '^TestReleasedCLI(Skew|BaselineValidation)$$' -count=1 -v -timeout=90s
+
+test-ship-gate:
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p test_ship_gate.py -v
+
+# Receipt verification is cheap on the deploy host; promotion tests run on Linux.
 deploy: check-downloads
-	$(MAKE) --no-print-directory check gate
+	python3 -B scripts/ship-gate.py stage-downloads
+	python3 -B scripts/ship-gate.py verify --receipt '$(subst ','"'"',$(RECEIPT))'
 	fly deploy
 
 # Local builds/vector generation and explicitly selected Fly operations.

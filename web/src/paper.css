@@ -429,3 +429,17 @@ body.paper-on #app { display: none; }
 .pp-search-result > span { min-width: 0; overflow-wrap: anywhere; }
 
 #paper :is(h1,h2,h3) { font-family: "Space Grotesk", sans-serif; }
+
+.pp-live-terminal { height: 340px; min-width: 0; margin-bottom: 12px; background: #07131A; }
+.pp-live-terminal #terminal-container { height: 100%; padding: 6px; }
+@media (max-width: 760px) { .pp-live-terminal { height: 180px; } }
+/* Linked account identities stay compact alongside machine passkeys. */
+#paper .ac-signin-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+#paper .ac-signin-row > div { min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
+#paper .ac-signin-row span { display: block; font-size: 12px; }
+#paper .ac-signin-row button { flex-shrink: 0; }
+#paper .ac-signin-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+#paper .ac-signin-actions form { margin: 0; }
+#paper .ac-signin-email { margin-top: 12px; }
+#paper .ac-signin-email label { display: block; font-size: 13px; margin-bottom: 6px; }
+#paper #ac-signin-status:empty { display: none; }

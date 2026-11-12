@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -491,17 +492,16 @@ func mapValues(values map[string]*websocket.Conn) []*websocket.Conn {
 	return result
 }
 
-// NotifyWingOffline sends a wing.offline message to all PTY browsers connected
-// to the given wing. Snapshot route ownership before I/O so one slow browser
-// cannot hold the global routing lock and stall every session on the relay.
-func (r *PTYRoutes) NotifyWingOffline(wingID string) {
+// notifyWingOffline queues the event behind output already accepted from this
+// wing, without waiting for any browser's transport.
+func (s *Server) notifyWingOffline(wingID string) {
 	msg := []byte(`{"type":"wing.offline"}`)
-	for _, connection := range r.offlineRecipients(wingID) {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		if err := connection.Write(ctx, websocket.MessageText, msg); err != nil {
-			log.Printf("notify browser that wing %s is offline: %v", wingID, err)
-		}
-		cancel()
+	for _, connection := range s.PTY.offlineRecipients(wingID) {
+		s.enqueueBrowser(connection, len(msg), "", func(ctx, rateCtx context.Context) {
+			if err := writeBrowserPayload(ctx, connection, msg); err != nil {
+				log.Printf("notify browser that wing %s is offline: %v", wingID, err)
+			}
+		})
 	}
 }
 
@@ -739,7 +739,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			if err := writeWebSocketJSON(ctx, wing.Conn, start); err != nil {
+			if err := writeWingJSON(ctx, wing.Conn, start); err != nil {
 				s.PTY.removeProvisional(sessionID, route)
 				log.Printf("forward PTY start to wing %s: %v", wing.WingID, err)
 				return
@@ -826,7 +826,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				log.Printf("pty session %s reattach pending wing authorization (user=%s)", attach.SessionID, userID)
 			}
 
-			if err := writeWebSocketJSON(ctx, wing.Conn, attach); err != nil {
+			if err := writeWingJSON(ctx, wing.Conn, attach); err != nil {
 				log.Printf("forward PTY attach to wing %s: %v", wing.WingID, err)
 				return
 			}
@@ -857,7 +857,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				s.denyHostedRelay(ctx, conn, userID, wing.WingID, env.Type, "", control.SessionID)
 				continue
 			}
-			if err := wing.Conn.Write(ctx, websocket.MessageText, data); err != nil {
+			if err := writeWingPayload(ctx, wing.Conn, data); err != nil {
 				log.Printf("forward PTY control to wing %s: %v", wing.WingID, err)
 				return
 			}
@@ -886,7 +886,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				s.denyHostedRelay(ctx, conn, userID, wing.WingID, ws.TypePasskeyResponse, "", response.SessionID)
 				continue
 			}
-			if err := wing.Conn.Write(ctx, websocket.MessageText, data); err != nil {
+			if err := writeWingPayload(ctx, wing.Conn, data); err != nil {
 				log.Printf("forward passkey response to wing %s: %v", wing.WingID, err)
 				return
 			}
@@ -946,7 +946,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				s.denyHostedRelay(ctx, conn, userID, wing.WingID, ws.TypePTYKill, "", kill.SessionID)
 				continue
 			}
-			if err := writeWebSocketJSON(ctx, wing.Conn, kill); err != nil {
+			if err := writeWingJSON(ctx, wing.Conn, kill); err != nil {
 				log.Printf("forward PTY kill to wing %s: %v", wing.WingID, err)
 				return
 			}
@@ -1015,7 +1015,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				}
 				continue
 			}
-			if err := writeWebSocketJSON(ctx, wing.Conn, req); err != nil {
+			if err := writeWingJSON(ctx, wing.Conn, req); err != nil {
 				log.Printf("forward tunnel request to wing %s: %v", wing.WingID, err)
 				return
 			}
@@ -1037,7 +1037,7 @@ func (s *Server) denyRelayEntitlement(ctx context.Context, conn *websocket.Conn,
 }
 
 func (s *Server) denyHostedRelay(ctx context.Context, conn *websocket.Conn, userID, wingID, operation, requestID, sessionID string) {
-	if err := writeWebSocketJSON(ctx, conn, ws.ErrorMsg{
+	if err := writeBrowserJSON(ctx, conn, ws.ErrorMsg{
 		Type: ws.TypeError, RequestID: requestID, SessionID: sessionID,
 		Message: "hosted relay payload transport is disabled by this wing",
 	}); err != nil {
@@ -1089,9 +1089,7 @@ func (s *Server) forwardPTYToBrowser(sessionID, sourceWingID string, data []byte
 			route.mu.Unlock()
 			s.PTY.removeProvisionalIfEmpty(sessionID, route)
 			if vc != nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				s.writeRelayPayload(ctx, vc, data, sessionID, "")
-				cancel()
+				s.queueRelayPayload(vc, data, sessionID, "")
 			}
 			return
 		}
@@ -1109,20 +1107,18 @@ func (s *Server) forwardPTYToBrowser(sessionID, sourceWingID string, data []byte
 		}
 		route.mu.Unlock()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
 		if bc != nil {
-			s.writeRelayPayload(ctx, bc, data, sessionID, "")
+			s.queueRelayPayload(bc, data, sessionID, "")
 		}
 		if pending != nil && pending != bc {
-			s.writeRelayPayload(ctx, pending, data, sessionID, "")
+			s.queueRelayPayload(pending, data, sessionID, "")
 		}
 		for _, vc := range viewers {
-			s.writeRelayPayload(ctx, vc, data, sessionID, "")
+			s.queueRelayPayload(vc, data, sessionID, "")
 		}
 
 		// Send ntfy exit notification
-		clickURL := s.ntfyClickURL(sessionID)
+clickURL := s.ntfyClickURL(sourceWingID, sessionID)
 		s.trySendNtfy("exit:"+sessionID, userID, func(c *ntfy.Client) {
 			c.SendExit(sessionID, agent, cwd, exited.ExitCode, clickURL)
 		})
@@ -1184,10 +1180,8 @@ func (s *Server) forwardPTYToBrowser(sessionID, sourceWingID string, data []byte
 		route.Provisional = false
 		route.mu.Unlock()
 		if config.Channel() == "preview" && replaced && oldController != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			message, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, SessionID: sessionID, ControllerID: oldControllerID, Message: "terminal attachment taken over; attach again to request control"})
-			s.writeRelayPayload(ctx, oldController, message, sessionID, "")
-			cancel()
+			s.queueRelayPayload(oldController, message, sessionID, "")
 		}
 	} else if env.Type == ws.TypePTYStarted && viewerID != "" {
 		route.mu.Lock()
@@ -1209,9 +1203,8 @@ func (s *Server) forwardPTYToBrowser(sessionID, sourceWingID string, data []byte
 		if vc == nil {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		s.writeRelayPayload(ctx, vc, data, sessionID, "")
+
+		s.queueRelayPayload(vc, data, sessionID, "")
 		return
 	}
 
@@ -1237,9 +1230,7 @@ func (s *Server) forwardPTYToBrowser(sessionID, sourceWingID string, data []byte
 			}
 			route.mu.Unlock()
 			if target != nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				s.writeRelayPayload(ctx, target, data, sessionID, "")
-				cancel()
+				s.queueRelayPayload(target, data, sessionID, "")
 			}
 			return
 		}
@@ -1255,9 +1246,7 @@ func (s *Server) forwardPTYToBrowser(sessionID, sourceWingID string, data []byte
 			s.PTY.removeProvisionalIfEmpty(sessionID, route)
 		}
 		if pending != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			s.writeRelayPayload(ctx, pending, data, sessionID, "")
+			s.queueRelayPayload(pending, data, sessionID, "")
 			return
 		}
 	}
@@ -1276,31 +1265,39 @@ func (s *Server) forwardPTYToBrowser(sessionID, sourceWingID string, data []byte
 		// Detached — drop the data (wing has ring buffer for replay)
 		return
 	}
+	s.enqueueBrowser(bc, len(data), sessionID, func(ctx, rateCtx context.Context) {
+		s.writeControllerPayload(ctx, rateCtx, route, bc, userID, sessionID, data)
+	})
+}
+
+func (s *Server) writeControllerPayload(ctx, rateCtx context.Context, route *PTYRoute, bc *websocket.Conn, userID, sessionID string, data []byte) {
 	if allowed, notify := s.browserRelayPayloadAccess(bc, "session:"+sessionID); !allowed {
 		if notify {
 			denied := ws.ErrorMsg{
 				Type: ws.TypeError, SessionID: sessionID,
 				Message: "hosted relay is not included on the free direct tier; connect directly, use a self-hosted roost, or upgrade to Pro",
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := writeWebSocketJSON(ctx, bc, denied); err != nil {
+
+			if err := writeBrowserJSON(ctx, bc, denied); err != nil {
 				log.Printf("report browser relay denial: %v", err)
 			}
-			cancel()
 		}
 		return
 	}
 
 	// Meter outbound bandwidth (relay → browser is what costs on Fly)
 	if s.Bandwidth != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := s.Bandwidth.Wait(ctx, userID, len(data)); err != nil {
+		if err := s.Bandwidth.Wait(rateCtx, userID, len(data)); err != nil {
+			if !errors.Is(err, errMonthlyBandwidthExceeded) {
+				log.Printf("wait for relay bandwidth: %v", err)
+				return
+			}
+
 			msg := ws.BandwidthExceeded{
 				Type:    ws.TypeBandwidthExceeded,
 				Message: "Monthly bandwidth limit exceeded. Upgrade to pro for higher limits.",
 			}
-			if writeErr := writeWebSocketJSON(ctx, bc, msg); writeErr != nil {
+			if writeErr := writeBrowserJSON(ctx, bc, msg); writeErr != nil {
 				log.Printf("report relay bandwidth exhaustion: %v", writeErr)
 			}
 			// Detach browser so subsequent forwards are dropped (send once)
@@ -1317,9 +1314,7 @@ func (s *Server) forwardPTYToBrowser(sessionID, sourceWingID string, data []byte
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := bc.Write(ctx, websocket.MessageText, data); err != nil {
+	if err := writeBrowserPayload(ctx, bc, data); err != nil {
 		log.Printf("forward PTY payload to browser: %v", err)
 		s.forwardBrowserDetach(bc, sessionID)
 		route.mu.Lock()
@@ -1330,14 +1325,20 @@ func (s *Server) forwardPTYToBrowser(sessionID, sourceWingID string, data []byte
 	}
 }
 
-func (s *Server) writeRelayPayload(ctx context.Context, conn *websocket.Conn, data []byte, sessionID, requestID string) {
+func (s *Server) queueRelayPayload(conn *websocket.Conn, data []byte, sessionID, requestID string) {
+	s.enqueueBrowser(conn, len(data), sessionID, func(ctx, rateCtx context.Context) {
+		s.deliverRelayPayload(ctx, rateCtx, conn, data, sessionID, requestID)
+	})
+}
+
+func (s *Server) deliverRelayPayload(ctx, rateCtx context.Context, conn *websocket.Conn, data []byte, sessionID, requestID string) {
 	resource := "session:" + sessionID
 	if requestID != "" {
 		resource = "request:" + requestID
 	}
 	allowed, notify := s.browserRelayPayloadAccess(conn, resource)
 	if allowed {
-		s.writeMeteredRelayPayload(ctx, conn, data)
+		s.writeMeteredRelayPayload(ctx, rateCtx, conn, data)
 		return
 	}
 	if notify {
@@ -1345,47 +1346,51 @@ func (s *Server) writeRelayPayload(ctx context.Context, conn *websocket.Conn, da
 			Type: ws.TypeError, SessionID: sessionID, RequestID: requestID,
 			Message: "hosted relay is not included on the free direct tier; connect directly, use a self-hosted roost, or upgrade to Pro",
 		}
-		if err := writeWebSocketJSON(ctx, conn, denied); err != nil {
+		if err := writeBrowserJSON(ctx, conn, denied); err != nil {
 			log.Printf("report relay payload denial: %v", err)
 		}
 	}
 }
 
-func (s *Server) writeMeteredRelayPayload(ctx context.Context, conn *websocket.Conn, data []byte) bool {
+func (s *Server) writeMeteredRelayPayload(ctx, rateCtx context.Context, conn *websocket.Conn, data []byte) bool {
 	userID := s.browserUserID(conn)
 	if s.Bandwidth != nil {
 		if userID == "" {
 			return false
 		}
-		if err := s.Bandwidth.Wait(ctx, userID, len(data)); err != nil {
+		if err := s.Bandwidth.Wait(rateCtx, userID, len(data)); err != nil {
+			if !errors.Is(err, errMonthlyBandwidthExceeded) {
+				log.Printf("wait for metered relay bandwidth: %v", err)
+				return false
+			}
 			message := ws.BandwidthExceeded{
 				Type:    ws.TypeBandwidthExceeded,
 				Message: "Monthly bandwidth limit exceeded. Upgrade to pro for higher limits.",
 			}
-			if writeErr := writeWebSocketJSON(ctx, conn, message); writeErr != nil {
+			if writeErr := writeBrowserJSON(ctx, conn, message); writeErr != nil {
 				log.Printf("report metered relay bandwidth exhaustion: %v", writeErr)
 			}
 			return false
 		}
 	}
-	if err := conn.Write(ctx, websocket.MessageText, data); err != nil {
+	if err := writeBrowserPayload(ctx, conn, data); err != nil {
 		log.Printf("write metered relay payload: %v", err)
 		return false
 	}
 	return true
 }
 
-func (s *Server) writeCoordinationPayload(ctx context.Context, conn *websocket.Conn, data []byte) bool {
+func (s *Server) writeCoordinationPayload(ctx, rateCtx context.Context, conn *websocket.Conn, data []byte) bool {
 	userID := s.browserUserID(conn)
 	if s.Bandwidth != nil {
 		if userID == "" {
 			return false
 		}
-		if err := s.Bandwidth.WaitRate(ctx, userID, len(data)); err != nil {
+		if err := s.Bandwidth.WaitRate(rateCtx, userID, len(data)); err != nil {
 			return false
 		}
 	}
-	if err := conn.Write(ctx, websocket.MessageText, data); err != nil {
+	if err := writeBrowserPayload(ctx, conn, data); err != nil {
 		log.Printf("write coordination payload: %v", err)
 		return false
 	}
