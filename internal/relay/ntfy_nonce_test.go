@@ -33,3 +33,15 @@ func TestNtfyNonceDedupIsPerUserAndBounded(t *testing.T) {
 		t.Fatal("oldest evicted nonce was not admitted again")
 	}
 }
+
+func TestNtfyClickURLKeepsExecutionWing(t *testing.T) {
+	server := NewServer(nil, ServerConfig{BaseURL: "https://wingthing.ai", AppHost: "app.wingthing.ai"})
+	for _, test := range []struct{ wing, session, want string }{
+		{"studio", "redirect", "https://app.wingthing.ai/#session/studio/redirect"},
+		{"studio two", "a/b", "https://app.wingthing.ai/#session/studio%20two/a%2Fb"},
+	} {
+		if got := server.ntfyClickURL(test.wing, test.session); got != test.want {
+			t.Fatalf("ntfyClickURL(%q, %q) = %q; want %q", test.wing, test.session, got, test.want)
+		}
+	}
+}
