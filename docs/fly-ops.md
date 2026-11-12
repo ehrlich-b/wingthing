@@ -92,11 +92,16 @@ deployment gates below for any separately authorized site deployment.
 `make ship-gate` runs the Linux promotion set and writes a receipt for the
 committed HEAD. Transfer that receipt to the deployment host and run
 `make deploy RECEIPT=/path/to/ship-gate-<sha>.txt`. Deploy verifies the receipt
-and staged release downloads before Fly; it does not run the suite locally.
+and staged release downloads before Fly; it does not run the suite locally or
+publish a GitLab release.
 See [Promotion and deployment](#promotion-and-deployment) for the exact set.
-The separate release qualification still exercises the historical baselines
-`v0.144.1` and `v0.147.0` in both gateway/wing orders; these pins do not claim
-to be the immediately previous release or a mixed Fly login/edge fleet.
+The separate release qualification retains the configured historical-baseline
+compatibility gate in `scripts/test-backward-compat.sh`. Set
+`WT_COMPAT_BASELINE_REF` to select one baseline; otherwise it runs both pinned
+defaults, `v0.144.1` and `v0.147.0`, in both gateway/wing orders. These pins do
+not claim to be the immediately previous release, and this compatibility gate
+does not exercise a mixed Fly login/edge fleet. The released-CLI skew probe
+below separately verifies the actual retained v0.149.5 artifact.
 
 Deploying the site before the matching release creates an installation outage: the
 newer installer refuses an older binary whose command surface does not match the
