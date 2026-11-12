@@ -107,6 +107,8 @@ func TestHeadlessContinuationAdvertisementEligibility(t *testing.T) {
 			case "unknown model":
 				writeResumeSessionFixture(t, s.Cfg, c.SessionID, "fixture-user", "claude", c.CWD, "provider", "{}\n")
 			case "other agent":
+				// A Codex session must carry its own matching native transcript.
+				writeResumeSessionFixture(t, s.Cfg, c.SessionID, "fixture-user", "codex", c.CWD, "provider", `{"type":"session_meta","payload":{"id":"provider"}}`+"\n")
 				write("egg.meta", "agent=codex\ncwd="+c.CWD+"\nprovider_session_id=provider\n")
 			case "superseded":
 				if err := db.ResumeConversationExecution(c.SessionID, "later"); err != nil {

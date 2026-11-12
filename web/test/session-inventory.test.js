@@ -218,3 +218,14 @@ test('removed focused rows recover focus to the nearest remaining row', () => {
     assert.equal(focused, 'remaining');
     assert.equal(restoreSessionFocus({ querySelectorAll: () => [] }, { id: 'gone', wingId: 'wsl' }), false);
 });
+
+test('paper viewing follows the rendered qualified session without requiring a PTY', () => {
+    const state = { activeView: 'home', ptySessionId: 'old', ptyWingId: 'linux' };
+    const target = { sessionId: session.id, wingId: 'mac' };
+    assert.equal(sessionIsViewed(session, state, true, null, target), true);
+    assert.equal(sessionIsViewed(session, state, false, null, target), false);
+    assert.equal(sessionIsViewed({ ...session, wing_id: 'linux' }, state, true, null, target), false);
+    assert.equal(sessionIsViewed({ ...session, id: 'other' }, state, true, null, target), false);
+    assert.equal(sessionIsViewed(session, state, true), false);
+    assert.equal(sessionIsViewed(session, { ...state, activeView: 'account' }, true, null, target), false);
+});

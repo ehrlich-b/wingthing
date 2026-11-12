@@ -1,4 +1,5 @@
 import { S, DOM } from '../state.js';
+import { acknowledgeViewedSession } from '../notify.js';
 import { escapeMarkup as esc } from '../security.js';
 import { sessionDisplayName } from '../helpers.js';
 import { machineState } from '../paper-state.js';
@@ -62,7 +63,8 @@ function frame() {
         }
         if (event.target.closest('[data-more-machines]')) { ui.allMachines = true; render(true); return; }
         const take = event.target.closest('[data-takeover]');
-        if (take) { const [wingId, sessionId] = take.dataset.takeover.split('/'); if (machineState(wingOf(wingId)) !== 'connected') return; switchToSession(sessionId, true, wingId); S.term?.focus(); return; }
+        if (take) { const [wingId, sessionId] = take.dataset.takeover.split('/'); if (machineState(wingOf(wingId)) !== 'connected') return; switchToSession(sessionId, true, wingId, { takeover: true }); render(true); S.term?.focus(); return; }
+        if (event.target.closest('[data-handback]')) { showHome(false); ui.inputReader?.refresh(); render(true); main.querySelector('#pp-message')?.focus(); return; }
         const copy = event.target.closest('[data-copy]');
         if (copy) { navigator.clipboard?.writeText(copy.dataset.copy).then(() => { copy.textContent = 'Copied'; }, () => { copy.textContent = 'Copy failed'; }); return; }
         if (browserUnavailable(S.currentUser)) return;
@@ -230,16 +232,16 @@ function render(force) {
     show();
     const current = paperRoute();
     const denied = browserUnavailable(S.currentUser);
-    const live = !denied && S.activeView === 'terminal';
+    const live = !denied && current.view === 'session' && S.activeView === 'terminal' && current.sessionId === S.ptySessionId && current.wingId === S.ptyWingId;
     syncHomePolling(current.view === 'wing' && !denied);
-    selectComposer(!denied ? (current.view === 'wing' ? coordinator() : current.view === 'session' && !live ? findSession(current) : null) : null);
+    selectComposer(!denied ? (current.view === 'wing' ? coordinator() : current.view === 'session' ? findSession(current) : null) : null);
     const views = { wing: viewWing, sessions: viewSessions, machines: viewMachines, pair: viewPair, new: viewNew, session: viewSession, account: viewAccount, machine: viewMachine, canvas: viewCanvas };
-    const html = denied && current.view !== 'account' ? (current.view === 'wing' ? viewBrowserAccess() : head('Get started', 'Free native access') + directSetup(S.currentUser)) : live ? head(esc(sessionDisplayName(findSession(current) || {}) || 'Session'), esc(machineName(wingOf(S.ptyWingId)))) + '<div class="pp-live" data-engine="terminal" data-stable></div>' : views[current.view](current);
+    const html = denied && current.view !== 'account' ? (current.view === 'wing' ? viewBrowserAccess() : head('Get started', 'Free native access') + directSetup(S.currentUser)) : views[current.view](current);
     const sig = location.hash + S.activeView + html;
     renderNavigation(current, denied);
     if (sig === lastSignature) return;
     lastSignature = sig;
-    const fresh = main.dataset.hash !== location.hash || main.dataset.mode !== String(live);
+    const fresh = main.dataset.hash !== location.hash;
     if (fresh) main.scrollTop = 0;
     const conversation = main.querySelector('.pp-conversation');
     const pinned = fresh || !conversation || conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight <= 2;
@@ -263,6 +265,7 @@ function render(force) {
         if (card) { card.focus({ preventScroll: true }); main.dataset.focusedNeeds = location.hash; }
     }
     if (!history.state?.focusNeeds) delete main.dataset.focusedNeeds;
+    acknowledgeViewedSession();
     const input = root.querySelector('#pp-message');
     if (input && document.activeElement !== input) input.value = drafts.get(ui.inputKey) || '';
     if (current.view === 'sessions') updateSessionSearch();

@@ -99,11 +99,11 @@ function terminal(s) {
     const k = s.wing_id + '/' + s.id;
     let entry = terminals.get(k);
     if (!entry) { entry = { text: '', at: 0, busy: false, error: '' }; terminals.set(k, entry); }
-    if (!entry.busy && machineState(wingOf(s.wing_id)) === 'connected' && Date.now() - entry.at > 4000) {
+    if (!entry.busy && machineState(wingOf(s.wing_id)) === 'connected' && Date.now() - entry.at > 1000) {
         entry.busy = true;
-        sendTunnelRequest(s.wing_id, { type: 'session.control', operation: 'terminal_read', arguments: { session: s.id } })
+        sendTunnelRequest(s.wing_id, { type: 'session.control', operation: 'session_action', arguments: { origin_wing_id: s.wing_id, session_id: s.id, operation: 'terminal_read', arguments: {} } })
             .then(result => { const ansi = result.result ? result.result.ansi : result.ansi; if (typeof ansi !== 'string') throw Error('No terminal preview'); entry.text = ansi.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07/g, ''); entry.error = ''; })
-            .catch(() => { entry.error = 'Preview unavailable from this machine.'; })
+            .catch(error => { entry.error = 'Terminal unavailable: ' + (error.message || 'Reconnect this machine.'); })
             .finally(() => { entry.at = Date.now(); entry.busy = false; render(true); });
     }
     return entry;

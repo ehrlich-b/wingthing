@@ -137,6 +137,12 @@ async function fixture(t, { width = 1440, reattach = true } = {}) {
             findSessionResource: () => null, wingDisplayName: () => 'Local wing', formatSessionTitle: () => 'Terminal' };
         const pty = await import('/src/pty.js');
         const nav = await import('/src/nav.js');
+        // Model the persistent shell's navigation boundary while keeping the
+        // production cancellation handler and recovery engine under test.
+        const shell = document.createElement('main');
+        shell.id = 'paper'; shell.hidden = true; shell.textContent = 'Home';
+        document.body.append(shell);
+        window.addEventListener('shell-navigate', () => { shell.hidden = S.activeView !== 'home'; });
         const p2p = await import('/src/webrtc.js');
         window._deleteSession = noop;
         const cryptoModule = await import('/src/crypto.js');
@@ -348,7 +354,8 @@ for (const phase of ['notice', 'authentication', 'failed reload']) {
         assert.equal(await page.evaluate(() => h.S.activeView), 'home');
         assert.equal(await page.evaluate(() => h.S.ptySessionId), null);
         assert.equal(await page.getByRole('dialog').count(), 0);
-        assert.equal(await page.locator('#home-section').isVisible(), true);
+        assert.equal(await page.locator('#paper').isVisible(), true);
+        assert.equal(await page.locator('#home-section').isVisible(), false);
         assert.equal(await page.locator('#terminal-section').isVisible(), false);
         const socketCount = await page.evaluate(() => { window.oldReload.click(); return h.sockets.length; });
         // The failed reconnect already armed a one-second retry; Home must cancel it.

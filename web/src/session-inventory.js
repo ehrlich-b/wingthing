@@ -22,7 +22,8 @@ export function sessionIsSelected(session, sessionId, wingId) {
     return !!wingId && session.id === sessionId && session.wing_id === wingId;
 }
 
-export function sessionIsViewed(session, state, visible, chatTarget) {
+export function sessionIsViewed(session, state, visible, chatTarget, paperTarget) {
+    if (visible && ['home', 'terminal'].includes(state.activeView) && paperTarget && sessionIsSelected(session, paperTarget.sessionId, paperTarget.wingId)) return true;
     return !!visible && state.activeView === 'terminal' && (sessionIsSelected(session, state.ptySessionId, state.ptyWingId) ||
         !!(chatTarget && state.currentUser && chatTarget.userId === state.currentUser.id && sessionIsSelected(session, chatTarget.sessionId, chatTarget.wingId)));
 }

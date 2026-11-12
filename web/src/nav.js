@@ -100,13 +100,13 @@ export function showTerminal() {
     return true;
 }
 
-export function switchToSession(sessionId, pushHistory, wingId) {
+export function switchToSession(sessionId, pushHistory, wingId, options) {
     if (hostedRelayUnavailable()) { showHome(pushHistory); return false; }
     var sess = findSessionResource(S.sessionsData, sessionId, wingId);
     if (!sess && S.sessionsData.filter(function(s) { return s.id === sessionId; }).length > 1) return false;
     detachPTY();
     if (!showTerminal()) return false;
-    attachPTY(sessionId, undefined, wingId || (sess && sess.wing_id));
+    attachPTY(sessionId, undefined, wingId || (sess && sess.wing_id), undefined, options);
     if (pushHistory !== false) {
         history.pushState({ view: 'terminal', sessionId: sessionId, wingId: wingId || (sess && sess.wing_id) }, '', sessionRoute(sessionId, wingId || (sess && sess.wing_id)));
     }

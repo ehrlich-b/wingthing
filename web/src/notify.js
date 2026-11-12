@@ -7,7 +7,25 @@ import { chatSnapshot } from './chat-view.js';
 import { acknowledgeSessionCompletions, COMPLETION_STORAGE_PREFIX } from './session-completion.js';
 import { browserLocalStorage, userStorageKey } from './storage-scope.js';
 
+import { paperRoute } from './paper-state.js';
+
 var notifyChannel = null;
+
+function paperTarget() {
+    const paper = document.getElementById('paper');
+    const main = paper?.querySelector('.pp-main');
+    const target = paperRoute(location.hash);
+    if (!['home', 'terminal'].includes(S.activeView) || !paper || paper.hidden || !main || main.dataset.hash !== location.hash || main.dataset.view !== 'session' ||
+        S.currentUser?.relay_allowed === false || target?.view !== 'session' || !findSessionResource(S.sessionsData, target.sessionId, target.wingId)) return null;
+    return target;
+}
+
+export function acknowledgeViewedSession() {
+    const target = paperTarget();
+    if (!target || !isViewingSession(target.sessionId, target.wingId)) return;
+    acknowledgeSessionCompletions(browserLocalStorage(), S.currentUser && S.currentUser.id, [{ id: target.sessionId, wing_id: target.wingId }]);
+    clearNotification(target.sessionId, target.wingId);
+}
 
 export function checkForNotification(text) {
     var tail = text.slice(-300);
@@ -33,7 +51,7 @@ export function sendAttentionAck(sessionId, wingId) {
 
 function isViewingSession(sessionId, wingId) {
     var snapshot = chatSnapshot();
-    return sessionIsViewed({ id: sessionId, wing_id: wingId }, S, document.visibilityState === 'visible', snapshot && snapshot.target);
+    return sessionIsViewed({ id: sessionId, wing_id: wingId }, S, document.visibilityState === 'visible', snapshot && snapshot.target, paperTarget());
 }
 
 export function setNotification(sessionId, wingId, conversation) {
@@ -43,6 +61,7 @@ export function setNotification(sessionId, wingId, conversation) {
     // If actively viewing this session, just ack — we're already looking at it.
     // Other tabs get the event via their own dashboard WebSocket and show the dot.
     if (isViewingSession(sessionId, wingId)) {
+        clearNotification(sessionId, wingId);
         sendAttentionAck(sessionId, wingId);
         return;
     }
@@ -122,6 +141,7 @@ export function clearNotification(sessionId, wingId) {
 
 export function initNotifyListeners() {
     document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') acknowledgeViewedSession();
         if (document.visibilityState === 'visible' && S.activeView === 'terminal') {
             var snapshot = chatSnapshot();
             var target = snapshot && snapshot.target;
@@ -147,7 +167,10 @@ export function initNotifyListeners() {
         notifyChannel.onmessage = function(ev) {
             var d = ev.data;
             if (!d || typeof d.wingId !== 'string' || !d.wingId || typeof d.sessionId !== 'string' || !d.sessionId) return;
-            if (d.type === 'notify') {
+            if (d.type === 'notify' && isViewingSession(d.sessionId, d.wingId)) {
+                clearNotification(d.sessionId, d.wingId);
+                sendAttentionAck(d.sessionId, d.wingId);
+            } else if (d.type === 'notify') {
                 if (changeSessionNotification(S.sessionNotifications, d.sessionId, d.wingId, true)) {
                     renderSidebar();
                     if (S.activeView === 'home') renderDashboard();

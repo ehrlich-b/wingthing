@@ -27,3 +27,10 @@ body.paper-on { height: 100dvh; overflow: hidden; }
     .pp-srow .pp-sline { display: none; }
     .pp-tabs { grid-template-columns: repeat(4, 1fr); }
 }
+
+.pp-live-terminal { height: 42dvh; min-height: 180px; }
+#paper .pp-term-rail #terminal-section { padding: 0; }
+@media (max-width: 760px) {
+    .pp-live-terminal { height: 24dvh; min-height: 120px; }
+    .pp-main[data-view="session"] .pp-terminal:has([data-handback]) { max-height: 36dvh; }
+}

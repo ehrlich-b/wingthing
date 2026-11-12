@@ -1,22 +1,31 @@
+import { S } from '../../state.js';
 import { escapeMarkup as esc } from '../../security.js';
 import { sessionDisplayName } from '../../helpers.js';
 import { machineState, agentName, machineLabel, machineGuidance } from '../../paper-state.js';
 import { head } from '../frame.js';
 import { wingOf, machineName, sessions, sessionState, findSession } from '../select.js';
-import { accessPanel, read, lines, request, terminal, needCard, kicker, composer, sessionHref, project, chip, clock, prose, awayText, isAway, staleState } from '../common.js';
+import { accessPanel, read, lines, request, terminal, ui, needCard, kicker, composer, sessionHref, project, chip, clock, prose, awayText, isAway, staleState } from '../common.js';
 function missing() { return head('Session', '') + '<section class="pp-empty"><h2>This session is not listed</h2><p>It may have ended, or its machine has not reported yet.</p><div class="pp-actions"><a class="pp-btn" href="#sessions">All sessions</a></div></section>'; }
 function viewSession(route) {
     const s = findSession(route); if (!s) return missing();
     const w = wingOf(s.wing_id), st = sessionState(s), entry = read(s), term = terminal(s);
-    const msgs = lines(s).slice(-24).map(l => '<div class="pp-row pp-row-' + (l.who === 'you' ? 'you' : 'session') + '" data-key="' + esc(s.wing_id + '/' + s.id + '/' + l.id) + '"><div class="pp-who"><b>' + (l.who === 'you' ? 'you' : 'session') + '</b><small>' + esc(clock(l.at)) + '</small></div><div class="pp-say">' + prose(l.text) + '</div></div>').join('');
+    const allMessages = lines(s);
+    const msgs = allMessages.slice(-24).map(l => '<div class="pp-row pp-row-' + (l.who === 'you' ? 'you' : 'session') + '" data-key="' + esc(s.wing_id + '/' + s.id + '/' + l.id) + '"><div class="pp-who"><b>' + (l.who === 'you' ? 'you' : 'session') + '</b><small>' + esc(clock(l.at)) + '</small></div><div class="pp-say">' + prose(l.text) + '</div></div>').join('');
+    const controlling = S.activeView === 'terminal' && S.ptySessionId === s.id && S.ptyWingId === s.wing_id;
+    const controlReady = controlling && !!S.e2eKey && !S.ptyInputBlocked && S.ptyWs?.readyState === WebSocket.OPEN;
+    const supported = ['claude', 'codex'].includes(s.agent);
     const live = machineState(w) === 'connected', phone = matchMedia('(max-width: 760px)').matches;
     const meta = esc([agentName(s.agent), machineName(w), project(s)].filter(Boolean).join(' · ')) + chip(st);
     return head(esc(sessionDisplayName(s)), meta) + accessPanel(w) + (staleState(s) ? '<p class="pp-quiet pp-stale">' + esc(staleState(s)) + '</p>' : '') + '<div class="pp-cols pp-split"><div class="pp-col-main"><div class="pp-conversation" tabindex="0" aria-label="Session messages">' + kicker('Messages', entry.error ? esc(entry.error) : '') +
-        (msgs || '<p class="pp-quiet">' + (entry.at ? 'No messages in this session yet.' : 'Reading the session…') + '</p>') +
+        (allMessages.length > 24 ? '<p class="pp-quiet">+' + (allMessages.length - 24) + ' earlier messages</p>' : '') +
+        (!supported ? '<p class="pp-quiet">Chat view is available for Claude and Codex.</p>' : msgs || '<p class="pp-quiet">' + (entry.at ? 'No messages in this session yet.' : 'Reading the session…') + '</p>') +
+        (ui.inputSnapshot?.sendingUntil > Date.now() ? '<p class="pp-sending" role="status">Sending...</p>' : '') +
         (st.key === 'need' ? needCard(s) : '') + '</div>' + composer('Message ' + sessionDisplayName(s), s) + '</div>' +
-        '<aside class="pp-col-rail pp-term-rail">' + (phone ? '<details class="pp-terminal"><summary>Show terminal</summary>' : '<div class="pp-terminal">') + kicker('Terminal', live ? 'Agent has control' : 'Last seen') +
-        '<pre class="pp-term" aria-label="Terminal preview">' + esc((term.text || '').split('\n').slice(-18).join('\n').trimEnd() || term.error || (live ? 'Waiting for terminal output…' : machineName(w) + ' · ' + (isAway(w) ? awayText(w) : machineLabel(w)) + '. ' + machineGuidance(w))) + '</pre>' +
-        (live ? '<button type="button" class="pp-btn" data-takeover="' + esc(s.wing_id + '/' + s.id) + '">Take over terminal</button><p class="pp-quiet">Your keys go to the session until you hand control back. Messages wait while you have control.</p>' : '') + (phone ? '</details>' : '</div>') + '</aside></div>';
+        '<aside class="pp-col-rail pp-term-rail">' + (phone ? '<details class="pp-terminal"' + (controlling ? ' open' : '') + '><summary>Show terminal</summary>' : '<div class="pp-terminal">') + kicker('Terminal', controlling ? (controlReady ? 'You have control' : S.ptyInputBlocked ? 'Control unavailable · hand back and retry' : 'Connecting terminal…') : live ? 'Agent has control' : 'Last seen') +
+        (controlling ? '<button type="button" class="pp-btn" data-handback>Hand back</button>' : '') +
+        (controlling ? '<div class="pp-live-terminal" data-engine="terminal"></div>' :
+        '<pre class="pp-term" aria-label="Terminal preview">' + esc((term.text || '').split('\n').slice(-18).join('\n').trimEnd() || term.error || (live ? 'Waiting for terminal output…' : machineName(w) + ' · ' + (isAway(w) ? awayText(w) : machineLabel(w)) + '. ' + machineGuidance(w))) + '</pre>') +
+        (!controlling && live ? '<button type="button" class="pp-btn" data-takeover="' + esc(s.wing_id + '/' + s.id) + '">Take over terminal</button><p class="pp-quiet">Your keys go to the session until you hand control back.</p>' : '') + (phone ? '</details>' : '</div>') + '</aside></div>';
 }
 function viewApprove(route) {
     const s = findSession(route); if (!s) return missing();
