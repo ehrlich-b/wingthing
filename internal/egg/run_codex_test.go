@@ -274,3 +274,35 @@ func TestCodexRunFailureKeepsTurnIDAndDiscardsDiagnostics(t *testing.T) {
 		t.Fatalf("failure result: %s %s %s %v %v", result.Status, result.FailureKind, result.TurnID, err, readErr)
 	}
 }
+
+func TestCodexCompletionRechecksPromptPublishedAfterLifecycleSnapshot(t *testing.T) {
+	rt, home, request, _ := codexRunFixture(t)
+	sessionID := filepath.Base(rt.dir)
+	read := rt.backend.Read
+	injected := false
+	rt.backend.Prepare = func(prompt, id string) (func() (turnEvidence, error), error) {
+		return codexRunScanner(home, sessionID, id, prompt, func(ctx context.Context, after int64, limit int) (SessionView, error) {
+			view, err := read(ctx, after, limit)
+			for _, event := range view.Events {
+				if !injected && event.Type == "prompt_submitted" && event.TurnID == "turn-exact" {
+					injected = true
+					// Publish the conflicting hook after this snapshot, but before
+					// the completion receipt becomes available to the scanner.
+					spool := filepath.Join(home, ".codex", "wingthing-events", sessionID)
+					lifecycleWrite(t, filepath.Join(spool, "seq.00000000000000000003.json"), `{"session_id":"thread-exact","turn_id":"human-turn","hook_event_name":"UserPromptSubmit","prompt":"human prompt"}`)
+					publishCodexNotify(t, home, sessionID, "complete", "thread-exact", "turn-exact", prompt, "final")
+				}
+			}
+			return view, err
+		}, readRunFile)
+	}
+	if _, err := rt.submit(request); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	result, err := rt.wait(ctx, request.RunID)
+	if err != nil || !injected || result.Status != "failed" || result.FailureKind != agent.InputConflict {
+		t.Fatalf("snapshot/completion conflict: %+v injected=%t err=%v", result, injected, err)
+	}
+}

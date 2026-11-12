@@ -107,11 +107,11 @@ func codexRunScanner(home, sessionID, providerID, prompt string, read func(conte
 	var evidence turnEvidence
 	var receiptKey string
 	pending := make(map[string]codexTurnNotification)
-	return func() (turnEvidence, error) {
+	scanHooks := func() error {
 		for {
 			view, err := read(context.Background(), cursor, 200)
 			if err != nil {
-				return evidence, err
+				return err
 			}
 			if providerID != "" && view.ProviderSessionID != providerID {
 				evidence.Conflict = true
@@ -122,7 +122,7 @@ func codexRunScanner(home, sessionID, providerID, prompt string, read func(conte
 				}
 				data, err := readRunHook(home, "codex", sessionID, event.SourceKey, readFile)
 				if err != nil {
-					return evidence, err
+					return err
 				}
 				var hook struct {
 					SessionID string `json:"session_id"`
@@ -163,6 +163,12 @@ func codexRunScanner(home, sessionID, providerID, prompt string, read func(conte
 				break
 			}
 		}
+		return nil
+	}
+	return func() (turnEvidence, error) {
+		if err := scanHooks(); err != nil {
+			return evidence, err
+		}
 		root, err := openProviderHome(home)
 		if err != nil {
 			return evidence, err
@@ -195,6 +201,11 @@ func codexRunScanner(home, sessionID, providerID, prompt string, read func(conte
 			}
 		}
 		if notify, exists := pending[evidence.TurnID]; exists && evidence.Receipt {
+			// A conflicting prompt can be published after the lifecycle snapshot
+			// but before this completion. Reconcile hooks again before accepting it.
+			if err := scanHooks(); err != nil {
+				return evidence, err
+			}
 			if len(notify.Inputs) != 1 || notify.Inputs[0] != prompt {
 				evidence.Conflict = true
 				return evidence, nil
