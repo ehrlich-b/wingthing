@@ -117,8 +117,7 @@ async function fireOSNotification(sessionId, wingId, conversation) {
                     mod.openConversationTranscript({ conversation_id: data.conversationId, root_conversation_id: data.rootConversationId, session_id: data.sessionId }, data.wingId);
                 });
             } else {
-                // Lazy import to avoid the nav/notify cycle.
-                import('./nav.js').then(function(mod) { mod.switchToSession(data.sessionId, undefined, data.wingId); });
+                location.hash = '#session/' + encodeURIComponent(data.wingId) + '/' + encodeURIComponent(data.sessionId);
             }
         };
     } catch (error) { /* Visible badges remain available without OS support. */ }
@@ -132,6 +131,8 @@ export function clearNotification(sessionId, wingId) {
     renderSidebar();
     if (S.activeView === 'home') renderDashboard();
     if (!Object.keys(S.sessionNotifications).length) {
+        clearInterval(S.titleFlashTimer);
+        S.titleFlashTimer = null;
         document.title = 'wingthing';
     }
     if (notifyChannel) {
