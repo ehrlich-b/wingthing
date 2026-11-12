@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/pake"
@@ -107,6 +108,12 @@ func pairBuiltFleetPhone(t *testing.T, state string) *builtFleetPhone {
 	if !pake.Available {
 		t.Skip("PAKE requires CGO")
 	}
+	p, control, key := newBuiltFleetPhone(t, state)
+	return finishBuiltFleetPhonePair(t, p, control, key)
+}
+
+func newBuiltFleetPhone(t *testing.T, state string) (*builtFleetPhone, phonepair.Control, *ecdh.PrivateKey) {
+	t.Helper()
 	data, err := os.ReadFile(filepath.Join(state, "phone-control.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +122,7 @@ func pairBuiltFleetPhone(t *testing.T, state string) *builtFleetPhone {
 	if err := json.Unmarshal(data, &control); err != nil {
 		t.Fatal(err)
 	}
-	client := &http.Client{Transport: &http.Transport{Proxy: nil}}
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 10 * time.Second}
 	t.Cleanup(client.CloseIdleConnections)
 	p := &builtFleetPhone{t: t, http: client, origin: fmt.Sprintf("http://127.0.0.1:%d", control.Port)}
 	key, err := ecdh.X25519().GenerateKey(rand.Reader)
@@ -127,12 +134,18 @@ func pairBuiltFleetPhone(t *testing.T, state string) *builtFleetPhone {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return p, control, key
+}
+
+func finishBuiltFleetPhonePair(t *testing.T, p *builtFleetPhone, control phonepair.Control, key *ecdh.PrivateKey) *builtFleetPhone {
+	t.Helper()
 	var q phonepair.Invitation
 	p.post("/admin", map[string]string{"Op": "create"}, &q, control.Token)
 	exchange, first, err := pake.New(true, q.Secret, phonepair.Identity(q))
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer exchange.Close()
 	alice := base64.StdEncoding.EncodeToString(first)
 	response := p.wire(phonepair.Request{Op: "pair.start", ID: q.ID, Message: alice})
 	bob, err := base64.StdEncoding.DecodeString(response.Message)
@@ -151,10 +164,20 @@ func pairBuiltFleetPhone(t *testing.T, state string) *builtFleetPhone {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.encrypted("pair.prove", map[string]any{"op": "prove", "id": q.ID, "name": "fixture-phone", "public_key": base64.StdEncoding.EncodeToString(elliptic.Marshal(elliptic.P256(), signing.X, signing.Y))}, pair)
+	emoji := phonepair.EmojiFromShared(q, shared, alice, response.Message)
+	proved := p.encrypted("pair.prove", map[string]any{"op": "prove", "id": q.ID, "name": "fixture-phone", "public_key": base64.StdEncoding.EncodeToString(elliptic.Marshal(elliptic.P256(), signing.X, signing.Y))}, pair)
+	if proved["op"] != "proved" || proved["id"] != q.ID || proved["emoji"] != emoji {
+		t.Fatal("fixture pairing proof failed")
+	}
 	var allowed map[string]any
 	p.post("/admin", map[string]string{"Op": "allow", "ID": q.ID}, &allowed, control.Token)
-	paired := p.encrypted("pair.confirm", map[string]any{"op": "confirm", "id": q.ID, "emoji": phonepair.EmojiFromShared(q, shared, alice, response.Message)}, pair)
+	if allowed["ok"] != true {
+		t.Fatal("fixture pairing approval failed")
+	}
+	paired := p.encrypted("pair.confirm", map[string]any{"op": "confirm", "id": q.ID, "emoji": emoji}, pair)
+	if paired["op"] != "paired" || paired["wing_id"] != q.WingID || paired["key"] != q.Key || stringField(paired, "device_id") == "" || len(stringField(paired, "credential")) < 40 {
+		t.Fatal("fixture pairing confirmation failed")
+	}
 	p.session, err = auth.DeriveSharedKey(key, control.Key, "wt-phone-v1")
 	if err != nil {
 		t.Fatal(err)
@@ -168,6 +191,9 @@ func pairBuiltFleetPhone(t *testing.T, state string) *builtFleetPhone {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		t.Fatal(err)
 	}
+	if fields["wing_id"] != q.WingID || fields["key"] != q.Key {
+		t.Fatal("fixture device challenge identity mismatch")
+	}
 	p.id = stringField(fields, "connection_id")
 	digest := sha256.Sum256([]byte("wt-device-v1\n" + q.WingID + "\n" + p.id + "\n" + stringField(fields, "challenge") + "\n" + p.pub))
 	signature, err := ecdsa.SignASN1(rand.Reader, signing, digest[:])
@@ -175,7 +201,7 @@ func pairBuiltFleetPhone(t *testing.T, state string) *builtFleetPhone {
 		t.Fatal(err)
 	}
 	authenticated := p.encrypted("device.auth", map[string]any{"connection_id": p.id, "device_id": paired["device_id"], "credential": paired["credential"], "signature": base64.StdEncoding.EncodeToString(signature)}, p.session)
-	if authenticated["ok"] != true {
+	if authenticated["ok"] != true || authenticated["connection_id"] != p.id || authenticated["sequence"] != float64(0) {
 		t.Fatal("fixture device authentication failed")
 	}
 	return p
