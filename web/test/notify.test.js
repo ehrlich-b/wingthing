@@ -12,7 +12,7 @@ const source = readFileSync(new URL('../src/notify.js', import.meta.url), 'utf8'
     .replace(/\bimport\(/g, 'loadModule(');
 
 function notificationHarness(persistent = false) {
-    const notifications = [], opened = [];
+    const notifications = [], opened = [], transport = [];
     const listeners = {}, intervals = new Map(), frames = [], acknowledged = [];
     const main = { dataset: { view: 'session', hash: '#session/linux/session' } };
     const paper = { hidden: false, querySelector: () => main };
@@ -32,6 +32,7 @@ function notificationHarness(persistent = false) {
         document: { title: 'wingthing', visibilityState: 'visible', hidden: false,
             getElementById: () => paper, addEventListener: (type, listener) => { listeners[type] = listener; } },
         paperRoute, findSessionResource, sessionIsViewed, sessionResourceKey, changeSessionNotification,
+        sendTunnelRequest: async (wingId, payload, options) => { transport.push({wingId, payload, options}); return {}; },
         chatSnapshot: () => null, renderSidebar() {}, renderDashboard() {},
         acknowledgeSessionCompletions: (_storage, _user, sessions) => acknowledged.push(...sessions),
         browserLocalStorage: () => null, WebSocket: { OPEN: 1 },
@@ -49,7 +50,7 @@ function notificationHarness(persistent = false) {
         }),
     });
     vm.runInContext(source, context, { filename: 'notify.js' });
-    return { context, notifications, opened, listeners, intervals, frames, acknowledged, paper, main, focused: () => focused };
+    return { context, notifications, opened, transport, listeners, intervals, frames, acknowledged, paper, main, focused: () => focused };
 }
 
 test('page and persistent coordinator notifications keep confidential titles off the lock screen', async () => {
@@ -133,4 +134,30 @@ test('returning to a visible paper session clears its alert and stops title flas
     assert.equal(h.intervals.size, 0);
     assert.equal(h.context.document.title, 'wingthing');
     assert.equal(h.acknowledged[0].wing_id, 'linux');
+});
+
+test('read-only paper opening acknowledges the wing without taking a terminal writer', async () => {
+    const h = notificationHarness();
+    h.context.location.hash = h.main.dataset.hash;
+    h.context.S.sessionsData[0].needs_attention = true;
+    h.context.acknowledgeViewedSession();
+    h.context.acknowledgeViewedSession();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(h.context.S.ptySessionId, null);
+    assert.equal(h.transport.length, 1, 'render ticks do not repeat the same opening acknowledgment');
+    assert.equal(h.transport[0].wingId, 'linux');
+    assert.equal(h.transport[0].payload.type, 'pty.attention_ack');
+    assert.equal(h.transport[0].payload.session_id, 'session');
+    assert.equal(h.transport[0].options.skipPasskey, true, 'reading cannot open an authentication dialog');
+    h.context.setNotification('session', 'mac');
+    assert.equal(h.transport.length, 1, 'unviewed wing is never acknowledged');
+    h.context.setNotification('session', 'linux');
+    assert.equal(h.transport.length, 2, 'a new viewed attention episode is acknowledged');
+});
+
+test('opening a reader without attention leaves the control channel quiet', () => {
+    const h = notificationHarness();
+    h.context.location.hash = h.main.dataset.hash;
+    h.context.acknowledgeViewedSession();
+    assert.equal(h.transport.length, 0);
 });

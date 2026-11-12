@@ -380,7 +380,7 @@ func (f *sessionTransportFixture) tunnel(user string, inner map[string]any) map[
 	var mu, eggMu sync.Mutex
 	var response ws.TunnelResponse
 	req := ws.TunnelRequest{Type: ws.TypeTunnelRequest, RequestID: strconv.Itoa(f.request), WingID: f.cfg.WingID, SenderPub: base64.StdEncoding.EncodeToString(f.browserKey.PublicKey().Bytes()), SenderUserID: user, SenderEmail: user + "@example.com", SenderOrgRole: "member", Payload: payload}
-	tunnel.HandleTunnelRequest(tunnel.References{Version: "test", WingCfg: f.wc, WingCfgMu: &mu, AllowedKeys: &keys, WingEggMu: &eggMu, WingEggCfg: &defaultEgg, Sessions: f.sessions, ListAliveEggSessions: ListAliveEggSessions}, f.ctx, f.cfg, req, func(v any) error {
+	tunnel.HandleTunnelRequest(tunnel.References{ClearAttention: clearAttentionCooldown, Version: "test", WingCfg: f.wc, WingCfgMu: &mu, AllowedKeys: &keys, WingEggMu: &eggMu, WingEggCfg: &defaultEgg, Sessions: f.sessions, ListAliveEggSessions: ListAliveEggSessions}, f.ctx, f.cfg, req, func(v any) error {
 		encoded, err := json.Marshal(v)
 		if err != nil {
 			return err
@@ -863,5 +863,50 @@ func TestSessionRegistrationCancelsAndJoinsBridgesOnShutdown(t *testing.T) {
 	}
 	if got := len(ListAliveEggSessions(f.cfg)); got != 2 {
 		t.Fatalf("bridge shutdown terminated surviving eggs: %d remain", got)
+	}
+}
+
+func TestPaperAttentionAckWithoutPTY(t *testing.T) {
+	f := newSessionTransportFixture(t)
+	owner := f.mcp("http", "alice")
+	id := callSessionMCP(t, owner, "terminal_start", map[string]any{"command": []string{"fixture-command"}, "cwd": f.work})["session"].(string)
+	// Session creation installs the wing's own read-only observer. Await it
+	// before measuring whether the subsequent browser read attaches anything.
+	select {
+	case options := <-f.egg(id).attached:
+		if options == nil || !options.ReadOnly || options.Claim {
+			t.Fatalf("wing observer claimed input: %+v", options)
+		}
+	case <-t.Context().Done():
+		t.Fatal(t.Context().Err())
+	}
+	wingAttention.Store(id, true)
+	wingAttentionNonce.Store(id, "episode")
+	t.Cleanup(func() { wingAttention.Delete(id); wingAttentionNonce.Delete(id); wingAttentionCooldown.Delete(id) })
+	for _, user := range []string{"bob", ""} {
+		result := f.tunnel(user, map[string]any{"type": "pty.attention_ack", "session_id": id})
+		if result["error"] == nil {
+			t.Fatalf("foreign/anonymous acknowledgement admitted: %v", result)
+		}
+		if _, ok := wingAttention.Load(id); !ok {
+			t.Fatal("foreign reader cleared attention")
+		}
+	}
+	result := f.tunnel("alice", map[string]any{"type": "pty.attention_ack", "session_id": id})
+	if result["ok"] != true {
+		t.Fatalf("owner acknowledgement: %v", result)
+	}
+	if _, ok := wingAttention.Load(id); ok {
+		t.Fatal("read-only acknowledgement did not clear wing attention")
+	}
+	if _, ok := wingAttentionNonce.Load(id); ok {
+		t.Fatal("attention episode remains after acknowledgement")
+	}
+	select {
+	case <-f.egg(id).attached:
+		t.Fatal("reading attention attached a PTY")
+	case <-f.egg(id).input:
+		t.Fatal("reading attention sent terminal input")
+	default:
 	}
 }

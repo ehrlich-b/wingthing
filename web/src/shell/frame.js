@@ -8,6 +8,7 @@ import '../tokens.css';
 import '../paper.css';
 import './frame.css';
 import { paperRoute as route } from '../paper-state.js';
+import { conversationRouteIsOpen, restoreConversationRoute } from '../conversation-view.js';
 import { resolveShellRoute } from '../session-route.js';
 import { patchRegion } from './patch.js';
 import { viewAccount } from './views/account.js';
@@ -24,7 +25,7 @@ import { viewSessions } from './views/sessions.js';
 import { viewMachines } from './views/machines.js';
 import { viewSession } from './views/session.js';
 import { viewPair } from './views/pair.js';
-let root, main, side, lastSignature = '', routing = false;
+let root, main, side, lastSignature = '', routing = false, conversationRestore = '';
 const homes = new Map();
 const searchDisclosures = new WeakMap();
 function paperRoute(hash = location.hash) { return route(hash); }
@@ -174,7 +175,16 @@ export function routeShell() {
         const resolved = resolveShellRoute(location.hash, sessions());
         if (location.hash !== resolved.hash) history.replaceState({ focusNeeds: resolved.focusNeeds }, '', resolved.hash);
         const current = resolved.route;
-        if (current.view === 'account') {
+        if (current.view === 'conversation') {
+            const hash = location.hash;
+            if (!conversationRouteIsOpen(current) && conversationRestore !== hash) {
+                conversationRestore = hash;
+                restoreConversationRoute().finally(() => {
+                    if (conversationRestore === hash) conversationRestore = '';
+                    if (location.hash === hash) render(true);
+                });
+            }
+        } else if (current.view === 'account') {
             if (S.activeView !== 'account' || S.accountExpandSlug !== current.orgSlug) navigateToAccount(false, current.orgSlug);
         } else if (current.view === 'machine') {
             if (S.activeView !== 'wing-detail' || S.currentWingId !== current.wingId) navigateToWingDetail(current.wingId, false);
@@ -243,9 +253,10 @@ function render(force) {
     const live = !denied && current.view === 'session' && S.activeView === 'terminal' && current.sessionId === S.ptySessionId && current.wingId === S.ptyWingId;
     syncHomePolling(current.view === 'wing' && !denied);
     selectComposer(!denied ? (current.view === 'wing' ? coordinator() : current.view === 'session' ? findSession(current) : null) : null);
-    const views = { wing: viewWing, sessions: viewSessions, machines: viewMachines, pair: viewPair, new: viewNew, session: viewSession, account: viewAccount, machine: viewMachine, canvas: viewCanvas };
+    const views = { wing: viewWing, sessions: viewSessions, machines: viewMachines, pair: viewPair, new: viewNew, session: viewSession, account: viewAccount, machine: viewMachine, canvas: viewCanvas, conversation: () => head('Conversation', esc(machineName(wingOf(current.wingId)))) + '<div class="pp-live" data-engine="terminal"></div>' };
     const html = denied && current.view !== 'account' ? (current.view === 'wing' ? viewBrowserAccess() : head('Get started', 'Free native access') + directSetup(S.currentUser)) : views[current.view](current);
-    const sig = location.hash + S.activeView + html;
+    const conversationLive = !denied && current.view === 'conversation' && S.activeView === 'terminal' && (conversationRouteIsOpen(current) || !conversationRestore);
+    const sig = location.hash + S.activeView + conversationLive + html;
     renderNavigation(current, denied);
     if (sig === lastSignature) return;
     lastSignature = sig;
@@ -260,7 +271,7 @@ function render(force) {
         main.replaceChildren(template.content);
     } else patchRegion(main, html);
     main.dataset.view = current.view; main.dataset.hash = location.hash; main.dataset.mode = String(live);
-    mountEngines(current.view, live);
+    mountEngines(current.view, live || conversationLive);
     const nextConversation = main.querySelector('.pp-conversation');
     if (nextConversation) {
         if (pinned && current.view === 'wing') followThread(nextConversation);

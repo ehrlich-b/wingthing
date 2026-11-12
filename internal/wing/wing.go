@@ -1253,7 +1253,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 			wingCfgMu.Unlock()
 			tunnelClient = projectDiscoveryClient(client, projectInventory.snapshot(projectRoots))
 		}
-		tunnel.HandleTunnelRequest(tunnel.References{Version: version, WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowedKeys, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs, Sessions: sessions, BrowserFleetAttachment: browserAttachments.Execute, BrowserTools: func() []*config.ToolConfig {
+		tunnel.HandleTunnelRequest(tunnel.References{ClearAttention: clearAttentionCooldown, Version: version, WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowedKeys, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs, Sessions: sessions, BrowserFleetAttachment: browserAttachments.Execute, BrowserTools: func() []*config.ToolConfig {
 			wingToolsMu.Lock()
 			defer wingToolsMu.Unlock()
 			return append([]*config.ToolConfig(nil), wingTools...)

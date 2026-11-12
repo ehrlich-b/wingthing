@@ -628,6 +628,21 @@ func HandleTunnelRequest(refs References, ctx context.Context, cfg *config.Confi
 		log.Printf("egg: config updated from tunnel (network=%s)", newCfg.NetworkSummary())
 		ws.TunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
+	case "pty.attention_ack":
+		sessionsService := refs.Sessions
+		if sessionsService == nil {
+			sessionsService = &wingsession.Service{Config: cfg}
+		}
+		session, err := sessionsService.Resolve(ctx, wingsession.AuthorityForWeb(wingCfg, req, home), inner.SessionID, false)
+		if err != nil {
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		if refs.ClearAttention != nil {
+			refs.ClearAttention(session.ID)
+		}
+		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"ok": true}, write)
+
 	case "pty.kill":
 		if inner.SessionID == "" {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing session_id"}, write)

@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { chromium } from '../../web/node_modules/playwright/index.mjs';
 const stubs = {
+    '/src/tunnel.js': 'export const sendTunnelRequest = async (wing, payload, options) => { window.transport.push({wing,payload,options}); return {}; };',
     '/src/state.js': 'export const S = window.state; export const DOM = {};',
     '/src/render.js': 'export const renderSidebar = () => {}, renderDashboard = () => {};',
     '/src/chat-view.js': 'export const chatSnapshot = () => null;',
@@ -35,7 +36,7 @@ try {
     const result=await page.evaluate(async()=>{
         const key=(wing,id)=>JSON.stringify([wing,id]);
         window.state={activeView:'home', currentUser:{id:'reader'}, sessionsData:[{id:'same',wing_id:'one'},{id:'same',wing_id:'two'}],sessionNotifications:{}};
-        window.seen=[]; window.visible=true;
+        window.seen=[]; window.transport=[]; window.visible=true;
         Object.defineProperty(document,'visibilityState',{get:()=>window.visible?'visible':'hidden'});
         Object.defineProperty(document,'hidden',{get:()=>!window.visible});
         Object.defineProperty(window,'Notification',{value:{permission:'denied'}});
@@ -65,6 +66,7 @@ try {
         assert(state.sessionNotifications[key('one','same')],'Account never acknowledges paper route');
         state.activeView='home';delete state.sessionNotifications[key('two','same')];acknowledgeViewedSession();
         assert(document.title==='wingthing','Reading last attention restores title');
+        assert(transport.length > 0 && transport.every(entry=>entry.wing==='one' && entry.payload.type==='pty.attention_ack' && entry.payload.session_id==='same' && entry.options.skipPasskey), 'Read-only attention uses scoped transport without a PTY or dialog');
         assert(seen.every(entry=>entry.user==='reader'&&entry.rows[0].wing_id==='one'),'Completion acknowledgments remain scoped');
         if(state.titleFlashTimer)clearInterval(state.titleFlashTimer);
         return {seen:seen.length,notifications:state.sessionNotifications,title:document.title};

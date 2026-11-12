@@ -25,3 +25,12 @@ test('the Home overflow route selects waiting sessions independently of search t
     assert.deepEqual(resolveShellRoute('#sessions?state=need').route, { view: 'sessions', state: 'need' });
     assert.deepEqual(resolveShellRoute('#sessions').route, { view: 'sessions' });
 });
+
+test('logical conversation bookmarks retain both identities across shell navigation', () => {
+    assert.deepEqual(resolveShellRoute('#conversation/task-123?wing=studio').route,
+        { view: 'conversation', conversationId: 'task-123', wingId: 'studio' });
+    assert.deepEqual(resolveShellRoute('#conversation/task%2F123?wing=studio%2Fone').route,
+        { view: 'conversation', conversationId: 'task/123', wingId: 'studio/one' });
+    for (const hash of ['#conversation/task?wing=', '#conversation/%broken?wing=studio'])
+        assert.equal(resolveShellRoute(hash).hash, '#');
+});

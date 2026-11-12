@@ -557,6 +557,7 @@ export function openConversationTranscript(conversation, wingId, pushHistory, co
     if (pushHistory !== false && location.hash !== route) history.pushState({ view: 'conversation', conversationId: conversation.conversation_id, wingId: wingId }, '', route);
     window.dispatchEvent(new CustomEvent('wingthing:conversation-selected', { detail: { wingId: wingId, conversationId: conversation.root_conversation_id || conversation.conversation_id, title: conversation.parent_conversation_id ? undefined : conversation.title } }));
     scheduleTreeRefresh(panel, 0);
+    window.dispatchEvent(new Event('shell-navigate'));
 }
 
 // Every activation resolves the logical task to its exact current execution
@@ -587,6 +588,11 @@ export async function openConversationReference(reference, pushHistory) {
         }
         throw error;
     }
+}
+
+export function conversationRouteIsOpen(reference) {
+    return S.activeView === 'terminal' && panel && panelCurrent(panel) &&
+        panel.wingId === reference.wingId && panel.conversation.conversation_id === reference.conversationId;
 }
 
 export async function restoreConversationRoute() {

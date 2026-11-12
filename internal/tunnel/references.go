@@ -14,6 +14,7 @@ import (
 // References supplies the runtime's live configuration and wing callbacks.
 // Mutexes and configuration pointers retain their original identities.
 type References struct {
+	ClearAttention            func(string)
 	Version                   string
 	Sessions                  *wingsession.Service
 	WingCfg                   *config.WingConfig

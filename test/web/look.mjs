@@ -49,6 +49,7 @@ roost.stdio[3]?.on('data', data => { roostReady += data; });
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const sockets = new Map();
 const sent = [];
+const attentionAcks = [];
 const captures = [];
 const overflow = [];
 const checks = [];
@@ -146,6 +147,11 @@ async function machine(id) {
         let response;
         if (inner.type === 'wing.info') response = { hostname: fixture.name, wing_label: fixture.name, platform: 'darwin', agents: ['claude', 'codex'], projects: [{ name: 'wingthing', path: '/Users/example/code/wingthing' }], capabilities: ['session.rename.v1'] };
         else if (inner.type === 'sessions.list') { if (shellMode === 'home') console.log('INVENTORY',id,fixture.rows.length); response = { sessions: fixture.rows }; }
+        else if (inner.type === 'pty.attention_ack') { attentionAcks.push({wingId:id,sessionId:inner.session_id}); response = {ok:true}; }
+        else if (inner.type === 'session.control' && inner.operation === 'conversation_read') {
+            const conversation = {conversation_id:inner.arguments.conversation_id, root_conversation_id:inner.arguments.conversation_id, wing_id:id, session_id:'migrate', agent:'claude', title:'Migration coordinator'};
+            response = {conversation, tasks:[{conversation, lifecycle:{session_id:'migrate',state:'working',status:'working'}}], events:[]};
+        }
         else if (inner.type === 'session.control' && inner.operation === 'session_read') {
             await fixture.beforeSessionRead?.(inner.arguments.session);
             const selected = fixture.rows.find(item => item.session_id === inner.arguments.session);
@@ -620,7 +626,7 @@ async function runShell(browser) {
         await go(page,'#'); await assertShell(page,'zero-machines-'+page.viewportSize().width);
         await shoot(page,'shell-volume-0','-'+page.viewportSize().width);
     }
-    machines.studio.rows=[original[2]]; await machine('studio');
+    machines.studio.rows=[shellMode === 'logical' ? {...original[2], needs_attention:true} : original[2]]; await machine('studio');
     for (const page of pages) {
         await go(page,'#sessions'); await page.locator('.pp-srow[href="#session/studio/migrate"]').waitFor();
         if (shellMode==='routes') await shoot(page,'shell-volume-1','-'+page.viewportSize().width);
@@ -690,6 +696,39 @@ async function runShell(browser) {
             await page.evaluate(()=>{location.hash='#account';}); await page.waitForTimeout(150);
             await page.goBack(); await page.waitForTimeout(150); await assertShell(page,'back-'+page.viewportSize().width);
             await page.goForward(); await page.waitForTimeout(150); await assertShell(page,'forward-'+page.viewportSize().width);
+        }
+    } else if (shellMode==='logical') {
+        for (const page of pages) {
+            const suffix='-'+page.viewportSize().width;
+            // A normal reader sends a real encrypted tunnel acknowledgment,
+            // without opening an interactive PTY attachment.
+            await go(page,'#session/studio/migrate');
+            await page.locator('.pp-conversation .pp-row').first().waitFor();
+            assert.ok(attentionAcks.some(ack=>ack.wingId==='studio'&&ack.sessionId==='migrate'));
+            assert.equal(await page.locator('#paper .xterm:visible').count(),0);
+            checked('encrypted-paper-attention'+suffix, attentionAcks);
+            const hash='#conversation/task-123?wing=studio';
+            await go(page,hash,true);
+            await page.locator('#paper #conversation-toolbar .cp-title').getByText('Migration coordinator',{exact:true}).waitFor();
+            await page.locator('#paper #chat-messages').getByText('Wrote migration 0042.',{exact:false}).waitFor();
+            assert.equal(await page.locator('#paper #chat-input').isVisible(),true);
+            await shoot(page,'logical-conversation',suffix);
+            await page.reload();
+            await page.locator('#paper #conversation-toolbar .cp-title').getByText('Migration coordinator',{exact:true}).waitFor();
+            assert.equal(await page.evaluate(()=>location.hash),hash);
+            await page.evaluate(()=>{location.hash='#sessions';});
+            await page.locator('#pp-filter').waitFor();
+            await page.goBack();
+            await page.locator('#paper #conversation-toolbar .cp-title').getByText('Migration coordinator',{exact:true}).waitFor();
+            await page.goForward(); await page.locator('#pp-filter').waitFor();
+            // Notification/coordinator callers push history directly.
+            await go(page,hash,true);
+            await page.locator('#paper #conversation-toolbar .cp-title').getByText('Migration coordinator',{exact:true}).waitFor();
+            if (page.viewportSize().width <= 600) await page.locator('#paper .conversation-controls > summary').click();
+            await page.locator('#paper .conversation-current').click();
+            await page.locator('#paper #chat-messages').getByText('Wrote migration 0042.',{exact:false}).waitFor();
+            assert.equal(await page.evaluate(()=>location.hash),hash);
+            checked('logical-conversation-route-reload-history-and-card'+suffix,{hash});
         }
     } else if (shellMode==='conversation') {
         for (const page of pages) {

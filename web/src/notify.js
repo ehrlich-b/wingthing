@@ -7,9 +7,13 @@ import { chatSnapshot } from './chat-view.js';
 import { acknowledgeSessionCompletions, COMPLETION_STORAGE_PREFIX } from './session-completion.js';
 import { browserLocalStorage, userStorageKey } from './storage-scope.js';
 
+import { sendTunnelRequest } from './tunnel.js';
+
 import { paperRoute } from './paper-state.js';
 
 var notifyChannel = null;
+var viewedPaperKey = '';
+const attentionAcks = new Map();
 
 function paperTarget() {
     const paper = document.getElementById('paper');
@@ -22,7 +26,11 @@ function paperTarget() {
 
 export function acknowledgeViewedSession() {
     const target = paperTarget();
-    if (!target || !isViewingSession(target.sessionId, target.wingId)) return;
+    if (!target || !isViewingSession(target.sessionId, target.wingId)) { viewedPaperKey = ''; return; }
+    const key = sessionResourceKey({ id: target.sessionId, wing_id: target.wingId });
+    const session = findSessionResource(S.sessionsData, target.sessionId, target.wingId);
+    if (viewedPaperKey !== key && session?.needs_attention && !S.sessionNotifications[key]) sendAttentionAck(target.sessionId, target.wingId);
+    viewedPaperKey = key;
     acknowledgeSessionCompletions(browserLocalStorage(), S.currentUser && S.currentUser.id, [{ id: target.sessionId, wing_id: target.wingId }]);
     clearNotification(target.sessionId, target.wingId);
 }
@@ -45,8 +53,21 @@ function notificationWing(sessionId, wingId) {
 
 export function sendAttentionAck(sessionId, wingId) {
     wingId = notificationWing(sessionId, wingId);
-    if (!wingId || sessionId !== S.ptySessionId || wingId !== S.ptyWingId || !S.ptyWs || S.ptyWs.readyState !== WebSocket.OPEN) return;
-    S.ptyWs.send(JSON.stringify({ type: 'pty.attention_ack', session_id: sessionId }));
+    if (!wingId || !sessionId) return;
+    if (sessionId === S.ptySessionId && wingId === S.ptyWingId && S.ptyWs?.readyState === WebSocket.OPEN) {
+        S.ptyWs.send(JSON.stringify({ type: 'pty.attention_ack', session_id: sessionId }));
+        return;
+    }
+    // Reading never claims a PTY writer. Use the authenticated encrypted
+    // control channel, with the same wing and session as the rendered reader.
+    const target = paperTarget();
+    if (!target || target.sessionId !== sessionId || target.wingId !== wingId || !isViewingSession(sessionId, wingId)) return;
+    const key = sessionResourceKey({ id: sessionId, wing_id: wingId });
+    if (attentionAcks.has(key)) return;
+    const pending = sendTunnelRequest(wingId, { type: 'pty.attention_ack', session_id: sessionId }, { skipPasskey: true })
+        .catch(() => { if (viewedPaperKey === key) viewedPaperKey = ''; })
+        .finally(() => attentionAcks.delete(key));
+    attentionAcks.set(key, pending);
 }
 
 function isViewingSession(sessionId, wingId) {

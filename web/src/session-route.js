@@ -36,6 +36,16 @@ export function resolveShellRoute(hash = '', inventory = []) {
         if (target.startsWith('#w/')) target = '#machine/' + encodeURIComponent(decodeURIComponent(target.slice(3)));
         if (target === '#needs' || target === '#decisions') target = '#';
         let route;
+        const conversation = target.match(/^#conversation\/([^?]+)\?(.+)$/);
+        if (conversation) {
+            const conversationId = decodeURIComponent(conversation[1]);
+            const wingId = new URLSearchParams(conversation[2]).get('wing');
+            if (conversationId && wingId) {
+                target = '#conversation/' + encodeURIComponent(conversationId) + '?wing=' + encodeURIComponent(wingId);
+                route = { view: 'conversation', conversationId, wingId };
+            }
+        }
+        if (route) return { hash: target, route, focusNeeds };
         if (target === '#') route = { view: 'wing' };
         else if (target === '#sessions?state=need') route = { view: 'sessions', state: 'need' };
         else if (/^#(sessions|machines|new|pair|canvas)$/.test(target)) route = { view: target.slice(1) };
