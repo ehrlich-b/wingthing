@@ -368,10 +368,36 @@ func TestNorthstarPTYColdClaude(t *testing.T) {
 		coldCleanup(t, f, binary)
 		northstarWrite(t, filepath.Join(f.local, "clients.yaml"), "clients:\n  default:\n    grants: [read, spawn, control]\n", 0600)
 		coldPolicyGuard(t, f)
+		// wing start may return while the child is still initializing. Observe
+		// status publication, which follows the readiness log, before checking
+		// that log. Register before starting so an early event is not missed.
+		startup, err := fsnotify.NewWatcher()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer startup.Close()
+		if err := startup.Add(f.local); err != nil {
+			t.Fatal(err)
+		}
 		start := exec.CommandContext(t.Context(), binary, "wing", "start", "--local-only")
 		start.Env, start.Dir = f.env, f.work
 		if output, err := start.CombinedOutput(); err != nil {
 			t.Fatalf("fixture wing: %v %s", err, output)
+		}
+		deadline := time.NewTimer(claudeWingStartupTimeout)
+		defer deadline.Stop()
+	awaitStartup:
+		for {
+			select {
+			case event := <-startup.Events:
+				if filepath.Base(event.Name) == "wing.status" && event.Has(fsnotify.Create) {
+					break awaitStartup
+				}
+			case err := <-startup.Errors:
+				t.Fatalf("watch daemon startup: %v", err)
+			case <-deadline.C:
+				t.Fatal("daemon did not publish startup status")
+			}
 		}
 		pid := coldOneDaemon(t, f)
 		f.env = append(f.env, "WT_MCP_CLIENT=denied")
