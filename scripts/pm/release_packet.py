@@ -268,8 +268,17 @@ def seal(root):
             path.chmod(0o555 if path.parent.name == 'artifacts' else 0o444)
 
 
-def supplement_pairing(args, packet, root, head):
+def supplement_pairing(args, packet, root, head, packet_source):
     """Copy a verified packet and add proof without rebuilding or editing it."""
+    updated = copy.deepcopy(packet)
+    # Only the original schema's exact, unqualified build profile may migrate.
+    # Never discard an existing capability claim or reinterpret arbitrary flags.
+    if (updated['build_limits'] == {'cgo_enabled': False, 'phone_pairing': 'unavailable'}
+            and 'phone_pairing' not in updated):
+        updated['build_limits'] = BUILD_LIMITS.copy()
+        updated['phone_pairing'] = {
+            platform: {'status': 'unqualified', 'receipt': None} for platform in PLATFORMS}
+    verify(updated, root, packet_source)
     output = Path(args.output).resolve()
     checkout = Path(git('rev-parse', '--show-toplevel')).resolve()
     if output == checkout or checkout in output.parents:
@@ -280,9 +289,8 @@ def supplement_pairing(args, packet, root, head):
         raise ValueError('symlink in original packet')
     shutil.copytree(root, output)  # Refuse existing destinations, even partial ones.
     (output / args.verify.name).unlink()
-    updated = copy.deepcopy(packet)
     include_pairing_receipts(updated, output, args.pairing_receipt)
-    blockers = verify(updated, output, head)
+    blockers = verify(updated, output, packet_source)
     if clean_head() != head:
         raise ValueError('source changed while attaching pairing evidence')
     write(output / 'candidate.json', updated)
@@ -448,6 +456,8 @@ def main():
     parser.add_argument('--assessment', help='JSON with commit, disposition, original path and sha256')
     mode.add_argument('--record-test', choices=REQUIRED_TESTS)
     mode.add_argument('--verify', type=Path)
+    parser.add_argument('--packet-source',
+                        help='explicit full source commit for inspecting or supplementing an older packet')
     parser.add_argument('--inspect', action='store_true', help='report integrity and blockers; never approve')
     parser.add_argument('--negative-fixtures', action='store_true')
     parser.add_argument('--rehearse-publish-rollback', action='store_true')
@@ -455,6 +465,10 @@ def main():
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     try:
+        if args.packet_source and not args.verify:
+            raise ValueError('--packet-source requires --verify')
+        if args.packet_source and not re.fullmatch('[0-9a-f]{40}', args.packet_source):
+            raise ValueError('--packet-source needs a full source commit')
         if args.record_test:
             if args.pairing_receipt:
                 raise ValueError('--pairing-receipt requires --stage or --verify with --output')
@@ -472,16 +486,21 @@ def main():
         packet = load(args.verify)
         root = args.verify.resolve().parent
         head = clean_head()
-        blockers = verify(packet, root, head)
+        packet_source = args.packet_source or head
         if args.pairing_receipt:
-            packet, root, blockers = supplement_pairing(args, packet, root, head)
+            packet, root, blockers = supplement_pairing(args, packet, root, head, packet_source)
+        else:
+            blockers = verify(packet, root, packet_source)
+        if packet_source != head:
+            blockers.append('packet source differs from current committed HEAD; historical inspection only')
         if args.negative_fixtures:
             negative_fixtures(packet, root)
         if args.rehearse_publish_rollback:
             if not args.local_only or not args.inspect:
                 raise ValueError('rehearsal requires --local-only --inspect; release remains held')
             rehearse(packet, root)
-        print(json.dumps({'commit': packet['commit'], 'version': packet['version'],
+        print(json.dumps({'commit': packet['commit'], 'verification_head': head,
+                          'version': packet['version'],
                           'integrity': 'PASS', 'decision': 'HOLD', 'blockers': blockers}, indent=2))
         return 0 if args.inspect else 1
     except (ValueError, KeyError, TypeError, OSError, subprocess.CalledProcessError) as error:

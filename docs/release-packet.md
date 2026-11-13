@@ -84,8 +84,22 @@ nice -n 10 python3 scripts/pm/release_packet.py --verify "$PACKET/candidate.json
   --output ../release-packet-with-pairing
 ```
 
-Use a clean checkout at the packet's exact source commit and a new output
-directory outside the checkout and original packet. Repeated `--pairing-receipt`
+Use a clean checkout and a new output directory outside the checkout and original
+packet. By default the packet must match the checkout's exact source commit.
+For an existing packet built before this tool version, explicitly supply its
+full original commit with `--packet-source FULL_SOURCE_COMMIT` when supplementing
+and when inspecting the result. This checks binary metadata, test receipts and
+the original assessment against that original commit, never the tool's newer
+commit. The report identifies both commits and retains a historical-inspection
+blocker when they differ; this does not assess or qualify the newer checkout.
+The supplement command accepts the original packet schema with
+`build_limits: {"cgo_enabled": false, "phone_pairing": "unavailable"}` and no
+top-level `phone_pairing`. It migrates only those metadata fields in the new
+copy, initializing every platform as unqualified before validating supplied
+receipts. The original packet, source identity, executable bytes, build logs,
+test receipts, assessment and other holds remain unchanged. No manual migration
+or rebuild is required. Ordinary verification still requires the new schema.
+Repeated `--pairing-receipt`
 flags add evidence for other platforms; existing receipts cannot be replaced.
 The tool verifies the original inventory and copied binaries, retains all other
 metadata and holds, and seals the new packet. It never invokes a build. Verify
