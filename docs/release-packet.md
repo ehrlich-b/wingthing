@@ -75,9 +75,26 @@ status and retained receipt for each platform. Without proof the status is
 `unqualified`, which independently blocks promotion for that platform. A passing
 source test or synthetic fixture cannot qualify packaged bytes.
 
-Supply repeated `--pairing-receipt FILE` flags when staging to include existing
-pair/attach evidence for the exact bytes being packaged. Each JSON receipt uses
-this schema (values below describe the contract, not qualification evidence):
+After testing the actual packaged executable, attach its evidence to a new copy
+of the packet without rebuilding or editing the sealed original:
+
+```sh
+nice -n 10 python3 scripts/pm/release_packet.py --verify "$PACKET/candidate.json" \
+  --inspect --pairing-receipt ../pairing-receipts/linux-amd64.json \
+  --output ../release-packet-with-pairing
+```
+
+Use a clean checkout at the packet's exact source commit and a new output
+directory outside the checkout and original packet. Repeated `--pairing-receipt`
+flags add evidence for other platforms; existing receipts cannot be replaced.
+The tool verifies the original inventory and copied binaries, retains all other
+metadata and holds, and seals the new packet. It never invokes a build. Verify
+the resulting `candidate.json` normally and retain a new trusted packet digest.
+Invalid evidence is refused; a partial output directory is not a completed packet
+and must not be used. Verification with `--pairing-receipt` requires `--output`;
+the flag is never silently ignored. Staging also accepts these flags if evidence
+already exists for the exact bytes it builds. Each JSON receipt uses this schema
+(values below describe the contract, not qualification evidence):
 
 ```json
 {

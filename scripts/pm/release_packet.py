@@ -256,12 +256,39 @@ def stage(args):
     if clean_head() != head:
         raise ValueError('source changed during build')
     write(root / 'candidate.json', packet)
+    seal(root)
+    print(str(root / 'candidate.json'))
+    return 0
+
+
+def seal(root):
     # Sealing is accidental-write protection, not a signature or trust bootstrap.
     for path in root.rglob('*'):
         if path.is_file():
             path.chmod(0o555 if path.parent.name == 'artifacts' else 0o444)
-    print(str(root / 'candidate.json'))
-    return 0
+
+
+def supplement_pairing(args, packet, root, head):
+    """Copy a verified packet and add proof without rebuilding or editing it."""
+    output = Path(args.output).resolve()
+    checkout = Path(git('rev-parse', '--show-toplevel')).resolve()
+    if output == checkout or checkout in output.parents:
+        raise ValueError('keep artifacts and execution evidence outside the checkout')
+    if output == root or root in output.parents:
+        raise ValueError('pairing output must be separate from the original packet')
+    if any(path.is_symlink() for path in root.rglob('*')):
+        raise ValueError('symlink in original packet')
+    shutil.copytree(root, output)  # Refuse existing destinations, even partial ones.
+    (output / args.verify.name).unlink()
+    updated = copy.deepcopy(packet)
+    include_pairing_receipts(updated, output, args.pairing_receipt)
+    blockers = verify(updated, output, head)
+    if clean_head() != head:
+        raise ValueError('source changed while attaching pairing evidence')
+    write(output / 'candidate.json', updated)
+    seal(output)
+    print(str(output / 'candidate.json'))
+    return updated, output, blockers
 
 
 def verify(packet, root, expected_head=None, binary_identity=True):
@@ -411,15 +438,16 @@ def rehearse(packet, root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--stage', action='store_true')
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--stage', action='store_true')
     parser.add_argument('--version')
     parser.add_argument('--output')
     parser.add_argument('--receipt', action='append', default=[])
     parser.add_argument('--pairing-receipt', action='append', default=[],
                         help='exact-source pair/attach receipt with platform, binary SHA and log')
     parser.add_argument('--assessment', help='JSON with commit, disposition, original path and sha256')
-    parser.add_argument('--record-test', choices=REQUIRED_TESTS)
-    parser.add_argument('--verify', type=Path)
+    mode.add_argument('--record-test', choices=REQUIRED_TESTS)
+    mode.add_argument('--verify', type=Path)
     parser.add_argument('--inspect', action='store_true', help='report integrity and blockers; never approve')
     parser.add_argument('--negative-fixtures', action='store_true')
     parser.add_argument('--rehearse-publish-rollback', action='store_true')
@@ -428,6 +456,8 @@ def main():
     args = parser.parse_args()
     try:
         if args.record_test:
+            if args.pairing_receipt:
+                raise ValueError('--pairing-receipt requires --stage or --verify with --output')
             if not args.output:
                 raise ValueError('--record-test needs --output')
             return record(args)
@@ -435,11 +465,16 @@ def main():
             if not args.version or not args.output:
                 raise ValueError('--stage needs --version and --output')
             return stage(args)
-        if not args.verify:
-            raise ValueError('--verify is required')
+        if args.pairing_receipt and not args.output:
+            raise ValueError('--verify with --pairing-receipt needs a new --output directory')
+        if args.output and not args.pairing_receipt:
+            raise ValueError('--verify with --output needs --pairing-receipt')
         packet = load(args.verify)
         root = args.verify.resolve().parent
-        blockers = verify(packet, root, clean_head())
+        head = clean_head()
+        blockers = verify(packet, root, head)
+        if args.pairing_receipt:
+            packet, root, blockers = supplement_pairing(args, packet, root, head)
         if args.negative_fixtures:
             negative_fixtures(packet, root)
         if args.rehearse_publish_rollback:
