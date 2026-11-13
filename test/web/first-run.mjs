@@ -1,4 +1,5 @@
 // Offline contract using the real screen and picker with synthetic discovery.
+import './first-run-inventory.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -73,9 +74,36 @@ try {
         const context = await browser.newContext({viewport: {width, height: 900}, colorScheme: 'light'});
         const page = await context.newPage();
         page.on('pageerror', e => { errors.push(String(e)); console.error(String(e)); });
-        await page.route('**/*', route => new URL(route.request().url()).origin === new URL(base).origin ? route.continue() : route.abort());
+        let releaseInventory;
+        const heldInventory = new Promise(resolve => { releaseInventory = resolve; });
+        await page.route('**/*', async route => {
+            const url = new URL(route.request().url());
+            if (url.origin !== new URL(base).origin) return route.abort();
+            if (url.pathname === '/api/app/wings') {
+                if (url.searchParams.has('reset')) await heldInventory;
+                // Read this viewport's live roster when answering, including
+                // requests that began before fixture() replaced the machines.
+                const roster = await page.evaluate(() => window.state.wingsData.map(({wing_id, public_key}) => ({wing_id, public_key})));
+                return route.fulfill({contentType: 'application/json', body: JSON.stringify(roster)});
+            }
+            return route.continue();
+        });
         await page.goto(base);
         await page.waitForSelector('#paper h2');
+        await page.evaluate(() => window.fixture(false, 9));
+        const crossingRequest = page.waitForRequest(request => new URL(request.url()).searchParams.has('reset'));
+        await page.evaluate(() => { window.resetInventory = fetch('/api/app/wings?reset').then(response => response.json()); });
+        await crossingRequest;
+        await page.evaluate(() => window.fixture(false, 0));
+        releaseInventory();
+        assert.deepEqual(await page.evaluate(() => window.resetInventory), [], 'pending inventory must use the reset roster');
+        for (const count of [1, 5, 9, 0]) {
+            await page.evaluate(count => window.fixture(false, count), count);
+            const roster = await page.evaluate(() => fetch('/api/app/wings').then(response => response.json()));
+            assert.deepEqual(roster.map(wing => wing.wing_id), Array.from({length: count}, (_, i) => 'machine-' + i));
+            assert.ok(roster.every(wing => wing.public_key === 'synthetic'));
+        }
+        checks.push(`${width}: inventory follows 9→0 in-flight reset and 1/5/9/0 roster replacements`);
         const shot = async name => {
             assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), name + ' overflows');
             assert.ok(await page.evaluate(() => [...document.querySelectorAll('.pp-side-squares .pp-sq')].every(row => row.getBoundingClientRect().right <= row.closest('.pp-side').getBoundingClientRect().right + 1)), name + ' machine label overlaps content');
