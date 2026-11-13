@@ -87,6 +87,51 @@ class ReceiptTests(unittest.TestCase):
         self.assertIn("fly deploy", result.stdout)
         self.assertNotIn("make --no-print-directory check gate", result.stdout)
 
+    def test_check_gate_receipt_deploy_preflight(self):
+        makefile = (ROOT / "Makefile").read_text().replace(
+            "scripts/ship-gate.py", str(ROOT / "scripts/ship-gate.py"))
+        Path("Makefile").write_text(makefile)
+        subprocess.run(["git", "add", "Makefile"], check=True)
+        subprocess.run(["git", "commit", "-qm", "Add check-gate deployment fixture."],
+                       check=True, env=dict(os.environ, GIT_AUTHOR_NAME="Bryan Ehrlich",
+                       GIT_AUTHOR_EMAIL="ehrlich.bryan@gmail.com", GIT_COMMITTER_NAME="Bryan Ehrlich",
+                       GIT_COMMITTER_EMAIL="ehrlich.bryan@gmail.com"))
+        log = Path("downloads/check-gate.log")
+        log.write_text("saved successful make check gate output\n")
+        receipt = (f"make check gate exit=0 head={ship.source()} host=forge2 "
+                   f"log={log.resolve()} at=2026-11-12T20:38:42.609911+00:00\n")
+
+        def preflight(text, valid=False):
+            Path("receipt.txt").write_text(text)
+            result = subprocess.run(["make", "-n", "deploy", "RECEIPT=receipt.txt"],
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode == 0, valid, result.stdout + result.stderr)
+            self.assertEqual("fly deploy" in result.stdout, valid)
+            if not valid:
+                self.assertIn("ship-gate:", result.stderr)
+
+        preflight(receipt, valid=True)
+        for invalid in (receipt.replace("exit=0", "exit=1"),
+                        receipt.replace(ship.source(), "0" * 40),
+                        receipt.replace("host=forge2", "host=forge"),
+                        receipt.replace("host=forge2", "host=forge2-vm-extra"),
+                        receipt.replace("+00:00", ""),
+                        receipt.replace("2026-11-12T20:38:42.609911+00:00", "invalid"),
+                        receipt + "extra line\n"):
+            with self.subTest(receipt=invalid):
+                preflight(invalid)
+        log.unlink()
+        preflight(receipt)
+        log.touch()
+        preflight(receipt)
+        log.unlink()
+        log.symlink_to(self.artifact.resolve())
+        preflight(receipt)
+        log.unlink()
+        log.write_text("saved successful make check gate output\n")
+        Path("source.txt").write_text("dirty\n")
+        preflight(receipt)
+
     def test_prepare_baseline_requires_retained_original_and_manifest(self):
         artifact = Path("downloads/v0.149.5/wt-linux-arm64")
         data = b"isolated release fixture"
