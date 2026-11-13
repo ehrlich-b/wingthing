@@ -177,3 +177,38 @@ func TestSetMachineContextPreservesLegacyWingID(t *testing.T) {
 		})
 	}
 }
+
+func TestSetMachineContextRejectsLoaderErrors(t *testing.T) {
+	conflict, err := os.ReadFile("testdata/context-conflicting-wing.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []string{string(conflict), "context: 7\n", "machine_context: [home]\n", "hosted_relay: invalid\n"} {
+		for _, value := range []string{"none", "home", "work"} {
+			t.Run(body+value, func(t *testing.T) {
+				dir := t.TempDir()
+				path := filepath.Join(dir, "wing.yaml")
+				if err := os.WriteFile(path, []byte(body), 0640); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := LoadWingConfig(dir); err == nil {
+					t.Fatal("loader accepted malformed fixture")
+				}
+				if err := SetMachineContext(dir, "local", value); err == nil {
+					t.Errorf("accepted malformed document for %s", value)
+				}
+				after, err := os.ReadFile(path)
+				if err != nil || string(after) != body {
+					t.Errorf("refusal changed bytes: %q, %v", after, err)
+				}
+				info, err := os.Stat(path)
+				if err != nil || info.Mode().Perm() != 0640 {
+					t.Errorf("refusal changed permissions: %v, %v", info, err)
+				}
+				if _, err := MachineContexts(dir); err == nil {
+					t.Error("context list accepted a document the loader rejects")
+				}
+			})
+		}
+	}
+}

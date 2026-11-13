@@ -75,10 +75,19 @@ func contextValue(node *yaml.Node, key string) (string, error) {
 	return field.Value, nil
 }
 
+func localContextDocument(dir string) (*yaml.Node, error) {
+	// Apply the loader's validation before selecting or changing a context key.
+	// Keep the original YAML nodes so unrelated settings survive the edit.
+	if _, err := LoadWingConfig(dir); err != nil {
+		return nil, err
+	}
+	return contextDocument(filepath.Join(dir, "wing.yaml"))
+}
+
 // MachineContexts lists saved metadata without contacting any machine or
 // creating local state. An unset context is represented by the empty string.
 func MachineContexts(dir string) (map[string]string, error) {
-	wing, err := contextDocument(filepath.Join(dir, "wing.yaml"))
+	wing, err := localContextDocument(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +138,13 @@ func SetMachineContext(dir, machine, value string) error {
 	}
 	path := filepath.Join(dir, filename)
 	load := func() (*yaml.Node, *yaml.Node, error) {
-		doc, err := contextDocument(path)
+		var doc *yaml.Node
+		var err error
+		if machine == "local" {
+			doc, err = localContextDocument(dir)
+		} else {
+			doc, err = contextDocument(path)
+		}
 		if err != nil {
 			return nil, nil, err
 		}
