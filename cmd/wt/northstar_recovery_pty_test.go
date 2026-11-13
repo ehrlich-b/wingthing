@@ -27,9 +27,11 @@ import (
 // standalone egg, CLI, SSH argv and terminal are real, independently owned
 // fixtures; killing the parent navigator does not own or stop the egg.
 func TestNorthstarPTYRecovery(t *testing.T) {
-	t.Run("symlinked-TMPDIR-coordinator-loss", func(t *testing.T) {
+	run := func(t *testing.T, holdRefresh bool) {
 		f := northstarNewFixture(t)
-		f.evidence = filepath.Join(f.repo, ".scratch", "evidence", "09", "pty")
+		if os.Getenv("WT_NAVIGATOR_EVIDENCE") == "" {
+			f.evidence = filepath.Join(f.repo, ".scratch", "evidence", "09", "pty")
+		}
 		if err := os.MkdirAll(f.evidence, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -49,9 +51,15 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 		northstarWrite(t, filepath.Join(f.local, "remotes.yaml"), fmt.Sprintf("remotes:\n  devbox:\n    ssh_target: ns-devbox\n    wing_id: wing-devbox\n    wingthing_dir: %s\n    control_socket: %s/control.sock\n    control_version: v1\n  legacy:\n    ssh_target: ns-offline\n", f.remote, f.remote), 0600)
 		f.env = append(f.env, "WT_MCP_CLIENT=recovery-fixture")
 		var mutations atomic.Int32
+		var refreshGate atomic.Pointer[northstarRecoveryRefreshGate]
 		var mu sync.Mutex
 		mode := "normal"
 		callCount := map[string]int{}
+		t.Cleanup(func() {
+			mu.Lock()
+			defer mu.Unlock()
+			t.Logf("event counts: agent_list=%d agent_result=%d mutations=%d", callCount["agent_list"], callCount["agent_result"], mutations.Load())
+		})
 		socket, err := controlsocket.Path(f.local)
 		if err != nil {
 			t.Fatal(err)
@@ -68,7 +76,21 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 			if hello.Client != "recovery-fixture" {
 				return controlsocket.Welcome{}, nil, fmt.Errorf("fixture rejects missing aggregate/client authority")
 			}
-			return controlsocket.Welcome{Principal: "recovery-fixture"}, func(_ context.Context, req control.DirectRequest) control.DirectResponse {
+			return controlsocket.Welcome{Principal: "recovery-fixture"}, func(ctx context.Context, req control.DirectRequest) control.DirectResponse {
+				if req.Tool == "agent_list" {
+					t.Logf("event: history refresh start at %s", time.Now().Format(time.RFC3339Nano))
+					defer func() { t.Logf("event: history refresh finish at %s", time.Now().Format(time.RFC3339Nano)) }()
+					if gate := refreshGate.Swap(nil); gate != nil {
+						t.Logf("event: history refresh entered fake agent_list; reply held at %s", time.Now().Format(time.RFC3339Nano))
+						close(gate.entered)
+						select {
+						case <-gate.release:
+							t.Logf("event: history refresh reply released at %s", time.Now().Format(time.RFC3339Nano))
+						case <-ctx.Done():
+							return control.DirectResponse{Version: control.ContractVersion, ID: req.ID, Error: ctx.Err().Error()}
+						}
+					}
+				}
 				mu.Lock()
 				defer mu.Unlock()
 				callCount[req.Tool]++
@@ -138,6 +160,7 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 					}
 					response.Result = map[string]any{"wing_id": wing, "sessions": live}
 				case "agent_result":
+					t.Logf("event: agent_result wing=%v run=%v max_chars=%v at %s", wing, args["run_id"], args["max_chars"], time.Now().Format(time.RFC3339Nano))
 					if mode == "denied" {
 						response.Error = "policy denied result"
 						break
@@ -227,12 +250,48 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 		refreshAfter := fresh.send("/\x15record\rR")
 		fresh.expect("terminal records after egg metadata loss", refreshAfter, "+ Done", "x Failed", "- Stopped", "? Unknown")
 		fresh.waitScreen("completed refresh confirms live metadata gone", refreshAfter, func(screen string) bool {
-			return strings.Contains(screen, "4 runs") && strings.Contains(screen, "? Unknown") && !strings.Contains(screen, "Live session verified")
+			return strings.Contains(screen, "4 runs") && strings.Contains(screen, "? Unknown") && !strings.Contains(screen, "Live session verified") && !strings.Contains(screen, "Loading runs...")
 		})
 		fresh.expect("cancelled run filter", fresh.send("/\x15cancelled-record\r"), "- Stopped")
+		// Retain the original unforced journey as well as the controlled ordering.
+		// A matching screen alone cannot identify the historical event sequence.
+		var release func()
+		if holdRefresh {
+			gate := &northstarRecoveryRefreshGate{entered: make(chan struct{}), release: make(chan struct{})}
+			var releaseOnce sync.Once
+			release = func() { releaseOnce.Do(func() { close(gate.release) }) }
+			t.Cleanup(release)
+			refreshGate.Store(gate)
+			fresh.send("R")
+			select {
+			case <-gate.entered:
+			case <-time.After(time.Second):
+				t.Fatal("refresh did not reach fake provider boundary")
+			}
+		}
 		fresh.expect("terminal Enter opens metadata", fresh.send("\r"), "Result: - Stopped", "Next: read what it did before it stopped.", "o result", "r recovery steps")
 		fresh.expect("recovery steps behind r", fresh.send("r"), "Recovery steps", "original request", "wt agent recover", "--snapshot FILE")
-		fresh.expect("explicit bounded result / sanitized controls", fresh.send("o"), "Result / Read only", "METADATA_ONLY_RESULT", "?]52;fake??", "cancellation is not completion")
+		resultAfter := fresh.send("o")
+		if holdRefresh {
+			fresh.expect("result action accepted before refresh reply", resultAfter, "Result / Read only", "Reading the result...")
+			mu.Lock()
+			resultsBeforeRelease := callCount["agent_result"]
+			mu.Unlock()
+			if resultsBeforeRelease != 0 {
+				t.Fatal("result bypassed the held history request")
+			}
+			t.Log("event: result view accepted o while history reply pending; agent_result not yet dispatched")
+			release()
+		} else {
+			t.Log("event: original result key sent without a held history reply")
+		}
+		fresh.expect("explicit bounded result / sanitized controls", resultAfter, "Result / Read only", "METADATA_ONLY_RESULT", "?]52;fake??", "cancellation is not completion")
+		mu.Lock()
+		resultCalls := callCount["agent_result"]
+		mu.Unlock()
+		if resultCalls != 1 {
+			t.Fatalf("single result key made %d agent_result calls; want one", resultCalls)
+		}
 		fresh.expect("unknown admission never launches", fresh.send("\x1b/\x15unknown-record\r\rn"), "Result: ? Unknown", "check its work before you run it again")
 		fresh.expect("pagination target first page", fresh.send("\x1b/\x15wing-local:same-run\r"), "* Working", "N next page")
 		mu.Lock()
@@ -247,7 +306,10 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 		if afterPages != beforePages+1 {
 			t.Fatalf("next page made %d inventory calls; want one", afterPages-beforePages)
 		}
-		fresh.expect("restart first pages", fresh.send("R/\x15unknown-record\r"), "? Unknown")
+		restartAfter := fresh.send("R/\x15unknown-record\r")
+		fresh.waitScreen("restart first pages", restartAfter, func(screen string) bool {
+			return strings.Contains(screen, "1 run") && strings.Contains(screen, "? Unknown") && !strings.Contains(screen, "Loading runs...")
+		})
 		mu.Lock()
 		mode = "incomplete"
 		mu.Unlock()
@@ -269,7 +331,13 @@ func TestNorthstarPTYRecovery(t *testing.T) {
 			t.Fatal("recovery admitted/stopped/steered a run")
 		}
 		northstarWrite(t, filepath.Join(f.evidence, "recovery-receipt.txt"), "same wing/run/session IDs survive parent loss; metadata-only outputs; explicit page calls=1; no mutations\n", 0600)
-	})
+	}
+	t.Run("symlinked-TMPDIR-coordinator-loss", func(t *testing.T) { run(t, false) })
+	t.Run("symlinked-TMPDIR-held-refresh", func(t *testing.T) { run(t, true) })
+}
+
+type northstarRecoveryRefreshGate struct {
+	entered, release chan struct{}
 }
 
 func northstarRecoveryAttach(t *testing.T, f *northstarFixture, state string) controlsocket.AttachBind {

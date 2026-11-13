@@ -188,11 +188,18 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			}
 			continue
 		case result := <-history.results:
-			if result.target != nil && s.mode != runResult {
+			if result.target != nil && (s.mode != runResult || history.pendingResult != nil) {
 				history.loading = false
 				history.content = nil
 			} else {
 				history.apply(result)
+			}
+			if pending := history.pendingResult; pending != nil {
+				history.pendingResult = nil
+				if s.mode == runResult {
+					history.request(ctx, s.localDir, remotes, pending)
+					continue
+				}
 			}
 			if history.requested && s.recent && s.mode == navigate {
 				history.request(ctx, s.localDir, remotes, nil)

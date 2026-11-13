@@ -341,3 +341,33 @@ func TestRecentRunsOfferNextPageOnlyWithACursor(t *testing.T) {
 		t.Fatal("next page offered without a cursor")
 	}
 }
+
+func TestRecentRunResultDuringRefreshCanBeCancelled(t *testing.T) {
+	for _, details := range []bool{false, true} {
+		t.Run(fmt.Sprint("details=", details), func(t *testing.T) {
+			s := fixture()
+			s.recent = true
+			h := s.history()
+			r := runRow{WingID: "two", ID: "same", SessionID: "egg", Status: "stopped", route: runRoute{name: "remote", wingID: "two"}}
+			h.pages["two"] = runPage{WingID: "two", Runs: []runRow{r}}
+			h.reconcile()
+			if details {
+				s.handle("i")
+				s.handle("r")
+			}
+			h.loading = true
+			act, _ := s.handle("o")
+			if act == nil || act.kind != runResult || act.run != r || s.mode != runResult {
+				t.Fatal("explicit result request dropped during refresh", act)
+			}
+			h.request(t.Context(), "", nil, &act.run)
+			if h.pendingResult == nil || *h.pendingResult != r {
+				t.Fatal("qualified target lost while refresh pending")
+			}
+			s.handle("escape")
+			if h.pendingResult != nil || s.mode != navigate || len(h.content) != 0 {
+				t.Fatal("closing result view retained a pending read")
+			}
+		})
+	}
+}
