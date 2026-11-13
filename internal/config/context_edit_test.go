@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -126,5 +127,53 @@ func TestMachineContextMissingAndMalformed(t *testing.T) {
 		if err != nil || string(after) != data {
 			t.Fatal("refused edit changed file")
 		}
+	}
+}
+
+func TestSetMachineContextPreservesLegacyWingID(t *testing.T) {
+	legacy, err := os.ReadFile("testdata/context-legacy-wing-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, first := range []string{"home", "work", "none"} {
+		t.Run(first, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "wing-id"), legacy, 0600); err != nil {
+				t.Fatal(err)
+			}
+			for _, value := range []string{first, "home", "work", "none"} {
+				if err := SetMachineContext(dir, "local", value); err != nil {
+					t.Fatal(err)
+				}
+				cfg, err := LoadWingConfig(dir)
+				if err != nil || cfg.WingID != "0123456789abcdef0123" {
+					t.Fatalf("after %s: cfg=%+v, err=%v", value, cfg, err)
+				}
+				after, err := os.ReadFile(filepath.Join(dir, "wing-id"))
+				if err != nil || !bytes.Equal(after, legacy) {
+					t.Fatalf("legacy bytes changed after %s: %q, %v", value, after, err)
+				}
+			}
+		})
+	}
+	for _, explicit := range []string{"explicit-wing-id", ""} {
+		t.Run("explicit-"+explicit, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "wing-id"), legacy, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte("wing_id: '"+explicit+"'\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			for _, value := range []string{"home", "work", "none"} {
+				if err := SetMachineContext(dir, "local", value); err != nil {
+					t.Fatal(err)
+				}
+				cfg, err := LoadWingConfig(dir)
+				if err != nil || cfg.WingID != explicit {
+					t.Fatalf("explicit ID after %s: cfg=%+v, err=%v", value, cfg, err)
+				}
+			}
+		})
 	}
 }

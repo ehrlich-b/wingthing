@@ -179,6 +179,22 @@ func SetMachineContext(dir, machine, value string) error {
 	key := "context"
 	if machine == "local" {
 		key = localContextKey(target)
+		// Creating wing.yaml switches LoadWingConfig away from the legacy
+		// wing-id fallback. Carry that effective identity into the new file,
+		// under the same lock as the context edit, without changing existing IDs.
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			cfg, err := LoadWingConfig(dir)
+			if err != nil {
+				return err
+			}
+			if cfg.WingID != "" {
+				target.Content = append(target.Content,
+					&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "wing_id"},
+					&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: cfg.WingID})
+			}
+		} else if err != nil {
+			return err
+		}
 	}
 	for i := 0; i+1 < len(target.Content); i += 2 {
 		if target.Content[i].Value == key {

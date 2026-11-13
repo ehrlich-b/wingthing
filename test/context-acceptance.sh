@@ -4,7 +4,7 @@
 set -euo pipefail
 case "${1:-}" in
   fixtures)
-    go test -p 2 ./internal/config ./cmd/wt -run '^(TestSetMachineContextFixtures|TestMachineContextMissingAndMalformed|TestContextCLI|TestDashboardNoTTYHelpUnchanged)$' -count=1 -v
+    go test -p 2 ./internal/config ./cmd/wt -run '^(TestSetMachineContextFixtures|TestSetMachineContextPreservesLegacyWingID|TestContextBuiltCLIPreservesLegacyWingID|TestMachineContextMissingAndMalformed|TestContextCLI|TestDashboardNoTTYHelpUnchanged)$' -count=1 -v
     ;;
   pty)
     go test -p 2 ./cmd/wt ./internal/dashboard -run '^(TestContextSetBuiltPTY|TestContextHintAndEvidence|TestContextViewportSelectionAndEvidence|TestDashboardScrollKeepsSelectionVisible)$' -count=1 -v

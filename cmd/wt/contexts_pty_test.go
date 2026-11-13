@@ -3,7 +3,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -52,4 +55,43 @@ func TestContextSetBuiltPTY(t *testing.T) {
 	}
 	northstarWrite(t, filepath.Join(f.evidence, "context-set-grouped-120x36.txt"), screen, 0600)
 	h.exit("q")
+}
+
+func TestContextBuiltCLIPreservesLegacyWingID(t *testing.T) {
+	f := northstarNewFixture(t)
+	binary := northstarBuild(t, f, "stable")
+	legacy, err := os.ReadFile("../../internal/config/testdata/context-legacy-wing-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(f.local, "wing-id")
+	if err := os.WriteFile(path, legacy, 0600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), binary, args...)
+		cmd.Env = f.env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("wt %v: %v\n%s", args, err, out)
+		}
+		t.Logf("wt %v:\n%s", args, out)
+		return string(out)
+	}
+	for _, value := range []string{"none", "home", "work", "none"} {
+		run("context", "set", "local", value)
+		out := run("wing", "config")
+		if !strings.Contains(out, "wing_id:    0123456789abcdef0123\n") {
+			t.Fatalf("identity lost after %s:\n%s", value, out)
+		}
+		cfg, err := config.LoadWingConfig(f.local)
+		if err != nil || cfg.WingID != "0123456789abcdef0123" {
+			t.Fatalf("loaded identity after %s: %+v, %v", value, cfg, err)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(after, legacy) {
+			t.Fatalf("legacy bytes changed after %s: %q, %v", value, after, err)
+		}
+	}
 }
