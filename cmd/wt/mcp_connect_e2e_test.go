@@ -267,9 +267,23 @@ func testBuiltWTConnectRememberedSSHRun(t *testing.T, nativeTask bool) {
 	forward := <-h.Started
 	h.Offline(t, "devbox", true)
 	forward.Drop()
-	offline := rawCall("agent_status", map[string]any{"wing_id": meta.WingID, "run_id": id})
-	if !offline.Result.IsError {
-		t.Fatalf("offline call succeeded: %+v", offline)
+	// Drop requests fixture shutdown asynchronously. A request already in flight
+	// can still succeed until SSH closes the forwarding sockets. Wait for that
+	// observable boundary before asserting the directory's offline state.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		offline := rawCall("agent_status", map[string]any{"wing_id": meta.WingID, "run_id": id})
+		if offline.Result.IsError {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("remote stayed reachable after fixture drop: %+v", offline)
+		}
+		select {
+		case <-time.After(10 * time.Millisecond):
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		}
 	}
 	directory = call("wing_list", map[string]any{})
 	rows := directory["wings"].([]any)
