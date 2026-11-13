@@ -29,6 +29,7 @@ export async function sendTunnelRequest(wingId, request, options) {
 fs.writeFileSync(entry, `
 import { S, initDOM } from '${root}/web/src/state.js';
 import { initPaper, render } from '${root}/web/src/paper.js';
+import { loadHome } from '${root}/web/src/data.js';
 import { renderHostedPlanGuidance } from '${root}/web/src/onboarding.js';
 import { showPalette, launchFromPalette, hidePalette } from '${root}/web/src/palette.js';
 initDOM(); window.requests = []; window.installed = false;
@@ -43,7 +44,8 @@ window.fixture = (relay, count) => {
 window.hostedGuidance = () => renderHostedPlanGuidance(S.currentUser, document);
 window.redraw = () => render(true);
 window.picker = showPalette; window.launch = launchFromPalette; window.state = S;
-window.fixture(false, 0); initPaper();
+window.readInventory = loadHome;
+window.fixture(window.fixtureOptions.relay, window.fixtureOptions.count); initPaper();
 `);
 const assets = path.join(root, '.scratch/first-run-assets');
 await build({configFile: false, root: path.join(root, 'web'), logLevel: 'error', plugins: [{
@@ -71,39 +73,71 @@ const browser = await chromium.launch({headless: true, executablePath: process.e
 const errors = [], checks = [], captures = [];
 try {
     for (const width of [390, 1440]) {
-        const context = await browser.newContext({viewport: {width, height: 900}, colorScheme: 'light'});
-        const page = await context.newPage();
-        page.on('pageerror', e => { errors.push(String(e)); console.error(String(e)); });
-        let releaseInventory;
-        const heldInventory = new Promise(resolve => { releaseInventory = resolve; });
-        await page.route('**/*', async route => {
-            const url = new URL(route.request().url());
-            if (url.origin !== new URL(base).origin) return route.abort();
-            if (url.pathname === '/api/app/wings') {
-                if (url.searchParams.has('reset')) await heldInventory;
-                // Read this viewport's live roster when answering, including
-                // requests that began before fixture() replaced the machines.
-                const roster = await page.evaluate(() => window.state.wingsData.map(({wing_id, public_key}) => ({wing_id, public_key})));
-                return route.fulfill({contentType: 'application/json', body: JSON.stringify(roster)});
-            }
-            return route.continue();
-        });
-        await page.goto(base);
-        await page.waitForSelector('#paper h2');
-        await page.evaluate(() => window.fixture(false, 9));
-        const crossingRequest = page.waitForRequest(request => new URL(request.url()).searchParams.has('reset'));
-        await page.evaluate(() => { window.resetInventory = fetch('/api/app/wings?reset').then(response => response.json()); });
-        await crossingRequest;
-        await page.evaluate(() => window.fixture(false, 0));
-        releaseInventory();
-        assert.deepEqual(await page.evaluate(() => window.resetInventory), [], 'pending inventory must use the reset roster');
+        let context, page, heldInventory;
+        // A case owns its entire browser state and outstanding requests. Closing
+        // that context before a reset prevents even an already captured response
+        // from merging the previous roster into the next case.
+        const resetFixture = async (relay, count, configure = () => {}, value) => {
+            await context?.close();
+            context = await browser.newContext({viewport: {width, height: 900}, colorScheme: 'light'});
+            await context.addInitScript(options => { window.fixtureOptions = options; }, {relay, count});
+            page = await context.newPage();
+            const fixturePage = page;
+            fixturePage.on('pageerror', e => { errors.push(String(e)); console.error(String(e)); });
+            await fixturePage.route('**/*', async route => {
+                const url = new URL(route.request().url());
+                if (url.origin !== new URL(base).origin) return route.abort();
+                if (url.pathname !== '/api/app/wings') return route.continue();
+                const held = heldInventory?.page === fixturePage ? heldInventory : null;
+                try {
+                    if (held?.stage === 'before snapshot') {
+                        held.captured();
+                        await held.release;
+                    }
+                    const roster = await fixturePage.evaluate(() => window.state.wingsData.map(({wing_id, public_key}) => ({wing_id, public_key})));
+                    if (held?.stage === 'after snapshot') {
+                        held.roster = roster;
+                        held.captured();
+                        await held.release;
+                    }
+                    await route.fulfill({contentType: 'application/json', body: JSON.stringify(roster)});
+                } catch (error) {
+                    // Closing a case cancels its pending route; other failures
+                    // still fail the fixture.
+                    if (!fixturePage.isClosed()) throw error;
+                } finally { held?.finished(); }
+            });
+            await page.goto(base);
+            await page.waitForSelector('#paper h2');
+            await page.evaluate(configure, value);
+        };
+        for (const stage of ['before snapshot', 'after snapshot']) {
+            await resetFixture(false, 9);
+            let captured, release, finished;
+            const capturedRequest = new Promise(resolve => { captured = resolve; });
+            const finishedRequest = new Promise(resolve => { finished = resolve; });
+            heldInventory = {page, stage, captured, finished, release: new Promise(resolve => { release = resolve; })};
+            const previousPage = page;
+            // Exercise the real merge caller, not a standalone fetch control.
+            await page.evaluate(() => { window.pendingInventory = window.readInventory(); });
+            await capturedRequest;
+            if (stage === 'after snapshot') assert.equal(heldInventory.roster.length, 9);
+            await resetFixture(false, 0);
+            assert.equal(previousPage.isClosed(), true);
+            release();
+            await finishedRequest;
+            assert.equal(await page.evaluate(() => window.state.wingsData.length), 0, stage + ': stale poll must not restore machines');
+            assert.equal(await page.locator('#pp-launch-machine').count(), 0);
+            assert.match(await page.locator('#paper').innerText(), /codex mcp add/);
+            heldInventory = null;
+        }
         for (const count of [1, 5, 9, 0]) {
-            await page.evaluate(count => window.fixture(false, count), count);
+            await resetFixture(false, count);
             const roster = await page.evaluate(() => fetch('/api/app/wings').then(response => response.json()));
             assert.deepEqual(roster.map(wing => wing.wing_id), Array.from({length: count}, (_, i) => 'machine-' + i));
             assert.ok(roster.every(wing => wing.public_key === 'synthetic'));
         }
-        checks.push(`${width}: inventory follows 9→0 in-flight reset and 1/5/9/0 roster replacements`);
+        checks.push(`${width}: inventory follows 9→0 reset before/after response snapshot through loadHome and isolated 1/5/9/0 cases`);
         const shot = async name => {
             assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), name + ' overflows');
             assert.ok(await page.evaluate(() => [...document.querySelectorAll('.pp-side-squares .pp-sq')].every(row => row.getBoundingClientRect().right <= row.closest('.pp-side').getBoundingClientRect().right + 1)), name + ' machine label overlaps content');
@@ -111,7 +145,7 @@ try {
             await page.screenshot({path: path.join(out, file), fullPage: true}); captures.push(file);
         };
         for (const count of [0, 1, 5, 9]) {
-            await page.evaluate(count => window.fixture(false, count), count);
+            await resetFixture(false, count);
             for (const hash of ['#', '#sessions', '#machines', '#new', '#session/machine-0/cached', '#approve/machine-0/cached']) {
                 await page.evaluate(hash => {location.hash = hash;}, hash);
                 await page.waitForTimeout(50);
@@ -132,11 +166,11 @@ try {
         checks.push(`${width}: free guidance on six routes with 0, 1, 5 and 9 cached machines; no runtime reads or controls`);
         for (const mode of ['pro', 'self-hosted']) {
             for (const count of [0, 1, 5]) {
-                await page.evaluate(({mode, count}) => {location.hash = '#'; window.fixture(true, count); window.state.currentUser.roost_mode = mode === 'self-hosted';}, {mode, count});
+                await resetFixture(true, count, ({mode, count}) => {location.hash = '#'; window.fixture(true, count); window.state.currentUser.roost_mode = mode === 'self-hosted';}, {mode, count});
                 await page.waitForTimeout(50);
                 await shot(`${mode}-${count}-machines`);
             }
-            await page.evaluate(mode => {location.hash = '#'; window.fixture(true, 9); window.state.currentUser.roost_mode = mode === 'self-hosted'; window.state.currentUser.relay_reason = mode === 'self-hosted' ? 'self-hosted' : 'pro';}, mode);
+            await resetFixture(true, 9, mode => {location.hash = '#'; window.fixture(true, 9); window.state.currentUser.roost_mode = mode === 'self-hosted'; window.state.currentUser.relay_reason = mode === 'self-hosted' ? 'self-hosted' : 'pro';}, mode);
             await page.getByRole('link', {name: 'New session', exact: true}).first().click();
             await page.waitForSelector('#pp-launch-machine');
             await page.selectOption('#pp-launch-machine', 'machine-8');
@@ -155,18 +189,19 @@ try {
             assert.equal(await page.locator('#pp-launch-machine').inputValue(), 'machine-8');
             assert.equal(await page.locator('#paper [data-choose-project]').count(), 0);
             await shot(`${mode}-refresh-unavailable`);
-            await page.evaluate(() => {window.discoveryError = false; window.fixture(true, 9); location.hash = '#new'; window.installed = true;});
+            await resetFixture(true, 9, () => {window.discoveryError = false; window.fixture(true, 9); location.hash = '#new/machine-8'; window.installed = true;});
             await page.getByRole('button', {name: 'Refresh agents', exact: true}).click();
             await page.waitForSelector('[data-choose-project]', {timeout: 5000}).catch(async error => {
                 console.error(await page.evaluate(() => ({requests: window.requests, wings: window.state.wingsData, content: document.querySelector('#paper').innerText})));
                 throw error;
             });
             assert.match(await page.locator('#paper').innerText(), /Codex/);
+            assert.equal(await page.locator('#pp-launch-machine').inputValue(), 'machine-8');
             await shot(`${mode}-agent-ready`);
             await page.getByRole('button', {name: 'Choose project', exact: true}).click();
             assert.ok(await page.locator('#palette-search').isEnabled());
             assert.match(await page.locator('#palette-status').innerText(), /codex/i);
-            await page.evaluate(() => {window.installed = false; window.fixture(true, 9); location.hash = '#';});
+            await resetFixture(true, 9, () => {window.installed = false; window.fixture(true, 9); location.hash = '#';});
             await page.waitForTimeout(50);
             assert.equal(await page.locator('.pp-side-squares .pp-sq').count(), 3);
             assert.equal(await page.locator('.pp-side-squares .pp-more').innerText(), '+6 more');
@@ -175,14 +210,14 @@ try {
         }
         // Both onboarding surfaces follow the deployment's actual plan options.
         for (const plans of [false, true]) {
-            await page.evaluate(plans => {window.fixture(false, 1); window.state.currentUser.self_service_plans = plans; window.hostedGuidance(); window.redraw();}, plans);
+            await resetFixture(false, 1, plans => {window.fixture(false, 1); window.state.currentUser.self_service_plans = plans; window.hostedGuidance(); window.redraw();}, plans);
             const expected = plans ? /See Account for the available plan options/ : /no self-service purchase/;
             assert.match(await page.locator('#paper').innerText(), expected);
             assert.match(await page.locator('#direct-agent-setup').textContent(), expected);
             if (plans) assert.doesNotMatch(await page.locator('#direct-agent-setup').textContent(), /no self-service purchase/);
         }
         for (const error of ['passkey_required', 'passkey_failed', 'no_passkeys_configured']) {
-            await page.evaluate(error => {
+            await resetFixture(true, 9, error => {
                 window.fixture(true, 9); window.requests = []; window.installed = true;
                 const wing = window.state.wingsData[8]; delete wing.agents; wing.locked = true; wing.tunnel_error = error;
                 window.picker(wing.wing_id);
