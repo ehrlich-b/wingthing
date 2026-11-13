@@ -66,12 +66,12 @@ function patchNode(current, next) {
         return;
     }
     // These engines own their children and listeners.
-    if (current.hasAttribute('data-engine')) return;
     if (current.hasAttribute('data-session-list') && next.hasAttribute('data-session-list')) retainSessionLayout(current, next);
     // Disclosure state belongs to the reader after the element is mounted.
     const readerOwned = name => current.tagName === 'DETAILS' && name === 'open';
     for (const attr of [...current.attributes]) if (!readerOwned(attr.name) && !next.hasAttribute(attr.name)) current.removeAttribute(attr.name);
     for (const attr of next.attributes) if (!readerOwned(attr.name) && current.getAttribute(attr.name) !== attr.value) current.setAttribute(attr.name, attr.value);
+    if (current.hasAttribute('data-engine')) return;
     patchChildren(current, next);
 }
 

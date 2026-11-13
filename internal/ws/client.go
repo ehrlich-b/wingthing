@@ -21,6 +21,7 @@ const (
 	writeTimeout      = 10 * time.Second
 	maxReconnectDelay = 10 * time.Second
 	maxTunnelHandlers = 64
+	ptyInputWait      = 250 * time.Millisecond
 )
 
 // TunnelHandler is called when the wing receives an encrypted tunnel request.
@@ -309,7 +310,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 				}
 				go func() {
 					defer c.unregisterPTYSession(start.SessionID, inputCh)
-					c.OnPTY(ctx, start, func(v any) error {
+					c.OnPTY(WithPTYInputRetirement(ctx, func() { c.unregisterPTYSession(start.SessionID, inputCh) }), start, func(v any) error {
 						return c.writeJSON(ctx, v)
 					}, inputCh)
 				}()
@@ -338,28 +339,32 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 			if !ValidSessionID(partial.SessionID) {
 				continue
 			}
-			ch := c.ptyRoutes().lookup(partial.SessionID)
-			if ch == nil && c.OnPTYAttach != nil {
+			route := c.ptyRoutes().lookup(partial.SessionID)
+			if route == nil && c.OnPTYAttach != nil {
 				var attach PTYAttach
 				if err := json.Unmarshal(data, &attach); err != nil {
 					continue
 				}
 				if err := c.OnPTYAttach(ctx, attach); err != nil {
-					if err := c.writeJSON(ctx, ErrorMsg{Type: TypeError, SessionID: attach.SessionID, ViewerID: attach.ViewerID, Message: "session not found or not owned by caller"}); err != nil {
+					if err := c.writeJSON(ctx, ErrorMsg{Type: TypeError, SessionID: attach.SessionID, ViewerID: attach.ViewerID, ControllerID: attach.ControllerID, RequestID: attach.RequestID, Operation: TypePTYAttach, Code: "session_not_found", Message: "session not found or not owned by caller"}); err != nil {
 						return connected, err
 					}
 					continue
 				}
-				ch = c.ptyRoutes().lookup(partial.SessionID)
 			}
-			if ch != nil {
-				select {
-				case ch <- data:
-				default:
-				}
+			if err := c.forwardPTYMessage(ctx, partial.SessionID, data); err != nil {
+				return connected, err
 			}
 
 		case TypePTYInput, TypePTYAttentionAck, TypePasskeyResponse, TypePTYMigrate, TypePTYDetach:
+			// A remote socket cannot supply wing-local data-channel reply routes.
+			if env.Type == TypePTYInput {
+				var input PTYInput
+				if json.Unmarshal(data, &input) != nil {
+					continue
+				}
+				data, _ = json.Marshal(input)
+			}
 			var partial struct {
 				SessionID string `json:"session_id"`
 			}
@@ -369,12 +374,8 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 			if !ValidSessionID(partial.SessionID) {
 				continue
 			}
-			ch := c.ptyRoutes().lookup(partial.SessionID)
-			if ch != nil {
-				select {
-				case ch <- data:
-				default:
-				}
+			if err := c.forwardPTYMessage(ctx, partial.SessionID, data); err != nil {
+				return connected, err
 			}
 
 		case TypePTYResize, TypePTYKill:
@@ -427,6 +428,37 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 			log.Printf("unknown message type: %s", env.Type)
 		}
 	}
+}
+
+// forwardPTYMessage applies backpressure without letting one stalled session
+// block the relay reader indefinitely. Every refused message gets a session
+// error; a failed error write ends the connection so refusal is never silent.
+func (c *Client) forwardPTYMessage(ctx context.Context, sessionID string, data []byte) error {
+	var envelope struct {
+		Type         string `json:"type"`
+		ControllerID string `json:"controller_id"`
+		ViewerID     string `json:"viewer_id"`
+		RequestID    string `json:"request_id"`
+	}
+	_ = json.Unmarshal(data, &envelope)
+	denied := ErrorMsg{Type: TypeError, Operation: envelope.Type, SessionID: sessionID, ControllerID: envelope.ControllerID, ViewerID: envelope.ViewerID, RequestID: envelope.RequestID}
+	code, err := c.ptyRoutes().deliver(ctx, sessionID, data)
+	if err != nil {
+		return err
+	}
+	if code == "" {
+		return nil
+	}
+	denied.Code = code
+	if code == "session_not_found" {
+		denied.Message = "session not found"
+	} else {
+		denied.Message = "session input is busy; message was not delivered"
+	}
+	if err := c.writeJSON(ctx, denied); err != nil {
+		return fmt.Errorf("report PTY delivery refusal: %w", err)
+	}
+	return nil
 }
 
 func (c *Client) heartbeatLoop(ctx context.Context) {
@@ -558,24 +590,31 @@ func (c *Client) unregisterPTYSession(sessionID string, inputCh chan []byte) {
 
 // PushPTYInput pushes raw data into a session's input channel from outside the WebSocket read loop.
 // Used by P2P DataChannels to route messages into the session handler.
-// Returns true if the session exists and the message was delivered.
-func (c *Client) PushPTYInput(sessionID string, data []byte) bool {
+// Returns a typed refusal if the message cannot be queued within the bounded wait.
+// The caller must send that refusal back on the originating transport.
+func (c *Client) PushPTYInput(sessionID string, data []byte) *ErrorMsg {
+	var envelope struct {
+		Type      string `json:"type"`
+		RequestID string `json:"request_id"`
+	}
+	_ = json.Unmarshal(data, &envelope)
+	denied := &ErrorMsg{Type: TypeError, SessionID: sessionID, Operation: envelope.Type, RequestID: envelope.RequestID}
 	if !ValidSessionID(sessionID) {
-		log.Printf("[P2P] PushPTYInput: invalid session ID %q", sessionID)
-		return false
+		denied.Code = "invalid_session_id"
+		denied.Message = "invalid session ID; message was not delivered"
+		return denied
 	}
-	ch := c.ptyRoutes().lookup(sessionID)
-	if ch == nil {
-		log.Printf("[P2P] PushPTYInput: no session %s", sessionID)
-		return false
+	code, _ := c.ptyRoutes().deliver(context.Background(), sessionID, data)
+	if code == "" {
+		return nil
 	}
-	select {
-	case ch <- data:
-		return true
-	default:
-		log.Printf("[P2P] PushPTYInput: input buffer full for session %s, dropping %d bytes", sessionID, len(data))
-		return false
+	denied.Code = code
+	if code == "session_not_found" {
+		denied.Message = "session not found; message was not delivered"
+	} else {
+		denied.Message = "session input is busy; message was not delivered"
 	}
+	return denied
 }
 
 func (c *Client) writeJSON(ctx context.Context, v any) error {

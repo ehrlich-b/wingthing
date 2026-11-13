@@ -16,7 +16,7 @@ const dashboard = await readFile(path.join(root, 'web/src/dashboard.js'), 'utf8'
 const main = await readFile(path.join(root, 'web/src/main.js'), 'utf8');
 const html = await readFile(path.join(root, 'web/index.html'), 'utf8');
 const inputControls = html.slice(html.indexOf('<div id="passkey-overlay"'), html.indexOf('</section>', html.indexOf('<div id="passkey-overlay"')));
-const input = terminal.match(/^export function sendPTYInput\(text\) \{[\s\S]*?^\}/m)[0];
+const input = terminal.slice(terminal.indexOf('function refusePTYInput('));
 const dependencies = new Map();
 for (const match of (source + nav + dashboard + await readFile(path.join(root, 'web/src/webrtc.js'), 'utf8')).matchAll(/import \{([^}]+)\} from '([^']+)';/g)) {
     const name = new URL(match[2], 'http://local/src/pty.js').pathname;
@@ -51,6 +51,7 @@ const server = createServer(async (req, res) => {
             res.end(await readFile(path.join(root, 'web/src/webrtc.js'), 'utf8') + '\nexport { handleDCMessage };');
         } else if (req.url === '/src/terminal.js') {
             res.end(`import { S, clearNotification, sendViaDC } from '/fixture.js';
+                import { DOM } from './state.js';
                 import { e2eEncrypt } from './crypto.js';
                 import { terminalReferenceMatches } from './session-reference.js';
                 export const saveTermBuffer = () => {}, clearTermBuffer = () => {};

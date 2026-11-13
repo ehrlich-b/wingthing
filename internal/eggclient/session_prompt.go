@@ -16,6 +16,10 @@ import (
 )
 
 func sendPromptInput(ctx context.Context, cfg *config.Config, sessionID, input, owner, expectedProviderID string, verifiedUserIDs ...string) (egg.PromptDelivery, error) {
+	return sendPromptAnswerInput(ctx, cfg, sessionID, input, owner, expectedProviderID, nil, verifiedUserIDs...)
+}
+
+func sendPromptAnswerInput(ctx context.Context, cfg *config.Config, sessionID, input, owner, expectedProviderID string, answerTo *int64, verifiedUserIDs ...string) (egg.PromptDelivery, error) {
 	delivery := egg.PromptDelivery{NoInputAttempted: true}
 	session, client, err := OpenLocalEgg(ctx, cfg, sessionID)
 	if err != nil {
@@ -48,7 +52,18 @@ func sendPromptInput(ctx context.Context, cfg *config.Config, sessionID, input, 
 	if view.ProviderSessionID != expectedProviderID {
 		return delivery, errors.New("provider identity changed before input")
 	}
-	if !egg.NativePromptReady(view) {
+	if answerTo == nil && view.State == "needs_input" {
+		delivery.WaitingPrompt = true
+		return delivery, errors.New("Answer in the terminal")
+	}
+	if answerTo != nil && (view.State != "needs_input" || view.StateCursor != *answerTo) {
+		return delivery, errors.New("waiting prompt was already resolved; Not sent - try again")
+	}
+	ready := egg.NativePromptReady(view)
+	if answerTo != nil {
+		ready = egg.NativeAnswerReady(view)
+	}
+	if !ready {
 		return delivery, fmt.Errorf("native foreground readiness changed before input: state=%s source=%s", view.State, view.StateSource)
 	}
 	observeSessionController(cfg, session.ID, verifiedUserIDs)
@@ -90,10 +105,15 @@ func sendPromptInput(ctx context.Context, cfg *config.Config, sessionID, input, 
 }
 
 func PromptSession(ctx context.Context, cfg *config.Config, session LocalSession, requestID, input string, timeout time.Duration, owner string, verifiedUserIDs ...string) (egg.SessionPromptResult, error) {
+	return PromptSessionWithAnswer(ctx, cfg, session, requestID, input, timeout, owner, nil, verifiedUserIDs...)
+}
+
+func PromptSessionWithAnswer(ctx context.Context, cfg *config.Config, session LocalSession, requestID, input string, timeout time.Duration, owner string, answerTo *int64, verifiedUserIDs ...string) (egg.SessionPromptResult, error) {
 	dir := filepath.Join(cfg.Dir, "eggs", session.ID)
 	expectedProviderID := ""
+	expectedAnswer := answerTo
 	return egg.SubmitSessionPrompt(ctx, dir, egg.SessionPromptOptions{
-		RequestID: requestID, Input: input, Timeout: timeout,
+		RequestID: requestID, Input: input, Timeout: timeout, AnswerToStateCursor: answerTo,
 		Read: func(ctx context.Context, after int64, limit int) (egg.SessionView, error) {
 			if err := ctx.Err(); err != nil {
 				return egg.SessionView{}, err
@@ -105,7 +125,7 @@ func PromptSession(ctx context.Context, cfg *config.Config, session LocalSession
 			return view, err
 		},
 		Send: func(ctx context.Context, text string) (egg.PromptDelivery, error) {
-			return sendPromptInput(ctx, cfg, session.ID, text, owner, expectedProviderID, verifiedUserIDs...)
+			return sendPromptAnswerInput(ctx, cfg, session.ID, text, owner, expectedProviderID, expectedAnswer, verifiedUserIDs...)
 		},
 	})
 }

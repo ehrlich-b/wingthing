@@ -13,7 +13,7 @@ test('A6: session copy is brief and recovery retains its permission guidance', (
     assert.match(view, /Last seen on /);
     assert.match(functionBody('accessPanel'), /machineGuidance\(w\)/);
     assert.match(functionBody('machineActions'), />Machine access<\/a>/);
-    assert.match(functionBody('viewApprove'), /Check the current prompt there before you answer/);
+    assert.match(functionBody('viewSession'), /Answer in the terminal/);
 });
 
 test('A7: session presentation keeps the existing machine display boundaries', () => {

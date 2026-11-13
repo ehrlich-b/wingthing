@@ -16,6 +16,12 @@ async function run() {
     const origin = 'http://presence-fixture.localhost';
     const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--disable-background-networking', '--renderer-process-limit=2'] });
     const results = [];
+    async function assertSessionInputUnavailable(page) {
+        assert.equal(await page.locator('#paper [data-takeover]').count(), 0, 'unavailable machines offer no terminal control');
+        assert.equal(await page.locator('#paper [data-composer]').count(), 1, 'session composer remains mounted');
+        assert.equal(await page.locator('#pp-message').isDisabled(), true, 'unavailable session cannot accept a draft');
+        assert.equal(await page.locator('#paper [data-composer] [type=submit]').isDisabled(), true, 'unavailable session cannot send input');
+    }
     async function serve(context, page, hasPasskeys = true, discoveryWait = null) {
         await context.route('**/*', async route => {
             const url = new URL(route.request().url());
@@ -61,11 +67,12 @@ async function run() {
                     await page.evaluate(() => { location.hash = '#session/machine-0/same-id'; });
                     await page.locator('[data-takeover]').waitFor({ state: 'attached' });
                     await page.evaluate(() => presenceFixture.disconnect('machine-0'));
-                    await page.locator('.pp-away').filter({ hasText: 'is offline' }).waitFor();
-                    assert.equal(await page.locator('#paper [data-composer], #paper [data-takeover]').count(), 0);
+                    await page.locator('.pp-session[data-state=offline]').waitFor();
+                    assert.match(await page.locator('.pp-delivery').innerText(), /is offline/);
+                    await assertSessionInputUnavailable(page);
                     assert.equal(await page.evaluate(() => JSON.parse(localStorage.wt_wings).find(w => w.wing_id === 'machine-0').last_seen), before.wings.find(w => w.wing_id === 'machine-0').last_seen, 'disconnect preserves last contact');
                     assert.match(await page.locator('.pp-main').innerText(), /Last reported: Working · stale/);
-                    assert.match(await page.locator('.pp-away').innerText(), /Last seen.*Sessions are kept/);
+                    assert.match(await page.locator('.pp-terminal-help').innerText(), /Last seen.*Sessions are kept/);
                     assert.doesNotMatch(await page.locator('.pp-main').innerText(), /Asleep|deleted/i);
                     await page.screenshot({ path: resolve(output, `offline-session-${width}.png`), fullPage: true });
                     await page.evaluate(() => { location.hash = '#'; });
@@ -101,8 +108,8 @@ async function run() {
                     await page.locator('[data-takeover]').waitFor({ state: 'attached' });
                     await page.screenshot({ path: resolve(output, `recovered-session-${width}.png`), fullPage: true });
                     await page.evaluate(() => presenceFixture.unreachable('machine-0'));
-                    await page.locator('.pp-away').waitFor().catch(async error => { console.log(JSON.stringify(await page.evaluate(() => ({ calls: presenceFixture.calls.slice(-20), text: document.querySelector('.pp-main').innerText })), null, 2)); throw error; });
-                    assert.equal(await page.locator('#paper [data-composer], #paper [data-takeover]').count(), 0);
+                    await page.locator('.pp-session[data-state=offline]').waitFor().catch(async error => { console.log(JSON.stringify(await page.evaluate(() => ({ calls: presenceFixture.calls.slice(-20), text: document.querySelector('.pp-main').innerText })), null, 2)); throw error; });
+                    await assertSessionInputUnavailable(page);
                     await page.evaluate(() => { location.hash = '#machines'; });
                     await page.locator('[data-machine="machine-0"] [data-retry]').waitFor();
                     assert.equal(await page.locator('#crypto-error-toast').count(), 0, 'ordinary connection loss is not a crypto error');
@@ -141,14 +148,20 @@ async function run() {
                     await page.locator('.pp-group').filter({ hasText: 'Access needed' }).waitFor();
                     await page.evaluate(() => { location.hash = '#session/machine-1/same-id'; });
                     await page.locator('.pp-hdr .pp-st').getByText(label, { exact: true }).waitFor();
-                    assert.equal(await page.locator('#paper [data-composer], #paper [data-takeover]').count(), 0);
-                    assert.ok((await page.locator('.pp-away').innerText()).includes(guidance));
-                    assert.doesNotMatch(await page.locator('.pp-away').innerText(), /offline|Reconnect|Sessions.*kept/i);
+                    if (width === 390 && label === 'Locked') await page.locator('[data-session-panel=terminal]').click();
+                    await assertSessionInputUnavailable(page);
+                    assert.ok((await page.locator('.pp-away, .pp-unlock').innerText()).includes(guidance));
+                    if (error === 'no_passkeys_configured') {
+                        assert.equal(await page.locator('[data-unlock-machine]').count(), 0, 'setup is offered before unlocking');
+                        await page.locator('.pp-unlock a').getByText('Machine access', {exact:true}).waitFor();
+                    }
+                    assert.doesNotMatch(await page.locator('.pp-away, .pp-unlock').innerText(), /offline|Reconnect|Sessions.*kept/i);
                     await page.evaluate(() => { location.hash = '#approve/machine-1/same-id'; });
                     await page.waitForFunction(() => location.hash === '#session/machine-1/same-id');
-                    await page.locator('.pp-away').waitFor();
-                    assert.ok((await page.locator('.pp-away').innerText()).includes(guidance));
-                    assert.doesNotMatch(await page.locator('.pp-away').innerText(), /offline|reconnect/i);
+                    if (width === 390 && label === 'Locked') await page.locator('[data-session-panel=terminal]').click();
+                    await page.locator('.pp-away, .pp-unlock').waitFor();
+                    assert.ok((await page.locator('.pp-away, .pp-unlock').innerText()).includes(guidance));
+                    assert.doesNotMatch(await page.locator('.pp-away, .pp-unlock').innerText(), /offline|reconnect/i);
                     assert.equal(await page.locator('#paper [data-takeover]').count(), 0);
                 }
                 if (error !== 'decrypt') {
@@ -170,7 +183,7 @@ async function run() {
             await page.goto(origin + '/app/#session/machine-0/same-id');
             await page.locator('.pp-hdr .pp-st-work').waitFor();
             assert.doesNotMatch(await page.locator('.pp-main').innerText(), /Unknown|stale/);
-            assert.equal(await page.locator('#paper [data-composer], #paper [data-takeover]').count(), 0, 'checking does not offer runtime controls');
+            await assertSessionInputUnavailable(page);
             assert.equal(await page.locator('.pp-side-squares .pp-more').innerText(), '+5 more', 'unnamed machines do not inflate the strip count');
             await page.screenshot({ path: resolve(output, `checking-session-${width}.png`), fullPage: true });
             release();

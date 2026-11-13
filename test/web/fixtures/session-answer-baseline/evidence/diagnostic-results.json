@@ -1,0 +1,292 @@
+{
+  "subject": "fb896393e94e710fd23cc52ee49c091ffbbccd8f",
+  "realTransport": {
+    "receipt": {
+      "session_id": "wt4094935095",
+      "request_id": "diagnostic-answer",
+      "status": "unconfirmed",
+      "native_receipt_observed": false,
+      "provider_request_acknowledged": false,
+      "causality": "unverified_without_provider_request_id",
+      "transport_enqueued": true,
+      "transport_bytes_enqueued": 4,
+      "definitely_not_sent": false,
+      "reserved_cursor": 1,
+      "retried": false,
+      "reason": "receipt wait ended; input may have been delivered; retry this request_id to inspect without resending"
+    },
+    "replay": {
+      "session_id": "wt4094935095",
+      "request_id": "diagnostic-answer",
+      "status": "waiting_answer_delivered",
+      "native_receipt_observed": false,
+      "provider_request_acknowledged": false,
+      "receipt_kind": "waiting_state_resolved",
+      "causality": "unverified_without_provider_request_id",
+      "transport_enqueued": true,
+      "transport_bytes_enqueued": 4,
+      "definitely_not_sent": false,
+      "reserved_cursor": 1,
+      "retried": true,
+      "reason": "waiting prompt resolved after transport enqueue"
+    },
+    "response_delay_ms": 3000,
+    "sends": 1,
+    "working": {
+      "session_id": "wt4094935095",
+      "agent": "claude",
+      "provider_session_id": "ours",
+      "state": "working",
+      "status": "working",
+      "state_source": "claude_hook",
+      "state_cursor": 2,
+      "state_observed_at": "2026-11-10T13:07:10.292646188Z",
+      "ready": false,
+      "process_alive": true,
+      "cursor": 2,
+      "head_cursor": 2,
+      "has_more": false,
+      "source_complete": true,
+      "events": [
+        {
+          "sequence": 1,
+          "type": "input_requested",
+          "source": "claude_hook",
+          "state": "needs_input",
+          "provider_session_id": "ours",
+          "timestamp": "2026-11-10T13:07:07.292614566Z",
+          "reason": "provider permission decision requested",
+          "source_key": "hook:seq.00000000000000000001.json"
+        },
+        {
+          "sequence": 2,
+          "type": "tool_activity",
+          "source": "claude_hook",
+          "state": "working",
+          "provider_session_id": "ours",
+          "timestamp": "2026-11-10T13:07:10.292646188Z",
+          "source_key": "hook:seq.00000000000000000002.json"
+        }
+      ]
+    }
+  },
+  "results": [
+    {
+      "scenario": "claude: lost response, working for 30s, reload, idle, exact replay",
+      "finding": "reproduced composer and follow-up deadlock",
+      "deadlock": {
+        "elapsed": 30000,
+        "state": "working",
+        "pending": "unconfirmed",
+        "enqueueEvidence": false,
+        "inputReady": false,
+        "composerEditable": false,
+        "queued": "Saved follow-up",
+        "notice": "",
+        "draft": null,
+        "answerSends": 1,
+        "followUpSends": 0
+      },
+      "recovery": {
+        "elapsed": 48000,
+        "state": "idle",
+        "pending": null,
+        "enqueueEvidence": false,
+        "inputReady": true,
+        "composerEditable": false,
+        "queued": null,
+        "notice": "",
+        "draft": null,
+        "answerSends": 1,
+        "followUpSends": 1
+      },
+      "requestIdentity": "request-2"
+    },
+    {
+      "scenario": "codex: lost response, working for 30s, reload, idle, exact replay",
+      "finding": "reproduced composer and follow-up deadlock",
+      "deadlock": {
+        "elapsed": 30000,
+        "state": "working",
+        "pending": "unconfirmed",
+        "enqueueEvidence": false,
+        "inputReady": false,
+        "composerEditable": false,
+        "queued": "Saved follow-up",
+        "notice": "",
+        "draft": null,
+        "answerSends": 1,
+        "followUpSends": 0
+      },
+      "recovery": {
+        "elapsed": 48000,
+        "state": "idle",
+        "pending": null,
+        "enqueueEvidence": false,
+        "inputReady": true,
+        "composerEditable": false,
+        "queued": null,
+        "notice": "",
+        "draft": null,
+        "answerSends": 1,
+        "followUpSends": 1
+      },
+      "requestIdentity": "request-2"
+    },
+    {
+      "scenario": "fresh working reads without enqueue evidence",
+      "finding": "delivery remains unknown; state alone cannot prove sent",
+      "observed": {
+        "elapsed": 30000,
+        "state": "working",
+        "pending": "unconfirmed",
+        "enqueueEvidence": false,
+        "inputReady": false,
+        "composerEditable": false,
+        "queued": null,
+        "notice": "",
+        "draft": null,
+        "answerSends": 0,
+        "followUpSends": 0
+      }
+    },
+    {
+      "scenario": "real three-second receipt wait; reload after response and after expiry",
+      "finding": "reproduced late timeout",
+      "responseDelayMs": 3000,
+      "browserEnqueueStampMs": 3000,
+      "at15s": {
+        "elapsed": 15000,
+        "state": "needs_input",
+        "pending": "unconfirmed",
+        "enqueueEvidence": true,
+        "inputReady": false,
+        "composerEditable": false,
+        "queued": null,
+        "notice": "",
+        "draft": null,
+        "answerSends": 1,
+        "followUpSends": 0
+      },
+      "expired": {
+        "elapsed": 18000,
+        "state": "needs_input",
+        "pending": null,
+        "enqueueEvidence": false,
+        "inputReady": true,
+        "composerEditable": false,
+        "queued": null,
+        "notice": "Not sent - try again",
+        "draft": "Yes",
+        "answerSends": 1,
+        "followUpSends": 0
+      }
+    },
+    {
+      "scenario": "delayed response after working; reload=false",
+      "safeguard": "no false unsent draft and follow-up drains exactly once after evidence recovery",
+      "observed": {
+        "elapsed": 37500,
+        "state": "idle",
+        "pending": null,
+        "enqueueEvidence": false,
+        "inputReady": true,
+        "composerEditable": false,
+        "queued": null,
+        "notice": "",
+        "draft": null,
+        "answerSends": 1,
+        "followUpSends": 1
+      }
+    },
+    {
+      "scenario": "reload before delayed response",
+      "finding": "new controller retains stale reservation until another reopen",
+      "observed": {
+        "elapsed": 31500,
+        "state": "working",
+        "pending": "pending",
+        "enqueueEvidence": false,
+        "inputReady": false,
+        "composerEditable": false,
+        "queued": "Saved follow-up",
+        "notice": "",
+        "draft": null,
+        "answerSends": 1,
+        "followUpSends": 0
+      }
+    },
+    {
+      "scenario": "delayed response after working; reload=true",
+      "safeguard": "no false unsent draft and follow-up drains exactly once after evidence recovery",
+      "observed": {
+        "elapsed": 37500,
+        "state": "idle",
+        "pending": null,
+        "enqueueEvidence": false,
+        "inputReady": true,
+        "composerEditable": false,
+        "queued": null,
+        "notice": "",
+        "draft": null,
+        "answerSends": 1,
+        "followUpSends": 1
+      }
+    },
+    {
+      "scenario": "reload after durable reservation but before enqueue",
+      "finding": "replacement reader overwrites late not-sent evidence and restored draft with its stale reservation",
+      "observed": {
+        "elapsed": 30000,
+        "state": "working",
+        "pending": "pending",
+        "enqueueEvidence": false,
+        "inputReady": false,
+        "composerEditable": false,
+        "queued": null,
+        "notice": "",
+        "draft": null,
+        "answerSends": 0,
+        "followUpSends": 0
+      }
+    },
+    {
+      "scenario": "prompt resolved in terminal before transport",
+      "safeguard": "explicit not-sent evidence returns the draft without a send",
+      "observed": {
+        "elapsed": 30000,
+        "state": "idle",
+        "pending": null,
+        "enqueueEvidence": false,
+        "inputReady": true,
+        "composerEditable": false,
+        "queued": null,
+        "notice": "Not sent - try again",
+        "draft": "Yes",
+        "answerSends": 0,
+        "followUpSends": 0
+      }
+    },
+    {
+      "scenario": "navigation while transport response is delayed",
+      "safeguard": "late evidence stays with original user, machine, session, provider and request",
+      "original": {
+        "status": "unconfirmed",
+        "checks": 1,
+        "lastCheckedAt": 1000000,
+        "lastReason": "receipt wait ended; input may have been delivered; retry this request_id to inspect without resending",
+        "request_id": "request-1",
+        "input": "Yes",
+        "userId": "owner",
+        "wingId": "machine",
+        "sessionId": "session",
+        "providerSessionId": "provider",
+        "conversationId": "conversation",
+        "createdAt": 1000000,
+        "answerToStateCursor": 6,
+        "transportEnqueued": true,
+        "transportEnqueuedAt": 1000000
+      }
+    }
+  ]
+}

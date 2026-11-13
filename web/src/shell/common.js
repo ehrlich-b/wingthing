@@ -4,19 +4,37 @@ import { wingDisplayName, sessionDisplayName } from '../helpers.js';
 import { sendTunnelRequest, randomUUID } from '../tunnel.js';
 import { applyConversationRead, restoredConversationState } from '../conversation-state.js';
 import { createConversationReader } from '../conversation-recovery.js';
+import { queuedExecutions } from '../conversation-recovery-store.js';
 import { machineState, sessionState as stateOf, projectName, agentName, requestedCommand, offlineLabel, machineLabel, machineGuidance } from '../paper-state.js';
 import { wingOf, machineName, sessions, sessionState, needing, machines, machineSessions } from './select.js';
 const reads = new Map(), terminals = new Map();
-const drafts = new Map();
+const drafts = new Map(), readers = new Map();
+let readerUser;
 const numberWords = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
 const machineLimit = 5, machineListLimit = 6;
-const ui = { allMachines: false, retrying: false, launchWingId: '', inputReader: null, inputKey: '', inputSnapshot: null, invalidate: () => {} };
+const ui = { allMachines: false, retrying: false, launchWingId: '', inputReader: null, inputKey: '', inputSnapshot: null, sessionCanQueue: false, invalidate: () => {} };
 function render() { ui.invalidate(); }
 const sessionHref = (s, view = 'session') => '#' + view + '/' + encodeURIComponent(s.wing_id) + '/' + encodeURIComponent(s.id);
 const project = s => projectName(s.cwd);
 const chip = st => '<span class="pp-st pp-st-' + st.key + '">' + esc(st.label) + '</span>';
 const clock = t => { const ms = typeof t === 'number' ? t : Date.parse(t); return Number.isFinite(ms) && ms > 0 ? new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''; };
 const ago = t => { const ms = Date.parse(t); if (!Number.isFinite(ms)) return ''; const m = Math.max(0, Math.round((Date.now() - ms) / 60000)); return m < 60 ? m + 'm' : m < 1440 ? Math.round(m / 60) + 'h' : Math.round(m / 1440) + 'd'; };
+function relativeTime(at, home = false) {
+    return '<time data-relative="' + esc(at || '') + '"' + (home ? ' data-home-time' : '') + '>' + esc(relativeLabel(at, home)) + '</time>';
+}
+function relativeLabel(at, home) {
+    if (!home) return ago(at);
+    const ms = Date.parse(at);
+    if (!Number.isFinite(ms)) return '';
+    const minutes = Math.max(0, Math.floor((Date.now() - ms) / 60000));
+    return minutes < 1 ? 'Now' : minutes < 60 ? minutes + 'm' : minutes < 1440 ? Math.floor(minutes / 60) + 'h' : Math.floor(minutes / 1440) + 'd';
+}
+export function tickRelativeTimes(root) {
+    for (const node of root.querySelectorAll('[data-relative]')) {
+        const label = relativeLabel(node.dataset.relative, node.hasAttribute('data-home-time'));
+        if (node.textContent !== label) node.textContent = label;
+    }
+}
 const prose = text => esc(text || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/(^|\s)(\.\/[\w./-]+|[\w-]+\/[\w./-]+\.\w+)/g, '$1<code>$2</code>');
 const lastSeen = w => { const ms = Date.parse(w.last_seen); return Number.isFinite(ms) ? new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; };
 const awayText = w => offlineLabel(lastSeen(w));
@@ -27,28 +45,53 @@ function storage(kind) { try { return window[kind]; } catch { return null; } }
 function inputAllowed(s) {
     return !!s && machineState(wingOf(s.wing_id)) === 'connected' && !S.spectating && S.currentUser?.relay_allowed !== false;
 }
-function selectComposer(s) {
-    const target = s && machineState(wingOf(s.wing_id)) === 'connected' && S.currentUser ? { userId: S.currentUser.id, wingId: s.wing_id, sessionId: s.id } : null;
-    const key = target ? JSON.stringify(target) : '';
-    if (key === ui.inputKey) return;
-    if (ui.inputReader) ui.inputReader.close();
-    ui.inputReader = null;
-    ui.inputKey = key; ui.inputSnapshot = null;
-    if (!target) return;
-    ui.inputReader = createConversationReader({
+function composerReader(target) {
+    const key = JSON.stringify({ userId: target.userId, wingId: target.wingId, sessionId: target.sessionId });
+    if (readers.has(key)) return readers.get(key);
+    const reader = createConversationReader({
         storage: storage('localStorage'), legacyStorage: storage('sessionStorage'),
-        request: sendTunnelRequest, randomId: randomUUID,
+        request: (wing, body) => sendTunnelRequest(wing, body, { skipPasskey: true }), randomId: randomUUID,
+        canSendQueued: ref => ref.userId === S.currentUser?.id && inputAllowed({ wing_id: ref.wingId }) &&
+            !(S.activeView === 'terminal' && S.ptyWingId === ref.wingId && S.ptySessionId === ref.sessionId),
         onChange(next) {
-            ui.inputSnapshot = next;
+            if (ui.inputKey === key) ui.inputSnapshot = next;
             queueMicrotask(() => {
-                if (ui.inputSnapshot !== next) return;
-                const draft = ui.inputReader.takeDraft();
-                if (draft !== null && !drafts.get(ui.inputKey)) drafts.set(ui.inputKey, draft);
+                if (readers.get(key) !== reader) return;
+                if (ui.inputKey === key) {
+                    ui.inputSnapshot = reader.snapshot();
+                    const draft = reader.takeDraft();
+                    if (draft !== null && !drafts.get(key)) drafts.set(key, draft);
+                }
                 render(true);
             });
         },
     });
-    ui.inputReader.open(target);
+    readers.set(key, reader);
+    reader.open(target);
+    return reader;
+}
+function selectComposer(s) {
+    const userId = S.currentUser?.id;
+    if (readerUser !== userId) {
+        for (const reader of readers.values()) reader.close();
+        readers.clear(); drafts.clear(); readerUser = userId;
+        ui.inputKey = ''; ui.inputReader = null; ui.inputSnapshot = null;
+
+    }
+    for (const [key, reader] of readers) {
+        if (machineState(wingOf(reader.snapshot().target?.wingId)) !== 'connected') { reader.close(); readers.delete(key); }
+    }
+    for (const ref of queuedExecutions(storage('localStorage'), userId)) {
+        if (machineState(wingOf(ref.wingId)) === 'connected') composerReader(ref);
+    }
+    const target = s && userId && machineState(wingOf(s.wing_id)) === 'connected' ? { userId, wingId: s.wing_id, sessionId: s.id } : null;
+    const key = target ? JSON.stringify(target) : '';
+    ui.inputKey = key;
+    ui.inputReader = target ? composerReader(target) : null;
+    ui.inputSnapshot = ui.inputReader?.snapshot() || null;
+    for (const [otherKey, reader] of readers) {
+        if (otherKey !== key && !reader.snapshot().queued && !reader.snapshot().checking) { readers.delete(otherKey); reader.close(); }
+    }
 }
 function offlinePanel(w) {
     return '<section class="pp-away" role="status"><b>' + esc(machineName(w)) + ' is offline</b><p>' + esc(lastSeen(w) ? 'Last seen ' + lastSeen(w) + '.' : 'Last seen time unavailable.') + ' Sessions are kept here.</p><p class="pp-quiet">Reconnect this machine, then retry.</p><div class="pp-actions">' + retryButton(w) + '</div></section>';
@@ -97,14 +140,14 @@ function request(s) {
     return { reason, command, at: marker && marker.timestamp };
 }
 function terminal(s) {
-    const k = s.wing_id + '/' + s.id;
+    const k = S.currentUser?.id + '/' + s.wing_id + '/' + s.id;
     let entry = terminals.get(k);
-    if (!entry) { entry = { text: '', at: 0, busy: false, error: '' }; terminals.set(k, entry); }
+    if (!entry) { entry = { text: '', at: 0, busy: false, error: '', supported: true }; terminals.set(k, entry); }
     if (!entry.busy && machineState(wingOf(s.wing_id)) === 'connected' && Date.now() - entry.at > 1000) {
         entry.busy = true;
-        sendTunnelRequest(s.wing_id, { type: 'session.control', operation: 'session_action', arguments: { origin_wing_id: s.wing_id, session_id: s.id, operation: 'terminal_read', arguments: {} } })
-            .then(result => { const ansi = result.result ? result.result.ansi : result.ansi; if (typeof ansi !== 'string') throw Error('No terminal preview'); entry.text = ansi.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07/g, ''); entry.error = ''; })
-            .catch(error => { entry.error = 'Terminal unavailable: ' + (error.message || 'Reconnect this machine.'); })
+        sendTunnelRequest(s.wing_id, { type: 'session.control', operation: 'session_action', arguments: { origin_wing_id: s.wing_id, session_id: s.id, operation: 'terminal_read', arguments: {} } }, { skipPasskey: true })
+            .then(result => { if (result.origin_wing_id !== s.wing_id || result.session_id !== s.id) throw Error('Session did not match'); const ansi = result.result?.ansi; if (typeof ansi !== 'string') throw Error('No terminal screen'); entry.text = ansi; entry.supported = true; entry.error = ''; })
+            .catch(error => { entry.supported = !/unsupported|unknown operation|not support/i.test(error.message); entry.error = 'Could not read the screen. Retry.'; })
             .finally(() => { entry.at = Date.now(); entry.busy = false; render(true); });
     }
     return entry;
@@ -132,24 +175,24 @@ function needsSummary() {
         (need.length > 2 ? '<a class="pp-more" href="#sessions">+' + (need.length - 2) + ' more</a>' : '') + '</div>' +
         (need.length ? need.slice(0, 2).map(needRow).join('') : '<p class="pp-quiet">Nothing waiting</p>') + '</section>';
 }
-function kicker(left, right = '') { return '<div class="pp-kick"><span>' + left + '</span><span>' + right + '</span></div>'; }
+function kicker(left, right = '') { return '<div class="pp-kick" data-stable><span>' + left + '</span><span>' + right + '</span></div>'; }
 function composer(label, s) {
     if (machineState(wingOf(s.wing_id)) !== 'connected') return '';
     const snap = ui.inputSnapshot, pending = snap?.pending, receipt = snap?.deliveryReceipt;
     const allowed = inputAllowed(s), ready = allowed && snap?.inputReady && !snap?.continuationReady;
     const unavailable = snap?.presentation?.archived ? 'Session ended' : snap?.presentation?.state === 'unsupported' ? 'Use terminal' : snap?.lifecycle?.state === 'working' ? 'Agent is working' : 'Messaging unavailable';
     const status = pending ? (snap.checking ? 'Checking delivery…' : 'Delivery unconfirmed') : receipt ? 'Delivered' : !allowed ? 'Read only' : snap?.notice || (ready ? '' : unavailable);
-    return '<form class="pp-composer" data-composer="' + esc(s.wing_id + '/' + s.id) + '"><label class="pp-sr" for="pp-message">' + esc(label) + '</label>' +
+    return '<form class="pp-composer pp-wing-composer" data-stable data-composer="' + esc(s.wing_id + '/' + s.id) + '"><label class="pp-sr" for="pp-message">' + esc(label) + '</label>' +
         '<div class="pp-compose-entry"><textarea id="pp-message" rows="1" placeholder="' + esc(label) + '"' + (ready ? '' : ' disabled') + '></textarea><button type="submit" class="pp-btn pp-btn-ink"' + (ready && drafts.get(ui.inputKey)?.trim() ? '' : ' disabled') + '>Send</button></div>' +
-        '<div class="pp-delivery" role="status">' + esc(status) + (pending || receipt ? '<small>Request ' + esc(pending?.request_id || receipt.request_id) + '</small>' : '') + '</div>' +
-        (pending ? '<pre class="pp-pending-text">' + esc(pending.input) + '</pre><button type="button" class="pp-btn" data-check-receipt' + (allowed && !snap.checking ? '' : ' disabled') + '>Check receipt</button>' : '') + '</form>';
+        '<div class="pp-delivery" role="status"><span>' + esc(status) + '</span><small>' + (pending || receipt ? 'Request ' + esc(pending?.request_id || receipt.request_id) : '') + '</small></div>' +
+        '<pre class="pp-pending-text"' + (pending ? '' : ' style="visibility:hidden"') + '>' + esc(pending?.input || '') + '</pre><button type="button" class="pp-btn" data-check-receipt' + (pending ? '' : ' style="visibility:hidden"') + (pending && allowed && !snap.checking ? '' : ' disabled') + '>Check receipt</button></form>';
 }
 function sessionRow(s) {
     const st = sessionState(s), last = lines(s).filter(l => l.who === 'agent').pop(), w = wingOf(s.wing_id);
     const line = st.key === 'need' ? (request(s).reason || (last && last.text) || '') : last ? last.text : '';
-    return '<a class="pp-srow" data-key="' + esc(s.wing_id + '/' + s.id) + '" data-k="' + esc(s.wing_id + '/' + s.id) + '" href="' + sessionHref(s) + '">' + chip(st) +
+    return '<a class="pp-srow" data-stable data-key="' + esc(s.wing_id + '/' + s.id) + '" data-k="' + esc(s.wing_id + '/' + s.id) + '" href="' + sessionHref(s) + '">' + chip(st) +
         '<span class="pp-sname"><b>' + esc(sessionDisplayName(s)) + '</b><i>' + esc([agentName(s.agent), machineName(w), project(s)].filter(Boolean).join(' · ')) + '</i></span>' +
-        '<span class="pp-sline">' + esc(staleState(s) || line) + '</span><time>' + esc(ago(last && last.at)) + '</time></a>';
+        '<span class="pp-sline">' + esc(staleState(s) || line) + '</span>' + relativeTime(last && last.at) + '</a>';
 }
 function machineRow(w, detail = '') {
     const m = machineState(w), n = machineSessions(w.wing_id).length;
@@ -158,4 +201,4 @@ function machineRow(w, detail = '') {
 }
 function machineOverflow() { return machines().length > machineLimit ? '<a class="pp-more" href="#machines">+' + (machines().length - machineLimit) + ' more</a>' : ''; }
 
-export { storage, inputAllowed, selectComposer, offlinePanel, accessPanel, machineActions, squares, read, lines, request, terminal, needCard, needRow, needsSummary, kicker, composer, sessionRow, machineRow, machineOverflow, sessionHref, project, chip, clock, ago, prose, lastSeen, awayText, isAway, staleState, retryButton, ui, drafts, numberWords, machineLimit, machineListLimit };
+export { storage, inputAllowed, selectComposer, offlinePanel, accessPanel, machineActions, squares, read, lines, request, terminal, needCard, needRow, needsSummary, kicker, composer, sessionRow, machineRow, machineOverflow, sessionHref, project, chip, clock, ago, relativeTime, prose, lastSeen, awayText, isAway, staleState, retryButton, ui, drafts, numberWords, machineLimit, machineListLimit };

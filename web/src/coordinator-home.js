@@ -171,6 +171,5 @@ export function initCoordinatorHome() {
     if (initialized) return;
     initialized = true;
     window.addEventListener('wingthing:conversation-inventory-updated', () => renderCoordinatorHome());
-    setInterval(() => renderCoordinatorHome(S.activeView === 'home' && document.visibilityState === 'visible'), 5000);
     renderCoordinatorHome();
 }

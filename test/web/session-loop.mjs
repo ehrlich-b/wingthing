@@ -11,7 +11,7 @@ const binary=process.env.WT_LOOP_BIN; assert.ok(binary && path.isAbsolute(binary
 const baseline=process.env.WT_LOOP_BASELINE==='1';
 const work=fs.mkdtempSync(path.join(process.env.WT_LOOP_SCRATCH,'r'));
 // Keep provider socket paths within Linux's 107-byte Unix socket limit.
-const home=path.join(work,'h'), state=path.join(work,'s'), bin=path.join(work,'b');
+const home=path.resolve(process.env.WT_LOOP_HOME || path.join(work,'h')), state=work, bin=path.join(work,'b');
 for(const p of [out,home,state,bin]) fs.mkdirSync(p,{recursive:true});
 for(const agent of ['claude','codex']) fs.copyFileSync(path.join(root,'test/web/session-loop/provider.py'),path.join(bin,agent));
 for(const agent of ['claude','codex']) fs.chmodSync(path.join(bin,agent),0o700);
@@ -39,6 +39,7 @@ try {
  await until(async()=> (await fetch(base+'/health')).ok);
  browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH || undefined,args:['--disable-background-networking','--renderer-process-limit=2']});
  const page=await browser.newPage({viewport:{width:1440,height:900}});
+ const compactShot=options=>page.screenshot({...options,path:options.path.replace(/\.png$/,'.jpg'),type:'jpeg',quality:60});
  page.on('dialog',dialog=>{dialogs.push(dialog.type());dialog.dismiss();});
  page.on('websocket',socket=>socket.on('framereceived',event=>{try{const msg=JSON.parse(event.payload);if(['error','pty.started'].includes(msg.type)) console.log('PTY',JSON.stringify({type:msg.type,message:msg.message,session:msg.session_id}));}catch{}}));
  page.on('pageerror',e=>console.log('PAGEERROR',e.message));
@@ -55,75 +56,76 @@ try {
   await page.goto(base+'/app/?provider='+agent+'#sessions');
   await page.locator('.pp-srow[href*="/'+sid+'"]').click();
   const inputs=[agent+' direct terminal',agent+' composer first',agent+' takeover line',agent+' composer after handback'];
-  if(agent==='codex' && !baseline) { for(const width of [1440,390]) { await page.setViewportSize({width,height:width===390?844:900});await page.waitForTimeout(150); await page.screenshot({path:path.join(out,'codex-zero-'+width+'.png')}); } await page.setViewportSize({width:1440,height:900}); }
+  if(agent==='codex' && !baseline) { for(const width of [1440,390]) { await page.setViewportSize({width,height:width===390?844:900});await page.waitForTimeout(150); await compactShot({path:path.join(out,'codex-zero-'+width+'.png')}); } await page.setViewportSize({width:1440,height:900}); }
   cli.stdin.write(inputs[0]+'\r');
   await check(agent+' direct user and assistant within 3s',async()=>{
-   const ms=await until(async()=> (await page.locator('.pp-row-you .pp-say').allTextContents()).includes(inputs[0])&&(await page.locator('.pp-row-session .pp-say').allTextContents()).includes('Reply to '+inputs[0]),3000);return {ms};
+   const ms=await until(async()=> (await page.locator('.pp-row-you .pp-message-full').allTextContents()).includes(inputs[0])&&(await page.locator('.pp-row-session .pp-message-full').allTextContents()).includes('Reply to '+inputs[0]),3000);return {ms};
   });
   cli.stdin.write('\x02q');
   await until(()=>cli.exitCode!==null);
-  await check(agent+' live terminal',async()=>{await until(async()=>(await page.locator('.pp-term').textContent()).includes('INPUT '+inputs[0]),3000);return await page.locator('.pp-term').textContent();});
-  for(const width of [1440,390]){await page.setViewportSize({width,height:width===390?844:900});await page.waitForTimeout(150);if(width===390) await page.locator('.pp-terminal').evaluate(el=>{el.open=true;}); await page.screenshot({path:path.join(out,agent+'-'+width+'.png')});}
+  await check(agent+' live terminal',async()=>{await until(async()=>(await page.locator('.pp-screen-snapshot .xterm-rows').textContent()).includes('INPUT '+inputs[0]),3000);return await page.locator('.pp-screen-snapshot .xterm-rows').textContent();});
+  for(const width of [1440,390]){await page.setViewportSize({width,height:width===390?844:900});await page.waitForTimeout(150);if(width===390) await page.locator('[data-session-panel=terminal]').click(); await compactShot({path:path.join(out,agent+'-'+width+'.png')});}
   await page.setViewportSize({width:1440,height:900});
   await check(agent+' composer takeover handback order',async()=>{
-   async function send(text){await until(()=>page.locator('#pp-message').isEnabled());await page.locator('#pp-message').fill(text);await page.locator('.pp-composer [type=submit]').click();await until(async()=>(await page.locator('.pp-row-you .pp-say').allTextContents()).includes(text),3000);}
+   async function send(text){await until(()=>page.locator('#pp-message').isEnabled());await page.locator('#pp-message').fill(text);await page.locator('.pp-composer [type=submit]').click();await until(async()=>(await page.locator('.pp-row-you .pp-message-full').allTextContents()).includes(text),3000);}
    await send(inputs[1]);
    await until(()=>page.locator('#pp-message').isEnabled());
    await page.evaluate(()=>{window.keptConversation=document.querySelector('.pp-conversation');window.keptComposer=document.querySelector('#pp-message');});
    await page.locator('#pp-message').fill('Draft stays during terminal control');
    await page.locator('[data-takeover]').click();
-   await page.locator('.pp-term-rail .xterm').waitFor({timeout:3000});
+   await page.locator('.pp-screen-control .xterm').waitFor({timeout:3000});
    assert.ok(await page.locator('.pp-conversation').isVisible());
    assert.ok(await page.locator('#pp-message').isVisible());
-   await until(()=>page.locator('#pp-message').isEnabled());
+   assert.equal(await page.locator('#pp-message').isDisabled(),true);
    assert.equal(await page.locator('#pp-message').inputValue(),'Draft stays during terminal control');
    assert.ok(await page.evaluate(()=>window.keptConversation===document.querySelector('.pp-conversation')&&window.keptComposer===document.querySelector('#pp-message')));
-   await page.locator('#pp-message').fill('Editable while terminal has control');
+   assert.equal(await page.locator('#pp-message').isDisabled(),true);
    assert.ok(await page.locator('.pp-side').isVisible());
-   await until(async()=>(await page.locator('.pp-term-rail .pp-kick').innerText()).includes('You have control'),3000);
-   for(const width of [1440,390]) {await page.setViewportSize({width,height:width===390?844:900});await page.waitForTimeout(150);assert.ok(await page.locator('.pp-conversation').isVisible());assert.ok(await page.locator('#pp-message').isVisible());await page.screenshot({path:path.join(out,agent+'-control-'+width+'.png')});}
+   await until(async()=>(await page.locator('[data-terminal-kicker]').innerText())==="You're typing",3000);
+   for(const width of [1440,390]) {await page.setViewportSize({width,height:width===390?844:900});await page.waitForTimeout(150);if(width===390) await page.locator('[data-session-panel=messages]').click();assert.ok(await page.locator('.pp-conversation').isVisible());assert.ok(await page.locator('#pp-message').isVisible());assert.ok(await page.locator('#pp-message').isDisabled());await compactShot({path:path.join(out,agent+'-control-'+width+'.png')});}
    await page.setViewportSize({width:1440,height:900});
    await sleep(1100); // A transcript refresh must keep the mounted terminal usable.
-   await page.locator('.pp-live-terminal .xterm-helper-textarea').focus();
+   await page.locator('.pp-screen-control .xterm-helper-textarea').focus();
    await page.keyboard.type(inputs[2]);await page.keyboard.press('Enter');
    await until(()=>fs.readFileSync(path.join(work,agent+'-pty.jsonl'),'utf8').includes(inputs[2]));
    await page.locator('[data-handback]').click();
    assert.ok(await page.locator('.pp-conversation').isVisible());
    assert.ok(await page.locator('#pp-message').isVisible());
-   assert.equal(await page.locator('#pp-message').inputValue(),'Editable while terminal has control');
+   assert.equal(await page.locator('#pp-message').inputValue(),'Draft stays during terminal control');
    assert.ok(await page.evaluate(()=>window.keptConversation===document.querySelector('.pp-conversation')&&window.keptComposer===document.querySelector('#pp-message')));
    await send(inputs[3]);
-   await until(async()=>(await page.locator('.pp-term').textContent()).includes(inputs[3]),3000);
-   const screen=await page.locator('.pp-term').textContent();
+   await until(async()=>(await page.locator('.pp-screen-snapshot .xterm-rows').textContent()).includes(inputs[3]),3000);
+   const screen=await page.locator('.pp-screen-snapshot .xterm-rows').textContent();
    for(const text of inputs) assert.ok(screen.includes('INPUT '+text));
    const received=fs.readFileSync(path.join(work,agent+'-pty.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
    fs.copyFileSync(path.join(work,agent+'-pty.jsonl'),path.join(out,agent+'-pty.jsonl'));
    assert.deepEqual(received,inputs);
-   const rows=await page.locator('.pp-row-you .pp-say').allTextContents();assert.deepEqual(rows,inputs);
-   for(const width of [1440,390]){await page.setViewportSize({width,height:width===390?844:900});await page.waitForTimeout(150);if(width===390) await page.locator('.pp-terminal').evaluate(el=>{el.open=true;}); await page.screenshot({path:path.join(out,agent+'-complete-'+width+'.png')});}
+   const rows=await page.locator('.pp-row-you .pp-message-full').allTextContents();assert.deepEqual(rows,inputs);
+   for(const width of [1440,390]){await page.setViewportSize({width,height:width===390?844:900});await page.waitForTimeout(150);if(width===390) await page.locator('[data-session-panel=terminal]').click(); await compactShot({path:path.join(out,agent+'-complete-'+width+'.png')});}
    return {received,rows};
   });
   if(agent==='codex' && !baseline) {
+   await page.setViewportSize({width:1440,height:900});
    const attach=spawn('nice',['-n','10',binary,'attach',sid],{cwd:work,env,stdio:['pipe','ignore','ignore']}); children.push(attach);
    await sleep(300);
    await check('codex repeated prompts without turn IDs and transient sending',async()=>{
     const repeated='Repeat without a turn ID';
-    const before=await page.locator('.pp-row-you .pp-say').allTextContents();
+    const before=await page.locator('.pp-row-you .pp-message-full').allTextContents();
     for(let turn=1;turn<=2;turn++) {
      attach.stdin.write(repeated+'\r');
      await page.locator('.pp-sending').waitFor({timeout:3000});
-     assert.equal(await page.locator('.pp-sending').innerText(),'Sending...');
-     assert.deepEqual(await page.locator('.pp-row-you .pp-say').allTextContents(),before.concat(Array(turn-1).fill(repeated)));
-     if(turn===1) for(const width of [1440,390]) {await page.setViewportSize({width,height:width===390?844:900}); await page.screenshot({path:path.join(out,'codex-sending-'+width+'.png')});}
+     assert.equal(await page.locator('.pp-sending').innerText(),'Sending…');
+     assert.deepEqual(await page.locator('.pp-row-you .pp-message-full').allTextContents(),before.concat(Array(turn-1).fill(repeated)));
+     if(turn===1) for(const width of [1440,390]) {await page.setViewportSize({width,height:width===390?844:900}); await compactShot({path:path.join(out,'codex-sending-'+width+'.png')});}
      await page.setViewportSize({width:1440,height:900});
      fs.writeFileSync(path.join(work,'release-transcript'),String(turn));
-     await until(async()=>(await page.locator('.pp-row-you .pp-say').allTextContents()).length===before.length+turn,3000);
+     await until(async()=>(await page.locator('.pp-row-you .pp-message-full').allTextContents()).length===before.length+turn,3000);
      await until(async()=>await page.locator('.pp-sending').count()===0,3000);
     }
     const expected=inputs.concat([repeated,repeated]).flatMap(text=>[text,'Reply to '+text]);
-    await until(async()=>(await page.locator('.pp-conversation .pp-say').allTextContents()).length===expected.length,3000);
-    assert.deepEqual(await page.locator('.pp-conversation .pp-say').allTextContents(),expected);
-    const rows=await page.locator('.pp-row-you .pp-say').allTextContents();
+    await until(async()=>(await page.locator('.pp-conversation .pp-message-full').allTextContents()).length===expected.length,3000);
+    assert.deepEqual(await page.locator('.pp-conversation .pp-message-full').allTextContents(),expected);
+    const rows=await page.locator('.pp-row-you .pp-message-full').allTextContents();
     assert.deepEqual(rows,before.concat([repeated,repeated]));
     const received=fs.readFileSync(path.join(work,'codex-pty.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
     assert.deepEqual(received,inputs.concat([repeated,repeated]));
@@ -132,21 +134,25 @@ try {
    });
    for(let i=0;i<6;i++) attach.stdin.write('Long follow-up '+i+' investigating session message order and native transcript replay\r');
    await until(async()=>await page.locator('.pp-conversation .pp-row').count()===24,10000);
-   for(const width of [1440,390]) {await page.setViewportSize({width,height:width===390?844:900});await page.waitForTimeout(150); await page.screenshot({path:path.join(out,'codex-limit24-'+width+'.png')});}
+   for(const width of [1440,390]) {await page.setViewportSize({width,height:width===390?844:900});await page.waitForTimeout(150); await compactShot({path:path.join(out,'codex-limit24-'+width+'.png')});}
    attach.stdin.write('One more turn beyond the message display limit\r');
-   await until(async()=>(await page.locator('.pp-conversation').innerText()).includes('+2 earlier messages'),10000);
+   // Reopening bounds the initial transcript window without moving a reader
+   // who kept the previous live window open while native turns arrived.
+   await page.reload();
+   await until(async()=>(await page.locator('.pp-earlier').innerText())==='+2 more',10000);
    assert.equal(await page.locator('.pp-conversation .pp-row').count(),24);
-   for(const width of [1440,390]) {await page.setViewportSize({width,height:width===390?844:900});await page.waitForTimeout(150); await page.screenshot({path:path.join(out,'codex-over-limit-'+width+'.png')});}
+   for(const width of [1440,390]) {await page.setViewportSize({width,height:width===390?844:900});await page.waitForTimeout(150); await compactShot({path:path.join(out,'codex-over-limit-'+width+'.png')});}
    attach.stdin.write('\x02q');await until(()=>attach.exitCode!==null);
   }
  }
+ await page.setViewportSize({width:1440,height:900});
  // Unknown provider executes an actual /bin/sh, with no transcript adapter.
  const before=list();const shell=spawn('nice',['-n','10',binary,'terminal','--unsandboxed','--name','Plain-shell','--cwd',work],{cwd:work,env,stdio:['pipe','ignore','ignore']});children.push(shell);
  await until(()=>list().some(id=>!before.includes(id)));const sid=list().find(id=>!before.includes(id));
  await sleep(700);shell.stdin.write('echo LIVE_SHELL_SCREEN\r');await sleep(300);shell.stdin.write('\x02q');
  await page.goto(base+'/app/?shell=1#sessions');await page.locator('.pp-srow[href*="/'+sid+'"]').click();
- await check('plain shell live terminal and honest chat note',async()=>{await until(async()=>(await page.locator('.pp-term').textContent()).includes('LIVE_SHELL_SCREEN'),3000);assert.ok((await page.locator('.pp-conversation').innerText()).includes('Chat view is available for Claude and Codex.'));assert.doesNotMatch(await page.locator('#paper').innerText(),/No messages in this session yet/);return 'live screen and availability note';});
- for(const width of [1440,390]){await page.setViewportSize({width,height:width===390?844:900});await page.waitForTimeout(150);if(width===390) await page.locator('.pp-terminal').evaluate(el=>{el.open=true;}); await page.screenshot({path:path.join(out,'shell-'+width+'.png')});}
+ await check('plain shell live terminal and honest chat note',async()=>{await until(async()=>(await page.locator('.pp-screen-snapshot .xterm-rows').textContent()).includes('LIVE_SHELL_SCREEN'),3000);assert.ok((await page.locator('.pp-conversation').innerText()).includes("wingthing can't read this agent's conversation, so there's no chat here. The terminal on the right is the whole session."));assert.doesNotMatch(await page.locator('#paper').innerText(),/No messages in this session yet/);return 'live screen and availability note';});
+ for(const width of [1440,390]){await page.setViewportSize({width,height:width===390?844:900});await page.waitForTimeout(150);if(width===390) await page.locator('[data-session-panel=terminal]').click(); await compactShot({path:path.join(out,'shell-'+width+'.png')});}
 } finally {
  if(browser)await browser.close();
  for(const cli of children)if(cli.exitCode===null)cli.kill('SIGTERM');

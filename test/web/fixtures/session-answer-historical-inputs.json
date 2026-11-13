@@ -1,0 +1,10 @@
+{
+  "evidence/history/manifest.json": "8d852162af06fbdba072c097c6983c51289e29e13838fd031a9678534005684f",
+  "evidence/REMEDIATION.json": "1e974814b93786c804a7dc3b36f30c29a40c3f51cd1c34c3819288879fe04faa",
+  "evidence/investigation.md": "7e062236de807f8911638893ea035088b6c96ed2fd9d38c240005cd300ab0b2d",
+  "evidence/design/Q11-ADDENDUM.md": "6706d862cd7c8488a93d087ee4a0486e9d40a48957738059c9dee1a3da6bb86f",
+  "evidence/design/Q11-WINGTHING-REDESIGN.md": "e54972f0ab4ca45004543cd23197297cbfa3bb975d7a86cbf8ab9139b648eaf2",
+  "evidence/design/Q11-wingthing-redesign-mockups.html": "e8fbc70386e5ab0fec0772a492309d87d2ca812d1c385c00a6653c0afe5c1f03",
+  "evidence/diagnostic-results.json": "c077df0c423e0d8bb9097bf02d13a481a47afb728794d5d336abfdf2fb3d69cc",
+  "evidence/delivery-probe.py": "21f9e1b9ed46edea159f3f65e6af72a45e0178a048451d3cf9b78907626a8f70"
+}

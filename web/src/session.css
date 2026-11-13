@@ -1,0 +1,63 @@
+#paper .pp-main[data-view="session"] { display: flex; flex-direction: column; padding-bottom: 16px; overflow: hidden; }
+.pp-session { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); flex: 1; min-height: 0; gap: 24px; }
+.pp-session-messages, .pp-session-terminal { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.pp-session-bar { flex: none; height: 44px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--wt-rule); font-size: 13px; font-weight: 600; color: var(--wt-ink-2); }
+.pp-session-bar span { font-size: 12px; font-weight: 400; }
+/* Keep the latest message next to the fixed composer, including short threads.
+   Auto space precedes short history and collapses when the transcript scrolls. */
+#paper .pp-session .pp-conversation { flex: 1; min-height: 0; padding: 12px 0; scrollbar-gutter: stable; display: flex; flex-direction: column; }
+.pp-session .pp-conversation > * { flex-shrink: 0; }
+#paper .pp-session .pp-conversation > :first-child { margin-top: auto; }
+#paper .pp-session .pp-row { height: 44px; padding: 5px 12px; display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 12px; margin: 0; overflow: hidden; }
+.pp-session .pp-who b, .pp-session .pp-who small { font-size: 12px; line-height: 16px; }
+.pp-session .pp-say { min-width: 0; font-size: 13px; align-self: center; }
+.pp-session .pp-say summary { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+.pp-session .pp-say summary span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pp-session .pp-say summary small { flex: none; color: var(--wt-blue); font-size: 12px; }
+.pp-session .pp-message-full { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 0; line-height: 1.5; }
+#paper .pp-session .pp-row:has(details[open]) { height: auto; min-height: 44px; overflow: visible; }
+.pp-session .pp-say[open] summary small { font-size: 0; }
+.pp-session .pp-say[open] summary small::after { content: 'Close'; font-size: 12px; }
+#paper .pp-session .pp-composer { border-top: 1px solid var(--wt-rule); padding-top: 12px; margin: 0; }
+.pp-session .pp-compose-entry textarea { min-width: 0; min-height: 44px; height: 44px; resize: none; }
+.pp-session .pp-compose-entry button { min-height: 44px; }
+.pp-session .pp-delivery, .pp-queue-note { height: 18px; min-height: 18px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; color: var(--wt-ink-3); }
+.pp-session-screen { position: relative; flex: 1; min-height: 0; overflow: hidden; margin: 12px 0; border: 1px solid var(--wt-rule-2); border-radius: var(--wt-r1); background: var(--wt-bg); }
+.pp-screen-snapshot, .pp-screen-control { position: absolute; inset: 10px; overflow: hidden; }
+#paper .pp-session [hidden] { display: none !important; }
+.pp-session .xterm { height: 100%; }
+.pp-pane-note { position: absolute; inset: 0; padding: 18px; background: var(--wt-bg); color: var(--wt-ink-2); font-size: 13px; }
+.pp-unlock { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 14px; overflow: auto; white-space: normal; scrollbar-gutter: stable; }
+.pp-unlock h3 { font-size: 15px; margin: 0; color: var(--wt-ink); }
+.pp-terminal-actions { flex: none; height: 44px; display: flex; align-items: center; }
+.pp-terminal-help { flex: none; height: 54px; padding-top: 8px; color: var(--wt-ink-3); font-size: 12px; }
+.pp-session[data-state="waiting"] .pp-session-screen { border-color: var(--wt-orange); }
+.pp-session[data-state="control"] .pp-session-screen { border-color: var(--wt-blue); }
+.pp-session:is([data-state="offline"], [data-state="ended"]) .pp-screen-snapshot { opacity: .55; }
+.pp-session[data-state="offline"] .pp-conversation { opacity: .55; }
+#paper .pp-session .pp-need { border-left: 2px solid var(--wt-orange); margin: 12px 0; padding: 12px; font-size: 13px; }
+.pp-session .pp-need b { color: var(--wt-orange); }
+.pp-session .pp-need p, .pp-session .pp-need button { margin-top: 8px; }
+.pp-session-note { padding: 12px 0; color: var(--wt-ink-2); font-size: 13px; }
+.pp-reading > div { height: 44px; border-bottom: 1px solid var(--wt-rule); background: var(--wt-surface); border-radius: var(--wt-r1); }
+.pp-session-switch { display: none; }
+@media (max-width: 760px) {
+    #paper .pp-main[data-view="session"] { height: 100%; min-height: 0; padding-bottom: 12px; }
+    .pp-session { display: flex; gap: 0; }
+    .pp-session > section { flex: 1; }
+    .pp-session[data-panel="messages"] .pp-session-terminal, .pp-session[data-panel="terminal"] .pp-session-messages { display: none; }
+    .pp-session-switch { flex: none; display: flex; height: 48px; padding-top: 4px; }
+    .pp-session-switch button { flex: 1; border: 1px solid var(--wt-rule-2); background: var(--wt-surface); color: var(--wt-ink-2); font: 13px var(--wt-sans); }
+    .pp-session-switch button[aria-pressed="true"] { color: var(--wt-ink); background: var(--wt-bg); border-bottom-color: var(--wt-blue); }
+    #paper .pp-session .pp-row, .pp-reading > div { height: 56px; }
+    .pp-session .pp-say summary { min-height: 44px; }
+    #paper .pp-session .pp-row:has(details[open]) { min-height: 56px; }
+    .pp-terminal-actions .pp-btn, .pp-session .pp-need .pp-btn { min-height: 44px; }
+}
+
+.pp-check-delivery { height: 44px; flex: none; }
+.pp-session .pp-screen-control #modifier-keys { display: none; }
+@media (max-width: 760px) { .pp-session .pp-screen-control #modifier-keys { display: flex; } }
+
+.pp-answer-terminal { height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--wt-ink-2); }
+.pp-answer-terminal .pp-btn { min-height: 44px; }

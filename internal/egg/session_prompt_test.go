@@ -336,7 +336,7 @@ func TestSessionPromptValidationReadinessAndCancellation(t *testing.T) {
 		dir, _, o := promptFixtureOptions(t)
 		var sends atomic.Int32
 		o.Send = func(context.Context, string) (PromptDelivery, error) { sends.Add(1); return PromptDelivery{}, nil }
-		for _, state := range []string{"working", "needs_input", "unknown"} {
+		for _, state := range []string{"working", "unknown"} {
 			func() {
 				next := o
 				next.Read = func(context.Context, int64, int) (SessionView, error) {
@@ -508,6 +508,155 @@ func TestSessionPromptComposedTextBothProviders(t *testing.T) {
 				wire, _ := json.Marshal(receipt)
 				t.Logf("provider=%s exact_text=%q sends=%d receipt=%s", agent, input, sends, wire)
 			})
+		})
+	}
+}
+
+func TestSessionPromptWaitingAnswerKeepsReservation(t *testing.T) {
+	for _, agent := range []string{"claude", "codex"} {
+		t.Run(agent, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				dir, _, o := promptFixtureOptions(t)
+				sends := 0
+				o.Input = "Yes"
+				cursor := int64(0)
+				o.AnswerToStateCursor = &cursor
+				o.Read = func(context.Context, int64, int) (SessionView, error) {
+					return SessionView{Agent: agent, ProviderSessionID: "ours", ProcessAlive: true, State: "needs_input", StateSource: agent + "_hook"}, nil
+				}
+				o.Send = func(context.Context, string) (PromptDelivery, error) {
+					sends++
+					return PromptDelivery{BytesEnqueued: 4}, nil
+				}
+				first, err := SubmitSessionPrompt(context.Background(), dir, o)
+				if err != nil || sends != 1 || first.NativeReceiptObserved || !first.TransportEnqueued {
+					t.Fatalf("waiting answer: %+v sends=%d err=%v", first, sends, err)
+				}
+				retry, err := SubmitSessionPrompt(context.Background(), dir, o)
+				if err != nil || sends != 1 || !retry.Retried {
+					t.Fatalf("waiting retry: %+v sends=%d err=%v", retry, sends, err)
+				}
+			})
+		})
+	}
+}
+
+func TestSessionPromptWaitingReadinessRequiresExactNativeProvider(t *testing.T) {
+	for _, agent := range []string{"claude", "codex"} {
+		view := SessionView{Agent: agent, ProviderSessionID: "ours", ProcessAlive: true, State: "needs_input", StateSource: agent + "_hook"}
+		if NativePromptReady(view) {
+			t.Fatal("human wait must not accept automatic prompts")
+		}
+		if !NativeAnswerReady(view) {
+			t.Fatal("waiting native input rejected")
+		}
+		for _, change := range []func(*SessionView){
+			func(v *SessionView) { v.ProviderSessionID = "" },
+			func(v *SessionView) { v.ProcessAlive = false },
+			func(v *SessionView) { v.StateSource = "unsupported" },
+			func(v *SessionView) { v.State = "working" },
+		} {
+			invalid := view
+			change(&invalid)
+			if NativeAnswerReady(invalid) {
+				t.Fatalf("unsafe waiting input: %+v", invalid)
+			}
+		}
+	}
+}
+
+func TestSessionPromptWaitingAnswerProductionReader(t *testing.T) {
+	for _, outcome := range []string{"running", "still_waiting", "resolved_before_send", "new_waiting_prompt"} {
+		t.Run(outcome, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				dir, home, cwd, _ := lifecycleFixture(t)
+				id := filepath.Base(dir)
+				lifecycleHook(t, home, id, "seq.00000000000000000001", `{"session_id":"ours","hook_event_name":"PermissionRequest","tool_name":"Bash"}`)
+				initial := lifecycleRead(t, dir, home, cwd, 0, 100)
+				cursor := initial.StateCursor
+				if initial.State != "needs_input" {
+					t.Fatalf("fixture not waiting: %+v", initial)
+				}
+				if outcome == "resolved_before_send" {
+					lifecycleHook(t, home, id, "seq.00000000000000000002", `{"session_id":"ours","hook_event_name":"Stop"}`)
+				}
+				if outcome == "new_waiting_prompt" {
+					lifecycleHook(t, home, id, "seq.00000000000000000002", `{"session_id":"ours","hook_event_name":"Stop"}`)
+					lifecycleHook(t, home, id, "seq.00000000000000000003", `{"session_id":"ours","hook_event_name":"PermissionRequest","tool_name":"Read"}`)
+				}
+				sends := 0
+				o := SessionPromptOptions{RequestID: "waiting-answer", Input: "Yes", AnswerToStateCursor: &cursor, Timeout: 20 * time.Second,
+					Read: func(ctx context.Context, after int64, limit int) (SessionView, error) {
+						return ReadSessionLifecycle(dir, "claude", cwd, home, "ours", true, after, limit)
+					},
+					Send: func(context.Context, string) (PromptDelivery, error) {
+						sends++
+						if outcome == "running" {
+							// Tool activity is a native running state, not a user message or prompt submission.
+							lifecycleHook(t, home, id, "seq.00000000000000000002", `{"session_id":"ours","hook_event_name":"PreToolUse","tool_name":"Bash"}`)
+						}
+						return PromptDelivery{BytesEnqueued: 4}, nil
+					},
+				}
+				start := time.Now()
+				receipt, err := SubmitSessionPrompt(t.Context(), dir, o)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want, wantSends := "waiting_answer_delivered", 1
+				if outcome == "still_waiting" {
+					want = "waiting_answer_expired"
+					if elapsed := time.Since(start); elapsed < 15*time.Second || elapsed > 16*time.Second {
+						t.Fatalf("timeout at %s", elapsed)
+					}
+				}
+				if outcome == "resolved_before_send" || outcome == "new_waiting_prompt" {
+					want = "not_sent"
+					wantSends = 0
+				}
+				if receipt.Status != want || sends != wantSends || receipt.NativeReceiptObserved {
+					t.Fatalf("receipt=%+v sends=%d want=%s/%d", receipt, sends, want, wantSends)
+				}
+				view := lifecycleRead(t, dir, home, cwd, 0, 100)
+				for _, event := range view.Events {
+					if event.Type == "message" || event.Type == "prompt_submitted" {
+						t.Fatalf("invented message receipt: %+v", event)
+					}
+				}
+				if outcome == "running" && view.State != "working" {
+					t.Fatalf("not running: %+v", view)
+				}
+				again, err := SubmitSessionPrompt(t.Context(), dir, o)
+				if err != nil || again.Status != want || !again.Retried || sends != wantSends {
+					t.Fatalf("replay=%+v sends=%d err=%v", again, sends, err)
+				}
+				t.Logf("%s: status=%s native_receipt=%t sends=%d retry=%t", outcome, receipt.Status, receipt.NativeReceiptObserved, sends, again.Retried)
+			})
+		})
+	}
+}
+
+func TestSessionPromptComposerNeverAnswersWaitingPrompt(t *testing.T) {
+	for _, agent := range []string{"claude", "codex"} {
+		t.Run(agent, func(t *testing.T) {
+			dir, _, o := promptFixtureOptions(t)
+			sends := 0
+			o.Input = "Saved follow-up"
+			o.Timeout = 3 * time.Second
+			o.Read = func(context.Context, int64, int) (SessionView, error) {
+				return SessionView{Agent: agent, ProviderSessionID: "ours", ProcessAlive: true, State: "needs_input", StateSource: agent + "_hook", StateCursor: 5}, nil
+			}
+			o.Send = func(context.Context, string) (PromptDelivery, error) {
+				sends++
+				return PromptDelivery{BytesEnqueued: 1}, nil
+			}
+			for i := 0; i < 2; i++ {
+				receipt, err := SubmitSessionPrompt(t.Context(), dir, o)
+				if err != nil || sends != 0 || receipt.Status != "not_sent" || !receipt.DefinitelyNotSent || receipt.TransportEnqueued || receipt.ProviderRequestAcknowledged {
+					t.Fatalf("composer answered waiting prompt: %+v sends=%d err=%v", receipt, sends, err)
+				}
+				t.Logf("%s timeout_seconds=3 status=%s sends=%d replay=%t", agent, receipt.Status, sends, receipt.Retried)
+			}
 		})
 	}
 }

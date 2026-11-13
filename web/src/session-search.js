@@ -123,7 +123,6 @@ export function initSessionSearch() {
         controller.run(query);
     }
     run();
-    setInterval(() => { if (S.activeView === 'home' && document.visibilityState === 'visible' && !input.value.trim() && !current?.loading) controller.run(''); }, 15000);
     window.addEventListener('online', run);
     input.addEventListener('input', () => {
         controller.retire(); clearTimeout(timer); reading++;

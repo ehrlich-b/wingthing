@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -47,7 +46,11 @@ func (r *PTYRoutes) browserDetachRoutes(conn *websocket.Conn, onlySession string
 }
 
 func (s *Server) forwardBrowserDetach(conn *websocket.Conn, onlySession string) {
-	if config.Channel() != "preview" {
+	s.browserMu.Lock()
+	tracked := s.browserConns[conn]
+	preview := tracked != nil && tracked.preview
+	s.browserMu.Unlock()
+	if !preview {
 		return
 	}
 	s.forwardDetachedRoutes(s.PTY.browserDetachRoutes(conn, onlySession))

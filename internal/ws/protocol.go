@@ -181,6 +181,8 @@ type RegisteredMsg struct {
 // ErrorMsg is sent for protocol/session errors. Session and viewer IDs let a
 // relay route an authorization failure back to the pending attach attempt.
 type ErrorMsg struct {
+	Code         string `json:"code,omitempty"`
+	Operation    string `json:"operation,omitempty"`
 	Type         string `json:"type"`
 	Message      string `json:"message"`
 	RequestID    string `json:"request_id,omitempty"`
@@ -225,15 +227,17 @@ type PTYStarted struct {
 
 // PasskeyChallenge is sent from wing to browser requesting passkey verification.
 type PasskeyChallenge struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id"`
-	Challenge string `json:"challenge"` // base64url random 32 bytes
-	RPID      string `json:"rp_id"`     // wing-configured WebAuthn relying-party ID
-	ViewerID  string `json:"viewer_id,omitempty"`
+	ControllerID string `json:"controller_id,omitempty"`
+	Type         string `json:"type"`
+	SessionID    string `json:"session_id"`
+	Challenge    string `json:"challenge"` // base64url random 32 bytes
+	RPID         string `json:"rp_id"`     // wing-configured WebAuthn relying-party ID
+	ViewerID     string `json:"viewer_id,omitempty"`
 }
 
 // PasskeyResponse is sent from browser to wing with the passkey assertion.
 type PasskeyResponse struct {
+	ControllerID      string `json:"controller_id,omitempty"`
 	Type              string `json:"type"`
 	SessionID         string `json:"session_id"`
 	ViewerID          string `json:"viewer_id,omitempty"`
@@ -262,9 +266,11 @@ type PTYPreview struct {
 
 // PTYInput carries keystrokes from browser to wing.
 type PTYInput struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id"`
-	Data      string `json:"data"` // base64-encoded
+	ControllerID string `json:"controller_id,omitempty"`
+	RequestID    string `json:"request_id,omitempty"`
+	Type         string `json:"type"`
+	SessionID    string `json:"session_id"`
+	Data         string `json:"data"` // base64-encoded
 }
 
 // PTYResize tells the wing to resize the terminal.
@@ -287,6 +293,7 @@ type PTYExited struct {
 
 // PTYAttach requests reattachment to an existing PTY session.
 type PTYAttach struct {
+	RequestID    string   `json:"request_id,omitempty"`    // relay-bound originating socket reply
 	ControllerID string   `json:"controller_id,omitempty"` // relay-assigned connection attempt
 	Takeover     bool     `json:"takeover,omitempty"`      // deliberate writer replacement
 	Type         string   `json:"type"`

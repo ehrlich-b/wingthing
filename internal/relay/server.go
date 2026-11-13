@@ -19,6 +19,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/tunnidentity"
 	"github.com/ehrlich-b/wingthing/internal/ws"
@@ -347,6 +348,7 @@ func (s *Server) SetSessionCache(sc *SessionCache) { s.sessionCache = sc }
 func (s *Server) GetSessionCache() *SessionCache { return s.sessionCache }
 
 type browserConnection struct {
+	preview       bool
 	outbound      *browserOutbound
 	userID        string
 	relayNotified map[string]bool
@@ -356,7 +358,7 @@ const maxRelayNotificationResources = 1024
 
 func (s *Server) trackBrowser(conn *websocket.Conn, userID string) {
 	s.browserMu.Lock()
-	s.browserConns[conn] = &browserConnection{userID: userID, relayNotified: make(map[string]bool)}
+	s.browserConns[conn] = &browserConnection{preview: config.Channel() == "preview", userID: userID, relayNotified: make(map[string]bool)}
 	s.browserMu.Unlock()
 }
 

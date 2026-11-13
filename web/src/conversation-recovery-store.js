@@ -81,7 +81,7 @@ function boundMessage(message) {
 // Pending input core fields are immutable once reserved. Only receipt evidence
 // (status, check count, last reason/time) may change, and only through
 // updatePendingEvidence, which refuses to rebind the request.
-const PENDING_CORE = ['request_id', 'input', 'userId', 'wingId', 'sessionId', 'providerSessionId', 'conversationId', 'createdAt'];
+const PENDING_CORE = ['request_id', 'input', 'userId', 'wingId', 'sessionId', 'providerSessionId', 'conversationId', 'createdAt', 'answerToStateCursor'];
 
 export function createPendingInput(fields) {
     var pending = { status: 'pending', checks: 0, lastCheckedAt: 0, lastReason: '' };
@@ -92,7 +92,7 @@ export function createPendingInput(fields) {
 
 export function updatePendingEvidence(pending, evidence) {
     var next = { ...pending };
-    ['status', 'checks', 'lastCheckedAt', 'lastReason'].forEach(function(key) { if (evidence[key] !== undefined) next[key] = evidence[key]; });
+    ['status', 'checks', 'lastCheckedAt', 'lastReason', 'transportEnqueued', 'transportEnqueuedAt', 'serverObservedAt', 'evidenceVersion', 'outcome', 'receipt'].forEach(function(key) { if (evidence[key] !== undefined) next[key] = evidence[key]; });
     PENDING_CORE.forEach(function(key) { next[key] = pending[key]; });
     return next;
 }
@@ -113,6 +113,8 @@ export function readExecution(storage, ref) {
     if (!validRecord(read.value, ref)) return { record: null, error: '' };
     var record = read.value;
     if (record.pending && !pendingMatchesExecution(record.pending, ref)) record.pending = null;
+    if (record.queued && !pendingMatchesExecution(record.queued, ref)) record.queued = null;
+    record.answers = Object.fromEntries(Object.entries(record.answers || {}).filter(([id,p]) => p?.request_id === id && pendingMatchesExecution(p, ref) && Number.isSafeInteger(p.answerToStateCursor) && validId(p.providerSessionId)));
     return { record: record, error: '' };
 }
 
@@ -127,21 +129,26 @@ function trySet(storage, key, encoded) {
 }
 
 // Bound by count and serialized size. Oldest messages go first; a pending input
-// is never trimmed and an execution holding one is never evicted. When the
+// or queued input is never trimmed or evicted. When the
 // browser quota is full, older transcript-only records are evicted first and,
 // as a last resort, the identity and pending input are kept without transcript.
 export function writeExecution(storage, ref, fields) {
     var key = executionKey(ref.userId, ref.wingId, ref.sessionId);
     if (!key) return { ok: false, error: 'Conversation identity is incomplete; nothing was saved.' };
+    var previous = readExecution(storage, ref).record;
+    if (fields.expectedRevision !== undefined && (previous?.revision || 0) !== fields.expectedRevision) {
+        return { ok: false, conflict: true, record: previous, error: '' };
+    }
     var messages = (fields.messages || []).slice(-TRANSCRIPT_MESSAGE_LIMIT).map(boundMessage);
     var trimmed = !!fields.trimmed || (fields.messages || []).length > messages.length;
     var record = {
-        v: 1, userId: ref.userId, wingId: ref.wingId, sessionId: ref.sessionId,
+        v: 1, revision: (previous?.revision || 0) + 1, userId: ref.userId, wingId: ref.wingId, sessionId: ref.sessionId,
         conversationId: fields.conversationId || '', providerSessionId: fields.providerSessionId || '', agent: fields.agent || '',
         cursor: Number.isSafeInteger(fields.cursor) ? fields.cursor : 0,
         lifecycle: fields.lifecycle ? { ...fields.lifecycle, events: [] } : null,
         observedAt: fields.observedAt || 0, savedAt: fields.savedAt || 0,
-        messages: messages, trimmed: trimmed, pending: fields.pending || null,
+        answers: fields.answers || {}, lastInputRequestId: fields.lastInputRequestId || '', draftRequestId: fields.draftRequestId || '',
+        messages: messages, trimmed: trimmed, pending: fields.pending || null, queued: fields.queued || null, draft: fields.draft || null,
     };
     var encoded = JSON.stringify(record);
     while (encoded.length > EXECUTION_RECORD_BYTES && record.messages.length) {
@@ -169,7 +176,7 @@ export function writeExecution(storage, ref, fields) {
         writeJSON(storage, indexKey(ref.userId), index);
         return { ok: false, error: 'This browser could not save conversation evidence (storage full or disabled).' };
     }
-    index.push([ref.wingId, ref.sessionId, record.savedAt, record.conversationId, record.pending ? 1 : 0]);
+    index.push([ref.wingId, ref.sessionId, record.savedAt, record.conversationId, record.pending || record.queued || record.draft || Object.values(record.answers).some(a => !a.outcome) ? 1 : 0]);
     var overflow = index.length - EXECUTION_CACHE_LIMIT;
     if (overflow > 0) {
         var keep = [];
@@ -184,7 +191,28 @@ export function writeExecution(storage, ref, fields) {
         index = keep;
     }
     if (!writeJSON(storage, indexKey(ref.userId), index) && !warning) warning = 'Conversation evidence was saved, but its browser index could not be updated.';
-    return { ok: true, error: warning };
+    return { ok: true, record: record, error: warning };
+}
+
+// Queued input keeps its exact execution alive after navigation or reload.
+export function queuedExecutions(storage, userId) {
+    const refs = new Map(readIndex(storage, userId).map(entry => [
+        executionKey(userId, entry[0], entry[1]), { userId, wingId: entry[0], sessionId: entry[1] },
+    ]));
+    // The record can be durable even when a quota failure prevented its index
+    // update. Recover those records too, rather than losing accepted input.
+    try {
+        for (let i = 0; i < storage.length; i++) {
+            const key = storage.key(i);
+            if (!key?.startsWith(EXECUTION_PREFIX)) continue;
+            const [owner, wingId, sessionId] = JSON.parse(key.slice(EXECUTION_PREFIX.length));
+            if (owner === userId && executionKey(owner, wingId, sessionId) === key) refs.set(key, { userId, wingId, sessionId });
+        }
+    } catch { /* Indexed records remain available when storage cannot enumerate. */ }
+    return [...refs.values()].map(ref => readExecution(storage, ref).record)
+        .filter(record => record?.queued).map(record => ({
+            userId, wingId: record.wingId, sessionId: record.sessionId, providerSessionId: record.queued.providerSessionId,
+        }));
 }
 
 // Other executions of one logical conversation that still hold unresolved

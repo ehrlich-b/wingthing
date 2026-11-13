@@ -1,0 +1,137 @@
+{
+  "verdict": "retry-with-plan",
+  "class": "builder-defect",
+  "repeated_findings": true,
+  "why": "Repeated implementation and fixture gaps couple composer availability to a missing waiting-answer receipt. Final fb896393 requires browser enqueue evidence to resolve fresh working reads, but lost responses never supply it; actual three-second backend wait is added to the browser fifteen-second timer. Tests cover receipt arrival and use a twenty-second backend wait, hiding both faults. Reproduction also finds stale replacement readers retaining or overwriting late evidence. Not an infrastructure, credential, host or headless limitation: real same-request backend replay resolves delivery with one Send. See evidence/investigation.md and evidence/diagnostic-results.json.",
+  "needed": [],
+  "host": "forge2",
+  "acceptance": [
+    {
+      "id": "R1",
+      "requirement": "Continue from exact FINAL fb896393e94e710fd23cc52ee49c091ffbbccd8f, preserving ancestors 731f80d8, 3c118c32, e509bea5 and 537b462e. Available offline source is historical/attempt-3/repo; this remediation repo also pins it at refs/diagnostics/session-answer-subject. Read the retained design inputs in evidence/design. Use unprivileged headless local fixtures only, nice -n 10, go test -p 2, no network/root/devices/downloads/pushes/deploys. Exact hostname equality defines forge; forge2-vm permits ordinary gates. Author and commit all new work as Bryan Ehrlich <ehrlich.bryan@gmail.com>. Common setup before commands: export npm_config_offline=true npm_config_audit=false npm_config_fund=false GOPROXY=off GOSUMDB=off; mkdir -p ../scratch/tmp; export TMPDIR=\"$PWD/../scratch/tmp\". Run make web and go build -p 2 -o ../scratch/wt ./cmd/wt once before browser commands. Existing shared npm/Go caches and /work/cache/ms-playwright provide dependencies offline; do not install or download browsers.",
+      "command": "git merge-base --is-ancestor fb896393e94e710fd23cc52ee49c091ffbbccd8f HEAD && git merge-base --is-ancestor e509bea54ed562fe825defebba7be7a53144840a HEAD && python3 -c 'import os,socket; assert os.geteuid()!=0; print(socket.gethostname(),socket.gethostname()==\"forge\")'",
+      "fixtures": [
+        "web/src/shell/views/session.js",
+        "internal/egg/session_prompt.go"
+      ]
+    },
+    {
+      "id": "R2",
+      "requirement": "Make waiting answers a separate durable lifecycle keyed by original user, wing, execution, provider, request ID and answer_to_state_cursor. Delivery evidence is a matching exact-provider native receipt, or durable transport enqueue plus a newer exact-provider hook transition out of that waiting prompt. Fresh working reads without enqueue evidence remain unknown; neither successful RPC, elapsed time nor cached state proves sent. Preserve provider_request_acknowledged=false where no causal provider ID exists. Ordinary prompts retain explicit receipt checks and are not automatically resubmitted.",
+      "command": "node --test web/src/conversation-recovery.test.js web/test/conversation-response.test.js",
+      "fixtures": [
+        "web/src/conversation-recovery.js",
+        "web/src/conversation-response.js",
+        "web/src/conversation-recovery-store.js",
+        "web/src/conversation-state.js"
+      ]
+    },
+    {
+      "id": "R3",
+      "requirement": "Add receipt-only reconciliation for an already reserved waiting answer using the existing authenticated session_read route with an optional original request selector. Factor the backend reservation/receipt evaluation into a no-Send status path; missing or crash-gap reservations remain unknown and the lookup must never reserve or enqueue input. Preserve all existing caller ownership, workspace, provider and session checks. Query automatically after lost response, on reopening an unresolved waiting answer, and during fresh reads until terminal evidence is found; bounded retry on errors. A separate unresolved-delivery record must not permanently gate the working composer or an idle saved follow-up. Working must allow editing/queueing even while delivery is unknown; retain and display that uncertainty. Do not infer sent from working alone or replay with a new request ID.",
+      "command": "go test -p 2 ./internal/egg ./internal/localmcp -run 'SessionPrompt|BrowserSessionControl' -count=1 -timeout=60s && node --test web/src/conversation-recovery.test.js web/test/conversation-response.test.js",
+      "fixtures": [
+        "internal/egg/session_prompt.go",
+        "internal/localmcp/session_prompt.go",
+        "internal/localmcp/session_lifecycle.go",
+        "internal/localmcp/conversation_browser.go",
+        "web/src/conversation-recovery.js"
+      ]
+    },
+    {
+      "id": "R4",
+      "requirement": "Expose authoritative enqueue time and server deadline/remaining duration from the durable reservation, plus the server observation clock, in receipt/status evidence. Use a monotonic local countdown adjusted from server remaining time, not browser request time or receipt arrival. At enqueue t=0 and the real timeout_seconds=3 response t=3, the waiting deadline is t=15, never t=18. Reload at t=0, t=2, t=4, t=14 and after expiry preserves the same deadline. Force a fresh exact-provider read at the deadline; stale/offline/no-enqueue evidence stays unknown. Return editable original text at the waiting deadline after fresh unchanged-prompt evidence. Retain the original request and transport evidence: the requested Not sent - try again describes the explicit waiting_answer_expired prompt outcome, not proof that zero bytes were transported; definitely_not_sent is reserved for proven no-attempt/preflight rejection. If the prompt outcome is unknown, show Delivery unknown. Late native/delivered evidence supersedes uncertainty and must never be discarded or resurrect an old draft over a new send.",
+      "command": "go test -p 2 ./internal/egg ./internal/localmcp -run 'SessionPrompt|BrowserSessionControl' -count=1 -timeout=60s && node --test web/src/conversation-recovery.test.js web/test/conversation-response.test.js",
+      "fixtures": [
+        "internal/egg/session_prompt.go",
+        "web/src/conversation-recovery.js",
+        "web/src/conversation-response.js",
+        "web/src/conversation-recovery-store.js"
+      ]
+    },
+    {
+      "id": "R5",
+      "requirement": "Add production-reader traces for both Claude and Codex: enqueue then lose tunnel response; 30s of fresh working reads with no browser enqueue receipt; no-enqueue with terminal independently resolving the prompt; delayed responses before and after 15s; a still-waiting response after the real 3s receipt wait; automatic receipt recovery without manual Check delivery. Assert enabled working composer, honest sent/unknown/expired/not-sent outcomes, no wrong-origin adoption, no duplicate Send, and no arbitrary unconfirmed/inputReady=false deadlock. Reuse the ten diagnostic scenarios as failure inputs, changing their assertions into product regressions in the existing reader/response tests. Tests must prove they fail fb896393 and pass the retry; prohibit success through a fixture-invented waiting-answer confirmed receipt.",
+      "command": "node --test web/src/conversation-recovery.test.js web/test/conversation-response.test.js",
+      "fixtures": [
+        "web/src/conversation-recovery.test.js",
+        "web/test/conversation-response.test.js",
+        "test/web/look.mjs"
+      ]
+    },
+    {
+      "id": "R6",
+      "requirement": "Test reload/navigation after durable browser reservation but before transport; after enqueue but before response; after lost/unconfirmed response; while checking; while working; after deadline; after receipt and follow-up completion. Merge storage evidence by immutable request identity and monotonic evidence version/CAS so an older controller or poll cannot overwrite a late not-sent/delivered result, restored draft or newer pending input. All late responses remain attached to the original user/wing/execution/provider/prompt cursor; replacements and equal-ID sibling sessions stay untouched. Reopening performs no transport Send.",
+      "command": "node --test web/src/conversation-recovery.test.js web/test/conversation-response.test.js",
+      "fixtures": [
+        "web/src/conversation-recovery-store.js",
+        "web/src/conversation-recovery.test.js",
+        "web/test/conversation-response.test.js"
+      ]
+    },
+    {
+      "id": "R7",
+      "requirement": "Preserve separate saved follow-up and explicit waiting answer. Follow-up queued while working must survive navigation/reload, stay held during needs_input, and never answer that later prompt. A typed Yes must be accepted immediately despite the saved follow-up. Once fresh native idle/ready is observed, atomically reserve and drain the follow-up exactly once, including after lost-answer recovery or an independently retained unknown answer; more reads/reloads/status lookups send neither message again. Recheck exact prompt state cursor at the actual transport gate: if terminal already resolved it or a new prompt replaced it, do not send the old answer later; return its draft with explicit not-sent evidence.",
+      "command": "go test -p 2 ./internal/egg ./internal/localmcp -run 'SessionPrompt|BrowserSessionControl' -count=1 -timeout=60s && node --test web/src/conversation-recovery.test.js web/test/conversation-response.test.js",
+      "fixtures": [
+        "internal/egg/session_prompt.go",
+        "internal/egg/session_prompt_test.go",
+        "web/src/conversation-recovery.test.js"
+      ]
+    },
+    {
+      "id": "R8",
+      "requirement": "Build a finite production transport/reader bridge: use real SubmitSessionPrompt with timeout_seconds=3 and native hook fixtures for both providers; feed its serialized unconfirmed enqueue/status results into the actual createConversationReader with an injected clock. Lose/delay the response only after backend Send and count actual Send invocations. Assert enqueue timestamp, 15s deadline, receipt-only lookup with zero Send calls, preflight no-send, crash gap and replay identity. Browser fixtures must support lost/delayed/no-receipt modes without fabricating waiting-answer confirmation; keep ordinary user-message confirmation tied to a real fixture-native event. Retain commands, source hashes, effect counts and observed states outside the checkout.",
+      "command": "go test -p 2 ./internal/egg ./internal/localmcp -run 'SessionPrompt|BrowserSessionControl' -count=1 -timeout=60s && node --test web/src/conversation-recovery.test.js web/test/conversation-response.test.js",
+      "fixtures": [
+        "internal/egg/session_prompt_test.go",
+        "test/web/look.mjs",
+        "web/src/conversation-recovery.test.js"
+      ]
+    },
+    {
+      "id": "R9",
+      "requirement": "Preserve all eleven addendum section 1 states and exact kicker/sentence copy. Messages stays left and Terminal right with identical desktop column/screen boxes across states, a coloured read-only screen by default, needs-you card and Answer in the terminal, no-readable-transcript sentence, and Messages | Terminal phone switch defaulting to Terminal for needs_input. Capture 1440x900 and 390x844 with at least eight long-name items plus 0/1/24/32 turns and inline +N more; long text remains expandable by touch and keyboard. Existing 49 state captures are baseline evidence, not a substitute for rerunning.",
+      "command": "PLAYWRIGHT_BROWSERS_PATH=/work/cache/ms-playwright PLAYWRIGHT_MODULE=\"$PWD/web/node_modules/playwright/index.mjs\" WT_LOOK_BIN=\"$PWD/../scratch/wt\" TMPDIR=\"$PWD/../scratch/tmp\" WT_LOOK_SHELL=states WT_LOOK_SHOTS=\"$PWD/../evidence/retry-states\" node test/web/look.mjs",
+      "fixtures": [
+        "test/web/look.mjs",
+        "test/web/session-states.mjs",
+        "web/src/shell/views/session.js",
+        "web/src/session.css"
+      ]
+    },
+    {
+      "id": "R10",
+      "requirement": "Preserve Take over -> Hand back -> Take over in the same pane at both widths; location.hash and shell sidebar stay unchanged, composer disables during control and restores appropriately afterward, terminal input appears in Messages in order after handback. Start session lands directly on this page with Reading then first screen. Preserve terminal/canvas application palette and absence of forbidden copy/colours.",
+      "command": "PLAYWRIGHT_BROWSERS_PATH=/work/cache/ms-playwright PLAYWRIGHT_MODULE=\"$PWD/web/node_modules/playwright/index.mjs\" WT_LOOK_BIN=\"$PWD/../scratch/wt\" TMPDIR=\"$PWD/../scratch/tmp\" WT_LOOK_SHELL=states WT_LOOK_SHOTS=\"$PWD/../evidence/retry-states\" node test/web/look.mjs && PLAYWRIGHT_BROWSERS_PATH=/work/cache/ms-playwright PLAYWRIGHT_MODULE=\"$PWD/web/node_modules/playwright/index.mjs\" WT_LOOK_BIN=\"$PWD/../scratch/wt\" TMPDIR=\"$PWD/../scratch/tmp\" WT_LOOK_SHELL=launch WT_LOOK_SHOTS=\"$PWD/../evidence/retry-launch\" node test/web/look.mjs && node --test test/web/pty-order.mjs && python3 -c 'import subprocess; r=subprocess.run([\"grep\",\"-rn\",r\"Preview unavailable\\|Agent has control\\|2B2420\\|EFE6D6\",\"web/src\"]); assert r.returncode==1'",
+      "fixtures": [
+        "test/web/session-states.mjs",
+        "test/web/look.mjs",
+        "test/web/pty-order.mjs",
+        "web/src/terminal.js",
+        "web/src/canvas.js"
+      ]
+    },
+    {
+      "id": "R11",
+      "requirement": "Keep all four no-jump routes: Home, Sessions, Session and Machine at both sizes for 60 fixture seconds, changing lines/state timestamps/one machine connection every 2s; at least 120 geometry samples per data-stable element, zero unintended x/y/width/height changes and layout-shift total zero. Keep stable node identity, composer focus/caret and scrolled-list scrollTop; any deliberate insertion moves only subsequent rows and is recorded. Use the existing fixture and cached Chromium, not downloads or long additional suites.",
+      "command": "PLAYWRIGHT_BROWSERS_PATH=/work/cache/ms-playwright PLAYWRIGHT_MODULE=\"$PWD/web/node_modules/playwright/index.mjs\" WT_LOOK_BIN=\"$PWD/../scratch/wt\" TMPDIR=\"$PWD/../scratch/tmp\" WT_LOOK_SHELL=session-stable WT_LOOK_SHOTS=\"$PWD/../evidence/retry-stability\" node test/web/look.mjs",
+      "fixtures": [
+        "test/web/stable.mjs",
+        "test/web/look.mjs"
+      ]
+    },
+    {
+      "id": "R12",
+      "requirement": "Run only the required gates and these focused tests, offline: make web; go vet -p 2 ./...; make test-launch-plan; git diff --check 537b462e HEAD. Build one local fixture binary using go build -p 2 -o ../scratch/wt ./cmd/wt after web assets; initialize scratch/tmp. Set npm_config_offline=true, npm_config_audit=false, GOPROXY=off, GOSUMDB=off and PLAYWRIGHT_BROWSERS_PATH=/work/cache/ms-playwright. Commit candidate first, declare every acceptance and gate with meaningful existing fixtures, run readiness.py, retain execution logs and compact screenshots outside checkout, and report exact HEAD, every acceptance, measured retained bytes and all workarounds. Do not bypass failed checks by moving/renaming/deleting files.",
+      "command": "make web && go vet -p 2 ./... && make test-launch-plan && git diff --check 537b462e HEAD",
+      "fixtures": [
+        "Makefile",
+        "go.mod",
+        "go.sum",
+        "web/package.json",
+        "web/package-lock.json"
+      ]
+    }
+  ]
+}

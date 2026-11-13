@@ -22,9 +22,10 @@ func (s *Server) resolveOwnedLifecycleSession(ref string) (eggclient.LocalSessio
 }
 
 type sessionLifecycleArgs struct {
-	Session     string `json:"session"`
-	AfterCursor int64  `json:"after_cursor"`
-	Limit       int    `json:"limit"`
+	Session         string                     `json:"session"`
+	AfterCursor     int64                      `json:"after_cursor"`
+	Limit           int                        `json:"limit"`
+	OriginalRequest *egg.SessionPromptSelector `json:"original_request,omitempty"`
 }
 
 func LifecycleResult(view egg.SessionView) map[string]any {
@@ -75,6 +76,13 @@ func (s *Server) toolSessionRead(ctx context.Context, arguments json.RawMessage)
 		return nil, err
 	}
 	result := LifecycleResult(view)
+	if args.OriginalRequest != nil {
+		receipt, err := s.Sessions.PromptReceipt(ctx, s.sessionAuthority(), session.ID, *args.OriginalRequest)
+		if err != nil {
+			return nil, err
+		}
+		result["receipt"] = receipt
+	}
 	s.addSessionContinuation(result, view)
 	return result, nil
 }

@@ -9,21 +9,50 @@ Scope: `conversation-recovery.js` (controller), `conversation-recovery-store.js`
 ## Reader contract
 
 - Opening or reopening a conversation **only reads** (`session.control`
-  `session_read` on the exact wing and session). The browser does not prompt,
-  check a receipt, checkpoint, wake, kill or attach a terminal writer. The
-  earlier reader automatically re-submitted a restored pending prompt when it
-  reopened. That behavior is removed.
+  `session_read` on the exact wing and session). An unresolved waiting answer
+  also gets automatic receipt-only reconciliation through that route, using
+  its original request selector; this never reserves or enqueues input. The
+  browser does not re-submit a restored prompt, checkpoint, wake, kill or
+  attach a terminal writer.
 - **Send** reserves an immutable pending input before any transport:
   `request_id`, text, user, wing, session, provider conversation and logical
   conversation. Only receipt evidence (status, check count, last reason/time)
   changes afterwards.
-- **Check receipt** is explicit. It re-submits the same `request_id` and text to
-  the same exact execution, and the wing replays it without resending input.
-  Only `native_receipt_observed` clears it. Only `not_sent` with
-  `definitely_not_sent` releases the text, which returns to the empty composer
-  whether the answer came from Send or Check receipt. Every other outcome stays
-  "delivery unconfirmed". A request still in flight when the reader closes
-  records its outcome under its own execution without updating the screen.
+- **Check receipt for an ordinary prompt** is explicit. It re-submits the same
+  `request_id` and text to the same exact execution, and the wing replays it
+  without resending input.
+  Prompts clear on `native_receipt_observed`; `not_sent` with
+  `definitely_not_sent` returns their text as a draft. Other outcomes stay
+  delivery unconfirmed and are never automatically resubmitted.
+- **Waiting prompts accept an explicit typed answer.** During fresh
+  `needs_input`, the composer accepts Send alongside “Answer in the terminal”
+  and its focus/takeover action. The answer has a separate durable lifecycle,
+  keyed by the original user, wing, execution, provider, `request_id` and
+  `answer_to_state_cursor`. A saved follow-up never answers that prompt or
+  prevents an explicit answer.
+  - After a lost response, on reopen and during fresh reads, the reader
+    automatically reconciles the original answer through receipt-only
+    `session_read`, with bounded retry on errors and no transport Send.
+  - The countdown uses the browser's monotonic clock, anchored to the server's
+    remaining time for the durable enqueue deadline. Browser and server wall
+    clocks are never compared. The three-second receipt wait consumes part of
+    the fifteen-second waiting window; it does not start a new window.
+  - At the deadline, the reader requests fresh exact-provider evidence and
+    reconciles the receipt. Fresh evidence that the same prompt still waits
+    yields `waiting_answer_expired`, returning the original editable text with
+    “Not sent - try again”. This outcome retains transport evidence and does
+    not mean zero bytes were transported. Stale, offline or missing-enqueue
+    evidence stays “Delivery unknown”; elapsed time alone never proves sent
+    or not sent. Matching native receipt evidence, or durable enqueue plus a
+    newer exact-provider hook transition out of that prompt, proves delivery.
+    Late delivery evidence supersedes uncertainty without overwriting newer
+    composer input.
+  - Saved follow-ups stay held during `needs_input` and reserve/drain once
+    after a fresh native idle/ready read. An ordinary send refused because the
+    agent entered `needs_input` returns to the queue when the receipt proves
+    no attempt (`not_sent`, `definitely_not_sent`, and retry-when-ready evidence).
+    Working keeps the composer editable for follow-ups even while a separate
+    waiting answer's delivery is unknown.
 - When a logical conversation moves to a new execution (for example after
   Resume in terminal), earlier unresolved input stays bound to the earlier
   execution. It is shown as "Unresolved input on an earlier execution" and

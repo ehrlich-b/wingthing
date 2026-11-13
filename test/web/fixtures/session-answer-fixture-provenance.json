@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "historical_source_commit": "b6e4238b99a9b1bd35c6f5c09a2e193e2c8a2486",
+  "historical_manifest": "session-answer-historical-inputs.json",
+  "public_manifest": "session-answer-baseline-inputs.json",
+  "changes": {
+    "evidence/REMEDIATION.json": "Replace the historical source checkout with historical/attempt-3/repo.",
+    "evidence/history/manifest.json": "Number attempts chronologically; source paths resolve below historical/attempt-N and copy paths below evidence/history/attempt-N. Original file hashes and observations are retained.",
+    "evidence/design/Q11-WINGTHING-REDESIGN.md": "Replace the observed host name with machine-1."
+  },
+  "scope": "Public packet hashes identify sanitized bytes; historical hashes identify only the original private packet. The packet contains a manifest of historical observations, not the underlying historical files."
+}

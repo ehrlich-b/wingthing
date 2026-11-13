@@ -42,7 +42,14 @@ const env = { PATH:process.env.PATH,TMPDIR:tmp,HOME:home,WINGTHING_DIR:state,WT_
 for (const name of cacheSelectors) if (process.env[name] !== undefined) env[name] = process.env[name];
 fs.writeFileSync(path.join(state,'wing.yaml'),'label: Studio\n',{mode:0o600});
 const log = fs.openSync(path.join(out,'roost.log'),'w');
-const startRoost = () => spawn('nice',['-n','10',path.join(root,'wt'),'roost','start','--foreground','--addr','127.0.0.1:'+port],{cwd:root,env,stdio:['ignore',log,log]});
+let readyToken = '', startupError;
+const startRoost = () => {
+    readyToken = ''; startupError = undefined;
+    const child = spawn('nice',['-n','10',path.join(root,'wt'),'roost','start','--foreground','--addr','127.0.0.1:'+port],{cwd:root,env:{...env,WT_ROOST_READY_FD:'3'},stdio:['ignore',log,log,'pipe']});
+    child.on('error', error => { startupError = error; });
+    child.stdio[3].on('data', data => { readyToken += data; });
+    return child;
+};
 let roost = startRoost(), invitationCount = 0;
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
 const proof=[]; const pairs=[], fixtureSockets=[];let browser, sessionStarted=false;
@@ -55,7 +62,7 @@ const devices = () => cli('devices');
 const decode = link => JSON.parse(inflateRawSync(Buffer.from(link.split('#v1z.')[1],'base64url')));
 const encode = a => 'wingthing://pair#v1z.'+deflateRawSync(Buffer.from(JSON.stringify(a))).toString('base64url');
 async function ready() {
-    for(let i=0;i<150;i++){if(roost.exitCode!==null)throw Error('roost exited');try{if((await fetch(base+'/health')).ok)return;}catch{}await sleep(100);}
+    for(let i=0;i<150;i++){if(startupError)throw startupError;if(roost.exitCode!==null||roost.signalCode!==null)throw Error('roost exited before embedded wing readiness');if(readyToken==='ready\n')return;await sleep(100);}
     throw Error('roost not ready');
 }
 async function resetRoost() {
@@ -68,11 +75,11 @@ async function pair() {
     if (invitationCount >= 6) await resetRoost();
     invitationCount++;
     const child=spawn('nice',['-n','10',path.join(root,'wt'),'pair','--show-link'],{cwd:root,env,stdio:['pipe','pipe','pipe']});
-    pairs.push(child);let output='';child.stdout.on('data',b=>output+=b); // Invitation remains only in memory.
-    child.stderr.on('data',()=>{});
+    pairs.push(child);let output='', errors='';child.stdout.on('data',b=>output+=b); // Invitation remains only in memory.
+    child.stderr.on('data',b=>errors+=b);
     let link;
     for(let i=0;i<100;i++){link=output.match(/wingthing:\/\/pair#v1z\.[A-Za-z0-9_-]+/)?.[0];if(link)break;await sleep(100);}
-    assert.ok(link,'pair command did not issue a link');
+    assert.ok(link,'pair command did not issue a link: '+errors);
     return {child,link,output:()=>output};
 }
 async function oldWing(id, publicKey) {

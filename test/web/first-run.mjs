@@ -158,6 +158,7 @@ try {
                 window.fixture(true, 9); window.requests = []; window.installed = true;
                 const wing = window.state.wingsData[8]; delete wing.agents; wing.locked = true; wing.tunnel_error = error;
                 window.picker(wing.wing_id);
+                window.redraw();
             }, error);
             await page.getByRole('heading', {name: 'Machine locked'}).waitFor();
             assert.equal(await page.locator('#pp-launch-machine').inputValue(), 'machine-8');

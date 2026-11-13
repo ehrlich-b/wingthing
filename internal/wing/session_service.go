@@ -52,7 +52,7 @@ func configureSessionRegistration(sessions *wingsession.Service, ctx context.Con
 			defer bridges.Done()
 			defer cleanup()
 			defer cmdutil.CloseWithLog("registered session client", ec)
-			handleReclaimedPTY(ctx, sessions.Config, ec, id, dir, write, input, policy.Wing, policy.Keys, sessions.AuthCache, passkeyPolicy(), ttl, sessionTools, sessions)
+			handleReclaimedPTY(ws.WithPTYInputRetirement(ctx, cleanup), sessions.Config, ec, id, dir, write, input, policy.Wing, policy.Keys, sessions.AuthCache, passkeyPolicy(), ttl, sessionTools, sessions)
 		}()
 		return nil
 	}

@@ -66,7 +66,7 @@ export function sidebarHarness() {
     const S = { sessionsData: [], wingsData: [{ wing_id: 'mac', online: true, capabilities: ['session.rename.v1'] }],
         currentUser: { id: 'owner' }, sessionNotifications: {}, activeView: 'home', ptySessionId: null, ptyWingId: null };
     const context = moduleContext('render', {
-        S, DOM: { sessionTabs: tabs }, document: doc, refreshParentDot() {}, renderCoordinatorHome() {},
+        S, DOM: { sessionTabs: tabs }, document: doc, refreshParentDot() {}, renderCoordinatorHome() {}, renderPaper() {},
         switchToSession: (id, _, wingId) => actions.push([wingId, id]),
     });
     context.beginSessionRename = (tab, session) => renames.push([session.wing_id, session.id]);

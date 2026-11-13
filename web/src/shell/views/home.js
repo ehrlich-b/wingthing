@@ -6,20 +6,19 @@ import { browserUnavailable } from '../../onboarding.js';
 import { loadHome } from '../../data.js';
 import { hostedPlanGuidance } from '../../onboarding.js';
 import { head, render, paperRoute } from '../frame.js';
-import { wingOf, machineName, sessions, workSessions, coordinator, sessionState, needing, machines } from '../select.js';
-import { lines, request, composer, sessionHref, chip, lastSeen, ui } from '../common.js';
+import { wingOf, machineName, sessions, workSessions, coordinator, sessionState, needing, machines, ordered } from '../select.js';
+import { lines, request, composer, sessionHref, chip, lastSeen, ui, relativeTime } from '../common.js';
 import '../home.css';
 
 const install = 'curl -fsSL https://wingthing.ai/install.sh | sh\nwt login\nwt start';
-let firstRunPoll;
-// The frame calls this for every route, including policy and inventory changes.
-// The ordinary inventory poll remains responsible after onboarding.
-export function syncHomePolling(active) {
-    const wanted = active && !!S.currentUser && !browserUnavailable(S.currentUser) && !sessions().length;
-    if (!wanted && firstRunPoll) { clearInterval(firstRunPoll); firstRunPoll = undefined; }
-    if (wanted && !firstRunPoll) firstRunPoll = setInterval(() => {
-        loadHome().finally(() => render(true));
-    }, 3000);
+let firstRunActive = false, lastInventoryRead = Date.now(), inventoryRead;
+// One data poll serves onboarding (3s) and the ordinary inventory (30s).
+export function syncHomePolling(active) { firstRunActive = active; }
+export function pollHomeData() {
+    const period = firstRunActive && !sessions().length ? 3000 : 30000;
+    if (!S.currentUser || inventoryRead || Date.now() - lastInventoryRead < period) return;
+    lastInventoryRead = Date.now();
+    inventoryRead = loadHome().finally(() => { inventoryRead = null; render(true); });
 }
 
 function connection() {
@@ -54,15 +53,6 @@ export function viewBrowserAccess() {
     const commands = ['codex mcp add wingthing -- wt mcp connect --client codex', 'claude mcp add --scope user wingthing -- wt mcp connect --client claude'];
     return head('Home', '', 'Your agents can connect from a terminal.') + '<section class="home-access"><h2>Use wingthing with your agent</h2><p>Your account includes native agent access. Connect Claude or Codex on your machines. Browser control requires relay access on the account and permission on the selected machine. ' + esc(hostedPlanGuidance(S.currentUser)) + '</p>' + commands.map(command => '<pre class="home-commands">' + esc(command) + '</pre>').join('') + '<a class="pp-btn pp-btn-ink" href="#account">See plans</a></section>';
 }
-// Preserve a group's surviving order across data refreshes; new members append.
-const orders = new Map();
-function ordered(key, rows) {
-    const ids = new Map(rows.map(s => [s.wing_id + '/' + s.id, s]));
-    const order = (orders.get(key) || []).filter(id => ids.has(id));
-    for (const id of ids.keys()) if (!order.includes(id)) order.push(id);
-    orders.set(key, order);
-    return order.map(id => ids.get(id));
-}
 function section(title, rows, limit, draw) {
     if (!rows.length) return '';
     const key = title.toLowerCase().replaceAll(' ', '-');
@@ -73,15 +63,9 @@ function needCard(s) {
     const r = request(s), command = r.command || requestedCommand(s.lifecycle?.reason);
     return '<article class="home-need" data-k="' + esc(s.wing_id + '/' + s.id) + '"><div><h3 title="' + esc(sessionDisplayName(s)) + '">' + esc(sessionDisplayName(s)) + '</h3><p>' + (command ? 'Wants to run a command on ' : 'Wants an answer on ') + esc(machineName(wingOf(s.wing_id))) + '.</p>' + '<pre class="home-commands" aria-hidden="' + !command + '" title="' + esc(command || '') + '">' + (command ? '<i>$ </i>' + esc(command) : '') + '</pre>' + '</div><button type="button" class="pp-btn pp-btn-ink" data-takeover="' + esc(s.wing_id + '/' + s.id) + '">Answer</button></article>';
 }
-function relative(at) {
-    const ms = Date.parse(at);
-    if (!Number.isFinite(ms)) return '';
-    const minutes = Math.max(0, Math.floor((Date.now() - ms) / 60000));
-    return minutes < 1 ? 'Now' : minutes < 60 ? minutes + 'm' : minutes < 1440 ? Math.floor(minutes / 60) + 'h' : Math.floor(minutes / 1440) + 'd';
-}
 function row(s) {
     const st = sessionState(s), last = lines(s).filter(l => l.who === 'agent').pop();
-    return '<a class="home-row' + (st.key === 'offline' ? ' home-offline' : '') + '" data-k="' + esc(s.wing_id + '/' + s.id) + '" data-stable href="' + sessionHref(s) + '">' + chip(st) + '<span class="home-identity"><b>' + esc(sessionDisplayName(s)) + '</b><small>' + esc([agentName(s.agent), machineName(wingOf(s.wing_id))].filter(Boolean).join(' · ')) + '</small></span><span class="home-line">' + esc(last?.text || '') + '</span><time>' + esc(relative(last?.at)) + '</time></a>';
+    return '<a class="home-row' + (st.key === 'offline' ? ' home-offline' : '') + '" data-k="' + esc(s.wing_id + '/' + s.id) + '" data-stable href="' + sessionHref(s) + '">' + chip(st) + '<span class="home-identity"><b>' + esc(sessionDisplayName(s)) + '</b><small>' + esc([agentName(s.agent), machineName(wingOf(s.wing_id))].filter(Boolean).join(' · ')) + '</small></span><span class="home-line">' + esc(last?.text || '') + '</span>' + relativeTime(last?.at, true) + '</a>';
 }
 export function viewWing() {
     if (browserUnavailable(S.currentUser)) return viewBrowserAccess();

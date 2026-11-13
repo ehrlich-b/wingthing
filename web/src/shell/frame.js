@@ -18,12 +18,13 @@ import { switchToSession, showHome, showCanvas, navigateToWingDetail, navigateTo
 import { showPalette } from '../palette.js';
 import { loadHome, probeWing } from '../data.js';
 import { wingOf, machineName, sessions, coordinator, workSessions, needing, findSession, machines, machineCounts } from './select.js';
-import { inputAllowed, selectComposer, squares, lines, terminal, composer, project, ui, drafts } from './common.js';
-import { viewWing, viewBrowserAccess, syncHomePolling } from './views/home.js';
+import { inputAllowed, selectComposer, squares, lines, read, terminal, tickRelativeTimes, composer, project, ui, drafts } from './common.js';
+import { viewWing, viewBrowserAccess, syncHomePolling, pollHomeData } from './views/home.js';
 import { viewNew } from './views/new.js';
 import { viewSessions } from './views/sessions.js';
 import { viewMachines } from './views/machines.js';
-import { viewSession } from './views/session.js';
+import { viewSession, setSessionPanel, showEarlierMessages } from './views/session.js';
+import { updateSessionScreen } from './views/session-screen.js';
 import { viewPair } from './views/pair.js';
 let root, main, side, lastSignature = '', routing = false, conversationRestore = '';
 const homes = new Map();
@@ -64,8 +65,11 @@ function frame() {
             return;
         }
         if (event.target.closest('[data-more-machines]')) { ui.allMachines = true; render(true); return; }
+        if (event.target.closest('[data-session-earlier]')) { const session = findSession(paperRoute()); if (session) showEarlierMessages(session); render(true); return; }
+        const panel = event.target.closest('[data-session-panel]');
+        if (panel) { const session = findSession(paperRoute()); if (session) setSessionPanel(session, panel.dataset.sessionPanel); render(true); return; }
         const take = event.target.closest('[data-takeover]');
-        if (take) { const [wingId, sessionId] = take.dataset.takeover.split('/'); if (machineState(wingOf(wingId)) !== 'connected') return; switchToSession(sessionId, true, wingId, { takeover: true }); render(true); return; }
+        if (take) { const [wingId, sessionId] = take.dataset.takeover.split('/'); if (machineState(wingOf(wingId)) !== 'connected') return; const session = sessions().find(s => s.wing_id === wingId && s.id === sessionId); if (session) setSessionPanel(session, 'terminal'); const current = paperRoute(); const navigate = current.view !== 'session' || current.wingId !== wingId || current.sessionId !== sessionId; switchToSession(sessionId, navigate, wingId, { takeover: true }); render(true); return; }
         if (event.target.closest('[data-handback]')) { showHome(false); ui.inputReader?.refresh(); render(true); main.querySelector('#pp-message')?.focus(); return; }
         const copy = event.target.closest('[data-copy]');
         if (copy) { navigator.clipboard?.writeText(copy.dataset.copy).then(() => { copy.textContent = 'Copied'; }, () => { copy.textContent = 'Copy failed'; }); return; }
@@ -87,7 +91,7 @@ function frame() {
     root.addEventListener('input', event => {
         if (event.target.id === 'pp-message') {
             drafts.set(ui.inputKey, event.target.value);
-            event.target.form.querySelector('[type="submit"]').disabled = !ui.inputSnapshot?.inputReady || !event.target.value.trim();
+            event.target.form.querySelector('[type="submit"]').disabled = event.target.disabled || !ui.inputSnapshot?.inputReady || !event.target.value.trim() || !!ui.inputSnapshot?.queued && ui.inputSnapshot?.lifecycle?.state !== 'needs_input';
             return;
         }
         if (event.target.id !== 'pp-filter') return;
@@ -97,11 +101,12 @@ function frame() {
         const form = event.target.closest('[data-composer]'); if (!form) return;
         event.preventDefault();
         const s = sessions().find(s => s.wing_id + '/' + s.id === form.dataset.composer);
-        if (!ui.inputReader || !inputAllowed(s) || !ui.inputSnapshot?.inputReady || ui.inputSnapshot.continuationReady) return;
-        const text = form.querySelector('textarea').value;
-        if (!text.trim()) return;
-        ui.inputReader.send(text);
-        if (ui.inputSnapshot?.pending?.input === text) drafts.set(ui.inputKey, '');
+        if (!ui.inputReader || !inputAllowed(s) || S.activeView === 'terminal' || !ui.inputSnapshot?.inputReady || ui.inputSnapshot.continuationReady) return;
+        const text = form.querySelector('textarea')?.value;
+        if (!text?.trim()) return;
+        if (ui.sessionCanQueue) { if (ui.inputReader.queue(text)) { drafts.set(ui.inputKey, ''); form.querySelector('textarea').value = ''; } }
+        else ui.inputReader.send(text);
+        if (ui.inputSnapshot?.pending?.input === text || ui.inputSnapshot?.waitingAnswers?.some(a => a.input === text && !a.outcome)) { drafts.set(ui.inputKey, ''); form.querySelector('textarea').value = ''; }
         render(true);
     });
 }
@@ -254,12 +259,17 @@ function render(force) {
     syncHomePolling(current.view === 'wing' && !denied);
     selectComposer(!denied ? (current.view === 'wing' ? coordinator() : current.view === 'session' ? findSession(current) : null) : null);
     const views = { wing: viewWing, sessions: viewSessions, machines: viewMachines, pair: viewPair, new: viewNew, session: viewSession, account: viewAccount, machine: viewMachine, canvas: viewCanvas, conversation: () => head('Conversation', esc(machineName(wingOf(current.wingId)))) + '<div class="pp-live" data-engine="terminal"></div>' };
+    ui.sessionCanQueue = false;
     const html = denied && current.view !== 'account' ? (current.view === 'wing' ? viewBrowserAccess() : head('Get started', 'Free native access') + directSetup(S.currentUser)) : views[current.view](current);
     const conversationLive = !denied && current.view === 'conversation' && S.activeView === 'terminal' && (conversationRouteIsOpen(current) || !conversationRestore);
     const sig = location.hash + S.activeView + conversationLive + html;
     renderNavigation(current, denied);
-    if (sig === lastSignature) return;
+    if (sig === lastSignature) {
+        updateSessionScreen(main, current.view === 'session' ? findSession(current) : null, !['locked', 'reading'].includes(main.querySelector('.pp-session')?.dataset.state));
+        return;
+    }
     lastSignature = sig;
+    const hadControl = main.querySelector('.pp-session')?.dataset.state === 'control';
     const fresh = main.dataset.hash !== location.hash;
     if (fresh) main.scrollTop = 0;
     const conversation = main.querySelector('.pp-conversation');
@@ -272,6 +282,8 @@ function render(force) {
     } else patchRegion(main, html);
     main.dataset.view = current.view; main.dataset.hash = location.hash; main.dataset.mode = String(live);
     mountEngines(current.view, live || conversationLive);
+    if (live && !hadControl) requestAnimationFrame(() => S.term?.focus());
+    updateSessionScreen(main, current.view === 'session' ? findSession(current) : null, !['locked', 'reading'].includes(main.querySelector('.pp-session')?.dataset.state));
     const nextConversation = main.querySelector('.pp-conversation');
     if (nextConversation) {
         if (pinned && current.view === 'wing') followThread(nextConversation);
@@ -304,8 +316,19 @@ function initPaper() {
     window.addEventListener('shell-navigate', () => render(true));
     window.addEventListener('resize', () => { render(true); updateThreadSource(); });
     window.addEventListener('hashchange', () => { ui.allMachines = false; routeShell(); });
-    // Data reads and relative-time text updates patch existing nodes.
-    setInterval(() => render(false), 1000);
+    // Poll data only. Completed reads invalidate the view and patch keyed nodes.
+    setInterval(() => {
+        if (document.visibilityState !== 'visible') return;
+        pollHomeData();
+        if (browserUnavailable(S.currentUser)) return;
+        const current = paperRoute();
+        if (['wing', 'sessions', 'machines'].includes(current.view)) for (const s of sessions()) read(s);
+        if (current.view === 'session') {
+            const s = findSession(current);
+            if (s) { read(s); terminal(s); }
+        }
+    }, 1000); // Data poll.
+    setInterval(() => tickRelativeTimes(root), 1000); // Relative-time ticker.
     render(true);
 }
 export { paperRoute, isPaperRoute, head, render, initPaper };

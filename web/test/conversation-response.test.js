@@ -161,3 +161,38 @@ test('optional model is forwarded through agent_start only when named and is par
     submitLaunch(blank, { ...parentFields, model: '   ' }, ids(), sent);
     assert.equal('model' in sent[sent.length - 1], false);
 });
+
+test('explicit expiry restores an editable answer without claiming zero transport', () => {
+    const pending = {request_id:'answer',input:'Yes',answerToStateCursor:7};
+    const enqueued = applyPromptReceipt(pending, {status:'unconfirmed',transport_enqueued:true,enqueued_at_ms:1000,observed_at_ms:4000});
+    assert.equal(enqueued.pending.transportEnqueuedAt,1000);
+    assert.equal(enqueued.draft,null);
+    const expiry=applyPromptReceipt(enqueued.pending,{status:'waiting_answer_expired',transport_enqueued:true,definitely_not_sent:false});
+    assert.equal(expiry.draft,'Yes');
+    assert.equal(expiry.pending,null);
+    assert.equal(expiry.notice,'Not sent - try again');
+    assert.equal(applyPromptReceipt(pending,{status:'unconfirmed'}).draft,null);
+});
+
+
+test('saved follow-up refused by a newly waiting prompt returns to the queue', () => {
+    const action = applyPromptReceipt({input:'Saved follow-up'}, {status:'not_sent',definitely_not_sent:true,reason:'Answer in the terminal'});
+    assert.equal(action.requeue, true);
+    assert.equal(action.pending, null);
+    assert.equal(action.draft, null);
+    assert.equal(action.notice, 'Answer in the terminal');
+});
+
+for (const reason of ['Answer in the terminal', 'Not sent - try again']) {
+    test(`saved follow-up refused with ${reason} requeues; explicit answer returns a draft`, () => {
+        const receipt = {status:'not_sent', definitely_not_sent:true, reason};
+        assert.equal(applyPromptReceipt({input:'Saved follow-up'},receipt).requeue,true);
+        const answer = applyPromptReceipt({input:'Yes',answerToStateCursor:7},receipt);
+        assert.equal(answer.draft,'Yes');
+        assert.equal(answer.requeue,undefined);
+    });
+}
+
+test('transport-gate waiting rejection keeps a saved follow-up queued using structured evidence', () => {
+    assert.equal(applyPromptReceipt({input:'Saved follow-up'}, {status:'not_sent',definitely_not_sent:true,retry_when_ready:true,reason:'input was not attempted: Answer in the terminal; resolve this condition and submit with a new request_id'}).requeue,true);
+});
