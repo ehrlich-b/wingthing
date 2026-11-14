@@ -88,21 +88,25 @@ func TestHomepageStoryHeroContract(t *testing.T) {
 					t.Errorf("hero must give %s the shared resource-link style", href)
 				}
 			}
-			lines := storyElements(hero, func(n *html.Node) bool { return n.Data == "code" && storyAttr(n, "id") == "install-line" })
+			lines := storyElements(page, func(n *html.Node) bool { return n.Data == "code" && storyAttr(n, "id") == "install-line" })
 			if len(lines) != 1 || storyText(lines[0]) != "curl -fsSL https://wingthing.ai/install.sh | sh" {
-				t.Fatal("hero must contain the exact copyable install line")
+				t.Fatal("setup must contain the exact copyable install line")
 			}
-			buttons := storyElements(hero, func(n *html.Node) bool {
+			buttons := storyElements(page, func(n *html.Node) bool {
 				return n.Data == "button" && storyAttr(n, "aria-label") == "Copy install command"
 			})
 			if len(buttons) != 1 {
-				t.Fatal("hero is missing its labelled copy button")
+				t.Fatal("setup is missing its labelled copy button")
 			}
 			var titles []string
-			for _, h := range storyElements(page, func(n *html.Node) bool { return n.Data == "h3" }) {
+			mechanics := storyElements(page, func(n *html.Node) bool { return storyAttr(n, "class") == "how" })
+			if len(mechanics) != 1 {
+				t.Fatal("missing wing mechanics section")
+			}
+			for _, h := range storyElements(mechanics[0], func(n *html.Node) bool { return n.Data == "h3" }) {
 				titles = append(titles, storyText(h))
 			}
-			want := "Launch with context|Observe the work|Steer together|Come back to it|Stop when needed|Set the boundaries"
+			want := "One execution machine|Terminal sessions|Supervised runs|Local state|CLI and MCP|Set the boundaries"
 			if strings.Join(titles, "|") != want {
 				t.Errorf("feature grid = %q, want %q", titles, want)
 			}
@@ -123,8 +127,8 @@ func TestHomepageStoryHeroContract(t *testing.T) {
 				t.Fatal("missing closing band")
 			}
 			closingHeadings := storyElements(closing[0], func(n *html.Node) bool { return n.Data == "h2" })
-			if len(closingHeadings) != 1 || storyText(closingHeadings[0]) != "Launch agents. Join their terminals." {
-				t.Fatal("closing band must contain the approved invitation")
+			if len(closingHeadings) != 1 || storyText(closingHeadings[0]) != "Source and releases" {
+				t.Fatal("closing band must separate source from available releases")
 			}
 		})
 	}

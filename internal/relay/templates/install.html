@@ -35,7 +35,7 @@
 <main>
 <div class="inst-hero">
 <h1>Install wingthing</h1>
-<p>Connect the computer where your code and agent login live. Then watch and steer your sessions from the app.</p>
+<p>Wingthing is an open-source (MIT) agent manager. A wing owns processes, sessions and run records on the machine with your code and provider login.</p>
 </div>
 <div class="inst-platforms">
 <div class="inst-platform"><span>macOS</span> arm64 / x64</div>
@@ -50,38 +50,29 @@
 </div>
 <p>Installs to <code>~/.local/bin/wt</code>. Set <code>WT_INSTALL_DIR</code> to choose another location.</p>
 </li>
-<li>
-<h2>2. Sign in</h2>
-<div class="inst-code"><span class="prompt">$ </span><span class="cmd">wt login</span></div>
-<p>Follow the link in your terminal to sign in or create your account.</p>
-</li>
-<li>
-<h2>3. Connect your machine</h2>
-<div class="inst-code"><span class="prompt">$ </span><span class="cmd">wt start</span></div>
-<p>Your machine appears in the app. Choose a project folder and an agent to start a session.</p>
-</li>
 </ol>
-<div class="inst-section">
-<a href="{{.AppURL}}" class="inst-open">Open the app</a>
-</div>
-<details class="inst-section" data-route="local-human">
-<summary>Use it without an account</summary>
+{{template "release-info" .}}
+<section class="inst-section" data-route="local-human">
+<h2>Run a local terminal without an account</h2>
 <p>Install and sign in to the Claude CLI with your provider, then run it in an existing project:</p>
 <div class="inst-code"><span class="prompt">$ </span><span class="cmd">cd /path/to/existing/project</span><br>
 <span class="prompt">$ </span><span class="cmd">wt egg claude --name work</span></div>
 <p>Claude opens in a sandboxed terminal. Detach with <code>Ctrl+B</code>, then <code>Q</code>; your agent keeps running. Return with <code>wt attach work</code>.</p>
-<p>For an agent to manage local sessions, register MCP and restart your client:</p>
-<div class="inst-code"><span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp stdio --client codex</span><br>
+<h3 id="account-free-mcp">Add local MCP</h3>
+<p>Start a local-only wing and keep it running before registering stdio. The wing and parent client's MCP process must use the same <code>WINGTHING_DIR</code> (default <code>~/.wingthing</code>). No Wingthing account is required. Register MCP and restart your client:</p>
+<div class="inst-code"><span class="prompt">$ </span><span class="cmd">wt wing start --local-only</span><br>
+<span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp stdio --client codex</span><br>
 <span class="comment"># or: claude mcp add --scope user wingthing -- wt mcp stdio --client claude</span></div>
 <p>More options in <a href="/docs">Docs</a> and <a href="/patterns">Patterns</a>.</p>
-</details>
+</section>
 <details class="inst-section">
 <summary>More ways to connect</summary>
 <ol class="inst-steps">
 <li data-route="local-agent">
 <h3>Let another agent manage your sessions with MCP</h3>
-<p>Register local stdio MCP, restart the parent client, and ask it to call <code>wingthing_capabilities</code>. Child agents use the existing code and provider login on this computer. No Wingthing account or daemon is required.</p>
+<p>Start the wing, register local stdio MCP, restart the parent client, and ask it to call <code>wingthing_capabilities</code>. Child agents use the existing code and provider login on this computer. No Wingthing account is required. Start a local-only wing and keep it running before registering stdio, using the same <code>WINGTHING_DIR</code> in the wing and parent client's MCP process environment (default <code>~/.wingthing</code>).</p>
 <div class="inst-code">
+<span class="prompt">$ </span><span class="cmd">wt wing start --local-only</span><br>
 <span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp stdio --client codex</span><br>
 <span class="comment"># or: claude mcp add --scope user wingthing -- wt mcp stdio --client claude</span>
 </div>
@@ -110,18 +101,19 @@
 </li>
 <li data-route="hosted-relay">
 <h3>Use the hosted browser</h3>
-<p>For this route, the hosted browser terminal and control relay require relay access on the account and <code>hosted_relay: allow</code> on the selected wing. This optional path is separate from direct remote MCP.</p>
+<p>For this route, the hosted browser terminal and control relay require relay access on the account and <code>hosted_relay: allow</code> on the selected wing. This optional path is separate from direct remote MCP. Signing in alone does not grant relay access.</p>
 <div class="inst-code">
 <span class="prompt">$ </span><span class="cmd">wt login</span><br>
 <span class="prompt">$ </span><span class="cmd">wt start</span><br>
 <span class="prompt">$ </span><span class="cmd">open https://app.wingthing.ai</span>
 </div>
+<a href="{{.AppURL}}" class="inst-open">Open the app</a>
 </li>
 </ol>
 </details>
 <details class="inst-section">
 <summary>Manual download</summary>
-<p>Choose a binary from <a href="https://github.com/ehrlich-b/wingthing/releases">GitHub releases</a>, or use the installer above to select one for your platform.</p>
+<p>See the <a href="/dl/latest.json">release metadata</a> for available assets. Current source is on <a href="https://gitlab.com/ehrlich-b/wingthing">GitLab</a>; <a href="https://github.com/ehrlich-b/wingthing">GitHub is a mirror</a>. Choose a binary from <a href="https://github.com/ehrlich-b/wingthing/releases">GitHub releases</a>, or use the installer above to select one for your platform.</p>
 </details>
 <div class="inst-section">
 <h2>Update wingthing</h2>

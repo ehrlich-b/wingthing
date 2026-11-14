@@ -514,14 +514,14 @@ func TestHomepageStoryPublicRoute(t *testing.T) {
 		`href="/install" class="hero-install">Install wingthing</a>`,
 		`href="/patterns">See patterns</a>`,
 		"Example · 8 sessions",
-		"Agents run on your machines. Watch and steer from the browser, your phone or the CLI.",
+		"Illustrative sessions and conversation, not a device demonstration or performance measurement.",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Errorf("home is missing %q", contract)
 		}
 	}
 	previous := -1
-	for _, section := range []string{`class="hero"`, `class="product-preview"`, `class="how"`, `class="closing"`} {
+	for _, section := range []string{`class="hero"`, `class="how"`, `class="home-setup"`, `class="product-preview"`, `class="closing"`} {
 		index := strings.Index(page, section)
 		if index <= previous {
 			t.Errorf("home section %q is missing or out of order", section)
@@ -586,7 +586,7 @@ func TestPublicDocsAndInstallRenderSetupHierarchy(t *testing.T) {
 			path: "/install",
 			contracts: []string{
 				"Install wingthing",
-				"Use it without an account",
+				"Run a local terminal without an account",
 				`class="inst-open">Open the app</a>`,
 			},
 		},
@@ -596,7 +596,7 @@ func TestPublicDocsAndInstallRenderSetupHierarchy(t *testing.T) {
 				"connector token",
 				"Run <code>wt start</code> on the parent only when that machine also executes agents",
 				"Remote execution through direct MCP or the hosted browser needs a running wing.",
-				"Local stdio MCP, local terminal commands, and an embedded self-hosted roost do not require a separate wing daemon.",
+				"Local stdio MCP needs an independently running wing for the same <code>WINGTHING_DIR</code>", "a self-hosted roost embeds its own wing and needs no separate wing daemon.",
 			},
 		},
 	} {
@@ -617,7 +617,7 @@ func TestPublicDocsAndInstallRenderSetupHierarchy(t *testing.T) {
 			previous := -1
 			routes := []string{`data-route="local-human"`, `data-route="local-agent"`, `data-route="direct-remote"`, `data-route="self-hosted-browser"`, `data-route="hosted-relay"`}
 			if test.path == "/install" {
-				routes = []string{"curl -fsSL https://wingthing.ai/install.sh | sh", ">wt login<", ">wt start<", `class="inst-open">Open the app</a>`, "Use it without an account", ">wt egg claude --name work<"}
+				routes = []string{"curl -fsSL https://wingthing.ai/install.sh | sh", "Run a local terminal without an account", ">wt egg claude --name work<", ">wt wing start --local-only<", `data-route="direct-remote"`, `data-route="self-hosted-browser"`, `data-route="hosted-relay"`, `class="inst-open">Open the app</a>`}
 			}
 			for _, route := range routes {
 				index := strings.Index(page, route)
@@ -654,7 +654,7 @@ func TestHomepageStorySandboxBoundary(t *testing.T) {
 	for _, want := range []string{
 		"Set the boundaries",
 		"Inspect sandbox policy before launch. Control file, network, and environment access.",
-		"Agents run on your machines. Watch and steer from the browser, your phone or the CLI.",
+		"Illustrative sessions and conversation, not a device demonstration or performance measurement.",
 	} {
 		if !strings.Contains(body.String(), want) {
 			t.Errorf("home omitted execution boundary %q", want)

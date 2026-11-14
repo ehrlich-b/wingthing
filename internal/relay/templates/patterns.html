@@ -51,7 +51,7 @@
 <h2>Let your current AI launch local sub-agents</h2>
 <p>Give a parent Claude or Codex session typed tools for agents on the same computer, using the code and provider logins already there.</p>
 <ul class="pattern-facts">
-<li><strong>You need:</strong> Wingthing registered as <code>wt mcp stdio</code> in the parent client. No account or daemon is required.</li>
+<li><strong>You need:</strong> An independently running local wing: start <code>wt wing start --local-only</code> before registering <code>wt mcp stdio</code> in the parent client and keep the wing running. Use the same <code>WINGTHING_DIR</code> in the wing and parent client's MCP process environment (default <code>~/.wingthing</code>). No Wingthing account is required.</li>
 <li><strong>You get:</strong> typed start, wait, inspect, steer, and stop controls for local sandboxed child agents.</li>
 </ul>
 <div class="flow">parent AI -> local stdio MCP -> local child agents</div>

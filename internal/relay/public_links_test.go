@@ -38,8 +38,23 @@ func TestPublicSkillAndLinks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if resp.StatusCode != http.StatusOK || strings.Count(string(body), `href="https://github.com/ehrlich-b/wingthing">Star on GitHub</a>`) != 1 {
-			t.Errorf("%s: status %d or missing/duplicate Star on GitHub link", path, resp.StatusCode)
+		page := string(body)
+		start := strings.Index(page, `<nav class="site-nav">`)
+		if resp.StatusCode != http.StatusOK || start < 0 {
+			t.Fatalf("%s: status %d or missing site navigation", path, resp.StatusCode)
+		}
+		end := strings.Index(page[start:], "</nav>")
+		if end < 0 {
+			t.Fatal("missing site navigation end")
+		}
+		nav := page[start : start+end]
+		for _, link := range []string{
+			`href="https://gitlab.com/ehrlich-b/wingthing">GitLab source</a>`,
+			`href="https://github.com/ehrlich-b/wingthing">GitHub mirror</a>`,
+		} {
+			if strings.Count(nav, link) != 1 {
+				t.Errorf("%s: missing/duplicate source navigation link %s", path, link)
+			}
 		}
 		if path == "/" && !strings.Contains(string(body), `href="/skill.md"`) {
 			t.Error("homepage missing skill link")

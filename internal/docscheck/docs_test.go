@@ -169,8 +169,8 @@ func TestPublicDocumentationContractsStayAligned(t *testing.T) {
 		"patterns/shared-web-roost/INSTRUCTIONS.md":    {"WT_ROOST_ALLOWED_EMAILS", "OAuth by itself proves"},
 		"patterns/hosted-browser-wing/INSTRUCTIONS.md": {"Account access and wing policy are independent", "wt login", "wt start", "self-hosted roost", "application-encrypted"},
 		"internal/relay/templates/base.html":           {`href="/install" class="nav-cta">Install wingthing`, `href="/login">Log in`, ">Open app</a>"},
-		"internal/relay/templates/home.html":           {"The agent manager for agents <span>(and people)</span>", "Launch agents on your machines, follow their progress, and step in when the work needs you.", `href="/patterns">choose a route</a>`},
-		"internal/relay/templates/docs.html":           {"WT_BASE_URL=https://roost.example.com", "WT_ROOST_ALLOWED_EMAILS", "wt roost start --addr :8080", "wt serve --addr :8080", "never silently changes", "gateway database contains", "does not let an account grant itself relay access", "no request happens until you choose load or open", "200,000 serialized terminal characters", "a wing binary from before", "stop or isolate the wing", "Remote execution through direct MCP or the hosted browser needs a running wing", "do not require a separate wing daemon", "connector token", "wt login", "wt start"},
+		"internal/relay/templates/home.html":           {"The agent manager for agents <span>(and people)</span>", "Wingthing is an open-source (MIT) tool", "How a wing owns the work", `href="/patterns">choose a route</a>`},
+		"internal/relay/templates/docs.html":           {"WT_BASE_URL=https://roost.example.com", "WT_ROOST_ALLOWED_EMAILS", "wt roost start --addr :8080", "wt serve --addr :8080", "never silently changes", "gateway database contains", "does not let an account grant itself relay access", "no request happens until you choose load or open", "200,000 serialized terminal characters", "a wing binary from before", "stop or isolate the wing", "Remote execution through direct MCP or the hosted browser needs a running wing", "Local stdio MCP needs an independently running wing", "a self-hosted roost embeds its own wing and needs no separate wing daemon", "connector token", "wt login", "wt start"},
 		"internal/relay/templates/patterns.html":       {"/patterns/hosted-browser-wing/INSTRUCTIONS.md", "account with hosted-relay access", "hosted browser -> encrypted relay -> selected wing", "authorization for the connector account", "parent/connector needs"},
 		"internal/relay/templates/privacy.html":        {"gateway database contains", "embedded wing separately keeps", "200,000 serialized terminal characters", "Clearing the site's browser data removes"},
 		"fly.toml":                                     {`WT_RELAY_POLICY = "direct-free"`, "WT_RELAY_MIGRATION_BEFORE"},
@@ -231,21 +231,20 @@ func TestPublicDocumentationContractsStayAligned(t *testing.T) {
 	}
 }
 
-func TestPublicHomeKeepsIllustrativePreviewBeforeCapabilities(t *testing.T) {
+func TestPublicHomeExplainsMechanicsBeforeSetupAndIllustration(t *testing.T) {
 	root := repositoryRoot(t)
 	data, err := os.ReadFile(filepath.Join(root, "internal/relay/templates/home.html"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	home := string(data)
-	const intro = `<p class="tagline">Launch agents on your machines, follow their progress, and step in when the work needs you.</p>`
-	if got := strings.Count(home, intro); got != 1 {
-		t.Fatalf("homepage contains %d benefit intros, want 1", got)
-	}
-	preview := strings.Index(home, `<section class="product-preview"`)
-	capabilities := strings.Index(home, `<section class="how"`)
-	if preview < 0 || capabilities <= preview {
-		t.Fatal("homepage must show the illustrative preview before capabilities")
+	previous := -1
+	for _, marker := range []string{`class="tagline"`, `class="how"`, `class="home-setup"`, `class="product-preview"`} {
+		index := strings.Index(home, marker)
+		if index < 0 || index <= previous {
+			t.Fatalf("homepage must explain the tool and wing before setup and illustration: %s", marker)
+		}
+		previous = index
 	}
 	for _, required := range []string{`Illustrative example`, `aria-label="Illustrative work"`, `browser access uses a self-hosted roost or an entitled hosted account`, `Headless run results stay in the CLI and MCP`} {
 		if !strings.Contains(home, required) {
@@ -329,7 +328,7 @@ func TestPublicEntryPointsKeepLocalAgentFirstHierarchy(t *testing.T) {
 		"README.md": {
 			"using the code and provider login already\nthere",
 			"No Wingthing account is required",
-			"`wt attach` requires a running\nwing and checks that client's grants and session ownership",
+			"Native `wt attach` can attach to a standalone egg", "no `WT_MCP_CLIENT` principal is named", "expected wing identity is pinned", "checks grants and session ownership", "An authorization denial or a lost attachment never triggers that fallback",
 			"It never silently falls back to the hosted relay",
 			"run the browser portal locally first",
 			"already has hosted-relay access",
@@ -340,7 +339,7 @@ func TestPublicEntryPointsKeepLocalAgentFirstHierarchy(t *testing.T) {
 			"Run <code>wt start</code> on the parent only when that machine also executes agents",
 			"The connector never silently changes to hosted relay",
 			"Remote execution through direct MCP or the hosted browser needs a running wing",
-			"do not require a separate wing daemon",
+			"Local stdio MCP needs an independently running wing", "a self-hosted roost embeds its own wing and needs no separate wing daemon",
 			"This self-hosted route needs no Wingthing account or hosted-relay entitlement",
 			"requires an account with hosted-relay access",
 		},
@@ -380,7 +379,7 @@ func TestUsageRecipesPointToTheCorrectRoute(t *testing.T) {
 		"patterns/local-subagents/INSTRUCTIONS.md": {
 			"Start here",
 			"Local stdio MCP uses the code and provider logins already on\nthis machine",
-			"no Wingthing account, daemon, roost, or hosted relay",
+			"no Wingthing account, roost, or hosted relay", "independently running local wing",
 		},
 		"patterns/local-sandbox/INSTRUCTIONS.md": {
 			"when a person wants a local sandboxed",

@@ -8,7 +8,10 @@ description: Choose the smallest supported local-first Wingthing route for an ag
 Choose the first supported route that satisfies the request:
 
 1. **Local agent control with stdio MCP:** let the current Claude or Codex
-   session manage local sub-agents on existing code and provider logins. Read
+   session manage local sub-agents on existing code and provider logins. Start
+   `wt wing start --local-only` before registering `wt mcp stdio` and keep the
+   wing running. The wing and parent client's MCP process must use the same
+   `WINGTHING_DIR` (default `~/.wingthing`). No Wingthing account is required. Read
    [local sub-agents](local-subagents/INSTRUCTIONS.md).
 2. **Local sandboxed agent terminal for a person:** run and later reattach to an
    agent on this computer. Read [local sandbox](local-sandbox/INSTRUCTIONS.md).
