@@ -11,6 +11,7 @@ Available Commands:
   claude       Start and attach to a wing-owned Claude parent with scoped MCP
   codex        Start and attach to a persistent Codex session
   completion   Generate the autocompletion script for the specified shell
+  context      Group this machine and saved remotes into Home or Work
   conversation Inspect persistent parent and child conversations
   daemon       Run this machine’s wing, locally or through a relay
   devices      List devices paired with this wing

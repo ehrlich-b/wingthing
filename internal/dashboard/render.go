@@ -806,6 +806,13 @@ func render(s *state, width, height int, now time.Time) string {
 		}
 		set(noticeRow, safeNotice(notice), warning)
 	}
+	if notice == "" && !grouped && s.mode == navigate && !s.recent && height >= 8 {
+		hint := "Group Home/Work: wt context set local home"
+		if position := strings.TrimSpace(lines[height-3].text); position != "" {
+			hint = "wt context set · " + position
+		}
+		lines[height-3] = viewLine{text: hint, tone: secondary}
+	}
 	hints := keyHints(s)
 	for i := range hints {
 		if runewidth.StringWidth(hints[i]) > width {

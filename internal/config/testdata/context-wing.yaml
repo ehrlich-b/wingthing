@@ -1,0 +1,9 @@
+# Local settings must survive context changes.
+wing_id: abcdef0123456789abcd
+context: home
+paths: [/projects/one, /projects/two]
+phone_fleet_exclude_contexts: [work]
+future_setting:
+  enabled: false
+  count: 7
+  label: "007"

@@ -71,6 +71,31 @@ func TestContextGroupsCountsAndCycle(t *testing.T) {
 		t.Fatal("unassigned group missing from cycle")
 	}
 }
+
+func TestContextHintAndEvidence(t *testing.T) {
+	now := time.Date(2026, time.November, 9, 14, 30, 0, 0, time.UTC)
+	for _, n := range []int{0, 1, 8, 12, 40} {
+		for _, width := range []int{48, 180} {
+			s := contextFixture(n)
+			s.localContext = ""
+			s.remotes["studio"], s.remotes["office"] = config.Remote{}, config.Remote{}
+			output := render(s, width, 36, now)
+			screen := strings.Join(renderedLines(t, output, width, 36), "\n") + "\n"
+			if strings.Count(screen, "wt context set") != 1 {
+				t.Fatalf("missing or repeated hint at width %d:\n%s", width, screen)
+			}
+			if dir := os.Getenv("WT_CONTEXT_EVIDENCE"); dir != "" {
+				if err := os.MkdirAll(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(dir, fmt.Sprintf("context-hint-%dx36-%d.txt", width, n))
+				if err := os.WriteFile(path, []byte(screen), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+}
 func TestContextViewportSelectionAndEvidence(t *testing.T) {
 	for _, n := range []int{0, 1, 3, 8, 12, 40} {
 		for _, dim := range [][2]int{{48, 36}, {120, 36}, {180, 36}} {

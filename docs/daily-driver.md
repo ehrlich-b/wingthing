@@ -49,9 +49,22 @@ wt attach -- my-server:FULL_SESSION_ID
 wt remote rm my-server
 ```
 
-Group the work list by adding `context: home` to local `wing.yaml`, and
-`context: work` to entries in `remotes.yaml`. For a new remote, use
-`wt remote add studio my-ssh-alias --context work`. Context headings show how many
+Group the work list with one command per machine, including saved remotes:
+
+```sh
+wt context set local home
+wt context set studio work
+wt context list
+wt context set studio none
+```
+
+`local` means this machine; other names must already exist in `wt remote ls`.
+`home` and `work` select a group; `none` removes the context key. Other saved
+settings stay intact. Local context is saved in `wing.yaml`, and remote context
+in that machine's `remotes.yaml` entry. Bare `wt` offers a command hint when no
+machine has a context. Reopen `wt` after changing contexts.
+For a new remote, use `wt remote add studio my-ssh-alias --context work`.
+Context headings show how many
 sessions currently need your reply; `c` cycles all contexts, then each named
 context, including Other for machines without a context. Work stays grouped by
 machine inside each context. The existing structured `context` service block in
