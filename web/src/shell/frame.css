@@ -39,3 +39,18 @@ body.paper-on { height: 100dvh; overflow: hidden; }
     .pp-tabs:has(a:nth-child(5)) { grid-template-columns: repeat(5, 1fr); }
     .pp-tabs:has(a:nth-child(2):last-child) { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* A refreshed pinned update keeps the Machines heading in its reserved place. */
+#paper .pp-pin p { height: 21px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Scrollbars and delivery feedback have space before data arrives. */
+#paper textarea, #paper .pp-terminal, #paper .pp-say, #paper #wing-detail-content { scrollbar-gutter: stable; }
+/* Keep both feedback lines, the saved message and its action mounted in every state. */
+#paper .pp-wing-composer .pp-delivery { display: block; height: 36px; min-height: 36px; flex: none; overflow: hidden; }
+#paper .pp-wing-composer .pp-delivery > :is(span, small) { display: block; height: 18px; line-height: 18px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#paper .pp-wing-composer .pp-pending-text { height: 80px; min-height: 80px; flex: none; scrollbar-gutter: stable; }
+#paper .pp-wing-composer [data-check-receipt] { height: 44px; min-height: 44px; flex: none; align-self: flex-start; }
+#paper .wd-session-row { height: 44px; padding: 0; flex-wrap: nowrap; overflow: hidden; }
+#paper .wd-session-identity { min-width: 0; overflow: hidden; }
+#paper .wd-session-name, #paper .wd-session-meta { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+@media (max-width: 760px) { #paper .wd-session-row { height: 56px; padding: 0; } }

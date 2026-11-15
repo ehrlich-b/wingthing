@@ -286,3 +286,61 @@ func TestNativePromptAfterClaudeSessionStartChangesBinding(t *testing.T) {
 		t.Fatal("new conversation did not receive the prompt")
 	}
 }
+
+func TestNativeWaitingAnswerRejectsPromptResolvedWhileClaimingWriter(t *testing.T) {
+	cfg, fixture := nativePromptTransport(t, false)
+	spool := filepath.Join(cfg.Dir, ".claude", "wingthing-events", "fixture")
+	if err := os.WriteFile(filepath.Join(spool, "seq.00000000000000000001.json"), []byte(`{"session_id":"ours","hook_event_name":"PermissionRequest"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	session, err := ResolveLifecycleSession(cfg, "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := LifecycleViewForSession(cfg, session, 0, 100)
+	if err != nil || view.State != "needs_input" {
+		t.Fatalf("fixture=%+v err=%v", view, err)
+	}
+	cursor := view.StateCursor
+	fixture.onAttach = func() {
+		if err := os.WriteFile(filepath.Join(spool, "seq.00000000000000000002.json"), []byte(`{"session_id":"ours","hook_event_name":"Stop"}`), 0600); err != nil {
+			t.Error(err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	receipt, err := PromptSessionWithAnswer(ctx, cfg, session, "waiting-race", "Yes", time.Second, "mcp:fixture", &cursor)
+	if err != nil || receipt.Status != "not_sent" || !receipt.DefinitelyNotSent || receipt.TransportEnqueued {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	select {
+	case input := <-fixture.input:
+		t.Fatalf("resolved prompt received input %q", input)
+	default:
+	}
+	t.Logf("writer-claim race: status=%s no_input=%t", receipt.Status, receipt.DefinitelyNotSent)
+}
+
+func TestNativeComposerRejectsWaitingPromptWhileClaimingWriter(t *testing.T) {
+	cfg, fixture := nativePromptTransport(t, false)
+	spool := filepath.Join(cfg.Dir, ".claude", "wingthing-events", "fixture")
+	fixture.onAttach = func() {
+		if err := os.WriteFile(filepath.Join(spool, "seq.00000000000000000002.json"), []byte(`{"session_id":"ours","hook_event_name":"PermissionRequest"}`), 0600); err != nil {
+			t.Error(err)
+		}
+	}
+	session, err := ResolveLifecycleSession(cfg, "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := PromptSession(t.Context(), cfg, session, "composer-waiting-race", "Saved follow-up", 3*time.Second, "mcp:fixture")
+	if err != nil || receipt.Status != "not_sent" || !receipt.DefinitelyNotSent || !receipt.RetryWhenReady || receipt.TransportEnqueued {
+		t.Fatalf("composer race: %+v err=%v", receipt, err)
+	}
+	select {
+	case input := <-fixture.input:
+		t.Fatalf("waiting prompt received composer input %q", input)
+	default:
+	}
+	t.Logf("actual transport gate: status=%s no_input=%t", receipt.Status, receipt.DefinitelyNotSent)
+}

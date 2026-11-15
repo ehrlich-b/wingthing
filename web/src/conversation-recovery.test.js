@@ -4,10 +4,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createConversationReader, createNavigationGuard, qualifyConversationRead, readConversationTree, resumeInTerminalState, findArchivedExecution, mergeRootRead, mergeWingListing } from './conversation-recovery.js';
+import { createNavigationGuard, qualifyConversationRead, readConversationTree, resumeInTerminalState, findArchivedExecution, mergeRootRead, mergeWingListing } from './conversation-recovery.js';
+const { createConversationReader } = await import(process.env.SESSION_READER_SOURCE || './conversation-recovery.js');
 import { applyConversationRead, emptyConversationState, conversationExecutionPresentation, CONVERSATION_FRESH_MS } from './conversation-state.js';
 import { conversationTaskAvailability } from './conversation-response.js';
-import { readExecution, writeExecution, executionKey, readSelection, saveSelection, readTree, saveTree, createPendingInput, updatePendingEvidence, TRANSCRIPT_MESSAGE_LIMIT, EXECUTION_CACHE_LIMIT } from './conversation-recovery-store.js';
+import { readExecution, writeExecution, queuedExecutions, executionKey, readSelection, saveSelection, readTree, saveTree, createPendingInput, updatePendingEvidence, TRANSCRIPT_MESSAGE_LIMIT, EXECUTION_CACHE_LIMIT } from './conversation-recovery-store.js';
 
 function memoryStorage() {
     const values = new Map();
@@ -16,6 +17,8 @@ function memoryStorage() {
         setItem: (key, value) => values.set(key, String(value)),
         removeItem: key => values.delete(key),
         keys: () => [...values.keys()],
+        get length() { return values.size; },
+        key: index => [...values.keys()][index] ?? null,
     };
 }
 
@@ -34,7 +37,7 @@ function userText(sequence, text) {
 function harness(storage, respond, extra) {
     const calls = [];
     const timers = [];
-    let clock = 1_000_000;
+    let clock = extra?.clockStart ?? 1_000_000;
     let ids = 0;
     let latest = null;
     const reader = createConversationReader({
@@ -46,7 +49,7 @@ function harness(storage, respond, extra) {
             return result?.receipt ? { ...result, receipt: { request_id: payload.arguments.request_id, session_id: payload.arguments.session, ...result.receipt } } : result;
         },
         now: () => clock,
-        schedule: (fn, ms) => { const timer = { fn, ms, cancelled: false }; timers.push(timer); return timer; },
+        schedule: (fn, ms) => { const timer = { fn, ms, cancelled: false }; timer.due = clock + ms; timers.push(timer); return timer; },
         cancel: timer => { timer.cancelled = true; },
         randomId: () => 'request-' + (++ids),
         onChange: snapshot => { latest = snapshot; },
@@ -54,15 +57,30 @@ function harness(storage, respond, extra) {
     });
     return {
         reader, calls,
+        get time() { return clock; },
         get latest() { return latest; },
         async tick(count) {
             for (let i = 0; i < (count || 1); i++) {
+                timers.sort((a, b) => a.due - b.due);
                 let timer = timers.shift();
                 while (timer && timer.cancelled) timer = timers.shift();
                 if (!timer) break;
+                clock = Math.max(clock, timer.due);
                 timer.fn();
                 await flush();
             }
+        },
+        async advance(ms) {
+            const end = clock + ms;
+            let steps = 0;
+            for (;;) {
+                timers.sort((a,b) => a.due - b.due);
+                while (timers[0]?.cancelled) timers.shift();
+                if (!timers[0] || timers[0].due > end) break;
+                assert.ok(++steps < 1000, 'timer loop must advance instead of repeatedly checking a zero deadline');
+                const timer = timers.shift(); clock = timer.due; timer.fn(); await flush();
+            }
+            clock = end;
         },
         pendingTimers: () => timers.filter(timer => !timer.cancelled).length,
         operations: () => calls.map(call => call.payload.operation || call.payload.type),
@@ -70,6 +88,52 @@ function harness(storage, respond, extra) {
 }
 
 const mac = { userId: 'owner', wingId: 'mac', sessionId: 'sess-1', conversationId: 'logical-child' };
+
+for (const agent of ['claude', 'codex']) for (const skew of [60000, -60000]) {
+    test(`${agent} waiting-answer countdown ignores browser/server clock skew ${skew}`, async () => {
+        const storage = memoryStorage();
+        let h, sends = 0, lookups = 0, wallSkew = skew;
+        const serverDeadline = 115000;
+        const respond = (_wing, payload) => {
+            const result = { lifecycle: live({ agent, state_source: agent + '_hook', state: 'needs_input' }) };
+            if (payload.operation === 'session_prompt' || payload.arguments.original_request) {
+                const statusOnly = !!payload.arguments.original_request;
+                if (statusOnly) lookups++; else sends++;
+                result.receipt = {
+                    request_id: statusOnly ? payload.arguments.original_request.request_id : payload.arguments.request_id,
+                    session_id: mac.sessionId, provider_session_id: 'prov-1', answer_to_state_cursor: 5,
+                    status: h.time >= serverDeadline ? 'waiting_answer_expired' : 'unconfirmed',
+                    transport_enqueued: true, definitely_not_sent: false, provider_request_acknowledged: false,
+                    enqueued_at_ms: 100000, waiting_deadline_ms: serverDeadline,
+                    observed_at_ms: h.time, remaining_ms: Math.max(0, serverDeadline - h.time),
+                };
+            }
+            return result;
+        };
+        const make = at => harness(storage, respond, {
+            clockStart: at, now: () => h.time + wallSkew, monotonic: () => h.time,
+        });
+        h = make(103000); h.reader.open(mac); await h.tick();
+        assert.equal(await h.reader.send('Yes'), true);
+        assert.equal(h.reader.snapshot().waitingRemainingMS, 12000, 'fresh server duration survives a one-minute clock offset');
+        assert.equal(h.latest.deliveryUnknown, true);
+        await h.advance(2000);
+        assert.equal(h.reader.snapshot().waitingRemainingMS, 10000);
+        h.reader.close();
+        h = make(105000); h.reader.open(mac); await h.tick(); await flush();
+        assert.equal(h.reader.snapshot().waitingRemainingMS, 10000, 'reload uses the fresh status duration, with no Send');
+        wallSkew = -wallSkew; // A wall-clock correction cannot move a monotonic deadline.
+        await h.advance(9999);
+        assert.equal(h.reader.snapshot().waitingRemainingMS, 1);
+        assert.equal(h.latest.waitingAnswers[0].outcome || '', '');
+        await h.advance(1); await flush();
+        assert.equal(h.latest.waitingAnswers[0].outcome, 'expired', 'deadline forces a fresh exact-provider status read');
+        assert.equal(h.reader.takeDraft(), 'Yes');
+        assert.equal(sends, 1);
+        assert.ok(lookups > 0);
+        h.reader.close();
+    });
+}
 
 test('Codex hook completion uses one correlated prompt and preserves uncertain delivery across reload', async () => {
     const storage = memoryStorage();
@@ -650,4 +714,472 @@ test('upgrading a legacy Codex cache rereads native history and preserves unreso
         assert.equal(reopened.latest.pending.request_id, 'unresolved');
         reopened.reader.close();
     }
+});
+
+test('queued follow-up survives reload and becomes one durable pending request before transport', async () => {
+    const storage = memoryStorage();
+    let state = 'working';
+    const respond = (_wing, payload) => {
+        if (payload.operation === 'session_read') return { lifecycle: live({ state }) };
+        const record = readExecution(storage, mac).record;
+        assert.equal(record.queued, null);
+        assert.equal(record.pending.input, 'Follow up after this turn');
+        return { receipt: { status: 'unconfirmed' } };
+    };
+    const first = harness(storage, respond, { canSendQueued: () => true });
+    first.reader.open(mac); await first.tick();
+    assert.equal(first.reader.queue('Follow up after this turn'), true);
+    const id = first.latest.queued.request_id;
+    assert.equal(first.operations().includes('session_prompt'), false);
+    assert.equal(queuedExecutions(storage, 'someone-else').length, 0);
+    first.reader.close();
+    const refs = queuedExecutions(storage, mac.userId);
+    assert.equal(refs.length, 1);
+    const next = harness(storage, respond, { canSendQueued: () => true });
+    next.reader.open(refs[0]); await next.tick();
+    assert.equal(next.latest.queued.input, 'Follow up after this turn');
+    state = 'idle'; await next.tick(3);
+    assert.equal(next.calls.filter(c => c.payload.operation === 'session_prompt').length, 1);
+    assert.equal(next.latest.pending.request_id, id);
+    next.reader.close();
+    const last = harness(storage, respond, { canSendQueued: () => true });
+    last.reader.open(mac); await last.tick(3);
+    assert.equal(last.latest.pending.request_id, id);
+    assert.equal(last.operations().includes('session_prompt'), false);
+});
+
+test('queue validates before acceptance and retains saved input when reservation storage fails', async () => {
+    const storage = memoryStorage();
+    let state = 'working';
+    const h = harness(storage, () => ({ lifecycle: live({ state }) }), { canSendQueued: () => true });
+    h.reader.open(mac); await h.tick();
+    for (const text of ['x'.repeat(65537), 'bad\x1binput']) {
+        assert.equal(h.reader.queue(text), false);
+        assert.match(h.latest.notice, /64 KiB/);
+        assert.equal(h.latest.queued, null);
+    }
+    assert.equal(h.reader.queue('Keep this follow-up'), true);
+    storage.setItem = () => { throw Error('full'); };
+    state = 'idle'; await h.tick();
+    assert.equal(h.latest.queued.input, 'Keep this follow-up');
+    assert.equal(h.latest.pending, null);
+    assert.equal(h.operations().includes('session_prompt'), false);
+    assert.equal(readExecution(storage, mac).record.queued.input, 'Keep this follow-up');
+});
+
+test('disabled storage never accepts a queue or clears the caller draft', async () => {
+    const storage = memoryStorage();
+    const h = harness(storage, () => ({ lifecycle: live({ state: 'working' }) }));
+    h.reader.open(mac); await h.tick();
+    storage.setItem = () => { throw Error('disabled'); };
+    assert.equal(h.reader.queue('Keep my draft'), false);
+    assert.equal(h.latest.queued, null);
+    assert.match(h.latest.notice, /not queued/);
+});
+
+test('queued sends wait for permission and cannot move to another provider execution', async () => {
+    const storage = memoryStorage();
+    let state = 'working', allowed = false;
+    const h = harness(storage, () => ({ lifecycle: live({ state }) }), { canSendQueued: () => allowed });
+    h.reader.open(mac); await h.tick();
+    assert.equal(h.reader.queue('Exact provider only'), true);
+    state = 'idle'; await h.tick(2);
+    assert.equal(h.operations().includes('session_prompt'), false);
+    h.reader.close();
+    allowed = true;
+    const next = harness(storage, () => ({ lifecycle: live({ provider_session_id: 'other-provider' }) }), { canSendQueued: () => allowed });
+    next.reader.open(queuedExecutions(storage, mac.userId)[0]); await next.tick(2);
+    assert.equal(next.latest.halted, true);
+    assert.equal(next.latest.queued.input, 'Exact provider only');
+    assert.equal(next.operations().includes('session_prompt'), false);
+});
+
+
+test('a background queued send that is definitely rejected restores its draft after reload', async () => {
+    const storage = memoryStorage();
+    let state = 'working', resolvePrompt;
+    const h = harness(storage, (_wing, payload) => payload.operation === 'session_read'
+        ? { lifecycle: live({ state }) } : new Promise(resolve => { resolvePrompt = resolve; }), { canSendQueued: () => true });
+    h.reader.open(mac); await h.tick();
+    assert.equal(h.reader.queue('Retain rejected follow-up'), true);
+    state = 'idle'; await h.tick();
+    h.reader.close();
+    resolvePrompt({ receipt: { status: 'not_sent', definitely_not_sent: true } }); await flush();
+    const next = harness(storage, () => ({ lifecycle: live() }));
+    next.reader.open(mac); await next.tick();
+    assert.equal(next.reader.takeDraft(), 'Retain rejected follow-up');
+    assert.equal(next.latest.pending, null);
+    assert.equal(next.latest.queued, null);
+});
+
+
+test('reload discovers durable queued input even if the browser index update failed', async () => {
+    const storage = memoryStorage();
+    const set = storage.setItem;
+    storage.setItem = (key, value) => {
+        if (key.startsWith('wt_conversation_execution_index_v1:')) throw Error('index quota');
+        set(key, value);
+    };
+    const h = harness(storage, () => ({ lifecycle: live({ state: 'working' }) }));
+    h.reader.open(mac); await h.tick();
+    assert.equal(h.reader.queue('Recover without an index'), true);
+    h.reader.close();
+    assert.equal(queuedExecutions(storage, mac.userId).length, 1);
+    assert.equal(queuedExecutions(storage, 'someone-else').length, 0);
+});
+
+
+// Waiting answers and saved follow-ups have separate durable identities.
+for (const agent of ['claude', 'codex']) {
+    for (const newerInput of [false, true]) {
+        test(`${agent} migrated rejection restores its draft across reload; newer input=${newerInput}`, async () => {
+            const storage = memoryStorage();
+            const original = { ...mac, providerSessionId: 'prov-1' };
+            const answer = createPendingInput({ ...original, request_id: 'saved-answer', input: 'Yes', answerToStateCursor: 5, createdAt: 1 });
+            const followUp = createPendingInput({ ...original, request_id: 'saved-follow-up', input: 'Later work', createdAt: 2 });
+            // This is the old durable format: a pending answer without the
+            // answers map or latest-input pointer introduced by newer clients.
+            writeExecution(storage, original, { providerSessionId: 'prov-1', pending: answer, queued: followUp,
+                ...(newerInput ? { lastInputRequestId: 'newer-input', draftRequestId: 'newer-input', draft: 'Keep my new draft' } : {}) });
+            let release;
+            const respond = (_wing, payload) => {
+                assert.equal(payload.operation, 'session_read', 'reopening must never send an answer or follow-up');
+                const result = { lifecycle: live({ agent, state_source: agent + '_hook', state: 'needs_input', ready: false }) };
+                if (!payload.arguments.original_request) return result;
+                assert.deepEqual(payload.arguments.original_request, { request_id: answer.request_id, provider_session_id: 'prov-1', answer_to_state_cursor: 5 });
+                return new Promise(resolve => { release = () => resolve({ ...result, receipt: {
+                    request_id: answer.request_id, session_id: original.sessionId, provider_session_id: 'prov-1', answer_to_state_cursor: 5,
+                    status: 'not_sent', definitely_not_sent: true,
+                } }); });
+            };
+            const first = harness(storage, respond);
+            first.reader.open(original); await first.tick();
+            first.reader.close();
+            const reopened = harness(storage, respond);
+            reopened.reader.open(original); await reopened.tick();
+            await reopened.advance(4000);
+            release(); await flush();
+            assert.equal(reopened.latest.waitingAnswers[0].outcome, 'not_sent');
+            assert.equal(reopened.reader.takeDraft(), newerInput ? 'Keep my new draft' : 'Yes');
+            assert.equal(reopened.reader.takeDraft(), null);
+            assert.equal(reopened.latest.queued.request_id, followUp.request_id);
+            assert.equal(reopened.latest.inputReady, true);
+            reopened.reader.close();
+            const restored = harness(storage, respond);
+            restored.reader.open(original); await restored.tick();
+            assert.equal(restored.reader.takeDraft(), newerInput ? 'Keep my new draft' : 'Yes', 'the restored text remains durable');
+            restored.reader.close();
+        });
+    }
+}
+
+for (const agent of ['claude', 'codex']) {
+    for (const reloadAt of [null, 0, 2000, 4000, 14000, 16000]) {
+        test(`${agent} waiting preserves one saved follow-up across reload at ${reloadAt}`, async () => {
+            const storage = memoryStorage();
+            let state = 'working';
+            const prompts = [];
+            const respond = (_wing, payload) => {
+                if (payload.operation === 'session_read') return { lifecycle: live({ agent, state_source: agent + '_hook', state, ready: state === 'idle' }) };
+                prompts.push(payload.arguments);
+                // Only the ordinary follow-up gets a real native-text receipt.
+                assert.equal(state, 'idle');
+                assert.equal(payload.arguments.answer_to_state_cursor, undefined);
+                return { receipt: { status: 'native_receipt_observed', native_receipt_observed: true } };
+            };
+            let h = harness(storage, respond, { canSendQueued: () => true });
+            h.reader.open(mac); await h.tick();
+            assert.equal(h.reader.queue('Saved follow-up'), true);
+            const id = h.latest.queued.request_id;
+            state = 'needs_input'; await h.tick();
+            assert.equal(h.latest.inputReady, true);
+            assert.equal(h.reader.queue('Yes'), false);
+            if (reloadAt !== null) {
+                await h.advance(reloadAt);
+                h.reader.close();
+                h = harness(storage, respond, { canSendQueued: () => true });
+                h.reader.open(mac); await h.tick();
+            }
+            await h.advance(30000);
+            assert.equal(h.reader.takeDraft(), null);
+            assert.equal(h.latest.pending, null);
+            assert.equal(h.latest.queued.request_id, id);
+            assert.equal(prompts.length, 0);
+            state = 'working'; await h.tick();
+            assert.equal(h.latest.presentation.state, 'working');
+            assert.equal(h.latest.queued.input, 'Saved follow-up');
+            // The working shell can edit/queue, but the saved input waits for idle.
+            state = 'idle'; await h.tick(4);
+            assert.equal(h.latest.inputReady, true);
+            assert.equal(h.latest.queued, null);
+            assert.deepEqual(prompts.map(p => [p.input, p.request_id]), [['Saved follow-up', id]]);
+            h.reader.close(); h.reader.open(mac); await h.tick(4);
+            assert.equal(prompts.length, 1);
+            h.reader.close();
+        });
+    }
+
+    for (const mode of ['lost response', 'no enqueue', 'delayed before 15s', 'delayed after 15s', 'three second wait', 'checking', 'working', 'before transport', 'terminal resolved', 'navigation']) {
+        test(`${agent} waiting-answer failure input: ${mode}`, async () => {
+            const storage = memoryStorage();
+            const original = {...mac,providerSessionId:'prov-1'};
+            let state = 'working', cursor = 5, release, answer, sends = 0, followUps = 0, statusReads = 0;
+            const noEnqueue = ['no enqueue','before transport','terminal resolved'].includes(mode);
+            let evidence = null;
+            const respond = (_wing,payload) => {
+                const args = payload.arguments;
+                if (payload.operation === 'session_read') {
+                    const result = {lifecycle:live({agent,state_source:agent+'_hook',state,state_cursor:cursor,ready:state==='idle'})};
+                    if (args.original_request) {
+                        statusReads++;
+                        assert.equal(args.original_request.request_id,answer.request_id);
+                        result.receipt = {session_id:original.sessionId,request_id:answer.request_id,provider_session_id:'prov-1',answer_to_state_cursor:5,
+                            status: state==='working' && !noEnqueue ? 'waiting_answer_delivered' : 'unconfirmed',transport_enqueued:!noEnqueue,
+                            ...(evidence || {})};
+                    }
+                    return result;
+                }
+                if (args.input === 'Saved follow-up') {
+                    assert.equal(state,'idle'); followUps++;
+                    return {receipt:{status:'native_receipt_observed',native_receipt_observed:true}};
+                }
+                answer = args;
+                assert.equal(args.input,'Yes'); assert.equal(args.answer_to_state_cursor,5);
+                const saved = readExecution(storage,original).record;
+                assert.equal(saved.answers[args.request_id].input,'Yes','reservation precedes transport');
+                assert.equal(saved.queued.input,'Saved follow-up');
+                if (!noEnqueue) sends++;
+                if (['delayed before 15s','delayed after 15s','three second wait','before transport','navigation'].includes(mode)) return new Promise(resolve=>{release=resolve;});
+                throw Error('response lost');
+            };
+            let h = harness(storage,respond,{canSendQueued:()=>true});
+            h.reader.open(original); await h.tick();
+            assert.equal(h.reader.queue('Saved follow-up'),true);
+            state='needs_input'; await h.tick();
+            assert.equal(h.latest.inputReady,true,'waiting accepts a typed answer despite saved follow-up');
+            const sending=h.reader.send('Yes'); await flush();
+            assert.equal(h.latest.inputReady,false,'one answer per prompt');
+            h.reader.close(); h=harness(storage,respond,{canSendQueued:()=>true});
+            h.reader.open(original); await h.tick();
+            assert.equal(h.calls.some(c=>c.payload.operation==='session_prompt'),false,'reopening only reads receipts');
+            if (mode==='terminal resolved' || mode==='before transport') evidence={status:'not_sent',definitely_not_sent:true};
+            if (release) {
+                await h.advance(mode==='delayed after 15s'?16000:mode==='three second wait'?3000:2000);
+                release({receipt:{session_id:original.sessionId,request_id:answer.request_id,provider_session_id:'prov-1',answer_to_state_cursor:5,status:'unconfirmed',transport_enqueued:!noEnqueue}});
+            }
+            await sending;
+            state='working';cursor++;
+            await h.advance(30000); await h.tick();
+            assert.equal(h.latest.pending,null);
+            assert.equal(h.latest.inputReady,true,'working composer stays enabled');
+            assert.equal(h.latest.deliveryUnknown,noEnqueue && !evidence);
+            if (evidence) assert.equal(h.reader.takeDraft(),'Yes');
+            else assert.equal(h.reader.takeDraft(),null,'fresh working alone cannot return a draft');
+            assert.ok(statusReads>0,'automatic status recovery');
+            if (mode==='navigation') {
+                h.reader.open({...original,wingId:'sibling'});await h.tick();
+                assert.equal(h.latest.waitingAnswers.length,0);assert.equal(h.latest.queued,null);
+                h.reader.open(original);await h.tick();
+            }
+            state='idle';cursor++;await h.tick(4);
+            assert.equal(followUps,1);assert.equal(sends,noEnqueue?0:1);
+            h.reader.close();h.reader.open(original);await h.tick(4);
+            assert.equal(followUps,1);assert.equal(h.calls.some(c=>c.payload.operation==='session_prompt' && c.payload.arguments.input==='Yes'),false);
+            h.reader.close();
+        });
+    }
+}
+
+for (const receipt of [
+    { status: 'native_receipt_observed', native_receipt_observed: true },
+    { status: 'not_sent', definitely_not_sent: true, reason: 'Writer changed' },
+    { status: 'unconfirmed' },
+]) {
+    test(`saved follow-up reload merges a delayed ${receipt.status} receipt without another Send`, async () => {
+        const storage = memoryStorage();
+        let state = 'working', release;
+        const prompts = [];
+        const respond = (_wing, payload) => {
+            if (payload.operation === 'session_read') return { lifecycle: live({ state, ready: state === 'idle' }) };
+            prompts.push(payload.arguments);
+            return new Promise(resolve => { release = resolve; });
+        };
+        const first = harness(storage, respond, { canSendQueued: () => true });
+        first.reader.open(mac); await first.tick();
+        first.reader.queue('Saved follow-up');
+        state = 'needs_input'; await first.tick(3);
+        first.reader.close();
+        const next = harness(storage, respond, { canSendQueued: () => true });
+        next.reader.open(mac); await next.tick();
+        state = 'working'; await next.tick();
+        assert.equal(next.latest.pending, null);
+        state = 'idle'; await next.tick();
+        assert.equal(prompts.length, 1);
+        next.reader.close();
+        const reopened = harness(storage, respond, { canSendQueued: () => true });
+        reopened.reader.open(mac); await reopened.tick();
+        await reopened.advance(4000);
+        release({ receipt }); await flush();
+        await reopened.tick(4);
+        assert.equal(prompts.length, 1);
+        assert.equal(reopened.latest.pending?.status || null, receipt.status === 'unconfirmed' ? 'unconfirmed' : null);
+        assert.equal(reopened.reader.takeDraft(), receipt.status === 'not_sent' ? 'Saved follow-up' : null);
+        reopened.reader.close(); reopened.reader.open(mac); await reopened.tick(4);
+        assert.equal(prompts.length, 1);
+        reopened.reader.close();
+    });
+}
+
+test('competing readers reserve a saved follow-up once and preserve a newer draft', async () => {
+    const storage = memoryStorage();
+    let state = 'working', release;
+    const calls = [];
+    const respond = (_wing, payload) => payload.operation === 'session_read'
+        ? { lifecycle: live({ state }) }
+        : (calls.push(payload), new Promise(resolve => { release = resolve; }));
+    const first = harness(storage, respond, { canSendQueued: () => true });
+    first.reader.open(mac); await first.tick();
+    first.reader.queue('Saved follow-up');
+    const second = harness(storage, respond, { canSendQueued: () => true });
+    second.reader.open(mac); await second.tick();
+    state = 'idle'; await first.tick(); await second.tick();
+    assert.equal(calls.length, 1);
+    release({ receipt: { status: 'not_sent', definitely_not_sent: true } }); await flush();
+    await second.tick();
+    assert.equal(second.reader.takeDraft(), 'Saved follow-up');
+    assert.equal(second.latest.pending, null);
+    first.reader.close(); second.reader.close();
+});
+
+const bridgeTraces = process.env.SESSION_ANSWER_BRIDGE
+    ? JSON.parse((await import('node:fs')).readFileSync(process.env.SESSION_ANSWER_BRIDGE, 'utf8')) : [];
+for (const trace of bridgeTraces) for (const reloadAt of [0,2000,4000,14000,16000]) for (const responseDelay of [3000,16000]) {
+    test(`${trace.agent} production bridge sends an explicit answer; reload=${reloadAt}; delay=${responseDelay}`, async () => {
+        const storage = memoryStorage();
+        const ref = {userId:'owner',wingId:'bridge-machine',sessionId:trace.receipt.session_id,providerSessionId:trace.receipt.provider_session_id};
+        const start = trace.receipt.enqueued_at_ms;
+        let h, release, prompts=0, lookups=0, resolved=false;
+        const respond = (_wing,payload) => {
+            if (payload.operation==='session_prompt') {
+                prompts++;
+                assert.equal(payload.arguments.answer_to_state_cursor,trace.initial.state_cursor);
+                assert.equal(payload.arguments.timeout_seconds,3);
+                const saved = readExecution(storage,ref).record;
+                assert.equal(saved.answers[payload.arguments.request_id].input,'Yes');
+                return new Promise(resolve=>{release=()=>resolve({receipt:{...trace.receipt,request_id:payload.arguments.request_id}});});
+            }
+            assert.equal(payload.operation,'session_read');
+            const result={session:ref.sessionId,lifecycle:resolved?trace.working:trace.initial};
+            if(payload.arguments.original_request) {
+                lookups++;
+                const id=payload.arguments.original_request.request_id;
+                const elapsed=h.time-start;
+                const receipt=resolved?trace.delivered:elapsed<3000?trace.missing:[...trace.statuses].reverse().find(s=>s.observed_at_ms<=h.time)||trace.receipt;
+                if (!resolved && elapsed >= 3000) assert.equal(receipt.observed_at_ms, h.time, 'receipt-only lookup returns a fresh server observation');
+                result.receipt={...receipt,request_id:id};
+            }
+            return result;
+        };
+        const make = at => harness(storage,respond,{canSendQueued:()=>true,clockStart:at});
+        h=make(start);h.reader.open(ref);await h.tick();
+        assert.equal(h.latest.inputReady,true);
+        const sending=h.reader.send('Yes');await flush();
+        const id=readExecution(storage,ref).record.lastInputRequestId;
+        await h.advance(Math.min(reloadAt,responseDelay));
+        if(responseDelay<=reloadAt) {release();await sending;await h.advance(reloadAt-responseDelay);}
+        const at=h.time;h.reader.close();h=make(at);h.reader.open(ref);await h.tick();
+        assert.equal(prompts,1,'reopening never sends');
+        if(responseDelay>reloadAt) {await h.advance(responseDelay-reloadAt);release();await sending;await h.tick();}
+        assert.equal(prompts,trace.sends);
+        if(h.time<start+15000) {
+            assert.ok(h.latest.waitingRemainingMS<=start+15000-h.time,'deadline never restarts on response/reload');
+            await h.advance(start+15000-h.time);await flush();
+            assert.equal(h.latest.waitingAnswers[0].outcome,'expired','deadline forces a fresh receipt read at t=15');
+        }
+        await h.tick();
+        assert.equal(h.latest.waitingAnswers[0].outcome,'expired');
+        assert.equal(h.latest.waitingAnswers[0].transportEnqueued,true);
+        assert.equal(h.latest.waitingAnswers[0].receipt.definitely_not_sent,false);
+        assert.equal(h.reader.takeDraft(),'Yes');
+        assert.equal(h.latest.inputReady,true);
+        assert.equal(h.latest.notice,'Not sent - try again');
+        resolved=true;await h.tick(3);
+        assert.equal(h.latest.deliveryReceipt.status,'waiting_answer_delivered');
+        assert.equal(h.latest.deliveryReceipt.provider_request_acknowledged,false);
+        assert.equal(h.reader.takeDraft(),null,'late delivery clears only the original draft');
+        assert.ok(lookups>0);assert.equal(prompts,1);
+        h.reader.close();h.reader.open(ref);await h.tick(3);
+        assert.equal(h.reader.takeDraft(),null);assert.equal(prompts,1);h.reader.close();
+    });
+}
+
+for (const agent of ['claude', 'codex']) for (const navigate of [false, true]) {
+    test(`${agent} saved follow-up requeues when needs_input wins the dispatch race; navigate=${navigate}`, async () => {
+        const storage = memoryStorage();
+        let phase = 'working', release, cursor = 5;
+        const receipts = new Map();
+        const dispatch = new Promise(resolve => { release = resolve; });
+        const respond = async (_wing, payload) => {
+            if (payload.operation === 'session_read') return { lifecycle: live({agent,state:phase,state_source:agent+'_hook',state_cursor:cursor}) };
+            const id = payload.arguments.request_id;
+            if (receipts.has(id)) return {receipt:receipts.get(id)};
+            if (receipts.size === 0) {
+                await dispatch;
+                receipts.set(id,{status:'not_sent',definitely_not_sent:true,reason:'Not sent - try again'});
+            } else receipts.set(id,{status:'native_receipt_observed',native_receipt_observed:true});
+            return {receipt:receipts.get(id)};
+        };
+        const first = harness(storage,respond,{canSendQueued:()=>true});
+        first.reader.open(mac); await first.tick();
+        assert.equal(first.reader.queue('Saved follow-up'),true);
+        phase='idle'; cursor++; await first.tick();
+        assert.equal(first.calls.filter(c=>c.payload.operation==='session_prompt').length,1);
+        phase='needs_input'; cursor++;
+        if (navigate) first.reader.close(); // rejection can arrive after leaving the page
+        release(); await flush();
+        const rejected=readExecution(storage,mac).record;
+        assert.equal(rejected.pending,null);
+        assert.equal(rejected.queued.input,'Saved follow-up');
+        assert.equal(rejected.draft,null);
+        first.reader.close();
+        const next=harness(storage,respond,{canSendQueued:()=>true});
+        next.reader.open(mac); await next.tick(3);
+        assert.equal(next.latest.queued.input,'Saved follow-up');
+        assert.equal(next.calls.filter(c=>c.payload.operation==='session_prompt').length,0);
+        phase='working'; cursor++; await next.tick(2);
+        assert.equal(next.calls.filter(c=>c.payload.operation==='session_prompt').length,0);
+        phase='idle'; cursor++; await next.tick(3);
+        const sends=next.calls.filter(c=>c.payload.operation==='session_prompt');
+        assert.equal(sends.length,1);
+        assert.equal(sends[0].payload.arguments.input,'Saved follow-up');
+        assert.notEqual(sends[0].payload.arguments.request_id,first.calls.find(c=>c.payload.operation==='session_prompt').payload.arguments.request_id);
+        assert.equal(next.latest.queued,null);
+        assert.equal(next.latest.pending,null);
+        next.reader.close();
+        const reopened=harness(storage,respond,{canSendQueued:()=>true});
+        reopened.reader.open(mac); await reopened.tick(4);
+        assert.equal(reopened.calls.filter(c=>c.payload.operation==='session_prompt').length,0);
+        reopened.reader.close();
+    });
+}
+
+for (const agent of ['claude','codex']) test(`${agent} expiry and late delivery never overwrite newer pending input`, async () => {
+    const storage=memoryStorage(), original={...mac,providerSessionId:'prov-1'};
+    let state='needs_input',cursor=5, status='unconfirmed', oldId, releaseNew;
+    const receipt = () => ({session_id:mac.sessionId,request_id:oldId,provider_session_id:'prov-1',answer_to_state_cursor:5,status,transport_enqueued:true,definitely_not_sent:false});
+    const h=harness(storage,(_wing,payload)=>{
+        if(payload.operation==='session_read') return {lifecycle:live({agent,state_source:agent+'_hook',state,state_cursor:cursor}),...(payload.arguments.original_request ? {receipt:receipt()} : {})};
+        if(payload.arguments.answer_to_state_cursor===5) {oldId=payload.arguments.request_id;return {receipt:receipt()};}
+        return new Promise(resolve=>{releaseNew=resolve;});
+    },{canSendQueued:()=>true});
+    h.reader.open(original);await h.tick();await h.reader.send('Yes');
+    status='waiting_answer_expired';await h.advance(2000);assert.equal(h.reader.takeDraft(),'Yes');
+    state='idle';cursor++;await h.tick();
+    const sending=h.reader.send('New work');await flush();
+    assert.equal(h.latest.pending.input,'New work');
+    status='waiting_answer_delivered';await h.advance(4000);
+    assert.equal(h.latest.pending.input,'New work');assert.equal(h.reader.takeDraft(),null);
+    h.reader.close();h.reader.open(original);await h.tick();
+    assert.equal(h.latest.pending.input,'New work');assert.equal(h.reader.takeDraft(),null);
+    releaseNew({receipt:{status:'unconfirmed'}});await sending;h.reader.close();
 });

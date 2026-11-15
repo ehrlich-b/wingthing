@@ -10,7 +10,7 @@ test('paper Send stays disabled for read-only accounts, spectators and offline w
     const context = moduleContext('paper', { S, machineState, esc: escapeMarkup });
     const session = { wing_id: 'machine', id: 'execution' };
     vm.runInContext("ui.inputSnapshot = { inputReady: true }; ui.inputKey = 'selected'; drafts.set(ui.inputKey, 'draft');", context);
-    assert.doesNotMatch(context.composer('Message', session), /disabled/);
+    assert.doesNotMatch(context.composer('Message', session), /<(?:textarea|button type="submit")[^>]*disabled/);
     for (const scenario of ['spectator', 'account', 'offline']) {
         S.spectating = scenario === 'spectator';
         S.currentUser.relay_allowed = scenario !== 'account';
@@ -26,7 +26,7 @@ test('paper readers stop on connection loss and reopen only on the selected conn
     const S = { currentUser: { id: 'owner' }, wingsData: [{ wing_id: 'machine', online: false }] };
     const opened = []; let closed = 0;
     const context = moduleContext('paper', { S, machineState, esc: escapeMarkup, window: {},
-        sendTunnelRequest() {}, randomUUID() {}, createConversationReader: () => ({ open: target => opened.push(target), close: () => closed++ }) });
+        sendTunnelRequest() {}, randomUUID() {}, queuedExecutions: () => [], createConversationReader: () => { let target; return { open: next => { target = next; opened.push(next); }, close: () => closed++, snapshot: () => ({target}) }; } });
     const session = { wing_id: 'machine', id: 'execution' };
     context.selectComposer(session);
     assert.equal(opened.length, 0);
@@ -44,4 +44,40 @@ test('paper readers stop on connection loss and reopen only on the selected conn
     S.wingsData[0].online = true;
     context.selectComposer(session);
     assert.equal(opened.length, 2);
+});
+
+
+test('session state composer preserves spectator and account input boundaries', () => {
+    let allowed = true;
+    const context = moduleContext('shell/views/session', {
+        S: {currentUser:{id:'owner'}}, esc:escapeMarkup,
+        ui:{inputSnapshot:{inputReady:true}, inputKey:'selected'},
+        drafts:new Map([['selected','Draft']]),
+        inputAllowed:()=>allowed, sessionDisplayName:()=> 'Session',
+    });
+    for (const state of ['live','working']) {
+        allowed=true;
+        assert.doesNotMatch(context.compose({wing_id:'machine',id:'execution'},{key:state}), /<textarea[^>]*disabled/);
+        allowed=false;
+        const html=context.compose({wing_id:'machine',id:'execution'},{key:state});
+        assert.match(html, /<textarea[^>]*disabled/);
+        assert.match(html, /type="submit"[^>]*disabled/);
+    }
+});
+
+
+test('session control preserves relaunch connecting and failed-control feedback', () => {
+    const S={activeView:'terminal',ptySessionId:'execution',ptyWingId:'machine',ptyInputBlocked:false,e2eKey:null,ptyWs:{readyState:1}};
+    const context=moduleContext('shell/views/session', {
+        S, ui:{}, machineState:()=> 'connected', sessionState:()=>({key:'work'}),
+        machineName:()=> 'Studio', WebSocket:{OPEN:1},
+    });
+    const session={id:'execution',wing_id:'machine'};
+    const state=()=>context.presentation(session,{}, {at:1},{});
+    assert.equal(state().kicker,'Connecting terminal…');
+    S.e2eKey={};
+    assert.equal(state().kicker,"You're typing");
+    S.ptyInputBlocked=true;
+    assert.equal(state().kicker,'Control unavailable · hand back and retry');
+    assert.equal(state().key,'control');
 });

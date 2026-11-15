@@ -28,6 +28,7 @@ import { unreadOutputBadge } from './session-inventory.js';
 import { stopSessionVerified, stopConfirmationText, checkStoppedSession } from './session-stop.js';
 
 import { patchRegion } from './shell/patch.js';
+import { ordered } from './shell/select.js';
 import { render as renderPaper } from './paper.js';
 import { machineState, machineLabel, machineGuidance, agentName } from './paper-state.js';
 
@@ -117,6 +118,7 @@ function sessionConnectionDot(s) {
 }
 
 export function renderSidebar() {
+    renderPaper(true);
     renderChannelBanner();
     refreshParentDot();
     renderCoordinatorHome(false);
@@ -1486,10 +1488,11 @@ export function renderWingDetailPage(wingId) {
 
     if (!w || isUpdating) {
         var msg = isUpdating
-            ? '<span class="text-dim">updating... wing will reconnect shortly</span>'
-            : '<span class="text-dim">wing not found</span>';
-        DOM.wingDetailContent.innerHTML = '<div class="wd-page"><div class="wd-header"><a class="wd-back" id="wd-back">back</a>' + msg + '</div></div>';
-        document.getElementById('wd-back').addEventListener('click', function() { showHome(); });
+            ? '<span class="text-dim" role="status">Updating… Machine will reconnect shortly.</span>'
+            : '<span class="text-dim" role="status">Machine not found.</span>';
+        // The reconnect check revisits this state. Keep its page and focused
+        // navigation mounted, just as on ordinary Machine refreshes.
+        patchRegion(DOM.wingDetailContent, '<div class="wd-page" data-key="' + escapeHtml(wingId) + '"><div class="wd-header" data-stable><a class="wd-back" id="wd-back" href="#machines">Machines</a> ' + msg + '</div></div>');
         if (isUpdating) {
             setTimeout(function() {
                 if (S.activeView === 'wing-detail' && S.currentWingId === wingId) {
@@ -1528,8 +1531,8 @@ export function renderWingDetailPage(wingId) {
 
     var scopeHtml = w.org_id ? escapeHtml(w.org_id) : 'personal';
 
-    var activeSessions = S.sessionsData.filter(function(s) { return s.wing_id === w.wing_id; });
-    var activeHtml = '<section class="wd-section"><h2 class="section-label">' + (isOnline ? 'Sessions' : connection === 'offline' ? 'Last seen sessions' : 'Saved sessions') + ' <span>' + activeSessions.length + '</span></h2><div class="wd-sessions" id="wd-active-sessions" data-session-list>' + (activeSessions.length ? renderActiveSessionRows(activeSessions) : '<p class="text-dim">' + (isOnline ? 'No sessions yet. Start one on this machine.' : 'No saved sessions.') + '</p>') + '</div></section>';
+    var activeSessions = ordered('machine/' + w.wing_id, S.sessionsData.filter(function(s) { return s.wing_id === w.wing_id; }));
+    var activeHtml = '<section class="wd-section"><h2 class="section-label" data-stable>' + (isOnline ? 'Sessions' : connection === 'offline' ? 'Last seen sessions' : 'Saved sessions') + ' <span>' + activeSessions.length + '</span></h2><div class="wd-sessions" id="wd-active-sessions" data-session-list>' + (activeSessions.length ? renderActiveSessionRows(activeSessions) : '<p class="text-dim">' + (isOnline ? 'No sessions yet. Start one on this machine.' : 'No saved sessions.') + '</p>') + '</div></section>';
 
     var isNotAllowed = w.tunnel_error === 'not_allowed';
     var isPasskeyNeeded = w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed';
@@ -1554,7 +1557,7 @@ export function renderWingDetailPage(wingId) {
         : machineGuidance(w);
     var html =
         '<div class="wd-page" data-key="' + escapeHtml(wingId) + '">' +
-        '<div class="wd-header"><a class="wd-back" href="#machines">Machines</a></div>' +
+        '<div class="wd-header"><a class="wd-back" id="wd-back" href="#machines">Machines</a></div>' +
         '<header class="wd-hero"><h1 class="wd-name" id="wd-name">' + escapeHtml(name) + '</h1>' +
             '<p class="wd-connection"><strong>' + escapeHtml(machineLabel(w)) + '</strong>' +
             ((w.agents || []).length ? ' · ' + escapeHtml(w.agents.map(agentName).join(', ')) : isOnline ? ' · No agents installed' : '') + '</p>' +
@@ -1682,13 +1685,13 @@ export function renderWingDetailPage(wingId) {
     var updateBtn = document.getElementById('wd-update');
     if (updateBtn) {
         setDetailListener(updateBtn, 'click', function() {
-            updateBtn.innerHTML = 'updating...';
+            updateBtn.textContent = 'Updating…';
             sendTunnelRequest(w.wing_id, { type: 'wing.update' })
                 .then(function() {
                     w.updating_at = Date.now();
                     renderWingDetailPage(wingId);
                 })
-                .catch(function() { updateBtn.innerHTML = 'update failed'; });
+                .catch(function() { updateBtn.textContent = 'Update failed'; });
         });
     }
 
@@ -1734,7 +1737,7 @@ function renderActiveSessionRows(sessions, expanded) {
             ? '<button class="btn-sm wd-replay-btn" data-sid="' + sid + '">replay</button>' +
               '<button class="btn-sm wd-keylog-btn" data-sid="' + sid + '">keylog</button>'
             : '';
-        return '<div class="wd-session-row" data-key="' + escapeHtml(s.wing_id + '/' + s.id) + '" role="group" tabindex="0" aria-label="' + escapeHtml(sName + ' · ' + presentation.agentLabel + ' · ' + presentation.connectionLabel) + '" data-sid="' + sid + '" data-wing-id="' + escapeHtml(s.wing_id || '') + '" data-kind="' + escapeHtml(kind) + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
+        return '<div class="wd-session-row" data-stable data-key="' + escapeHtml(s.wing_id + '/' + s.id) + '" role="group" tabindex="0" aria-label="' + escapeHtml(sName + ' · ' + presentation.agentLabel + ' · ' + presentation.connectionLabel) + '" data-sid="' + sid + '" data-wing-id="' + escapeHtml(s.wing_id || '') + '" data-kind="' + escapeHtml(kind) + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
             '<span class="session-dot ' + sessionConnectionDot(s) + '"></span>' +
             '<span class="wd-session-identity"><span class="wd-session-name">' + escapeHtml(sName) + '</span><span class="wd-session-meta">' + escapeHtml(agentName(s.agent) + ' · ' + presentation.agentLabel) + '</span></span>' +
             auditBadge +
@@ -1789,7 +1792,7 @@ function updateWingDetailSessions(wingId) {
     var w = S.wingsData.find(function(w) { return w.wing_id === wingId; });
     if (!w) return;
     var container = document.getElementById('wd-active-sessions');
-    var activeSessions = S.sessionsData.filter(function(s) { return s.wing_id === w.wing_id; });
+    var activeSessions = ordered('machine/' + w.wing_id, S.sessionsData.filter(function(s) { return s.wing_id === w.wing_id; }));
     if (container) {
         patchRegion(container, renderActiveSessionRows(activeSessions));
         wireActiveSessionRows();

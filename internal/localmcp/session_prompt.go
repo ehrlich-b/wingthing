@@ -10,10 +10,11 @@ import (
 
 func (s *Server) toolSessionPrompt(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {
 	var args struct {
-		Session        string  `json:"session"`
-		RequestID      string  `json:"request_id"`
-		Input          string  `json:"input"`
-		TimeoutSeconds float64 `json:"timeout_seconds"`
+		Session             string  `json:"session"`
+		RequestID           string  `json:"request_id"`
+		Input               string  `json:"input"`
+		AnswerToStateCursor *int64  `json:"answer_to_state_cursor,omitempty"`
+		TimeoutSeconds      float64 `json:"timeout_seconds"`
 	}
 	if err := decodeStrict(arguments, &args); err != nil {
 		return nil, err
@@ -29,7 +30,7 @@ func (s *Server) toolSessionPrompt(ctx context.Context, arguments json.RawMessag
 		return nil, err
 	}
 	var result egg.SessionPromptResult
-	_, result, err = s.Sessions.Prompt(ctx, s.sessionAuthority(), session.ID, args.RequestID, args.Input, durationSeconds(args.TimeoutSeconds), "mcp:"+s.clientActor())
+	_, result, err = s.Sessions.Prompt(ctx, s.sessionAuthority(), session.ID, args.RequestID, args.Input, durationSeconds(args.TimeoutSeconds), "mcp:"+s.clientActor(), args.AnswerToStateCursor)
 	if err != nil {
 		return nil, err
 	}

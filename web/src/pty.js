@@ -10,7 +10,7 @@ import { checkForNotification, setNotification, clearNotification } from './noti
 import { showReconnectBanner, hideReconnectBanner } from './dashboard.js';
 import { renderSidebar } from './render.js';
 import { loadHome } from './data.js';
-import { showHome } from './nav.js';
+import { showHome, showSessionChat } from './nav.js';
 import { wingDisplayName, formatSessionTitle, b64urlToBytes, bytesToB64url, bytesToB64 } from './helpers.js';
 import { saveTunnelAuthTokens, sendTunnelRequest } from './tunnel.js';
 import { handlePreview, setPreviewSession, discardPreview } from './preview.js';
@@ -24,6 +24,26 @@ import { browserLocalStorage } from './storage-scope.js';
 
 var PTY_PING_INTERVAL_MS = 5000;
 var PTY_LIVENESS_TIMEOUT_MS = 12000;
+
+// Reconnecting confirms a new key, not delivery of input on the old channel.
+// Keep input refusals attached to the qualified terminal until dismissed.
+var unconfirmedInputWarnings = new Map();
+
+function renderInputWarning(sessionId, wingId, message) {
+    if (!DOM.ptyInputNotice) return;
+    var key = JSON.stringify([wingId, sessionId]);
+    if (message) unconfirmedInputWarnings.set(key, message);
+    var warning = unconfirmedInputWarnings.get(key);
+    DOM.ptyInputWarning.textContent = warning || '';
+    DOM.ptyInputNotice.hidden = !warning;
+    DOM.ptyInputDismiss.onclick = function () {
+        unconfirmedInputWarnings.delete(key);
+        if (DOM.ptyStatus.textContent === warning) {
+            DOM.ptyStatus.textContent = S.ptyReconnecting ? 'reconnecting...' : S.e2eKey ? '\uD83D\uDD12' : '';
+        }
+        renderInputWarning(S.ptySessionId, S.ptyWingId);
+    };
+}
 
 function clearTerminalControl() {
     S.ptyControllerId = null;
@@ -39,10 +59,12 @@ function handleTerminalControlError(ws, sessionId, wingId, message) {
     S.ptyInputBlocked = true;
     S.ptyReconnecting = false;
     if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
-    cleanupSession(sessionId, wingId);
     hideReconnectBanner();
     hideReplayOverlay();
     DOM.ptyStatus.textContent = failure.kind === 'busy' ? 'input in use' : 'control changed';
+    // Cleanup can synchronously report unconfirmed input through this socket.
+    // Keep that warning visible after the control status has been set.
+    cleanupSession(sessionId, wingId);
     var wing = S.wingsData.find(function(item) { return item.wing_id === wingId; });
     renderTerminalControlNotice(document.getElementById('terminal-control-notice'), failure, wing, S.currentUser, function(mode) {
         if (ws !== S.ptyWs || wingId !== S.ptyWingId) return;
@@ -220,6 +242,7 @@ export async function handlePTYPasskey() {
             type: 'passkey.response',
             session_id: msg.session_id,
             viewer_id: msg.viewer_id || '',
+            controller_id: msg.controller_id || '',
             credential_id: bytesToB64url(new Uint8Array(credential.rawId)),
             authenticator_data: bytesToB64(new Uint8Array(credential.response.authenticatorData)),
             client_data_json: bytesToB64(new Uint8Array(credential.response.clientDataJSON)),
@@ -232,6 +255,7 @@ export async function handlePTYPasskey() {
 
 function setupPTYHandlers(ws, reattach, requestedSessionId) {
     var connectedWingId = S.ptyWingId;
+    renderInputWarning(requestedSessionId, connectedWingId);
     var pendingOutput = [];
     var keyReady = false;
     var keySetupVersion = 0;
@@ -465,6 +489,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                     replayDone = !reattach;
                 }
                 S.ptySessionId = msg.session_id;
+                renderInputWarning(msg.session_id, connectedWingId);
                 outputSessionId = msg.session_id;
                 clearTerminalControl();
                 S.ptyControllerId = typeof msg.controller_id === 'string' ? msg.controller_id : null;
@@ -525,6 +550,13 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                 S.term.focus();
                 renderSidebar();
                 loadHome();
+                // A newly started session lands in the same read-only two-column page.
+                if (!reattach && document.body.classList.contains('paper-on')) {
+                    if (!activeSession) S.sessionsData.push({ id: msg.session_id, wing_id: connectedWingId, agent: msg.agent, name: msg.agent, status: 'detached' });
+                    queueMicrotask(function () {
+                        if (S.ptySessionId === msg.session_id && S.ptyWingId === connectedWingId) showSessionChat(msg.session_id, connectedWingId, false);
+                    });
+                }
 
                 // Dispose previous resize listener to prevent accumulation across sessions
                 if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
@@ -631,8 +663,19 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
 
             case 'error':
                 if (msg.session_id && requestedSessionId && msg.session_id !== requestedSessionId) break;
+                // A surviving direct channel can return an old controller's
+                // queued-input refusal after this terminal reconnects. It still
+                // concerns this person's input, but cannot change current control.
+                if (msg.operation === 'pty.input') {
+                    renderInputWarning(msg.session_id || requestedSessionId || S.ptySessionId, connectedWingId, msg.message);
+                    DOM.ptyStatus.textContent = DOM.ptyInputNotice && S.e2eKey && !S.ptyReconnecting ? '\uD83D\uDD12' : msg.message;
+                    break;
+                }
                 if (msg.controller_id && S.ptyControllerId && msg.controller_id !== S.ptyControllerId) break;
                 if (handleTerminalControlError(ws, msg.session_id || requestedSessionId || S.ptySessionId, connectedWingId, msg.message)) break;
+                if (msg.code === 'input_delivery_unconfirmed') {
+                    renderInputWarning(msg.session_id || requestedSessionId || S.ptySessionId, connectedWingId, msg.message);
+                }
                 DOM.ptyStatus.textContent = msg.message;
                 break;
         }
@@ -857,6 +900,7 @@ export function detachPTY() {
     }
     S.ptySessionId = null;
     S.ptyWingId = null;
+    renderInputWarning(null, null);
     S.e2eKey = null;
     S.spectating = false;
     S.pendingResumeSessionId = null;
@@ -884,6 +928,7 @@ export function disconnectPTY() {
     if (S.ptyWs) { S.ptyWs.close(); S.ptyWs = null; }
     S.ptySessionId = null;
     S.ptyWingId = null;
+    renderInputWarning(null, null);
     S.e2eKey = null;
     S.spectating = false;
     S.pendingResumeSessionId = null;
@@ -956,8 +1001,16 @@ function ptyReconnectAttach(sessionId, attempt, wingId) {
         if (msg.type === 'pty.started' && msg.session_id === sessionId) {
             S.ptyReconnecting = false;
             hideReconnectBanner();
+            // Recovery is complete; subsequent refusals use the normal handler.
+            innerWs.onmessage = origMsg;
         }
         if (msg.type === 'error') {
+            // The surviving direct channel can refuse input before this relay
+            // attach starts. Display that refusal without aborting the attach.
+            if (msg.operation === 'pty.input') {
+                origMsg.call(innerWs, e);
+                return;
+            }
             if (terminalControlFailure(msg.message) && S.currentUser && S.currentUser.release_channel === 'preview') {
                 origMsg.call(innerWs, e);
                 return;

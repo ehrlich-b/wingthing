@@ -5,17 +5,23 @@ export function conversationResponseCurrent(requested, current) {
     return requested.userId === current.userId && requested.viewGeneration === current.viewGeneration && requested.hash === current.hash;
 }
 
-// Only explicit evidence that Send was never attempted releases an uncertain
-// request for a fresh deliberate send. Zero bytes alone is not that evidence.
-// The request identity, input and exact target are never changed here.
+// Prompts need native receipts or explicit proof of no input attempt.
 export function applyPromptReceipt(pending, receipt) {
     if (receipt.status === 'native_receipt_observed' && receipt.native_receipt_observed === true) {
         return { pending: null, draft: '', notice: '' };
     }
+    if (!Number.isSafeInteger(pending.answerToStateCursor) && receipt.status === 'not_sent' && receipt.definitely_not_sent === true && (receipt.retry_when_ready === true || ['Answer in the terminal', 'Not sent - try again'].includes(receipt.reason))) {
+        // The agent asked a question while a saved follow-up acquired input.
+        // Keep it queued for a later native-ready read; never answer the prompt.
+        return { pending: null, draft: null, notice: receipt.reason, requeue: true };
+    }
+    if (receipt.status === 'waiting_answer_expired' && Number.isSafeInteger(pending.answerToStateCursor) && receipt.transport_enqueued === true) {
+        return { pending: null, draft: pending.input, notice: 'Not sent - try again' };
+    }
     if (receipt.status === 'not_sent' && receipt.definitely_not_sent === true) {
         return { pending: null, draft: pending.input, notice: receipt.reason || 'Input was not sent. Try again when the session is ready.' };
     }
-    return { pending: { ...pending, status: 'unconfirmed', lastReason: receipt.reason || '' }, draft: null, notice: '' };
+    return { pending: { ...pending, status: 'unconfirmed', lastReason: receipt.reason || '', transportEnqueued: receipt.transport_enqueued === true || pending.transportEnqueued === true, transportEnqueuedAt: receipt.enqueued_at_ms || pending.transportEnqueuedAt, serverObservedAt: receipt.observed_at_ms }, draft: null, notice: '' };
 }
 
 export function canStartFreshLaunch(result) { return !!result && result.launch_state === 'failed'; }

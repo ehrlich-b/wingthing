@@ -87,9 +87,25 @@ export async function initWebRTC(wingId, sessionId, p2pOnly) {
             dc._migrateTimer = migrateTimer;
         };
 
+        // A successful send only queues bytes locally; there is no input receipt.
+        // Keep the uncertainty on this channel until it is visibly refused.
+        dc._unconfirmedInputs = 0;
+        dc._refuseUnconfirmedInput = function() {
+            if (dc._inputDeliveryRefused) return;
+            dc._inputDeliveryRefused = true;
+            dc._refusedInputs = dc._unconfirmedInputs;
+            dc._unconfirmedInputs = 0;
+            if (dcActive[key] && dc._refusedInputs > 0) {
+                handleDCMessage(wingId, sessionId, JSON.stringify({ type: 'error', session_id: sessionId,
+                    operation: 'pty.input', code: 'input_delivery_unconfirmed',
+                    message: 'Connection lost: check terminal before retrying input.' }));
+            }
+        };
+
         dc.onclose = function() {
             console.log('[P2P] data channel \'pty:' + sessionId + '\' closed — falling back to relay WS');
             if (dataChannels[key] !== dc) return;
+            dc._refuseUnconfirmedInput();
             delete dataChannels[key];
             delete dcBuffers[key];
             delete sessionWings[key];
@@ -263,8 +279,13 @@ export function sendViaDC(sessionId, msg, wingId) {
         return false;
     }
     var data = typeof msg === 'string' ? msg : JSON.stringify(msg);
+    var isInput = msg && msg.type === 'pty.input';
+    if (typeof msg === 'string') {
+        try { isInput = JSON.parse(msg).type === 'pty.input'; } catch (_) {}
+    }
     try {
         dc.send(data);
+        if (isInput) dc._unconfirmedInputs++;
         return true;
     } catch (err) {
         console.log('[P2P] sendViaDC error:', err);
@@ -284,6 +305,9 @@ export function cleanupPeer(wingId) {
     for (var sid in sessionWings) {
         if (sessionWings[sid] === wingId) {
             if (dataChannels[sid]) {
+                // close events are asynchronous: report before retiring the
+                // registration that the close handler uses to reject stale peers.
+                dataChannels[sid]._refuseUnconfirmedInput();
                 dataChannels[sid].close();
                 delete dataChannels[sid];
             }
@@ -307,6 +331,9 @@ export function cleanupSession(sessionId, wingId) {
     var key = sessionResourceKey({ id: sessionId, wingId: wingId });
     var dc = dataChannels[key];
     if (dc) {
+        // Relay fallback can precede the asynchronous channel-close event.
+        // Report while this channel still owns the session registration.
+        dc._refuseUnconfirmedInput();
         delete dataChannels[key];
         dc.close();
     }

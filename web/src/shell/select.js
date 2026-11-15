@@ -38,3 +38,15 @@ export function machineSummary() {
     }).filter(Boolean);
     return [counts.connected + ' connected', counts.offline + ' offline', ...otherStates].join(' · ');
 }
+
+// Surviving rows keep their order within a group; new members append.
+const groupOrders = new Map();
+let orderUser;
+export function ordered(group, rows) {
+    if (orderUser !== S.currentUser?.id) { groupOrders.clear(); orderUser = S.currentUser?.id; }
+    const members = new Map(rows.map(s => [s.wing_id + '/' + s.id, s]));
+    const order = (groupOrders.get(group) || []).filter(id => members.has(id));
+    for (const id of members.keys()) if (!order.includes(id)) order.push(id);
+    groupOrders.set(group, order);
+    return order.map(id => members.get(id));
+}

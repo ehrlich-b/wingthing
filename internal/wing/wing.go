@@ -1026,6 +1026,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 
 			dc.OnMessage(browserDataChannelInputHandler(&dcSessions, sessionID, dc, boundController, client.PushPTYInput))
 			dc.OnClose(func() {
+				releaseDataChannelInputOrigins(dc)
 				if !dcSessions.CompareAndDelete(sessionID, dc) {
 					log.Printf("[P2P] stale DC closed for session %s", sessionID)
 					return
@@ -1721,6 +1722,15 @@ func (p *pendingReattachAuths) take(viewerID string) (pendingReattachAuth, bool)
 	return pending, ok
 }
 
+// A delayed response must not consume a replacement controller's challenge.
+func (p *pendingReattachAuths) takeAttempt(viewerID, controllerID string) (pendingReattachAuth, bool) {
+	pending, ok := p.byViewer[viewerID]
+	if !ok || pending.attach.ControllerID != controllerID {
+		return pendingReattachAuth{}, false
+	}
+	return p.take(viewerID)
+}
+
 func (p *pendingReattachAuths) detach(detach ws.PTYDetach) {
 	for viewerID, pending := range p.byViewer {
 		if (detach.ViewerID != "" && pending.attach.ViewerID == detach.ViewerID) || (detach.ControllerID != "" && pending.attach.ControllerID == detach.ControllerID) {
@@ -1783,6 +1793,12 @@ func (p *pendingReattachAuths) resetTimer() {
 
 // handleReclaimedPTY sets up I/O routing for a reclaimed (surviving) egg session.
 func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client, sessionID, eggDir string, write ws.PTYWriteFunc, input <-chan []byte, wingCfg *config.WingConfig, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, passkeyPolicy auth.PasskeyPolicy, authTTL time.Duration, tools []*config.ToolConfig, services ...*wingsession.Service) {
+	preview := config.Channel() == "preview"
+	write, flushExit := delayPTYExit(write)
+	defer flushExit()
+	var finishInputOnce sync.Once
+	finishInput := func() { finishInputOnce.Do(func() { retirePTYInput(ctx, sessionID, input, write) }) }
+	defer finishInput()
 	ctx, cancel := context.WithCancel(ctx)
 	var workers sync.WaitGroup
 	defer workers.Wait()
@@ -1847,7 +1863,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 	}
 	activeStream = stream
 	cancelStream = sCancel
-	if config.Channel() == "preview" {
+	if preview {
 		cancelStream = nil
 		defer sCancel()
 	}
@@ -1886,7 +1902,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				} else {
 					lastHadBell = false
 				}
-				if config.Channel() == "preview" {
+				if preview {
 					continue
 				}
 				mu.Lock()
@@ -1908,7 +1924,10 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 	// Process input from browser
 	workers.Go(func() {
+		defer sessionCancel()
 		defer releaseBrowserClient(sessionID, ec)
+		defer finishInput()
+		controllerID := ""
 		pendingAuth := newPendingReattachAuths()
 		defer pendingAuth.close()
 		defer func() {
@@ -1918,14 +1937,17 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 		}()
 	reclaimInputLoop:
 		for {
+			if sessionCtx.Err() != nil {
+				return
+			}
 			var data []byte
 			select {
-			case <-ctx.Done():
+			case <-sessionCtx.Done():
 				return
 			case <-pendingAuth.timeout():
 				for _, pending := range pendingAuth.expire(time.Now()) {
 					log.Printf("pty session %s: reattach passkey timed out", sessionID)
-					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out", SessionID: sessionID, ViewerID: pending.attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out", SessionID: sessionID, ViewerID: pending.attach.ViewerID, ControllerID: pending.attach.ControllerID})
 				}
 				continue
 			case inputData, ok := <-input:
@@ -1944,7 +1966,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				if err := json.Unmarshal(data, &response); err != nil {
 					continue
 				}
-				pending, ok := pendingAuth.take(response.ViewerID)
+				pending, ok := pendingAuth.takeAttempt(response.ViewerID, response.ControllerID)
 				if !ok {
 					log.Printf("pty session %s: ignoring passkey response without matching reattach", sessionID)
 					continue
@@ -1954,12 +1976,12 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				signature, _ := base64.StdEncoding.DecodeString(response.Signature)
 				rawKey, verifyErr := wingpolicy.VerifySubjectPasskey(allowedKeys, pending.attach.UserID, pending.challenge, authData, clientData, signature, passkeyPolicy)
 				if verifyErr != nil {
-					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey", SessionID: sessionID, ViewerID: pending.attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey", SessionID: sessionID, ViewerID: pending.attach.ViewerID, ControllerID: pending.attach.ControllerID})
 					continue
 				}
 				token, tokenErr := auth.GenerateAuthToken()
 				if tokenErr != nil {
-					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "auth token generation failed", SessionID: sessionID, ViewerID: pending.attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "auth token generation failed", SessionID: sessionID, ViewerID: pending.attach.ViewerID, ControllerID: pending.attach.ControllerID})
 					continue
 				}
 				passkeyCache.Put(token, rawKey, pending.subject)
@@ -1976,12 +1998,12 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					}
 				}
 				if !wingpolicy.CanAttachSession(attach.UserID, attach.OrgRole, eggclient.ReadEggOwner(eggDir)) {
-					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "session not found or not owned by caller", SessionID: sessionID, ViewerID: attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "session not found or not owned by caller", SessionID: sessionID, ViewerID: attach.ViewerID, ControllerID: attach.ControllerID})
 					continue
 				}
 				clearAttentionCooldown(sessionID)
 				if attach.PublicKey == "" {
-					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption key required", SessionID: sessionID, ViewerID: attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption key required", SessionID: sessionID, ViewerID: attach.ViewerID, ControllerID: attach.ControllerID})
 					continue
 				}
 
@@ -1990,7 +2012,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				attachSubject := wingpolicy.PasskeySubject(attach.UserID, attach.PublicKey)
 				attachUserHasPasskey := len(wingpolicy.PasskeysForSubject(allowedKeys, attach.UserID)) > 0
 				if wingCfg.Locked && (attachSubject == "" || !attachUserHasPasskey) {
-					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "not allowed by wing", SessionID: sessionID, ViewerID: attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "not allowed by wing", SessionID: sessionID, ViewerID: attach.ViewerID, ControllerID: attach.ControllerID})
 					continue
 				}
 				if attachUserHasPasskey {
@@ -2006,14 +2028,16 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 						challenge, chalErr := auth.GenerateChallenge()
 						if chalErr != nil {
 							log.Printf("pty session %s: reattach challenge generation failed: %v", sessionID, chalErr)
+							ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "challenge generation failed", SessionID: sessionID, ControllerID: attach.ControllerID, ViewerID: attach.ViewerID})
 							continue
 						}
 						ws.WritePTYMessage(write, ws.PasskeyChallenge{
-							Type:      ws.TypePasskeyChallenge,
-							SessionID: sessionID,
-							Challenge: base64.RawURLEncoding.EncodeToString(challenge),
-							RPID:      passkeyPolicy.RPID,
-							ViewerID:  attach.ViewerID,
+							Type:         ws.TypePasskeyChallenge,
+							SessionID:    sessionID,
+							Challenge:    base64.RawURLEncoding.EncodeToString(challenge),
+							RPID:         passkeyPolicy.RPID,
+							ViewerID:     attach.ViewerID,
+							ControllerID: attach.ControllerID,
 						})
 						log.Printf("pty session %s: reattach passkey challenge sent", sessionID)
 						pendingAuth.put(attach, challenge, attachSubject, time.Minute)
@@ -2030,14 +2054,14 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					}
 					spectatorGCM, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey, "wt-pty")
 					if deriveErr != nil {
-						ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator encryption setup failed", SessionID: sessionID, ViewerID: attach.ViewerID})
+						ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator encryption setup failed", SessionID: sessionID, ViewerID: attach.ViewerID, ControllerID: attach.ControllerID})
 						continue
 					}
 					specCtx, specCancel := context.WithCancel(ctx)
 					specStream, specErr := sessions.Attach(specCtx, attachmentAuthority(wingCfg, attach), ec, sessionID, egg.AttachOptions{ReadOnly: true, Owner: "browser:observer"}, nil)
 					if specErr != nil {
 						specCancel()
-						ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator attach failed", SessionID: sessionID, ViewerID: attach.ViewerID})
+						ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator attach failed", SessionID: sessionID, ViewerID: attach.ViewerID, ControllerID: attach.ControllerID})
 						continue
 					}
 					bindBrowserViewer(sessionID, attach.ViewerID, ec, specCancel)
@@ -2045,17 +2069,19 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 						Type: ws.TypePTYStarted, SessionID: sessionID, Agent: reclaimAgent,
 						PublicKey: wingPubKeyB64, AuthToken: attachAuthToken, ViewerID: attach.ViewerID,
 					})
-					replayMsg, replayErr := specStream.Recv()
-					if replayErr == nil {
-						if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
-							sendReplayChunkedTagged(sessionID, attach.ViewerID, replay.Output, spectatorGCM, write)
-						}
-					}
+
 					workers.Add(1)
 					go func(viewerID string, g cipher.AEAD, stream pb.Egg_SessionClient, cancel context.CancelFunc) {
 						defer workers.Done()
 						defer cancel()
 						defer browserViewers.Delete(sessionID + ":" + viewerID)
+						replayMsg, replayErr := stream.Recv()
+						if replayErr == nil {
+							if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
+								sendReplayChunkedTagged(sessionID, viewerID, replay.Output, g, write)
+							}
+						}
+
 						for {
 							msg, err := stream.Recv()
 							if err != nil {
@@ -2079,7 +2105,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				newGCM, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey, "wt-pty")
 				if deriveErr != nil {
 					log.Printf("pty session %s: reattach derive key failed: %v", sessionID, deriveErr)
-					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption setup failed", SessionID: sessionID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption setup failed", SessionID: sessionID, ControllerID: attach.ControllerID})
 					continue
 				}
 				log.Printf("pty session %s: re-keyed E2E for reattach", sessionID)
@@ -2107,6 +2133,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				activeStream = newStream
 				cancelStream = newSCancel
 				mu.Unlock()
+				controllerID = attach.ControllerID
 				bindBrowserInput(sessionID, attach.ControllerID, attach.PublicKey, attach.UserID, ec, newStream, newSCancel)
 
 				// Send pty.started so browser can derive key.
@@ -2121,22 +2148,22 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					ws.WritePTYMessage(write, started)
 				}
 
-				// Read replay (first message) and send to browser in chunks.
-				if newGCM != nil {
-					replayMsg, rErr := newStream.Recv()
-					if rErr == nil {
-						if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
-							sendReplayChunked(sessionID, replay.Output, newGCM, write)
+				workers.Go(func() {
+					// Read replay (first message) and send to browser in chunks.
+					if newGCM != nil {
+						replayMsg, rErr := newStream.Recv()
+						if rErr == nil {
+							if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
+								sendReplayChunked(sessionID, replay.Output, newGCM, write)
+							}
 						}
 					}
-				}
 
-				workers.Go(func() {
 					var lastHadBell bool
 					for {
 						msg, err := newStream.Recv()
 						if err != nil {
-							browserStreamEnded(sessionID, attach.ControllerID, err, write)
+							browserStreamEnded(preview, sessionID, attach.ControllerID, err, write)
 							if err != io.EOF {
 								log.Printf("pty session %s: egg stream error: %v", sessionID, err)
 							}
@@ -2147,7 +2174,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 							reclaimIdleState.mu.Lock()
 							reclaimIdleState.lastOutput = time.Now()
 							reclaimIdleState.mu.Unlock()
-							if config.Channel() != "preview" && hasBell(p.Output) {
+							if !preview && hasBell(p.Output) {
 								if lastHadBell {
 									checkAndSendAttention(sessionID, reclaimAgent, reclaimCWD, write)
 								}
@@ -2163,7 +2190,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 							}
 							sendPTYOutput(sessionID, p.Output, currentGCM, write)
 						case *pb.SessionMsg_ExitCode:
-							if config.Channel() == "preview" {
+							if preview {
 								return
 							}
 							log.Printf("pty session %s: exited with code %d", sessionID, p.ExitCode)
@@ -2180,7 +2207,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				reclaimIdleState.mu.Lock()
 				reclaimIdleState.lastInput = time.Now()
 				reclaimIdleState.mu.Unlock()
-				var msg ws.PTYInput
+				var msg queuedBrowserInput
 				if err := json.Unmarshal(data, &msg); err != nil {
 					continue
 				}
@@ -2188,17 +2215,9 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				currentGCM := gcm
 				currentStream := activeStream
 				mu.Unlock()
-				if currentGCM == nil || currentStream == nil {
-					log.Printf("pty session %s: rejecting input — E2E not established", sessionID)
-					continue
-				}
-				decoded, decErr := auth.Decrypt(currentGCM, msg.Data)
-				if decErr != nil {
-					continue
-				}
-				if err := sessions.Input(currentStream, sessionID, decoded); err != nil {
+				if err := deliverBrowserInput(sessionID, controllerID, msg, currentGCM, currentStream, sessions, write); err != nil {
 					log.Printf("pty session %s: send input to reclaimed egg: %v", sessionID, err)
-					if config.Channel() == "preview" {
+					if preview {
 						continue reclaimInputLoop
 					}
 					sessionCancel()
@@ -2224,7 +2243,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				currentStream := activeStream
 				mu.Unlock()
 				if currentStream != nil {
-					if config.Channel() == "preview" {
+					if preview {
 						if err := resizeBrowserStream(ctx, sessionID, msg.ControllerID, currentStream, uint32(msg.Rows), uint32(msg.Cols)); err != nil {
 							log.Printf("browser resize: %v", err)
 						}
@@ -2232,7 +2251,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					}
 					if err := currentStream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Resize{Resize: &pb.Resize{Rows: uint32(msg.Rows), Cols: uint32(msg.Cols)}}}); err != nil {
 						log.Printf("pty session %s: send resize to reclaimed egg: %v", sessionID, err)
-						if config.Channel() == "preview" {
+						if preview {
 							continue reclaimInputLoop
 						}
 						sessionCancel()
@@ -2252,11 +2271,20 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 	})
 
 	<-sessionCtx.Done()
+	ws.RetirePTYInput(ctx)
 }
 
 // handlePTYSession bridges a PTY session between a per-session egg and the relay.
 // E2E encryption stays in the wing — the egg sees plaintext only.
 func handlePTYSession(version string, ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, passkeyPolicy auth.PasskeyPolicy, authTTL time.Duration, idleTimeout time.Duration, sw *webrtcpkg.SwappableWriter, dcSessions *sync.Map, tools []*config.ToolConfig, sharedHost bool, sessions *wingsession.Service) {
+	preview := config.Channel() == "preview"
+	write, flushExit := delayPTYExit(write)
+	defer flushExit()
+	var finishInputOnce sync.Once
+	finishInput := func() { finishInputOnce.Do(func() { retirePTYInput(ctx, start.SessionID, input, write) }) }
+	defer finishInput()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	allowedKeys := *allowedKeysPtr
 	if start.PublicKey == "" {
 		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "E2E client key required"})
@@ -2286,10 +2314,11 @@ func handlePTYSession(version string, ctx context.Context, cfg *config.Config, w
 		}
 
 		ws.WritePTYMessage(write, ws.PasskeyChallenge{
-			Type:      ws.TypePasskeyChallenge,
-			SessionID: start.SessionID,
-			Challenge: base64.RawURLEncoding.EncodeToString(challenge),
-			RPID:      passkeyPolicy.RPID,
+			Type:         ws.TypePasskeyChallenge,
+			SessionID:    start.SessionID,
+			ControllerID: start.ControllerID,
+			Challenge:    base64.RawURLEncoding.EncodeToString(challenge),
+			RPID:         passkeyPolicy.RPID,
 		})
 		log.Printf("pty session %s: passkey challenge sent, waiting for response", start.SessionID)
 
@@ -2308,7 +2337,8 @@ func handlePTYSession(version string, ctx context.Context, cfg *config.Config, w
 					continue
 				}
 				if env.Type != ws.TypePasskeyResponse {
-					continue // ignore non-passkey messages during auth
+					refusePTYMessage(start.SessionID, data, write, "session_auth_pending", "terminal is not ready; input was not delivered")
+					continue
 				}
 				var resp ws.PasskeyResponse
 				if err := json.Unmarshal(data, &resp); err != nil {
@@ -2317,6 +2347,9 @@ func handlePTYSession(version string, ctx context.Context, cfg *config.Config, w
 				}
 
 				// Decode assertion fields
+				if resp.ViewerID != "" || resp.ControllerID != start.ControllerID {
+					continue
+				}
 				authData, _ := base64.StdEncoding.DecodeString(resp.AuthenticatorData)
 				clientJSON, _ := base64.StdEncoding.DecodeString(resp.ClientDataJSON)
 				sig, _ := base64.StdEncoding.DecodeString(resp.Signature)
@@ -2450,7 +2483,7 @@ authDone:
 	writerConfirmed := err == nil
 	if err != nil {
 		log.Printf("pty: egg attach failed: %v", err)
-		if config.Channel() != "preview" {
+		if !preview {
 			sCancel()
 			ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
 			return
@@ -2491,7 +2524,7 @@ authDone:
 
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
 	defer sessionCancel()
-	if config.Channel() == "preview" {
+	if preview {
 		if err := watchPreviewBrowserEgg(sessionCtx, ec, start.SessionID, start.Agent, start.CWD, idleState, write, sessionCancel, sessions); err != nil {
 			ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, SessionID: start.SessionID, Message: err.Error()})
 			return
@@ -2512,7 +2545,7 @@ authDone:
 		for {
 			msg, err := stream.Recv()
 			if err != nil {
-				browserStreamEnded(start.SessionID, start.ControllerID, err, write)
+				browserStreamEnded(preview, start.SessionID, start.ControllerID, err, write)
 				if err != io.EOF {
 					log.Printf("pty session %s: egg stream error: %v", start.SessionID, err)
 				}
@@ -2524,7 +2557,7 @@ authDone:
 				idleState.mu.Lock()
 				idleState.lastOutput = time.Now()
 				idleState.mu.Unlock()
-				if config.Channel() != "preview" && hasBell(p.Output) {
+				if !preview && hasBell(p.Output) {
 					if lastHadBell {
 						checkAndSendAttention(start.SessionID, start.Agent, start.CWD, write)
 					}
@@ -2542,7 +2575,7 @@ authDone:
 				sendPTYOutput(start.SessionID, p.Output, currentGCM, write)
 
 			case *pb.SessionMsg_ExitCode:
-				if config.Channel() == "preview" {
+				if preview {
 					return
 				}
 				log.Printf("pty session %s: exited with code %d", start.SessionID, p.ExitCode)
@@ -2555,8 +2588,13 @@ authDone:
 	}()
 
 	// Process input from browser -> decrypt -> send to egg
+	inputDone := make(chan struct{})
 	go func() {
+		defer close(inputDone)
+		defer sessionCancel()
 		defer releaseBrowserClient(start.SessionID, ec)
+		defer finishInput()
+		controllerID := start.ControllerID
 		pendingAuth := newPendingReattachAuths()
 		defer pendingAuth.close()
 		defer func() {
@@ -2566,14 +2604,17 @@ authDone:
 		}()
 	inputLoop:
 		for {
+			if sessionCtx.Err() != nil {
+				return
+			}
 			var data []byte
 			select {
-			case <-ctx.Done():
+			case <-sessionCtx.Done():
 				return
 			case <-pendingAuth.timeout():
 				for _, pending := range pendingAuth.expire(time.Now()) {
 					log.Printf("pty session %s: reattach passkey timed out", start.SessionID)
-					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID, ControllerID: pending.attach.ControllerID})
 				}
 				continue
 			case inputData, ok := <-input:
@@ -2592,7 +2633,7 @@ authDone:
 				if err := json.Unmarshal(data, &response); err != nil {
 					continue
 				}
-				pending, ok := pendingAuth.take(response.ViewerID)
+				pending, ok := pendingAuth.takeAttempt(response.ViewerID, response.ControllerID)
 				if !ok {
 					log.Printf("pty session %s: ignoring passkey response without matching reattach", start.SessionID)
 					continue
@@ -2602,12 +2643,12 @@ authDone:
 				signature, _ := base64.StdEncoding.DecodeString(response.Signature)
 				rawKey, verifyErr := wingpolicy.VerifySubjectPasskey(allowedKeys, pending.attach.UserID, pending.challenge, authData, clientData, signature, passkeyPolicy)
 				if verifyErr != nil {
-					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID, ControllerID: pending.attach.ControllerID})
 					continue
 				}
 				token, tokenErr := auth.GenerateAuthToken()
 				if tokenErr != nil {
-					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "auth token generation failed", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "auth token generation failed", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID, ControllerID: pending.attach.ControllerID})
 					continue
 				}
 				passkeyCache.Put(token, rawKey, pending.subject)
@@ -2624,19 +2665,19 @@ authDone:
 					}
 				}
 				if !wingpolicy.CanAttachSession(attach.UserID, attach.OrgRole, start.UserID) {
-					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "session not found or not owned by caller", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "session not found or not owned by caller", SessionID: start.SessionID, ViewerID: attach.ViewerID, ControllerID: attach.ControllerID})
 					continue
 				}
 				clearAttentionCooldown(start.SessionID)
 				if attach.PublicKey == "" {
-					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption key required", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption key required", SessionID: start.SessionID, ViewerID: attach.ViewerID, ControllerID: attach.ControllerID})
 					continue
 				}
 
 				attachSubject := wingpolicy.PasskeySubject(attach.UserID, attach.PublicKey)
 				attachUserHasPasskey := len(wingpolicy.PasskeysForSubject(allowedKeys, attach.UserID)) > 0
 				if wingCfg.Locked && (attachSubject == "" || !attachUserHasPasskey) {
-					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "not allowed by wing", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "not allowed by wing", SessionID: start.SessionID, ViewerID: attach.ViewerID, ControllerID: attach.ControllerID})
 					continue
 				}
 				var attachAuthToken string
@@ -2649,15 +2690,16 @@ authDone:
 					if attachAuthToken == "" {
 						challenge, chalErr := auth.GenerateChallenge()
 						if chalErr != nil {
-							ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "challenge generation failed", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+							ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "challenge generation failed", SessionID: start.SessionID, ViewerID: attach.ViewerID, ControllerID: attach.ControllerID})
 							continue
 						}
 						ws.WritePTYMessage(write, ws.PasskeyChallenge{
-							Type:      ws.TypePasskeyChallenge,
-							SessionID: start.SessionID,
-							Challenge: base64.RawURLEncoding.EncodeToString(challenge),
-							RPID:      passkeyPolicy.RPID,
-							ViewerID:  attach.ViewerID,
+							Type:         ws.TypePasskeyChallenge,
+							SessionID:    start.SessionID,
+							Challenge:    base64.RawURLEncoding.EncodeToString(challenge),
+							RPID:         passkeyPolicy.RPID,
+							ViewerID:     attach.ViewerID,
+							ControllerID: attach.ControllerID,
 						})
 						pendingAuth.put(attach, challenge, attachSubject, time.Minute)
 						continue inputLoop
@@ -2675,7 +2717,7 @@ authDone:
 					spectatorGCM, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey, "wt-pty")
 					if deriveErr != nil {
 						log.Printf("pty session %s: spectator key derive failed: %v", start.SessionID, deriveErr)
-						ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator encryption setup failed", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+						ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator encryption setup failed", SessionID: start.SessionID, ViewerID: attach.ViewerID, ControllerID: attach.ControllerID})
 						continue
 					}
 					log.Printf("pty session %s: spectator E2E enabled (viewer=%s)", start.SessionID, attach.ViewerID)
@@ -2686,35 +2728,36 @@ authDone:
 					if specErr != nil {
 						specCancel()
 						log.Printf("pty session %s: spectator attach to egg failed: %v", start.SessionID, specErr)
-						ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator attach failed", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+						ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator attach failed", SessionID: start.SessionID, ViewerID: attach.ViewerID, ControllerID: attach.ControllerID})
 						continue
 					}
 
 					// Send pty.started only after the independent stream exists.
 					bindBrowserViewer(start.SessionID, attach.ViewerID, ec, specCancel)
 					ws.WritePTYMessage(write, ws.PTYStarted{
-						Type:      ws.TypePTYStarted,
-						SessionID: start.SessionID,
-						Agent:     start.Agent,
-						PublicKey: wingPubKeyB64,
-						AuthToken: attachAuthToken,
-						ViewerID:  attach.ViewerID,
+						Type:         ws.TypePTYStarted,
+						SessionID:    start.SessionID,
+						Agent:        start.Agent,
+						PublicKey:    wingPubKeyB64,
+						AuthToken:    attachAuthToken,
+						ViewerID:     attach.ViewerID,
+						ControllerID: attach.ControllerID,
 					})
-
-					// Replay
-					if spectatorGCM != nil {
-						replayMsg, rErr := specStream.Recv()
-						if rErr == nil {
-							if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
-								sendReplayChunkedTagged(start.SessionID, attach.ViewerID, replay.Output, spectatorGCM, write)
-							}
-						}
-					}
 
 					// Independent output goroutine
 					go func(viewerID string, g cipher.AEAD, stream pb.Egg_SessionClient, cancel context.CancelFunc) {
 						defer cancel()
 						defer browserViewers.Delete(start.SessionID + ":" + viewerID)
+						// Replay
+						if g != nil {
+							replayMsg, rErr := stream.Recv()
+							if rErr == nil {
+								if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
+									sendReplayChunkedTagged(start.SessionID, viewerID, replay.Output, g, write)
+								}
+							}
+						}
+
 						for {
 							msg, err := stream.Recv()
 							if err != nil {
@@ -2740,7 +2783,7 @@ authDone:
 				newGCM, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey, "wt-pty")
 				if deriveErr != nil {
 					log.Printf("pty session %s: reattach derive key failed: %v", start.SessionID, deriveErr)
-					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption setup failed", SessionID: start.SessionID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption setup failed", SessionID: start.SessionID, ControllerID: attach.ControllerID})
 					continue
 				}
 				log.Printf("pty session %s: re-keyed E2E for reattach", start.SessionID)
@@ -2766,6 +2809,7 @@ authDone:
 				activeStream = newStream
 				cancelStream = newSCancel
 				mu.Unlock()
+				controllerID = attach.ControllerID
 				bindBrowserInput(start.SessionID, attach.ControllerID, attach.PublicKey, attach.UserID, ec, newStream, newSCancel)
 
 				// Send pty.started so browser can derive key and the relay can
@@ -2782,22 +2826,22 @@ authDone:
 					AuthToken:    attachAuthToken,
 				})
 
-				// Read replay (first message) and send to browser in chunks.
-				if newGCM != nil {
-					replayMsg, rErr := newStream.Recv()
-					if rErr == nil {
-						if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
-							sendReplayChunked(start.SessionID, replay.Output, newGCM, write)
+				go func() {
+					// Read replay (first message) and send to browser in chunks.
+					if newGCM != nil {
+						replayMsg, rErr := newStream.Recv()
+						if rErr == nil {
+							if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
+								sendReplayChunked(start.SessionID, replay.Output, newGCM, write)
+							}
 						}
 					}
-				}
 
-				go func() {
 					var lastHadBell bool
 					for {
 						msg, err := newStream.Recv()
 						if err != nil {
-							browserStreamEnded(start.SessionID, attach.ControllerID, err, write)
+							browserStreamEnded(preview, start.SessionID, attach.ControllerID, err, write)
 							if err != io.EOF {
 								log.Printf("pty session %s: egg stream error: %v", start.SessionID, err)
 							}
@@ -2808,7 +2852,7 @@ authDone:
 							idleState.mu.Lock()
 							idleState.lastOutput = time.Now()
 							idleState.mu.Unlock()
-							if config.Channel() != "preview" && hasBell(p.Output) {
+							if !preview && hasBell(p.Output) {
 								if lastHadBell {
 									checkAndSendAttention(start.SessionID, start.Agent, start.CWD, write)
 								}
@@ -2824,7 +2868,7 @@ authDone:
 							}
 							sendPTYOutput(start.SessionID, p.Output, currentGCM, write)
 						case *pb.SessionMsg_ExitCode:
-							if config.Channel() == "preview" {
+							if preview {
 								return
 							}
 							log.Printf("pty session %s: exited with code %d", start.SessionID, p.ExitCode)
@@ -2841,7 +2885,7 @@ authDone:
 				idleState.mu.Lock()
 				idleState.lastInput = time.Now()
 				idleState.mu.Unlock()
-				var msg ws.PTYInput
+				var msg queuedBrowserInput
 				if err := json.Unmarshal(data, &msg); err != nil {
 					continue
 				}
@@ -2849,21 +2893,9 @@ authDone:
 				currentGCM := gcm
 				currentStream := activeStream
 				mu.Unlock()
-				if currentGCM == nil || currentStream == nil {
-					log.Printf("pty session %s: rejecting input — E2E not established", start.SessionID)
-					continue
-				}
-				decoded, decErr := auth.Decrypt(currentGCM, msg.Data)
-				if decErr != nil {
-					log.Printf("pty session %s: decrypt error: %v", start.SessionID, decErr)
-					continue
-				}
-				if err := currentStream.Send(&pb.SessionMsg{
-					SessionId: start.SessionID,
-					Payload:   &pb.SessionMsg_Input{Input: decoded},
-				}); err != nil {
+				if err := deliverBrowserInput(start.SessionID, controllerID, msg, currentGCM, currentStream, sessions, write); err != nil {
 					log.Printf("pty session %s: send input to egg: %v", start.SessionID, err)
-					if config.Channel() == "preview" {
+					if preview {
 						continue inputLoop
 					}
 					sessionCancel()
@@ -2889,7 +2921,7 @@ authDone:
 				currentStream := activeStream
 				mu.Unlock()
 				if currentStream != nil {
-					if config.Channel() == "preview" {
+					if preview {
 						if err := resizeBrowserStream(ctx, start.SessionID, msg.ControllerID, currentStream, uint32(msg.Rows), uint32(msg.Cols)); err != nil {
 							log.Printf("browser resize: %v", err)
 						}
@@ -2903,7 +2935,7 @@ authDone:
 						}},
 					}); err != nil {
 						log.Printf("pty session %s: send resize to egg: %v", start.SessionID, err)
-						if config.Channel() == "preview" {
+						if preview {
 							continue inputLoop
 						}
 						sessionCancel()
@@ -2956,8 +2988,11 @@ authDone:
 		}
 	}()
 
-	// Wait for session to end
+	// Join the sole input consumer before retiring and refusing its queue.
 	<-sessionCtx.Done()
+	ws.RetirePTYInput(ctx)
+	cancel() // Unblock an in-flight egg RPC before joining its input worker.
+	<-inputDone
 }
 
 func appendHostedRelayPolicyAudit(cfg *config.Config, operation string) (result error) {

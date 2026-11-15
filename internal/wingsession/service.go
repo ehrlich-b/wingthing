@@ -403,12 +403,16 @@ func (s *Service) Read(ctx context.Context, a Authority, ref string, after int64
 	return eggclient.LifecycleViewForSession(s.Config, session, after, limit)
 }
 
-func (s *Service) Prompt(ctx context.Context, a Authority, ref, request, input string, timeout time.Duration, actor string) (eggclient.LocalSession, egg.SessionPromptResult, error) {
+func (s *Service) Prompt(ctx context.Context, a Authority, ref, request, input string, timeout time.Duration, actor string, answerCursor ...*int64) (eggclient.LocalSession, egg.SessionPromptResult, error) {
 	session, err := s.Resolve(ctx, a, ref, true)
 	if err != nil {
 		return eggclient.LocalSession{}, egg.SessionPromptResult{}, err
 	}
-	receipt, err := eggclient.PromptSession(ctx, s.Config, session, request, input, timeout, actor, a.UserID)
+	var answerTo *int64
+	if len(answerCursor) > 0 {
+		answerTo = answerCursor[0]
+	}
+	receipt, err := eggclient.PromptSessionWithAnswer(ctx, s.Config, session, request, input, timeout, actor, answerTo, a.UserID)
 	return session, receipt, err
 }
 
@@ -418,4 +422,18 @@ func (s *Service) Wait(ctx context.Context, a Authority, ref string, after int64
 		return egg.SessionView{}, false, err
 	}
 	return eggclient.WaitSessionLifecycle(ctx, s.Config, session, after, state)
+}
+
+// PromptReceipt uses the same exact-session authority as reads; it cannot send.
+func (s *Service) PromptReceipt(ctx context.Context, a Authority, ref string, selector egg.SessionPromptSelector) (egg.SessionPromptResult, error) {
+	session, err := s.Resolve(ctx, a, ref, true)
+	if err != nil {
+		return egg.SessionPromptResult{}, err
+	}
+	return egg.ReadSessionPromptReceipt(ctx, filepath.Join(s.Config.Dir, "eggs", session.ID), selector, func(ctx context.Context, after int64, limit int) (egg.SessionView, error) {
+		if err := ctx.Err(); err != nil {
+			return egg.SessionView{}, err
+		}
+		return eggclient.LifecycleViewForSession(s.Config, session, after, limit)
+	})
 }

@@ -648,7 +648,11 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 				log.Printf("decode error message from wing %s: %v", wing.WingID, err)
 				continue
 			}
-			if message.RequestID != "" {
+			// PTY delivery errors use request_id to retain the originating
+			// socket across takeover. Only tunnel errors belong to the tunnel
+			// request table; PTY errors still require hosted-relay policy below.
+			ptyError := strings.HasPrefix(message.Operation, "pty.")
+			if message.RequestID != "" && !ptyError {
 				s.forwardTunnelToBrowser(wing.WingID, message.RequestID, data, true)
 				continue
 			}

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { terminalTheme } from '../src/terminal-theme.js';
 import { createCanvasSessionState } from '../src/canvas-session-state.js';
 import { sessionResourceKey } from '../src/session-reference.js';
 import { requestCanvasStop } from '../src/canvas-stop.js';
@@ -41,7 +42,7 @@ function canvasHarness() {
     const requests = [], cleared = [], deleted = [];
     const context = vm.createContext({
         Terminal, FitAddon: Addon, SerializeAddon: Addon, WebSocket,
-        createCanvasSessionState, sessionResourceKey, requestCanvasStop,
+        createCanvasSessionState, sessionResourceKey, requestCanvasStop, terminalTheme,
         S: { wingsData: [], tunnelAuthTokens: {}, currentUser: { release_channel: 'preview' } },
         DOM: { canvasWorld: element() },
         document: { createElement: element },

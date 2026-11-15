@@ -1,3 +1,4 @@
+import { terminalTheme } from './terminal-theme.js';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SerializeAddon } from '@xterm/addon-serialize';
@@ -877,12 +878,7 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
         cursorBlink: true,
         fontSize: 14,
         fontFamily: "'JetBrains Mono', monospace",
-        theme: {
-            background: '#07131A',
-            foreground: '#E6F1F6',
-            cursor: '#ffffff',
-            selectionBackground: '#264553',
-        },
+        theme: terminalTheme,
         allowProposedApi: true,
     });
     var fitAddon = new FitAddon();
@@ -1174,12 +1170,7 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, la
         cursorBlink: true,
         fontSize: 14,
         fontFamily: "'JetBrains Mono', monospace",
-        theme: {
-            background: '#07131A',
-            foreground: '#E6F1F6',
-            cursor: '#ffffff',
-            selectionBackground: '#264553',
-        },
+        theme: terminalTheme,
         allowProposedApi: true,
     });
     var fitAddon = new FitAddon();

@@ -38,14 +38,11 @@ func bindBrowserViewer(sessionID, viewerID string, client *egg.Client, cancel co
 }
 
 func bindBrowserInput(sessionID, controllerID, publicKey, userID string, client *egg.Client, stream pb.Egg_SessionClient, cancel context.CancelFunc) {
-	if config.Channel() != "preview" {
-		return
-	}
 	browserInputs.Store(sessionID, &browserInputController{id: controllerID, publicKey: publicKey, userID: userID, client: client, lease: egg.AttachmentInfo(stream), cancel: cancel})
 }
 
 func releaseBrowserInput(sessionID, controllerID string) bool {
-	if config.Channel() != "preview" || controllerID == "" {
+	if controllerID == "" {
 		return false
 	}
 	value, ok := browserInputs.Load(sessionID)
@@ -61,9 +58,6 @@ func releaseBrowserInput(sessionID, controllerID string) bool {
 }
 
 func releaseBrowserClient(sessionID string, client *egg.Client) {
-	if config.Channel() != "preview" {
-		return
-	}
 	if value, ok := browserInputs.Load(sessionID); ok {
 		controller := value.(*browserInputController)
 		if controller.client == client && browserInputs.CompareAndDelete(sessionID, controller) {
@@ -92,9 +86,6 @@ func resizeBrowserInput(ctx context.Context, sessionID, controllerID, publicKey,
 }
 
 func browserDataChannelBinding(sessionID, publicKey, userID string) (*browserInputController, bool) {
-	if config.Channel() != "preview" {
-		return nil, true
-	}
 	value, ok := browserInputs.Load(sessionID)
 	if !ok {
 		return nil, false
@@ -104,9 +95,6 @@ func browserDataChannelBinding(sessionID, publicKey, userID string) (*browserInp
 }
 
 func currentBrowserInput(sessionID string, controller *browserInputController) bool {
-	if config.Channel() != "preview" {
-		return true
-	}
 	current, ok := browserInputs.Load(sessionID)
 	return ok && current == controller
 }
@@ -124,8 +112,8 @@ func resizeBrowserStream(ctx context.Context, sessionID, controllerID string, st
 	return controller.client.ResizeForAttachment(ctx, sessionID, rows, cols, controller.lease)
 }
 
-func browserStreamEnded(sessionID, controllerID string, err error, write ws.PTYWriteFunc) {
-	if config.Channel() != "preview" {
+func browserStreamEnded(preview bool, sessionID, controllerID string, err error, write ws.PTYWriteFunc) {
+	if !preview {
 		return
 	}
 	if err != nil && (status.Code(err) == codes.Aborted || status.Code(err) == codes.FailedPrecondition || status.Code(err) == codes.PermissionDenied) {

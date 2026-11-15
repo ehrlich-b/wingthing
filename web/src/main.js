@@ -403,7 +403,6 @@ async function init() {
         }).catch(function() {});
     });
     await loadHome();
-    setInterval(loadHome, 30000);
     connectAppWS();
 
     routeShell();

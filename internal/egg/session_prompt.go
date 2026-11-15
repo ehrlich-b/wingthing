@@ -23,6 +23,8 @@ const MaxSessionPromptBytes = 64 << 10
 // PromptDelivery is transport evidence only. Release holds the input stream
 // (and its writer lease when supported) until receipt observation finishes.
 type PromptDelivery struct {
+	// WaitingPrompt proves a saved follow-up met a later prompt before input.
+	WaitingPrompt bool
 	BytesEnqueued int
 	// NoInputAttempted is explicit sender evidence, never inferred from a
 	// zero byte count or an error. Clear it before the first input Send.
@@ -33,16 +35,19 @@ type PromptDelivery struct {
 
 type SessionPromptOptions struct {
 	RequestID string
-	Input     string
-	Timeout   time.Duration
-	Read      func(context.Context, int64, int) (SessionView, error)
-	Send      func(context.Context, string) (PromptDelivery, error)
+	// AnswerToStateCursor binds a deliberate answer to the observed waiting prompt.
+	AnswerToStateCursor *int64
+	Input               string
+	Timeout             time.Duration
+	Read                func(context.Context, int64, int) (SessionView, error)
+	Send                func(context.Context, string) (PromptDelivery, error)
 }
 
 type SessionPromptResult struct {
 	SessionID                   string `json:"session_id"`
 	RequestID                   string `json:"request_id"`
 	Status                      string `json:"status"`
+	RetryWhenReady              bool   `json:"retry_when_ready,omitempty"`
 	NativeReceiptObserved       bool   `json:"native_receipt_observed"`
 	ProviderRequestAcknowledged bool   `json:"provider_request_acknowledged"`
 	ReceiptKind                 string `json:"receipt_kind,omitempty"`
@@ -54,16 +59,27 @@ type SessionPromptResult struct {
 	ReceiptCursor               int64  `json:"receipt_cursor,omitempty"`
 	Retried                     bool   `json:"retried"`
 	Reason                      string `json:"reason,omitempty"`
+	ProviderSessionID           string `json:"provider_session_id,omitempty"`
+	AnswerToStateCursor         *int64 `json:"answer_to_state_cursor,omitempty"`
+	EnqueuedAtMS                int64  `json:"enqueued_at_ms,omitempty"`
+	WaitingDeadlineMS           int64  `json:"waiting_deadline_ms,omitempty"`
+	RemainingMS                 int64  `json:"remaining_ms"`
+	ObservedAtMS                int64  `json:"observed_at_ms"`
 }
 
 type promptReservation struct {
-	Version           int                 `json:"version"`
-	RequestID         string              `json:"request_id"`
-	SpecHash          string              `json:"spec_hash"`
-	ProviderSessionID string              `json:"provider_session_id"`
-	Phase             string              `json:"phase"`
-	CreatedAt         string              `json:"created_at"`
-	Result            SessionPromptResult `json:"result"`
+	Agent               string              `json:"agent,omitempty"`
+	Version             int                 `json:"version"`
+	RequestID           string              `json:"request_id"`
+	SpecHash            string              `json:"spec_hash"`
+	ProviderSessionID   string              `json:"provider_session_id"`
+	Phase               string              `json:"phase"`
+	Input               string              `json:"input,omitempty"`
+	AnswerToStateCursor *int64              `json:"answer_to_state_cursor,omitempty"`
+	WaitingAnswer       bool                `json:"waiting_answer,omitempty"`
+	EnqueuedAt          time.Time           `json:"enqueued_at,omitempty"`
+	CreatedAt           string              `json:"created_at"`
+	Result              SessionPromptResult `json:"result"`
 }
 
 func validateSessionPromptOptions(o SessionPromptOptions) error {
@@ -83,6 +99,9 @@ func validateSessionPromptOptions(o SessionPromptOptions) error {
 			return errors.New("input contains unsupported terminal control characters; use newlines rather than carriage returns")
 		}
 	}
+	if o.AnswerToStateCursor != nil && *o.AnswerToStateCursor < 0 {
+		return errors.New("answer_to_state_cursor must be nonnegative")
+	}
 	if o.Timeout < 100*time.Millisecond || o.Timeout > time.Minute {
 		return errors.New("timeout must be between 100ms and 60s")
 	}
@@ -92,10 +111,21 @@ func validateSessionPromptOptions(o SessionPromptOptions) error {
 	return nil
 }
 
-// NativePromptReady requires a living exact-provider session and native
-// foreground idle/completion evidence; it does not certify a visible composer.
+// NativePromptReady requires a living exact-provider session with native
+// foreground idle/completion evidence. Human permission waits are never ready
+// for automatic work or follow-ups.
 func NativePromptReady(view SessionView) bool {
-	return (view.Agent == "claude" || view.Agent == "codex") && validLifecycleID(view.ProviderSessionID) && view.ProcessAlive && view.Ready && view.StateSource == view.Agent+"_hook" && (view.State == "idle" || view.State == "completed")
+	return nativePromptProviderReady(view) && view.Ready && (view.State == "idle" || view.State == "completed")
+}
+
+// NativeAnswerReady permits an explicit human answer to a native waiting prompt.
+// Callers must also match the waiting state's cursor before sending input.
+func NativeAnswerReady(view SessionView) bool {
+	return nativePromptProviderReady(view) && view.State == "needs_input"
+}
+
+func nativePromptProviderReady(view SessionView) bool {
+	return (view.Agent == "claude" || view.Agent == "codex") && validLifecycleID(view.ProviderSessionID) && view.ProcessAlive && view.StateSource == view.Agent+"_hook"
 }
 
 func lockPromptSession(ctx context.Context, dir string) (*os.File, error) {
@@ -173,7 +203,8 @@ func sessionPromptSpecHash(sessionID, providerID string, o SessionPromptOptions)
 	spec, err := json.Marshal(struct {
 		Session, Provider, Input string
 		Timeout                  int64
-	}{sessionID, providerID, o.Input, int64(o.Timeout)})
+		AnswerToStateCursor      *int64 `json:",omitempty"`
+	}{sessionID, providerID, o.Input, int64(o.Timeout), o.AnswerToStateCursor})
 	if err != nil {
 		return "", err
 	}
@@ -219,12 +250,12 @@ func SubmitSessionPrompt(ctx context.Context, dir string, o SessionPromptOptions
 	var reservation promptReservation
 	file, err := openBoundRegularFile(path)
 	if err == nil {
-		data, readErr := io.ReadAll(io.LimitReader(file, 16385))
+		data, readErr := io.ReadAll(io.LimitReader(file, 524289))
 		_ = file.Close()
 		if readErr != nil {
 			return result, readErr
 		}
-		if len(data) > 16384 {
+		if len(data) > 524288 {
 			return result, errors.New("prompt reservation exceeds bound")
 		}
 		if err = json.Unmarshal(data, &reservation); err != nil {
@@ -245,8 +276,8 @@ func SubmitSessionPrompt(ctx context.Context, dir string, o SessionPromptOptions
 		}
 		result = reservation.Result
 		result.Retried = true
-		if result.NativeReceiptObserved || (result.Status == "not_sent" && result.DefinitelyNotSent && reservation.Phase == "not_sent") {
-			return result, nil
+		if result.NativeReceiptObserved || result.Status == "waiting_answer_delivered" || (result.Status == "not_sent" && result.DefinitelyNotSent && reservation.Phase == "not_sent") {
+			return promptClock(reservation, result), nil
 		}
 		result.Reason = "prior reservation may have delivered input; retry will inspect native history without resending"
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -274,7 +305,25 @@ func SubmitSessionPrompt(ctx context.Context, dir string, o SessionPromptOptions
 		if (initial.Agent != "claude" && initial.Agent != "codex") || !validLifecycleID(initial.ProviderSessionID) {
 			return result, errors.New("provider has no exact native prompt receipt adapter; use terminal_send for raw input")
 		}
-		if !NativePromptReady(initial) {
+		if o.AnswerToStateCursor == nil && initial.State == "needs_input" || o.AnswerToStateCursor != nil && (initial.State != "needs_input" || initial.StateCursor != *o.AnswerToStateCursor) {
+			result.Status = "not_sent"
+			result.DefinitelyNotSent = true
+			result.Reason = "Not sent - try again"
+			result.RetryWhenReady = o.AnswerToStateCursor == nil && initial.State == "needs_input"
+			specHash, hashErr := sessionPromptSpecHash(result.SessionID, initial.ProviderSessionID, o)
+			if hashErr != nil {
+				return result, hashErr
+			}
+			reservation = promptReservation{Version: 1, RequestID: o.RequestID, SpecHash: specHash, ProviderSessionID: initial.ProviderSessionID, Phase: "not_sent", Agent: initial.Agent, Input: o.Input, AnswerToStateCursor: o.AnswerToStateCursor, Result: result}
+			result = promptClock(reservation, result)
+			reservation.Result = result
+			return result, savePromptReservation(path, reservation)
+		}
+		ready := NativePromptReady(initial)
+		if o.AnswerToStateCursor != nil {
+			ready = NativeAnswerReady(initial)
+		}
+		if !ready {
 			return result, fmt.Errorf("native foreground readiness required: state=%s source=%s ready=%t process_alive=%t", initial.State, initial.StateSource, initial.Ready, initial.ProcessAlive)
 		}
 		if err = waitCtx.Err(); err != nil {
@@ -286,7 +335,12 @@ func SubmitSessionPrompt(ctx context.Context, dir string, o SessionPromptOptions
 		}
 		result.ReservedCursor = initial.HeadCursor
 		result.Reason = "reserved before input transport; delivery is not yet confirmed"
-		reservation = promptReservation{Version: 1, RequestID: o.RequestID, SpecHash: specHash, ProviderSessionID: initial.ProviderSessionID, Phase: "reserved", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Result: result}
+		reservation = promptReservation{Version: 1, RequestID: o.RequestID, SpecHash: specHash, ProviderSessionID: initial.ProviderSessionID, Phase: "reserved", Agent: initial.Agent, Input: o.Input, AnswerToStateCursor: o.AnswerToStateCursor, WaitingAnswer: initial.State == "needs_input", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Result: result}
+
+		if reservation.WaitingAnswer && reservation.AnswerToStateCursor == nil {
+			cursor := initial.StateCursor
+			reservation.AnswerToStateCursor = &cursor
+		}
 		if err = savePromptReservation(path, reservation); err != nil {
 			return result, fmt.Errorf("persist before-send reservation: %w", err)
 		}
@@ -296,6 +350,9 @@ func SubmitSessionPrompt(ctx context.Context, dir string, o SessionPromptOptions
 		}
 		result.TransportBytesEnqueued = delivery.BytesEnqueued
 		result.TransportEnqueued = sendErr == nil
+		if result.TransportEnqueued {
+			reservation.EnqueuedAt = time.Now()
+		}
 		reservation.Phase = "transport_attempted"
 		reservation.Result = result
 		if sendErr != nil {
@@ -304,13 +361,14 @@ func SubmitSessionPrompt(ctx context.Context, dir string, o SessionPromptOptions
 				result.Status = "not_sent"
 				result.DefinitelyNotSent = true
 				result.Reason = promptPreflightReason(sendErr)
+				result.RetryWhenReady = o.AnswerToStateCursor == nil && delivery.WaitingPrompt
 				reservation.Phase = "not_sent"
 			}
 			reservation.Result = result
 			if err = savePromptReservation(path, reservation); err != nil {
 				return result, err
 			}
-			return result, nil
+			return promptClock(reservation, result), nil
 		}
 		if err = savePromptReservation(path, reservation); err != nil {
 			return result, fmt.Errorf("persist transport evidence (reservation remains retry-safe): %w", err)
@@ -326,6 +384,7 @@ func waitForPromptReceipt(ctx context.Context, path string, reservation promptRe
 	defer ticker.Stop()
 	persist := func(reason string) (SessionPromptResult, error) {
 		result.Reason = reason
+		result = promptClock(reservation, result)
 		reservation.Result = result
 		return result, savePromptReservation(path, reservation)
 	}
@@ -340,18 +399,8 @@ func waitForPromptReceipt(ctx context.Context, path string, reservation promptRe
 		if view.ProviderSessionID != reservation.ProviderSessionID {
 			return persist("provider identity changed; receipt cannot be attributed to the reserved destination")
 		}
-		for _, event := range view.Events {
-			if event.Sequence > result.ReservedCursor && nativeHumanPromptReceipt(event, reservation.ProviderSessionID, o.Input) {
-				result.NativeReceiptObserved = true
-				result.Status = "native_receipt_observed"
-				result.ReceiptKind = "exact_provider_user_text_match"
-				if event.Source == "codex_hook" {
-					result.ReceiptKind = "exact_provider_prompt_hook_match"
-				}
-				result.ReceiptCursor = event.Sequence
-				reservation.Phase = "native_receipt_observed"
-				return persist("matching human user prompt observed in exact provider transcript; concurrent identical human input cannot be causally distinguished")
-			}
+		if evaluatePromptReceipt(&reservation, &result, view, o.Input) {
+			return persist(result.Reason)
 		}
 		if view.Cursor > scan {
 			scan = view.Cursor
@@ -411,4 +460,134 @@ func nativeHumanPromptReceipt(event SessionEvent, providerID, input string) bool
 		parts = append(parts, block.Text)
 	}
 	return strings.Join(parts, "\n") == input
+}
+
+// promptClock reports the durable enqueue clock, never the receipt-arrival clock.
+func promptClock(r promptReservation, result SessionPromptResult) SessionPromptResult {
+	result.ProviderSessionID = r.ProviderSessionID
+	result.AnswerToStateCursor = r.AnswerToStateCursor
+	result.ObservedAtMS = time.Now().UnixMilli()
+	if !r.EnqueuedAt.IsZero() {
+		result.EnqueuedAtMS = r.EnqueuedAt.UnixMilli()
+		if r.WaitingAnswer {
+			result.WaitingDeadlineMS = r.EnqueuedAt.Add(15 * time.Second).UnixMilli()
+			result.RemainingMS = max(0, result.WaitingDeadlineMS-result.ObservedAtMS)
+		}
+	}
+	return result
+}
+
+// Shared by submission and receipt-only reads. Working alone proves no delivery.
+func evaluatePromptReceipt(r *promptReservation, result *SessionPromptResult, view SessionView, input string) bool {
+	if view.ProviderSessionID != r.ProviderSessionID || r.Agent != "" && view.Agent != r.Agent {
+		return false
+	}
+	// Proven no-attempt outcomes cannot be attributed to independent human text.
+	if result.DefinitelyNotSent {
+		return true
+	}
+	for _, event := range view.Events {
+		if input != "" && (r.Agent == "" || strings.HasPrefix(event.Source, r.Agent+"_")) && event.Sequence > result.ReservedCursor && nativeHumanPromptReceipt(event, r.ProviderSessionID, input) {
+			result.NativeReceiptObserved = true
+			result.Status = "native_receipt_observed"
+			result.ReceiptKind = "exact_provider_user_text_match"
+			if event.Source == "codex_hook" {
+				result.ReceiptKind = "exact_provider_prompt_hook_match"
+			}
+			result.ReceiptCursor = event.Sequence
+			result.Reason = "matching human user prompt observed in exact provider transcript; concurrent identical human input cannot be causally distinguished"
+			r.Phase = result.Status
+			return true
+		}
+	}
+	if result.NativeReceiptObserved || result.Status == "waiting_answer_delivered" || result.DefinitelyNotSent {
+		return true
+	}
+	if r.WaitingAnswer && result.TransportEnqueued && r.AnswerToStateCursor != nil && view.StateSource == view.Agent+"_hook" {
+		if view.State != "" && view.State != "needs_input" && view.StateCursor > *r.AnswerToStateCursor {
+			result.Status = "waiting_answer_delivered"
+			result.ReceiptKind = "waiting_state_resolved"
+			result.Reason = "waiting prompt resolved after transport enqueue"
+			r.Phase = result.Status
+			return true
+		}
+
+		// Expiry describes the unchanged prompt outcome, never zero transport.
+		// Only this fresh exact-provider hook read can establish that outcome.
+		if view.ProcessAlive && view.State == "needs_input" && view.StateCursor == *r.AnswerToStateCursor && !r.EnqueuedAt.IsZero() && !time.Now().Before(r.EnqueuedAt.Add(15*time.Second)) {
+			result.Status = "waiting_answer_expired"
+			result.Reason = "Not sent - try again"
+			r.Phase = result.Status
+			return true
+		}
+	}
+	return false
+}
+
+// SessionPromptSelector names the original reservation without authorizing input.
+type SessionPromptSelector struct {
+	RequestID           string `json:"request_id"`
+	ProviderSessionID   string `json:"provider_session_id"`
+	AnswerToStateCursor int64  `json:"answer_to_state_cursor"`
+}
+
+// ReadSessionPromptReceipt never reserves a request and has no transport sender.
+// Missing records and the durable-before-Send crash gap remain unconfirmed.
+func ReadSessionPromptReceipt(ctx context.Context, dir string, selector SessionPromptSelector, read func(context.Context, int64, int) (SessionView, error)) (SessionPromptResult, error) {
+	result := SessionPromptResult{SessionID: filepath.Base(dir), RequestID: selector.RequestID, Status: "unconfirmed", Causality: "unverified_without_provider_request_id", ObservedAtMS: time.Now().UnixMilli()}
+	if !validLifecycleID(selector.RequestID) || len(selector.RequestID) > 128 || !validLifecycleID(selector.ProviderSessionID) || selector.AnswerToStateCursor < 0 {
+		return result, errors.New("invalid original request selector")
+	}
+	key := sha256.Sum256([]byte(selector.RequestID))
+	path := filepath.Join(dir, "prompt."+hex.EncodeToString(key[:])+".json")
+	// No lock file or reservation is created for an absent request.
+	f, err := openBoundRegularFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return result, nil
+	}
+	if err != nil {
+		return result, err
+	}
+	_ = f.Close()
+	lock, err := lockPromptSession(ctx, dir)
+	if err != nil {
+		return result, err
+	}
+	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN); _ = lock.Close() }()
+	f, err = openBoundRegularFile(path)
+	if err != nil {
+		return result, err
+	}
+	data, err := io.ReadAll(io.LimitReader(f, 524289))
+	_ = f.Close()
+	if err != nil {
+		return result, err
+	}
+	var r promptReservation
+	if len(data) > 524288 || json.Unmarshal(data, &r) != nil || r.Version != 1 || r.RequestID != selector.RequestID || r.Result.SessionID != result.SessionID || r.Result.RequestID != selector.RequestID {
+		return result, errors.New("invalid prompt reservation")
+	}
+	if r.ProviderSessionID != selector.ProviderSessionID || r.AnswerToStateCursor == nil || *r.AnswerToStateCursor != selector.AnswerToStateCursor {
+		return result, errors.New("original request destination mismatch")
+	}
+	result = r.Result
+	result.Retried = true
+	scan := result.ReservedCursor
+	for {
+		view, readErr := read(ctx, scan, 200)
+		if readErr != nil {
+			return promptClock(r, result), readErr
+		}
+		evaluatePromptReceipt(&r, &result, view, r.Input)
+		if !view.HasMore {
+			break
+		}
+		if view.Cursor <= scan {
+			return promptClock(r, result), errors.New("native receipt scan made no progress")
+		}
+		scan = view.Cursor
+	}
+	result = promptClock(r, result)
+	r.Result = result
+	return result, savePromptReservation(path, r)
 }

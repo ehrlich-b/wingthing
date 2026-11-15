@@ -3,6 +3,8 @@ package localmcp
 import (
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -13,7 +15,13 @@ import (
 func TestContextPhoneFleetTypedRefusal(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{Dir: dir, WingID: "home-wing"}
-	wc := &config.WingConfig{WingID: "home-wing", PhoneFleet: true, PhoneFleetExcludeContexts: []string{"work"}}
+	if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte("wing_id: home-wing\nphone_fleet: true\nphone_fleet_exclude_contexts: [work]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	wc, err := config.LoadWingConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	service := &wingsession.Service{Config: cfg, Policy: func() wingsession.Policy { return wingsession.Policy{Wing: wc} }}
 	owner, err := config.EnsureLocalOwner(dir, "alice")
 	if err != nil {

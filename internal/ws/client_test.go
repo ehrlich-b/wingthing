@@ -67,7 +67,7 @@ func TestRegisterPTYSessionIsAtomicAndCleanupIsOwnershipSafe(t *testing.T) {
 	// newer owner of the same session ID.
 	firstCleanup()
 	message := []byte(`{"type":"pty.input"}`)
-	if !client.PushPTYInput("session-1", message) {
+	if refusal := client.PushPTYInput("session-1", message); refusal != nil {
 		t.Fatal("stale cleanup removed replacement session")
 	}
 	select {
@@ -259,7 +259,7 @@ func TestClientRejectsPlaintextRelayControls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !client.PushPTYInput("session-1", trustedResize) {
+	if refusal := client.PushPTYInput("session-1", trustedResize); refusal != nil {
 		t.Fatal("trusted P2P control was not delivered")
 	}
 	select {
@@ -511,14 +511,14 @@ func TestClientRegistersLatePTYAttachAfterAuthorization(t *testing.T) {
 					t.Error(err)
 					return
 				}
-				if err = wsjson.Write(ctx, conn, PTYAttach{Type: TypePTYAttach, SessionID: "late-session", UserID: "relay-owner"}); err != nil {
+				if err = wsjson.Write(ctx, conn, PTYAttach{Type: TypePTYAttach, SessionID: "late-session", UserID: "relay-owner", ControllerID: "controller", RequestID: "origin"}); err != nil {
 					t.Error(err)
 					return
 				}
 				if allowed {
 					select {
 					case got := <-forwarded:
-						if got.SessionID != "late-session" || got.UserID != "local-owner" {
+						if got.SessionID != "late-session" || got.UserID != "local-owner" || got.ControllerID != "controller" || got.RequestID != "origin" {
 							t.Errorf("wrong forwarded attach: %+v", got)
 						}
 					case <-ctx.Done():
@@ -530,7 +530,7 @@ func TestClientRegistersLatePTYAttachAfterAuthorization(t *testing.T) {
 						t.Error(err)
 						return
 					}
-					if response.Type != TypeError || response.SessionID != "late-session" || client.ptyRoutes().HasPTYSession("late-session") {
+					if response.Type != TypeError || response.SessionID != "late-session" || response.ControllerID != "controller" || response.RequestID != "origin" || response.Operation != TypePTYAttach || response.Code != "session_not_found" || client.ptyRoutes().HasPTYSession("late-session") {
 						t.Errorf("denied attach registered: %+v", response)
 					}
 				}

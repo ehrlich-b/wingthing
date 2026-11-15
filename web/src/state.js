@@ -64,6 +64,9 @@ export function initDOM() {
     DOM.terminalSection = document.getElementById('terminal-section');
     DOM.terminalContainer = document.getElementById('terminal-container');
     DOM.ptyStatus = document.getElementById('pty-status');
+    DOM.ptyInputNotice = document.getElementById('pty-input-notice');
+    DOM.ptyInputWarning = document.getElementById('pty-input-warning');
+    DOM.ptyInputDismiss = document.getElementById('pty-input-dismiss');
     DOM.terminalCopyBtn = document.getElementById('terminal-copy-btn');
     DOM.previewToggleBtn = document.getElementById('preview-toggle-btn');
     DOM.sessionFilesBtn = document.getElementById('session-files-btn');

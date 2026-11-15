@@ -1,3 +1,4 @@
+import { terminalTheme } from './terminal-theme.js';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SerializeAddon } from '@xterm/addon-serialize';
@@ -10,6 +11,7 @@ import { setNotification, clearNotification } from './notify.js';
 import { showHome } from './nav.js';
 import { sendViaDC } from './webrtc.js';
 import { cleanTerminalSelection, copyTextWithFallback, terminalClipboardAvailable } from './terminal-selection.js';
+import { showInputRefusal } from './input-refusal.js';
 
 export var TERMINAL_CACHE_BUDGET = 2000000;
 export var TERMINAL_CACHE_ENTRY_BUDGET = 200000;
@@ -197,12 +199,7 @@ export function initTerminal() {
         cursorBlink: true,
         fontSize: 14,
         fontFamily: "'JetBrains Mono', monospace",
-        theme: {
-            background: '#07131A',
-            foreground: '#E6F1F6',
-            cursor: '#ffffff',
-            selectionBackground: '#264553',
-        },
+        theme: terminalTheme,
         allowProposedApi: true,
     });
     S.fitAddon = new FitAddon();
@@ -540,17 +537,42 @@ function showSpectateToast() {
     }, 2000);
 }
 
+function refusePTYInput(sessionId, wingId, message) {
+    if (S.ptySessionId === sessionId && S.ptyWingId === wingId) DOM.ptyStatus.textContent = message;
+    else showInputRefusal(sessionId, wingId, message);
+}
+
 export function sendPTYInput(text) {
-    if (!S.ptySessionId || !S.e2eKey || S.spectating || S.ptyInputBlocked) return;
+    if (!S.ptySessionId) return;
     var sessionId = S.ptySessionId, wingId = S.ptyWingId, socket = S.ptyWs;
-    clearNotification(sessionId, wingId);
-    e2eEncrypt(text).then(function (encoded) {
-        if (!terminalReferenceMatches(S, sessionId, wingId, socket) || S.ptyInputBlocked || !S.e2eKey) return;
+    var key = S.e2eKey, controllerId = S.ptyControllerId;
+    if (!key || S.ptyReconnecting) {
+        refusePTYInput(sessionId, wingId, 'Input not sent: reconnecting.');
+        return;
+    }
+    if (S.spectating || S.ptyInputBlocked) {
+        refusePTYInput(sessionId, wingId, 'Input not sent: read-only session.');
+        return;
+    }
+    return e2eEncrypt(text).then(function (encoded) {
+        if (!terminalReferenceMatches(S, sessionId, wingId, socket) || S.e2eKey !== key ||
+                S.ptyControllerId !== controllerId || S.ptyReconnecting || S.ptyInputBlocked || S.spectating) {
+            refusePTYInput(sessionId, wingId, 'Input not sent: terminal connection changed.');
+            return;
+        }
         var msg = { type: 'pty.input', session_id: sessionId, data: encoded };
         // P2P: try DataChannel first, fall back to relay WS
-        if (sendViaDC(sessionId, msg, wingId)) return;
-        if (S.ptyWs && S.ptyWs.readyState === WebSocket.OPEN) {
-            S.ptyWs.send(JSON.stringify(msg));
+        if (sendViaDC(sessionId, msg, wingId)) {
+            clearNotification(sessionId, wingId);
+            return;
         }
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify(msg));
+            clearNotification(sessionId, wingId);
+        } else {
+            refusePTYInput(sessionId, wingId, 'Input not sent: disconnected.');
+        }
+    }).catch(function () {
+        refusePTYInput(sessionId, wingId, 'Input not sent: terminal unavailable.');
     });
 }

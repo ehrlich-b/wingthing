@@ -2,15 +2,20 @@
 // fixture machines, same harness as reach-share.mjs. No provider, OAuth or
 // public publication. Fixtures are not live proof.
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { createServer } from 'node:net';
-import { tmpdir } from 'node:os';
+import { tmpdir, hostname } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { removeState } from './fixture-state.mjs';
+import { assertSessionStates } from './session-states.mjs';
+import { assertSessionStability, assertHomeDeliveryStability, assertMachineUpdateStability } from './stable.mjs';
 import { runHome } from './home.mjs';
 import { assertListViewRefresh } from './shell-list-focus.mjs';
+import { assertInputRefusal } from './input-refusal.mjs';
 import { x25519 } from '../../web/node_modules/@noble/curves/ed25519.js';
 import { hkdf } from '../../web/node_modules/@noble/hashes/hkdf.js';
 import { sha256 } from '../../web/node_modules/@noble/hashes/sha2.js';
@@ -18,10 +23,20 @@ import { gcm } from '../../web/node_modules/@noble/ciphers/aes.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const shots = process.env.WT_LOOK_SHOTS || path.join(root, '.scratch/look');
+const sourceFiles = ['test/web/look.mjs', 'test/web/session-states.mjs', 'test/web/fixtures/session-layout-mutations.json', 'web/src/session.css', 'web/src/shell/views/session.js', 'web/src/input-refusal.js', 'web/src/terminal.js', 'web/src/webrtc.js', 'web/src/pty.js', 'web/test/pty-reconnect.test.js', 'web/test/terminal-input.test.js', 'web/test/webrtc-input.test.js'];
+const source = {
+    host: {hostname:hostname(),uid:process.getuid(),node:process.version},
+    head: spawnSync('git', ['rev-parse', 'HEAD'], {cwd:root, encoding:'utf8'}).stdout.trim(),
+    status: spawnSync('git', ['status', '--porcelain'], {cwd:root, encoding:'utf8'}).stdout,
+    hashes: Object.fromEntries(sourceFiles.map(file => [file, createHash('sha256').update(fs.readFileSync(path.join(root,file))).digest('hex')])),
+    environment: Object.fromEntries(['WT_LOOK_SHELL','WT_LOOK_SHOTS','WT_LOOK_BIN','PLAYWRIGHT_BROWSERS_PATH','PLAYWRIGHT_MODULE','CHROMIUM_PATH','TZ','LANG','GOFLAGS','GOMAXPROCS','GOCACHE','GOMODCACHE','GOTMPDIR','TMPDIR','PATH'].map(key=>[key,process.env[key] ?? null])),
+};
+const layoutMutations = JSON.parse(fs.readFileSync(path.join(root,'test/web/fixtures/session-layout-mutations.json'),'utf8'));
 const shellMode = process.env.WT_LOOK_SHELL || '';
 const only = (process.env.WT_LOOK_ONLY || '').split(',').filter(Boolean);
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 fs.mkdirSync(shots, { recursive: true });
+fs.writeFileSync(path.join(shots,'browser.jsonl'),'');
 fs.mkdirSync(path.join(root, '.scratch'), { recursive: true });
 const state = fs.mkdtempSync(path.join(tmpdir(), 'wt'));
 // Shell runs need only one listener. Let the OS choose a free port so a
@@ -49,7 +64,9 @@ roost.stdio[3]?.on('data', data => { roostReady += data; });
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const sockets = new Map();
 const sent = [];
+const answerReservations = new Map();
 const attentionAcks = [];
+const attachments = [];
 const captures = [];
 const overflow = [];
 const checks = [];
@@ -58,7 +75,7 @@ const publicBase = 'http://127.0.0.1:' + (port + 2);
 const publicServer = shellMode ? null : spawn('nice', ['-n', '10', path.join(root, '.scratch/look-public'), '127.0.0.1:' + (port + 2)], { cwd: root, env, stdio: ['ignore', log, log] });
 
 function writeIndex(complete) {
-    fs.writeFileSync(path.join(shots, 'capture.json'), JSON.stringify({ complete, captures, overflow, checks }, null, 2) + '\n');
+    fs.writeFileSync(path.join(shots, 'capture.json'), JSON.stringify({ complete, source, captures, overflow, checks }, null, 2) + '\n');
     fs.writeFileSync(path.join(shots, 'index.html'), '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>wingthing captures</title><style>body{font:16px system-ui;margin:24px}ul{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px;padding:0;list-style:none}img{width:100%;border:1px solid #888}a{overflow-wrap:anywhere}</style><h1>wingthing captures</h1><p>' + (complete ? 'Complete' : 'Incomplete') + ' · ' + captures.length + ' images · ' + overflow.length + ' overflow failures</p><ul>' + captures.map(({file}) => '<li><a href="' + file + '">' + file + '<br><img loading="lazy" src="' + file + '" alt="' + file + '"></a></li>').join('') + '</ul></html>\n');
 }
 
@@ -133,11 +150,28 @@ async function machine(id) {
         socket.onerror = reject;
         socket.onmessage = e => { if (JSON.parse(e.data).type === 'registered') resolve(); };
     });
+    const ptyKeys = new Map(), ptyLines = new Map();
     socket.onmessage = async e => {
         const outer = JSON.parse(e.data);
         if (shellMode && (outer.type === 'pty.start' || outer.type === 'pty.attach')) {
-            if (outer.type === 'pty.start') fixture.rows.push(row(outer.session_id, 'fixture-new-session', outer.agent, 'working', 'wingthing'));
+            attachments.push({type:outer.type,wingId:id,sessionId:outer.session_id});
+            ptyKeys.set(outer.session_id, hkdf(sha256, x25519.getSharedSecret(priv, Buffer.from(outer.public_key, 'base64')), new Uint8Array(32), new TextEncoder().encode('wt-pty'), 32));
+            if (outer.type === 'pty.start') fixture.rows.push(row(outer.session_id, 'fixture-new-session', outer.agent, 'working', 'wingthing', {readingHold:shellMode==='launch'}));
             socket.send(JSON.stringify({ type:'pty.started', session_id:outer.session_id, agent:outer.agent || 'claude', public_key:pub, controller_id:outer.controller_id }));
+            return;
+        }
+        if (shellMode && outer.type === 'pty.input') {
+            const data = Buffer.from(outer.data, 'base64');
+            const text = new TextDecoder().decode(gcm(ptyKeys.get(outer.session_id), data.subarray(0, 12)).decrypt(data.subarray(12)));
+            const buffered = (ptyLines.get(outer.session_id) || '') + text;
+            const parts = buffered.split(/\r|\n/);
+            ptyLines.set(outer.session_id, parts.pop());
+            for (const input of parts.filter(Boolean)) {
+                const list = events[outer.session_id] ||= [];
+                list.push(msg(list.length + 1, 'user', input, 0));
+                const selected = fixture.rows.find(item => item.session_id === outer.session_id);
+                Object.assign(selected.lifecycle, {status:'working', state:'working'});
+            }
             return;
         }
         if (outer.type !== 'tunnel.req') return;
@@ -145,7 +179,9 @@ async function machine(id) {
         const encrypted = Buffer.from(outer.payload, 'base64');
         const inner = JSON.parse(new TextDecoder().decode(gcm(key, encrypted.subarray(0, 12)).decrypt(encrypted.subarray(12))));
         let response;
-        if (inner.type === 'wing.info') response = { hostname: fixture.name, wing_label: fixture.name, platform: 'darwin', agents: ['claude', 'codex'], projects: [{ name: 'wingthing', path: '/Users/example/code/wingthing' }], capabilities: ['session.rename.v1'] };
+        if (fixture.flags?.locked) response = {error:'passkey_required'};
+        else if (inner.type === 'wing.info') response = { hostname: fixture.name, wing_label: fixture.name, platform: 'darwin', version: fixture.version, agents: ['claude', 'codex'], projects: [{ name: 'wingthing', path: '/Users/example/code/wingthing' }], capabilities: ['session.rename.v1'] };
+        else if (inner.type === 'wing.update') { fixture.updates = (fixture.updates || 0) + 1; response = {ok:true}; }
         else if (inner.type === 'sessions.list') { if (shellMode === 'home') console.log('INVENTORY',id,fixture.rows.length); response = { sessions: fixture.rows }; }
         else if (inner.type === 'pty.attention_ack') { attentionAcks.push({wingId:id,sessionId:inner.session_id}); response = {ok:true}; }
         else if (inner.type === 'session.control' && inner.operation === 'conversation_read') {
@@ -156,16 +192,69 @@ async function machine(id) {
             await fixture.beforeSessionRead?.(inner.arguments.session);
             const selected = fixture.rows.find(item => item.session_id === inner.arguments.session);
             const list = selected && (events[selected.session_id] || fallback(selected.name));
-            response = selected ? { session: selected.session_id, lifecycle: { ...selected.lifecycle, session_id: selected.session_id, agent: selected.agent, provider_session_id: 'provider-' + selected.session_id, process_alive: true, ready: true, cursor: list.length, head_cursor: list.length, has_more: false, report_cursor: list.length, reported_at: at(1), report: { goal: 'Fix the redirect loop and deploy to staging', update: 'Deploy script is ready on Studio and needs your go.', presence: 'awake' }, events: list } } : { error: 'Session not found' };
+            response = selected ? { session: selected.session_id, lifecycle: { ...selected.lifecycle, state_cursor:selected.lifecycle.state_cursor ?? 1, session_id: selected.session_id, agent: selected.agent, provider_session_id: 'provider-' + selected.session_id, process_alive: selected.process_alive ?? true, ready: ['idle','completed'].includes(selected.lifecycle.state), cursor: list.length, head_cursor: list.length, has_more: false, report_cursor: list.length, reported_at: at(1), report: { goal: 'Fix the redirect loop and deploy to staging', update: 'Deploy script is ready on Studio and needs your go.', presence: 'awake' }, events: list } } : { error: 'Session not found' };
+            const selector = inner.arguments.original_request;
+            if (selector) {
+                const saved = answerReservations.get(JSON.stringify([id,inner.arguments.session,selector.request_id]));
+                const matching = saved && saved.provider_session_id === selector.provider_session_id && saved.answer_to_state_cursor === selector.answer_to_state_cursor;
+                if (matching && saved.transport_enqueued) {
+                    const view = response.lifecycle;
+                    if (view.provider_session_id === saved.provider_session_id && view.state_source === selected.agent+'_hook' && view.state !== 'needs_input' && view.state_cursor > saved.answer_to_state_cursor) saved.status='waiting_answer_delivered';
+                    else if(view.state==='needs_input' && view.state_cursor===saved.answer_to_state_cursor && Date.now()>=saved.waiting_deadline_ms) saved.status='waiting_answer_expired';
+                }
+                response.receipt = {request_id:selector.request_id,session_id:inner.arguments.session,status:'unconfirmed',transport_enqueued:false,
+                    ...(matching ? saved : {}),remaining_ms:matching ? Math.max(0,(saved.waiting_deadline_ms || 0)-Date.now()) : 0,observed_at_ms:Date.now()};
+            }
         }
-        else if (inner.type === 'session.control' && inner.operation === 'session_action' && inner.arguments.operation === 'terminal_read') response = { result: { ansi: (screens[inner.arguments.session_id] || '$ ').replace(/\r/g, '') } };
+        else if (inner.type === 'session.control' && inner.operation === 'session_action' && inner.arguments.operation === 'terminal_read') {
+            const selected = fixture.rows.find(item => item.session_id === inner.arguments.session_id);
+            response = selected?.older ? { error:'unsupported browser session operation' } : { origin_wing_id: id, session_id: inner.arguments.session_id, route:{wing_id:id}, result:{ansi:screens[inner.arguments.session_id] || '$ '} };
+        }
+        else if (inner.type === 'session.control' && inner.operation === 'terminal_read') response = { result: { ansi: (screens[inner.arguments.session] || '$ ').replace(/\r/g, '') } };
+        else if (inner.type === 'session.control' && inner.operation === 'session_prompt') {
+            const selected = fixture.rows.find(item => item.session_id === inner.arguments.session);
+            const receipt = { request_id:inner.arguments.request_id, session_id:inner.arguments.session };
+            if (inner.arguments.answer_to_state_cursor !== undefined) {
+                const cursor = inner.arguments.answer_to_state_cursor;
+                const identity = {...receipt,provider_session_id:'provider-'+selected.session_id,answer_to_state_cursor:cursor};
+                if (selected.lifecycle.state !== 'needs_input' || cursor !== (selected.lifecycle.state_cursor ?? 1)) {
+                    response={session:selected.session_id,receipt:{...identity,status:'not_sent',definitely_not_sent:true,reason:'Not sent - try again'}};
+                } else {
+                    const enqueued=Date.now();
+                    const saved={...identity,status:'unconfirmed',transport_enqueued:selected.answerMode!=='no-enqueue',native_receipt_observed:false,provider_request_acknowledged:false,
+                        enqueued_at_ms:enqueued,waiting_deadline_ms:enqueued+15000,remaining_ms:15000,observed_at_ms:enqueued};
+                    answerReservations.set(JSON.stringify([id,selected.session_id,inner.arguments.request_id]),saved);
+                    if(saved.transport_enqueued) sent.push({machine:id,...inner.arguments});
+                    if(!['waiting','no-receipt','no-enqueue'].includes(selected.answerMode)) Object.assign(selected.lifecycle,{state:'working',status:'working',state_cursor:cursor+1});
+                    // Waiting answers never invent a native human-message receipt.
+                    response={session:selected.session_id,receipt:saved};
+                }
+            } else if (selected?.lifecycle.state === 'needs_input') {
+                response={session:selected.session_id,receipt:{...receipt,status:'not_sent',definitely_not_sent:true,reason:'Not sent - try again'}};
+            } else if (selected?.receiptMode === 'unconfirmed') {
+                sent.push({machine:id,...inner.arguments});
+                response={session:inner.arguments.session,receipt:{...receipt,status:'unconfirmed',transport_enqueued:true}};
+            } else {
+                sent.push({machine:id,...inner.arguments});
+                const list=events[inner.arguments.session] ||= [];
+                list.push(msg(list.length+1,'user',inner.arguments.input,0));
+                response={session:inner.arguments.session,receipt:{...receipt,status:'native_receipt_observed',native_receipt_observed:true}};
+            }
+        }
         else if (inner.type === 'session.control' && inner.operation === 'terminal_send') { sent.push({ machine: id, ...inner.arguments }); response = { session: inner.arguments.session, bytes_sent: inner.arguments.input.length }; }
         else if (inner.type === 'dir.list') response = { entries: [{ name:'wingthing', path:'/Users/example/code/wingthing', is_dir:true }] };
         else if (inner.type === 'pty.resize' || inner.type === 'pty.detach') response = {};
         else if (inner.type === 'sessions.history') response = { sessions: [] };
         else if (inner.type === 'conversations.list') response = { conversations: [] };
         else response = { error: 'unsupported fixture request' };
-        socket.send(JSON.stringify({ type: 'tunnel.res', request_id: outer.request_id, payload: encrypt(key, response) }));
+        const reply = () => socket.send(JSON.stringify({ type: 'tunnel.res', request_id: outer.request_id, payload: encrypt(key, response) }));
+        const selected = fixture.rows.find(item => item.session_id === inner.arguments?.session);
+        if (inner.operation === 'session_prompt' && inner.arguments.answer_to_state_cursor !== undefined && selected?.answerMode === 'lost') return;
+        if (inner.operation === 'session_prompt' && inner.arguments.answer_to_state_cursor !== undefined && selected?.answerMode === 'delayed') {setTimeout(reply,16000);return;}
+        if (selected?.promptDelayMs && inner.operation === 'session_prompt') {setTimeout(reply,selected.promptDelayMs);return;}
+        if (selected?.readingHold && inner.operation === 'session_read') {
+            const release=()=>{if(socket.readyState !== WebSocket.OPEN)return;if(selected.readingHold)setTimeout(release,50);else reply();};release();
+        } else if (inner.operation === 'session_read' && (selected?.reading || selected?.readDelayMs)) setTimeout(reply, selected.readDelayMs || 4000); else reply();
     };
 }
 
@@ -180,8 +269,9 @@ async function shoot(page, name, suffix) {
         checked(name + suffix + '-original-pinned-update', {pinned, timestamp});
     }
     assert.doesNotMatch(await page.locator('body').innerText(), /progress receipt/i);
-    const file = name + suffix + '.png';
-    await page.screenshot({ path: path.join(shots, file) });
+    const compact = process.env.WT_LOOK_COMPACT === '1';
+    const file = name + suffix + (compact ? '.jpg' : '.png');
+    await page.screenshot({ path: path.join(shots, file), ...(compact ? {type:'jpeg',quality:60} : {}) });
     const dimensions = await page.evaluate(() => ({ viewport: innerWidth, width: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth || 0) }));
     captures.push({ file, url: page.url(), ...dimensions });
     if (dimensions.viewport === 390 && dimensions.width > dimensions.viewport) {
@@ -359,23 +449,58 @@ async function checkConversation(page, name, suffix) {
     if (name === '01-wing') await checkWingSource(page, suffix, true);
     if (name === '03-session' && page.viewportSize().width === 1440) {
         assert.equal(await page.locator('.pp-terminal summary').count(), 0);
-        assert.ok(await page.getByRole('button',{name:'Take over terminal',exact:true}).isVisible());
+        assert.ok(await page.getByRole('button',{name:'Take over',exact:true}).isVisible());
         if (await page.locator('.pp-conversation .pp-row').count() === 3) {
-            const layout = await page.evaluate(() => {
-                const messages=document.querySelector('.pp-conversation .pp-kick').getBoundingClientRect();
-                const terminal=document.querySelector('.pp-terminal .pp-kick').getBoundingClientRect();
-                const last=document.querySelector('.pp-conversation .pp-row:last-child').getBoundingClientRect();
-                const composer=document.querySelector('.pp-composer').getBoundingClientRect();
-                const row=document.querySelector('.pp-row-you'), who=row.querySelector('.pp-who').getBoundingClientRect();
-                return {messages:messages.top,terminal:terminal.top,gap:composer.top-last.bottom,inset:who.left-row.getBoundingClientRect().left};
-            });
-            assert.equal(layout.messages,layout.terminal, JSON.stringify(layout));
-            assert.ok(layout.gap>=0 && layout.gap<=32, JSON.stringify(layout));
-            assert.ok(layout.inset>=12, JSON.stringify(layout));
+            const layout = await checkSessionLayout(page, name + suffix);
             checked(name + suffix + '-short-desktop-layout', layout);
         }
     }
     checked(name + suffix + '-identity-and-composer', {identity,...geometry});
+}
+// Both the normal session check and the state/volume fixture use these bounds.
+function assertSessionLayout(layout) {
+    if (layout.width === 1440) assert.equal(layout.messages,layout.terminal, JSON.stringify(layout));
+    if (layout.rows) {
+        assert.ok(layout.gap>=0 && layout.gap<=32, JSON.stringify(layout));
+        assert.ok(layout.inset>=12, JSON.stringify(layout));
+    }
+}
+async function checkSessionLayout(page, label, mutations = false) {
+    const measure = () => page.evaluate(() => {
+        const rect = selector => document.querySelector(selector).getBoundingClientRect();
+        const rows = document.querySelectorAll('.pp-conversation .pp-row');
+        const row = document.querySelector('.pp-row-you') || rows[0];
+        return {width:innerWidth, rows:rows.length,
+            messages:rect('.pp-session-messages .pp-session-bar').top,
+            terminal:rect('.pp-session-terminal .pp-session-bar').top,
+            gap:rows.length ? rect('.pp-composer').top - rows[rows.length-1].getBoundingClientRect().bottom : null,
+            inset:row ? row.querySelector('.pp-who').getBoundingClientRect().left-row.getBoundingClientRect().left : null};
+    });
+    await page.locator('.pp-conversation').evaluate(node=>{node.scrollTop=node.scrollHeight;});
+    const layout = await measure();
+    assertSessionLayout(layout);
+    checked(label+'-layout-contract',layout);
+    if (mutations && layout.rows) {
+        for (const fixture of layoutMutations) {
+            const selector = fixture.bound === 'gap' ? '.pp-composer' : '.pp-row-you, .pp-conversation .pp-row:first-child';
+            const target = page.locator(selector).first();
+            const original = await target.getAttribute('style');
+            try {
+                await target.evaluate((node, {fixture,layout})=>{
+                    if (fixture.bound === 'gap') node.style.transform='translateY('+(fixture.value-layout.gap)+'px)';
+                    else node.style.paddingLeft=fixture.value+'px';
+                },{fixture,layout});
+                const broken = await measure();
+                assert.ok(Math.abs(broken[fixture.bound]-fixture.value)<0.1,JSON.stringify(broken));
+                assert.throws(()=>assertSessionLayout(broken),{name:'AssertionError'},fixture.name+' must fail the original assertion');
+                checked(label+'-reject-'+fixture.name,{fixture,broken});
+            } finally {
+                await target.evaluate((node,original)=>original===null?node.removeAttribute('style'):node.setAttribute('style',original),original);
+            }
+            assertSessionLayout(await measure());
+        }
+    }
+    return layout;
 }
 async function checkConversationRefresh(page, name, suffix) {
     if(process.env.WT_LOOK_LEGACY) return;
@@ -383,9 +508,10 @@ async function checkConversationRefresh(page, name, suffix) {
     const append = text => events[id].push(msg(Math.max(...events[id].map(e=>e.sequence))+1, 'assistant', text, 0));
     const advance = () => page.evaluate(() => { const now=Date.now; Date.now=()=>now()+11000; });
     try {
-        for(let i=0;i<9;i++) append('Earlier progress receipt ' + i + '. The session is continuing its current task. This example update provides enough history to read back through the conversation without losing the machine identity.');
+        const additions=id==='migrate'?24:9;
+        for(let i=0;i<additions;i++) append('Earlier progress receipt ' + i + '. The session is continuing its current task. This example update provides enough history to read back through the conversation without losing the machine identity.');
         await advance();
-        await page.locator('.pp-conversation .pp-say').filter({hasText:'Earlier progress receipt 8.'}).waitFor({state:'attached'});
+        await page.locator('.pp-conversation .pp-say').filter({hasText:'Earlier progress receipt '+(additions-1)+'.'}).waitFor({state:'attached'});
         const before = await page.locator('.pp-conversation').evaluate(el=>{el.scrollTop=37;return {top:el.scrollTop,height:el.clientHeight,content:el.scrollHeight};});
         assert.ok(before.content>before.height+48);
         append('New progress receipt while reading earlier messages.');await advance();
@@ -398,10 +524,10 @@ async function checkConversationRefresh(page, name, suffix) {
         assert.ok(after.content-after.top-after.height<=2);
         await checkConversation(page,name,suffix);
         if(name==='03-session') {
-            if(page.viewportSize().width===390) await page.locator('.pp-terminal summary').click();
-            const takeover=page.getByRole('button',{name:'Take over terminal',exact:true});
+            if(page.viewportSize().width===390) await page.locator('[data-session-panel=terminal]').click();
+            const takeover=page.getByRole('button',{name:'Take over',exact:true});
             await takeover.scrollIntoViewIfNeeded();assert.ok(await takeover.isVisible());
-            if(page.viewportSize().width===390) await page.locator('.pp-terminal summary').click();
+            if(page.viewportSize().width===390) await page.locator('[data-session-panel=messages]').click();
             await page.evaluate(()=>{location.hash='#sessions';});
             await page.locator('.pp-srow[href="#session/studio/migrate"]').click();
             await page.getByRole('heading',{name:'migrate-sessions-table',exact:true}).waitFor();
@@ -431,10 +557,16 @@ async function checkConversationRefresh(page, name, suffix) {
 }
 async function go(page, hash, hashOnly = false) {
     if (hashOnly) await page.evaluate(hash => { location.hash = hash; }, hash);
-    else await page.goto(base + '/app/' + hash);
+    else {
+        const url = base + '/app/' + hash;
+        // Navigating to the same hash can stay in-document; this branch
+        // promises a fresh fixture read, including coordinator-only changes.
+        if (page.url() === url) await page.reload();
+        else await page.goto(url);
+    }
     await page.waitForLoadState('networkidle').catch(() => {});
     await page.waitForTimeout(shellMode ? 100 : 900);
-    if (shellMode) {
+    if (shellMode && !['states','session-stable','launch'].includes(shellMode)) {
         const count=[...sockets.keys()].reduce((total,id)=>total+machines[id].rows.filter(s=>!(s.pinned && s.role==='coordinator')).length,0);
         await page.waitForFunction(expected => document.querySelector('.pp-nav-sessions small')?.textContent === String(expected.sessions || '') && document.querySelector('.pp-nav-machines small')?.textContent === String(expected.machines || ''), {sessions:count,machines:sockets.size}).catch(async error => { console.error('Inventory mismatch', {expectedSessions:count,expectedMachines:sockets.size,actual:await page.locator('#paper').innerText()}); throw error; });
         await page.waitForFunction(expected => document.querySelectorAll('.pp-side-squares .pp-sq-connected').length === expected, Math.min(sockets.size, 3));
@@ -601,10 +733,14 @@ async function assertSessionRowRefresh(page) {
 }
 async function runShell(browser) {
     const original=machines.studio.rows.slice(), pages=[], contexts=[], errors=[];
-    for (const viewport of [{width:1440,height:900},{width:390,height:844}]) {
-        const context=await browser.newContext({viewport, ...(shellMode === 'home' ? {colorScheme:'dark'} : {})}); contexts.push(context);
-        const page=await context.newPage(); pages.push(page);
-        if (shellMode === 'home') page.on('console', message => { if (message.type() === 'error') console.error('BROWSER', message.text()); });
+    const sizes = [{width:1440,height:900},{width:390,height:844}];
+    const viewports = shellMode === 'session-stable' ? [...sizes,...sizes,...sizes,...sizes] : sizes;
+    for (const viewport of viewports) {
+        const context=await browser.newContext({viewport, hasTouch:viewport.width===390, ...(['home','states'].includes(shellMode) ? {colorScheme:'dark'} : {})}); contexts.push(context);
+        const page=await context.newPage(); page.setDefaultTimeout(15000); pages.push(page);
+        await page.addInitScript(()=>{ window.credentialCalls=0; if (navigator.credentials) for (const method of ['get','create']) Object.defineProperty(navigator.credentials,method,{value:()=>{window.credentialCalls++;return Promise.reject(Error('Unexpected credential sheet'));}}); });
+        page.on('console', message => fs.appendFileSync(path.join(shots,'browser.jsonl'),JSON.stringify({width:viewport.width,type:message.type(),text:message.text()})+'\n'));
+        page.on('requestfailed', request => fs.appendFileSync(path.join(shots,'browser.jsonl'),JSON.stringify({width:viewport.width,type:'requestfailed',url:request.url(),error:request.failure()})+'\n'));
         page.on('pageerror',error=>{ errors.push(String(error)); console.error('PAGEERROR '+error); });
         page.on('dialog',dialog=>{ errors.push('Unexpected dialog: '+dialog.message()); dialog.dismiss(); });
         await page.route('**/*',route=>new URL(route.request().url()).origin===base?route.continue():route.abort());
@@ -613,9 +749,53 @@ async function runShell(browser) {
         await page.route('**/api/app/wings', async route => {
             const response=await route.fetch();
             const entries=await response.json();
-            await route.fulfill({response,json:entries.filter(w=>Object.hasOwn(machines,w.wing_id))});
+            await route.fulfill({response,json:entries.filter(w=>Object.hasOwn(machines,w.wing_id) && !machines[w.wing_id].flags?.offline)});
         });
     }
+    if (['session-stable','home-delivery','machine-update'].includes(shellMode)) {
+        await machine('studio');
+        if (shellMode==='machine-update') {
+            await assertMachineUpdateStability({pages,machines,go,checked,shoot});
+        } else if (shellMode==='home-delivery') {
+            await assertHomeDeliveryStability({pages,machines,events,row,msg,go,checked,sent,shoot});
+        } else {
+            machines['long-0']={name:'Research workstation for extended workspace migration projects',rows:[]}; await machine('long-0');
+            await assertSessionStability({pages,machines,events,screens,row,msg,go,checked,sent,shoot,toggleConnection:tick=>{machines['long-0'].flags={offline:tick%2===1};}});
+        }
+        assert.deepEqual(errors,[]); checked('no-page-errors-or-dialogs',errors);
+        for (const context of contexts) await context.close();
+        return;
+    }
+    if (shellMode==='states') {
+        await machine('studio');
+        await assertSessionStates({pages, machines, events, screens, row, msg, go, shoot, checked, assertShell, sent, checkSessionLayout});
+        for (const count of [0,1,8]) {
+            machines.studio.rows=Array.from({length:count},(_,i)=>row('long-'+i,'Improve organization invitation recovery for interrupted workspace migration '+(i+1),'claude','idle','wingthing'));
+            for (const page of pages) {
+                await go(page,'#sessions');
+                assert.equal(await page.locator('.pp-srow').count(),count);
+                await assertShell(page,'session-list-volume-'+count+'-'+page.viewportSize().width);
+                await shoot(page,'session-list-volume-'+count,'-'+page.viewportSize().width);
+            }
+        }
+        machines.studio.rows=[original[2], ...machines.studio.rows.slice(1)];
+        for (const page of pages) await assertInputRefusal({page,go,shoot,checked});
+        for (let i=0;i<5;i++) {
+            const id='research-'+i;
+            machines[id]={name:'Research workstation for extended migration projects '+(i+1),rows:[]};
+            await machine(id);
+        }
+        for (const page of pages) {
+            await go(page,'#machines');
+            assert.equal(await page.locator('[data-machine]').count(),6);
+            await assertShell(page,'session-plan-limit-6-'+page.viewportSize().width);
+            await shoot(page,'session-volume-plan-limit-6','-'+page.viewportSize().width);
+        }
+        assert.deepEqual(errors,[]); checked('no-page-errors-or-dialogs',errors);
+        for (const context of contexts) await context.close();
+        return;
+    }
+
     if (shellMode === 'home') {
         await runHome({pages, machines, sockets, machine, row, events, at, go, shoot, checked, base});
         assert.deepEqual(errors, []); checked('no-page-errors-or-dialogs', errors);
@@ -648,6 +828,7 @@ async function runShell(browser) {
         for (const page of pages) await go(page,'#sessions');
         const routes=['#','#sessions','#machines','#account','#new','#s/redirect?wing=studio','#chat/redirect?wing=studio','#w/studio','#bogus','#new/studio','#machine/studio','#approve/studio/redirect','#needs','#decisions','#session/studio/migrate','#%broken'];
         for (const page of pages) {
+            if (shellMode==='routes') await assertInputRefusal({page, go, shoot, checked});
             if (shellMode==='focus') {
                 await assertListViewRefresh(page, {root, go, checked});
                 continue;
@@ -705,7 +886,8 @@ async function runShell(browser) {
             await go(page,'#session/studio/migrate');
             await page.locator('.pp-conversation .pp-row').first().waitFor();
             assert.ok(attentionAcks.some(ack=>ack.wingId==='studio'&&ack.sessionId==='migrate'));
-            assert.equal(await page.locator('#paper .xterm:visible').count(),0);
+            assert.equal(await page.locator('.pp-screen-control .xterm').count(),0);
+            assert.equal(attachments.length,0,'read-only snapshots never attach a PTY writer');
             checked('encrypted-paper-attention'+suffix, attentionAcks);
             const hash='#conversation/task-123?wing=studio';
             await go(page,hash,true);
@@ -748,14 +930,21 @@ async function runShell(browser) {
             await page.locator('#palette-search').fill('/Users/example/code/wingthing');
             await page.waitForTimeout(500);
             await page.locator('.palette-item[data-path="/Users/example/code/wingthing"]').click();
-            await page.waitForFunction(()=>/^#session\//.test(location.hash)); await page.locator('#paper .xterm').waitFor({state:'visible'});
+            await page.waitForFunction(()=>/^#session\//.test(location.hash)); await page.locator('.pp-session').waitFor({state:'visible'});
+            assert.equal(await page.locator('.pp-session').getAttribute('data-state'),'reading');
+            await shoot(page,'session-start-reading','-'+page.viewportSize().width);
+            const startedId=decodeURIComponent(new URL(page.url()).hash.split('/')[2]);
+            machines.studio.rows.find(item=>item.session_id===startedId).readingHold=false;
+            await page.waitForFunction(()=>document.querySelector('.pp-session')?.dataset.state!=='control' && document.querySelector('[data-terminal-kicker]')?.textContent==='Read-only');
+            if (page.viewportSize().width===390) await page.locator('[data-session-panel=terminal]').click();
+            await page.locator('.pp-screen-snapshot .xterm').waitFor({state:'visible'});
             await assertShell(page,'launch-'+page.viewportSize().width);
-            assert.ok(await page.evaluate(()=>document.querySelector('#paper .pp-live').contains(document.querySelector('#terminal-section'))));
+            assert.ok(await page.locator('.pp-session-messages').count());
             await shoot(page,'shell-started','-'+page.viewportSize().width);
             await go(page,'#session/studio/migrate');
-            if (page.viewportSize().width===390) await page.locator('.pp-terminal').evaluate(el=>el.open=true);
-            await page.getByRole('button',{name:'Take over terminal',exact:true}).click();
-            await page.locator('#paper .pp-live .xterm').waitFor({state:'visible'}); await assertShell(page,'takeover-'+page.viewportSize().width);
+            if (page.viewportSize().width===390) await page.locator('[data-session-panel=terminal]').click();
+            await page.getByRole('button',{name:'Take over',exact:true}).click();
+            await page.locator('#paper .pp-screen-control .xterm').waitFor({state:'visible'}); await assertShell(page,'takeover-'+page.viewportSize().width);
             await page.evaluate(()=>{location.hash='#sessions';}); await page.locator('#pp-filter').waitFor();
             assert.equal(await page.locator('#paper #terminal-section').count(),0);
         }
@@ -814,6 +1003,9 @@ try {
         for (let i = 0; i < 100; i++) { try { if ((await fetch(base + '/health')).ok) break; } catch {} await sleep(100); }
     }
     browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH, args: ['--disable-background-networking','--disable-component-update','--disable-default-apps','--disable-sync','--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'] });
+    source.browser = await browser.version();
+    source.binary = {path:process.env.WT_LOOK_BIN || path.join(root,'wt'),sha256:createHash('sha256').update(fs.readFileSync(process.env.WT_LOOK_BIN || path.join(root,'wt'))).digest('hex')};
+    source.assets = Object.fromEntries(fs.readdirSync(path.join(root,'web/dist/assets')).map(file=>[file,createHash('sha256').update(fs.readFileSync(path.join(root,'web/dist/assets',file))).digest('hex')]));
     if (shellMode) {
         await runShell(browser);
         complete = true;
@@ -885,8 +1077,9 @@ try {
         await go(page, process.env.WT_LOOK_LEGACY ? '#chat/redirect?wing=studio' : '#approve/studio/redirect');
         await shoot(page, '04-approve', v.suffix);
         if (!process.env.WT_LOOK_LEGACY) {
-            await page.getByRole('heading', {name:'Answer in terminal',exact:true}).waitFor();
-            await page.getByRole('button', {name:'Answer in terminal',exact:true}).waitFor();
+            await page.getByRole('heading', {name:'fix-login-redirect',exact:true}).waitFor();
+            if (page.viewportSize().width===390) await page.locator('[data-session-panel=messages]').click();
+            await page.getByRole('button', {name:'Answer in the terminal',exact:true}).waitFor();
             if (await page.locator('[data-answer]').count()) throw Error('browser offered an approval decision');
             if (sent.length) throw Error('browser guessed terminal input: ' + JSON.stringify(sent));
             const marks = await page.evaluate(() => document.querySelectorAll('#paper .pp-st-need, #paper .pp-hot').length);
@@ -939,12 +1132,26 @@ try {
     if (overflow.length) throw Error('Horizontal overflow in ' + overflow.length + ' phone captures');
     }
 } finally {
+    if (!complete && browser) {
+        const pages=browser.contexts().flatMap(context=>context.pages()).slice(0,2);
+        const diagnostics=[];
+        for (const [index,page] of pages.entries()) try {
+            diagnostics.push(await page.evaluate(()=>({url:location.href,text:document.body.innerText.slice(0,12000),state:document.querySelector('.pp-session')?.dataset.state,disabled:document.querySelector('#pp-message')?.disabled})));
+            await page.screenshot({path:path.join(shots,'failure-'+index+'.jpg'),type:'jpeg',quality:60});
+        } catch {}
+        fs.writeFileSync(path.join(shots,'failure.json'),JSON.stringify(diagnostics,null,2)+'\n');
+    }
     writeIndex(complete);
     if (browser) await browser.close();
     for (const socket of sockets.values()) try { socket.close(); } catch {}
-    roost.kill('SIGTERM');
-    if (joinRoost) joinRoost.kill('SIGTERM');
-    publicServer?.kill('SIGTERM');
+    // Finish owned listeners before the next fixture starts or state is removed.
+    for (const child of [roost, joinRoost, publicServer]) {
+        if (child && child.exitCode === null && child.signalCode === null) {
+            const exited = once(child, 'exit');
+            child.kill('SIGTERM');
+            await exited;
+        }
+    }
     await removeState(joinState);
     await removeState(state);
     fs.closeSync(log);
