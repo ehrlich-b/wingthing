@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Linux promotion receipt and cheap deploy preflight; never deploys itself."""
 import argparse
+import datetime
 import hashlib
 import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -70,10 +72,32 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def verify_check_gate(text):
+    match = re.fullmatch(
+        r"make check gate exit=0 head=([0-9a-f]{40}) host=forge2 "
+        r"log=(\S+) at=(\S+)\n?", text)
+    if not match:
+        raise ValueError("invalid forge2 check-gate receipt")
+    head, log, at = match.groups()
+    timestamp = datetime.datetime.fromisoformat(at)
+    if timestamp.utcoffset() is None:
+        raise ValueError("check-gate receipt timestamp requires a timezone")
+    if head != source():
+        raise ValueError("check-gate receipt does not match HEAD")
+    log = Path(log)
+    if log.is_symlink() or not log.is_file() or not log.stat().st_size:
+        raise ValueError("check-gate receipt requires its saved nonempty regular log")
+    print(f"check-gate receipt verified for {head}")
+
+
 def verify(receipt):
     if not receipt:
-        raise ValueError("RECEIPT is required; run make ship-gate on Linux")
-    data = json.loads(Path(receipt).read_text())
+        raise ValueError("RECEIPT is required; supply a forge2 check-gate or Linux ship-gate receipt")
+    text = Path(receipt).read_text()
+    if text.startswith("make "):
+        verify_check_gate(text)
+        return
+    data = json.loads(text)
     if (data.get("version") != 1 or data.get("head") != source()
             or data.get("platform") != "Linux" or data.get("gates") != GATES):
         raise ValueError("receipt does not match HEAD and the Linux promotion set")

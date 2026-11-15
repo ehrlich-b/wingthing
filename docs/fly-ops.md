@@ -95,6 +95,23 @@ committed HEAD. Transfer that receipt to the deployment host and run
 and staged release downloads before Fly; it does not run the suite locally or
 publish a GitLab release.
 See [Promotion and deployment](#promotion-and-deployment) for the exact set.
+
+Deploy also accepts a saved forge2 `make check gate` receipt for a committed,
+clean HEAD, with exactly this one-line format:
+
+```text
+make check gate exit=0 head=<full sha> host=forge2 log=<saved log path> at=<ISO 8601 time with timezone>
+```
+
+Write this receipt only after `nice -n 10 make check gate` exits zero. Retain
+and transfer its nonempty log with it; the log path must resolve on the deploy
+host. Run `make deploy RECEIPT=/path/to/check-gate-receipt.txt` to validate the
+receipt and staged downloads before Fly. Missing logs, stale source, dirty
+source, failed exits, other hosts and malformed receipts fail before Fly,
+including with `make -n deploy`. This receipt covers the local check/gate run;
+the release's Linux and macOS verification and download promotion still precede
+deployment as described in the release checklist.
+
 The separate release qualification retains the configured historical-baseline
 compatibility gate in `scripts/test-backward-compat.sh`. Set
 `WT_COMPAT_BASELINE_REF` to select one baseline; otherwise it runs both pinned
