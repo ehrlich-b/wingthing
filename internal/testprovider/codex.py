@@ -1,5 +1,21 @@
 import json, os, re, subprocess, sys, tty
 args=sys.argv[1:]
+# Startup controls apply only to this embedded fake, before its turn protocol.
+if '--help' in args:
+ mode=os.environ.get('WT_TEST_PROVIDER_HELP', 'ok')
+ if mode=='exit-75':
+  print('fixture quota supervisor: startup budget unavailable', file=sys.stderr)
+  sys.exit(75)
+ if mode=='disappear':
+  import signal
+  os.kill(os.getpid(), signal.SIGKILL)
+ if mode=='wait':
+  sys.stdin.buffer.read(1)
+  sys.exit(0)
+ if mode=='reject':
+  print('unknown flag: fixture unattended option', file=sys.stderr)
+  sys.exit(2)
+ print('fixture codex help'); sys.exit(0)
 if args==['--version']:
  print('codex-cli 0.159.3'); sys.exit(0)
 hooks={}; notify=None

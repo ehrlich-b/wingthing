@@ -275,6 +275,7 @@ type runHistory struct {
 	unavailable      []string
 	err              string
 	loading          bool
+	pendingResult    *runRow // One explicit result read waiting for an inventory reply.
 	requested        bool
 	next             bool
 	target           runRow
@@ -395,6 +396,11 @@ func (h *runHistory) apply(result runsResult) {
 }
 func (h *runHistory) request(ctx context.Context, dir string, remotes map[string]config.Remote, result *runRow) {
 	if h.loading {
+		// Inventory refresh and result reads share one worker. Preserve the
+		// explicit qualified target until the in-flight reply is applied.
+		if result != nil {
+			h.pendingResult = result
+		}
 		return
 	}
 	h.loading = true
@@ -508,13 +514,14 @@ func (s *state) runHandle(key string) (*action, bool) {
 			s.mode = navigate
 			h.content = nil
 			h.recovery = false
+			h.pendingResult = nil
 		case "r":
 			if s.mode == runDetails {
 				h.recovery = !h.recovery
 				s.overlayOffset = 0
 			}
 		case "o":
-			if s.mode == runDetails && !h.loading {
+			if s.mode == runDetails {
 				s.mode = runResult
 				s.overlayOffset = 0
 				h.content = nil
@@ -591,7 +598,7 @@ func (s *state) runHandle(key string) (*action, bool) {
 			h.target = r
 			h.recovery = false
 			s.overlayOffset = 0
-			if key == "o" && !h.loading {
+			if key == "o" {
 				s.mode = runResult
 				h.content = nil
 				return &action{kind: runResult, run: r}, false
