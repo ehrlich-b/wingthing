@@ -10,10 +10,13 @@ description: Use Wingthing local-first to start and supervise coding agents thro
 Use this order. Do not start with a hosted service when a local route satisfies
 the task.
 
-1. **Local agent control:** register `wt mcp stdio --client NAME` with the parent
+1. **Local agent control:** start `wt wing start --local-only` and keep the wing
+   running before registering `wt mcp stdio --client NAME` with the parent
    agent. It manages agents on this computer using existing workspaces and the
-   current OS user's existing provider logins. No Wingthing account or daemon is
-   required.
+   current OS user's existing provider logins. No Wingthing account is required.
+   The independently running wing owns execution and state. Use the same
+   `WINGTHING_DIR` (default `~/.wingthing`) in the wing and the parent client's
+   MCP process environment, including after restarting the client.
 2. **Local human terminal:** run `wt egg AGENT` from an existing project and
    resume it with `wt attach`. This is the local sandboxed agent-terminal route.
 3. **Direct remote MCP:** use `wt mcp connect` when parent and child execution are

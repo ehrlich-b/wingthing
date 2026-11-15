@@ -57,10 +57,11 @@
 </nav>
 <div class="docs-body">
 <h1>documentation</h1>
-<p class="lead">Run coding agents in your existing projects and return to their sessions later. Start with a local terminal; add another machine or a browser when you need one.</p>
+<p class="lead">Wingthing is an open-source (MIT) agent manager. A wing owns processes, sessions, run records and local state on an execution machine. Workspaces and provider logins stay there. Start with a local terminal; add MCP or a browser when needed.</p>
 
 <div class="docs-section" id="quickstart">
 <h2>quickstart</h2>
+{{template "release-info" .}}
 
 <h3 data-route="local-human" style="font-size:14px;margin:16px 0 8px;color:var(--text)">Run your first coding agent</h3>
 <div class="docs-code"><span class="prompt">$ </span><span class="cmd">curl -fsSL https://wingthing.ai/install.sh | sh</span></div>
@@ -75,13 +76,15 @@
 <p>Manual downloads: <a href="https://github.com/ehrlich-b/wingthing/releases">GitHub releases</a>.</p>
 <h3 style="font-size:16px;margin:24px 0 8px;color:var(--text)">Optional next steps</h3>
 <h3 data-route="local-agent" style="font-size:14px;margin:16px 0 8px;color:var(--text)">Let another agent manage your sessions with MCP</h3>
+<p>Start a local-only wing and keep it running before registering stdio. Use the same <code>WINGTHING_DIR</code> in the wing and parent client's MCP process environment (default <code>~/.wingthing</code>).</p>
 <div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">wt wing start --local-only</span><br>
 <span class="comment"># Codex</span><br>
 <span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp stdio --client codex</span><br>
 <span class="comment"># or Claude Code</span><br>
 <span class="prompt">$ </span><span class="cmd">claude mcp add --scope user wingthing -- wt mcp stdio --client claude</span>
 </div>
-<p>Restart the client, then ask it to call <code>wingthing_capabilities</code>. Child agents use existing project directories and the current OS user's existing provider logins on this computer. No Wingthing account or daemon is required.</p>
+<p>Restart the client, then ask it to call <code>wingthing_capabilities</code>. Child agents use existing project directories and the current OS user's existing provider logins on this computer. No Wingthing account is required; stdio connects to the running wing.</p>
 
 <h3 data-route="direct-remote" style="font-size:14px;margin:16px 0 8px;color:var(--text)">Connect agents on other machines</h3>
 <p>On every execution machine, keep the required workspace there, install and authenticate the provider CLIs that may run there, then log in and start its wing:</p>
@@ -99,19 +102,21 @@
 <p>The agent calls <code>wing_list</code>, then passes an explicit <code>wing_id</code> to every operation. The hosted service supplies identity, the access-filtered directory, and WebRTC signaling; MCP payloads travel directly between the connector and selected wing. The connector never silently changes to hosted relay. The first release expects the peers to share a LAN or tailnet unless you configure STUN or TURN under <code>ice_servers</code> in <code>~/.wingthing/wing.yaml</code>; the several-computer pattern includes the exact YAML shape.</p>
 
 <h3 data-route="self-hosted-browser" style="font-size:14px;margin:16px 0 8px;color:var(--text)">Open a browser on your own machine</h3>
+<p>This self-hosted route needs no Wingthing account or hosted-relay entitlement. WT creates a localhost-only certificate on demand, installs only its public CA for your current user, and keeps its private keys on this machine. Use the localhost-plus-SSH pattern for a remote wing, or configure OAuth, HTTPS, and explicit enrollment for several people.</p>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt roost start --https</span><span class="comment"> # portal + gateway + local wing</span><br>
 <span class="prompt">$ </span><span class="cmd">open https://localhost:8443</span>
 </div>
-<p>This self-hosted route needs no Wingthing account or hosted-relay entitlement. WT creates a localhost-only certificate on demand, installs only its public CA for your current user, and keeps its private keys on this machine. Use the localhost-plus-SSH pattern for a remote wing, or configure OAuth, HTTPS, and explicit enrollment for several people.</p>
+
 
 <h3 data-route="hosted-relay" style="font-size:14px;margin:16px 0 8px;color:var(--text)">Use the hosted browser</h3>
+<p>The optional hosted browser terminal requires an account with hosted-relay access and a selected wing whose effective policy is <code>hosted_relay: allow</code>. The public direct-free service does not let an account grant itself relay access. In this mode, the service relays application-encrypted terminal and control payloads, sees routing metadata, and supplies the browser code.</p>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt login</span><br>
 <span class="prompt">$ </span><span class="cmd">wt start</span><br>
 <span class="prompt">$ </span><span class="cmd">open https://app.wingthing.ai</span>
 </div>
-<p>The optional hosted browser terminal requires an account with hosted-relay access and a selected wing whose effective policy is <code>hosted_relay: allow</code>. The public direct-free service does not let an account grant itself relay access. In this mode, the service relays application-encrypted terminal and control payloads, sees routing metadata, and supplies the browser code.</p>
+
 
 <p>Your machine is a <strong>wing</strong>, the runtime that owns its processes, workspaces, agent homes, sessions, and runs. Local and remote adapters address that runtime; neither a connector nor a browser moves execution off the selected wing.</p>
 </div>
@@ -128,7 +133,7 @@
 <tr><td>egg</td><td>The process, PTY, sandbox policy, and local control socket behind a session.</td></tr>
 <tr><td>roost</td><td>The self-hosted bundle started by <code>wt roost start</code>: a portal and gateway with an embedded wing. Other wings can register with its gateway.</td></tr>
 </table></div>
-<p><code>wingthing.ai</code> is the hosted identity, directory, and connection-coordination service. Think of it as a tailnet control plane for wings: it introduces authenticated peers, while the free native-MCP data path is direct. The optional hosted relay carries encrypted browser-terminal and control payloads for Pro users. It is not a roost under the stricter self-hosted-bundle definition above.</p>
+<p><code>wingthing.ai</code> is the hosted identity, directory, and connection-coordination service. Think of it as a tailnet control plane for wings: it introduces authenticated peers, while the free native-MCP data path is direct. The optional hosted relay carries encrypted browser-terminal and control payloads for accounts with hosted-relay access. Signing in does not itself grant that access. It is not a roost under the stricter self-hosted-bundle definition above.</p>
 </div>
 
 <div class="docs-section" id="agent-control">
@@ -143,7 +148,9 @@
 <tr><td>durable memory</td><td>Tasks, results, messages, and threads stay in that wing's <code>~/.wingthing/wt.db</code>; terminal state stays under <code>~/.wingthing/eggs</code>, optional prompt memory under <code>~/.wingthing/memory</code>, and provider history in the provider home. <code>WINGTHING_DIR</code> changes the Wingthing state root. None of this is replicated between wings automatically.</td></tr>
 </table></div>
 <p>A terminal survives client detachment. A run's record and result persist, but an active headless run still depends on its supervising Wingthing process. Keep the returned run or session ID together with its owning wing for every later operation.</p>
+<p>Start a local-only wing and keep it running before registering stdio. Use the same <code>WINGTHING_DIR</code> in the wing and parent client's MCP process environment (default <code>~/.wingthing</code>).</p>
 <div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">wt wing start --local-only</span><br>
 <span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp stdio --client codex</span><br>
 <span class="prompt">$ </span><span class="cmd">claude mcp add --scope user wingthing -- wt mcp stdio --client claude</span>
 </div>
@@ -167,7 +174,7 @@
 
 <div class="docs-section" id="wing-setup">
 <h2>wing setup</h2>
-<p>Remote execution through direct MCP or the hosted browser needs a running wing. Local stdio MCP, local terminal commands, and an embedded self-hosted roost do not require a separate wing daemon. Prepare each standalone execution wing from a terminal:</p>
+<p>Remote execution through direct MCP or the hosted browser needs a running wing. Local stdio MCP needs an independently running wing for the same <code>WINGTHING_DIR</code>: start <code>wt wing start --local-only</code> before registration. Local terminal commands can run standalone; a self-hosted roost embeds its own wing and needs no separate wing daemon. Prepare each standalone execution wing from a terminal:</p>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt login</span><span class="comment">       # authenticate for identity, directory, and signaling</span><br>
 <span class="prompt">$ </span><span class="cmd">wt start</span><span class="comment">       # start the execution wing</span><br>
@@ -397,7 +404,7 @@ idle_timeout: 4h
 <p>Without an <code>egg.yaml</code>, the sandbox applies opinionated defaults: CWD is writable, home is read-only, sensitive directories (<code>~/.ssh</code>, <code>~/.gnupg</code>, <code>~/.aws</code>, etc.) are denied, and only essential env vars pass through. <code>~/.ssh/known_hosts</code> is preserved read-only so SSH can verify host keys without prompting (add <code>deny:~/.ssh/known_hosts</code> to disable this). Network is blocked except for exactly what your agent needs - each agent has a profile declaring its API domains, env vars, and config directories. Claude gets <code>api.anthropic.com</code>, Ollama gets <code>localhost</code>, etc. You don't configure any of this.</p>
 <p>A local <a href="https://en.wikipedia.org/wiki/HTTP_tunnel">CONNECT proxy</a> enforces domain-level filtering - agents can only reach their declared APIs, not the entire internet. On macOS, Seatbelt permits only the proxy endpoint. On Linux, every sandbox keeps a route-less network namespace and an inherited-FD relay exposes only the proxy and explicitly declared host-loopback ports. Removing <code>HTTPS_PROXY</code> does not create a route.</p>
 <p>Drop an <code>egg.yaml</code> in your project to customize. Configs are additive - you only declare what you're changing from the defaults.</p>
-<p>Place <code>egg.yaml</code> in your project directory for per-project config, or in <code>~/.wingthing/egg.yaml</code> for global defaults. Project configs are discovered automatically. Use the <a href="/">sandbox builder</a> on the homepage to generate configs visually, or install the <a href="https://github.com/ehrlich-b/wingthing/tree/main/docs/skills/create-egg">Claude Code skill</a> for an interactive security interview that generates hardened configs.</p>
+<p>Place <code>egg.yaml</code> in your project directory for per-project config, or in <code>~/.wingthing/egg.yaml</code> for global defaults. Project configs are discovered automatically. Use the policy example below, the <a href="#sandbox-limits">sandbox limits</a>, or the <a href="https://gitlab.com/ehrlich-b/wingthing/-/tree/main/docs/skills/create-egg">Claude Code skill</a> for an interactive security interview that generates hardened configs.</p>
 <p>Example <code>egg.yaml</code>:</p>
 <div class="docs-code">
 fs:<br>
@@ -414,7 +421,7 @@ dangerously_skip_permissions: true
 <div class="docs-table-scroll" role="region" aria-label="Scrollable reference table" tabindex="0"><table class="docs-table">
 <tr><th>field</th><th>effect</th></tr>
 <tr><td>fs</td><td>filesystem rules: <code>rw:PATH</code>, <code>ro:PATH</code>, <code>deny:PATH</code>, <code>deny-write:PATH</code>. Additive on top of defaults</td></tr>
-<tr><td>network</td><td>domain allowlist, merged with agent defaults. Use <code>"*"</code> for unrestricted</td></tr>
+<tr><td>network</td><td>domain allowlist, merged with agent defaults. Use <code>"*"</code> for any destination; on Linux this is TCP via HTTP CONNECT in a route-less namespace, not ordinary routed UDP, ICMP or raw sockets. Clients must honor the proxy or speak CONNECT. Host-loopback TCP services need explicit <code>network.local_ports</code></td></tr>
 <tr><td>env</td><td>extra env vars to pass through (agent-required vars are auto-injected)</td></tr>
 <tr><td>dangerously_skip_permissions</td><td>let the agent run without asking - the sandbox is the permission boundary</td></tr>
 <tr><td>agent_settings</td><td>map of agent name to settings file path (e.g. <code>claude: /path/to/settings.json</code>). Host settings override user prefs</td></tr>

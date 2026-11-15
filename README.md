@@ -6,9 +6,16 @@ using the code and provider login already
 there. You can detach and come back later from the `wt` command line or a
 browser, and a parent agent can start and inspect the same sessions over MCP.
 
-![Illustrated local MCP workflow](docs/assets/local-mcp-demo.svg)
+A **wing** is the runtime on an execution machine. It owns the processes,
+terminal sessions, run records and local state there. A session is an interactive
+terminal; a run is a supervised task with semantic status and a final result.
+Workspaces and provider logins must already exist on that machine; Wingthing
+does not synchronize them between wings.
 
-[Star on GitHub](https://github.com/ehrlich-b/wingthing) ·
+![Illustrative local MCP workflow](docs/assets/local-mcp-demo.svg)
+
+[Source on GitLab](https://gitlab.com/ehrlich-b/wingthing) ·
+[GitHub mirror](https://github.com/ehrlich-b/wingthing) ·
 [GitHub issues](https://github.com/ehrlich-b/wingthing/issues) ·
 [Build evidence](https://gitlab.com/ehrlich-b/wingthing/-/pipelines)
 (successful tag jobs retain verification receipts; see the [release checklist](docs/release-verification.md)).
@@ -24,7 +31,10 @@ release checksum, installs `wt` into `~/.local/bin` (set `WT_INSTALL_DIR` to
 change that) and never runs sudo. Manual downloads are on
 [GitHub releases](https://github.com/ehrlich-b/wingthing/releases). Update with
 `wt update`. To build from source you need Go 1.26.9 or newer and Node.js:
-`git clone https://github.com/ehrlich-b/wingthing.git`, then `make check`.
+`git clone https://gitlab.com/ehrlich-b/wingthing.git`, then `make check`.
+The [download metadata](https://wingthing.ai/dl/latest.json) identifies the
+available release and its assets. Source documentation can describe changes
+that are not in that release; check `wt --version` and its release notes.
 
 ## First commands
 
@@ -46,7 +56,10 @@ from the smallest setup to the largest; use the first one that fits.
 ## 1. Local agent control: stdio MCP
 
 A parent agent can manage other agents on the same machine through typed MCP
-tools. Start a wing, then register the stdio server with the parent:
+tools. Start a local-only wing, then register the stdio server with the parent.
+Keep the wing running. Use the same `WINGTHING_DIR` for the wing and the MCP
+client process (default: `~/.wingthing`); if you customize it, configure that
+environment in the parent client's MCP settings as well.
 
 ```bash
 wt wing start --local-only
@@ -73,8 +86,11 @@ wt search 'DNS helper' --json          # search live and past sessions
 
 The provider CLI must already be installed and logged in for the current OS
 user. No Wingthing account is required. The first `wt egg` command can run on
-its own; `wt attach` requires a running
-wing and checks that client's grants and session ownership. More:
+its own. Native `wt attach` can attach to a standalone egg when the wing socket
+is absent or refuses connection, no `WT_MCP_CLIENT` principal is named, and no
+expected wing identity is pinned. Named clients and pinned wing identities
+require the wing; wing-mediated attachment checks grants and session ownership.
+An authorization denial or a lost attachment never triggers that fallback. More:
 [session search](docs/session-search.md), [leave and return example](examples/leave-laptop/README.md).
 
 ## 3. Different machines: direct remote MCP
@@ -138,7 +154,11 @@ writable, home is read-only, common credential directories are denied, the
 environment is stripped, and the network is limited to the domains the selected
 agent needs. macOS uses Seatbelt; Linux uses namespaces, seccomp and cgroups
 when available. `wt egg explain claude --json` prints the resolved policy before
-a launch. Limits are in the [security model](docs/security.md#egg-sandbox).
+a launch. On Linux, `network: "*"` permits any TCP destination through HTTP
+CONNECT but retains a route-less namespace. Clients must honor the proxy or
+speak CONNECT; ordinary routed UDP, ICMP and raw sockets are unavailable.
+Host-loopback TCP services need explicit `network.local_ports`. Limits are in
+the [security model](docs/security.md#egg-sandbox).
 
 Interactive sessions support Claude Code, Codex, Cursor Agent, Gemini CLI,
 Hermes Agent, Ollama and OpenCode. `wt doctor` reports which are installed.
