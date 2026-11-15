@@ -20,7 +20,7 @@ FEATURES = ['encrypted terminal output', 'loopback local-only listener',
             'legacy sandbox capability reports',
             'opt-in Claude native policy', 'opt-in Codex native policy',
             'visible session search counts']
-BUILD_LIMITS = {'cgo_enabled': False, 'phone_pairing': 'unavailable'}
+BUILD_LIMITS = {'cgo_enabled': False}
 
 
 def git(*args):
@@ -76,6 +76,79 @@ def relative(root, name):
     return path
 
 
+def pairing_status(packet, root, platform, binary_identity=True):
+    """Derive one artifact's capability from its retained receipt and actual bytes.
+
+    Receipt integrity is not signer authentication or release authorization.
+    Synthetic evidence exercises this contract but never qualifies a package.
+    """
+    entry = packet['phone_pairing'][platform]
+    retained = entry['receipt']
+    if retained is None:
+        return 'unqualified'
+    path = relative(root, retained['path'])
+    if digest(path) != retained['sha256']:
+        raise ValueError('pairing receipt checksum mismatch: ' + platform)
+    receipt = load(path)
+    if type(receipt['schema']) is not int or receipt['schema'] != 1:
+        raise ValueError('invalid pairing receipt schema')
+    if receipt['commit'] != packet['commit']:
+        raise ValueError('pairing receipt is for another commit')
+    if receipt['platform'] != platform:
+        raise ValueError('pairing receipt is for another platform')
+    artifact = packet['artifacts'][platform]
+    if receipt['binary_sha256'] != artifact['sha256'] or digest(
+            relative(root, artifact['path'])) != receipt['binary_sha256']:
+        raise ValueError('pairing receipt binary checksum mismatch')
+    if (receipt['outcomes'] != {'pair': 'PASS', 'attach': 'PASS'}
+            or type(receipt['exit_code']) is not int or receipt['exit_code'] != 0):
+        raise ValueError('pairing receipt needs successful pair and attach outcomes')
+    command = receipt['command']
+    if (not isinstance(command, list) or not command
+            or any(not isinstance(arg, str) or not arg for arg in command)):
+        raise ValueError('pairing receipt needs an execution command')
+    log = receipt['log']
+    if digest(relative(path.parent, log['path'])) != log['sha256']:
+        raise ValueError('pairing receipt log checksum mismatch')
+    if receipt['kind'] == 'synthetic-fixture':
+        return 'fixture-passed'
+    if receipt['kind'] != 'packaged-binary':
+        raise ValueError('unknown pairing receipt kind')
+    if not binary_identity:
+        raise ValueError('package pairing requires binary identity verification')
+    return 'qualified'
+
+
+def include_pairing_receipts(packet, root, filenames):
+    """Retain original receipt bytes and logs; never relabel source or binaries."""
+    for filename in filenames:
+        source = Path(filename).resolve()
+        receipt = load(source)
+        platform = receipt['platform']
+        if platform not in PLATFORMS:
+            raise ValueError('unknown pairing receipt platform')
+        entry = packet['phone_pairing'][platform]
+        if entry['receipt'] is not None:
+            raise ValueError('duplicate pairing receipt: ' + platform)
+        log = receipt['log']
+        source_log = relative(source.parent, log['path'])
+        if digest(source_log) != log['sha256']:
+            raise ValueError('pairing receipt log checksum mismatch')
+        folder = root / 'pairing' / platform
+        folder.mkdir(parents=True)
+        # Keep each supplier's relative log namespace inside its platform.
+        log_target = relative(folder / 'logs', log['path'])
+        log_target.parent.mkdir(parents=True)
+        # Preserve the receipt unchanged, including its relative log path.
+        target = folder / 'logs' / 'receipt.json'
+        if target == log_target:
+            raise ValueError('pairing log collides with receipt')
+        shutil.copyfile(source_log, log_target)
+        shutil.copyfile(source, target)
+        entry['receipt'] = {'path': str(target.relative_to(root)), 'sha256': digest(target)}
+        entry['status'] = pairing_status(packet, root, platform)
+
+
 def clean_head():
     if git('status', '--porcelain'):
         raise ValueError('commit all source changes before recording or building')
@@ -91,8 +164,9 @@ def unused(version):
 
 def build_command(version, target):
     # Go omits linker flags from build metadata with -trimpath. Preserve them
-    # so a foreign-version binary cannot be relabeled using envelope metadata.
-    return ['go', 'build', '-p', '2', '-buildvcs=true',
+    # so a foreign-version binary cannot be relabeled using envelope metadata,
+    # even when the caller's GOFLAGS enables -trimpath.
+    return ['go', 'build', '-p', '2', '-trimpath=false', '-buildvcs=true',
             '-ldflags=-s -w -X main.version=' + version, '-o', str(target), './cmd/wt']
 
 
@@ -170,20 +244,59 @@ def stage(args):
               'artifacts': artifacts, 'build_logs': build_logs, 'tests': tests,
               'assessment': assessment, 'supported_features': FEATURES,
               'build_limits': BUILD_LIMITS,
+              'phone_pairing': {platform: {'status': 'unqualified', 'receipt': None}
+                                for platform in PLATFORMS},
               'qualifications': {key: {'status': 'pending', 'receipt': None}
                                  for key in QUALIFICATIONS},
               'operator': {'path': 'OPERATOR.md', 'sha256': digest(root / 'OPERATOR.md')},
               'installer': {'path': 'install.sh', 'sha256': digest(root / 'install.sh')},
               'publication': 'not authorized', 'decision': 'HOLD'}
+    include_pairing_receipts(packet, root, args.pairing_receipt)
+    verify(packet, root, head)
     if clean_head() != head:
         raise ValueError('source changed during build')
     write(root / 'candidate.json', packet)
+    seal(root)
+    print(str(root / 'candidate.json'))
+    return 0
+
+
+def seal(root):
     # Sealing is accidental-write protection, not a signature or trust bootstrap.
     for path in root.rglob('*'):
         if path.is_file():
             path.chmod(0o555 if path.parent.name == 'artifacts' else 0o444)
-    print(str(root / 'candidate.json'))
-    return 0
+
+
+def supplement_pairing(args, packet, root, head, packet_source):
+    """Copy a verified packet and add proof without rebuilding or editing it."""
+    updated = copy.deepcopy(packet)
+    # Only the original schema's exact, unqualified build profile may migrate.
+    # Never discard an existing capability claim or reinterpret arbitrary flags.
+    if (updated['build_limits'] == {'cgo_enabled': False, 'phone_pairing': 'unavailable'}
+            and 'phone_pairing' not in updated):
+        updated['build_limits'] = BUILD_LIMITS.copy()
+        updated['phone_pairing'] = {
+            platform: {'status': 'unqualified', 'receipt': None} for platform in PLATFORMS}
+    verify(updated, root, packet_source)
+    output = Path(args.output).resolve()
+    checkout = Path(git('rev-parse', '--show-toplevel')).resolve()
+    if output == checkout or checkout in output.parents:
+        raise ValueError('keep artifacts and execution evidence outside the checkout')
+    if output == root or root in output.parents:
+        raise ValueError('pairing output must be separate from the original packet')
+    if any(path.is_symlink() for path in root.rglob('*')):
+        raise ValueError('symlink in original packet')
+    shutil.copytree(root, output)  # Refuse existing destinations, even partial ones.
+    (output / args.verify.name).unlink()
+    include_pairing_receipts(updated, output, args.pairing_receipt)
+    blockers = verify(updated, output, packet_source)
+    if clean_head() != head:
+        raise ValueError('source changed while attaching pairing evidence')
+    write(output / 'candidate.json', updated)
+    seal(output)
+    print(str(output / 'candidate.json'))
+    return updated, output, blockers
 
 
 def verify(packet, root, expected_head=None, binary_identity=True):
@@ -196,7 +309,7 @@ def verify(packet, root, expected_head=None, binary_identity=True):
     if packet['publication'] != 'not authorized' or packet['decision'] != 'HOLD':
         raise ValueError('this tool only prepares held operator packets')
     if packet['build_limits'] != BUILD_LIMITS:
-        raise ValueError('unsupported artifact capability claim: native pairing requires CGO')
+        raise ValueError('unsupported build profile')
     if set(packet['artifacts']) != set(PLATFORMS) or set(packet['build_logs']) != set(PLATFORMS):
         raise ValueError('all four platform artifacts and build logs are required')
     for key in ('operator', 'installer'):
@@ -223,7 +336,18 @@ def verify(packet, root, expected_head=None, binary_identity=True):
                     raise ValueError('artifact build identity missing: ' + setting)
     if relative(root, 'SHA256SUMS').read_text() != ''.join(sums):
         raise ValueError('checksum manifest mismatch')
-    blockers = ['phone pairing unavailable in inventory artifacts (CGO disabled)']
+    if set(packet['phone_pairing']) != set(PLATFORMS):
+        raise ValueError('all platform pairing dispositions must be visible')
+    blockers = []
+    for platform in PLATFORMS:
+        entry = packet['phone_pairing'][platform]
+        if set(entry) != {'status', 'receipt'}:
+            raise ValueError('invalid pairing capability fields')
+        status = pairing_status(packet, root, platform, binary_identity)
+        if entry['status'] != status:
+            raise ValueError('unsupported phone pairing capability claim: ' + platform)
+        if status != 'qualified':
+            blockers.append('phone pairing unqualified: ' + platform + ' (' + status + ')')
     ids = set()
     for receipt in packet['tests']:
         if receipt['id'] in ids or receipt['id'] not in REQUIRED_TESTS:
@@ -322,13 +446,18 @@ def rehearse(packet, root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--stage', action='store_true')
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--stage', action='store_true')
     parser.add_argument('--version')
     parser.add_argument('--output')
     parser.add_argument('--receipt', action='append', default=[])
+    parser.add_argument('--pairing-receipt', action='append', default=[],
+                        help='exact-source pair/attach receipt with platform, binary SHA and log')
     parser.add_argument('--assessment', help='JSON with commit, disposition, original path and sha256')
-    parser.add_argument('--record-test', choices=REQUIRED_TESTS)
-    parser.add_argument('--verify', type=Path)
+    mode.add_argument('--record-test', choices=REQUIRED_TESTS)
+    mode.add_argument('--verify', type=Path)
+    parser.add_argument('--packet-source',
+                        help='explicit full source commit for inspecting or supplementing an older packet')
     parser.add_argument('--inspect', action='store_true', help='report integrity and blockers; never approve')
     parser.add_argument('--negative-fixtures', action='store_true')
     parser.add_argument('--rehearse-publish-rollback', action='store_true')
@@ -336,7 +465,13 @@ def main():
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     try:
+        if args.packet_source and not args.verify:
+            raise ValueError('--packet-source requires --verify')
+        if args.packet_source and not re.fullmatch('[0-9a-f]{40}', args.packet_source):
+            raise ValueError('--packet-source needs a full source commit')
         if args.record_test:
+            if args.pairing_receipt:
+                raise ValueError('--pairing-receipt requires --stage or --verify with --output')
             if not args.output:
                 raise ValueError('--record-test needs --output')
             return record(args)
@@ -344,18 +479,28 @@ def main():
             if not args.version or not args.output:
                 raise ValueError('--stage needs --version and --output')
             return stage(args)
-        if not args.verify:
-            raise ValueError('--verify is required')
+        if args.pairing_receipt and not args.output:
+            raise ValueError('--verify with --pairing-receipt needs a new --output directory')
+        if args.output and not args.pairing_receipt:
+            raise ValueError('--verify with --output needs --pairing-receipt')
         packet = load(args.verify)
         root = args.verify.resolve().parent
-        blockers = verify(packet, root, clean_head())
+        head = clean_head()
+        packet_source = args.packet_source or head
+        if args.pairing_receipt:
+            packet, root, blockers = supplement_pairing(args, packet, root, head, packet_source)
+        else:
+            blockers = verify(packet, root, packet_source)
+        if packet_source != head:
+            blockers.append('packet source differs from current committed HEAD; historical inspection only')
         if args.negative_fixtures:
             negative_fixtures(packet, root)
         if args.rehearse_publish_rollback:
             if not args.local_only or not args.inspect:
                 raise ValueError('rehearsal requires --local-only --inspect; release remains held')
             rehearse(packet, root)
-        print(json.dumps({'commit': packet['commit'], 'version': packet['version'],
+        print(json.dumps({'commit': packet['commit'], 'verification_head': head,
+                          'version': packet['version'],
                           'integrity': 'PASS', 'decision': 'HOLD', 'blockers': blockers}, indent=2))
         return 0 if args.inspect else 1
     except (ValueError, KeyError, TypeError, OSError, subprocess.CalledProcessError) as error:

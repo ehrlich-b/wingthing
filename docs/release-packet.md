@@ -69,12 +69,73 @@ operations are needed to inspect the packet. Collect independently validated
 supplier receipts for this source and these hashes before reconsidering HOLD.
 The current checker deliberately refuses promotion claims supplied as bare JSON.
 
-These inventory binaries use `CGO_ENABLED=0`. Phone/browser pairing is
-**unavailable** in these bytes; the manifest records that build limitation and
-excludes pairing from supported features. Native browser-join source tests use
-CGO and do not qualify pairing in the inventory binaries. A future native build
-profile needs a new unique version, matching artifacts and native receipts
-before pairing can be claimed. This limitation independently blocks promotion.
+These inventory binaries use `CGO_ENABLED=0`; that build flag alone says
+nothing about phone/browser pairing support. `phone_pairing` records a separate
+status and retained receipt for each platform. Without proof the status is
+`unqualified`, which independently blocks promotion for that platform. A passing
+source test or synthetic fixture cannot qualify packaged bytes.
+
+After testing the actual packaged executable, attach its evidence to a new copy
+of the packet without rebuilding or editing the sealed original:
+
+```sh
+nice -n 10 python3 scripts/pm/release_packet.py --verify "$PACKET/candidate.json" \
+  --inspect --pairing-receipt ../pairing-receipts/linux-amd64.json \
+  --output ../release-packet-with-pairing
+```
+
+Use a clean checkout and a new output directory outside the checkout and original
+packet. By default the packet must match the checkout's exact source commit.
+For an existing packet built before this tool version, explicitly supply its
+full original commit with `--packet-source FULL_SOURCE_COMMIT` when supplementing
+and when inspecting the result. This checks binary metadata, test receipts and
+the original assessment against that original commit, never the tool's newer
+commit. The report identifies both commits and retains a historical-inspection
+blocker when they differ; this does not assess or qualify the newer checkout.
+The supplement command accepts the original packet schema with
+`build_limits: {"cgo_enabled": false, "phone_pairing": "unavailable"}` and no
+top-level `phone_pairing`. It migrates only those metadata fields in the new
+copy, initializing every platform as unqualified before validating supplied
+receipts. The original packet, source identity, executable bytes, build logs,
+test receipts, assessment and other holds remain unchanged. No manual migration
+or rebuild is required. Ordinary verification still requires the new schema.
+Repeated `--pairing-receipt`
+flags add evidence for other platforms; existing receipts cannot be replaced.
+The tool verifies the original inventory and copied binaries, retains all other
+metadata and holds, and seals the new packet. It never invokes a build. Verify
+the resulting `candidate.json` normally and retain a new trusted packet digest.
+Invalid evidence is refused; a partial output directory is not a completed packet
+and must not be used. Verification with `--pairing-receipt` requires `--output`;
+the flag is never silently ignored. Staging also accepts these flags if evidence
+already exists for the exact bytes it builds. Each JSON receipt uses this schema
+(values below describe the contract, not qualification evidence):
+
+```json
+{
+  "schema": 1,
+  "kind": "packaged-binary",
+  "commit": "FULL_SOURCE_COMMIT",
+  "platform": "linux-amd64",
+  "binary_sha256": "SHA256_OF_PACKAGED_EXECUTABLE",
+  "outcomes": {"pair": "PASS", "attach": "PASS"},
+  "command": ["the-executed-pair-attach-command", "its-arguments"],
+  "exit_code": 0,
+  "log": {"path": "pair-attach.txt", "sha256": "SHA256_OF_EXECUTION_LOG"}
+}
+```
+
+Log paths are relative to the receipt and must remain inside its directory.
+The original receipt and log are retained unchanged in the packet. Verification
+checks their hashes, the full source commit, platform, actual executable SHA,
+binary build identity, and both outcomes before accepting `qualified`. Missing,
+stale, mismatched or failed evidence cannot support that status. A
+`synthetic-fixture` receipt can yield only `fixture-passed`, which still blocks
+package qualification. These are integrity checks on supplied execution evidence,
+not signer authentication or independent trust. Operators must validate the
+supplier and original log. A pairing receipt never satisfies any of the external
+qualifications, exact-head assessment or publication authorization requirements.
+Do not rebuild or relabel unchanged artifacts merely to update capability metadata;
+existing receipts must match the exact package source and bytes.
 
 The release operator owns version reservation and publication; a security
 approver owns trust/bootstrap and downgrade disposition; native Mac and provider

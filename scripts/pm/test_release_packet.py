@@ -1,6 +1,7 @@
 """Synthetic packet contract tests; these never qualify a release or platform."""
 import copy
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -27,6 +28,8 @@ class PacketContract(unittest.TestCase):
                        'assessment': None, 'publication': 'not authorized', 'decision': 'HOLD',
                        'supported_features': packet_tool.FEATURES,
                        'build_limits': packet_tool.BUILD_LIMITS.copy(),
+                       'phone_pairing': {p: {'status': 'unqualified', 'receipt': None}
+                                         for p in packet_tool.PLATFORMS},
                        'qualifications': {k: {'status': 'pending', 'receipt': None}
                                           for k in packet_tool.QUALIFICATIONS}}
         for platform in packet_tool.PLATFORMS:
@@ -133,15 +136,376 @@ class PacketContract(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'independently validated supplier evidence'):
             self.check()
 
-    def test_cgo_disabled_artifacts_cannot_claim_pairing(self):
-        self.assertIn('phone pairing unavailable in inventory artifacts (CGO disabled)', self.check())
+    def pairing_receipt(self, kind='synthetic-fixture'):
+        platform = 'linux-amd64'
+        log = self.file('pair-attach.txt', 'SYNTHETIC pair PASS; attach PASS')
+        self.receipt = {'schema': 1, 'kind': kind, 'commit': self.head,
+                        'platform': platform,
+                        'binary_sha256': self.packet['artifacts'][platform]['sha256'],
+                        'outcomes': {'pair': 'PASS', 'attach': 'PASS'},
+                        'command': ['fixture-only', 'pair-and-attach'], 'exit_code': 0,
+                        'log': log}
+        self.save_pairing_receipt()
+        self.packet['phone_pairing'][platform]['status'] = (
+            'fixture-passed' if kind == 'synthetic-fixture' else 'qualified')
+
+    def save_pairing_receipt(self):
+        retained = self.file('pairing.json', json.dumps(self.receipt))
+        self.packet['phone_pairing']['linux-amd64']['receipt'] = retained
+
+    def binary_metadata(self, command, **kwargs):
+        # Mocked metadata is only a contract oracle, never a package receipt.
+        platform = Path(command[-1]).name.removeprefix('wt-')
+        system, arch = platform.split('-')
+        return '\n'.join(('vcs.revision=' + self.head, 'vcs.modified=false',
+                          'GOOS=' + system, 'GOARCH=' + arch, 'CGO_ENABLED=0',
+                          '-X main.version=' + self.packet['version']))
+
+    def test_absent_receipt_is_unqualified_regardless_of_cgo(self):
+        for platform in packet_tool.PLATFORMS:
+            self.assertIn('phone pairing unqualified: ' + platform + ' (unqualified)', self.check())
+        self.packet['phone_pairing']['linux-amd64']['status'] = 'qualified'
+        with self.assertRaisesRegex(ValueError, 'unsupported phone pairing capability claim'):
+            self.check()
+
+    def test_valid_synthetic_pair_attach_fixture_never_qualifies_package(self):
+        self.pairing_receipt()
+        self.assertEqual(packet_tool.pairing_status(
+            self.packet, self.root, 'linux-amd64', binary_identity=False), 'fixture-passed')
+        self.assertIn('phone pairing unqualified: linux-amd64 (fixture-passed)', self.check())
+        self.packet['phone_pairing']['linux-amd64']['status'] = 'qualified'
+        with self.assertRaisesRegex(ValueError, 'unsupported phone pairing capability claim'):
+            self.check()
+
+    def test_packaged_receipt_requires_binary_identity_and_preserves_other_holds(self):
+        self.pairing_receipt('packaged-binary')
+        with self.assertRaisesRegex(ValueError, 'requires binary identity verification'):
+            self.check()
+        with patch.object(packet_tool, 'git', return_value=''), \
+                patch.object(packet_tool.subprocess, 'check_output', side_effect=self.binary_metadata):
+            blockers = packet_tool.verify(self.packet, self.root, self.head)
+        self.assertFalse(any('phone pairing unqualified: linux-amd64' in b for b in blockers))
+        for platform in packet_tool.PLATFORMS[1:]:
+            self.assertIn('phone pairing unqualified: ' + platform + ' (unqualified)', blockers)
+        for name in packet_tool.QUALIFICATIONS:
+            self.assertIn('pending qualification: ' + name, blockers)
+        self.assertIn('authoritative version uniqueness and publication authorization pending', blockers)
+        self.assertEqual(self.packet['decision'], 'HOLD')
+        self.assertEqual(self.packet['publication'], 'not authorized')
+        self.packet['assessment']['commit'] = 'b' * 40
+        with patch.object(packet_tool, 'git', return_value=''), \
+                patch.object(packet_tool.subprocess, 'check_output', side_effect=self.binary_metadata):
+            with self.assertRaisesRegex(ValueError, 'assessment is for another commit'):
+                packet_tool.verify(self.packet, self.root, self.head)
+
+    def test_stale_source_and_other_platform_pairing_receipts_fail(self):
+        self.pairing_receipt()
+        original = copy.deepcopy(self.receipt)
+        for field, value, reason in (('commit', 'b' * 40, 'another commit'),
+                                     ('platform', 'darwin-arm64', 'another platform'),
+                                     ('binary_sha256', '0' * 64, 'binary checksum mismatch')):
+            with self.subTest(field=field):
+                self.receipt = dict(original, **{field: value})
+                self.save_pairing_receipt()
+                with self.assertRaisesRegex(ValueError, reason):
+                    self.check()
+
+    def test_changed_binary_cannot_reuse_pairing_receipt_even_after_rehash(self):
+        self.pairing_receipt()
+        self.packet['artifacts']['linux-amd64'] = self.file(
+            'artifacts/wt-linux-amd64', 'SYNTHETIC replacement bytes')
+        (self.root / 'SHA256SUMS').write_text(''.join(
+            a['sha256'] + '  ' + a['path'] + '\n' for a in self.packet['artifacts'].values()))
+        with self.assertRaisesRegex(ValueError, 'pairing receipt binary checksum mismatch'):
+            self.check()
+
+    def test_pair_and_attach_success_command_and_log_are_required(self):
+        self.pairing_receipt()
+        original = copy.deepcopy(self.receipt)
+        cases = [('outcomes', {'pair': 'PASS'}, 'pair and attach'),
+                 ('outcomes', {'pair': 'PASS', 'attach': 'FAIL'}, 'pair and attach'),
+                 ('exit_code', 1, 'pair and attach'), ('exit_code', False, 'pair and attach'),
+                 ('command', [], 'execution command'), ('command', 'assertion', 'execution command'),
+                 ('kind', 'source-test', 'unknown pairing receipt kind'),
+                 ('log', {'path': '../escape', 'sha256': '0' * 64}, 'escapes root')]
+        for field, value, reason in cases:
+            with self.subTest(field=field, value=value):
+                self.receipt = dict(original, **{field: value})
+                self.save_pairing_receipt()
+                with self.assertRaisesRegex(ValueError, reason):
+                    self.check()
+        self.receipt = original
+        self.save_pairing_receipt()
+        (self.root / 'pair-attach.txt').write_text('changed log')
+        with self.assertRaisesRegex(ValueError, 'pairing receipt log checksum mismatch'):
+            self.check()
+
+    def test_missing_and_tampered_pairing_receipts_fail(self):
+        self.pairing_receipt()
+        entry = self.packet['phone_pairing']['linux-amd64']['receipt']
+        entry['path'] = 'absent.json'
+        with self.assertRaisesRegex(ValueError, 'missing nonempty regular file'):
+            self.check()
+        entry['path'] = 'pairing.json'
+        (self.root / 'pairing.json').write_text('{}')
+        with self.assertRaisesRegex(ValueError, 'pairing receipt checksum mismatch'):
+            self.check()
+
+    def test_staging_retains_pairing_receipt_and_log_without_relabelling(self):
+        self.pairing_receipt()
+        source = self.root / 'pairing.json'
+        original = source.read_bytes()
+        self.packet['phone_pairing']['linux-amd64'] = {'status': 'unqualified', 'receipt': None}
+        packet_tool.include_pairing_receipts(self.packet, self.root, [source])
+        retained = self.packet['phone_pairing']['linux-amd64']['receipt']
+        self.assertEqual((self.root / retained['path']).read_bytes(), original)
+        self.assertIn('phone pairing unqualified: linux-amd64 (fixture-passed)', self.check())
+        with self.assertRaisesRegex(ValueError, 'duplicate pairing receipt'):
+            packet_tool.include_pairing_receipts(self.packet, self.root, [source])
+
+    def test_pairing_cannot_be_claimed_via_global_features_or_build_flags(self):
         self.packet['build_limits']['phone_pairing'] = 'supported'
-        with self.assertRaisesRegex(ValueError, 'unsupported artifact capability claim'):
+        with self.assertRaisesRegex(ValueError, 'unsupported build profile'):
             self.check()
         self.packet['build_limits'] = packet_tool.BUILD_LIMITS.copy()
         self.packet['supported_features'] = packet_tool.FEATURES + ['explicit LAN pairing']
         with self.assertRaisesRegex(ValueError, 'unsupported feature claim'):
             self.check()
+
+    def pairing_cli(self, arguments, tool_head=None):
+        # Only binary metadata is mocked; receipt, copying and verification run.
+        with patch.object(packet_tool, 'clean_head', return_value=tool_head or self.head), \
+                patch.object(packet_tool, 'git', side_effect=lambda *args:
+                             str(self.root / 'checkout') if args[0] == 'rev-parse' else ''), \
+                patch.object(packet_tool.subprocess, 'check_output', side_effect=self.binary_metadata), \
+                patch.object(packet_tool.subprocess, 'run') as build, \
+                patch('sys.argv', ['release_packet.py', *map(str, arguments)]), \
+                patch('sys.stdout', new_callable=io.StringIO) as output, \
+                patch('sys.stderr', new_callable=io.StringIO) as errors:
+            try:
+                result = packet_tool.main()
+            except SystemExit as error:
+                self.assertEqual(error.code, 1, errors.getvalue())
+                result = 1
+            build.assert_not_called()
+            self.cli_output = output.getvalue()
+            return result, errors.getvalue()
+
+    def legacy_packet(self):
+        self.packet['build_limits'] = {'cgo_enabled': False, 'phone_pairing': 'unavailable'}
+        del self.packet['phone_pairing']
+        candidate = self.root / 'candidate.json'
+        candidate.write_text(json.dumps(self.packet))
+        return candidate
+
+    def test_cli_supplements_original_schema_from_newer_checkout_without_rebuilding(self):
+        self.pairing_receipt('packaged-binary')
+        source = self.root / 'pairing.json'
+        candidate = self.legacy_packet()
+        packet_tool.seal(self.root)
+        before = {p: (p.read_bytes(), p.stat().st_mode)
+                  for p in self.root.rglob('*') if p.is_file()}
+        newer_head = 'b' * 40
+        with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR')) as tmp:
+            output = Path(tmp) / 'supplement'
+            args = ['--verify', candidate, '--inspect', '--pairing-receipt', source,
+                    '--output', output]
+            self.assertIn('differs from current committed HEAD',
+                          self.pairing_cli(args, tool_head=newer_head)[1])
+            self.assertFalse(output.exists())
+            self.assertEqual(self.pairing_cli(
+                [*args, '--packet-source', self.head], tool_head=newer_head), (0, ''))
+            report = json.loads(self.cli_output.split('\n', 1)[1])
+            self.assertEqual(report['commit'], self.head)
+            self.assertEqual(report['verification_head'], newer_head)
+            self.assertEqual(report['decision'], 'HOLD')
+            self.assertIn('packet source differs from current committed HEAD; historical inspection only',
+                          report['blockers'])
+            for name in packet_tool.QUALIFICATIONS:
+                self.assertIn('pending qualification: ' + name, report['blockers'])
+            updated = packet_tool.load(output / 'candidate.json')
+            expected = copy.deepcopy(self.packet)
+            expected['build_limits'] = packet_tool.BUILD_LIMITS.copy()
+            expected['phone_pairing'] = updated['phone_pairing']
+            self.assertEqual(updated, expected)
+            self.assertEqual(updated['phone_pairing']['linux-amd64']['status'], 'qualified')
+            for platform in packet_tool.PLATFORMS[1:]:
+                self.assertEqual(updated['phone_pairing'][platform],
+                                 {'status': 'unqualified', 'receipt': None})
+            self.assertEqual(before, {p: (p.read_bytes(), p.stat().st_mode) for p in before})
+            for path in before:
+                if path != candidate:
+                    self.assertEqual((output / path.relative_to(self.root)).read_bytes(),
+                                     path.read_bytes())
+            inspect = ['--verify', output / 'candidate.json', '--inspect',
+                       '--packet-source', self.head]
+            self.assertEqual(self.pairing_cli(inspect, tool_head=newer_head), (0, ''))
+            self.assertEqual(self.pairing_cli(
+                [arg for arg in inspect if arg != '--inspect'], tool_head=newer_head)[0], 1)
+            self.assertIn('differs from current committed HEAD', self.pairing_cli(
+                ['--verify', output / 'candidate.json', '--inspect'], tool_head=newer_head)[1])
+
+    def test_legacy_supplement_rejects_foreign_evidence_and_changed_inventory(self):
+        self.pairing_receipt('packaged-binary')
+        original = copy.deepcopy(self.receipt)
+        source = self.root / 'pairing.json'
+        candidate = self.legacy_packet()
+        for field, value, reason in (
+                ('commit', 'b' * 40, 'another commit'),
+                ('platform', 'darwin-arm64', 'binary checksum mismatch'),
+                ('binary_sha256', '0' * 64, 'binary checksum mismatch'),
+                ('outcomes', {'pair': 'PASS', 'attach': 'FAIL'}, 'pair and attach')):
+            with self.subTest(field=field), tempfile.TemporaryDirectory(
+                    dir=os.environ.get('TMPDIR')) as tmp:
+                source.write_text(json.dumps(dict(original, **{field: value})))
+                output = Path(tmp) / 'rejected'
+                result, error = self.pairing_cli([
+                    '--verify', candidate, '--inspect', '--packet-source', self.head,
+                    '--pairing-receipt', source, '--output', output], tool_head='b' * 40)
+                self.assertEqual(result, 1)
+                self.assertIn(reason, error)
+                self.assertFalse((output / 'candidate.json').exists())
+                self.assertEqual(packet_tool.load(candidate), self.packet)
+        source.write_text(json.dumps(original))
+        (self.root / 'artifacts/wt-linux-amd64').write_text('changed binary')
+        with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR')) as tmp:
+            output = Path(tmp) / 'rejected'
+            result, error = self.pairing_cli([
+                '--verify', candidate, '--inspect', '--packet-source', self.head,
+                '--pairing-receipt', source, '--output', output], tool_head='b' * 40)
+            self.assertEqual(result, 1)
+            self.assertIn('artifact checksum mismatch', error)
+            self.assertFalse(output.exists())
+
+    def test_legacy_migration_cannot_discard_claims_or_weaken_assessment(self):
+        self.pairing_receipt('packaged-binary')
+        source = self.root / 'pairing.json'
+        candidate = self.legacy_packet()
+        original = copy.deepcopy(self.packet)
+        cases = [('build_limits', {'cgo_enabled': False, 'phone_pairing': 'supported'},
+                  'unsupported build profile'),
+                 ('build_limits', {'cgo_enabled': True, 'phone_pairing': 'unavailable'},
+                  'unsupported build profile'),
+                 ('phone_pairing', {}, 'unsupported build profile'),
+                 ('assessment', dict(self.packet['assessment'], commit='b' * 40),
+                  'assessment is for another commit')]
+        for key, value, reason in cases:
+            with self.subTest(key=key, value=value), tempfile.TemporaryDirectory(
+                    dir=os.environ.get('TMPDIR')) as tmp:
+                candidate.write_text(json.dumps(dict(original, **{key: value})))
+                output = Path(tmp) / 'rejected'
+                result, error = self.pairing_cli([
+                    '--verify', candidate, '--inspect', '--packet-source', self.head,
+                    '--pairing-receipt', source, '--output', output], tool_head='b' * 40)
+                self.assertEqual(result, 1)
+                self.assertIn(reason, error)
+                self.assertFalse(output.exists())
+
+    def test_explicit_packet_source_must_match_and_be_full(self):
+        candidate = self.root / 'candidate.json'
+        candidate.write_text(json.dumps(self.packet))
+        for source, reason in (('a' * 8, 'full source commit'),
+                               ('b' * 40, 'differs from current committed HEAD')):
+            with self.subTest(source=source):
+                result, error = self.pairing_cli([
+                    '--verify', candidate, '--inspect', '--packet-source', source])
+                self.assertEqual(result, 1)
+                self.assertIn(reason, error)
+        result, error = self.pairing_cli([
+            '--stage', '--version', self.packet['version'], '--output', self.root,
+            '--packet-source', self.head])
+        self.assertEqual(result, 1)
+        self.assertIn('requires --verify', error)
+
+    def test_cli_adds_pairing_to_sealed_packet_without_rebuilding_or_changing_original(self):
+        for kind, status in (('packaged-binary', 'qualified'),
+                             ('synthetic-fixture', 'fixture-passed')):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory(
+                    dir=os.environ.get('TMPDIR')) as tmp:
+                self.pairing_receipt(kind)
+                source = self.root / 'pairing.json'
+                self.packet['phone_pairing']['linux-amd64'] = {
+                    'status': 'unqualified', 'receipt': None}
+                candidate = self.root / 'candidate.json'
+                candidate.write_text(json.dumps(self.packet))
+                packet_tool.seal(self.root)
+                before = {p: (p.read_bytes(), p.stat().st_mode)
+                          for p in self.root.rglob('*') if p.is_file()}
+                output = Path(tmp) / 'supplement'
+                arguments = ['--verify', candidate, '--inspect',
+                             '--pairing-receipt', source, '--output', output]
+                self.assertEqual(self.pairing_cli(arguments), (0, ''))
+                self.assertEqual(before, {p: (p.read_bytes(), p.stat().st_mode)
+                                         for p in before})
+                updated = packet_tool.load(output / 'candidate.json')
+                expected = copy.deepcopy(self.packet)
+                expected['phone_pairing'] = updated['phone_pairing']
+                self.assertEqual(updated, expected)
+                entry = updated['phone_pairing']['linux-amd64']
+                self.assertEqual(entry['status'], status)
+                self.assertEqual((output / entry['receipt']['path']).read_bytes(),
+                                 source.read_bytes())
+                for name in ('artifacts', 'build_logs'):
+                    for artifact in self.packet[name].values():
+                        path = artifact['path']
+                        self.assertEqual((output / path).read_bytes(),
+                                         (self.root / path).read_bytes())
+                self.assertEqual((output / 'candidate.json').stat().st_mode & 0o222, 0)
+                self.assertEqual(self.pairing_cli(
+                    ['--verify', output / 'candidate.json', '--inspect']), (0, ''))
+                self.assertEqual(self.pairing_cli(
+                    ['--verify', output / 'candidate.json'])[0], 1)  # Still HOLD.
+                self.assertIn('File exists', self.pairing_cli(arguments)[1])
+                # Restore only our synthetic source fixture for the next subtest.
+                for path in before:
+                    path.chmod(0o644)
+
+    def test_cli_refuses_ignored_missing_and_mismatched_pairing_evidence(self):
+        self.pairing_receipt('packaged-binary')
+        source = self.root / 'pairing.json'
+        self.packet['phone_pairing']['linux-amd64'] = {'status': 'unqualified', 'receipt': None}
+        candidate = self.root / 'candidate.json'
+        candidate.write_text(json.dumps(self.packet))
+        base = ['--verify', candidate, '--inspect', '--pairing-receipt']
+        self.assertIn('needs a new --output', self.pairing_cli([*base, source])[1])
+        original = copy.deepcopy(self.receipt)
+        cases = [('missing', None, 'missing.json', 'No such file'),
+                 ('commit', 'b' * 40, source, 'another commit'),
+                 ('platform', 'darwin-arm64', source, 'binary checksum mismatch'),
+                 ('binary_sha256', '0' * 64, source, 'binary checksum mismatch')]
+        for field, value, filename, reason in cases:
+            with self.subTest(field=field), tempfile.TemporaryDirectory(
+                    dir=os.environ.get('TMPDIR')) as tmp:
+                receipt = dict(original, **({field: value} if value else {}))
+                source.write_text(json.dumps(receipt))
+                output = Path(tmp) / 'rejected'
+                result, error = self.pairing_cli([*base, filename, '--output', output])
+                self.assertEqual(result, 1)
+                self.assertIn(reason, error)
+                self.assertFalse((output / 'candidate.json').exists())
+                self.assertEqual(packet_tool.load(candidate), self.packet)
+
+    def test_cli_refuses_pairing_output_inside_source_or_checkout(self):
+        self.pairing_receipt()
+        self.packet['phone_pairing']['linux-amd64'] = {'status': 'unqualified', 'receipt': None}
+        candidate = self.root / 'candidate.json'
+        candidate.write_text(json.dumps(self.packet))
+        for output, reason in ((self.root, 'separate from the original'),
+                               (self.root / 'nested', 'separate from the original'),
+                               (self.root / 'checkout' / 'packet', 'outside the checkout')):
+            with self.subTest(output=output):
+                result, error = self.pairing_cli([
+                    '--verify', candidate, '--inspect', '--pairing-receipt',
+                    self.root / 'pairing.json', '--output', output])
+                self.assertEqual(result, 1)
+                self.assertIn(reason, error)
+
+    def test_record_mode_cannot_silently_ignore_pairing_receipt(self):
+        result, error = self.pairing_cli([
+            '--record-test', 'race', '--output', self.root,
+            '--pairing-receipt', self.root / 'absent.json'])
+        self.assertEqual(result, 1)
+        self.assertIn('requires --stage or --verify', error)
 
     def test_existing_version_is_rejected(self):
         with patch.object(packet_tool, 'git', return_value='v0.0.999999'):
