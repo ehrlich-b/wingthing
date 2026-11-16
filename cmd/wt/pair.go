@@ -201,15 +201,7 @@ func runPairWithLink(ctx context.Context, in io.Reader, out io.Writer, showLink 
 					case "confirming":
 						if showed != status.Emoji {
 							showed = status.Emoji
-							scope := "Control sessions on this machine"
-							if status.Scope == phonepair.ScopeInventory {
-								scope = "Inventory only: list sessions and machines on this machine"
-							}
-							fmt.Fprintln(out, "\nComparison labels:")
-							for i, label := range strings.Split(phonepair.EmojiLabels(status.Emoji), " · ") {
-								fmt.Fprintf(out, "%d. %s\n", i+1, label)
-							}
-							fmt.Fprintf(out, "Fingerprint: %s\nAccess: %s\n%s wants to pair. Enter to allow.\nOnly allow if the full fingerprint and all 4 labels match the device in order. Ctrl-C cancels.\n", groupedFingerprint(status.Fingerprint), scope, status.Name)
+							showPairConfirmation(out, status)
 						}
 					case "cancelled", "used":
 						if showed != "cancelled" {
@@ -233,6 +225,43 @@ func runPairWithLink(ctx context.Context, in io.Reader, out io.Writer, showLink 
 			return pairErr
 		}
 	}
+}
+
+// Locale precedence follows LC_ALL, LC_CTYPE, then LANG. A terminal's font
+// coverage cannot be detected, so only explicit non-emoji environments fall back.
+func pairTerminalEmoji() bool {
+	if strings.EqualFold(os.Getenv("TERM"), "dumb") {
+		return false
+	}
+	for _, name := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
+		if locale := os.Getenv(name); locale != "" {
+			locale = strings.ToLower(strings.SplitN(locale, "@", 2)[0])
+			return strings.HasSuffix(locale, ".utf-8") || strings.HasSuffix(locale, ".utf8") || locale == "utf-8" || locale == "utf8"
+		}
+	}
+	return false
+}
+
+func showPairConfirmation(out io.Writer, status phonepair.PairStatus) {
+	scope := "Control sessions on this machine"
+	if status.Scope == phonepair.ScopeInventory {
+		scope = "Inventory only: list sessions and machines on this machine"
+	}
+	fmt.Fprintln(out, "\nComparison labels:")
+	glyphs := strings.Fields(status.Emoji)
+	labels := strings.Split(phonepair.EmojiLabels(status.Emoji), " · ")
+	withEmoji := pairTerminalEmoji()
+	if !withEmoji {
+		fmt.Fprintln(out, "Emoji unavailable in this terminal; compare names in order.")
+	}
+	for i, glyph := range glyphs {
+		if withEmoji {
+			fmt.Fprintf(out, "%d. %s %s\n", i+1, glyph, labels[i])
+		} else {
+			fmt.Fprintf(out, "%d. %s\n", i+1, labels[i])
+		}
+	}
+	fmt.Fprintf(out, "Fingerprint: %s\nAccess: %s\n%s wants to pair. Enter to allow.\nOnly allow if the full fingerprint and all 4 labels match the device in order. Ctrl-C cancels.\n", groupedFingerprint(status.Fingerprint), scope, status.Name)
 }
 
 var errPaired = errors.New("paired")

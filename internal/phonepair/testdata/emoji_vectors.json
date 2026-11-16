@@ -1,0 +1,45 @@
+{
+  "invitation": {
+    "wing_id": "fixture-wing",
+    "key": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+    "id": "test-invitation-long-enough"
+  },
+  "alice": "alice-fixture-message",
+  "bob": "bob-fixture-message",
+  "vectors": [
+    {
+      "name": "zero",
+      "shared_hex": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "key_hex": "db2256b6a17abbb0a8e3f4ce4537b4481251a1c156c64256b460be02fa2ad403",
+      "emoji": "🧡 👰 🙂 🤤",
+      "multi_emoji": "❤️ 👨‍👩‍👧‍👦 👩‍💻 👨‍👩‍👧‍👦"
+    },
+    {
+      "name": "ascending",
+      "shared_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "key_hex": "47447f76779176591c3a55d84b71bcba2fb3861809949659ddb4769b78af104e",
+      "emoji": "😷 🤒 😛 🤘",
+      "multi_emoji": "❤️ 👨‍👩‍👧‍👦 👍🏽 ❤️"
+    },
+    {
+      "name": "repeated-seven",
+      "shared_hex": "07070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707",
+      "key_hex": "9bcebac272719f09da2b276a80fb96630e9f0e08049f3e2e06cacb27d79f81b4",
+      "emoji": "😘 🫵 🤯 🙁",
+      "multi_emoji": "❤️ 👩‍💻 👍🏽 ❤️"
+    },
+    {
+      "name": "descending",
+      "shared_hex": "3f3e3d3c3b3a393837363534333231302f2e2d2c2b2a292827262524232221201f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100",
+      "key_hex": "5bf9359eb9b61749828af32f687821346f34579787a2a1959048d081eda97958",
+      "emoji": "🤵 🙉 😣 🫰",
+      "multi_emoji": "❤️ 👩‍💻 ❤️ 👍🏽"
+    }
+  ],
+  "multi_codepoint": [
+    "👩‍💻",
+    "❤️",
+    "👨‍👩‍👧‍👦",
+    "👍🏽"
+  ]
+}
