@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import plistlib
 import shlex
+import shutil
+import zipfile
 import subprocess
 import sys
 import tempfile
@@ -61,7 +63,175 @@ def phone(identifier="phone-one", transport="local", pairing="paired", mode="ena
             "deviceProperties": {"name": "Test iPhone", "developerModeStatus": mode}}
 
 
+@contextlib.contextmanager
+def installer_fixture():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        clone = root / "clone"
+        scripts = clone / "mobile/ios/scripts"
+        scripts.mkdir(parents=True)
+        source = Path(__file__).resolve().parent
+        for name in ("install_phone.sh", "ios_install_support.py", "wt-ios-install"):
+            shutil.copy2(source / name, scripts / name)
+        project = clone / "mobile/ios/Wingthing.xcodeproj"
+        project.mkdir()
+        (project / "project.pbxproj").touch()
+        mockbin = root / "mockbin"; mockbin.mkdir()
+        xcode = root / "Xcode.app"
+        (xcode / "Contents/Developer/usr/bin").mkdir(parents=True)
+        (xcode / "Contents/Developer/usr/bin/xcodebuild").touch()
+        (xcode / "Contents/Developer/usr/bin/xcodebuild").chmod(0o755)
+        devices = root / "devices.json"
+        devices.write_text(json.dumps({"result": {"devices": [phone()]}}))
+        prefs = root / "prefs.plist"
+        prefs.write_bytes(plistlib.dumps({"IDEProvisioningTeams": [{"teamID": "TESTTEAM01"}]}))
+        mocks = {
+            "uname": 'printf "Darwin\\n"',
+            "plutil": ':',
+            "pbcopy": ':',
+            "open": ':',
+            "defaults": 'cp "$MOCK_PREFS" "$3"',
+            "taskpolicy": 'shift; exec "$@"',
+            "nice": 'shift 2; exec "$@"',
+            "xcodebuild": '''printf '%s\\n' "$*" >>"$MOCK_CALLS"
+if [[ $1 == -checkFirstLaunchStatus ]]; then exit 0; fi
+while [[ $# -gt 0 ]]; do
+  if [[ $1 == -derivedDataPath ]]; then mkdir -p "$2/Build/Products/Release-iphoneos/Wingthing.app"; fi
+  shift
+done''',
+            "xcrun": '''printf '%s\\n' "$*" >>"$MOCK_CALLS"
+if [[ $1 == devicectl && $2 == list ]]; then
+  while [[ $# -gt 0 ]]; do
+    if [[ $1 == --json-output ]]; then cp "$MOCK_DEVICES" "$2"; break; fi
+    shift
+  done
+fi''',
+        }
+        for name, body in mocks.items():
+            path = mockbin / name
+            path.write_text("#!/bin/bash\nset -euo pipefail\n" + body + "\n"); path.chmod(0o755)
+        environment = dict(os.environ, PATH=str(mockbin) + ":" + os.environ["PATH"], WT_IOS_XCODE=str(xcode),
+                           WT_IOS_STATE=str(root / "state"), WT_IOS_ENTRYPOINT=str(root / "entrypoint"),
+                           MOCK_PREFS=str(prefs), MOCK_DEVICES=str(devices), MOCK_CALLS=str(root / "calls"))
+        for name in ("WT_IOS_TEAM", "WT_IOS_BUNDLE", "WT_IOS_DEVICE", "WT_IOS_SETUP_LINK_FILE"):
+            environment.pop(name, None)
+        environment["WT_IOS_CLONE"] = str(clone)
+        environment["WT_IOS_GO"] = shutil.which("go")
+        command = ["/bin/bash", str(clone / "mobile/ios/scripts/install_phone.sh"), "--install-only"]
+        yield root, clone, environment, command
+
+
+def offline_pair_module(root, clone, environment):
+    """A real Go build with one tiny dependency available only in a local cache."""
+    cache = root / "user module cache"
+    download = cache / "cache/download/fixture.test/dependency/@v"
+    download.mkdir(parents=True)
+    mod = "module fixture.test/dependency\n\ngo 1.26.9\n"
+    (download / "v1.0.0.mod").write_text(mod)
+    (download / "v1.0.0.info").write_text('{"Version":"v1.0.0","Time":"2026-01-01T00:00:00Z"}')
+    with zipfile.ZipFile(download / "v1.0.0.zip", "w") as archive:
+        archive.writestr("fixture.test/dependency@v1.0.0/go.mod", mod)
+        archive.writestr("fixture.test/dependency@v1.0.0/dependency.go",
+                         'package dependency\nconst Message = "offline fixture"\n')
+    (clone / "go.mod").write_text("module github.com/ehrlich-b/wingthing\n\ngo 1.26.9\n"
+                                 "require fixture.test/dependency v1.0.0\n")
+    main = clone / "cmd/wt"
+    main.mkdir(parents=True)
+    (main / "main.go").write_text(r'''package main
+import ("fmt"; "os"; "path/filepath"; "fixture.test/dependency")
+func main() {
+    f, err := os.OpenFile(os.Getenv("MOCK_PAIR_CALLS"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+    if err != nil { panic(err) }; defer f.Close()
+    fmt.Fprintln(f, os.Args[1:])
+    if os.Args[1] == "wing" && os.Args[2] == "status" {
+        fmt.Println("wing daemon is running (pid 123)")
+        mode := os.Getenv("MOCK_LEGACY_MODE")
+        if mode == "local-only" { fmt.Println("  local control: ready") }
+        if mode == "relay" { fmt.Println("  relay: connected") }
+        if mode == "" {
+            os.WriteFile(filepath.Join(os.Getenv("WINGTHING_DIR"), "phone-control.json"),
+                         []byte(`{"address":"0.0.0.0:6078"}`), 0600)
+        }
+    }
+    if os.Args[1] == "egg" { fmt.Println(os.Getenv("MOCK_SESSIONS")) }
+    if os.Args[1] == "pair" { fmt.Println(dependency.Message) }
+}
+''')
+    wing = root / "main wing"
+    wing.mkdir()
+    environment.update(GOMODCACHE=str(cache), WT_IOS_WING_DIR=str(wing),
+                       WT_IOS_BUNDLE="dev.wingthing.fixture", MOCK_PAIR_CALLS=str(root / "pair-calls"),
+                       GOFLAGS="-mod=mod", GOPROXY="https://invalid.example", GOPRIVATE="fixture.test/*")
+    environment.pop("MOCK_LEGACY_MODE", None)
+    return cache, wing
+
+
 class InstallerTests(unittest.TestCase):
+    def test_cold_offline_cache_builds_from_user_file_proxy(self):
+        with installer_fixture() as (root, clone, environment, command):
+            cache, _ = offline_pair_module(root, clone, environment)
+            self.assertFalse((clone / ".scratch").exists())
+            original_cache = {p.relative_to(cache): p.read_bytes() for p in cache.rglob("*") if p.is_file()}
+            result = subprocess.run(command[:-1] + ["--connect-only"], env=environment,
+                                    text=True, capture_output=True, timeout=60)
+            log = (root / "state/wing-build.log").read_text()
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr + log)
+            self.assertIn("offline fixture", result.stdout)
+            self.assertTrue((clone / ".scratch/go-mod/fixture.test/dependency@v1.0.0/dependency.go").is_file())
+            self.assertTrue((clone / ".scratch/go-mod/cache/download/fixture.test/dependency/@v/v1.0.0.zip").is_file())
+            self.assertEqual({p.relative_to(cache): p.read_bytes() for p in cache.rglob("*") if p.is_file()},
+                             original_cache)
+            support.check_pair_output(clone / ".scratch/bin/wt-ios-pair")
+
+    def test_pre_existing_mock_output_fails_with_named_error_without_overwriting(self):
+        with installer_fixture() as (root, clone, environment, command):
+            offline_pair_module(root, clone, environment)
+            output = clone / ".scratch/bin/wt-ios-pair"
+            output.parent.mkdir(parents=True)
+            mock = b"#!/bin/bash\necho stale fixture\n"
+            output.write_bytes(mock)
+            output.chmod(0o700)
+            result = subprocess.run(command[:-1] + ["--connect-only"], env=environment,
+                                    text=True, capture_output=True, timeout=30)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("PAIR_CLI_OUTPUT_CONFLICT", result.stderr)
+            self.assertEqual(output.read_bytes(), mock)
+            self.assertFalse((root / "pair-calls").exists())
+            self.assertFalse((root / "state/wing-build.log").exists())
+            self.assertFalse((clone / ".scratch/go-mod").exists())
+
+    def test_pre_pairing_wing_restart_preserves_mode_and_names_sessions(self):
+        for mode in ("relay", "local-only", "unknown"):
+            with self.subTest(mode=mode), installer_fixture() as (root, clone, environment, command):
+                _, wing = offline_pair_module(root, clone, environment)
+                # Misleading dead metadata must not override the live status.
+                (wing / "wing.args").write_text("wing\nstart\n--local-only\n")
+                (wing / "wing.status").write_text('{"state":"local"}')
+                environment.update(MOCK_LEGACY_MODE=mode,
+                                   MOCK_SESSIONS="NAME  ID\nlong running research  egg-123\nrelease work  egg-456")
+                result = subprocess.run(command[:-1] + ["--connect-only"], env=environment,
+                                        text=True, capture_output=True, timeout=60)
+                log = (root / "state/wing-build.log").read_text()
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr + log)
+                calls = (root / "pair-calls").read_text().splitlines()
+                self.assertFalse((wing / "phone-control.json").exists())
+                if mode == "unknown":
+                    self.assertIn("MAIN_WING_MODE_UNKNOWN", result.stderr)
+                    self.assertEqual(calls, ["[wing status]"])
+                    self.assertNotIn("&&", result.stderr)
+                    continue
+                self.assertEqual(calls, ["[wing status]", "[egg list]"])
+                self.assertIn("long running research  egg-123", result.stderr)
+                self.assertIn("release work  egg-456", result.stderr)
+                commands = [line for line in result.stderr.splitlines() if "&&" in line]
+                self.assertEqual(len(commands), 1, result.stderr)
+                stop, start = [shlex.split(part) for part in commands[0].split("&&")]
+                wt = ["env", "-u", "WINGTHING_PREVIEW_DIR", "WINGTHING_DIR=" + str(wing), str(root / "state/wt-pair")]
+                self.assertEqual(stop, wt + ["wing", "stop"])
+                self.assertEqual(start, wt + ["wing", "start"] +
+                                 (["--local-only", "--listen", "0.0.0.0"] if mode == "local-only" else []))
+                self.assertIn("left the running wing untouched", result.stderr)
+
     def test_device_selection_excludes_wireless_unpaired_and_non_phones(self):
         ipad = phone("ipad")
         ipad["hardwareProperties"]["productType"] = "iPad16,1"
@@ -142,51 +312,9 @@ class InstallerTests(unittest.TestCase):
                 self.assertIsNone(support.running_mode(root))
 
     def test_installer_reuses_team_and_builds_installs_launches_only_selected_device(self):
-        clone = Path(__file__).resolve().parents[3]
-        scratch = clone / ".scratch/ios"
-        scratch.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=scratch) as directory:
-            root = Path(directory)
-            mockbin = root / "mockbin"; mockbin.mkdir()
-            xcode = root / "Xcode.app"
-            (xcode / "Contents/Developer/usr/bin").mkdir(parents=True)
-            (xcode / "Contents/Developer/usr/bin/xcodebuild").touch()
-            (xcode / "Contents/Developer/usr/bin/xcodebuild").chmod(0o755)
+        with installer_fixture() as (root, clone, environment, command):
+            mockbin = root / "mockbin"
             devices = root / "devices.json"
-            devices.write_text(json.dumps({"result": {"devices": [phone()]}}))
-            prefs = root / "prefs.plist"
-            prefs.write_bytes(plistlib.dumps({"IDEProvisioningTeams": [{"teamID": "TESTTEAM01"}]}))
-            mocks = {
-                "uname": 'printf "Darwin\\n"',
-                "plutil": ':',
-                "pbcopy": ':',
-                "open": ':',
-                "defaults": 'cp "$MOCK_PREFS" "$3"',
-                "taskpolicy": 'shift; exec "$@"',
-                "nice": 'shift 2; exec "$@"',
-                "xcodebuild": '''printf '%s\\n' "$*" >>"$MOCK_CALLS"
-if [[ $1 == -checkFirstLaunchStatus ]]; then exit 0; fi
-while [[ $# -gt 0 ]]; do
-  if [[ $1 == -derivedDataPath ]]; then mkdir -p "$2/Build/Products/Release-iphoneos/Wingthing.app"; fi
-  shift
-done''',
-                "xcrun": '''printf '%s\\n' "$*" >>"$MOCK_CALLS"
-if [[ $1 == devicectl && $2 == list ]]; then
-  while [[ $# -gt 0 ]]; do
-    if [[ $1 == --json-output ]]; then cp "$MOCK_DEVICES" "$2"; break; fi
-    shift
-  done
-fi''',
-            }
-            for name, body in mocks.items():
-                path = mockbin / name
-                path.write_text("#!/bin/bash\nset -euo pipefail\n" + body + "\n"); path.chmod(0o755)
-            environment = dict(os.environ, PATH=str(mockbin) + ":" + os.environ["PATH"], WT_IOS_XCODE=str(xcode),
-                               WT_IOS_STATE=str(root / "state"), WT_IOS_ENTRYPOINT=str(root / "entrypoint"),
-                               MOCK_PREFS=str(prefs), MOCK_DEVICES=str(devices), MOCK_CALLS=str(root / "calls"))
-            for name in ("WT_IOS_TEAM", "WT_IOS_BUNDLE", "WT_IOS_DEVICE", "WT_IOS_CLONE"):
-                environment.pop(name, None)
-            command = ["/bin/bash", str(clone / "mobile/ios/scripts/install_phone.sh"), "--install-only"]
             for _ in range(2):
                 result = subprocess.run(command, env=environment, text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -194,12 +322,17 @@ fi''',
             fake_go = mockbin / "fake-go"
             fake_go.write_text("""#!/bin/bash
 set -euo pipefail
+if [[ $1 == env ]]; then exec "$MOCK_REAL_GO" "$@"; fi
+printf '%s\\n' "$GOPROXY" >>"$MOCK_PROXY_CALLS"
 while [[ $# -gt 0 ]]; do
  if [[ $1 == -o ]]; then target=$2; break; fi
  shift
 done
-cat >"$target" <<'SH'
-#!/bin/bash
+cp "$MOCK_PAIR_BINARY" "$target"
+""")
+            fake_go.chmod(0o755)
+            pair_impl = root / "pair-impl"
+            pair_impl.write_text("""#!/bin/bash
 printf '%s\\n' "$*" >>"$MOCK_PAIR_CALLS"
 if [[ $1 == wing && $2 == status ]]; then
   if [[ $MOCK_WING_INITIAL != missing ]]; then
@@ -222,11 +355,18 @@ if [[ $1 == pair ]]; then
   grep -q '0.0.0.0' "$WINGTHING_DIR/phone-control.json" || exit 1
   printf 'Scan this with the Wingthing app\\n'
 fi
-SH
-chmod 700 "$target"
 """)
-            fake_go.chmod(0o755)
-            environment.update(WT_IOS_GO=str(fake_go), MOCK_PAIR_CALLS=str(root / "pair-calls"))
+            launcher = root / "launcher.go"
+            launcher.write_text('package main; import ("os"; "os/exec"); func main() { '
+                                'c := exec.Command("/bin/bash", append([]string{os.Getenv("MOCK_PAIR_IMPL")}, os.Args[1:]...)...); '
+                                'c.Stdout=os.Stdout; c.Stderr=os.Stderr; if c.Run()!=nil {os.Exit(1)} }')
+            native = root / "native-pair"
+            real_go = shutil.which("go")
+            subprocess.run([real_go, "build", "-p", "2", "-o", str(native), str(launcher)],
+                           check=True, env=dict(os.environ, GOTOOLCHAIN="local"), capture_output=True)
+            environment.update(WT_IOS_GO=str(fake_go), MOCK_PAIR_CALLS=str(root / "pair-calls"),
+                               MOCK_REAL_GO=real_go, MOCK_PAIR_BINARY=str(native), MOCK_PAIR_IMPL=str(pair_impl),
+                               MOCK_PROXY_CALLS=str(root / "proxy-calls"))
             environment.pop("WT_IOS_SETUP_LINK_FILE", None)
             cases = [("missing", "unknown"), ("0.0.0.0", "unknown"),
                      ("127.0.0.1", "local-only"), ("[::1]", "unknown"),

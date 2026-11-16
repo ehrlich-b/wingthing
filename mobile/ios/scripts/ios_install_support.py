@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import plistlib
 import re
+import stat
 import sys
 import time
 import urllib.parse
@@ -81,6 +82,35 @@ def running_mode(directory):
             return reply["mode"]
     except (OSError, ValueError, TypeError, KeyError, AttributeError, http.client.HTTPException):
         pass
+    return None
+
+
+def check_pair_output(path):
+    """Refuse scripts, links and other artifacts before Go tries to overwrite them."""
+    path = Path(path)
+    if not path.exists() and not path.is_symlink():
+        return
+    metadata = path.lstat()
+    if not stat.S_ISREG(metadata.st_mode) or not metadata.st_mode & 0o111:
+        raise ValueError()
+    with path.open("rb") as binary:
+        magic = binary.read(4)
+    # Mach-O (including universal binaries) and ELF for portable fixtures.
+    if magic not in {b"\x7fELF", b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
+                     b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xce", b"\xca\xfe\xba\xbe",
+                     b"\xbe\xba\xfe\xca", b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca"}:
+        raise ValueError()
+
+
+def legacy_restart_mode(status):
+    """Use the mode reported after wing status verified the live daemon PID."""
+    lines = status.splitlines()
+    if not lines or not re.fullmatch(r"wing daemon is running \(pid [1-9][0-9]*\)", lines[0]):
+        return None
+    local = "  local control: ready" in lines
+    relay = any(line.startswith("  relay: ") for line in lines)
+    if local != relay:
+        return "local-only" if local else "relay"
     return None
 
 
@@ -163,6 +193,12 @@ def main():
     command, path, *extra = sys.argv[1:]
     if command == "lan-restart":
         print(running_mode(path) or "unknown")
+    elif command == "legacy-restart-mode":
+        print(legacy_restart_mode(Path(path).read_text()) or "unknown")
+    elif command == "pair-output":
+        check_pair_output(path)
+    elif command == "file-proxy":
+        print(Path(path).resolve().as_uri())
     elif command == "devices":
         phones = connected_iphones(json.loads(Path(path).read_text()))
         requested = extra[0] if extra else ""
