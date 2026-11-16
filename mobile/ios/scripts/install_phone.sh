@@ -139,13 +139,21 @@ WING=${WT_IOS_WING_DIR:-${WINGTHING_DIR:-$HOME/.wingthing}}
 BIN=$STATE/wt-pair
 printf '%s\n' "Pairing target: this Mac’s main wing in $WING (the same one wt and the dashboard use)." \
   'Same Wi-Fi: no account needed. Away from home: run wt login once on this Mac; the phone never logs in.'
+PAIR_OUTPUT=$CLONE/.scratch/bin/wt-ios-pair
+python3 "$SUPPORT" pair-output "$PAIR_OUTPUT" 2>/dev/null \
+  || die "PAIR_CLI_OUTPUT_CONFLICT: $PAIR_OUTPUT is not a compiled executable. Inspect it and choose a clean clone; the installer left it untouched."
+# Go's download cache already has the module-proxy layout. A file-only proxy
+# populates this clone's cache on demand without copying or changing the source.
+USER_MODCACHE=$(GOTOOLCHAIN=local "$GO" env GOMODCACHE) \
+  || die 'PAIR_CLI_CACHE_UNAVAILABLE: Cannot locate the existing Go module cache.'
+OFFLINE_PROXY=$(python3 "$SUPPORT" file-proxy "$USER_MODCACHE/cache/download")
 mkdir -p "$CLONE/.scratch/bin"
-(cd "$CLONE" && taskpolicy -b nice -n 15 env CGO_ENABLED=1 GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off \
+(cd "$CLONE" && taskpolicy -b nice -n 15 env CGO_ENABLED=1 GOTOOLCHAIN=local GOPROXY="$OFFLINE_PROXY" GOSUMDB=off GONOPROXY=none GOVCS='*:off' \
   GOMAXPROCS=2 GOCACHE="$CLONE/.scratch/go-cache" GOMODCACHE="$CLONE/.scratch/go-mod" \
   "$GO" build -p 2 -ldflags '-X github.com/ehrlich-b/wingthing/internal/config.ReleaseChannel=stable' \
   -o .scratch/bin/wt-ios-pair ./cmd/wt) >"$STATE/wing-build.log" 2>&1 \
-  || die "Wing build failed; inspect $STATE/wing-build.log. Seed the clone Go cache if dependencies are missing."
-install -m 700 "$CLONE/.scratch/bin/wt-ios-pair" "$BIN"
+  || die "PAIR_CLI_BUILD_FAILED: Offline wing build failed; inspect $STATE/wing-build.log. Required modules must already exist in $USER_MODCACHE/cache/download."
+install -m 700 "$PAIR_OUTPUT" "$BIN"
 WT=(env -u WINGTHING_PREVIEW_DIR WINGTHING_DIR="$WING" "$BIN")
 "${WT[@]}" wing status >"$STATE/wing-status.log" 2>&1 || die 'Main wing status is invalid; inspect it.'
 if ! grep -q '^wing daemon is running ' "$STATE/wing-status.log"; then
@@ -154,7 +162,28 @@ if ! grep -q '^wing daemon is running ' "$STATE/wing-status.log"; then
 fi
 # An existing daemon must already run the pairing-capable binary. Do not replace
 # or restart a running main wing while its sessions may be in use.
-[[ -f $WING/phone-control.json ]] || die 'Your running main wing needs the pairing-capable binary. Update/restart that wing yourself, preserving this same state directory, then rerun --connect-only.'
+if [[ ! -f $WING/phone-control.json ]]; then
+  # wing status has verified the live daemon and reports its current mode.
+  # Saved launch arguments/status files alone may belong to a dead daemon.
+  MODE_HINT=$(python3 "$SUPPORT" legacy-restart-mode "$STATE/wing-status.log")
+  [[ $MODE_HINT == local-only || $MODE_HINT == relay ]] \
+    || die 'MAIN_WING_MODE_UNKNOWN: Cannot determine the running wing mode; inspect wing status before restarting it yourself.'
+  "${WT[@]}" egg list >"$STATE/wing-sessions.log" 2>&1 \
+    || die "MAIN_WING_SESSIONS_UNKNOWN: Cannot inspect active sessions; see $STATE/wing-sessions.log before restarting."
+  printf '%s\n' 'Your running main wing predates phone pairing.' \
+    'Egg sessions this restart would interrupt:' >&2
+  cat "$STATE/wing-sessions.log" >&2
+  printf '%s\n' 'When ready, run this command to restart the same wing with the pairing-capable binary:' >&2
+  printf '%q ' "${WT[@]}" wing stop >&2
+  printf '&& ' >&2
+  if [[ $MODE_HINT == local-only ]]; then
+    printf '%q ' "${WT[@]}" wing start --local-only --listen 0.0.0.0 >&2
+  else
+    printf '%q ' "${WT[@]}" wing start >&2
+  fi
+  printf '\n' >&2
+  die 'Then rerun --connect-only. The installer has left the running wing untouched; preserve its state directory and wing_key.'
+fi
 # Inspect the actual listener before offering a QR or a retry. Never restart a
 # pre-existing main wing, which may have active sessions.
 LISTENER=$(python3 - "$WING/phone-control.json" <<'PYTHON'
