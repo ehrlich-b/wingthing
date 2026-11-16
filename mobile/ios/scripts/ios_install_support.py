@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Read-only parsers and bounded identity checks for the personal installer."""
 import base64
+from datetime import datetime, timezone
 import http.client
 import json
 import ipaddress
@@ -9,6 +10,7 @@ from pathlib import Path
 import plistlib
 import re
 import stat
+import subprocess
 import sys
 import time
 import urllib.parse
@@ -102,15 +104,38 @@ def check_pair_output(path):
         raise ValueError()
 
 
-def legacy_restart_mode(status):
-    """Use the mode reported after wing status verified the live daemon PID."""
+def legacy_restart_mode(status, directory=None):
+    """Bind old status metadata to the live process before suggesting a mode."""
     lines = status.splitlines()
     if not lines or not re.fullmatch(r"wing daemon is running \(pid [1-9][0-9]*\)", lines[0]):
         return None
     local = "  local control: ready" in lines
     relay = any(line.startswith("  relay: ") for line in lines)
-    if local != relay:
-        return "local-only" if local else "relay"
+    if local == relay or directory is None:
+        return None
+    try:
+        directory = Path(directory)
+        pid = lines[0].removesuffix(")").rsplit(" ", 1)[1]
+        if (directory / "wing.pid").read_text().strip() != pid:
+            return None
+        metadata = json.loads((directory / "wing.status").read_text())
+        state = metadata["state"]
+        if (local and state != "local") or (relay and state not in {
+                "connecting", "connected", "auth_failed", "disconnected"}):
+            return None
+        # Both macOS and Linux ps expose process birth in whole seconds. Require
+        # a strictly newer status timestamp: same-second metadata is ambiguous.
+        result = subprocess.run(["ps", "-p", pid, "-o", "pid=", "-o", "lstart="],
+                                env=dict(os.environ, LC_ALL="C", TZ="UTC"),
+                                capture_output=True, text=True, timeout=2, check=True)
+        reported_pid, birth = result.stdout.strip().split(maxsplit=1)
+        started = datetime.strptime(birth, "%a %b %d %H:%M:%S %Y").replace(tzinfo=timezone.utc)
+        updated = datetime.strptime(metadata["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        if (reported_pid == pid and started < updated <= datetime.now(timezone.utc)
+                and (directory / "wing.pid").read_text().strip() == pid):
+            return "local-only" if local else "relay"
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+        pass
     return None
 
 
@@ -194,7 +219,7 @@ def main():
     if command == "lan-restart":
         print(running_mode(path) or "unknown")
     elif command == "legacy-restart-mode":
-        print(legacy_restart_mode(Path(path).read_text()) or "unknown")
+        print(legacy_restart_mode(Path(path).read_text(), extra[0] if extra else None) or "unknown")
     elif command == "pair-output":
         check_pair_output(path)
     elif command == "file-proxy":

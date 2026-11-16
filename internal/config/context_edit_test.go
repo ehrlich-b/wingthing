@@ -191,6 +191,10 @@ func TestSetMachineContextRejectsLoaderErrors(t *testing.T) {
 				if err := os.WriteFile(path, []byte(body), 0640); err != nil {
 					t.Fatal(err)
 				}
+				// Establish the permission fixture independently of the caller's umask.
+				if err := os.Chmod(path, 0640); err != nil {
+					t.Fatal(err)
+				}
 				if _, err := LoadWingConfig(dir); err == nil {
 					t.Fatal("loader accepted malformed fixture")
 				}

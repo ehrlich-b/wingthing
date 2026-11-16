@@ -163,9 +163,9 @@ fi
 # An existing daemon must already run the pairing-capable binary. Do not replace
 # or restart a running main wing while its sessions may be in use.
 if [[ ! -f $WING/phone-control.json ]]; then
-  # wing status has verified the live daemon and reports its current mode.
-  # Saved launch arguments/status files alone may belong to a dead daemon.
-  MODE_HINT=$(python3 "$SUPPORT" legacy-restart-mode "$STATE/wing-status.log")
+  # Bind the reported status timestamp to the verified daemon's process birth;
+  # saved launch arguments/status files alone may belong to a dead daemon.
+  MODE_HINT=$(python3 "$SUPPORT" legacy-restart-mode "$STATE/wing-status.log" "$WING")
   [[ $MODE_HINT == local-only || $MODE_HINT == relay ]] \
     || die 'MAIN_WING_MODE_UNKNOWN: Cannot determine the running wing mode; inspect wing status before restarting it yourself.'
   "${WT[@]}" egg list >"$STATE/wing-sessions.log" 2>&1 \

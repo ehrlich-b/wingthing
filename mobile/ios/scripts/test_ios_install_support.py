@@ -93,6 +93,7 @@ def installer_fixture():
             "defaults": 'cp "$MOCK_PREFS" "$3"',
             "taskpolicy": 'shift; exec "$@"',
             "nice": 'shift 2; exec "$@"',
+            "ps": '[[ $* == "-p 123 -o pid= -o lstart=" ]]; printf "123 Thu Jan 1 00:00:00 2026\\n"',
             "xcodebuild": '''printf '%s\\n' "$*" >>"$MOCK_CALLS"
 if [[ $1 == -checkFirstLaunchStatus ]]; then exit 0; fi
 while [[ $# -gt 0 ]]; do
@@ -201,13 +202,17 @@ class InstallerTests(unittest.TestCase):
             self.assertFalse((clone / ".scratch/go-mod").exists())
 
     def test_pre_pairing_wing_restart_preserves_mode_and_names_sessions(self):
-        for mode in ("relay", "local-only", "unknown"):
+        for mode in ("relay", "local-only", "unknown", "stale-relay", "stale-local-only"):
             with self.subTest(mode=mode), installer_fixture() as (root, clone, environment, command):
                 _, wing = offline_pair_module(root, clone, environment)
-                # Misleading dead metadata must not override the live status.
+                # Saved launch arguments must not override verified status.
                 (wing / "wing.args").write_text("wing\nstart\n--local-only\n")
-                (wing / "wing.status").write_text('{"state":"local"}')
-                environment.update(MOCK_LEGACY_MODE=mode,
+                (wing / "wing.pid").write_text("123\n")
+                reported_mode = mode.removeprefix("stale-")
+                (wing / "wing.status").write_text(json.dumps({
+                    "state": "local" if reported_mode == "local-only" else "connected",
+                    "ts": "2025-12-31T23:59:59Z" if mode.startswith("stale-") else "2026-01-01T00:00:02Z"}))
+                environment.update(MOCK_LEGACY_MODE=reported_mode,
                                    MOCK_SESSIONS="NAME  ID\nlong running research  egg-123\nrelease work  egg-456")
                 result = subprocess.run(command[:-1] + ["--connect-only"], env=environment,
                                         text=True, capture_output=True, timeout=60)
@@ -215,7 +220,7 @@ class InstallerTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr + log)
                 calls = (root / "pair-calls").read_text().splitlines()
                 self.assertFalse((wing / "phone-control.json").exists())
-                if mode == "unknown":
+                if mode == "unknown" or mode.startswith("stale-"):
                     self.assertIn("MAIN_WING_MODE_UNKNOWN", result.stderr)
                     self.assertEqual(calls, ["[wing status]"])
                     self.assertNotIn("&&", result.stderr)
@@ -231,6 +236,33 @@ class InstallerTests(unittest.TestCase):
                 self.assertEqual(start, wt + ["wing", "start"] +
                                  (["--local-only", "--listen", "0.0.0.0"] if mode == "local-only" else []))
                 self.assertIn("left the running wing untouched", result.stderr)
+
+    def test_legacy_restart_rejects_stale_or_unbound_status(self):
+        status = "wing daemon is running (pid 123)\n  relay: disconnected\n"
+        self.assertIsNone(support.legacy_restart_mode(status))
+        with tempfile.TemporaryDirectory() as directory:
+            wing = Path(directory)
+            (wing / "wing.pid").write_text("123\n")
+            live_ps = subprocess.CompletedProcess([], 0, "123 Thu Jan 1 00:00:00 2026\n", "")
+            with patch.object(support.subprocess, "run", return_value=live_ps) as ps:
+                for ts in ("2025-12-31T23:59:59Z", "2026-01-01T00:00:00Z", "invalid", "2999-01-01T00:00:00Z", None):
+                    (wing / "wing.status").write_text(json.dumps({"state": "disconnected", "ts": ts}))
+                    self.assertIsNone(support.legacy_restart_mode(status, wing), ts)
+                (wing / "wing.status").write_text(json.dumps({"state": "disconnected", "ts": "2026-01-01T00:00:02Z"}))
+                self.assertEqual(support.legacy_restart_mode(status, wing), "relay")
+                self.assertEqual(ps.call_args.args[0], ["ps", "-p", "123", "-o", "pid=", "-o", "lstart="])
+                self.assertEqual(ps.call_args.kwargs["env"]["TZ"], "UTC")
+                self.assertEqual(ps.call_args.kwargs["env"]["LC_ALL"], "C")
+                self.assertIsNone(support.legacy_restart_mode(status.replace("  relay: disconnected", "  local control: ready"), wing))
+                (wing / "wing.pid").write_text("456\n")
+                self.assertIsNone(support.legacy_restart_mode(status, wing))
+                (wing / "wing.pid").write_text("123\n")
+                ps.return_value = subprocess.CompletedProcess([], 0, "456 Thu Jan 1 00:00:00 2026\n", "")
+                self.assertIsNone(support.legacy_restart_mode(status, wing))
+                ps.side_effect = subprocess.TimeoutExpired("ps", 2)
+                self.assertIsNone(support.legacy_restart_mode(status, wing))
+            (wing / "wing.status").unlink()
+            self.assertIsNone(support.legacy_restart_mode(status, wing))
 
     def test_device_selection_excludes_wireless_unpaired_and_non_phones(self):
         ipad = phone("ipad")
