@@ -155,6 +155,13 @@ func enrichLocalSession(ctx context.Context, cfg *config.Config, session *LocalS
 			projectSessionLifecycle(session, view)
 		}
 	}
+	if dialErr == nil && inputWaitCandidate(session) && ctx.Err() == nil {
+		waitCtx, cancel := context.WithTimeout(ctx, localStatusTimeout)
+		if SessionWaitsForInput(waitCtx, cfg, session.ID, time.Duration(session.IdleSecs)*time.Second) {
+			projectInputWait(session)
+		}
+		cancel()
+	}
 }
 
 // Inventory keeps only structured, content-free evidence from its existing
@@ -491,21 +498,29 @@ func ReadSessionSnapshot(ctx context.Context, cfg *config.Config, ref string) (L
 		return LocalSession{}, nil, err
 	}
 	defer cmdutil.CloseWithLog("egg client", ec)
-	stream, err := ec.AttachSessionWithOptions(ctx, session.ID, egg.AttachOptions{ReadOnly: true, Owner: "snapshot"})
+	snapshot, err := readEggSnapshot(ctx, ec, session.ID)
 	if err != nil {
-		return LocalSession{}, nil, fmt.Errorf("read session %s: %w", session.ID, err)
+		return LocalSession{}, nil, err
+	}
+	return session, snapshot, nil
+}
+
+func readEggSnapshot(ctx context.Context, ec *egg.Client, sessionID string) ([]byte, error) {
+	stream, err := ec.AttachSessionWithOptions(ctx, sessionID, egg.AttachOptions{ReadOnly: true, Owner: "snapshot"})
+	if err != nil {
+		return nil, fmt.Errorf("read session %s: %w", sessionID, err)
 	}
 	msg, err := stream.Recv()
 	if err != nil {
-		return LocalSession{}, nil, fmt.Errorf("read session %s: %w", session.ID, err)
+		return nil, fmt.Errorf("read session %s: %w", sessionID, err)
 	}
-	_ = stream.Send(&pb.SessionMsg{SessionId: session.ID, Payload: &pb.SessionMsg_Detach{Detach: true}})
+	_ = stream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Detach{Detach: true}})
 	_ = stream.CloseSend()
 	payload, ok := msg.Payload.(*pb.SessionMsg_Output)
 	if !ok {
-		return LocalSession{}, nil, fmt.Errorf("read session %s: expected terminal snapshot", session.ID)
+		return nil, fmt.Errorf("read session %s: expected terminal snapshot", sessionID)
 	}
-	return session, payload.Output, nil
+	return payload.Output, nil
 }
 
 func sessionInputChunks(input []byte, enter bool) [][]byte {

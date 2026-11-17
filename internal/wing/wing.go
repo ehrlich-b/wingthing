@@ -1132,6 +1132,18 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		return append([]*config.ToolConfig(nil), wingTools...)
 	})
 	defer stopSessionRegistration()
+	// Headless sessions waiting on a prompt raise attention as a bell would.
+	// Without the relay (local-only, or hosted relay denied) the session is
+	// still marked locally for session lists.
+	go watchInputWaits(ctx, cfg, func(v any) error {
+		wingCfgMu.Lock()
+		hosted := wingCfg.HostedRelay
+		wingCfgMu.Unlock()
+		if relayWrite == nil || !ws.HostedRelayAllowed(hosted) {
+			return nil
+		}
+		return relayWrite(v)
+	})
 	if err := sessions.StartRuns(ctx); err != nil {
 		return fmt.Errorf("agent run service: %w", err)
 	}
