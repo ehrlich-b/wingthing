@@ -79,6 +79,31 @@ func TestSweepInputWaitsLeavesNewerBellAttention(t *testing.T) {
 	}
 }
 
+// A bell that already holds attention when the sweep first sees the prompt
+// is not the sweep's to send again or to clear.
+func TestSweepInputWaitsNeverAdoptsABellEpisode(t *testing.T) {
+	const id = "input-wait-adopt-test"
+	forgetAttentionState(id)
+	defer forgetAttentionState(id)
+	sends := 0
+	write := func(any) error { sends++; return nil }
+	if !checkAndSendAttention(id, "", "", write) {
+		t.Fatal("bell attention was not raised")
+	}
+	bellNonce, _ := wingAttentionNonce.Load(id)
+	sessions := []ws.SessionInfo{{SessionID: id}}
+	raised := make(map[string]string)
+
+	sweepInputWaits(sessions, map[string]probeResult{id: {waiting: true, ok: true}}, write, raised)
+	if sends != 1 || raised[id] != "" {
+		t.Fatalf("the sweep adopted the bell episode: sends=%d raised=%q", sends, raised[id])
+	}
+	sweepInputWaits(sessions, map[string]probeResult{id: {waiting: false, ok: true}}, write, raised)
+	if nonce, ok := wingAttentionNonce.Load(id); !ok || nonce != bellNonce {
+		t.Fatal("the sweep cleared a bell episode it never raised")
+	}
+}
+
 func TestProbeAllCollectsEveryResult(t *testing.T) {
 	sessions := []ws.SessionInfo{{SessionID: "a"}, {SessionID: "b"}, {SessionID: "c"}, {SessionID: "d"}, {SessionID: "e"}}
 	results := probeAll(sessions, func(id string) (bool, bool) { return id == "c", id != "e" })

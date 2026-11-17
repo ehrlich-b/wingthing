@@ -76,7 +76,10 @@ func RenderSnapshot(snapshot []byte, cols, rows int) string {
 	}
 	if i := bytes.LastIndex(snapshot, gridRepaint); i >= 0 {
 		snapshot = snapshot[i:]
-	} else if len(snapshot) > maxInputWaitRender {
+	}
+	// The prompt is the last thing drawn before the terminal went quiet, so
+	// the tail keeps it even when an oversized repaint or replay is cut.
+	if len(snapshot) > maxInputWaitRender {
 		snapshot = snapshot[len(snapshot)-maxInputWaitRender:]
 	}
 	vt := egg.NewVTerm(cols, rows)
