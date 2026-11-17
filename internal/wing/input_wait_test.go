@@ -40,6 +40,14 @@ func TestSweepInputWaitsNotifiesOnceAndClears(t *testing.T) {
 		t.Fatal("a failed screen read must not clear attention")
 	}
 
+	firstNonce := sent[0].Nonce
+	clearAttentionCooldown(id) // answered in a browser, but the prompt came back
+	wingAttentionCooldown.Delete(id)
+	sweep(probeResult{waiting: true, ok: true})
+	if len(sent) != 2 || sent[1].Nonce == firstNonce {
+		t.Fatalf("a returning prompt should start a new episode: %+v", sent)
+	}
+
 	sweep(probeResult{waiting: false, ok: true})
 	if _, ok := wingAttention.Load(id); ok || raised[id] != "" {
 		t.Fatal("attention should clear once the prompt is gone")

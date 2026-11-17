@@ -79,17 +79,21 @@ func sweepInputWaits(sessions []ws.SessionInfo, results map[string]probeResult, 
 			continue
 		}
 		if r.waiting {
-			// An episode this sweep didn't start (a bell, or one that replaced
-			// ours) belongs to the browser path: leave it and drop any claim.
-			current, active := wingAttentionNonce.Load(s.SessionID)
-			if mine, claimed := raised[s.SessionID]; active && (!claimed || current.(string) != mine) {
+			// Stake the episode atomically. One the sweep didn't start (a
+			// bell, or one that replaced ours) belongs to the browser path:
+			// leave it and drop any claim.
+			mine := generateAttentionNonce()
+			if previous, claimed := raised[s.SessionID]; claimed {
+				if current, active := wingAttentionNonce.Load(s.SessionID); active && current.(string) == previous {
+					mine = previous // our episode is still open: same nonce, one push
+				}
+			}
+			if current, loaded := wingAttentionNonce.LoadOrStore(s.SessionID, mine); loaded && current.(string) != mine {
 				delete(raised, s.SessionID)
 				continue
 			}
+			raised[s.SessionID] = mine
 			checkAndSendAttention(s.SessionID, s.Agent, s.CWD, write)
-			if nonce, ok := wingAttentionNonce.Load(s.SessionID); ok {
-				raised[s.SessionID] = nonce.(string)
-			}
 			continue
 		}
 		if mine, ok := raised[s.SessionID]; ok {

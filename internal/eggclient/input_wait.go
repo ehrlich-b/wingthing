@@ -36,9 +36,10 @@ var lineMarkers = []string{
 
 const inputWaitTailLines = 12
 
-// maxInputWaitRender bounds the bytes rendered when a snapshot has no grid
-// repaint to start from (a canonical replay fallback).
-const maxInputWaitRender = 256 << 10
+// maxInputWaitRender bounds the bytes rendered. A grid repaint is bounded by
+// the screen (about 240 KiB for 200x60 with styling on every cell), so this
+// cuts only canonical replays, whose tail holds the last thing drawn.
+const maxInputWaitRender = 1 << 20
 
 // gridRepaint starts the grid section of egg.VTerm.Snapshot.
 var gridRepaint = []byte("\x1b[m\x1b[H")
