@@ -18,32 +18,71 @@ func TestSweepInputWaitsNotifiesOnceAndClears(t *testing.T) {
 		return nil
 	}
 	sessions := []ws.SessionInfo{{SessionID: id, Agent: "claude", CWD: "/work/egg"}}
-	waiting := true
-	flagged := make(map[string]bool)
-	sweep := func() { sweepInputWaits(sessions, func(string) bool { return waiting }, write, flagged) }
+	raised := make(map[string]string)
+	sweep := func(r probeResult) {
+		sweepInputWaits(sessions, map[string]probeResult{id: r}, write, raised)
+	}
 
-	sweep()
+	sweep(probeResult{waiting: true, ok: true})
 	if len(sent) != 1 || sent[0].SessionID != id || sent[0].Agent != "claude" || sent[0].Nonce == "" {
 		t.Fatalf("first sweep sent %+v", sent)
 	}
 	if _, ok := wingAttention.Load(id); !ok {
 		t.Fatal("session lists should show the session needs attention")
 	}
-	sweep()
+	sweep(probeResult{waiting: true, ok: true})
 	if len(sent) != 1 {
 		t.Fatalf("a second sweep inside the cooldown re-sent: %+v", sent)
 	}
 
-	waiting = false
-	sweep()
-	if _, ok := wingAttention.Load(id); ok || flagged[id] {
+	sweep(probeResult{ok: false})
+	if _, ok := wingAttention.Load(id); !ok {
+		t.Fatal("a failed screen read must not clear attention")
+	}
+
+	sweep(probeResult{waiting: false, ok: true})
+	if _, ok := wingAttention.Load(id); ok || raised[id] != "" {
 		t.Fatal("attention should clear once the prompt is gone")
 	}
 
-	waiting = true
-	flagged[id] = true
-	sweepInputWaits(nil, func(string) bool { return true }, write, flagged)
-	if flagged[id] {
+	raised[id] = "gone-session-nonce"
+	sweepInputWaits(nil, nil, write, raised)
+	if _, ok := raised[id]; ok {
 		t.Fatal("a session that is no longer alive should be forgotten")
+	}
+}
+
+// The browser bell path shares the attention state. A bell raised after the
+// sweep's episode ended has a new nonce, and the sweep must leave it alone.
+func TestSweepInputWaitsLeavesNewerBellAttention(t *testing.T) {
+	const id = "input-wait-bell-test"
+	forgetAttentionState(id)
+	defer forgetAttentionState(id)
+	write := func(any) error { return nil }
+	sessions := []ws.SessionInfo{{SessionID: id}}
+	raised := make(map[string]string)
+	sweepInputWaits(sessions, map[string]probeResult{id: {waiting: true, ok: true}}, write, raised)
+
+	clearAttentionCooldown(id) // the user answered in a browser
+	wingAttentionCooldown.Delete(id)
+	if !checkAndSendAttention(id, "", "", write) { // then a new bell rang
+		t.Fatal("bell attention was not raised")
+	}
+	bellNonce, _ := wingAttentionNonce.Load(id)
+
+	sweepInputWaits(sessions, map[string]probeResult{id: {waiting: false, ok: true}}, write, raised)
+	if _, ok := wingAttention.Load(id); !ok {
+		t.Fatal("the sweep cleared a bell's attention")
+	}
+	if nonce, _ := wingAttentionNonce.Load(id); nonce != bellNonce {
+		t.Fatal("the sweep replaced the bell's nonce")
+	}
+}
+
+func TestProbeAllCollectsEveryResult(t *testing.T) {
+	sessions := []ws.SessionInfo{{SessionID: "a"}, {SessionID: "b"}, {SessionID: "c"}, {SessionID: "d"}, {SessionID: "e"}}
+	results := probeAll(sessions, func(id string) (bool, bool) { return id == "c", id != "e" })
+	if len(results) != len(sessions) || !results["c"].waiting || results["a"].waiting || results["e"].ok {
+		t.Fatalf("results = %+v", results)
 	}
 }

@@ -3,6 +3,7 @@ package eggclient
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestScreenWaitsForInput(t *testing.T) {
@@ -15,6 +16,8 @@ func TestScreenWaitsForInput(t *testing.T) {
 		{"codex approval", "Allow command?\n  Press enter to confirm or esc to cancel\n", true},
 		{"claude permission", "Bash command\n  rm -rf build\nDo you want to proceed?\n❯ 1. Yes\n  2. No\n", true},
 		{"shell y/n", "Overwrite config.yaml? (y/N) ", true},
+		{"answered shell y/n", "Overwrite config.yaml? (y/N) y\nwrote config.yaml\n$ ", false},
+		{"press enter, waiting", "Build done.\nPress Enter to continue...\n\n", true},
 		{"working agent", "✻ Bootstrapping… (12s · esc to interrupt)\n⏵⏵ auto mode on\n", false},
 		{"idle input box", "────\n❯ Try \"edit <filepath> to…\"\n────\n⏵⏵ auto mode on\n", false},
 		{"plain output", "PASS\nok  github.com/x 0.2s\n$ ", false},
@@ -48,26 +51,41 @@ func TestRenderSnapshotReadsCursorDrawnPrompt(t *testing.T) {
 	}
 }
 
+// An egg snapshot is scrollback, then a grid repaint. Only the repaint is
+// rendered, so a prompt left in the scrollback doesn't count and a huge
+// scrollback costs nothing.
+func TestRenderSnapshotRendersOnlyTheGrid(t *testing.T) {
+	scrollback := strings.Repeat("old log line\r\n", 50000) + "Enter to confirm · Esc to cancel\r\n"
+	grid := "\x1b[m\x1b[H$ make test\r\nok\r\n$ "
+	screen := RenderSnapshot([]byte(scrollback+strings.Repeat("\n", 23)+grid), 80, 24)
+	if strings.Contains(screen, "old log line") || ScreenWaitsForInput(screen) {
+		t.Fatalf("rendered more than the grid:\n%s", screen)
+	}
+	if !strings.Contains(screen, "$ make test") {
+		t.Fatalf("grid missing:\n%s", screen)
+	}
+}
+
 func TestInputWaitCandidateAndProjection(t *testing.T) {
-	quiet := int64(InputWaitIdle.Seconds())
 	for _, tc := range []struct {
-		state string
-		idle  int64
-		want  bool
+		state   string
+		readers int32
+		idle    time.Duration
+		want    bool
 	}{
-		{"unknown", quiet, true},
-		{"", quiet, true},
-		{"idle", quiet, true},
-		{"working", quiet, true},
-		{"unknown", quiet - 1, false},
-		{"needs_input", quiet, false},
-		{"completed", quiet, false},
-		{"failed", quiet, false},
-		{"stopped", quiet, false},
+		{"unknown", 0, InputWaitIdle, true},
+		{"", 0, InputWaitIdle, true},
+		{"idle", 0, InputWaitIdle, true},
+		{"working", 0, InputWaitIdle, true},
+		{"unknown", 0, InputWaitIdle - time.Second, false},
+		{"unknown", 1, InputWaitIdle, false},
+		{"needs_input", 0, InputWaitIdle, false},
+		{"completed", 0, InputWaitIdle, false},
+		{"failed", 0, InputWaitIdle, false},
+		{"stopped", 0, InputWaitIdle, false},
 	} {
-		session := LocalSession{State: tc.state, IdleSecs: tc.idle}
-		if got := inputWaitCandidate(&session); got != tc.want {
-			t.Errorf("state %q idle %ds: candidate = %v, want %v", tc.state, tc.idle, got, tc.want)
+		if got := InputWaitCandidate(tc.state, tc.readers, tc.idle); got != tc.want {
+			t.Errorf("state %q readers %d idle %s: candidate = %v, want %v", tc.state, tc.readers, tc.idle, got, tc.want)
 		}
 	}
 	session := LocalSession{Status: "unknown", State: "unknown", StateSource: "unsupported"}

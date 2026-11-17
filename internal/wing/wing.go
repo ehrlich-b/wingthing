@@ -1133,8 +1133,9 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	})
 	defer stopSessionRegistration()
 	// Headless sessions waiting on a prompt raise attention as a bell would.
-	// Without the relay (local-only, or hosted relay denied) the session is
-	// still marked locally for session lists.
+	// The session is marked locally for session lists even when the relay is
+	// absent, denied by policy or down; a failed push is retried after the
+	// cooldown under the same nonce.
 	go watchInputWaits(ctx, cfg, func(v any) error {
 		wingCfgMu.Lock()
 		hosted := wingCfg.HostedRelay
@@ -1142,7 +1143,10 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		if relayWrite == nil || !ws.HostedRelayAllowed(hosted) {
 			return nil
 		}
-		return relayWrite(v)
+		if err := relayWrite(v); err != nil {
+			log.Printf("input-wait attention: %v", err)
+		}
+		return nil
 	})
 	if err := sessions.StartRuns(ctx); err != nil {
 		return fmt.Errorf("agent run service: %w", err)

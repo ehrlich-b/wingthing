@@ -114,6 +114,7 @@ admit:
 	}
 	close(jobs)
 	workers.Wait()
+	probeInputWaits(ctx, cfg, sessions)
 	sortLocalSessions(sessions)
 	return sessions, nil
 }
@@ -154,13 +155,6 @@ func enrichLocalSession(ctx context.Context, cfg *config.Config, session *LocalS
 		if view, err := tryLifecycleViewForSession(cfg, *session); err == nil {
 			projectSessionLifecycle(session, view)
 		}
-	}
-	if dialErr == nil && inputWaitCandidate(session) && ctx.Err() == nil {
-		waitCtx, cancel := context.WithTimeout(ctx, localStatusTimeout)
-		if SessionWaitsForInput(waitCtx, cfg, session.ID, time.Duration(session.IdleSecs)*time.Second) {
-			projectInputWait(session)
-		}
-		cancel()
 	}
 }
 
