@@ -135,4 +135,7 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: web/package-lock.json
+      # macOS configures only 127.0.0.1 on lo0; the specific-loopback listen
+      # test binds 127.0.0.2.
+      - run: sudo ifconfig lo0 alias 127.0.0.2 up
       - run: make e2e-mac

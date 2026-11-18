@@ -114,7 +114,7 @@ func TestReleaseWorkflow(t *testing.T) {
 			actual = append(actual, s.Run)
 		}
 	}
-	if !reflect.DeepEqual(actual, commands) || runs(workflow.Jobs["macos-sandbox"]) != "make e2e-mac" {
+	if !reflect.DeepEqual(actual, commands) || runs(workflow.Jobs["macos-sandbox"]) != "sudo ifconfig lo0 alias 127.0.0.2 up\nmake e2e-mac" {
 		t.Fatalf("historical gates, including integration, must precede packaging: %v", actual)
 	}
 	var uploaded string
