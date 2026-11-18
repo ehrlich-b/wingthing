@@ -754,18 +754,25 @@ func TestPTYRoutingReattach(t *testing.T) {
 	if len(wingAttach.Passkeys) != 0 {
 		t.Fatalf("browser-supplied attach passkeys reached wing: %#v", wingAttach.Passkeys)
 	}
+	if wingAttach.ControllerID == "" {
+		t.Fatal("relay forwarded reattach without a pending controller ID")
+	}
 
 	// Reattach is not authoritative until the wing has completed its local
 	// authorization and encryption setup. The relay promotes the pending
-	// controller only after this acknowledgement.
+	// controller only after this acknowledgement, which names that attempt's
+	// controller ID as the wing does; an unscoped start is ignored.
 	if err := wsjson.Write(ctx, wingConn, ws.PTYStarted{
-		Type: ws.TypePTYStarted, SessionID: sess, Agent: "claude",
+		Type: ws.TypePTYStarted, SessionID: sess, Agent: "claude", ControllerID: wingAttach.ControllerID,
 	}); err != nil {
 		t.Fatalf("wing write reattach pty.started: %v", err)
 	}
 	var reattached ws.PTYStarted
 	if err := wsjson.Read(ctx, browser2, &reattached); err != nil {
 		t.Fatalf("browser2 read reattach pty.started: %v", err)
+	}
+	if reattached.ControllerID != wingAttach.ControllerID {
+		t.Fatalf("browser2 pty.started controller = %q, want %q", reattached.ControllerID, wingAttach.ControllerID)
 	}
 
 	// Wing sends output — browser 2 should get it
