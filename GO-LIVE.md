@@ -16,7 +16,7 @@ The script runs all Node tests, builds embedded web assets, runs gateway race
 tests and CLI configuration tests, then builds `.scratch/bin/wt-phone`. It uses
 clone-local Go/npm caches. The Go module cache was seeded by a local copy of
 the invoking Go module download cache; no secret files were copied. If
-moving to my-server, set `WT_PHONE_GO` to its Go **1.26.9** binary and seed that
+moving to my-server, set `WT_PHONE_GO` to its Go **1.26.11** binary and seed that
 clone's `.scratch/gomod/cache/download` from its existing module cache, or
 deliberately allow dependency downloads with `GOPROXY=https://proxy.golang.org`
 and `GOSUMDB=sum.golang.org`. Linux uses `nice -n 15` without `taskpolicy`.

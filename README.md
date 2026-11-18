@@ -30,7 +30,7 @@ The installer supports macOS and Linux on amd64 and arm64. It verifies the
 release checksum, installs `wt` into `~/.local/bin` (set `WT_INSTALL_DIR` to
 change that) and never runs sudo. Manual downloads are on
 [GitHub releases](https://github.com/ehrlich-b/wingthing/releases). Update with
-`wt update`. To build from source you need Go 1.26.9 or newer and Node.js:
+`wt update`. To build from source you need Go 1.26.11 or newer and Node.js:
 `git clone https://gitlab.com/ehrlich-b/wingthing.git`, then `make check`.
 The [download metadata](https://wingthing.ai/dl/latest.json) identifies the
 available release and its assets. Source documentation can describe changes

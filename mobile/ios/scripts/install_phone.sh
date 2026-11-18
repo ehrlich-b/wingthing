@@ -134,7 +134,7 @@ fi
 step "6/7 Connect to this Mac's main wing"
 [[ -z ${WT_IOS_SETUP_LINK_FILE:-} ]] || die "The QR flow pairs with the main wing. For an old Home link, use the app's hidden Existing Home setup fallback."
 GO=${WT_IOS_GO:-$(command -v go || true)}
-[[ -x $GO ]] || die 'Go 1.26.9 is missing; select it on PATH or set WT_IOS_GO to its executable.'
+[[ -x $GO ]] || die 'Go 1.26.11 is missing; select it on PATH or set WT_IOS_GO to its executable.'
 WING=${WT_IOS_WING_DIR:-${WINGTHING_DIR:-$HOME/.wingthing}}
 BIN=$STATE/wt-pair
 printf '%s\n' "Pairing target: this Mac’s main wing in $WING (the same one wt and the dashboard use)." \

@@ -1,6 +1,6 @@
 module github.com/ehrlich-b/wingthing
 
-go 1.26.9
+go 1.26.11
 
 require (
 	github.com/charmbracelet/ultraviolet v0.0.0-20251106193841-7889546fc720

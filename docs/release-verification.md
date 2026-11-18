@@ -17,7 +17,7 @@ stable tag enables publication after all gates pass.
 ## Runner contract
 
 Register protected, disposable shell runners with tags `wingthing-release-linux`
-and `wingthing-release-macos`. Both need Git, Python 3, Go **1.26.9**, Node **22**,
+and `wingthing-release-macos`. Both need Git, Python 3, Go **1.26.11**, Node **22**,
 npm and make; provision those exact tool versions before accepting release work.
 Linux also needs Docker, Chromium's runtime libraries, build tools for CGO and a
 host user-namespace/AppArmor policy that permits native sandbox tests and

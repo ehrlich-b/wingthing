@@ -77,8 +77,8 @@ def gate(args):
     dry_run = args.profile == "local"
     head = source(args.tag, dry_run)
     toolchain = {"go": run(["go", "version"]), "node": run(["node", "--version"])}
-    if not dry_run and (" go1.26.9 " not in toolchain["go"] or not toolchain["node"].startswith("v22.")):
-        raise ValueError("release runners require Go 1.26.9 and Node 22")
+    if not dry_run and (" go1.26.11 " not in toolchain["go"] or not toolchain["node"].startswith("v22.")):
+        raise ValueError("release runners require Go 1.26.11 and Node 22")
     records = []
     for number, command in enumerate(GATES[args.profile]):
         log = Path(args.output).with_suffix(f".{number}.log")
