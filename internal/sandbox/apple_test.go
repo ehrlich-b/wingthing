@@ -331,6 +331,50 @@ func TestSeatbeltSSHKnownHostsExceptionSurvivesExactDirectoryDeny(t *testing.T) 
 	}
 }
 
+// A provider reads its generated settings file inside the denied wing state,
+// and nothing else there; it can never write the file.
+func TestSeatbeltReadOnlyFileSurvivesDirectoryDeny(t *testing.T) {
+	sandboxExecAvailable(t)
+	state := testsocket.Dir(t)
+	settings := filepath.Join(state, "eggs", "fixture", "claude-settings.json")
+	sibling := filepath.Join(state, "eggs", "fixture", "egg.token")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{settings, sibling} {
+		if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run := func(cfg Config, name string, args ...string) error {
+		t.Helper()
+		sb, err := newPlatform(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer destroySandboxForTest(t, sb)
+		cmd, err := sb.Exec(context.Background(), name, args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cmd.Run()
+	}
+	exposed := Config{NetworkNeed: NetworkFull, Deny: []string{state}, ReadOnlyFiles: []string{settings}}
+	if err := run(exposed, "/usr/bin/head", "-c", "1", settings); err != nil {
+		t.Fatalf("read-only file was blocked by its directory deny: %v", err)
+	}
+	if err := run(exposed, "/usr/bin/head", "-c", "1", sibling); err == nil {
+		t.Fatal("read-only file exposed its denied sibling")
+	}
+	if err := run(exposed, "/bin/sh", "-c", `printf x >> "$1"`, "sh", settings); err == nil {
+		t.Fatal("read-only file became writable")
+	}
+	denied := Config{NetworkNeed: NetworkFull, Deny: []string{state, settings}, ReadOnlyFiles: []string{settings}}
+	if err := run(denied, "/usr/bin/head", "-c", "1", settings); err == nil {
+		t.Fatal("explicit deny of the read-only file was bypassed")
+	}
+}
+
 func TestSeatbeltWriteRestriction(t *testing.T) {
 	sandboxExecAvailable(t)
 	home, err := os.UserHomeDir()

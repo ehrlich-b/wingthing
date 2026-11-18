@@ -200,6 +200,17 @@ func buildProfile(cfg Config) string {
 		}
 	}
 
+	// Host-generated runtime files stay readable at their exact path inside a
+	// denied directory, as Linux binds them read-only inside its masks. Writes
+	// stay denied, and an explicit deny of the file itself still wins.
+	for _, file := range cfg.ReadOnlyFiles {
+		abs, err := canonicalSandboxPath(file)
+		if err != nil || containsDenyPath(cfg.Deny, abs) {
+			continue
+		}
+		fmt.Fprintf(&sb, "(allow file-read* (literal %q))\n", abs)
+	}
+
 	// Deny-write paths — block writes only, reads allowed.
 	// Emitted AFTER mount allows so they take precedence in SBPL evaluation.
 	for _, d := range cfg.DenyWrite {
