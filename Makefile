@@ -308,6 +308,12 @@ endif
 	@mkdir -p test/linux/runinspect-orphan
 	@cp -R internal/runinspect/testdata/orphan/. test/linux/runinspect-orphan/
 	@cp scripts/install.sh test/linux/install.sh
+	# Repo files the compiled cmd/wt tests read, at their repo paths. The image
+	# puts this tree at / and wt-tests.sh runs wt-tests from /cmd/wt.
+	@set -e; for path in cmd/wt/testdata internal/config/testdata internal/phonepair/testdata scripts/examples fly.toml \
+		mobile/ios/WingthingCore/Sources/WingthingCore/PairingEmoji.swift mobile/ios/WingthingCore/Sources/WingthingCore/PhonePairing.swift; do \
+		dir="test/linux/repo-fixtures/$$(dirname "$$path")"; mkdir -p "$$dir"; cp -R "$$path" "$$dir/"; \
+	done
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) build -p 2 -o test/linux/mock-agent ./test/mock-agent/
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) test -p 2 -c -tags 'e2e linux' -o test/linux/run-tests ./test/linux/
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) test -p 2 -c -tags integration -o test/linux/sandbox-tests ./internal/sandbox/
@@ -319,7 +325,7 @@ endif
 		docker run --rm --privileged \
    --tmpfs /provider-guard-fixtures:rw,exec,size=64m --tmpfs /tmp:rw,exec \
    -e WT_PROVIDER_GUARD_FIXTURE_ROOT=/provider-guard-fixtures "$$testimage" sh -lc \
-			'/root/run-tests -test.v -test.timeout 120s && /root/sandbox-tests -test.v -test.timeout 120s && /root/wt-tests -test.v -test.timeout 120s && sh /root/roost-pin-tests.sh /root/eggclient-tests'; \
+			'/root/run-tests -test.v -test.timeout 120s && /root/sandbox-tests -test.v -test.timeout 120s && sh /root/wt-tests.sh /root/wt-tests && sh /root/roost-pin-tests.sh /root/eggclient-tests'; \
 	done
 
 e2e-web: web

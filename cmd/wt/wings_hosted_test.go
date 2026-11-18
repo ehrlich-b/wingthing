@@ -34,21 +34,27 @@ func TestWingsAgainstHostedShapeRelay(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
-	binary := filepath.Join(root, "wt")
-	buildCtx, cancelBuild := context.WithTimeout(t.Context(), 2*time.Minute)
-	defer cancelBuild()
-	build := exec.CommandContext(buildCtx, "go", "build", "-p", "2", "-buildvcs=false", "-o", binary, "./cmd/wt")
-	build.Dir = repo
-	for _, variable := range os.Environ() {
-		if !strings.HasPrefix(variable, "CGO_ENABLED=") {
-			build.Env = append(build.Env, variable)
+	// A battery without a Go toolchain provides its own CGO_ENABLED=0 build.
+	binary := os.Getenv("WT_TEST_NOCGO_BINARY")
+	if binary != "" {
+		t.Logf("using CGO_ENABLED=0 wt from WT_TEST_NOCGO_BINARY=%s", binary)
+	} else {
+		binary = filepath.Join(root, "wt")
+		buildCtx, cancelBuild := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancelBuild()
+		build := exec.CommandContext(buildCtx, "go", "build", "-p", "2", "-buildvcs=false", "-o", binary, "./cmd/wt")
+		build.Dir = repo
+		for _, variable := range os.Environ() {
+			if !strings.HasPrefix(variable, "CGO_ENABLED=") {
+				build.Env = append(build.Env, variable)
+			}
 		}
+		build.Env = append(build.Env, "CGO_ENABLED=0")
+		if output, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("build CGO_ENABLED=0 wt: %v\n%s", err, output)
+		}
+		t.Log("built wt with CGO_ENABLED=0")
 	}
-	build.Env = append(build.Env, "CGO_ENABLED=0")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CGO_ENABLED=0 wt: %v\n%s", err, output)
-	}
-	t.Log("built wt with CGO_ENABLED=0")
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
