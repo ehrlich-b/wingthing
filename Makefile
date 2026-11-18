@@ -382,6 +382,11 @@ $(error $(DEPLOY_RECEIPT_CHECK))
 endif
 endif
 
+# A version is "released" only once this prints PUBLISHED; a tag alone is not.
+.PHONY: published
+published:
+	@scripts/check-published.sh "$(VERSION)"
+
 .PHONY: ship-gate test-release-skew test-ship-gate
 SHIP_GATE_DIR ?= .scratch/ship-gate
 ship-gate:
