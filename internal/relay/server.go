@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -270,6 +271,9 @@ func (s *Server) JWTPubKey() *ecdsa.PublicKey {
 
 func (s *Server) registerStaticRoutes() {
 	sub, _ := fs.Sub(web.FS, "dist")
+	// Go's built-in table says audio/webm, and Linux keeps it over the system
+	// database, so the homepage video needs its type registered here.
+	_ = mime.AddExtensionType(".webm", "video/webm")
 	fileServer := http.FileServer(http.FS(sub))
 
 	s.mux.Handle("GET /favicon.ico", fileServer)

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -573,6 +574,20 @@ func TestPublicDemoAssetsSupportPlayback(t *testing.T) {
 				t.Fatalf("asset %s: status=%d type=%q prefix=%x", asset.path, resp.StatusCode, resp.Header.Get("Content-Type"), body)
 			}
 		})
+	}
+}
+
+// Go's built-in table maps .webm to audio/webm and the Linux loader keeps
+// that entry, so the relay has to register the video type itself.
+func TestHomepageWebmServedAsVideoDespiteHostMimeTable(t *testing.T) {
+	mustTest(t, mime.AddExtensionType(".webm", "audio/webm"))
+	t.Cleanup(func() { _ = mime.AddExtensionType(".webm", "video/webm") })
+	_, ts := testServer(t)
+	resp, err := http.Get(ts.URL + "/app/demo/homepage.webm")
+	mustTest(t, err)
+	defer closeTestBody(t, resp.Body)
+	if got := resp.Header.Get("Content-Type"); resp.StatusCode != http.StatusOK || got != "video/webm" {
+		t.Fatalf("homepage.webm: status=%d Content-Type=%q, want 200 video/webm", resp.StatusCode, got)
 	}
 }
 
