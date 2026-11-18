@@ -325,7 +325,7 @@ endif
 		docker run --rm --privileged \
    --tmpfs /provider-guard-fixtures:rw,exec,size=64m --tmpfs /tmp:rw,exec \
    -e WT_PROVIDER_GUARD_FIXTURE_ROOT=/provider-guard-fixtures "$$testimage" sh -lc \
-			'/root/run-tests -test.v -test.timeout 120s && /root/sandbox-tests -test.v -test.timeout 120s && sh /root/wt-tests.sh /root/wt-tests && sh /root/roost-pin-tests.sh /root/eggclient-tests'; \
+			'/root/run-tests -test.v -test.timeout 120s && /root/sandbox-tests -test.v -test.timeout 120s && sh /root/wt-tests.sh /root/wt-tests "$(E2E_MAC_NORTHSTAR)" "$(E2E_MAC_BUILT)" "$(E2E_MAC_TERMINAL)" && sh /root/roost-pin-tests.sh /root/eggclient-tests'; \
 	done
 
 e2e-web: web
@@ -333,8 +333,9 @@ e2e-web: web
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(WEB_TEST_ARCH) $(GO) build -p 2 -o test/web/claude ./test/web/canary-agent/
 	test/web/run.sh
 
-# cmd/wt groups for e2e-mac. Each name prefix belongs to exactly one group and
-# the first cmd/wt run skips them all, so every CLI test still runs once.
+# cmd/wt groups for e2e-mac and e2e-linux. Each name prefix belongs to exactly
+# one group and the first cmd/wt run skips them all, so every CLI test still
+# runs once.
 E2E_MAC_NORTHSTAR := Northstar|NativeTerminal
 E2E_MAC_BUILT := Built
 E2E_MAC_TERMINAL := Claude|Preview|Terminal|Attach|Onboarding|Phone|Session|Wings
