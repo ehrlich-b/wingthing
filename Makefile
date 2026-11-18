@@ -327,13 +327,23 @@ e2e-web: web
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(WEB_TEST_ARCH) $(GO) build -p 2 -o test/web/claude ./test/web/canary-agent/
 	test/web/run.sh
 
+# cmd/wt groups for e2e-mac. Each name prefix belongs to exactly one group and
+# the first cmd/wt run skips them all, so every CLI test still runs once.
+E2E_MAC_NORTHSTAR := Northstar|NativeTerminal
+E2E_MAC_BUILT := Built
+E2E_MAC_TERMINAL := Claude|Preview|Terminal|Attach|Onboarding|Phone|Session|Wings
+E2E_MAC_GO_TEST = WT_TEST_BINARY="$(CURDIR)/wt" WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 -tags integration -v -timeout 120s
+
 e2e-mac: web
 	@test "$$(uname -s)" = Darwin || { echo 'e2e-mac requires the macOS Seatbelt parent sandbox'; exit 1; }
 	$(stable-build)
 	$(preview-build)
 	# Keep the two-minute deadline for each group while running every CLI test.
-	WT_TEST_BINARY="$(CURDIR)/wt" WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 -tags integration -v -timeout 120s ./internal/sandbox ./cmd/wt -skip '^Test(Northstar|NativeTerminal)'
-	WT_TEST_BINARY="$(CURDIR)/wt" WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 -tags integration -v -timeout 120s ./cmd/wt -run '^Test(Northstar|NativeTerminal)'
+	$(E2E_MAC_GO_TEST) ./internal/sandbox
+	$(E2E_MAC_GO_TEST) ./cmd/wt -skip '^Test($(E2E_MAC_NORTHSTAR)|$(E2E_MAC_BUILT)|$(E2E_MAC_TERMINAL))'
+	$(E2E_MAC_GO_TEST) ./cmd/wt -run '^Test($(E2E_MAC_BUILT))'
+	$(E2E_MAC_GO_TEST) ./cmd/wt -run '^Test($(E2E_MAC_TERMINAL))'
+	$(E2E_MAC_GO_TEST) ./cmd/wt -run '^Test($(E2E_MAC_NORTHSTAR))'
 	$(GO) test -p 2 ./internal/egg -run 'TestPreviewClaude(GuardRejectsSymlinkAliases|ContextRejectsAliasedForeignSelector|LifecycleSettingsAndHooksKeepDataHome)$$' -count=1
 	python3 -B -m unittest discover -s test/preview -p test_mac_provider_context.py
 	python3 test/preview/mac_provider_context.py "$(PREVIEW_CONTEXT_BINARY)"
