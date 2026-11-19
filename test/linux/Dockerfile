@@ -9,17 +9,22 @@ COPY wt /root/wt-fixture
 ENV WT_TEST_BINARY=/root/wt-fixture
 COPY wt-preview /root/wt-preview-fixture
 ENV WT_TEST_PREVIEW_BINARY=/root/wt-preview-fixture
+# The hosted-shape relay test runs this CGO_ENABLED=0 build; no Go toolchain here.
+ENV WT_TEST_NOCGO_BINARY=/root/wt-fixture
 # The compiled run-inspect CLI tests consume this read-only source fixture
 # relative to /root, just as ordinary go test consumes it from cmd/wt.
 COPY runinspect-orphan /internal/runinspect/testdata/orphan
 # Real checksum installer used by the compiled onboarding PTY fixture.
 COPY install.sh /scripts/install.sh
+# Repo files the compiled cmd/wt tests read; wt-tests.sh runs them from /cmd/wt.
+COPY repo-fixtures/ /
 COPY mock-agent /usr/local/bin/claude
 COPY run-tests /root/run-tests
 COPY sandbox-tests /root/sandbox-tests
 COPY wt-tests /root/wt-tests
 COPY eggclient-tests /root/eggclient-tests
 COPY roost-pin-tests.sh /root/roost-pin-tests.sh
+COPY wt-tests.sh /root/wt-tests.sh
 RUN chmod +x /usr/local/bin/wt /usr/local/bin/claude /root/run-tests /root/sandbox-tests /root/wt-tests /root/eggclient-tests
 RUN mkdir -p /root/.wingthing/eggs /root/.wingthing/logs /root/.claude /root/.ssh
 # Non-root user for namespace failure tests

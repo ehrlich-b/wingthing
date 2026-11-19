@@ -174,6 +174,7 @@ type replayBuffer struct {
 	cursorRow    int    // last known absolute cursor row (1-based)
 	cursorCol    int    // last known absolute cursor col (1-based)
 	modes        terminalModes
+	marginResets []int64 // absolute offsets where a resize cleared a scroll region
 }
 
 type replayStats struct {
@@ -328,8 +329,43 @@ func (r *replayBuffer) AttachmentSnapshot() ([]byte, int64) {
 		snapshot = r.buildTrimPreamble()
 		snapshot = append(snapshot, r.modes.restoreSelected(alternateMode)...)
 	}
-	snapshot = append(snapshot, r.buf...)
+	last := 0
+	for _, offset := range r.marginResets {
+		if at := int(offset - r.trimmed); at >= last {
+			snapshot = append(append(snapshot, r.buf[last:at]...), marginReset...)
+			last = at
+		}
+	}
+	snapshot = append(snapshot, r.buf[last:]...)
 	return r.modes.replaySnapshot(snapshot), r.trimmed + int64(len(r.buf))
+}
+
+// DECSTBM homes the cursor, so the reset is wrapped in DECSC/DECRC.
+var marginReset = []byte("\x1b7\x1b[r\x1b8")
+
+// Resized records that the terminal dropped its scroll region, as every
+// terminal does when its size changes. The resize is not in the PTY stream, so
+// a replay into a fresh terminal would otherwise keep a region sized for the
+// old screen (macOS ncurses sets one at startup and never sets it again).
+func (r *replayBuffer) Resized() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	d := &r.modes.decoder
+	// Only a point between sequences and codepoints can take the reset.
+	if !r.modes.margins || d.utf8Remaining > 0 || d.state != escapeGround && d.state != escapeStart && d.state != escapeCSI {
+		return
+	}
+	r.modes.margins = false
+	kept := r.marginResets[:0]
+	for _, offset := range r.marginResets {
+		if offset >= r.trimmed {
+			kept = append(kept, offset)
+		}
+	}
+	r.marginResets = kept
+	if offset := r.trimmed + int64(len(r.buf)-len(d.pending)); offset >= r.trimmed {
+		r.marginResets = append(r.marginResets, offset)
+	}
 }
 
 // WritePosition returns the absolute end offset without copying the buffer.
@@ -1761,6 +1797,9 @@ func (s *Server) resizeSession(ctx context.Context, sess *Session, rows, cols ui
 		return status.Errorf(codes.Internal, "resize PTY: %v", err)
 	}
 	decision <- true
+	if sess.replay != nil {
+		sess.replay.Resized()
+	}
 	sess.writeAuditResize(cols, rows)
 	if err := s.updateMetaDimensions(cols, rows); err != nil {
 		log.Printf("egg: update terminal metadata: %v", err)

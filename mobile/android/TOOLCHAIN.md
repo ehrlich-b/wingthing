@@ -1,6 +1,6 @@
 # Android debug qualification
 
-Use Linux x86-64, Go 1.26.9 or newer, JDK 21, Android SDK platform 37,
+Use Linux x86-64, Go 1.26.11 or newer, JDK 21, Android SDK platform 37,
 build tools 37.0.0, and NDK 29.0.14206865. Set `WT_ANDROID_WORKDIR` to a
 writable local directory and `JAVA_HOME` to the JDK. The default SDK is
 `$WT_ANDROID_WORKDIR/sdk`; `ANDROID_HOME` and `ANDROID_NDK_HOME` can override

@@ -220,6 +220,23 @@ type terminalModeState struct{ seen, enabled bool }
 type terminalModes struct {
 	decoder terminalEscapeDecoder
 	states  [len(presentationModes)]terminalModeState
+	margins bool // a DECSTBM scroll region is in force
+}
+
+// scrollMargins reports whether seq is DECSTBM and whether it sets a region.
+func scrollMargins(seq []byte) (set, ok bool) {
+	body := bytes.TrimPrefix(bytes.TrimPrefix(seq, []byte("\x1b[")), []byte{0x9b})
+	if len(body) == len(seq) || body[len(body)-1] != 'r' {
+		return false, false
+	}
+	for _, b := range body[:len(body)-1] {
+		if b >= '1' && b <= '9' {
+			set = true
+		} else if b >= 0x20 && b != ';' && b != '0' {
+			return false, false
+		}
+	}
+	return set, true
 }
 
 func (m *terminalModes) write(data []byte) {
@@ -228,6 +245,11 @@ func (m *terminalModes) write(data []byte) {
 			for i, mode := range presentationModes {
 				m.states[i] = terminalModeState{true, mode == 25}
 			}
+			m.margins = false
+			return nil
+		}
+		if set, ok := scrollMargins(seq); ok {
+			m.margins = set
 			return nil
 		}
 		params, final, ok := privateModes(seq)

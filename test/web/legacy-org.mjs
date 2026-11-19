@@ -47,7 +47,10 @@ try {
 
   try {
     await page.goto(BASE + '/app/', { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('#wing-status .wing-box', { timeout: 30000 });
+    // Home names its one connected machine in the shell's status line; the
+    // wing boxes now sit in a diagnostics disclosure that first-run Home hides.
+    await page.waitForSelector('#wing-status .wing-box', { state: 'attached', timeout: 30000 });
+    await page.locator('#paper .pp-main').getByText(/ is connected\.$/).first().waitFor({ timeout: 30000 });
     record('legacy org: dashboard renders the shared wing', true);
   } catch (error) {
     record('legacy org: dashboard renders the shared wing', false, String(error).slice(0, 200));

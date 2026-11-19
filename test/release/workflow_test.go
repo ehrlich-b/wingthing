@@ -100,10 +100,10 @@ func TestReleaseWorkflow(t *testing.T) {
 	}
 	deterministic := workflow.Jobs["deterministic"]
 	commands := []string{
-		"go test -p 2 ./test/release -count=1", "make check",
+		"go test -p 2 ./test/release -count=1",
+		"sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0", "make check",
 		"npm install -g @anthropic-ai/claude-code@2.1.260", "make gate GATE=claude",
 		"make gate GATE=static RACE_PACKAGES=./...",
-		"sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0",
 		"make gate GATE=integration", "make gate GATE=compat",
 		"make e2e-linux LINUX_DISTROS=debian", "make e2e-linux LINUX_DISTROS=ubuntu",
 		"make e2e-web", "git diff --check", `make release CHANNEL=stable VERSION="$VERSION"`,
@@ -114,7 +114,7 @@ func TestReleaseWorkflow(t *testing.T) {
 			actual = append(actual, s.Run)
 		}
 	}
-	if !reflect.DeepEqual(actual, commands) || runs(workflow.Jobs["macos-sandbox"]) != "make e2e-mac" {
+	if !reflect.DeepEqual(actual, commands) || runs(workflow.Jobs["macos-sandbox"]) != "sudo ifconfig lo0 alias 127.0.0.2 up\nmake e2e-mac" {
 		t.Fatalf("historical gates, including integration, must precede packaging: %v", actual)
 	}
 	var uploaded string

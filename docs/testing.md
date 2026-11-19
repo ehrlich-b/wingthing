@@ -501,13 +501,13 @@ physical-device acceptance, native pairing or passkey approval.
 
 ## Northstar terminal daily loop
 
-Use the native macOS Go 1.26.9 toolchain on the combined carrier. Providers and
+Use the native macOS Go 1.26.11 toolchain on the combined carrier. Providers and
 SSH are isolated fixtures; no real login, user daemon or remote installation is
 required. A passing kernel PTY test is not a real-provider, real-SSH or physical
 trackpad/selection canary. See [the daily-driver guide](daily-driver.md).
 
 ```sh
-WT_GO=$(command -v go) # Select Go 1.26.9 on PATH first.
+WT_GO=$(command -v go) # Select Go 1.26.11 on PATH first.
 # Select clone-local HOME/state, temporary directories and populated module/build
 # caches before running. Use GOPROXY=off, GOSUMDB=off, GOTOOLCHAIN=local,
 # GOFLAGS=-p=2 and GOMAXPROCS=2. Execute heavy commands serially.

@@ -308,6 +308,12 @@ endif
 	@mkdir -p test/linux/runinspect-orphan
 	@cp -R internal/runinspect/testdata/orphan/. test/linux/runinspect-orphan/
 	@cp scripts/install.sh test/linux/install.sh
+	# Repo files the compiled cmd/wt tests read, at their repo paths. The image
+	# puts this tree at / and wt-tests.sh runs wt-tests from /cmd/wt.
+	@set -e; for path in cmd/wt/testdata internal/config/testdata internal/phonepair/testdata scripts/examples fly.toml \
+		mobile/ios/WingthingCore/Sources/WingthingCore/PairingEmoji.swift mobile/ios/WingthingCore/Sources/WingthingCore/PhonePairing.swift; do \
+		dir="test/linux/repo-fixtures/$$(dirname "$$path")"; mkdir -p "$$dir"; cp -R "$$path" "$$dir/"; \
+	done
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) build -p 2 -o test/linux/mock-agent ./test/mock-agent/
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) test -p 2 -c -tags 'e2e linux' -o test/linux/run-tests ./test/linux/
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_TEST_ARCH) $(GO) test -p 2 -c -tags integration -o test/linux/sandbox-tests ./internal/sandbox/
@@ -319,7 +325,7 @@ endif
 		docker run --rm --privileged \
    --tmpfs /provider-guard-fixtures:rw,exec,size=64m --tmpfs /tmp:rw,exec \
    -e WT_PROVIDER_GUARD_FIXTURE_ROOT=/provider-guard-fixtures "$$testimage" sh -lc \
-			'/root/run-tests -test.v -test.timeout 120s && /root/sandbox-tests -test.v -test.timeout 120s && /root/wt-tests -test.v -test.timeout 120s && sh /root/roost-pin-tests.sh /root/eggclient-tests'; \
+			'/root/run-tests -test.v -test.timeout 120s && /root/sandbox-tests -test.v -test.timeout 120s && sh /root/wt-tests.sh /root/wt-tests "$(E2E_MAC_NORTHSTAR)" "$(E2E_MAC_BUILT)" "$(E2E_MAC_TERMINAL)" && sh /root/roost-pin-tests.sh /root/eggclient-tests'; \
 	done
 
 e2e-web: web
@@ -327,13 +333,24 @@ e2e-web: web
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(WEB_TEST_ARCH) $(GO) build -p 2 -o test/web/claude ./test/web/canary-agent/
 	test/web/run.sh
 
+# cmd/wt groups for e2e-mac and e2e-linux. Each name prefix belongs to exactly
+# one group and the first cmd/wt run skips them all, so every CLI test still
+# runs once.
+E2E_MAC_NORTHSTAR := Northstar|NativeTerminal
+E2E_MAC_BUILT := Built
+E2E_MAC_TERMINAL := Claude|Preview|Terminal|Attach|Onboarding|Phone|Session|Wings
+E2E_MAC_GO_TEST = WT_TEST_BINARY="$(CURDIR)/wt" WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 -tags integration -v -timeout 120s
+
 e2e-mac: web
 	@test "$$(uname -s)" = Darwin || { echo 'e2e-mac requires the macOS Seatbelt parent sandbox'; exit 1; }
 	$(stable-build)
 	$(preview-build)
 	# Keep the two-minute deadline for each group while running every CLI test.
-	WT_TEST_BINARY="$(CURDIR)/wt" WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 -tags integration -v -timeout 120s ./internal/sandbox ./cmd/wt -skip '^Test(Northstar|NativeTerminal)'
-	WT_TEST_BINARY="$(CURDIR)/wt" WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 -tags integration -v -timeout 120s ./cmd/wt -run '^Test(Northstar|NativeTerminal)'
+	$(E2E_MAC_GO_TEST) ./internal/sandbox
+	$(E2E_MAC_GO_TEST) ./cmd/wt -skip '^Test($(E2E_MAC_NORTHSTAR)|$(E2E_MAC_BUILT)|$(E2E_MAC_TERMINAL))'
+	$(E2E_MAC_GO_TEST) ./cmd/wt -run '^Test($(E2E_MAC_BUILT))'
+	$(E2E_MAC_GO_TEST) ./cmd/wt -run '^Test($(E2E_MAC_TERMINAL))'
+	$(E2E_MAC_GO_TEST) ./cmd/wt -run '^Test($(E2E_MAC_NORTHSTAR))'
 	$(GO) test -p 2 ./internal/egg -run 'TestPreviewClaude(GuardRejectsSymlinkAliases|ContextRejectsAliasedForeignSelector|LifecycleSettingsAndHooksKeepDataHome)$$' -count=1
 	python3 -B -m unittest discover -s test/preview -p test_mac_provider_context.py
 	python3 test/preview/mac_provider_context.py "$(PREVIEW_CONTEXT_BINARY)"
@@ -371,6 +388,11 @@ ifneq ($(findstring INVALID_SHIP_RECEIPT,$(DEPLOY_RECEIPT_CHECK)),)
 $(error $(DEPLOY_RECEIPT_CHECK))
 endif
 endif
+
+# A version is "released" only once this prints PUBLISHED; a tag alone is not.
+.PHONY: published
+published:
+	@scripts/check-published.sh "$(VERSION)"
 
 .PHONY: ship-gate test-release-skew test-ship-gate
 SHIP_GATE_DIR ?= .scratch/ship-gate

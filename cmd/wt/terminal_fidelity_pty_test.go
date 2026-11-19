@@ -9,14 +9,17 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -65,6 +68,55 @@ type fidelityTerminal struct {
 	err                   error
 	queries               map[string]string
 	reporting             int // 0: DECRQM replies, 1: unsupported reports, 2: no reports
+	led                   bool
+}
+
+// Darwin revokes a terminal from every process when its session leader dies,
+// and no guardian can write to it afterwards. A client that will be killed
+// there runs beneath a surviving leader, as it does beneath a user's shell.
+func fidelityKillable(t *testing.T, cmd *exec.Cmd) (*exec.Cmd, func(*fidelityTerminal)) {
+	if runtime.GOOS != "darwin" {
+		return cmd, func(*fidelityTerminal) {}
+	}
+	args, err := json.Marshal(cmd.Args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leader := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestTerminalFidelitySessionLeader$")
+	leader.Env = append(cmd.Environ(), "WT_FIDELITY_LEADER="+string(args))
+	return leader, func(h *fidelityTerminal) { h.led = true }
+}
+
+func TestTerminalFidelitySessionLeader(t *testing.T) {
+	var args []string
+	if err := json.Unmarshal([]byte(os.Getenv("WT_FIDELITY_LEADER")), &args); err != nil {
+		return
+	}
+	kill := make(chan os.Signal, 1)
+	signal.Notify(kill, syscall.SIGUSR1)
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	<-kill
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+	for {
+		time.Sleep(time.Hour)
+	}
+}
+
+// kill ends the client without notice, as SIGKILL does.
+func (h *fidelityTerminal) kill() {
+	h.t.Helper()
+	signal := syscall.SIGKILL
+	if h.led {
+		signal = syscall.SIGUSR1
+	}
+	if err := h.cmd.Process.Signal(signal); err != nil {
+		h.t.Fatal(err)
+	}
 }
 
 var fidelityCSI = regexp.MustCompile("^\x1b\\[([?<>0-9;\x7f]*)([ $\x7f]*)([@-~])")
@@ -487,13 +539,37 @@ func (h *fidelityTerminal) assertModes(initial map[int]bool) {
 	}
 }
 
+func (h *fidelityTerminal) restored(initial map[int]bool) bool {
+	state, err := term.GetState(int(h.slave.Fd()))
+	if err != nil || !reflect.DeepEqual(h.before, state) {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, mode := range fidelityTrackedModes {
+		want, ok := initial[mode]
+		if h.modes[mode] != (want || mode == 25 && !ok) {
+			return false
+		}
+	}
+	return true
+}
+
 func (h *fidelityTerminal) assertCleanup(initial map[int]bool, killed bool) {
 	h.t.Helper()
-	<-h.processDone
-	// PTY EOF fences the independent guardian's output and termios restoration.
 	slaveName := h.slave.Name()
-	_ = h.slave.Close()
-	<-h.readDone
+	if h.led {
+		// A surviving session keeps a Darwin PTY connected past its last close,
+		// so no EOF fences the guardian; its restoration must arrive unprompted.
+		for deadline := time.Now().Add(10 * time.Second); !h.restored(initial) && time.Now().Before(deadline); {
+			time.Sleep(10 * time.Millisecond)
+		}
+	} else {
+		<-h.processDone
+		// PTY EOF fences the independent guardian's output and termios restoration.
+		_ = h.slave.Close()
+		<-h.readDone
+	}
 	h.assertModes(initial)
 	reopened, err := os.OpenFile(slaveName, os.O_RDWR, 0600)
 	if err != nil {
@@ -583,12 +659,14 @@ func fidelityCleanup(t *testing.T, binary, evidence string, providerArgs ...stri
 					f := startFidelityEgg(t, binary, provider, append([]string{"--exercise-saves"}, providerArgs...)...)
 					cmd := exec.CommandContext(t.Context(), binary, "attach", "fidelity")
 					cmd.Env = f.cmd.Env
-					h := startFidelityTerminal(t, cmd, initial, func(h *fidelityTerminal) { h.reporting = reporting })
+					led := func(*fidelityTerminal) {}
+					if kill {
+						cmd, led = fidelityKillable(t, cmd)
+					}
+					h := startFidelityTerminal(t, cmd, initial, led, func(h *fidelityTerminal) { h.reporting = reporting })
 					h.exerciseSavedModes(initial, false)
 					if kill {
-						if err := h.cmd.Process.Kill(); err != nil {
-							t.Fatal(err)
-						}
+						h.kill()
 					} else {
 						h.send("\x02q")
 					}
@@ -656,7 +734,11 @@ func TestTerminalFidelityRemoteCleanup(t *testing.T) {
 						}
 						// Include typeahead in the negotiation read; SSH must receive it once.
 						typeahead := index == 2
-						h := startFidelityTerminal(t, cmd, initial, func(h *fidelityTerminal) {
+						led := func(*fidelityTerminal) {}
+						if kill {
+							cmd, led = fidelityKillable(t, cmd)
+						}
+						h := startFidelityTerminal(t, cmd, initial, led, func(h *fidelityTerminal) {
 							h.reporting = reporting
 							if typeahead {
 								h.queries["\x1b[6n"] = "\x1b[7;13Rg"
@@ -668,9 +750,7 @@ func TestTerminalFidelityRemoteCleanup(t *testing.T) {
 						}
 						h.wait("SIZE:93x31\r\n")
 						if kill {
-							if err := h.cmd.Process.Kill(); err != nil {
-								t.Fatal(err)
-							}
+							h.kill()
 						} else {
 							h.send("\x02q")
 						}

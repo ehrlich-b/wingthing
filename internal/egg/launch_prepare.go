@@ -275,7 +275,9 @@ func prepareLegacyLaunch(rc RunConfig, opts LaunchPreparationOptions, state Laun
 		} else {
 			out.LifecycleSettingsPath = out.Args[providerOptionsEnd(out.Args)-1]
 			out.Sandbox.Mounts = append(out.Sandbox.Mounts, sandbox.Mount{Source: out.LifecycleSettingsPath, Target: out.LifecycleSettingsPath, ReadOnly: true})
-			if runtime.GOOS == "linux" && len(rc.ProtectedWriteTargets) > 0 {
+			// The egg directory sits in wing state, which scoped parents deny;
+			// Seatbelt has no read-only bind, so name the file on macOS always.
+			if runtime.GOOS == "darwin" || runtime.GOOS == "linux" && len(rc.ProtectedWriteTargets) > 0 {
 				out.Sandbox.ReadOnlyFiles = append(out.Sandbox.ReadOnlyFiles, out.LifecycleSettingsPath)
 			}
 		}

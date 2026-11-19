@@ -124,8 +124,9 @@ func TestSharedHostAgentRunPreservesExternalReadOnlyMount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("shared-host run failed: %v\n%s", err, output.String())
 	}
-	if strings.TrimSpace(output.String()) != "sealed" {
-		t.Fatalf("shared-host agent output = %q, want sealed", output.String())
+	// Task output leads with the sandbox notice (7c28d3a3), then the agent's.
+	if strings.TrimSpace(output.String()) != "Sandbox enabled.\nsealed" {
+		t.Fatalf("shared-host agent output = %q, want the sandbox notice then sealed", output.String())
 	}
 	var saved map[string]any
 	settingsData, err := os.ReadFile(filepath.Join(userHome, ".claude", "settings.json"))
