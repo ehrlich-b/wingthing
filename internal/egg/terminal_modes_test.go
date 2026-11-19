@@ -148,6 +148,30 @@ func TestNativeTerminalReplayModesAndRawTrimOffsets(t *testing.T) {
 	}
 }
 
+// A terminal drops its scroll region when resized; the raw replay must too,
+// or a fresh terminal scrolls the taller redraw inside the old region.
+func TestNativeTerminalReplayResetsScrollRegionAtResize(t *testing.T) {
+	r := newReplayBuffer("")
+	r.Resized()
+	r.Write([]byte("\x1b[1;24rOLD\x1b[?10"))
+	r.Resized()
+	r.Resized()
+	r.Write([]byte("49hNEW"))
+	snapshot, offset := r.AttachmentSnapshot()
+	if want := "\x1b[1;24rOLD\x1b7\x1b[r\x1b8\x1b[?1049hNEW"; string(snapshot) != want || offset != 21 {
+		t.Fatalf("snapshot %q at %d, want %q", snapshot, offset, want)
+	}
+	r.Write([]byte("\x1b[2;5r\x1b[r"))
+	r.Resized()
+	if next, _ := r.AttachmentSnapshot(); bytes.Count(next, marginReset) != 1 {
+		t.Fatalf("a region the provider already cleared was reset again: %q", next)
+	}
+	r.Write(bytes.Repeat([]byte("line\r\n"), maxReplaySize/6+1))
+	if trimmed, _ := r.AttachmentSnapshot(); bytes.Contains(trimmed, marginReset) {
+		t.Fatal("a reset outlived the bytes it followed")
+	}
+}
+
 func TestNativeTerminalSnapshotContinuesSplitCSI(t *testing.T) {
 	r := newReplayBuffer("")
 	r.Write([]byte("HISTORY\x1b[?1000h\x1b[?100"))
