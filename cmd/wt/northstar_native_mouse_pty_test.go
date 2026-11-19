@@ -39,7 +39,9 @@ func northstarNativeMouseFixture(t *testing.T) *northstarFixture {
 		t.Fatal(err)
 	}
 	scratch := testprovider.TempDir(t)
-	home := testprovider.ShortStateDir(t, scratch)
+	// The macOS sandbox always grants writes below /private/tmp, where scratch
+	// lives; the HOME holding the protected mailbox must sit outside it.
+	home := testprovider.ShortStateDir(t, testprovider.ProtectedTempDir(t))
 	root, err := os.MkdirTemp(scratch, "native-")
 	if err != nil {
 		t.Fatal(err)
