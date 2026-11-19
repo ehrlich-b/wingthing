@@ -25,7 +25,7 @@ import { createFixtureLayout } from './fixture-layout.mjs';
 
 const supplied = process.argv[2] || '';
 if (!supplied.includes('/')) throw new Error(`receiver binary must be an explicit path, not a PATH lookup: ${JSON.stringify(supplied)}`);
-const binary = path.resolve(supplied);
+let binary = path.resolve(supplied);
 const binaryInfo = await lstat(binary);
 if (!binaryInfo.isFile() || (binaryInfo.mode & 0o111) === 0) throw new Error(`receiver ${binary} must be a regular executable file (symlinks refused)`);
 const reportedVersion = execFileSync(binary, ['--version'], { env: { PATH: '/usr/bin:/bin', HOME: '/nonexistent' }, timeout: 10000 }).toString();
@@ -49,6 +49,14 @@ if (stateRoot) {
 }
 let providerData = '';
 if (stateRoot) {
+    // Seatbelt protects only what lies below the egg HOME, and the host mailbox
+    // refuses a receiver the provider could replace. Run the verified bytes
+    // from the protected HOME, where an installed wt lives.
+    const installed = path.join(home, 'bin', path.basename(binary));
+    await mkdir(path.dirname(installed), { mode: 0o700 });
+    await copyFile(binary, installed, fsConstants.COPYFILE_EXCL);
+    await chmod(installed, 0o700);
+    binary = installed;
     // The host mailbox requires the provider data home D outside the protected
     // state S. A fake D in the scratch directory is selected through the
     // existing private binding file inside S; no real provider home is used.
