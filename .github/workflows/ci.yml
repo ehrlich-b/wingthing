@@ -119,6 +119,9 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: make web
+      # The race run of touched packages starts sandboxed terminals on the
+      # runner host; the dedicated Linux sandbox jobs keep the restriction.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: make gate GATE=static
       - run: git diff --check
 
