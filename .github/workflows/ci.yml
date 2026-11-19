@@ -100,6 +100,12 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: make e2e-web
+      # Screenshots, results and roost logs explain a red browser run.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: web-e2e-out
+          path: test/web/out/
 
   static-race-docs:
     env:
