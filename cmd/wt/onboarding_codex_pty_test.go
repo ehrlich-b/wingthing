@@ -122,7 +122,10 @@ while True:
 	if !alive {
 		t.Fatal("detached healthy fixture is not alive")
 	}
-	failed := northstarStartPTY(t, f, binary, 120, 36, "codex", "--cwd", f.work, "--name", "onboarding-failure", "--", "-m", "fixture-onboarding", "fixture-prompt")
+	// A failed provider's egg.log follows its last output onto the still-raw
+	// terminal. On macOS that log carries the whole Seatbelt profile, so the
+	// screen is tall enough to keep the provider's failure above it.
+	failed := northstarStartPTY(t, f, binary, 120, 100, "codex", "--cwd", f.work, "--name", "onboarding-failure", "--", "-m", "fixture-onboarding", "fixture-prompt")
 	failed.expect("second fixture ready", 0, "CODEX_READY")
 	failed.expect("provider failure returned without relaunch", failed.send("fail\r"), "FIXTURE_PROVIDER_FAILED", "agent exited with code 7")
 	coldPTYExit(t, failed, true)
