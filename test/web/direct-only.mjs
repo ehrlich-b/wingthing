@@ -43,9 +43,11 @@ try {
     const nav = document.querySelector('nav.site-nav');
     const logo = nav.querySelector('.logo').getBoundingClientRect();
     const links = nav.querySelector('.nav-links');
+    // On phones the install action stays beside the logo and the rest wrap below.
+    const secondary = nav.querySelector('.nav-secondary');
     const linkElements = Array.from(links.querySelectorAll('a'));
     const linkRects = linkElements.map((link) => link.getBoundingClientRect());
-    const hero = document.querySelector('.container > .hero');
+    const hero = document.querySelector('.container > main > .hero');
     const heroLinks = hero ? Array.from(hero.querySelectorAll('a[href]')) : [];
     const heroVideo = hero ? hero.querySelector('video, iframe[title*="video" i], [data-hero-video]') : null;
     const installCTA = heroLinks.find((link) => /\binstall\b/i.test(text(link)));
@@ -61,8 +63,8 @@ try {
     return {
       navLabels: linkElements.map((link) => link.textContent.trim()),
       ctaLabels: linkElements.filter((link) => link.classList.contains('nav-cta')).map((link) => link.textContent.trim()),
-      flexWrap: getComputedStyle(links).flexWrap,
-      linksBelowLogo: links.getBoundingClientRect().top >= logo.bottom,
+      flexWrap: getComputedStyle(secondary).flexWrap,
+      linksBelowLogo: secondary.getBoundingClientRect().top >= logo.bottom,
       linksInsideViewport: linkRects.every((rect) => rect.width > 0 && rect.left >= 0 && rect.right <= innerWidth + 0.5),
       noHorizontalOverflow: document.documentElement.scrollWidth <= innerWidth,
       headingCount: introElements.filter((element) => element.matches('h1')).length,
@@ -82,14 +84,14 @@ try {
     };
   });
   record('public mobile: nav wraps below the logo without clipping and keeps neutral actions',
-    JSON.stringify(publicState.navLabels) === JSON.stringify(['patterns', 'docs', 'github', 'install locally', 'login']) &&
-      JSON.stringify(publicState.ctaLabels) === JSON.stringify(['install locally']) &&
+    JSON.stringify(publicState.navLabels) === JSON.stringify(['Patterns', 'Docs', 'GitLab source', 'GitHub mirror', 'Log in', 'Install wingthing']) &&
+      JSON.stringify(publicState.ctaLabels) === JSON.stringify(['Install wingthing']) &&
       publicState.flexWrap === 'wrap' && publicState.linksBelowLogo &&
       publicState.linksInsideViewport && publicState.noHorizontalOverflow,
     JSON.stringify(publicState));
   record('public mobile: home keeps the concise local-agent hierarchy without the detailed route map',
     publicState.headingCount === 1 &&
-      /\blocal\b/i.test(publicState.introText) && /\bagents?\b/i.test(publicState.introText) &&
+      /\bown machines\b/i.test(publicState.introText) && /\bagents?\b/i.test(publicState.introText) &&
       publicState.routeMapCount === 0 && publicState.dataRouteCount === 0 &&
       publicState.patternsHref === '/patterns' && publicState.patternsVisible &&
       (!publicState.heroConfigured || (publicState.heroVisible && publicState.introBeforeHero && publicState.heroBeforeInstall)) &&
